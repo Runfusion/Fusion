@@ -141,6 +141,7 @@ export { CentralCore } from "./central-core.js";
 export type { CentralCoreEvents } from "./central-core.js";
 export { CentralDatabase, createCentralDatabase } from "./central-db.js";
 export { NodeConnection } from "./node-connection.js";
+export { collectSystemMetrics } from "./system-metrics.js";
 export type {
   ConnectionErrorType,
   ConnectionOptions,
@@ -152,12 +153,16 @@ export type {
   CentralActivityLogEntry,
   GlobalConcurrencyState,
   IsolationMode,
+  MeshDiscovery,
   MigrationOptions,
   NodeConfig,
+  NodeMeshState,
   NodeStatus,
+  PeerNode,
   ProjectHealth,
   /** @deprecated Use RegisteredProject instead */
   ProjectInfo,
+  SystemMetrics,
   ProjectStatus,
   RegisteredProject,
   SetupCompletionResult,

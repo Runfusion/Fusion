@@ -44,10 +44,14 @@ import type {
   AgentCapability,
   NodeConfig,
   NodeStatus,
+  SystemMetrics,
+  NodeMeshState,
+  PeerNode,
 } from "./types.js";
 import { CentralDatabase, toJson, toJsonNullable, fromJson } from "./central-db.js";
 import { resolveGlobalDir } from "./global-settings.js";
 import { NodeConnection } from "./node-connection.js";
+import { collectSystemMetrics } from "./system-metrics.js";
 import type { ConnectionOptions, ConnectionResult } from "./node-connection.js";
 
 // ── Event Types ───────────────────────────────────────────────────────────
@@ -71,6 +75,14 @@ export interface CentralCoreEvents {
   "node:updated": [node: NodeConfig];
   /** Emitted when node health status changes */
   "node:health:changed": [node: NodeConfig];
+  /** Emitted when node metrics are updated */
+  "node:metrics:updated": [payload: { nodeId: string; metrics: SystemMetrics }];
+  /** Emitted when a mesh peer is added for a node */
+  "mesh:peer:added": [payload: { nodeId: string; peer: PeerNode }];
+  /** Emitted when a mesh peer is removed for a node */
+  "mesh:peer:removed": [payload: { nodeId: string; peerNodeId: string }];
+  /** Emitted when a node mesh snapshot changes */
+  "mesh:state:changed": [payload: { nodeId: string; state: NodeMeshState }];
   /** Emitted after a remote node connection test completes */
   "node:connection:test": [result: ConnectionResult];
   /** Emitted when global concurrency state changes */
@@ -555,6 +567,8 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
           apiKey: string | null;
           status: string;
           capabilities: string | null;
+          systemMetrics: string | null;
+          knownPeers: string | null;
           maxConcurrent: number;
           createdAt: string;
           updatedAt: string;
@@ -580,6 +594,8 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
           apiKey: string | null;
           status: string;
           capabilities: string | null;
+          systemMetrics: string | null;
+          knownPeers: string | null;
           maxConcurrent: number;
           createdAt: string;
           updatedAt: string;
@@ -604,6 +620,8 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       apiKey: string | null;
       status: string;
       capabilities: string | null;
+      systemMetrics: string | null;
+      knownPeers: string | null;
       maxConcurrent: number;
       createdAt: string;
       updatedAt: string;
@@ -654,6 +672,8 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
         apiKey = ?,
         status = ?,
         capabilities = ?,
+        systemMetrics = ?,
+        knownPeers = ?,
         maxConcurrent = ?,
         updatedAt = ?
        WHERE id = ?`
@@ -664,6 +684,8 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       updated.apiKey ?? null,
       updated.status,
       toJsonNullable(updated.capabilities),
+      toJsonNullable(updated.systemMetrics),
+      toJsonNullable(updated.knownPeers),
       updated.maxConcurrent,
       updated.updatedAt,
       id
@@ -726,6 +748,221 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     }
 
     return nextStatus;
+  }
+
+  /**
+   * Update metrics for a registered node.
+   */
+  async updateNodeMetrics(id: string, metrics: SystemMetrics): Promise<NodeConfig> {
+    this.ensureInitialized();
+
+    const node = await this.getNode(id);
+    if (!node) {
+      throw new Error(`Node not found: ${id}`);
+    }
+
+    const now = new Date().toISOString();
+    this.db!
+      .prepare("UPDATE nodes SET systemMetrics = ?, updatedAt = ? WHERE id = ?")
+      .run(toJsonNullable(metrics), now, id);
+
+    this.db!.bumpLastModified();
+
+    const updated = await this.getNode(id);
+    if (!updated) {
+      throw new Error(`Node not found after metrics update: ${id}`);
+    }
+
+    this.emit("node:metrics:updated", { nodeId: id, metrics });
+    this.emit("node:updated", updated);
+
+    const state = await this.getMeshState(id);
+    this.emit("mesh:state:changed", { nodeId: id, state });
+
+    return updated;
+  }
+
+  /**
+   * List all known peers for a node.
+   */
+  async listPeers(nodeId: string): Promise<PeerNode[]> {
+    this.ensureInitialized();
+
+    const rows = this.db!
+      .prepare("SELECT * FROM peerNodes WHERE nodeId = ? ORDER BY name")
+      .all(nodeId) as Array<{
+      id: string;
+      nodeId: string;
+      peerNodeId: string;
+      name: string;
+      url: string;
+      status: string;
+      lastSeen: string;
+      connectedAt: string;
+    }>;
+
+    return rows.map((row) => this.rowToPeerNode(row));
+  }
+
+  /**
+   * Register or update a peer node for mesh discovery.
+   */
+  async registerPeerNode(input: {
+    nodeId: string;
+    peerNodeId: string;
+    name: string;
+    url: string;
+  }): Promise<PeerNode> {
+    this.ensureInitialized();
+
+    const node = await this.getNode(input.nodeId);
+    if (!node) {
+      throw new Error(`Node not found: ${input.nodeId}`);
+    }
+
+    const now = new Date().toISOString();
+
+    this.db!.transaction(() => {
+      this.db!
+        .prepare(
+          `INSERT INTO peerNodes (id, nodeId, peerNodeId, name, url, status, lastSeen, connectedAt)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(nodeId, peerNodeId) DO UPDATE SET
+             name = excluded.name,
+             url = excluded.url,
+             status = excluded.status,
+             lastSeen = excluded.lastSeen`
+        )
+        .run(
+          `peer_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+          input.nodeId,
+          input.peerNodeId,
+          input.name,
+          input.url,
+          "offline",
+          now,
+          now,
+        );
+
+      const knownPeers = new Set(node.knownPeers ?? []);
+      knownPeers.add(input.peerNodeId);
+
+      this.db!
+        .prepare("UPDATE nodes SET knownPeers = ?, updatedAt = ? WHERE id = ?")
+        .run(toJson(Array.from(knownPeers)), now, input.nodeId);
+    });
+
+    this.db!.bumpLastModified();
+
+    const row = this.db!
+      .prepare("SELECT * FROM peerNodes WHERE nodeId = ? AND peerNodeId = ?")
+      .get(input.nodeId, input.peerNodeId) as
+      | {
+          id: string;
+          nodeId: string;
+          peerNodeId: string;
+          name: string;
+          url: string;
+          status: string;
+          lastSeen: string;
+          connectedAt: string;
+        }
+      | undefined;
+
+    if (!row) {
+      throw new Error(
+        `Failed to load peer node after registration: ${input.nodeId}/${input.peerNodeId}`,
+      );
+    }
+
+    const peer = this.rowToPeerNode(row);
+    this.emit("mesh:peer:added", { nodeId: input.nodeId, peer });
+
+    const updatedNode = await this.getNode(input.nodeId);
+    if (updatedNode) {
+      this.emit("node:updated", updatedNode);
+    }
+
+    const state = await this.getMeshState(input.nodeId);
+    this.emit("mesh:state:changed", { nodeId: input.nodeId, state });
+
+    return peer;
+  }
+
+  /**
+   * Remove a peer node relationship.
+   */
+  async unregisterPeerNode(nodeId: string, peerNodeId: string): Promise<void> {
+    this.ensureInitialized();
+
+    const node = await this.getNode(nodeId);
+    if (!node) {
+      throw new Error(`Node not found: ${nodeId}`);
+    }
+
+    const now = new Date().toISOString();
+
+    this.db!.transaction(() => {
+      this.db!.prepare("DELETE FROM peerNodes WHERE nodeId = ? AND peerNodeId = ?").run(nodeId, peerNodeId);
+
+      const knownPeers = (node.knownPeers ?? []).filter((id) => id !== peerNodeId);
+      this.db!
+        .prepare("UPDATE nodes SET knownPeers = ?, updatedAt = ? WHERE id = ?")
+        .run(toJson(knownPeers), now, nodeId);
+    });
+
+    this.db!.bumpLastModified();
+    this.emit("mesh:peer:removed", { nodeId, peerNodeId });
+
+    const updatedNode = await this.getNode(nodeId);
+    if (updatedNode) {
+      this.emit("node:updated", updatedNode);
+    }
+
+    const state = await this.getMeshState(nodeId);
+    this.emit("mesh:state:changed", { nodeId, state });
+  }
+
+  /**
+   * Get mesh state for a node (or the local node by default).
+   */
+  async getMeshState(nodeId?: string): Promise<NodeMeshState> {
+    this.ensureInitialized();
+
+    const node = nodeId ? await this.getNode(nodeId) : await this.getLocalNode();
+    if (!node) {
+      throw new Error(nodeId ? `Node not found: ${nodeId}` : "Local node not found");
+    }
+
+    const peers = await this.listPeers(node.id);
+
+    return {
+      nodeId: node.id,
+      nodeName: node.name,
+      nodeUrl: node.url,
+      status: node.status,
+      metrics: node.systemMetrics ?? null,
+      lastSeen: node.updatedAt,
+      connectedAt: node.createdAt,
+      knownPeers: peers,
+    };
+  }
+
+  /**
+   * Collect a fresh local mesh state snapshot.
+   */
+  async reportMeshState(): Promise<NodeMeshState> {
+    this.ensureInitialized();
+
+    const localNode = await this.getLocalNode();
+    if (!localNode) {
+      throw new Error("Local node not found");
+    }
+
+    const metrics = await collectSystemMetrics(this.db!.getPath());
+    await this.updateNodeMetrics(localNode.id, metrics);
+
+    return this.getMeshState(localNode.id);
   }
 
   /**
@@ -1400,6 +1637,8 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     apiKey: string | null;
     status: string;
     capabilities: string | null;
+    systemMetrics: string | null;
+    knownPeers: string | null;
     maxConcurrent: number;
     createdAt: string;
     updatedAt: string;
@@ -1412,10 +1651,57 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       apiKey: row.apiKey ?? undefined,
       status: row.status as NodeStatus,
       capabilities: fromJson<AgentCapability[]>(row.capabilities),
+      systemMetrics: fromJson<SystemMetrics>(row.systemMetrics),
+      knownPeers: fromJson<string[]>(row.knownPeers),
       maxConcurrent: row.maxConcurrent,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
+  }
+
+  private rowToPeerNode(row: {
+    id: string;
+    nodeId: string;
+    peerNodeId: string;
+    name: string;
+    url: string;
+    status: string;
+    lastSeen: string;
+    connectedAt: string;
+  }): PeerNode {
+    return {
+      id: row.id,
+      nodeId: row.nodeId,
+      peerNodeId: row.peerNodeId,
+      name: row.name,
+      url: row.url,
+      status: row.status as NodeStatus,
+      lastSeen: row.lastSeen,
+      connectedAt: row.connectedAt,
+    };
+  }
+
+  private async getLocalNode(): Promise<NodeConfig | undefined> {
+    const row = this.db!
+      .prepare("SELECT * FROM nodes WHERE type = 'local' ORDER BY createdAt ASC LIMIT 1")
+      .get() as
+      | {
+          id: string;
+          name: string;
+          type: string;
+          url: string | null;
+          apiKey: string | null;
+          status: string;
+          capabilities: string | null;
+          systemMetrics: string | null;
+          knownPeers: string | null;
+          maxConcurrent: number;
+          createdAt: string;
+          updatedAt: string;
+        }
+      | undefined;
+
+    return row ? this.rowToNode(row) : undefined;
   }
 
   private rowToHealth(row: {

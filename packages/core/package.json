@@ -35,6 +35,7 @@
   },
   "private": true,
   "dependencies": {
+    "check-disk-space": "^3.4.0",
     "cron-parser": "^5.5.0",
     "extract-zip": "^2.0.1",
     "yaml": "^2.8.3"

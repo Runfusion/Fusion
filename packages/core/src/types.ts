@@ -1336,6 +1336,76 @@ export type ProjectStatus = "active" | "paused" | "errored" | "initializing";
 /** Node connectivity/health status in the central registry */
 export type NodeStatus = "online" | "offline" | "connecting" | "error";
 
+/** Host-level resource and uptime metrics reported by a node. */
+export interface SystemMetrics {
+  /** CPU utilization percentage (0-100). */
+  cpuUsage: number;
+  /** Used system memory in bytes. */
+  memoryUsed: number;
+  /** Total system memory in bytes. */
+  memoryTotal: number;
+  /** Used storage space in bytes. */
+  storageUsed: number;
+  /** Total storage space in bytes. */
+  storageTotal: number;
+  /** Node uptime in milliseconds. */
+  uptime: number;
+  /** ISO timestamp for when the metrics snapshot was captured. */
+  reportedAt: string;
+}
+
+/** A peer node known by a local node in the mesh graph. */
+export interface PeerNode {
+  /** Unique id for this node-peer relationship. */
+  id: string;
+  /** Local node id that owns this peer entry. */
+  nodeId: string;
+  /** Remote node identifier for this peer relationship. */
+  peerNodeId: string;
+  /** Remote peer display name. */
+  name: string;
+  /** Remote peer base URL. */
+  url: string;
+  /** Last known peer connectivity status. */
+  status: NodeStatus;
+  /** ISO timestamp when the peer was last observed. */
+  lastSeen: string;
+  /** ISO timestamp when the peer relationship was created. */
+  connectedAt: string;
+}
+
+/** Full mesh status snapshot for a node. */
+export interface NodeMeshState {
+  /** Node id for this snapshot. */
+  nodeId: string;
+  /** Display name of the reporting node. */
+  nodeName: string;
+  /** Optional base URL (undefined for local nodes). */
+  nodeUrl: string | undefined;
+  /** Current node status. */
+  status: NodeStatus;
+  /** Latest metrics payload for the node. */
+  metrics: SystemMetrics | null;
+  /** ISO timestamp when the node was last seen. */
+  lastSeen: string;
+  /** ISO timestamp when this node was connected/registered. */
+  connectedAt: string;
+  /** Expanded peer list for the node. */
+  knownPeers: PeerNode[];
+}
+
+/** Lightweight mesh discovery record for propagating peer awareness. */
+export interface MeshDiscovery {
+  /** Node id that generated this discovery payload. */
+  nodeId: string;
+  /** Known peer node ids for the reporting node. */
+  knownPeers: string[];
+  /** ISO timestamp for latest discovery refresh. */
+  lastDiscoveryAt: string;
+  /** Monotonic version for discovery state updates. */
+  discoveryVersion: number;
+}
+
 /** A runtime node that can host project execution (local machine or remote host) */
 export interface NodeConfig {
   /** Unique node ID (e.g., "node_abc123") */
@@ -1352,6 +1422,10 @@ export interface NodeConfig {
   status: NodeStatus;
   /** Optional capabilities available on this node */
   capabilities?: AgentCapability[];
+  /** Optional latest host metrics for this node. */
+  systemMetrics?: SystemMetrics;
+  /** Optional list of known peer node IDs. */
+  knownPeers?: string[];
   /** Maximum concurrent tasks/runtimes this node can host */
   maxConcurrent: number;
   /** ISO-8601 timestamp of creation */

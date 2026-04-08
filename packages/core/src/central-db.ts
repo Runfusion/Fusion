@@ -23,7 +23,7 @@ export { toJson, toJsonNullable, fromJson };
 
 // ── Schema Definition ───────────────────────────────────────────────────
 
-const CENTRAL_SCHEMA_VERSION = 2;
+const CENTRAL_SCHEMA_VERSION = 3;
 
 const CENTRAL_SCHEMA_SQL = `
 -- Projects table (project registry)
@@ -96,12 +96,29 @@ CREATE TABLE IF NOT EXISTS nodes (
   apiKey TEXT,
   status TEXT NOT NULL DEFAULT 'offline',
   capabilities TEXT,
+  systemMetrics TEXT,
+  knownPeers TEXT,
   maxConcurrent INTEGER NOT NULL DEFAULT 2,
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idxNodesStatus ON nodes(status);
 CREATE INDEX IF NOT EXISTS idxNodesType ON nodes(type);
+
+-- Peer nodes table (mesh awareness graph per node)
+CREATE TABLE IF NOT EXISTS peerNodes (
+  id TEXT PRIMARY KEY,
+  nodeId TEXT NOT NULL,
+  peerNodeId TEXT NOT NULL,
+  name TEXT NOT NULL,
+  url TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'unknown',
+  lastSeen TEXT NOT NULL,
+  connectedAt TEXT NOT NULL,
+  UNIQUE(nodeId, peerNodeId),
+  FOREIGN KEY (nodeId) REFERENCES nodes(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idxPeerNodesNodeId ON peerNodes(nodeId);
 
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS __meta (
@@ -126,6 +143,29 @@ CREATE TABLE IF NOT EXISTS nodes (
 CREATE INDEX IF NOT EXISTS idxNodesStatus ON nodes(status);
 CREATE INDEX IF NOT EXISTS idxNodesType ON nodes(type);
 `;
+
+const CENTRAL_SCHEMA_V3_MIGRATION_SQL = `
+ALTER TABLE nodes ADD COLUMN systemMetrics TEXT;
+ALTER TABLE nodes ADD COLUMN knownPeers TEXT;
+CREATE TABLE IF NOT EXISTS peerNodes (
+  id TEXT PRIMARY KEY,
+  nodeId TEXT NOT NULL,
+  peerNodeId TEXT NOT NULL,
+  name TEXT NOT NULL,
+  url TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'unknown',
+  lastSeen TEXT NOT NULL,
+  connectedAt TEXT NOT NULL,
+  UNIQUE(nodeId, peerNodeId),
+  FOREIGN KEY (nodeId) REFERENCES nodes(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idxPeerNodesNodeId ON peerNodes(nodeId);
+`;
+
+const CENTRAL_SCHEMA_V3_CREATE_PEERS_SQL = CENTRAL_SCHEMA_V3_MIGRATION_SQL
+  .split("\n")
+  .filter((line) => !line.trim().startsWith("ALTER TABLE nodes ADD COLUMN"))
+  .join("\n");
 
 // ── Central Database Class ────────────────────────────────────────────────
 
@@ -161,11 +201,28 @@ export class CentralDatabase {
     this.db.exec(CENTRAL_SCHEMA_SQL);
 
     const currentVersion = this.getSchemaVersion();
+    let migrated = false;
+
     if (currentVersion < 2) {
       this.db.exec(CENTRAL_SCHEMA_V2_MIGRATION_SQL);
       if (!this.hasColumn("projects", "nodeId")) {
         this.db.exec("ALTER TABLE projects ADD COLUMN nodeId TEXT");
       }
+      migrated = true;
+    }
+
+    if (currentVersion < 3) {
+      if (!this.hasColumn("nodes", "systemMetrics")) {
+        this.db.exec("ALTER TABLE nodes ADD COLUMN systemMetrics TEXT");
+      }
+      if (!this.hasColumn("nodes", "knownPeers")) {
+        this.db.exec("ALTER TABLE nodes ADD COLUMN knownPeers TEXT");
+      }
+      this.db.exec(CENTRAL_SCHEMA_V3_CREATE_PEERS_SQL);
+      migrated = true;
+    }
+
+    if (migrated) {
       this.db
         .prepare("INSERT INTO __meta (key, value) VALUES ('schemaVersion', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
         .run(String(CENTRAL_SCHEMA_VERSION));

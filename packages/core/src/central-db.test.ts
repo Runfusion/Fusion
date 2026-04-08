@@ -39,7 +39,7 @@ describe("CentralDatabase", () => {
 
     it("should initialize schema version", () => {
       db.init();
-      expect(db.getSchemaVersion()).toBe(2);
+      expect(db.getSchemaVersion()).toBe(3);
     });
 
     it("should seed lastModified on init", () => {
@@ -93,6 +93,7 @@ describe("CentralDatabase", () => {
       expect(tableNames).toContain("centralActivityLog");
       expect(tableNames).toContain("globalConcurrency");
       expect(tableNames).toContain("nodes");
+      expect(tableNames).toContain("peerNodes");
       expect(tableNames).toContain("__meta");
     });
 
@@ -104,6 +105,39 @@ describe("CentralDatabase", () => {
       }>;
       const columnNames = columns.map((column) => column.name);
       expect(columnNames).toContain("nodeId");
+    });
+
+    it("should include systemMetrics and knownPeers columns on nodes table", () => {
+      db.init();
+
+      const columns = db.prepare("PRAGMA table_info(nodes)").all() as Array<{
+        name: string;
+      }>;
+      const columnNames = columns.map((column) => column.name);
+      expect(columnNames).toContain("systemMetrics");
+      expect(columnNames).toContain("knownPeers");
+    });
+
+    it("should create peerNodes table with expected columns", () => {
+      db.init();
+
+      const columns = db.prepare("PRAGMA table_info(peerNodes)").all() as Array<{
+        name: string;
+      }>;
+      const columnNames = columns.map((column) => column.name);
+
+      expect(columnNames).toEqual(
+        expect.arrayContaining([
+          "id",
+          "nodeId",
+          "peerNodeId",
+          "name",
+          "url",
+          "status",
+          "lastSeen",
+          "connectedAt",
+        ]),
+      );
     });
 
     it("should create required indexes", () => {
@@ -119,6 +153,71 @@ describe("CentralDatabase", () => {
       expect(indexNames).toContain("idxActivityLogProjectId");
       expect(indexNames).toContain("idxNodesStatus");
       expect(indexNames).toContain("idxNodesType");
+      expect(indexNames).toContain("idxPeerNodesNodeId");
+    });
+  });
+
+  describe("schema migrations", () => {
+    it("should migrate from v2 to v3 with mesh node columns and peer table", () => {
+      const now = new Date().toISOString();
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS projects (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          path TEXT NOT NULL UNIQUE,
+          status TEXT NOT NULL DEFAULT 'active',
+          isolationMode TEXT NOT NULL DEFAULT 'in-process',
+          createdAt TEXT NOT NULL,
+          updatedAt TEXT NOT NULL,
+          lastActivityAt TEXT,
+          nodeId TEXT,
+          settings TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS nodes (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          type TEXT NOT NULL CHECK (type IN ('local', 'remote')),
+          url TEXT,
+          apiKey TEXT,
+          status TEXT NOT NULL DEFAULT 'offline',
+          capabilities TEXT,
+          maxConcurrent INTEGER NOT NULL DEFAULT 2,
+          createdAt TEXT NOT NULL,
+          updatedAt TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS __meta (
+          key TEXT PRIMARY KEY,
+          value TEXT
+        );
+      `);
+
+      db.prepare("INSERT INTO __meta (key, value) VALUES ('schemaVersion', '2')").run();
+      db.prepare("INSERT INTO __meta (key, value) VALUES ('lastModified', ?)").run(String(Date.now()));
+      db.prepare(
+        "INSERT INTO nodes (id, name, type, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)",
+      ).run("node_legacy", "legacy", "local", now, now);
+
+      db.init();
+
+      expect(db.getSchemaVersion()).toBe(3);
+
+      const nodeColumns = db.prepare("PRAGMA table_info(nodes)").all() as Array<{ name: string }>;
+      const nodeColumnNames = nodeColumns.map((column) => column.name);
+      expect(nodeColumnNames).toContain("systemMetrics");
+      expect(nodeColumnNames).toContain("knownPeers");
+
+      const peerTable = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='peerNodes'")
+        .get() as { name: string } | undefined;
+      expect(peerTable?.name).toBe("peerNodes");
+
+      const peerIndexes = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='peerNodes'")
+        .all() as Array<{ name: string }>;
+      expect(peerIndexes.map((index) => index.name)).toContain("idxPeerNodesNodeId");
     });
   });
 

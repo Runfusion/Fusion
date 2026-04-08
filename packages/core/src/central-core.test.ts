@@ -4,11 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CentralCore } from "./central-core.js";
 import { NodeConnection, type ConnectionResult } from "./node-connection.js";
+import * as systemMetrics from "./system-metrics.js";
 import type {
   RegisteredProject,
   ProjectHealth,
   CentralActivityLogEntry,
   GlobalConcurrencyState,
+  SystemMetrics,
 } from "./types.js";
 
 describe("CentralCore", () => {
@@ -870,6 +872,188 @@ describe("CentralCore", () => {
       expect(registerSpy).not.toHaveBeenCalled();
       expect(healthSpy).not.toHaveBeenCalled();
       expect(emittedResult).toEqual(connectionResult);
+    });
+
+    it("should update node metrics and emit node:metrics:updated", async () => {
+      const local = (await central.listNodes()).find((node) => node.type === "local");
+      expect(local).toBeDefined();
+
+      const metrics: SystemMetrics = {
+        cpuUsage: 23,
+        memoryUsed: 200,
+        memoryTotal: 500,
+        storageUsed: 1_500,
+        storageTotal: 4_000,
+        uptime: 12_000,
+        reportedAt: "2026-04-01T12:00:00.000Z",
+      };
+
+      let eventPayload: { nodeId: string; metrics: SystemMetrics } | undefined;
+      central.on("node:metrics:updated", (payload) => {
+        eventPayload = payload;
+      });
+
+      const updated = await central.updateNodeMetrics(local!.id, metrics);
+      expect(updated.systemMetrics).toEqual(metrics);
+      expect(eventPayload).toEqual({ nodeId: local!.id, metrics });
+    });
+
+    it("should register peer nodes, list peers, and keep knownPeers in sync", async () => {
+      const local = (await central.listNodes()).find((node) => node.type === "local");
+      expect(local).toBeDefined();
+
+      const firstPeer = await central.registerPeerNode({
+        nodeId: local!.id,
+        peerNodeId: "node_peer_b",
+        name: "Peer B",
+        url: "https://peer-b.example",
+      });
+      const secondPeer = await central.registerPeerNode({
+        nodeId: local!.id,
+        peerNodeId: "node_peer_a",
+        name: "Peer A",
+        url: "https://peer-a.example",
+      });
+
+      expect(firstPeer.peerNodeId).toBe("node_peer_b");
+      expect(secondPeer.peerNodeId).toBe("node_peer_a");
+
+      const peers = await central.listPeers(local!.id);
+      expect(peers.map((peer) => peer.name)).toEqual(["Peer A", "Peer B"]);
+
+      const storedNode = await central.getNode(local!.id);
+      expect(storedNode?.knownPeers).toEqual(expect.arrayContaining(["node_peer_a", "node_peer_b"]));
+      expect(storedNode?.knownPeers).toHaveLength(2);
+    });
+
+    it("should emit mesh:peer:added and mesh:peer:removed events", async () => {
+      const local = (await central.listNodes()).find((node) => node.type === "local");
+      expect(local).toBeDefined();
+
+      let addedPayload:
+        | {
+            nodeId: string;
+            peer: {
+              peerNodeId: string;
+            };
+          }
+        | undefined;
+      let removedPayload: { nodeId: string; peerNodeId: string } | undefined;
+
+      central.on("mesh:peer:added", (payload) => {
+        addedPayload = payload as typeof addedPayload;
+      });
+      central.on("mesh:peer:removed", (payload) => {
+        removedPayload = payload;
+      });
+
+      await central.registerPeerNode({
+        nodeId: local!.id,
+        peerNodeId: "node_peer_event",
+        name: "Peer Event",
+        url: "https://peer-event.example",
+      });
+
+      expect(addedPayload?.nodeId).toBe(local!.id);
+      expect(addedPayload?.peer.peerNodeId).toBe("node_peer_event");
+
+      await central.unregisterPeerNode(local!.id, "node_peer_event");
+      expect(removedPayload).toEqual({ nodeId: local!.id, peerNodeId: "node_peer_event" });
+    });
+
+    it("should handle duplicate peer registration idempotently", async () => {
+      const local = (await central.listNodes()).find((node) => node.type === "local");
+      expect(local).toBeDefined();
+
+      await central.registerPeerNode({
+        nodeId: local!.id,
+        peerNodeId: "node_dup_peer",
+        name: "Peer Original",
+        url: "https://peer-original.example",
+      });
+      await central.registerPeerNode({
+        nodeId: local!.id,
+        peerNodeId: "node_dup_peer",
+        name: "Peer Updated",
+        url: "https://peer-updated.example",
+      });
+
+      const peers = await central.listPeers(local!.id);
+      expect(peers).toHaveLength(1);
+      expect(peers[0].peerNodeId).toBe("node_dup_peer");
+      expect(peers[0].name).toBe("Peer Updated");
+
+      const node = await central.getNode(local!.id);
+      expect(node?.knownPeers).toEqual(["node_dup_peer"]);
+    });
+
+    it("should unregister peers and remove IDs from knownPeers", async () => {
+      const local = (await central.listNodes()).find((node) => node.type === "local");
+      expect(local).toBeDefined();
+
+      await central.registerPeerNode({
+        nodeId: local!.id,
+        peerNodeId: "node_peer_remove",
+        name: "Peer Remove",
+        url: "https://peer-remove.example",
+      });
+
+      await central.unregisterPeerNode(local!.id, "node_peer_remove");
+
+      const peers = await central.listPeers(local!.id);
+      expect(peers).toHaveLength(0);
+
+      const node = await central.getNode(local!.id);
+      expect(node?.knownPeers ?? []).not.toContain("node_peer_remove");
+    });
+
+    it("should return mesh state with metrics and peers", async () => {
+      const local = (await central.listNodes()).find((node) => node.type === "local");
+      expect(local).toBeDefined();
+
+      const metrics: SystemMetrics = {
+        cpuUsage: 45,
+        memoryUsed: 100,
+        memoryTotal: 200,
+        storageUsed: 300,
+        storageTotal: 500,
+        uptime: 90_000,
+        reportedAt: "2026-04-01T12:00:00.000Z",
+      };
+
+      await central.updateNodeMetrics(local!.id, metrics);
+      await central.registerPeerNode({
+        nodeId: local!.id,
+        peerNodeId: "node_mesh_peer",
+        name: "Mesh Peer",
+        url: "https://mesh-peer.example",
+      });
+
+      const state = await central.getMeshState(local!.id);
+      expect(state.nodeId).toBe(local!.id);
+      expect(state.metrics).toEqual(metrics);
+      expect(state.knownPeers).toHaveLength(1);
+      expect(state.knownPeers[0].peerNodeId).toBe("node_mesh_peer");
+    });
+
+    it("should report local mesh state using collected system metrics", async () => {
+      const metrics: SystemMetrics = {
+        cpuUsage: 18,
+        memoryUsed: 150,
+        memoryTotal: 250,
+        storageUsed: 1_000,
+        storageTotal: 2_000,
+        uptime: 50_000,
+        reportedAt: "2026-04-01T12:00:00.000Z",
+      };
+      const metricsSpy = vi.spyOn(systemMetrics, "collectSystemMetrics").mockResolvedValue(metrics);
+
+      const state = await central.reportMeshState();
+
+      expect(metricsSpy).toHaveBeenCalledTimes(1);
+      expect(state.nodeName).toBe("local");
+      expect(state.metrics).toEqual(metrics);
+      expect(state.knownPeers).toEqual([]);
     });
   });
 
