@@ -30,6 +30,7 @@ import { NodesView } from "./components/NodesView";
 import { MailboxModal } from "./components/MailboxModal";
 import { ScriptsModal } from "./components/ScriptsModal";
 import { ExecutorStatusBar } from "./components/ExecutorStatusBar";
+import { QuickChatFAB } from "./components/QuickChatFAB";
 import { useBackgroundSessions } from "./hooks/useBackgroundSessions";
 import { useTasks } from "./hooks/useTasks";
 import { useProjects } from "./hooks/useProjects";
@@ -749,6 +750,9 @@ function AppInner() {
           }}
           onDismissBackgroundSession={bgDismiss}
         />
+      )}
+      {viewMode === "project" && currentProject && (
+        <QuickChatFAB projectId={currentProject.id} addToast={addToast} />
       )}
       {detailTask && (
         <TaskDetailModal
