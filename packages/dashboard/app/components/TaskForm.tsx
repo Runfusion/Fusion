@@ -356,6 +356,13 @@ export function TaskForm({
     description: "Verify web application functionality using browser automation (agent-browser)",
   });
 
+  const browserVerificationResolvedIds = workflowSteps
+    .filter((step) => step.templateId === "browser-verification")
+    .map((step) => step.id);
+  const isBrowserVerificationSelected =
+    selectedWorkflowSteps.includes("browser-verification") ||
+    browserVerificationResolvedIds.some((id) => selectedWorkflowSteps.includes(id));
+
   const availableDeps = tasks
     .filter((t) => !dependencies.includes(t.id))
     .sort((a, b) => {
@@ -753,12 +760,16 @@ export function TaskForm({
           >
             <input
               type="checkbox"
-              checked={selectedWorkflowSteps.includes("browser-verification")}
+              checked={isBrowserVerificationSelected}
               onChange={(e) => {
+                const filteredSteps = selectedWorkflowSteps.filter(
+                  (id) => id !== "browser-verification" && !browserVerificationResolvedIds.includes(id),
+                );
+
                 onWorkflowStepsChange(
                   e.target.checked
-                    ? [...selectedWorkflowSteps, "browser-verification"]
-                    : selectedWorkflowSteps.filter((id) => id !== "browser-verification")
+                    ? [...filteredSteps, "browser-verification"]
+                    : filteredSteps,
                 );
               }}
               disabled={disabled}

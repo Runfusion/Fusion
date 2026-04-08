@@ -216,6 +216,112 @@ describe("TaskForm", () => {
     expect(onWorkflowStepsChange).toHaveBeenCalledWith(["browser-verification"]);
   });
 
+  it("shows browser verification checkbox as checked when selectedWorkflowSteps has resolved WS step ID", async () => {
+    const { fetchWorkflowSteps } = await import("../../api");
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
+      {
+        id: "WS-005",
+        name: "Browser Verification",
+        description: "Verify in browser",
+        prompt: "Run browser verification",
+        templateId: "browser-verification",
+        enabled: true,
+        createdAt: "",
+        updatedAt: "",
+      },
+    ]);
+
+    renderTaskForm({ selectedWorkflowSteps: ["WS-005"] });
+
+    await waitFor(() => {
+      const checkbox = screen.getByTestId("browser-verification-checkbox").querySelector('input[type="checkbox"]') as HTMLInputElement;
+      expect(checkbox.checked).toBe(true);
+    });
+  });
+
+  it("removes resolved WS step IDs when browser verification is unchecked", async () => {
+    const { fetchWorkflowSteps } = await import("../../api");
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
+      {
+        id: "WS-005",
+        name: "Browser Verification",
+        description: "Verify in browser",
+        prompt: "Run browser verification",
+        templateId: "browser-verification",
+        enabled: true,
+        createdAt: "",
+        updatedAt: "",
+      },
+      {
+        id: "WS-001",
+        name: "QA Check",
+        description: "Run tests",
+        prompt: "Run tests",
+        enabled: true,
+        createdAt: "",
+        updatedAt: "",
+      },
+    ]);
+
+    const onWorkflowStepsChange = vi.fn();
+    renderTaskForm({
+      selectedWorkflowSteps: ["WS-001", "WS-005"],
+      onWorkflowStepsChange,
+    });
+
+    const checkbox = screen.getByTestId("browser-verification-checkbox").querySelector('input[type="checkbox"]') as HTMLInputElement;
+
+    await waitFor(() => {
+      expect(checkbox.checked).toBe(true);
+    });
+
+    fireEvent.click(checkbox);
+
+    expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-001"]);
+  });
+
+  it("normalizes resolved WS step IDs to browser-verification when checkbox is checked", async () => {
+    const { fetchWorkflowSteps } = await import("../../api");
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
+      {
+        id: "WS-005",
+        name: "Browser Verification",
+        description: "Verify in browser",
+        prompt: "Run browser verification",
+        templateId: "browser-verification",
+        enabled: true,
+        createdAt: "",
+        updatedAt: "",
+      },
+      {
+        id: "WS-001",
+        name: "QA Check",
+        description: "Run tests",
+        prompt: "Run tests",
+        enabled: true,
+        createdAt: "",
+        updatedAt: "",
+      },
+    ]);
+
+    const onWorkflowStepsChange = vi.fn();
+    renderTaskForm({
+      selectedWorkflowSteps: ["WS-001", "WS-005"],
+      onWorkflowStepsChange,
+    });
+
+    const checkbox = screen.getByTestId("browser-verification-checkbox").querySelector('input[type="checkbox"]') as HTMLInputElement;
+
+    await waitFor(() => {
+      expect(checkbox.checked).toBe(true);
+    });
+
+    checkbox.checked = false;
+    fireEvent.click(checkbox);
+
+    expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-001", "browser-verification"]);
+  });
+
   it("disables all inputs when disabled prop is true", () => {
     renderTaskForm({
       disabled: true,
