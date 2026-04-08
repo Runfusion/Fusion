@@ -7,10 +7,13 @@
     "cap": "cap",
     "dev:ios": "tsx scripts/live-reload.ts --platform ios",
     "dev:android": "tsx scripts/live-reload.ts --platform android",
-    "build:mobile": "pnpm --filter @fusion/dashboard build && npx cap sync"
+    "build:mobile": "pnpm --filter @fusion/dashboard build && npx cap sync",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@capacitor/core": "^7.0.0"
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/push-notifications": "^7.0.0"
   },
   "devDependencies": {
     "@capacitor/android": "^7.0.0",
@@ -18,6 +21,7 @@
     "@capacitor/ios": "^7.0.0",
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^3.1.0"
   }
 }

@@ -337,6 +337,9 @@ importers:
       '@capacitor/core':
         specifier: ^7.0.0
         version: 7.6.1
+      '@capacitor/push-notifications':
+        specifier: ^7.0.0
+        version: 7.0.6(@capacitor/core@7.6.1)
     devDependencies:
       '@capacitor/android':
         specifier: ^7.0.0
@@ -356,6 +359,9 @@ importers:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
+      vitest:
+        specifier: ^3.1.0
+        version: 3.2.4(@types/debug@4.1.13)(@types/node@22.19.15)(jiti@2.6.1)(jsdom@29.0.1)(tsx@4.21.0)(yaml@2.8.3)
 
   packages/tui:
     dependencies:
