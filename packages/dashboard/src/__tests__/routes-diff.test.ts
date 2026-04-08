@@ -376,7 +376,7 @@ describe("GET /api/tasks/:id/diff — done tasks", () => {
     vi.useRealTimers();
   });
 
-  it("shows only this task's files using merge-base, not unrelated main branch changes", async () => {
+  it("shows only this task's files using sha^, not unrelated main branch changes", async () => {
     const store = new MockStore();
     store.addTask(createTask({
       column: "done",
@@ -386,7 +386,7 @@ describe("GET /api/tasks/:id/diff — done tasks", () => {
 
     mockExecSync.mockImplementation((command) => {
       const cmd = String(command);
-      // No baseCommitSha set, so Priority 2: rev-parse first parent
+      // Done tasks resolve merge base via sha^
       if (cmd === "git rev-parse merge789^") {
         return "base456\n" as any;
       }
@@ -412,7 +412,7 @@ describe("GET /api/tasks/:id/diff — done tasks", () => {
     expect(response.body.stats.filesChanged).toBe(1);
   });
 
-  it("computes correct additions and deletions from merge-base diff", async () => {
+  it("computes correct additions and deletions from sha^ diff", async () => {
     const store = new MockStore();
     store.addTask(createTask({
       column: "done",
@@ -422,7 +422,7 @@ describe("GET /api/tasks/:id/diff — done tasks", () => {
 
     mockExecSync.mockImplementation((command) => {
       const cmd = String(command);
-      // No baseCommitSha, so Priority 2: rev-parse first parent
+      // Done tasks resolve merge base via sha^
       if (cmd === "git rev-parse sha_with_modifications^") {
         return "base_xyz\n" as any;
       }
@@ -457,7 +457,7 @@ describe("GET /api/tasks/:id/diff — done tasks", () => {
     });
   });
 
-  it("falls back to parent commit when merge-base fails", async () => {
+  it("uses parent commit when rev-parse sha^ succeeds", async () => {
     const store = new MockStore();
     store.addTask(createTask({
       column: "done",
@@ -467,8 +467,7 @@ describe("GET /api/tasks/:id/diff — done tasks", () => {
 
     mockExecSync.mockImplementation((command) => {
       const cmd = String(command);
-      // No baseCommitSha — Priority 1 skipped
-      // Priority 2: rev-parse first parent (used to be merge-base)
+      // Done tasks always resolve the first parent via sha^
       if (cmd === "git rev-parse merge_ff^") {
         return "parent_ff\n" as any;
       }
@@ -490,7 +489,7 @@ describe("GET /api/tasks/:id/diff — done tasks", () => {
     expect(response.body.files[0].path).toBe("readme.md");
   });
 
-  it("returns empty result when both rev-parse and merge-base fail", async () => {
+  it("returns empty result when rev-parse sha^ fails", async () => {
     const store = new MockStore();
     store.addTask(createTask({
       column: "done",
@@ -524,7 +523,7 @@ describe("GET /api/tasks/:id/diff — done tasks", () => {
 
     mockExecSync.mockImplementation((command) => {
       const cmd = String(command);
-      // No baseCommitSha — Priority 2: rev-parse first parent
+      // Done tasks resolve merge base via sha^
       if (cmd === "git rev-parse multi_merge^") {
         return "multi_base\n" as any;
       }
@@ -553,31 +552,30 @@ describe("GET /api/tasks/:id/diff — done tasks", () => {
     expect(response.body.files[2]).toMatchObject({ path: "src/removed.ts", status: "deleted" });
   });
 
-  it("uses task.baseCommitSha as diff base when available and valid ancestor", async () => {
+  it("ignores baseCommitSha even when valid ancestor to avoid cross-task leaks", async () => {
     const store = new MockStore();
     store.addTask(createTask({
       column: "done",
-      mergeDetails: { commitSha: "merged_commit" },
-      baseCommitSha: "original_base",
+      mergeDetails: { commitSha: "task_a_merge" },
+      baseCommitSha: "very_old_base",
       baseBranch: "main",
     }));
 
     mockExecSync.mockImplementation((command) => {
       const cmd = String(command);
-      // Priority 1: validate baseCommitSha is ancestor of merge commit — succeeds
-      if (cmd === "git merge-base --is-ancestor original_base merged_commit") {
-        return "" as any; // exit 0 = is ancestor
+      // Scenario: Task B merged between Task A start and Task A merge.
+      // Using baseCommitSha would include Task B's file, but sha^ isolates Task A.
+      if (cmd === "git rev-parse task_a_merge^") {
+        return "task_a_parent\n" as any;
       }
-      // Should NOT reach Priority 2 (merge-base with branch)
-      if (cmd.includes("git merge-base merged_commit origin/main") || cmd.includes("git merge-base merged_commit main")) {
-        throw new Error("Should not reach branch merge-base when baseCommitSha is valid");
+      if (cmd === "git diff --name-status task_a_parent..task_a_merge") {
+        return "A\ttask-a.ts\n" as any;
       }
-      // Diff from baseCommitSha to merge commit
-      if (cmd === "git diff --name-status original_base..merged_commit") {
-        return "A\tfeature-file.ts\n" as any;
+      if (cmd === 'git diff task_a_parent..task_a_merge -- "task-a.ts"') {
+        return "diff --git a/task-a.ts b/task-a.ts\n+task A only\n" as any;
       }
-      if (cmd === 'git diff original_base..merged_commit -- "feature-file.ts"') {
-        return "diff --git a/feature-file.ts b/feature-file.ts\n+new feature\n" as any;
+      if (cmd.includes("git merge-base --is-ancestor")) {
+        throw new Error("Done-task diff must ignore baseCommitSha");
       }
       throw new Error(`Unexpected command: ${cmd}`);
     });
@@ -587,16 +585,19 @@ describe("GET /api/tasks/:id/diff — done tasks", () => {
 
     expect(response.status).toBe(200);
     expect(response.body.files).toHaveLength(1);
-    expect(response.body.files[0].path).toBe("feature-file.ts");
-    expect(response.body.files[0].status).toBe("added");
-    // Verify baseCommitSha validation was called
+    expect(response.body.files[0].path).toBe("task-a.ts");
+    expect(response.body.files.map((f: any) => f.path)).not.toContain("task-b.ts");
     expect(mockExecSync).toHaveBeenCalledWith(
-      expect.stringContaining("git merge-base --is-ancestor original_base merged_commit"),
+      "git rev-parse task_a_merge^",
+      expect.any(Object),
+    );
+    expect(mockExecSync).not.toHaveBeenCalledWith(
+      expect.stringContaining("git merge-base --is-ancestor"),
       expect.any(Object),
     );
   });
 
-  it("falls through to branch merge-base when baseCommitSha is not an ancestor", async () => {
+  it("uses sha^ even when baseCommitSha is stale", async () => {
     const store = new MockStore();
     store.addTask(createTask({
       column: "done",
@@ -607,20 +608,17 @@ describe("GET /api/tasks/:id/diff — done tasks", () => {
 
     mockExecSync.mockImplementation((command) => {
       const cmd = String(command);
-      // Priority 1: baseCommitSha is NOT a valid ancestor — fails
-      if (cmd === "git merge-base --is-ancestor stale_base merged_commit") {
-        throw new Error("not an ancestor");
-      }
-      // Priority 2: rev-parse first parent of merge commit
       if (cmd === "git rev-parse merged_commit^") {
         return "branch_base\n" as any;
       }
-      // Diff from first parent
       if (cmd === "git diff --name-status branch_base..merged_commit") {
         return "M\tsrc/app.ts\n" as any;
       }
       if (cmd === 'git diff branch_base..merged_commit -- "src/app.ts"') {
         return "diff --git a/src/app.ts b/src/app.ts\n-old\n+new\n" as any;
+      }
+      if (cmd.includes("git merge-base --is-ancestor")) {
+        throw new Error("Done-task diff must not validate baseCommitSha");
       }
       throw new Error(`Unexpected command: ${cmd}`);
     });
@@ -631,30 +629,28 @@ describe("GET /api/tasks/:id/diff — done tasks", () => {
     expect(response.status).toBe(200);
     expect(response.body.files).toHaveLength(1);
     expect(response.body.files[0].path).toBe("src/app.ts");
-    // Verify baseCommitSha was tried first
     expect(mockExecSync).toHaveBeenCalledWith(
-      expect.stringContaining("git merge-base --is-ancestor stale_base merged_commit"),
+      "git rev-parse merged_commit^",
       expect.any(Object),
     );
-    // Verify rev-parse first parent was called as fallback
-    expect(mockExecSync).toHaveBeenCalledWith(
-      expect.stringContaining("git rev-parse merged_commit^"),
+    expect(mockExecSync).not.toHaveBeenCalledWith(
+      expect.stringContaining("git merge-base --is-ancestor"),
       expect.any(Object),
     );
   });
 
-  it("uses custom baseBranch for merge-base computation", async () => {
+  it("uses sha^ regardless of baseBranch", async () => {
     const store = new MockStore();
     store.addTask(createTask({
       column: "done",
       mergeDetails: { commitSha: "custom_merge" },
-      // No baseCommitSha — should go straight to Priority 2
+      // baseBranch should be ignored for done-task diffs
       baseBranch: "release/v2",
     }));
 
     mockExecSync.mockImplementation((command) => {
       const cmd = String(command);
-      // No baseCommitSha — Priority 2: rev-parse first parent
+      // Done tasks resolve merge base via sha^
       if (cmd === "git rev-parse custom_merge^") {
         return "release_base\n" as any;
       }

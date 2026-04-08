@@ -465,6 +465,127 @@ describe("GET /api/tasks/:id/file-diffs", () => {
     expect(diffPaths.sort()).toEqual(sessionFiles.sort());
   });
 
+  // ── Done task file-diffs: first-parent computation ─────────────────────────────
+
+  it("returns done-task file diffs from sha^..sha", async () => {
+    const store = new MockStore();
+    store.addTask(createTask({
+      column: "done",
+      mergeDetails: { commitSha: "done_merge_sha" },
+      baseCommitSha: "ignored_base",
+      worktree: undefined,
+    }));
+
+    mockExecSync.mockImplementation((command) => {
+      const cmd = String(command);
+      if (cmd === "git rev-parse done_merge_sha^") {
+        return "done_parent\n" as any;
+      }
+      if (cmd === "git diff --name-status done_parent..done_merge_sha") {
+        return "A\tsrc/done.ts\n" as any;
+      }
+      if (cmd === 'git diff done_parent..done_merge_sha -- "src/done.ts"') {
+        return "diff --git a/src/done.ts b/src/done.ts\n+done\n" as any;
+      }
+      if (cmd.includes("git merge-base --is-ancestor")) {
+        throw new Error("Done-task file-diffs must ignore baseCommitSha");
+      }
+      throw new Error(`Unexpected command: ${cmd}`);
+    });
+
+    const response = await requestFileDiffs(store);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual([
+      {
+        path: "src/done.ts",
+        status: "added",
+        diff: "diff --git a/src/done.ts b/src/done.ts\n+done\n",
+      },
+    ]);
+    expect(mockExecSync).toHaveBeenCalledWith(
+      "git rev-parse done_merge_sha^",
+      expect.any(Object),
+    );
+  });
+
+  it("ignores done-task baseCommitSha even when valid ancestor", async () => {
+    const store = new MockStore();
+    store.addTask(createTask({
+      column: "done",
+      mergeDetails: { commitSha: "task_a_merge" },
+      baseCommitSha: "very_old_base",
+      worktree: undefined,
+    }));
+
+    mockExecSync.mockImplementation((command) => {
+      const cmd = String(command);
+      // Task B was merged between Task A start and Task A merge.
+      // sha^ keeps only Task A file and prevents a cross-task leak.
+      if (cmd === "git rev-parse task_a_merge^") {
+        return "task_a_parent\n" as any;
+      }
+      if (cmd === "git diff --name-status task_a_parent..task_a_merge") {
+        return "A\ttask-a.ts\n" as any;
+      }
+      if (cmd === 'git diff task_a_parent..task_a_merge -- "task-a.ts"') {
+        return "diff --git a/task-a.ts b/task-a.ts\n+task A\n" as any;
+      }
+      if (cmd.includes("git merge-base --is-ancestor")) {
+        throw new Error("Done-task file-diffs must not validate baseCommitSha");
+      }
+      throw new Error(`Unexpected command: ${cmd}`);
+    });
+
+    const response = await requestFileDiffs(store);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toHaveLength(1);
+    expect(response.body[0].path).toBe("task-a.ts");
+    expect(response.body.map((file: any) => file.path)).not.toContain("task-b.ts");
+    expect(mockExecSync).not.toHaveBeenCalledWith(
+      expect.stringContaining("git merge-base --is-ancestor"),
+      expect.any(Object),
+    );
+  });
+
+  it("returns empty array for done task without commitSha", async () => {
+    const store = new MockStore();
+    store.addTask(createTask({
+      column: "done",
+      mergeDetails: undefined,
+      worktree: undefined,
+    }));
+
+    const response = await requestFileDiffs(store);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual([]);
+    expect(mockExecSync).not.toHaveBeenCalled();
+  });
+
+  it("returns empty array when done-task sha^ cannot be resolved", async () => {
+    const store = new MockStore();
+    store.addTask(createTask({
+      column: "done",
+      mergeDetails: { commitSha: "broken_merge_sha" },
+      worktree: undefined,
+    }));
+
+    mockExecSync.mockImplementation((command) => {
+      const cmd = String(command);
+      if (cmd === "git rev-parse broken_merge_sha^") {
+        throw new Error("unknown revision");
+      }
+      throw new Error(`Unexpected command: ${cmd}`);
+    });
+
+    const response = await requestFileDiffs(store);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual([]);
+  });
+
   // ── Regression: shared/recycled worktree produces broader file sets ─────────────────
 
   it("task-scoped baseCommitSha narrows file-diffs to this task's work", async () => {

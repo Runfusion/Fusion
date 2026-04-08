@@ -9337,46 +9337,24 @@ Output ONLY the prompt text (no markdown, no explanations).`;
         return;
       }
 
-      // Done tasks: compute diff from merge base to isolate only this task's changes.
-      // Using `git show SHA` on merge commits shows ALL files changed in the merge,
-      // including files from unrelated commits on main. Instead, find the true
-      // divergence point (where the feature branch started) and diff from that point.
+      // Done tasks: diff from the squash commit's first parent.
+      // The merger only performs squash merges, so sha^..sha contains exactly
+      // this task's merged changes and excludes unrelated tasks merged in between.
       if (task.column === "done" && task.mergeDetails?.commitSha) {
         const rootDir = scopedStore.getRootDir();
         const sha = task.mergeDetails.commitSha;
 
-        // Resolve the diff base:
-        // 1. task.baseCommitSha (exact starting commit of the worktree)
-        // 2. First parent of the merge commit (safe for squash merges)
         let mergeBase: string | undefined;
 
-        // Priority 1: Use task.baseCommitSha if it's a valid ancestor of the merge commit
-        if (task.baseCommitSha) {
-          try {
-            nodeChildProcess.execSync(
-              `git merge-base --is-ancestor ${task.baseCommitSha} ${sha}`,
-              { cwd: rootDir, encoding: "utf-8", timeout: 5000, stdio: "pipe" },
-            );
-            mergeBase = task.baseCommitSha;
-          } catch {
-            // baseCommitSha is stale or not an ancestor — fall through
-          }
-        }
-
-        // Priority 2: Fall back to first parent of the merge commit (safe for squash merges)
-        // This is more reliable than merge-base with baseBranch, which can return incorrect
-        // results when baseBranch is another merged feature branch (for dependent tasks).
-        if (!mergeBase) {
-          try {
-            mergeBase = nodeChildProcess.execSync(
-              `git rev-parse ${sha}^`,
-              { cwd: rootDir, encoding: "utf-8", timeout: 5000 },
-            ).trim();
-          } catch {
-            // Last resort: no diff available
-            res.json({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
-            return;
-          }
+        try {
+          mergeBase = nodeChildProcess.execSync(
+            `git rev-parse ${sha}^`,
+            { cwd: rootDir, encoding: "utf-8", timeout: 5000 },
+          ).trim();
+        } catch {
+          // Last resort: no diff available
+          res.json({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
+          return;
         }
 
         const nameStatus = nodeChildProcess.execSync(
@@ -9538,45 +9516,23 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const scopedStore = await getScopedStore(req);
       const task = await scopedStore.getTask(req.params.id);
 
-      // Done tasks: compute diff from merge base to isolate only this task's changes.
-      // Using `git show SHA` on merge commits shows ALL files changed in the merge,
-      // including files from unrelated commits on main. Instead, find the true
-      // divergence point (where the feature branch started) and diff from that point.
+      // Done tasks: diff from the squash commit's first parent.
+      // The merger only performs squash merges, so sha^..sha contains exactly
+      // this task's merged changes and excludes unrelated tasks merged in between.
       if (task.column === "done" && task.mergeDetails?.commitSha) {
         const rootDir = scopedStore.getRootDir();
         const sha = task.mergeDetails.commitSha;
 
-        // Resolve the diff base:
-        // 1. task.baseCommitSha (exact starting commit of the worktree)
-        // 2. First parent of the merge commit (safe for squash merges)
         let mergeBase: string | undefined;
 
-        // Priority 1: Use task.baseCommitSha if it's a valid ancestor of the merge commit
-        if (task.baseCommitSha) {
-          try {
-            nodeChildProcess.execSync(
-              `git merge-base --is-ancestor ${task.baseCommitSha} ${sha}`,
-              { cwd: rootDir, encoding: "utf-8", timeout: 5000, stdio: "pipe" },
-            );
-            mergeBase = task.baseCommitSha;
-          } catch {
-            // baseCommitSha is stale or not an ancestor — fall through
-          }
-        }
-
-        // Priority 2: Fall back to first parent of the merge commit (safe for squash merges)
-        // This is more reliable than merge-base with baseBranch, which can return incorrect
-        // results when baseBranch is another merged feature branch (for dependent tasks).
-        if (!mergeBase) {
-          try {
-            mergeBase = nodeChildProcess.execSync(
-              `git rev-parse ${sha}^`,
-              { cwd: rootDir, encoding: "utf-8", timeout: 5000 },
-            ).trim();
-          } catch {
-            res.json([]);
-            return;
-          }
+        try {
+          mergeBase = nodeChildProcess.execSync(
+            `git rev-parse ${sha}^`,
+            { cwd: rootDir, encoding: "utf-8", timeout: 5000 },
+          ).trim();
+        } catch {
+          res.json([]);
+          return;
         }
 
         try {
