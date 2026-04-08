@@ -774,41 +774,71 @@ export class StepSessionExecutor {
 
     // Create worktrees for each step in the wave
     const worktreePaths = new Map<number, string>();
+    const failedWorktreeSteps = new Set<number>();
     for (const stepIdx of wave.indices) {
       try {
         const path = await this.createStepWorktree(stepIdx);
         worktreePaths.set(stepIdx, path);
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
-        stepExecLog.error(`Failed to create worktree for step ${stepIdx}: ${errorMessage}`);
-        // If worktree creation fails, this step fails immediately
-        worktreePaths.set(stepIdx, this.options.worktreePath);
+        stepExecLog.error(
+          `Failed to create worktree for step ${stepIdx}: ${errorMessage}. ` +
+          `Step will be deferred to sequential fallback on primary worktree.`,
+        );
+        failedWorktreeSteps.add(stepIdx);
       }
     }
 
-    // Execute all steps concurrently
-    const promises = wave.indices.map((stepIdx) => {
-      const path = worktreePaths.get(stepIdx) ?? this.options.worktreePath;
-      return this.executeStep(stepIdx, path);
-    });
+    const sequentialFallbackSteps = [...failedWorktreeSteps].sort((a, b) => a - b);
+    const parallelSteps = wave.indices.filter((stepIdx) => !failedWorktreeSteps.has(stepIdx));
 
-    const settled = await Promise.allSettled(promises);
-    const results: StepResult[] = settled.map((outcome, i) => {
-      if (outcome.status === "fulfilled") {
-        return outcome.value;
-      }
-      // Promise rejected (unexpected — should be caught inside executeStep)
-      const stepIdx = wave.indices[i]!;
-      return {
-        stepIndex: stepIdx,
-        success: false,
-        error: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
-        retries: 0,
-      };
-    });
+    if (sequentialFallbackSteps.length > 0) {
+      stepExecLog.warn(
+        `Wave ${wave.waveNumber}: worktree creation failed for step(s) ` +
+        `[${sequentialFallbackSteps.join(", ")}]; degrading those step(s) to sequential ` +
+        `execution on primary worktree for task ${taskDetail.id}`,
+      );
+    }
+
+    // Phase 1: Execute successful-worktree steps in parallel.
+    const parallelResults: StepResult[] = [];
+    if (parallelSteps.length > 0) {
+      const promises = parallelSteps.map((stepIdx) => {
+        const path = worktreePaths.get(stepIdx) ?? this.options.worktreePath;
+        return this.executeStep(stepIdx, path);
+      });
+
+      const settled = await Promise.allSettled(promises);
+      parallelResults.push(...settled.map((outcome, i) => {
+        if (outcome.status === "fulfilled") {
+          return outcome.value;
+        }
+        // Promise rejected (unexpected — should be caught inside executeStep)
+        const stepIdx = parallelSteps[i]!;
+        return {
+          stepIndex: stepIdx,
+          success: false,
+          error: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
+          retries: 0,
+        };
+      }));
+    }
+
+    // Phase 2: Execute failed-worktree steps sequentially on primary worktree.
+    const sequentialResults: StepResult[] = [];
+    for (const stepIdx of sequentialFallbackSteps) {
+      stepExecLog.warn(
+        `Wave ${wave.waveNumber}: executing step ${stepIdx} sequentially on primary worktree ` +
+        `after worktree creation failure for task ${taskDetail.id}`,
+      );
+      const result = await this.executeStep(stepIdx, this.options.worktreePath);
+      sequentialResults.push(result);
+    }
+
+    const results = [...parallelResults, ...sequentialResults];
 
     // Cherry-pick successful steps into primary worktree
-    for (const stepIdx of wave.indices) {
+    for (const stepIdx of parallelSteps) {
       const result = results.find((r) => r.stepIndex === stepIdx);
       const worktreePath = worktreePaths.get(stepIdx);
 
@@ -851,7 +881,7 @@ export class StepSessionExecutor {
       }
     }
 
-    return results;
+    return results.sort((a, b) => a.stepIndex - b.stepIndex);
   }
 
   // ── Internal: Worktree Management ───────────────────────────────────

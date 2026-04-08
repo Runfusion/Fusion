@@ -1039,6 +1039,387 @@ describe("StepSessionExecutor", () => {
       expect(releaseSpy).toHaveBeenCalledTimes(2);
       expect(semaphore.activeCount).toBe(0);
     });
+
+    describe("worktree creation failure handling", () => {
+      it("degrades to sequential when one worktree creation fails", async () => {
+        const prompt = `# Task: FN-001
+
+### Step 0: Core work
+- \`packages/core/src/types.ts\`
+
+### Step 1: Engine work
+- \`packages/engine/src/pi.ts\``;
+
+        const task = makeTaskDetail({
+          prompt,
+          steps: [
+            { name: "Step 0", status: "pending" },
+            { name: "Step 1", status: "pending" },
+          ],
+        });
+        const settings = makeSettings({ maxParallelSteps: 2 });
+
+        mockedGenerateWorktreeName
+          .mockImplementationOnce(() => "wt-step-0")
+          .mockImplementationOnce(() => "wt-step-1");
+
+        let worktreeAddCount = 0;
+        mockedExecSync.mockImplementation((cmd: string) => {
+          if (cmd.includes("git worktree add")) {
+            worktreeAddCount++;
+            if (worktreeAddCount === 2) {
+              throw new Error("step 1 worktree failed");
+            }
+          }
+          return "";
+        });
+
+        let releaseStep0: (() => void) | undefined;
+        const step0Gate = new Promise<void>((resolve) => {
+          releaseStep0 = resolve;
+        });
+        const executionEvents: string[] = [];
+
+        mockedCreateKbAgent.mockImplementation(({ cwd }: any) => {
+          if (cwd === "/project/.worktrees/wt-step-0") {
+            return Promise.resolve({
+              session: makeMockSession(async () => {
+                executionEvents.push("step-0-start");
+                await step0Gate;
+                executionEvents.push("step-0-end");
+              }),
+            } as any);
+          }
+
+          if (cwd === "/project/.worktrees/main") {
+            return Promise.resolve({
+              session: makeMockSession(async () => {
+                executionEvents.push("step-1-start");
+              }),
+            } as any);
+          }
+
+          throw new Error(`Unexpected cwd: ${cwd}`);
+        });
+
+        const executor = new StepSessionExecutor({
+          taskDetail: task,
+          worktreePath: "/project/.worktrees/main",
+          rootDir: "/project",
+          settings,
+        });
+
+        const resultsPromise = executor.executeAll();
+
+        for (let i = 0; i < 20 && !executionEvents.includes("step-0-start"); i++) {
+          await Promise.resolve();
+        }
+
+        expect(executionEvents.includes("step-0-start")).toBe(true);
+
+        releaseStep0?.();
+        const results = await resultsPromise;
+
+        expect(results).toHaveLength(2);
+        expect(results.map((r) => r.stepIndex)).toEqual([0, 1]);
+        expect(results.every((r) => r.success)).toBe(true);
+        expect(mockedCreateKbAgent).toHaveBeenNthCalledWith(
+          2,
+          expect.objectContaining({ cwd: "/project/.worktrees/main" }),
+        );
+        expect(executionEvents).toEqual(["step-0-start", "step-0-end", "step-1-start"]);
+      });
+
+      it("degrades to sequential when all worktree creations fail", async () => {
+        const prompt = `# Task: FN-001
+
+### Step 0: Core work
+- \`packages/core/src/types.ts\`
+
+### Step 1: Engine work
+- \`packages/engine/src/pi.ts\`
+
+### Step 2: Tests
+- \`packages/engine/src/step-session-executor.test.ts\``;
+
+        const task = makeTaskDetail({
+          prompt,
+          steps: [
+            { name: "Step 0", status: "pending" },
+            { name: "Step 1", status: "pending" },
+            { name: "Step 2", status: "pending" },
+          ],
+        });
+        const settings = makeSettings({ maxParallelSteps: 3 });
+
+        let nameCounter = 0;
+        mockedGenerateWorktreeName.mockImplementation(() => `wt-fail-${nameCounter++}`);
+        mockedExecSync.mockImplementation((cmd: string) => {
+          if (cmd.includes("git worktree add")) {
+            throw new Error("worktree creation failed");
+          }
+          return "";
+        });
+
+        let activePrimarySteps = 0;
+        let maxActivePrimarySteps = 0;
+        const cwdOrder: string[] = [];
+
+        mockedCreateKbAgent.mockImplementation(({ cwd }: any) => {
+          return Promise.resolve({
+            session: makeMockSession(async () => {
+              cwdOrder.push(cwd);
+              activePrimarySteps++;
+              maxActivePrimarySteps = Math.max(maxActivePrimarySteps, activePrimarySteps);
+              await Promise.resolve();
+              activePrimarySteps--;
+            }),
+          } as any);
+        });
+
+        const executor = new StepSessionExecutor({
+          taskDetail: task,
+          worktreePath: "/project/.worktrees/main",
+          rootDir: "/project",
+          settings,
+        });
+
+        const results = await executor.executeAll();
+
+        expect(results).toHaveLength(3);
+        expect(results.map((r) => r.stepIndex)).toEqual([0, 1, 2]);
+        expect(results.every((r) => r.success)).toBe(true);
+        expect(cwdOrder).toEqual([
+          "/project/.worktrees/main",
+          "/project/.worktrees/main",
+          "/project/.worktrees/main",
+        ]);
+        expect(maxActivePrimarySteps).toBe(1);
+      });
+
+      it("mixed success/failure: parallel steps cherry-pick, sequential step runs on primary", async () => {
+        const prompt = `# Task: FN-001
+
+### Step 0: Core work
+- \`packages/core/src/types.ts\`
+
+### Step 1: Engine work
+- \`packages/engine/src/pi.ts\`
+
+### Step 2: Tests
+- \`packages/engine/src/step-session-executor.test.ts\``;
+
+        const task = makeTaskDetail({
+          prompt,
+          steps: [
+            { name: "Step 0", status: "pending" },
+            { name: "Step 1", status: "pending" },
+            { name: "Step 2", status: "pending" },
+          ],
+        });
+        const settings = makeSettings({ maxParallelSteps: 3 });
+
+        mockedGenerateWorktreeName
+          .mockImplementationOnce(() => "wt-mixed-0")
+          .mockImplementationOnce(() => "wt-mixed-1")
+          .mockImplementationOnce(() => "wt-mixed-2");
+
+        let worktreeAddCount = 0;
+        mockedExecSync.mockImplementation((cmd: string) => {
+          if (cmd.includes("git worktree add")) {
+            worktreeAddCount++;
+            if (worktreeAddCount === 3) {
+              throw new Error("step 2 worktree failed");
+            }
+          }
+          if (cmd.includes("git log")) {
+            return "abc123";
+          }
+          return "";
+        });
+
+        let releaseParallel: (() => void) | undefined;
+        const parallelGate = new Promise<void>((resolve) => {
+          releaseParallel = resolve;
+        });
+
+        let activeParallelSteps = 0;
+        let maxActiveParallelSteps = 0;
+        const events: string[] = [];
+
+        mockedCreateKbAgent.mockImplementation(({ cwd }: any) => {
+          if (cwd === "/project/.worktrees/main") {
+            return Promise.resolve({
+              session: makeMockSession(async () => {
+                events.push("primary-start");
+                expect(activeParallelSteps).toBe(0);
+                events.push("primary-end");
+              }),
+            } as any);
+          }
+
+          const label = cwd.endsWith("wt-mixed-0") ? "parallel-0" : "parallel-1";
+          return Promise.resolve({
+            session: makeMockSession(async () => {
+              events.push(`${label}-start`);
+              activeParallelSteps++;
+              maxActiveParallelSteps = Math.max(maxActiveParallelSteps, activeParallelSteps);
+              await parallelGate;
+              activeParallelSteps--;
+              events.push(`${label}-end`);
+            }),
+          } as any);
+        });
+
+        const executor = new StepSessionExecutor({
+          taskDetail: task,
+          worktreePath: "/project/.worktrees/main",
+          rootDir: "/project",
+          settings,
+        });
+
+        const resultsPromise = executor.executeAll();
+
+        for (let i = 0; i < 20 && events.filter((event) => event.endsWith("-start")).length < 2; i++) {
+          await Promise.resolve();
+        }
+
+        const parallelStartsBeforeRelease = events.filter((event) => event.endsWith("-start"));
+        expect(parallelStartsBeforeRelease).toEqual(expect.arrayContaining(["parallel-0-start", "parallel-1-start"]));
+        expect(events.includes("primary-start")).toBe(false);
+
+        releaseParallel?.();
+        const results = await resultsPromise;
+
+        expect(results).toHaveLength(3);
+        expect(results.map((r) => r.stepIndex)).toEqual([0, 1, 2]);
+        expect(results.every((r) => r.success)).toBe(true);
+        expect(maxActiveParallelSteps).toBe(2);
+
+        const primaryCwdCalls = mockedCreateKbAgent.mock.calls.filter(
+          ([opts]) => (opts as { cwd?: string }).cwd === "/project/.worktrees/main",
+        );
+        expect(primaryCwdCalls).toHaveLength(1);
+
+        const primaryStartIdx = events.indexOf("primary-start");
+        expect(primaryStartIdx).toBeGreaterThan(events.indexOf("parallel-0-end"));
+        expect(primaryStartIdx).toBeGreaterThan(events.indexOf("parallel-1-end"));
+
+        const cherryPickCalls = mockedExecSync.mock.calls.filter(
+          ([cmd]) => typeof cmd === "string" && cmd.includes("git cherry-pick \"abc123\""),
+        );
+        expect(cherryPickCalls).toHaveLength(2);
+      });
+
+      it("no degradation when all worktrees succeed", async () => {
+        const prompt = `# Task: FN-001
+
+### Step 0: Core work
+- \`packages/core/src/types.ts\`
+
+### Step 1: Engine work
+- \`packages/engine/src/pi.ts\``;
+
+        const task = makeTaskDetail({
+          prompt,
+          steps: [
+            { name: "Step 0", status: "pending" },
+            { name: "Step 1", status: "pending" },
+          ],
+        });
+        const settings = makeSettings({ maxParallelSteps: 2 });
+
+        mockedGenerateWorktreeName
+          .mockImplementationOnce(() => "wt-success-0")
+          .mockImplementationOnce(() => "wt-success-1");
+        mockedExecSync.mockReturnValue("");
+        mockedCreateKbAgent.mockImplementation(({ cwd }: any) => {
+          return Promise.resolve({
+            session: makeMockSession(async () => {
+              expect(cwd).not.toBe("/project/.worktrees/main");
+            }),
+          } as any);
+        });
+
+        const executor = new StepSessionExecutor({
+          taskDetail: task,
+          worktreePath: "/project/.worktrees/main",
+          rootDir: "/project",
+          settings,
+        });
+
+        const results = await executor.executeAll();
+
+        expect(results).toHaveLength(2);
+        expect(results.map((r) => r.stepIndex)).toEqual([0, 1]);
+        expect(results.every((r) => r.success)).toBe(true);
+
+        const primaryCwdCalls = mockedCreateKbAgent.mock.calls.filter(
+          ([opts]) => (opts as { cwd?: string }).cwd === "/project/.worktrees/main",
+        );
+        expect(primaryCwdCalls).toHaveLength(0);
+      });
+
+      it("cleanup still removes successful parallel worktrees even when some failed", async () => {
+        const prompt = `# Task: FN-001
+
+### Step 0: Core work
+- \`packages/core/src/types.ts\`
+
+### Step 1: Engine work
+- \`packages/engine/src/pi.ts\`
+
+### Step 2: Tests
+- \`packages/engine/src/step-session-executor.test.ts\``;
+
+        const task = makeTaskDetail({
+          prompt,
+          steps: [
+            { name: "Step 0", status: "pending" },
+            { name: "Step 1", status: "pending" },
+            { name: "Step 2", status: "pending" },
+          ],
+        });
+        const settings = makeSettings({ maxParallelSteps: 3 });
+
+        mockedGenerateWorktreeName
+          .mockImplementationOnce(() => "wt-clean-0")
+          .mockImplementationOnce(() => "wt-clean-1")
+          .mockImplementationOnce(() => "wt-clean-2");
+
+        let worktreeAddCount = 0;
+        mockedExecSync.mockImplementation((cmd: string) => {
+          if (cmd.includes("git worktree add")) {
+            worktreeAddCount++;
+            if (worktreeAddCount === 3) {
+              throw new Error("step 2 worktree failed");
+            }
+          }
+          return "";
+        });
+
+        mockedCreateKbAgent.mockResolvedValue({ session: makeMockSession() } as any);
+
+        const executor = new StepSessionExecutor({
+          taskDetail: task,
+          worktreePath: "/project/.worktrees/main",
+          rootDir: "/project",
+          settings,
+        });
+
+        await executor.executeAll();
+
+        const removeCalls = mockedExecSync.mock.calls
+          .map(([cmd]) => cmd)
+          .filter((cmd): cmd is string => typeof cmd === "string" && cmd.includes("git worktree remove"));
+
+        expect(removeCalls).toHaveLength(2);
+        expect(removeCalls.some((cmd) => cmd.includes("wt-clean-0"))).toBe(true);
+        expect(removeCalls.some((cmd) => cmd.includes("wt-clean-1"))).toBe(true);
+        expect(removeCalls.some((cmd) => cmd.includes("wt-clean-2"))).toBe(false);
+        expect(removeCalls.some((cmd) => cmd.includes("/project/.worktrees/main"))).toBe(false);
+      });
+    });
   });
 
   describe("terminateAllSessions", () => {
