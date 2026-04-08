@@ -349,6 +349,12 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   const mergeQueue: string[] = [];
   const mergeActive = new Set<string>(); // IDs queued or currently merging
   let mergeRunning = false;
+  const maxAutoMergeRetries = 3;
+
+  function canAutoMergeTask(task: { mergeRetries?: number | null; column: string; paused?: boolean; status?: string | null; error?: string | null; steps?: Array<{ status: string }>; workflowStepResults?: Array<{ status: string }> }): boolean {
+    if (getTaskMergeBlocker(task as any)) return false;
+    return (task.mergeRetries ?? 0) < maxAutoMergeRetries;
+  }
 
   /** Enqueue a task for auto-merge if not already queued/active. */
   function enqueueMerge(taskId: string): void {
@@ -378,7 +384,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           }
           // Verify the task is still in-review and not paused
           const task = await store.getTask(taskId);
-          if (getTaskMergeBlocker(task)) {
+          if (!canAutoMergeTask(task as any)) {
             continue;
           }
           const mergeStrategy = getMergeStrategy(settings);
@@ -413,7 +419,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
 
             if (task && isConflictError) {
               const currentRetries = task.mergeRetries ?? 0;
-              const maxRetries = 3;
+              const maxRetries = maxAutoMergeRetries;
 
               if (settings.autoResolveConflicts !== false && currentRetries < maxRetries) {
                 // Increment retry counter and re-enqueue with delay
@@ -440,14 +446,24 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
                 } catch { /* best-effort */ }
               }
             } else {
-              // Non-conflict error - reset task status
+              // Non-conflict error - stop auto-retrying until a user intervenes.
+              // This prevents the periodic sweep from re-enqueueing the same
+              // broken merge on every poll cycle.
               try {
-                await store.updateTask(taskId, { status: null });
+                await store.updateTask(taskId, {
+                  status: null,
+                  mergeRetries: maxAutoMergeRetries,
+                  error: errorMsg,
+                });
               } catch { /* best-effort */ }
             }
           } else {
             try {
-              await store.updateTask(taskId, { status: null });
+              await store.updateTask(taskId, {
+                status: null,
+                mergeRetries: maxAutoMergeRetries,
+                error: errorMsg,
+              });
             } catch { /* best-effort */ }
           }
         } finally {
@@ -463,7 +479,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   // enqueue it for serialized merge processing.
   store.on("task:moved", async ({ task, to }) => {
     if (to !== "in-review") return;
-    if (getTaskMergeBlocker(task)) return;
+    if (!canAutoMergeTask(task as any)) return;
     try {
       const settings = await store.getSettings();
       if (settings.globalPause || settings.enginePaused) return;
@@ -678,7 +694,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     // ── Startup sweep: enqueue any tasks already in "in-review" ───────
     if (settings.autoMerge) {
       const existing = await store.listTasks();
-      const inReview = existing.filter((t) => !getTaskMergeBlocker(t));
+      const inReview = existing.filter((t) => canAutoMergeTask(t as any));
       if (inReview.length > 0) {
         console.log(
           `[auto-merge] Startup sweep: enqueueing ${inReview.length} in-review task(s)`,
@@ -707,7 +723,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           try {
             const tasks = await store.listTasks();
             for (const t of tasks) {
-              if (!getTaskMergeBlocker(t)) {
+              if (canAutoMergeTask(t as any)) {
                 enqueueMerge(t.id);
               }
             }
@@ -766,7 +782,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           if (!s.globalPause && !s.enginePaused && s.autoMerge) {
             const tasks = await store.listTasks();
             for (const t of tasks) {
-              if (!getTaskMergeBlocker(t)) {
+              if (canAutoMergeTask(t as any)) {
                 enqueueMerge(t.id);
               }
             }

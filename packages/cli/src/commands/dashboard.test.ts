@@ -714,6 +714,26 @@ describe("runDashboard — auto-merge pause exclusion", () => {
     expect(aiMergeTask).not.toHaveBeenCalled();
   });
 
+  it("does not auto-merge in-review tasks with exhausted merge retries", async () => {
+    mockStore.getSettings.mockResolvedValue({
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: true,
+      pollIntervalMs: 60_000,
+    });
+    mockStore.listTasks.mockResolvedValue([
+      { id: "FN-EXHAUSTED", column: "in-review", paused: false, mergeRetries: 3 },
+    ]);
+
+    const { aiMergeTask } = await import("@fusion/engine");
+    (aiMergeTask as ReturnType<typeof vi.fn>).mockClear();
+
+    await runDashboard(0, { open: false });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(aiMergeTask).not.toHaveBeenCalled();
+  });
+
   it("does not auto-merge in-review tasks with incomplete steps", async () => {
     mockStore.getSettings.mockResolvedValue({
       maxConcurrent: 1,
@@ -1469,17 +1489,11 @@ describe("runDashboard — merge conflict retry logic", () => {
 
     await new Promise((r) => setTimeout(r, 50));
 
-    // Should log max retries exceeded
-    const maxRetryLog = consoleSpy.mock.calls.find(
-      (call) =>
-        typeof call[0] === "string" && call[0].includes("max retries (3) exceeded"),
-    );
-    expect(maxRetryLog).toBeDefined();
-
-    // Should reset mergeRetries on the task
-    expect(mockStore.updateTask).toHaveBeenCalledWith(
+    // Exhausted tasks are skipped before enqueue, so they should not be merged again.
+    expect(aiMergeTask).not.toHaveBeenCalled();
+    expect(mockStore.updateTask).not.toHaveBeenCalledWith(
       "FN-MAX",
-      expect.objectContaining({ status: null }),
+      expect.objectContaining({ mergeRetries: expect.anything() }),
     );
   });
 
@@ -1552,6 +1566,47 @@ describe("runDashboard — merge conflict retry logic", () => {
     expect(mockStore.updateTask).toHaveBeenCalledWith(
       "FN-SUCCESS",
       expect.objectContaining({ mergeRetries: 0 }),
+    );
+  });
+
+  it("marks non-conflict merge failures as exhausted so auto-merge stops retrying", async () => {
+    const { aiMergeTask } = await import("@fusion/engine");
+
+    (aiMergeTask as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("Build verification failed for FN-BUILD: Dependency sync failed"),
+    );
+
+    mockStore.getSettings.mockResolvedValue({
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: true,
+      autoResolveConflicts: true,
+      pollIntervalMs: 60_000,
+      enginePaused: false,
+      globalPause: false,
+    });
+
+    mockStore.getTask = vi.fn().mockImplementation(async (id: string) => ({
+      id,
+      column: "in-review",
+      paused: false,
+      mergeRetries: 0,
+    }));
+
+    mockStore.listTasks.mockResolvedValue([
+      { id: "FN-BUILD", column: "in-review", paused: false, mergeRetries: 0 },
+    ]);
+
+    await runDashboard(0, { open: false });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(mockStore.updateTask).toHaveBeenCalledWith(
+      "FN-BUILD",
+      expect.objectContaining({
+        status: null,
+        mergeRetries: 3,
+        error: "Build verification failed for FN-BUILD: Dependency sync failed",
+      }),
     );
   });
 });

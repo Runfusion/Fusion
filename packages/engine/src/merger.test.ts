@@ -42,6 +42,7 @@ import {
   parseDiffStat,
   extractFileScope,
   validateDiffScope,
+  shouldSyncDependenciesForMerge,
   type ConflictCategory,
 } from "./merger.js";
 import { createKbAgent } from "./pi.js";
@@ -1933,6 +1934,81 @@ describe("aiMergeTask — build verification", () => {
 
     expect(result.merged).toBe(true);
     expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+  });
+
+  it("syncs dependencies before build verification when install state is missing", async () => {
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    mockedExistsSync.mockImplementation((path: any) => {
+      const pathStr = String(path);
+      if (pathStr.includes("node_modules") || pathStr.endsWith(".pnp.cjs")) return false;
+      return true;
+    });
+
+    let cachedQuietChecks = 0;
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr === "git rev-parse HEAD" || cmdStr.startsWith("git rev-parse HEAD ")) return "mergedcommit123";
+      if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "2 files changed" as any;
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("diff --name-only --diff-filter=U")) return "" as any;
+      if (cmdStr.includes("git diff --cached --name-only")) {
+        return "package.json\npackages/desktop/package.json" as any;
+      }
+      if (cmdStr.includes("pnpm install --frozen-lockfile")) return "Lockfile is up to date" as any;
+      if (cmdStr.includes("diff --cached --quiet")) {
+        cachedQuietChecks += 1;
+        return cachedQuietChecks === 1 ? "1" as any : "0" as any;
+      }
+      if (cmdStr.includes("show --shortstat")) return "3 files changed, 10 insertions(+), 2 deletions(-)" as any;
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      buildCommand: "pnpm build",
+    });
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(result.merged).toBe(true);
+    const installCall = mockedExecSync.mock.calls.find(
+      (call) => String(call[0]).includes("pnpm install --frozen-lockfile"),
+    );
+    expect(installCall).toBeDefined();
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-050",
+      "Syncing dependencies before merge build verification: pnpm install --frozen-lockfile",
+    );
+  });
+});
+
+describe("shouldSyncDependenciesForMerge", () => {
+  it("returns true when install state is missing", () => {
+    expect(shouldSyncDependenciesForMerge([], false)).toBe(true);
+  });
+
+  it("returns true when staged files change package manifests or lockfiles", () => {
+    expect(shouldSyncDependenciesForMerge(["packages/desktop/package.json"], true)).toBe(true);
+    expect(shouldSyncDependenciesForMerge(["pnpm-lock.yaml"], true)).toBe(true);
+  });
+
+  it("returns false for regular source-only changes when install state exists", () => {
+    expect(shouldSyncDependenciesForMerge(["packages/engine/src/merger.ts"], true)).toBe(false);
   });
 });
 

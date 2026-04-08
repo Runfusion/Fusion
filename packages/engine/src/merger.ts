@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { getTaskMergeBlocker, type TaskStore, type MergeResult, type MergeDetails, type WorkflowStep, type WorkflowStepResult, type Settings, type AgentPromptsConfig } from "@fusion/core";
 import { resolveAgentPrompt } from "@fusion/core";
 import { createKbAgent, describeModel, promptWithFallback } from "./pi.js";
@@ -49,6 +50,17 @@ export const GENERATED_PATTERNS = [
   "generated/*",
 ];
 
+const DEPENDENCY_SYNC_TRIGGER_PATTERNS = [
+  "package.json",
+  "pnpm-lock.yaml",
+  "pnpm-workspace.yaml",
+  "package-lock.json",
+  "yarn.lock",
+  "bun.lockb",
+  "bun.lock",
+  "packages/*/package.json",
+];
+
 /** Check if a path matches a glob pattern (simple glob support: * and **) */
 function matchGlob(path: string, pattern: string): boolean {
   // Handle ** which matches across directory boundaries (must do before single *)
@@ -92,6 +104,65 @@ function matchGlob(path: string, pattern: string): boolean {
     .replace(/\*/g, "[^/]*");
   const regex = new RegExp(`^${regexPattern}$`);
   return regex.test(fileName) || regex.test(path);
+}
+
+export function getStagedFiles(cwd: string): string[] {
+  try {
+    const output = execSync("git diff --cached --name-only", {
+      cwd,
+      encoding: "utf-8",
+      stdio: "pipe",
+    }).trim();
+    return output ? output.split("\n").filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function hasInstallState(rootDir: string): boolean {
+  return existsSync(join(rootDir, "node_modules")) || existsSync(join(rootDir, ".pnp.cjs"));
+}
+
+export function shouldSyncDependenciesForMerge(
+  stagedFiles: string[],
+  installStatePresent: boolean,
+): boolean {
+  if (!installStatePresent) return true;
+  return stagedFiles.some((file) =>
+    DEPENDENCY_SYNC_TRIGGER_PATTERNS.some((pattern) => matchGlob(file, pattern)),
+  );
+}
+
+function getDependencySyncCommand(rootDir: string): string | null {
+  if (existsSync(join(rootDir, "pnpm-lock.yaml"))) return "pnpm install --frozen-lockfile";
+  if (existsSync(join(rootDir, "package-lock.json"))) return "npm install";
+  if (existsSync(join(rootDir, "yarn.lock"))) return "yarn install --frozen-lockfile";
+  if (existsSync(join(rootDir, "bun.lock")) || existsSync(join(rootDir, "bun.lockb"))) {
+    return "bun install --frozen-lockfile";
+  }
+  return null;
+}
+
+async function syncDependenciesForMerge(
+  store: TaskStore,
+  rootDir: string,
+  taskId: string,
+): Promise<void> {
+  const installCommand = getDependencySyncCommand(rootDir);
+  if (!installCommand) return;
+
+  mergerLog.log(`${taskId}: syncing dependencies before merge build verification`);
+  await store.logEntry(taskId, `Syncing dependencies before merge build verification: ${installCommand}`);
+  try {
+    execSync(installCommand, {
+      cwd: rootDir,
+      encoding: "utf-8",
+      stdio: "pipe",
+    });
+  } catch (error: any) {
+    const details = error?.stderr || error?.stdout || error?.message || String(error);
+    throw new Error(`Dependency sync failed for ${taskId}: ${details}`.trim());
+  }
 }
 
 // ── Pre-merge diffstat scope validation ──────────────────────────────
@@ -1149,6 +1220,13 @@ async function executeMergeAttempt(
         // Reset and return false to trigger attempt 2
         mergerLog.log(`${taskId}: conflicts detected, will retry with auto-resolution`);
         return false;
+      }
+    }
+
+    if (buildCommand) {
+      const stagedFiles = getStagedFiles(rootDir);
+      if (shouldSyncDependenciesForMerge(stagedFiles, hasInstallState(rootDir))) {
+        await syncDependenciesForMerge(store, rootDir, taskId);
       }
     }
 
