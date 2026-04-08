@@ -144,7 +144,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
   }
 
   /**
-   * List active sessions (generating or awaiting_input).
+   * List active sessions (generating, awaiting_input, or complete).
    * Optionally filtered by projectId.
    */
   listActive(projectId?: string): AiSessionSummary[] {
@@ -152,7 +152,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
       return this.db
         .prepare(
           `SELECT id, type, status, title, projectId, updatedAt FROM ai_sessions
-           WHERE status IN ('generating', 'awaiting_input') AND projectId = ?
+           WHERE status IN ('generating', 'awaiting_input', 'complete') AND projectId = ?
            ORDER BY updatedAt DESC`,
         )
         .all(projectId) as unknown as AiSessionSummary[];
@@ -160,7 +160,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
     return this.db
       .prepare(
         `SELECT id, type, status, title, projectId, updatedAt FROM ai_sessions
-         WHERE status IN ('generating', 'awaiting_input')
+         WHERE status IN ('generating', 'awaiting_input', 'complete')
          ORDER BY updatedAt DESC`,
       )
       .all() as unknown as AiSessionSummary[];

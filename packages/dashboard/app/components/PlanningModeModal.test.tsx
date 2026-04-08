@@ -293,6 +293,118 @@ describe("PlanningModeModal", () => {
     });
   });
 
+  describe("Resuming complete sessions", () => {
+    it("shows summary view when resuming a complete persisted session", async () => {
+      const resumedSummary: PlanningSummary = {
+        title: "Resume-ready planning output",
+        description: "Recovered summary description from persisted session",
+        suggestedSize: "L",
+        suggestedDependencies: ["FN-001"],
+        keyDeliverables: ["Deliverable A", "Deliverable B"],
+      };
+
+      mockFetchAiSession.mockResolvedValueOnce({
+        id: "session-complete-1",
+        type: "planning",
+        status: "complete",
+        title: "Resume-ready planning output",
+        inputPayload: JSON.stringify({ initialPlan: "Build resilient planning resume" }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: JSON.stringify(resumedSummary),
+        thinkingOutput: "",
+        error: null,
+        projectId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+          resumeSessionId="session-complete-1"
+        />
+      );
+
+      await waitFor(() => {
+        expect(mockFetchAiSession).toHaveBeenCalledWith("session-complete-1");
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("Planning Complete!")).toBeDefined();
+      });
+
+      expect(screen.getByDisplayValue("Recovered summary description from persisted session")).toBeDefined();
+      expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("L");
+      expect(screen.getByText("Deliverable A")).toBeDefined();
+      expect(screen.getByText("Deliverable B")).toBeDefined();
+    });
+
+    it("creates a task from a resumed complete session", async () => {
+      const resumedSummary: PlanningSummary = {
+        title: "Resume-to-task",
+        description: "Recovered summary for task creation",
+        suggestedSize: "M",
+        suggestedDependencies: [],
+        keyDeliverables: ["Implement", "Verify"],
+      };
+
+      mockFetchAiSession.mockResolvedValueOnce({
+        id: "session-complete-2",
+        type: "planning",
+        status: "complete",
+        title: "Resume-to-task",
+        inputPayload: JSON.stringify({ initialPlan: "Recover and create" }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: JSON.stringify(resumedSummary),
+        thinkingOutput: "",
+        error: null,
+        projectId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      mockCreateTaskFromPlanning.mockResolvedValueOnce({
+        id: "FN-100",
+        title: "Resume-to-task",
+        description: "Recovered summary for task creation",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+          resumeSessionId="session-complete-2"
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("Create Task")).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByText("Create Task"));
+
+      await waitFor(() => {
+        expect(mockCreateTaskFromPlanning).toHaveBeenCalledWith("session-complete-2", undefined);
+      });
+    });
+  });
+
   describe("Question view", () => {
     it("renders single_select question with options", async () => {
       const { container } = render(

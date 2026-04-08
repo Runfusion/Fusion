@@ -41,7 +41,11 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
             return next;
           }
           // New session — only add if active
-          if (updated.status === "generating" || updated.status === "awaiting_input") {
+          if (
+            updated.status === "generating" ||
+            updated.status === "awaiting_input" ||
+            updated.status === "complete"
+          ) {
             return [updated, ...prev];
           }
           return prev;
@@ -73,7 +77,7 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
 
   // Filter to only active sessions
   const active = sessions.filter(
-    (s) => s.status === "generating" || s.status === "awaiting_input"
+    (s) => s.status === "generating" || s.status === "awaiting_input" || s.status === "complete"
   );
 
   const planningSessions = active.filter((s) => s.type === "planning");

@@ -5661,15 +5661,87 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         return;
       }
 
-      const { getSession, getSummary, cleanupSession, SessionNotFoundError } = await import("./planning.js");
+      const { getSession, getSummary, cleanupSession } = await import("./planning.js");
 
       const session = getSession(sessionId);
+      let summary = getSummary(sessionId);
+      let initialPlan = session?.initialPlan;
+      let usedPersistedFallback = false;
+
       if (!session) {
-        res.status(404).json({ error: `Planning session ${sessionId} not found or expired` });
-        return;
+        if (!aiSessionStore) {
+          res.status(404).json({ error: `Planning session ${sessionId} not found or expired` });
+          return;
+        }
+
+        const persistedSession = aiSessionStore.get(sessionId);
+        if (!persistedSession || persistedSession.type !== "planning") {
+          res.status(404).json({ error: `Planning session ${sessionId} not found or expired` });
+          return;
+        }
+
+        if (persistedSession.status !== "complete") {
+          res.status(400).json({ error: "Planning session is not complete" });
+          return;
+        }
+
+        if (!persistedSession.result) {
+          res.status(400).json({ error: "Planning session result is not available" });
+          return;
+        }
+
+        try {
+          const parsedSummary = JSON.parse(persistedSession.result) as {
+            title?: unknown;
+            description?: unknown;
+            suggestedSize?: unknown;
+            suggestedDependencies?: unknown;
+            keyDeliverables?: unknown;
+          };
+
+          summary = {
+            title:
+              typeof parsedSummary.title === "string" && parsedSummary.title.trim().length > 0
+                ? parsedSummary.title
+                : persistedSession.title,
+            description:
+              typeof parsedSummary.description === "string" && parsedSummary.description.trim().length > 0
+                ? parsedSummary.description
+                : persistedSession.title,
+            suggestedSize:
+              parsedSummary.suggestedSize === "S" ||
+              parsedSummary.suggestedSize === "M" ||
+              parsedSummary.suggestedSize === "L"
+                ? parsedSummary.suggestedSize
+                : "M",
+            suggestedDependencies: Array.isArray(parsedSummary.suggestedDependencies)
+              ? parsedSummary.suggestedDependencies.filter((dep): dep is string => typeof dep === "string")
+              : [],
+            keyDeliverables: Array.isArray(parsedSummary.keyDeliverables)
+              ? parsedSummary.keyDeliverables.filter((item): item is string => typeof item === "string")
+              : [],
+          };
+        } catch {
+          res.status(400).json({ error: "Planning session result is invalid" });
+          return;
+        }
+
+        try {
+          const parsedInput = JSON.parse(persistedSession.inputPayload) as { initialPlan?: unknown };
+          if (typeof parsedInput.initialPlan === "string" && parsedInput.initialPlan.trim().length > 0) {
+            initialPlan = parsedInput.initialPlan;
+          }
+        } catch {
+          // Keep fallback value below
+        }
+
+        if (!initialPlan) {
+          initialPlan = persistedSession.title;
+        }
+
+        usedPersistedFallback = true;
       }
 
-      const summary = getSummary(sessionId);
       if (!summary) {
         res.status(400).json({ error: "Planning session is not complete" });
         return;
@@ -5689,10 +5761,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       // Log the planning mode creation
-      await store.logEntry(task.id, "Created via Planning Mode", `Initial plan: ${session.initialPlan.slice(0, 200)}`);
+      await store.logEntry(task.id, "Created via Planning Mode", `Initial plan: ${(initialPlan ?? "").slice(0, 200)}`);
 
       // Cleanup the session
-      cleanupSession(sessionId);
+      if (usedPersistedFallback) {
+        aiSessionStore?.delete(sessionId);
+      } else {
+        cleanupSession(sessionId);
+      }
 
       res.status(201).json(task);
     } catch (err: any) {

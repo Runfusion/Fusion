@@ -5970,6 +5970,74 @@ describe("Git Management endpoints", () => {
         expect(store.createTask).toHaveBeenCalled();
       });
 
+      it("creates a task from a persisted complete session when in-memory session is missing", async () => {
+        (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: "FN-043",
+          description: "Build a resumable planning flow",
+          column: "triage",
+          dependencies: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        });
+        (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({});
+        (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+        const sessionId = "session-from-sqlite";
+        const mockAiSessionStore = {
+          get: vi.fn().mockReturnValue({
+            id: sessionId,
+            type: "planning",
+            status: "complete",
+            title: "Build resumable planning",
+            inputPayload: JSON.stringify({ initialPlan: "Build resumable planning sessions" }),
+            conversationHistory: "[]",
+            currentQuestion: null,
+            result: JSON.stringify({
+              title: "Build resumable planning flow",
+              description: "Persist planning results so users can create tasks later",
+              suggestedSize: "M",
+              suggestedDependencies: ["FN-100"],
+              keyDeliverables: ["Persist sessions", "Support resume"],
+            }),
+            thinkingOutput: "",
+            error: null,
+            projectId: null,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          }),
+          delete: vi.fn(),
+        };
+
+        const appWithAiSessionStore = express();
+        appWithAiSessionStore.use(express.json());
+        appWithAiSessionStore.use(
+          "/api",
+          createApiRoutes(store, { aiSessionStore: mockAiSessionStore as any }),
+        );
+
+        const res = await REQUEST(
+          appWithAiSessionStore,
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId }),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(201);
+        expect(store.createTask).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: "Build resumable planning flow",
+            dependencies: ["FN-100"],
+          }),
+        );
+        expect(store.logEntry).toHaveBeenCalledWith(
+          "FN-043",
+          "Created via Planning Mode",
+          expect.stringContaining("Initial plan: Build resumable planning sessions"),
+        );
+        expect(mockAiSessionStore.delete).toHaveBeenCalledWith(sessionId);
+      });
+
       it("returns 400 if session is not complete", async () => {
         // Create a session but don't complete it
         const startRes = await REQUEST(
