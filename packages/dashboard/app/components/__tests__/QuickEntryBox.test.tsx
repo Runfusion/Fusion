@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { QuickEntryBox } from "../QuickEntryBox";
 import type { Task } from "@fusion/core";
-import { fetchSettings } from "../../api";
+import { fetchSettings, fetchAgents } from "../../api";
 
 const MOCK_MODELS = [
   {
@@ -78,6 +78,8 @@ vi.mock("../../api", () => ({
   }),
   refineText: vi.fn(),
   getRefineErrorMessage: vi.fn((err) => err?.message || "Failed to refine text. Please try again."),
+  fetchAgents: vi.fn().mockResolvedValue([]),
+  updateGlobalSettings: vi.fn().mockResolvedValue({}),
 }));
 
 // Mock lucide-react
@@ -93,6 +95,7 @@ vi.mock("lucide-react", () => ({
   ChevronDown: () => null,
   ChevronUp: () => null,
   ChevronRight: () => null,
+  Bot: () => null,
 }));
 
 // Mock ModelSelectionModal (kept for backward compatibility - no longer directly rendered)
@@ -184,6 +187,7 @@ describe("QuickEntryBox", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     localStorage.clear();
+    vi.mocked(fetchAgents).mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -2130,6 +2134,96 @@ describe("QuickEntryBox", () => {
       const mobileWidth = parseFloat(menu.style.width);
       expect(mobileWidth).toBe(375 - 32);
       expect(mobileWidth).toBeGreaterThan(desktopWidth);
+    });
+  });
+
+  describe("agent selector", () => {
+    it("opens the agent picker from the agent button", async () => {
+      vi.mocked(fetchAgents).mockResolvedValue([
+        {
+          id: "agent-001",
+          name: "Task Runner",
+          role: "executor",
+          state: "active",
+          metadata: {},
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ] as any);
+
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      fireEvent.click(screen.getByTestId("quick-entry-agent-button"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Select agent")).toBeInTheDocument();
+        expect(screen.getByText("Task Runner")).toBeInTheDocument();
+      });
+    });
+
+    it("includes assignedAgentId in onCreate payload when selected", async () => {
+      vi.mocked(fetchAgents).mockResolvedValue([
+        {
+          id: "agent-002",
+          name: "Builder",
+          role: "executor",
+          state: "active",
+          metadata: {},
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ] as any);
+      const onCreate = vi.fn().mockResolvedValue(undefined);
+
+      renderQuickEntryBox({ onCreate });
+      expandQuickEntry();
+
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Create task with agent" } });
+      fireEvent.click(screen.getByTestId("quick-entry-agent-button"));
+      await waitFor(() => expect(screen.getByText("Builder")).toBeInTheDocument());
+      fireEvent.click(screen.getByText("Builder"));
+
+      fireEvent.keyDown(screen.getByTestId("quick-entry-input"), { key: "Enter" });
+
+      await waitFor(() => {
+        expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ assignedAgentId: "agent-002" }));
+      });
+    });
+
+    it("omits assignedAgentId when agent selection is cleared", async () => {
+      vi.mocked(fetchAgents).mockResolvedValue([
+        {
+          id: "agent-003",
+          name: "Reviewer",
+          role: "reviewer",
+          state: "active",
+          metadata: {},
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ] as any);
+      const onCreate = vi.fn().mockResolvedValue(undefined);
+
+      renderQuickEntryBox({ onCreate });
+      expandQuickEntry();
+
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Create task without agent" } });
+      fireEvent.click(screen.getByTestId("quick-entry-agent-button"));
+      await waitFor(() => expect(screen.getByText("Reviewer")).toBeInTheDocument());
+      fireEvent.click(screen.getByText("Reviewer"));
+
+      // Clear via picker action
+      fireEvent.click(screen.getByTestId("quick-entry-agent-button"));
+      await waitFor(() => expect(screen.getByText("Clear selection")).toBeInTheDocument());
+      fireEvent.click(screen.getByText("Clear selection"));
+
+      fireEvent.keyDown(screen.getByTestId("quick-entry-input"), { key: "Enter" });
+
+      await waitFor(() => {
+        const payload = onCreate.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(payload.assignedAgentId).toBeUndefined();
+      });
     });
   });
 });

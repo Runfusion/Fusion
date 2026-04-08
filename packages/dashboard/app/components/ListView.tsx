@@ -751,6 +751,7 @@ export function ListView({
             availableModels={availableModels}
             onPlanningMode={onPlanningMode}
             onSubtaskBreakdown={onSubtaskBreakdown}
+            projectId={projectId}
             autoExpand={false}
             favoriteProviders={favoriteProviders}
             favoriteModels={favoriteModels}

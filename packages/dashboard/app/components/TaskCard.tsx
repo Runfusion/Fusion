@@ -1,7 +1,7 @@
 import { memo, useCallback, useState, useRef, useEffect, useMemo } from "react";
-import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target } from "lucide-react";
+import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot } from "lucide-react";
 import type { Task, TaskDetail, Column, PrInfo, IssueInfo } from "@fusion/core";
-import { fetchTaskDetail, uploadAttachment, fetchMission } from "../api";
+import { fetchTaskDetail, uploadAttachment, fetchMission, fetchAgent } from "../api";
 import { GitHubBadge } from "./GitHubBadge";
 import { pickPreferredBadge } from "./TaskCardBadge";
 import { useBadgeWebSocket } from "../hooks/useBadgeWebSocket";
@@ -38,6 +38,33 @@ const MAX_MISSION_TITLE_LENGTH = 20;
 function abbreviateMissionTitle(title: string): string {
   if (title.length <= MAX_MISSION_TITLE_LENGTH) return title;
   return title.slice(0, MAX_MISSION_TITLE_LENGTH - 3) + "...";
+}
+
+// ── Assigned agent name caching ─────────────────────────────────────────────
+
+const agentNameCache = new Map<string, string>();
+
+/** @internal Test helper to reset the assigned agent cache between tests */
+export function __test_clearAgentNameCache(): void {
+  agentNameCache.clear();
+}
+
+async function getAgentName(agentId: string, projectId?: string): Promise<string> {
+  const cached = agentNameCache.get(agentId);
+  if (cached) return cached;
+
+  try {
+    const agent = await fetchAgent(agentId, projectId);
+    agentNameCache.set(agentId, agent.name);
+    return agent.name;
+  } catch {
+    return agentId;
+  }
+}
+
+function abbreviateBadge(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return text.slice(0, max - 3) + "...";
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -131,6 +158,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previousTask.validatorModelId === nextTask.validatorModelId &&
     previousTask.reviewLevel === nextTask.reviewLevel &&
     previousTask.missionId === nextTask.missionId &&
+    previousTask.assignedAgentId === nextTask.assignedAgentId &&
     previousTask.mergeRetries === nextTask.mergeRetries &&
     JSON.stringify(previousTask.attachments ?? []) === JSON.stringify(nextTask.attachments ?? []) &&
     JSON.stringify(previousTask.comments ?? []) === JSON.stringify(nextTask.comments ?? []) &&
@@ -165,6 +193,7 @@ function TaskCardComponent({
     (task.column === "triage" && task.steps.some(s => s.status === "done" || s.status === "skipped"))
   );
   const [missionTitle, setMissionTitle] = useState<string | null>(null);
+  const [agentName, setAgentName] = useState<string | null>(null);
 
   const descTextareaRef = useRef<HTMLTextAreaElement>(null);
   const touchOpenHandledRef = useRef(false);
@@ -206,6 +235,27 @@ function TaskCardComponent({
     });
     return () => { cancelled = true; };
   }, [task.missionId, projectId]);
+
+  // Fetch assigned agent name when assignedAgentId is set
+  useEffect(() => {
+    if (!task.assignedAgentId) {
+      setAgentName(null);
+      return;
+    }
+
+    // Check cache synchronously first
+    const cached = agentNameCache.get(task.assignedAgentId);
+    if (cached) {
+      setAgentName(cached);
+      return;
+    }
+
+    let cancelled = false;
+    void getAgentName(task.assignedAgentId, projectId).then((name) => {
+      if (!cancelled) setAgentName(name);
+    });
+    return () => { cancelled = true; };
+  }, [task.assignedAgentId, projectId]);
 
   // Auto-focus and auto-resize description textarea when entering edit mode
   useEffect(() => {
@@ -650,6 +700,12 @@ function TaskCardComponent({
           >
             <Target size={11} />
             {abbreviateMissionTitle(missionTitle ?? task.missionId)}
+          </span>
+        )}
+        {task.assignedAgentId && (
+          <span className="card-agent-badge" title={`Assigned to ${agentName ?? task.assignedAgentId}`}>
+            <Bot size={11} />
+            {abbreviateBadge(agentName ?? task.assignedAgentId, 15)}
           </span>
         )}
         <div className="card-header-actions">

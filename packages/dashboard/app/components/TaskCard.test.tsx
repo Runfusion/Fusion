@@ -14,6 +14,7 @@ vi.mock("lucide-react", () => ({
   GitPullRequest: () => null,
   CircleDot: () => null,
   Target: () => null,
+  Bot: () => null,
 }));
 
 // Mock the api module
@@ -21,9 +22,10 @@ vi.mock("../api", () => ({
   fetchTaskDetail: vi.fn(),
   uploadAttachment: vi.fn(),
   fetchMission: vi.fn(),
+  fetchAgent: vi.fn(),
 }));
 
-import { uploadAttachment, fetchMission } from "../api";
+import { uploadAttachment, fetchMission, fetchAgent } from "../api";
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -401,5 +403,58 @@ describe("TaskCard mission badge", () => {
       expect(badge?.textContent).toContain("Auth Fix");
       expect(badge?.textContent).not.toContain("...");
     });
+  });
+});
+
+describe("TaskCard agent badge", () => {
+  let clearAgentCache: () => void;
+
+  beforeAll(async () => {
+    const mod = await import("./TaskCard");
+    clearAgentCache = (mod as { __test_clearAgentNameCache?: () => void }).__test_clearAgentNameCache ?? (() => undefined);
+  });
+
+  beforeEach(() => {
+    clearAgentCache?.();
+    vi.mocked(fetchAgent).mockReset();
+  });
+
+  it("renders agent badge when task has assignedAgentId", async () => {
+    vi.mocked(fetchAgent).mockResolvedValue({
+      id: "agent-001",
+      name: "Task Robot",
+      role: "executor",
+      state: "active",
+      metadata: {},
+      heartbeatHistory: [],
+      completedRuns: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    } as any);
+
+    render(
+      <TaskCard
+        task={makeTask({ assignedAgentId: "agent-001" })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTitle("Assigned to Task Robot")).toBeDefined();
+      expect(screen.getByText("Task Robot")).toBeDefined();
+    });
+  });
+
+  it("does not render agent badge when assignedAgentId is undefined", () => {
+    render(
+      <TaskCard
+        task={makeTask()}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.queryByTitle(/Assigned to/)).toBeNull();
   });
 });

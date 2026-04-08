@@ -2,13 +2,13 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { 
   Bot, Heart, Activity, Pause, Play, Square, Trash2, RefreshCw, 
   Settings, FileText, ActivitySquare, X, Copy, 
-  ExternalLink, CheckCircle, XCircle, Loader2, GitBranch,
+  ExternalLink, CheckCircle, XCircle, Loader2, GitBranch, ListChecks,
   ChevronDown, ChevronRight
 } from "lucide-react";
 import type { AgentDetail, AgentState, AgentHeartbeatRun } from "../api";
-import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogs, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, updateAgentInstructions } from "../api";
+import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogs, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, updateAgentInstructions, fetchAgentTasks } from "../api";
 import type { Agent } from "../api";
-import type { AgentLogEntry } from "@fusion/core";
+import type { AgentLogEntry, Task } from "@fusion/core";
 import { AgentLogViewer } from "./AgentLogViewer";
 
 /**
@@ -50,12 +50,13 @@ interface AgentDetailViewProps {
   onChildClick?: (childId: string) => void;
 }
 
-type TabId = "dashboard" | "logs" | "config" | "runs" | "children";
+type TabId = "dashboard" | "logs" | "config" | "runs" | "children" | "tasks";
 
 const TABS: { id: TabId; label: string; icon: typeof Activity }[] = [
   { id: "dashboard", label: "Dashboard", icon: ActivitySquare },
   { id: "logs", label: "Logs", icon: FileText },
   { id: "runs", label: "Runs", icon: Activity },
+  { id: "tasks", label: "Tasks", icon: ListChecks },
   { id: "children", label: "Children", icon: GitBranch },
   { id: "config", label: "Settings", icon: Settings },
 ];
@@ -379,6 +380,14 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
               projectId={projectId}
               agentState={agent.state}
               agentName={agent.name}
+            />
+          )}
+
+          {activeTab === "tasks" && (
+            <TasksTab
+              agentId={agent.id}
+              projectId={projectId}
+              addToast={addToast}
             />
           )}
           
@@ -1051,6 +1060,97 @@ function formatDuration(start: Date, end: Date): string {
   if (diff < 60) return `${diff}s`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ${diff % 60}s`;
   return `${Math.floor(diff / 3600)}h ${Math.floor((diff % 3600) / 60)}m`;
+}
+
+const TASK_COLUMN_LABELS: Record<Task["column"], string> = {
+  triage: "Triage",
+  todo: "Todo",
+  "in-progress": "In Progress",
+  "in-review": "In Review",
+  done: "Done",
+  archived: "Archived",
+};
+
+function truncateTaskLabel(task: Task): string {
+  const source = task.title?.trim() || task.description?.trim() || task.id;
+  return source.length > 80 ? `${source.slice(0, 77)}...` : source;
+}
+
+function TasksTab({
+  agentId,
+  projectId,
+  addToast,
+}: {
+  agentId: string;
+  projectId?: string;
+  addToast: (msg: string, type?: "success" | "error") => void;
+}) {
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoading(true);
+
+    void fetchAgentTasks(agentId, projectId)
+      .then((assignedTasks) => {
+        if (!cancelled) {
+          setTasks(assignedTasks);
+        }
+      })
+      .catch((err: any) => {
+        if (!cancelled) {
+          setTasks([]);
+          addToast(`Failed to load assigned tasks: ${err.message}`, "error");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [agentId, projectId, addToast]);
+
+  if (isLoading) {
+    return (
+      <div className="agent-tasks-empty">
+        <Loader2 size={16} className="animate-spin" />
+        <p>Loading assigned tasks...</p>
+      </div>
+    );
+  }
+
+  if (tasks.length === 0) {
+    return (
+      <div className="agent-tasks-empty">
+        <ListChecks size={18} />
+        <p>No tasks assigned to this agent</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="agent-tasks-list">
+      {tasks.map((task) => (
+        <a key={task.id} className="agent-task-item" href={`/tasks/${task.id}`}>
+          <div className="agent-task-row">
+            <span className="agent-task-id">{task.id}</span>
+            <span className={`agent-task-column column-${task.column}`}>{TASK_COLUMN_LABELS[task.column]}</span>
+          </div>
+          <div className="agent-task-title" title={task.title || task.description || task.id}>
+            {truncateTaskLabel(task)}
+          </div>
+          <div className="agent-task-status">
+            {task.status ?? "idle"} · Updated {relativeTime(task.updatedAt)}
+          </div>
+        </a>
+      ))}
+    </div>
+  );
 }
 
 // ── Config Tab ─────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { InlineCreateCard } from "../InlineCreateCard";
 import type { Task, Column } from "@fusion/core";
-import { fetchModels, fetchSettings } from "../../api";
+import { fetchModels, fetchSettings, fetchAgents } from "../../api";
 import type { ModelInfo } from "../../api";
 
 // Mock lucide-react
@@ -19,6 +19,7 @@ vi.mock("lucide-react", () => ({
   Zap: () => null,
   ChevronDown: () => null,
   ChevronUp: () => null,
+  Bot: () => null,
 }));
 
 // Mock ModelSelectionModal (renders via portal, so mock for testability)
@@ -94,6 +95,7 @@ vi.mock("../../api", () => ({
   }),
   uploadAttachment: vi.fn(),
   updateGlobalSettings: vi.fn(),
+  fetchAgents: vi.fn().mockResolvedValue([]),
 }));
 
 const MOCK_MODELS: ModelInfo[] = [
@@ -162,6 +164,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
   vi.mocked(fetchModels).mockResolvedValue({ models: MOCK_MODELS, favoriteProviders: [], favoriteModels: [] });
+  vi.mocked(fetchAgents).mockResolvedValue([]);
   vi.mocked(fetchSettings).mockResolvedValue({
     modelPresets: [],
     autoSelectModelPreset: false,
@@ -990,6 +993,95 @@ describe("InlineCreateCard button visibility when collapsed", () => {
       });
 
       expect(screen.getByTestId("modal-props-selected-preset-id").textContent).toBe("fast");
+    });
+  });
+
+  describe("agent selector", () => {
+    it("opens the agent picker", async () => {
+      vi.mocked(fetchAgents).mockResolvedValue([
+        {
+          id: "agent-001",
+          name: "Task Runner",
+          role: "executor",
+          state: "active",
+          metadata: {},
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ] as any);
+
+      renderCard([createMockTask({ id: "FN-100" })]);
+      expandCard();
+
+      fireEvent.click(screen.getByTestId("inline-create-agent-button"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Select agent")).toBeInTheDocument();
+        expect(screen.getByText("Task Runner")).toBeInTheDocument();
+      });
+    });
+
+    it("passes assignedAgentId when selected", async () => {
+      vi.mocked(fetchAgents).mockResolvedValue([
+        {
+          id: "agent-002",
+          name: "Builder",
+          role: "executor",
+          state: "active",
+          metadata: {},
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ] as any);
+
+      const onSubmit = vi.fn().mockResolvedValue({ id: "FN-900" } as Task);
+      renderCard([createMockTask({ id: "FN-100" })], { onSubmit });
+      expandCard();
+
+      fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Create card with agent" } });
+      fireEvent.click(screen.getByTestId("inline-create-agent-button"));
+      await waitFor(() => expect(screen.getByText("Builder")).toBeInTheDocument());
+      fireEvent.click(screen.getByText("Builder"));
+
+      fireEvent.keyDown(screen.getByPlaceholderText("What needs to be done?"), { key: "Enter" });
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ assignedAgentId: "agent-002" }));
+      });
+    });
+
+    it("clears assignedAgentId when selection is removed", async () => {
+      vi.mocked(fetchAgents).mockResolvedValue([
+        {
+          id: "agent-003",
+          name: "Reviewer",
+          role: "reviewer",
+          state: "active",
+          metadata: {},
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ] as any);
+
+      const onSubmit = vi.fn().mockResolvedValue({ id: "FN-901" } as Task);
+      renderCard([createMockTask({ id: "FN-100" })], { onSubmit });
+      expandCard();
+
+      fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Create card without agent" } });
+      fireEvent.click(screen.getByTestId("inline-create-agent-button"));
+      await waitFor(() => expect(screen.getByText("Reviewer")).toBeInTheDocument());
+      fireEvent.click(screen.getByText("Reviewer"));
+
+      fireEvent.click(screen.getByTestId("inline-create-agent-button"));
+      await waitFor(() => expect(screen.getByText("Clear selection")).toBeInTheDocument());
+      fireEvent.click(screen.getByText("Clear selection"));
+
+      fireEvent.keyDown(screen.getByPlaceholderText("What needs to be done?"), { key: "Enter" });
+
+      await waitFor(() => {
+        const payload = onSubmit.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(payload.assignedAgentId).toBeUndefined();
+      });
     });
   });
 });
