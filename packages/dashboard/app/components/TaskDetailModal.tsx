@@ -907,7 +907,7 @@ export function TaskDetailModal({
             </div>
           ) : activeTab === "model" ? (
             <div className="detail-section">
-              <ModelSelectorTab task={task} addToast={addToast} />
+              <ModelSelectorTab task={task} addToast={addToast} onTaskUpdated={onTaskUpdated} />
             </div>
           ) : activeTab === "logs" ? (
             <div className={`detail-section${logSubview === "agent-log" ? " detail-section--agent-log" : ""}`}>

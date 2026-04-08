@@ -9,6 +9,7 @@ import { ProviderIcon } from "./ProviderIcon";
 interface ModelSelectorTabProps {
   task: Task | TaskDetail;
   addToast: (message: string, type?: ToastType) => void;
+  onTaskUpdated?: (task: Task) => void;
 }
 
 interface ModelSelection {
@@ -78,7 +79,7 @@ function getSuccessToastMessage(target: "executor" | "validator" | "planning", s
   return `${label} model set to ${selection.provider}/${selection.modelId}`;
 }
 
-export function ModelSelectorTab({ task, addToast }: ModelSelectorTabProps) {
+export function ModelSelectorTab({ task, addToast, onTaskUpdated }: ModelSelectorTabProps) {
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [favoriteProviders, setFavoriteProviders] = useState<string[]>([]);
   const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
@@ -222,6 +223,7 @@ export function ModelSelectorTab({ task, addToast }: ModelSelectorTabProps) {
         setSelectedValidator(nextSavedValidator);
         setSavedPlanning(nextSavedPlanning);
         setSelectedPlanning(nextSavedPlanning);
+        onTaskUpdated?.(updatedTask);
 
         const targetSelections: Record<string, ModelSelection> = {
           executor: nextSavedExecutor,
@@ -253,7 +255,7 @@ export function ModelSelectorTab({ task, addToast }: ModelSelectorTabProps) {
         }
       }
     },
-    [task.id, savedExecutor, savedValidator, savedPlanning, addToast],
+    [task.id, savedExecutor, savedValidator, savedPlanning, addToast, onTaskUpdated],
   );
 
   const handleExecutorChange = useCallback(
@@ -318,6 +320,7 @@ export function ModelSelectorTab({ task, addToast }: ModelSelectorTabProps) {
         const nextThinking = updatedTask.thinkingLevel ?? "off";
         setSavedThinking(nextThinking);
         setSelectedThinking(nextThinking);
+        onTaskUpdated?.(updatedTask);
 
         addToast(
           nextThinking === "off"
@@ -338,7 +341,7 @@ export function ModelSelectorTab({ task, addToast }: ModelSelectorTabProps) {
         }
       }
     },
-    [task.id, savedThinking, addToast],
+    [task.id, savedThinking, addToast, onTaskUpdated],
   );
 
   const executorUsingDefault = !savedExecutor.provider && !savedExecutor.modelId;

@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
+import { useState } from "react";
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { TaskDetailModal } from "../TaskDetailModal";
 import type { TaskDetail, Column, MergeResult, Task } from "@fusion/core";
 
@@ -3705,6 +3707,100 @@ describe("TaskDetailModal", () => {
       const descTextarea = container.querySelector("#task-form-description") as HTMLTextAreaElement;
       expect(titleInput.value).toBe("My Task");
       expect(descTextarea.value).toBe("My Description");
+    });
+
+    it("uses updated model values in edit mode after saving from the Model tab", async () => {
+      const { fetchModels, updateTask } = await import("../../api");
+      const mockFetchModels = vi.mocked(fetchModels);
+      const mockUpdateTask = vi.mocked(updateTask);
+      const user = userEvent.setup();
+
+      const availableModels = [
+        { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 },
+        { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
+      ];
+      mockFetchModels.mockResolvedValue({
+        models: availableModels,
+        favoriteProviders: [],
+        favoriteModels: [],
+      });
+
+      const initialTask = makeTask({ id: "FN-001", column: "triage", title: "Model sync test" });
+      const updatedAfterExecutor: Task = {
+        ...initialTask,
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+      };
+      const updatedAfterValidator: Task = {
+        ...updatedAfterExecutor,
+        validatorModelProvider: "openai",
+        validatorModelId: "gpt-4o",
+      };
+
+      mockUpdateTask
+        .mockResolvedValueOnce(updatedAfterExecutor)
+        .mockResolvedValueOnce(updatedAfterValidator);
+
+      function StatefulModal() {
+        const [task, setTask] = useState<TaskDetail>(initialTask);
+
+        return (
+          <TaskDetailModal
+            task={task}
+            onClose={noop}
+            onMoveTask={noopMove}
+            onDeleteTask={noopDelete}
+            onMergeTask={noopMerge}
+            onOpenDetail={noopOpenDetail}
+            onTaskUpdated={(updated) => setTask((prev) => ({ ...prev, ...updated }))}
+            addToast={noop}
+          />
+        );
+      }
+
+      const { container } = render(<StatefulModal />);
+
+      await user.click(screen.getByText("Model"));
+      await waitFor(() => {
+        expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByLabelText("Executor Model"));
+      await user.click(screen.getByText("Claude Sonnet 4.5"));
+
+      await waitFor(() => {
+        expect(mockUpdateTask).toHaveBeenNthCalledWith(
+          1,
+          "FN-001",
+          expect.objectContaining({
+            modelProvider: "anthropic",
+            modelId: "claude-sonnet-4-5",
+          }),
+        );
+      });
+
+      await user.click(screen.getByLabelText("Validator Model"));
+      await user.click(screen.getByText("GPT-4o"));
+
+      await waitFor(() => {
+        expect(mockUpdateTask).toHaveBeenNthCalledWith(
+          2,
+          "FN-001",
+          expect.objectContaining({
+            modelProvider: "anthropic",
+            modelId: "claude-sonnet-4-5",
+            validatorModelProvider: "openai",
+            validatorModelId: "gpt-4o",
+          }),
+        );
+      });
+
+      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Executor Model")).toHaveTextContent("Claude Sonnet 4.5");
+        expect(screen.getByLabelText("Validator Model")).toHaveTextContent("GPT-4o");
+      });
     });
 
     it("renders Save and Cancel in the modal footer, not inside the edit form body", () => {

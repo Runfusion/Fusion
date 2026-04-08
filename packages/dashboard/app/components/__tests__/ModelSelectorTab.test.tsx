@@ -474,6 +474,25 @@ describe("ModelSelectorTab", () => {
     });
   });
 
+  it("calls onTaskUpdated with server task after saving executor model", async () => {
+    const onTaskUpdated = vi.fn();
+    const updatedTask = {
+      ...FAKE_TASK,
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+    };
+    mockUpdateTask.mockResolvedValueOnce(updatedTask);
+
+    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} onTaskUpdated={onTaskUpdated} />);
+
+    await waitForSelectors();
+    await selectOption("Executor Model", "Claude Sonnet 4.5");
+
+    await waitFor(() => {
+      expect(onTaskUpdated).toHaveBeenCalledWith(updatedTask);
+    });
+  });
+
   it("shows a specific validator success toast with the saved model name", async () => {
     render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
 
@@ -913,6 +932,25 @@ describe("ModelSelectorTab", () => {
           "Thinking level set to high",
           "success",
         );
+      });
+    });
+
+    it("calls onTaskUpdated with server task after saving thinking level", async () => {
+      const onTaskUpdated = vi.fn();
+      const updatedTask = {
+        ...FAKE_TASK,
+        thinkingLevel: "high" as const,
+      };
+      mockUpdateTask.mockResolvedValueOnce(updatedTask);
+
+      const user = userEvent.setup();
+      render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} onTaskUpdated={onTaskUpdated} />);
+
+      await waitForSelectors();
+      await user.selectOptions(screen.getByLabelText("Thinking Level"), "high");
+
+      await waitFor(() => {
+        expect(onTaskUpdated).toHaveBeenCalledWith(updatedTask);
       });
     });
 
