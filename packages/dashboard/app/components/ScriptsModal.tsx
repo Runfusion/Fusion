@@ -187,7 +187,7 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
 
         <div className="modal-body" style={{ padding: "16px", maxHeight: "70vh", overflowY: "auto" }}>
           {loading ? (
-            <div style={{ textAlign: "center", padding: "32px", color: "var(--text-secondary)" }}>
+            <div style={{ textAlign: "center", padding: "32px", color: "var(--text-muted)" }}>
               <Loader2 size={24} className="spin" style={{ margin: "0 auto 8px", display: "block" }} />
               Loading scripts...
             </div>
@@ -202,7 +202,7 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
                     marginBottom: "4px",
                     fontSize: "13px",
                     fontWeight: 500,
-                    color: "var(--text-primary)",
+                    color: "var(--text)",
                   }}
                 >
                   Script Name
@@ -218,14 +218,14 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
                   data-testid="script-name-input"
                   style={{
                     width: "100%",
-                    borderColor: nameError ? "var(--status-error, #ef4444)" : undefined,
+                    borderColor: nameError ? "var(--color-error)" : undefined,
                   }}
                 />
                 {nameError && (
                   <div
                     style={{
                       fontSize: "12px",
-                      color: "var(--status-error, #ef4444)",
+                      color: "var(--color-error)",
                       marginTop: "4px",
                     }}
                     data-testid="script-name-error"
@@ -236,7 +236,7 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
                 <div
                   style={{
                     fontSize: "11px",
-                    color: "var(--text-secondary)",
+                    color: "var(--text-muted)",
                     marginTop: "4px",
                   }}
                 >
@@ -252,7 +252,7 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
                     marginBottom: "4px",
                     fontSize: "13px",
                     fontWeight: 500,
-                    color: "var(--text-primary)",
+                    color: "var(--text)",
                   }}
                 >
                   Command
@@ -313,7 +313,7 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
                   marginBottom: "16px",
                 }}
               >
-                <div style={{ fontSize: "13px", color: "var(--text-secondary)" }}>
+                <div style={{ fontSize: "13px", color: "var(--text-muted)" }}>
                   {scriptEntries.length === 0
                     ? "No scripts defined"
                     : `${scriptEntries.length} script${scriptEntries.length === 1 ? "" : "s"}`}
@@ -334,9 +334,9 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
                   style={{
                     textAlign: "center",
                     padding: "32px",
-                    color: "var(--text-secondary)",
+                    color: "var(--text-muted)",
                     fontSize: "14px",
-                    border: "1px dashed var(--border-primary)",
+                    border: "1px dashed var(--border)",
                     borderRadius: "8px",
                   }}
                   data-testid="empty-state"
@@ -356,9 +356,9 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
                       data-testid={`script-${script.name}`}
                       style={{
                         padding: "12px 16px",
-                        border: "1px solid var(--border-primary)",
+                        border: "1px solid var(--border)",
                         borderRadius: "8px",
-                        background: "var(--bg-secondary)",
+                        background: "var(--card)",
                       }}
                     >
                       <div
@@ -390,7 +390,7 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
                           <div
                             style={{
                               fontSize: "12px",
-                              color: "var(--text-secondary)",
+                              color: "var(--text-muted)",
                               fontFamily: "monospace",
                               overflow: "hidden",
                               textOverflow: "ellipsis",
@@ -443,7 +443,7 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
                                 title="Confirm delete"
                                 aria-label={`Confirm delete ${script.name}`}
                                 data-testid={`confirm-delete-script-${script.name}`}
-                                style={{ color: "var(--status-error, #ef4444)" }}
+                                style={{ color: "var(--color-error)" }}
                               >
                                 <Trash2 size={14} />
                               </button>
