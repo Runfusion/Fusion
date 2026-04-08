@@ -287,8 +287,6 @@ function createMockMissionStore() {
 
     // Mission status helpers for pause/stop
     computeMissionStatus: vi.fn(() => "active"),
-    getMilestone: vi.fn((id: string) => milestones.get(id)),
-    getMission: vi.fn((id: string) => missions.get(id)),
 
     on: vi.fn(),
     off: vi.fn(),
@@ -303,11 +301,28 @@ function createMockStore(): TaskStore {
   } as unknown as TaskStore;
 }
 
-function buildApp() {
+function createMockMissionAutopilot() {
+  return {
+    watchMission: vi.fn(),
+    unwatchMission: vi.fn(),
+    isWatching: vi.fn().mockReturnValue(false),
+    getAutopilotStatus: vi.fn().mockReturnValue({
+      enabled: false,
+      state: "inactive",
+      watched: false,
+      lastActivityAt: undefined,
+    }),
+    checkAndStartMission: vi.fn().mockResolvedValue(undefined),
+    start: vi.fn(),
+    stop: vi.fn(),
+  };
+}
+
+function buildApp(options?: { missionAutopilot?: ReturnType<typeof createMockMissionAutopilot> }) {
   const app = express();
   app.use(express.json());
   const store = createMockStore();
-  app.use("/api/missions", createMissionRouter(store));
+  app.use("/api/missions", createMissionRouter(store, options?.missionAutopilot));
   return { app, store, missionStore: store.getMissionStore() };
 }
 
@@ -1201,6 +1216,265 @@ describe("Mission API", () => {
       );
 
       expect(res.status).toBe(400);
+    });
+  });
+
+  // ── Autopilot Endpoints ──────────────────────────────────────────────────
+
+  describe("autopilot endpoints", () => {
+    describe("GET /api/missions/:missionId/autopilot", () => {
+      it("returns autopilot status from service when provided", async () => {
+        const missionAutopilot = createMockMissionAutopilot();
+        const { app, missionStore } = buildApp({ missionAutopilot });
+        const mission = missionStore.createMission({ title: "Autopilot Mission" });
+
+        missionAutopilot.getAutopilotStatus.mockReturnValue({
+          enabled: true,
+          state: "watching",
+          watched: true,
+          lastActivityAt: "2026-04-07T12:00:00.000Z",
+        });
+
+        const res = await get(app, `/api/missions/${mission.id}/autopilot`);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({
+          enabled: true,
+          state: "watching",
+          watched: true,
+          lastActivityAt: "2026-04-07T12:00:00.000Z",
+        });
+        expect(missionAutopilot.getAutopilotStatus).toHaveBeenCalledWith(mission.id);
+      });
+
+      it("returns fallback mission status when autopilot service is unavailable", async () => {
+        const { app, missionStore } = buildApp();
+        const mission = missionStore.createMission({ title: "Fallback Mission" });
+        missionStore.updateMission(mission.id, {
+          autopilotEnabled: true,
+          autopilotState: "watching",
+          lastAutopilotActivityAt: "2026-04-07T13:00:00.000Z",
+        });
+
+        const res = await get(app, `/api/missions/${mission.id}/autopilot`);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({
+          enabled: true,
+          state: "watching",
+          watched: false,
+          lastActivityAt: "2026-04-07T13:00:00.000Z",
+        });
+      });
+    });
+
+    describe("PATCH /api/missions/:missionId/autopilot", () => {
+      it("enables autopilot and starts planning missions", async () => {
+        const missionAutopilot = createMockMissionAutopilot();
+        const { app, missionStore } = buildApp({ missionAutopilot });
+        const mission = missionStore.createMission({ title: "Enable Autopilot" });
+
+        missionAutopilot.getAutopilotStatus.mockReturnValue({
+          enabled: true,
+          state: "watching",
+          watched: true,
+          lastActivityAt: undefined,
+        });
+
+        const res = await request(
+          app,
+          "PATCH",
+          `/api/missions/${mission.id}/autopilot`,
+          JSON.stringify({ enabled: true }),
+          { "content-type": "application/json" },
+        );
+
+        expect(res.status).toBe(200);
+        expect(missionAutopilot.watchMission).toHaveBeenCalledWith(mission.id);
+        expect(missionAutopilot.checkAndStartMission).toHaveBeenCalledWith(mission.id);
+        expect(missionStore.updateMission).toHaveBeenCalledWith(mission.id, { autopilotEnabled: true });
+      });
+
+      it("disables autopilot and unwatches mission", async () => {
+        const missionAutopilot = createMockMissionAutopilot();
+        const { app, missionStore } = buildApp({ missionAutopilot });
+        const mission = missionStore.createMission({ title: "Disable Autopilot" });
+
+        missionAutopilot.getAutopilotStatus.mockReturnValue({
+          enabled: false,
+          state: "inactive",
+          watched: false,
+          lastActivityAt: undefined,
+        });
+
+        const res = await request(
+          app,
+          "PATCH",
+          `/api/missions/${mission.id}/autopilot`,
+          JSON.stringify({ enabled: false }),
+          { "content-type": "application/json" },
+        );
+
+        expect(res.status).toBe(200);
+        expect(missionAutopilot.unwatchMission).toHaveBeenCalledWith(mission.id);
+        expect(missionAutopilot.checkAndStartMission).not.toHaveBeenCalled();
+      });
+
+      it("returns 400 when enabled is missing or not boolean", async () => {
+        const { app, missionStore } = buildApp();
+        const mission = missionStore.createMission({ title: "Invalid Payload" });
+
+        const missingRes = await request(
+          app,
+          "PATCH",
+          `/api/missions/${mission.id}/autopilot`,
+          JSON.stringify({}),
+          { "content-type": "application/json" },
+        );
+        expect(missingRes.status).toBe(400);
+
+        const invalidRes = await request(
+          app,
+          "PATCH",
+          `/api/missions/${mission.id}/autopilot`,
+          JSON.stringify({ enabled: "yes" }),
+          { "content-type": "application/json" },
+        );
+        expect(invalidRes.status).toBe(400);
+      });
+
+      it("returns fallback response without autopilot service", async () => {
+        const { app, missionStore } = buildApp();
+        const mission = missionStore.createMission({ title: "No Autopilot Service" });
+
+        const res = await request(
+          app,
+          "PATCH",
+          `/api/missions/${mission.id}/autopilot`,
+          JSON.stringify({ enabled: true }),
+          { "content-type": "application/json" },
+        );
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({
+          enabled: true,
+          state: "inactive",
+          watched: false,
+          lastActivityAt: undefined,
+        });
+      });
+    });
+
+    describe("POST /api/missions/:missionId/autopilot/start", () => {
+      it("starts watching when autopilot is enabled", async () => {
+        const missionAutopilot = createMockMissionAutopilot();
+        const { app, missionStore } = buildApp({ missionAutopilot });
+        const mission = missionStore.createMission({ title: "Start Autopilot" });
+        missionStore.updateMission(mission.id, { autopilotEnabled: true });
+
+        missionAutopilot.getAutopilotStatus.mockReturnValue({
+          enabled: true,
+          state: "watching",
+          watched: true,
+          lastActivityAt: undefined,
+        });
+
+        const res = await request(
+          app,
+          "POST",
+          `/api/missions/${mission.id}/autopilot/start`,
+          JSON.stringify({}),
+          { "content-type": "application/json" },
+        );
+
+        expect(res.status).toBe(200);
+        expect(missionAutopilot.watchMission).toHaveBeenCalledWith(mission.id);
+        expect(missionAutopilot.checkAndStartMission).toHaveBeenCalledWith(mission.id);
+      });
+
+      it("returns 400 when mission autopilot is disabled", async () => {
+        const missionAutopilot = createMockMissionAutopilot();
+        const { app, missionStore } = buildApp({ missionAutopilot });
+        const mission = missionStore.createMission({ title: "Disabled Autopilot" });
+
+        const res = await request(
+          app,
+          "POST",
+          `/api/missions/${mission.id}/autopilot/start`,
+          JSON.stringify({}),
+          { "content-type": "application/json" },
+        );
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain("not enabled");
+      });
+
+      it("returns 503 when autopilot service is unavailable", async () => {
+        const { app, missionStore } = buildApp();
+        const mission = missionStore.createMission({ title: "Service Unavailable" });
+        missionStore.updateMission(mission.id, { autopilotEnabled: true });
+
+        const res = await request(
+          app,
+          "POST",
+          `/api/missions/${mission.id}/autopilot/start`,
+          JSON.stringify({}),
+          { "content-type": "application/json" },
+        );
+
+        expect(res.status).toBe(503);
+      });
+    });
+
+    describe("POST /api/missions/:missionId/autopilot/stop", () => {
+      it("stops watching when autopilot service is available", async () => {
+        const missionAutopilot = createMockMissionAutopilot();
+        const { app, missionStore } = buildApp({ missionAutopilot });
+        const mission = missionStore.createMission({ title: "Stop Autopilot" });
+
+        missionAutopilot.getAutopilotStatus.mockReturnValue({
+          enabled: true,
+          state: "inactive",
+          watched: false,
+          lastActivityAt: undefined,
+        });
+
+        const res = await request(
+          app,
+          "POST",
+          `/api/missions/${mission.id}/autopilot/stop`,
+          JSON.stringify({}),
+          { "content-type": "application/json" },
+        );
+
+        expect(res.status).toBe(200);
+        expect(missionAutopilot.unwatchMission).toHaveBeenCalledWith(mission.id);
+      });
+
+      it("returns fallback status when autopilot service is unavailable", async () => {
+        const { app, missionStore } = buildApp();
+        const mission = missionStore.createMission({ title: "Stop Fallback" });
+        missionStore.updateMission(mission.id, {
+          autopilotEnabled: true,
+          lastAutopilotActivityAt: "2026-04-07T15:00:00.000Z",
+        });
+
+        const res = await request(
+          app,
+          "POST",
+          `/api/missions/${mission.id}/autopilot/stop`,
+          JSON.stringify({}),
+          { "content-type": "application/json" },
+        );
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({
+          enabled: true,
+          state: "inactive",
+          watched: false,
+          lastActivityAt: "2026-04-07T15:00:00.000Z",
+        });
+      });
     });
   });
 });

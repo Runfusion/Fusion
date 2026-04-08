@@ -169,6 +169,117 @@ describe("MissionStore", () => {
     });
   });
 
+  // ── Mission Summary & Slice Discovery Tests ───────────────────────────
+
+  describe("Mission summary helpers", () => {
+    it("getMissionSummary returns zeros for an empty mission", () => {
+      const mission = store.createMission({ title: "Empty" });
+
+      const summary = store.getMissionSummary(mission.id);
+
+      expect(summary).toEqual({
+        totalMilestones: 0,
+        completedMilestones: 0,
+        totalFeatures: 0,
+        completedFeatures: 0,
+        progressPercent: 0,
+      });
+    });
+
+    it("getMissionSummary falls back to milestone progress when no features exist", () => {
+      const mission = store.createMission({ title: "Milestones only" });
+      const m1 = store.addMilestone(mission.id, { title: "M1" });
+      store.addMilestone(mission.id, { title: "M2" });
+      store.updateMilestone(m1.id, { status: "complete" });
+
+      const summary = store.getMissionSummary(mission.id);
+
+      expect(summary.totalMilestones).toBe(2);
+      expect(summary.completedMilestones).toBe(1);
+      expect(summary.totalFeatures).toBe(0);
+      expect(summary.completedFeatures).toBe(0);
+      expect(summary.progressPercent).toBe(50);
+    });
+
+    it("getMissionSummary reports partial feature completion", () => {
+      const mission = store.createMission({ title: "Partial features" });
+      const milestone = store.addMilestone(mission.id, { title: "M1" });
+      const slice = store.addSlice(milestone.id, { title: "Slice" });
+      const f1 = store.addFeature(slice.id, { title: "F1" });
+      const f2 = store.addFeature(slice.id, { title: "F2" });
+      store.addFeature(slice.id, { title: "F3" });
+
+      store.updateFeature(f1.id, { status: "done" });
+      store.updateFeature(f2.id, { status: "done" });
+
+      const summary = store.getMissionSummary(mission.id);
+
+      expect(summary.totalFeatures).toBe(3);
+      expect(summary.completedFeatures).toBe(2);
+      expect(summary.progressPercent).toBe(67);
+    });
+
+    it("getMissionSummary reports 100% when all features are done", () => {
+      const mission = store.createMission({ title: "All done" });
+      const milestone = store.addMilestone(mission.id, { title: "M1" });
+      const slice = store.addSlice(milestone.id, { title: "Slice" });
+      const f1 = store.addFeature(slice.id, { title: "F1" });
+      const f2 = store.addFeature(slice.id, { title: "F2" });
+
+      store.updateFeature(f1.id, { status: "done" });
+      store.updateFeature(f2.id, { status: "done" });
+
+      const summary = store.getMissionSummary(mission.id);
+      expect(summary.progressPercent).toBe(100);
+    });
+
+    it("getMissionSummary rounds progress percent accurately", () => {
+      const mission = store.createMission({ title: "Rounding" });
+      const milestone = store.addMilestone(mission.id, { title: "M1" });
+      const slice = store.addSlice(milestone.id, { title: "Slice" });
+      const f1 = store.addFeature(slice.id, { title: "F1" });
+      store.addFeature(slice.id, { title: "F2" });
+      store.addFeature(slice.id, { title: "F3" });
+
+      store.updateFeature(f1.id, { status: "done" });
+
+      const summary = store.getMissionSummary(mission.id);
+      expect(summary.progressPercent).toBe(33);
+    });
+
+    it("findNextPendingSlice skips completed slices in earlier milestones", () => {
+      const mission = store.createMission({ title: "Next pending" });
+      const m1 = store.addMilestone(mission.id, { title: "M1" });
+      const m2 = store.addMilestone(mission.id, { title: "M2" });
+      const completed = store.addSlice(m1.id, { title: "Done slice" });
+      const pending = store.addSlice(m2.id, { title: "Pending slice" });
+
+      store.updateSlice(completed.id, { status: "complete" });
+
+      const next = store.findNextPendingSlice(mission.id);
+      expect(next?.id).toBe(pending.id);
+    });
+
+    it("findNextPendingSlice returns undefined when no pending slices exist", () => {
+      const mission = store.createMission({ title: "No pending" });
+      const milestone = store.addMilestone(mission.id, { title: "M1" });
+      const slice = store.addSlice(milestone.id, { title: "Completed" });
+      store.updateSlice(slice.id, { status: "complete" });
+
+      const next = store.findNextPendingSlice(mission.id);
+      expect(next).toBeUndefined();
+    });
+
+    it("findNextPendingSlice returns first pending slice in a single-milestone mission", () => {
+      const mission = store.createMission({ title: "Single" });
+      const milestone = store.addMilestone(mission.id, { title: "M1" });
+      const pending = store.addSlice(milestone.id, { title: "Pending" });
+
+      const next = store.findNextPendingSlice(mission.id);
+      expect(next?.id).toBe(pending.id);
+    });
+  });
+
   // ── Milestone CRUD Tests ──────────────────────────────────────────────
 
   describe("Milestone CRUD", () => {

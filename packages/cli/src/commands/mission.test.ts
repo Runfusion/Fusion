@@ -38,6 +38,10 @@ const {
   runMissionShow,
   runMissionDelete,
   runMissionActivateSlice,
+  runMilestoneAdd,
+  runSliceAdd,
+  runFeatureAdd,
+  runFeatureLinkTask,
 } = await import("./mission.js");
 
 // Helper to mock console output
@@ -103,12 +107,44 @@ function createMockMissionStore(overrides = {}) {
       title: "Test Mission",
       status: "active",
     }),
-    deleteMission: vi.fn(),
+    addMilestone: vi.fn().mockReturnValue({
+      id: "MS-001",
+      title: "New Milestone",
+      status: "planning",
+    }),
+    getMilestone: vi.fn().mockReturnValue({
+      id: "MS-001",
+      title: "Milestone 1",
+      status: "active",
+    }),
+    addSlice: vi.fn().mockReturnValue({
+      id: "SL-001",
+      title: "New Slice",
+      status: "pending",
+    }),
     getSlice: vi.fn().mockReturnValue({
       id: "SL-001",
       title: "Test Slice",
       status: "pending",
     }),
+    addFeature: vi.fn().mockReturnValue({
+      id: "F-001",
+      title: "New Feature",
+      status: "defined",
+      acceptanceCriteria: undefined,
+    }),
+    getFeature: vi.fn().mockReturnValue({
+      id: "F-001",
+      title: "Feature 1",
+      status: "defined",
+    }),
+    linkFeatureToTask: vi.fn().mockImplementation((featureId: string, taskId: string) => ({
+      id: featureId,
+      title: "Feature 1",
+      status: "triaged",
+      taskId,
+    })),
+    deleteMission: vi.fn(),
     activateSlice: vi.fn().mockReturnValue({
       id: "SL-001",
       title: "Test Slice",
@@ -117,6 +153,17 @@ function createMockMissionStore(overrides = {}) {
     }),
     ...overrides,
   };
+}
+
+function mockResolvedProjectStore(
+  missionStore: ReturnType<typeof createMockMissionStore>,
+  overrides: Partial<{ getTask: ReturnType<typeof vi.fn> }> = {},
+) {
+  vi.mocked(getStore).mockResolvedValue({
+    getMissionStore: () => missionStore,
+    getTask: vi.fn().mockResolvedValue({ id: "FN-001" }),
+    ...overrides,
+  } as any);
 }
 
 describe("mission commands", () => {
@@ -506,6 +553,230 @@ describe("mission commands", () => {
       }
 
       expect(mockError).toHaveBeenCalledWith("✗ Slice SL-001 is not pending (status: active)");
+      expect(mockExit).toHaveBeenCalledWith(1);
+
+      mockExit.mockRestore();
+      mockError.mockRestore();
+    });
+  });
+
+  describe("runMilestoneAdd", () => {
+    it("adds a milestone successfully", async () => {
+      const mockMissionStore = createMockMissionStore({
+        addMilestone: vi.fn().mockReturnValue({ id: "MS-010", title: "M2", status: "planning" }),
+      });
+      mockResolvedProjectStore(mockMissionStore);
+
+      const consoleCapture = captureConsole();
+      try {
+        await runMilestoneAdd("M-001", "M2", "Details");
+        expect(mockMissionStore.addMilestone).toHaveBeenCalledWith("M-001", {
+          title: "M2",
+          description: "Details",
+        });
+        expect(consoleCapture.logs.some((line) => line.includes("Added MS-010"))).toBe(true);
+      } finally {
+        consoleCapture.restore();
+      }
+    });
+
+    it("exits when mission does not exist", async () => {
+      const mockMissionStore = createMockMissionStore({ getMission: vi.fn().mockReturnValue(undefined) });
+      mockResolvedProjectStore(mockMissionStore);
+
+      const mockExit = vi.spyOn(process, "exit").mockImplementation(() => {
+        throw new Error("process.exit");
+      });
+      const mockError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      await expect(runMilestoneAdd("M-404", "M2")).rejects.toThrow("process.exit");
+      expect(mockError).toHaveBeenCalledWith("✗ Mission M-404 not found");
+      expect(mockExit).toHaveBeenCalledWith(1);
+
+      mockExit.mockRestore();
+      mockError.mockRestore();
+    });
+
+    it("prompts interactively when title is omitted", async () => {
+      const mockMissionStore = createMockMissionStore();
+      mockResolvedProjectStore(mockMissionStore);
+
+      const mockRl = {
+        question: vi.fn().mockResolvedValueOnce("Interactive milestone").mockResolvedValueOnce("Interactive desc"),
+        close: vi.fn(),
+      };
+      vi.mocked(createInterface).mockReturnValue(mockRl as any);
+
+      await runMilestoneAdd("M-001");
+
+      expect(mockRl.question).toHaveBeenCalledWith("Milestone title: ");
+      expect(mockMissionStore.addMilestone).toHaveBeenCalledWith("M-001", {
+        title: "Interactive milestone",
+        description: "Interactive desc",
+      });
+    });
+  });
+
+  describe("runSliceAdd", () => {
+    it("adds a slice successfully", async () => {
+      const mockMissionStore = createMockMissionStore({
+        addSlice: vi.fn().mockReturnValue({ id: "SL-010", title: "Slice", status: "pending" }),
+      });
+      mockResolvedProjectStore(mockMissionStore);
+
+      const consoleCapture = captureConsole();
+      try {
+        await runSliceAdd("MS-001", "Slice", "Slice details");
+        expect(mockMissionStore.addSlice).toHaveBeenCalledWith("MS-001", {
+          title: "Slice",
+          description: "Slice details",
+        });
+        expect(consoleCapture.logs.some((line) => line.includes("Added SL-010"))).toBe(true);
+      } finally {
+        consoleCapture.restore();
+      }
+    });
+
+    it("exits when milestone does not exist", async () => {
+      const mockMissionStore = createMockMissionStore({ getMilestone: vi.fn().mockReturnValue(undefined) });
+      mockResolvedProjectStore(mockMissionStore);
+
+      const mockExit = vi.spyOn(process, "exit").mockImplementation(() => {
+        throw new Error("process.exit");
+      });
+      const mockError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      await expect(runSliceAdd("MS-404", "Slice")).rejects.toThrow("process.exit");
+      expect(mockError).toHaveBeenCalledWith("✗ Milestone MS-404 not found");
+      expect(mockExit).toHaveBeenCalledWith(1);
+
+      mockExit.mockRestore();
+      mockError.mockRestore();
+    });
+
+    it("prompts interactively when title is omitted", async () => {
+      const mockMissionStore = createMockMissionStore();
+      mockResolvedProjectStore(mockMissionStore);
+
+      const mockRl = {
+        question: vi.fn().mockResolvedValueOnce("Interactive slice").mockResolvedValueOnce("Interactive slice desc"),
+        close: vi.fn(),
+      };
+      vi.mocked(createInterface).mockReturnValue(mockRl as any);
+
+      await runSliceAdd("MS-001");
+
+      expect(mockRl.question).toHaveBeenCalledWith("Slice title: ");
+      expect(mockMissionStore.addSlice).toHaveBeenCalledWith("MS-001", {
+        title: "Interactive slice",
+        description: "Interactive slice desc",
+      });
+    });
+  });
+
+  describe("runFeatureAdd", () => {
+    it("adds a feature with acceptance criteria", async () => {
+      const mockMissionStore = createMockMissionStore({
+        addFeature: vi.fn().mockReturnValue({
+          id: "F-010",
+          title: "Feature",
+          status: "defined",
+          acceptanceCriteria: "Ship works",
+        }),
+      });
+      mockResolvedProjectStore(mockMissionStore);
+
+      await runFeatureAdd("SL-001", "Feature", "Feature details", "Ship works");
+
+      expect(mockMissionStore.addFeature).toHaveBeenCalledWith("SL-001", {
+        title: "Feature",
+        description: "Feature details",
+        acceptanceCriteria: "Ship works",
+      });
+    });
+
+    it("exits when slice does not exist", async () => {
+      const mockMissionStore = createMockMissionStore({ getSlice: vi.fn().mockReturnValue(undefined) });
+      mockResolvedProjectStore(mockMissionStore);
+
+      const mockExit = vi.spyOn(process, "exit").mockImplementation(() => {
+        throw new Error("process.exit");
+      });
+      const mockError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      await expect(runFeatureAdd("SL-404", "Feature")).rejects.toThrow("process.exit");
+      expect(mockError).toHaveBeenCalledWith("✗ Slice SL-404 not found");
+      expect(mockExit).toHaveBeenCalledWith(1);
+
+      mockExit.mockRestore();
+      mockError.mockRestore();
+    });
+
+    it("prompts interactively when title is omitted", async () => {
+      const mockMissionStore = createMockMissionStore();
+      mockResolvedProjectStore(mockMissionStore);
+
+      const mockRl = {
+        question: vi.fn()
+          .mockResolvedValueOnce("Interactive feature")
+          .mockResolvedValueOnce("Interactive feature desc")
+          .mockResolvedValueOnce("Interactive acceptance"),
+        close: vi.fn(),
+      };
+      vi.mocked(createInterface).mockReturnValue(mockRl as any);
+
+      await runFeatureAdd("SL-001");
+
+      expect(mockRl.question).toHaveBeenCalledWith("Feature title: ");
+      expect(mockMissionStore.addFeature).toHaveBeenCalledWith("SL-001", {
+        title: "Interactive feature",
+        description: "Interactive feature desc",
+        acceptanceCriteria: "Interactive acceptance",
+      });
+    });
+  });
+
+  describe("runFeatureLinkTask", () => {
+    it("links a feature to a task", async () => {
+      const mockMissionStore = createMockMissionStore();
+      const getTask = vi.fn().mockResolvedValue({ id: "FN-001" });
+      mockResolvedProjectStore(mockMissionStore, { getTask });
+
+      await runFeatureLinkTask("F-001", "FN-001");
+
+      expect(getTask).toHaveBeenCalledWith("FN-001");
+      expect(mockMissionStore.linkFeatureToTask).toHaveBeenCalledWith("F-001", "FN-001");
+    });
+
+    it("exits when feature does not exist", async () => {
+      const mockMissionStore = createMockMissionStore({ getFeature: vi.fn().mockReturnValue(undefined) });
+      mockResolvedProjectStore(mockMissionStore);
+
+      const mockExit = vi.spyOn(process, "exit").mockImplementation(() => {
+        throw new Error("process.exit");
+      });
+      const mockError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      await expect(runFeatureLinkTask("F-404", "FN-001")).rejects.toThrow("process.exit");
+      expect(mockError).toHaveBeenCalledWith("✗ Feature F-404 not found");
+      expect(mockExit).toHaveBeenCalledWith(1);
+
+      mockExit.mockRestore();
+      mockError.mockRestore();
+    });
+
+    it("exits when task does not exist", async () => {
+      const mockMissionStore = createMockMissionStore();
+      const getTask = vi.fn().mockRejectedValue(new Error("missing"));
+      mockResolvedProjectStore(mockMissionStore, { getTask });
+
+      const mockExit = vi.spyOn(process, "exit").mockImplementation(() => {
+        throw new Error("process.exit");
+      });
+      const mockError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      await expect(runFeatureLinkTask("F-001", "FN-404")).rejects.toThrow("process.exit");
+      expect(mockError).toHaveBeenCalledWith("✗ Task FN-404 not found");
       expect(mockExit).toHaveBeenCalledWith(1);
 
       mockExit.mockRestore();

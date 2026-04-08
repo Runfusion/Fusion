@@ -23,7 +23,7 @@ function createMockMissionStore(): any {
     getMission: vi.fn(),
     getMissionWithHierarchy: vi.fn(),
     getFeatureByTaskId: vi.fn(),
-    updateFeatureStatus: vi.fn().mockResolvedValue(undefined),
+    updateFeatureStatus: vi.fn(),
     computeSliceStatus: vi.fn(),
     on: vi.fn(),
     off: vi.fn(),
@@ -38,6 +38,8 @@ function createMockTaskStore(): any {
     updateTask: vi.fn().mockResolvedValue(undefined),
     moveTask: vi.fn().mockResolvedValue(undefined),
     logEntry: vi.fn().mockResolvedValue(undefined),
+    parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
+    getTasksDir: vi.fn().mockReturnValue("/test/project/.fusion/tasks"),
     getRootDir: vi.fn().mockReturnValue("/test/project"),
     on: vi.fn(),
     off: vi.fn(),
@@ -106,11 +108,19 @@ describe("Scheduler Mission Integration", () => {
   let taskStore: any;
   let missionStore: any;
   let scheduler: Scheduler;
+  let listeners: Record<string, Array<(...args: any[]) => void>>;
 
   beforeEach(() => {
+    listeners = {};
     taskStore = createMockTaskStore();
     missionStore = createMockMissionStore();
     taskStore.getMissionStore.mockReturnValue(missionStore);
+
+    taskStore.on.mockImplementation((event: string, handler: (...args: any[]) => void) => {
+      listeners[event] ??= [];
+      listeners[event].push(handler);
+      return taskStore;
+    });
 
     const semaphore = new AgentSemaphore(2);
     scheduler = new Scheduler(taskStore, {
@@ -149,6 +159,44 @@ describe("Scheduler Mission Integration", () => {
 
       expect(missionStore.getMissionWithHierarchy).toHaveBeenCalledWith("M-001");
       expect(missionStore.activateSlice).toHaveBeenCalledWith("SL-002");
+      expect(result).toEqual(mockActivated);
+    });
+
+    it("skips milestones with unmet dependencies and activates the next eligible pending slice", async () => {
+      const mockActivated = createMockSlice({ id: "SL-ELIGIBLE", status: "active" });
+
+      missionStore.getMissionWithHierarchy.mockReturnValue({
+        id: "M-001",
+        status: "active",
+        milestones: [
+          {
+            id: "MS-BLOCKED",
+            orderIndex: 0,
+            dependencies: ["MS-DEP"],
+            status: "planning",
+            slices: [{ id: "SL-BLOCKED", status: "pending", orderIndex: 0 }],
+          },
+          {
+            id: "MS-DEP",
+            orderIndex: 1,
+            dependencies: [],
+            status: "planning",
+            slices: [{ id: "SL-DEP", status: "complete", orderIndex: 0 }],
+          },
+          {
+            id: "MS-ELIGIBLE",
+            orderIndex: 2,
+            dependencies: [],
+            status: "active",
+            slices: [{ id: "SL-ELIGIBLE", status: "pending", orderIndex: 0 }],
+          },
+        ],
+      });
+      missionStore.activateSlice.mockReturnValue(mockActivated);
+
+      const result = await scheduler.activateNextPendingSlice("M-001");
+
+      expect(missionStore.activateSlice).toHaveBeenCalledWith("SL-ELIGIBLE");
       expect(result).toEqual(mockActivated);
     });
 
@@ -200,68 +248,79 @@ describe("Scheduler Mission Integration", () => {
   });
 
   describe("Mission-aware scheduling", () => {
-    it("should handle task completion with mission integration", async () => {
-      const feature = createMockFeature({ id: "F-001", sliceId: "SL-001", taskId: "FN-001" });
-      const slice = createMockSlice({ id: "SL-001", milestoneId: "MS-001" });
-      const milestone = createMockMilestone({ id: "MS-001", missionId: "M-001" });
-      const mission = createMockMission({ id: "M-001", autoAdvance: true });
-      const nextSlice = createMockSlice({ id: "SL-002", status: "pending" });
+    it("filters out todo tasks whose mission is blocked", async () => {
+      const blockedTask = {
+        id: "FN-001",
+        title: "Blocked task",
+        column: "todo",
+        paused: false,
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        sliceId: "SL-001",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
 
-      missionStore.getFeatureByTaskId.mockReturnValue(feature);
-      missionStore.getSlice.mockReturnValue(slice);
-      missionStore.getMilestone.mockReturnValue(milestone);
-      missionStore.getMission.mockReturnValue(mission);
-      missionStore.computeSliceStatus.mockReturnValue("complete");
-      missionStore.findNextPendingSlice.mockReturnValue(nextSlice);
-      missionStore.activateSlice.mockReturnValue({ ...nextSlice, status: "active" });
+      taskStore.listTasks.mockResolvedValue([blockedTask]);
+      taskStore.getSettings.mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 2,
+      });
+      missionStore.getSlice.mockReturnValue(createMockSlice({ id: "SL-001", milestoneId: "MS-001" }));
+      missionStore.getMilestone.mockReturnValue(createMockMilestone({ id: "MS-001", missionId: "M-001" }));
+      missionStore.getMission.mockReturnValue(createMockMission({ id: "M-001", status: "blocked" }));
 
-      // Verify the scheduler has access to mission store
-      expect(scheduler).toBeDefined();
+      vi.spyOn(scheduler as any, "validateTaskFilesystem").mockResolvedValue({ valid: true });
+
+      await scheduler.schedule();
+
+      expect(taskStore.moveTask).not.toHaveBeenCalled();
+      expect(taskStore.updateTask).not.toHaveBeenCalled();
     });
 
-    it("should not auto-advance when mission is blocked", async () => {
-      const feature = createMockFeature({ id: "F-001", sliceId: "SL-001", taskId: "FN-001" });
-      const slice = createMockSlice({ id: "SL-001", milestoneId: "MS-001" });
-      const milestone = createMockMilestone({ id: "MS-001", missionId: "M-001" });
-      const mission = createMockMission({ id: "M-001", status: "blocked" });
+    it("delegates completion progression to missionAutopilot when a linked mission slice completes", async () => {
+      const localTaskStore = createMockTaskStore();
+      const localMissionStore = createMockMissionStore();
+      const localListeners: Record<string, Array<(...args: any[]) => void>> = {};
+      const missionAutopilot = {
+        handleTaskCompletion: vi.fn().mockResolvedValue(undefined),
+        stop: vi.fn(),
+      };
 
-      missionStore.getFeatureByTaskId.mockReturnValue(feature);
-      missionStore.getSlice.mockReturnValue(slice);
-      missionStore.getMilestone.mockReturnValue(milestone);
-      missionStore.getMission.mockReturnValue(mission);
-      missionStore.computeSliceStatus.mockReturnValue("complete");
+      localTaskStore.on.mockImplementation((event: string, handler: (...args: any[]) => void) => {
+        localListeners[event] ??= [];
+        localListeners[event].push(handler);
+        return localTaskStore;
+      });
 
-      // Verify that scheduler has the mission store
-      expect(scheduler).toBeDefined();
-    });
+      const localScheduler = new Scheduler(localTaskStore, {
+        pollIntervalMs: 1000,
+        semaphore: new AgentSemaphore(2),
+        missionStore: localMissionStore,
+        missionAutopilot: missionAutopilot as any,
+      });
 
-    it("should handle task with no linked feature gracefully", async () => {
-      missionStore.getFeatureByTaskId.mockReturnValue(undefined);
+      localMissionStore.getFeatureByTaskId.mockReturnValue(
+        createMockFeature({ id: "F-001", sliceId: "SL-001", taskId: "FN-001", status: "triaged" }),
+      );
+      localMissionStore.getSlice.mockReturnValue(createMockSlice({ id: "SL-001", status: "complete" }));
+      localMissionStore.updateFeatureStatus.mockReturnValue(undefined);
 
-      // Should not throw when feature is not found
-      expect(scheduler).toBeDefined();
-    });
+      const handler = localListeners["task:moved"]?.[0];
+      expect(handler).toBeDefined();
 
-    it("should handle multiple slices becoming ready simultaneously", async () => {
-      const mission = createMockMission({ id: "M-001" });
-      const pendingSlice1 = createMockSlice({ id: "SL-002", status: "pending" });
-      const pendingSlice2 = createMockSlice({ id: "SL-003", status: "pending" });
+      handler?.({
+        task: { id: "FN-001", sliceId: "SL-001" },
+        from: "in-progress",
+        to: "done",
+      });
 
-      missionStore.getMission.mockReturnValue(mission);
+      await vi.waitFor(() => {
+        expect(missionAutopilot.handleTaskCompletion).toHaveBeenCalledWith("FN-001");
+      });
 
-      // First call returns SL-002
-      missionStore.findNextPendingSlice
-        .mockReturnValueOnce(pendingSlice1)
-        .mockReturnValueOnce(pendingSlice2)
-        .mockReturnValueOnce(null);
-
-      // Activate should be called for each slice
-      missionStore.activateSlice
-        .mockReturnValueOnce({ ...pendingSlice1, status: "active" })
-        .mockReturnValueOnce({ ...pendingSlice2, status: "active" });
-
-      // Verify that the scheduler has the mission store
-      expect(scheduler).toBeDefined();
+      localScheduler.stop();
     });
   });
 
