@@ -19,9 +19,9 @@ import { useViewportMode } from "./Header";
 
 export interface MobileNavBarProps {
   /** Current task view mode */
-  view: "board" | "list" | "agents";
+  view: "board" | "list" | "agents" | "missions";
   /** Change task view handler */
-  onChangeView: (view: "board" | "list" | "agents") => void;
+  onChangeView: (view: "board" | "list" | "agents" | "missions") => void;
   /** Whether the ExecutorStatusBar footer is visible */
   footerVisible: boolean;
   /** Whether any full-screen modal is currently open (hides the tab bar) */

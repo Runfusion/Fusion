@@ -98,16 +98,6 @@ describe("Header", () => {
     expect(btn).toBeDefined();
   });
 
-  it("renders the missions button when mission management is available", () => {
-    const onOpen = vi.fn();
-    render(<Header onOpenMissions={onOpen} />);
-    expect(screen.getByTestId("missions-btn")).toBeDefined();
-  });
-
-  it("does not render the missions button when mission management is unavailable", () => {
-    render(<Header />);
-    expect(screen.queryByTestId("missions-btn")).toBeNull();
-  });
 
   it("calls onOpenGitHubImport when import button is clicked", () => {
     const onOpen = vi.fn();
@@ -303,6 +293,39 @@ describe("Header", () => {
     const boardBtn = screen.getByTitle("Board view");
     expect(boardBtn.className).not.toContain("active");
     expect(boardBtn.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  // ── Missions View Toggle ────────────────────────────────────────
+
+  it("renders missions view button in view toggle when onChangeView is provided", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="board" onChangeView={onChangeView} />);
+    const missionsBtn = screen.getByTitle("Missions view");
+    expect(missionsBtn).toBeDefined();
+  });
+
+  it("calls onChangeView with 'missions' when missions view button is clicked", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="board" onChangeView={onChangeView} />);
+    const missionsBtn = screen.getByTitle("Missions view");
+    fireEvent.click(missionsBtn);
+    expect(onChangeView).toHaveBeenCalledWith("missions");
+  });
+
+  it("marks missions view button as active when view is 'missions'", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="missions" onChangeView={onChangeView} />);
+    const missionsBtn = screen.getByTitle("Missions view");
+    expect(missionsBtn.className).toContain("active");
+    expect(missionsBtn.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("does not mark missions view button as active when view is 'board'", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="board" onChangeView={onChangeView} />);
+    const missionsBtn = screen.getByTitle("Missions view");
+    expect(missionsBtn.className).not.toContain("active");
+    expect(missionsBtn.getAttribute("aria-pressed")).toBe("false");
   });
 
   // ── Search Visibility by View ─────────────────────────────────────
@@ -768,14 +791,6 @@ describe("Header", () => {
       );
       fireEvent.click(screen.getByTitle("More header actions"));
       expect(screen.queryByTestId("overflow-project-selector-btn")).not.toBeNull();
-    });
-
-    it("missions overflow menu item calls onOpenMissions when clicked", () => {
-      const onOpenMissions = vi.fn();
-      render(<Header onOpenSettings={vi.fn()} onOpenMissions={onOpenMissions} />);
-      fireEvent.click(screen.getByTitle("More header actions"));
-      fireEvent.click(screen.getByText("Missions"));
-      expect(onOpenMissions).toHaveBeenCalledOnce();
     });
 
     it("workflow steps overflow menu item calls onOpenWorkflowSteps when clicked", () => {

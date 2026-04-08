@@ -71,6 +71,7 @@ import type { AutopilotStatus as AutopilotStatusType, AutopilotState } from "./m
 
 interface MissionManagerProps {
   isOpen: boolean;
+  isInline?: boolean;
   onClose: () => void;
   addToast: (message: string, type?: ToastType) => void;
   projectId?: string;
@@ -174,7 +175,8 @@ const EMPTY_FEATURE_FORM: FeatureFormData = {
   status: "defined",
 };
 
-export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectTask, availableTasks = [], resumeSessionId, targetMissionId }: MissionManagerProps) {
+export function MissionManager({ isOpen, isInline = false, onClose, addToast, projectId, onSelectTask, availableTasks = [], resumeSessionId, targetMissionId }: MissionManagerProps) {
+  const isActive = isInline || isOpen;
   const [missions, setMissions] = useState<MissionWithSummary[]>([]);
   const [selectedMission, setSelectedMission] = useState<MissionWithHierarchy | null>(null);
   const [loading, setLoading] = useState(true);
@@ -213,10 +215,10 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
 
   // Auto-open interview modal when resuming a session
   useEffect(() => {
-    if (isOpen && resumeSessionId) {
+    if (isActive && resumeSessionId) {
       setShowInterviewModal(true);
     }
-  }, [isOpen, resumeSessionId]);
+  }, [isActive, resumeSessionId]);
 
   // Delete confirmation
   const [deleteConfirmId, setDeleteConfirmId] = useState<{ type: string; id: string } | null>(null);
@@ -257,27 +259,27 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
   }, [addToast, projectId]);
 
   useEffect(() => {
-    if (isOpen) {
+    if (isActive) {
       loadMissions();
       setSelectedMission(null);
     }
-  }, [isOpen, loadMissions]);
+  }, [isActive, loadMissions]);
 
   // Auto-load target mission when specified
   const targetLoadedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (isOpen && targetMissionId && targetLoadedRef.current !== targetMissionId && missions.length > 0) {
+    if (isActive && targetMissionId && targetLoadedRef.current !== targetMissionId && missions.length > 0) {
       targetLoadedRef.current = targetMissionId;
       loadMissionDetail(targetMissionId);
     }
-  }, [isOpen, targetMissionId, missions, loadMissionDetail]);
+  }, [isActive, targetMissionId, missions, loadMissionDetail]);
 
   // Reset target tracking when modal closes
   useEffect(() => {
-    if (!isOpen) {
+    if (!isActive) {
       targetLoadedRef.current = null;
     }
-  }, [isOpen]);
+  }, [isActive]);
 
   // Mission handlers
   const handleCreateMission = useCallback(() => {
@@ -801,7 +803,7 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
 
   // Escape key handling
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isActive) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         onClose();
@@ -809,24 +811,19 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isActive, onClose]);
 
-  if (!isOpen) return null;
+  if (!isActive) return null;
 
-  return (
+  const manager = (
     <div
-      className="mission-manager-overlay open"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-      data-testid="mission-manager-overlay"
+      ref={modalRef}
+      className={`mission-manager${isInline ? " mission-manager--inline" : ""}`}
+      role={isInline ? undefined : "dialog"}
+      aria-modal={isInline ? undefined : true}
+      aria-label={isInline ? undefined : "Mission Manager"}
+      data-testid="mission-manager-dialog"
     >
-      <div
-        ref={modalRef}
-        className="mission-manager"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Mission Manager"
-        data-testid="mission-manager-dialog"
-      >
         {/* ── Header ── */}
         <div className="mission-manager__header">
           <div className="mission-manager__header-title">
@@ -1800,17 +1797,40 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
           </div>
         )}
       </div>
+  );
 
-      <MissionInterviewModal
-        isOpen={showInterviewModal}
-        onClose={() => setShowInterviewModal(false)}
-        onMissionCreated={() => {
-          loadMissions();
-          addToast("Mission created from AI interview", "success");
-        }}
-        projectId={projectId}
-        resumeSessionId={resumeSessionId}
-      />
-    </div>
+  const interviewModal = (
+    <MissionInterviewModal
+      isOpen={showInterviewModal}
+      onClose={() => setShowInterviewModal(false)}
+      onMissionCreated={() => {
+        loadMissions();
+        addToast("Mission created from AI interview", "success");
+      }}
+      projectId={projectId}
+      resumeSessionId={resumeSessionId}
+    />
+  );
+
+  if (isInline) {
+    return (
+      <>
+        {manager}
+        {interviewModal}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div
+        className="mission-manager-overlay open"
+        onClick={(e) => e.target === e.currentTarget && onClose()}
+        data-testid="mission-manager-overlay"
+      >
+        {manager}
+      </div>
+      {interviewModal}
+    </>
   );
 }

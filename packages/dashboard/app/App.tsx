@@ -5,6 +5,7 @@ import { Board } from "./components/Board";
 import { ListView } from "./components/ListView";
 import { ProjectOverview } from "./components/ProjectOverview";
 import { AgentsView } from "./components/AgentsView";
+import { MissionManager } from "./components/MissionManager";
 import { NodesView } from "./components/NodesView";
 import { AppModals } from "./components/AppModals";
 import { ExecutorStatusBar } from "./components/ExecutorStatusBar";
@@ -23,7 +24,7 @@ import { useAppSettings } from "./hooks/useAppSettings";
 import { useDeepLink } from "./hooks/useDeepLink";
 import { useFavorites } from "./hooks/useFavorites";
 import { useAuthOnboarding } from "./hooks/useAuthOnboarding";
-import { useViewState } from "./hooks/useViewState";
+import { useViewState, type TaskView } from "./hooks/useViewState";
 import { useProjectActions } from "./hooks/useProjectActions";
 import { useTaskHandlers } from "./hooks/useTaskHandlers";
 import type { AiSessionSummary } from "./api";
@@ -60,6 +61,8 @@ function AppInner() {
 
   // Nodes management is an overlay view (not a modal), so it stays local to App.
   const [nodesOpen, setNodesOpen] = useState(false);
+  const [missionResumeSessionId, setMissionResumeSessionId] = useState<string | undefined>(undefined);
+  const [missionTargetId, setMissionTargetId] = useState<string | undefined>(undefined);
 
   // Settings state
   const {
@@ -93,6 +96,14 @@ function AppInner() {
     themeMode,
     setThemeMode,
   });
+
+  const handleTaskViewChange = useCallback((newView: TaskView) => {
+    if (newView === "missions") {
+      setMissionResumeSessionId(undefined);
+      setMissionTargetId(undefined);
+    }
+    handleChangeTaskView(newView);
+  }, [handleChangeTaskView]);
 
   // Auth and onboarding bootstrap logic extracted to a dedicated hook.
   useAuthOnboarding({
@@ -167,15 +178,29 @@ function AppInner() {
     setNodesOpen((prev) => !prev);
   }, []);
 
+  const handleOpenMissionsView = useCallback(() => {
+    setMissionTargetId(undefined);
+    setMissionResumeSessionId(undefined);
+    handleChangeTaskView("missions");
+  }, [handleChangeTaskView]);
+
+  const handleOpenMission = useCallback((missionId: string) => {
+    setMissionTargetId(missionId);
+    setMissionResumeSessionId(undefined);
+    handleChangeTaskView("missions");
+  }, [handleChangeTaskView]);
+
   const handleOpenBackgroundSession = useCallback((session: AiSessionSummary) => {
     if (session.type === "planning") {
       modalManager.openPlanningWithSession(session.id);
     } else if (session.type === "subtask") {
       modalManager.openSubtaskWithSession(session.id);
     } else if (session.type === "mission_interview") {
-      modalManager.openMissionWithSession(session.id);
+      setMissionTargetId(undefined);
+      setMissionResumeSessionId(session.id);
+      handleChangeTaskView("missions");
     }
-  }, [modalManager]);
+  }, [handleChangeTaskView, modalManager]);
 
   const handleDismissAllNeedingInputSessions = useCallback(() => {
     for (const session of sessionsNeedingInput) {
@@ -212,6 +237,29 @@ function AppInner() {
     }
 
     // Project view
+    if (taskView === "missions") {
+      return (
+        <MissionManager
+          isInline={true}
+          isOpen={true}
+          onClose={() => {
+            setMissionTargetId(undefined);
+            setMissionResumeSessionId(undefined);
+            handleChangeTaskView("board");
+          }}
+          addToast={addToast}
+          projectId={currentProject?.id}
+          onSelectTask={(taskId) => {
+            const task = tasks.find((t) => t.id === taskId);
+            if (task) modalManager.openDetailTask(task as TaskDetail);
+          }}
+          availableTasks={tasks.map((t) => ({ id: t.id, title: t.title }))}
+          resumeSessionId={missionResumeSessionId}
+          targetMissionId={missionTargetId}
+        />
+      );
+    }
+
     if (taskView === "agents") {
       return <AgentsView addToast={addToast} projectId={currentProject?.id} />;
     }
@@ -244,7 +292,7 @@ function AppInner() {
           onToggleFavorite={handleToggleFavorite}
           onToggleModelFavorite={handleToggleModelFavorite}
           taskStuckTimeoutMs={taskStuckTimeoutMs}
-          onOpenMission={modalManager.openMissionById}
+          onOpenMission={handleOpenMission}
         />
       );
     }
@@ -289,7 +337,6 @@ function AppInner() {
         onOpenGitManager={modalManager.openGitManager}
         onOpenNodes={handleOpenNodes}
         onOpenWorkflowSteps={modalManager.openWorkflowSteps}
-        onOpenMissions={viewMode === "project" && currentProject ? modalManager.openMissions : undefined}
         onOpenScripts={modalManager.openScripts}
         onRunScript={modalManager.runScript}
         onToggleTerminal={modalManager.toggleTerminal}
@@ -300,7 +347,7 @@ function AppInner() {
         onToggleGlobalPause={toggleGlobalPause}
         onToggleEnginePause={toggleEnginePause}
         view={taskView}
-        onChangeView={viewMode === "project" && currentProject ? handleChangeTaskView : undefined}
+        onChangeView={viewMode === "project" && currentProject ? handleTaskViewChange : undefined}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         projects={projects}
@@ -337,7 +384,7 @@ function AppInner() {
       )}
       <MobileNavBar
         view={taskView}
-        onChangeView={viewMode === "project" && currentProject ? handleChangeTaskView : () => {}}
+        onChangeView={viewMode === "project" && currentProject ? handleTaskViewChange : () => {}}
         footerVisible={viewMode === "project" && !!currentProject}
         modalOpen={modalManager.anyModalOpen}
         onOpenSettings={handleOpenSettings}
@@ -346,7 +393,7 @@ function AppInner() {
         mailboxUnreadCount={modalManager.mailboxUnreadCount}
         onOpenGitManager={modalManager.openGitManager}
         onOpenWorkflowSteps={modalManager.openWorkflowSteps}
-        onOpenMissions={viewMode === "project" && currentProject ? modalManager.openMissions : undefined}
+        onOpenMissions={viewMode === "project" && currentProject ? handleOpenMissionsView : undefined}
         onOpenSchedules={modalManager.openSchedules}
         onOpenScripts={modalManager.openScripts}
         onToggleTerminal={modalManager.toggleTerminal}

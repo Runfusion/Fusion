@@ -153,11 +153,6 @@ describe("tablet header controls", () => {
     expect(screen.queryByTitle("Workflow Steps")).toBeNull();
   });
 
-  it("does not render missions button inline on tablet", () => {
-    renderTabletHeader({ onOpenMissions: noop });
-    expect(screen.queryByTitle("Mission Manager")).toBeNull();
-  });
-
   // ── Overflow menu on tablet ────────────────────────────────────
 
   it("renders overflow menu trigger on tablet", () => {
@@ -233,12 +228,6 @@ describe("tablet header controls", () => {
     renderTabletHeader({ onOpenWorkflowSteps: noop });
     fireEvent.click(screen.getByTitle("More header actions"));
     expect(screen.getByTestId("overflow-workflow-steps-btn")).toBeDefined();
-  });
-
-  it("overflow menu contains missions on tablet when provided", () => {
-    renderTabletHeader({ onOpenMissions: noop });
-    fireEvent.click(screen.getByTitle("More header actions"));
-    expect(screen.getByTestId("overflow-missions-btn")).toBeDefined();
   });
 
   // ── Overflow menu callbacks work on tablet ─────────────────────
@@ -464,7 +453,6 @@ describe("tablet header controls", () => {
         onOpenUsage: noop,
         onOpenActivityLog: noop,
         onOpenWorkflowSteps: noop,
-        onOpenMissions: noop,
         onOpenFiles: noop,
         onOpenGitManager: noop,
       });

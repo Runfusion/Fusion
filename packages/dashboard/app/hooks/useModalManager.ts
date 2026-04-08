@@ -47,9 +47,6 @@ export interface ModalManager {
   mailboxAgents: Agent[];
   gitManagerOpen: boolean;
   workflowStepsOpen: boolean;
-  missionsOpen: boolean;
-  missionResumeSessionId: string | undefined;
-  missionTargetId: string | undefined;
   agentsOpen: boolean;
   scriptsOpen: boolean;
   setupWizardOpen: boolean;
@@ -106,11 +103,6 @@ export interface ModalManager {
   openWorkflowSteps: () => void;
   closeWorkflowSteps: () => void;
 
-  openMissions: () => void;
-  openMissionById: (missionId: string) => void;
-  openMissionWithSession: (sessionId: string) => void;
-  closeMissions: () => void;
-
   openAgents: () => void;
   closeAgents: () => void;
 
@@ -162,9 +154,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const [mailboxAgents, setMailboxAgents] = useState<Agent[]>([]);
   const [gitManagerOpen, setGitManagerOpen] = useState(false);
   const [workflowStepsOpen, setWorkflowStepsOpen] = useState(false);
-  const [missionsOpen, setMissionsOpen] = useState(false);
-  const [missionResumeSessionId, setMissionResumeSessionId] = useState<string | undefined>(undefined);
-  const [missionTargetId, setMissionTargetId] = useState<string | undefined>(undefined);
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [scriptsOpen, setScriptsOpen] = useState(false);
   const [setupWizardOpen, setSetupWizardOpen] = useState(false);
@@ -182,7 +171,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
       mailboxOpen ||
       gitManagerOpen ||
       workflowStepsOpen ||
-      missionsOpen ||
       scriptsOpen ||
       agentsOpen ||
       usageOpen ||
@@ -303,21 +291,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const openWorkflowSteps = useCallback(() => setWorkflowStepsOpen(true), []);
   const closeWorkflowSteps = useCallback(() => setWorkflowStepsOpen(false), []);
 
-  const openMissions = useCallback(() => setMissionsOpen(true), []);
-  const openMissionById = useCallback((missionId: string) => {
-    setMissionTargetId(missionId);
-    setMissionsOpen(true);
-  }, []);
-  const openMissionWithSession = useCallback((sessionId: string) => {
-    setMissionResumeSessionId(sessionId);
-    setMissionsOpen(true);
-  }, []);
-  const closeMissions = useCallback(() => {
-    setMissionsOpen(false);
-    setMissionResumeSessionId(undefined);
-    setMissionTargetId(undefined);
-  }, []);
-
   const openAgents = useCallback(() => setAgentsOpen(true), []);
   const closeAgents = useCallback(() => setAgentsOpen(false), []);
 
@@ -380,9 +353,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     mailboxAgents,
     gitManagerOpen,
     workflowStepsOpen,
-    missionsOpen,
-    missionResumeSessionId,
-    missionTargetId,
     agentsOpen,
     scriptsOpen,
     setupWizardOpen,
@@ -423,10 +393,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     closeGitManager,
     openWorkflowSteps,
     closeWorkflowSteps,
-    openMissions,
-    openMissionById,
-    openMissionWithSession,
-    closeMissions,
     openAgents,
     closeAgents,
     openScripts,

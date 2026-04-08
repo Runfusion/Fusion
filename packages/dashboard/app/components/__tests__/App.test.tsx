@@ -486,7 +486,7 @@ describe("App mission wiring", () => {
     localStorage.removeItem("kb-dashboard-view-mode");
   });
 
-  it("hides mission controls when no project is selected", async () => {
+  it("hides missions view toggle when no project is selected", async () => {
     mockCurrentProjectState.currentProject = null;
     mockProjectsState.projects = [];
 
@@ -496,10 +496,10 @@ describe("App mission wiring", () => {
       expect(fetchSettings).toHaveBeenCalled();
     });
 
-    expect(screen.queryByTestId("missions-btn")).toBeNull();
+    expect(screen.queryByTitle("Missions view")).toBeNull();
   });
 
-  it("shows mission controls in project view when a project is selected", async () => {
+  it("shows missions view toggle in project view when a project is selected", async () => {
     localStorage.setItem("kb-dashboard-view-mode", "project");
     mockCurrentProjectState.currentProject = {
       id: "proj_123",
@@ -514,7 +514,7 @@ describe("App mission wiring", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("missions-btn")).toBeTruthy();
+      expect(screen.getByTitle("Missions view")).toBeTruthy();
     });
   });
 });

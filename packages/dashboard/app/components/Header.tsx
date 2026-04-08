@@ -41,7 +41,6 @@ export interface HeaderProps {
   onOpenGitManager?: () => void;
   onOpenNodes?: () => void;
   onOpenWorkflowSteps?: () => void;
-  onOpenMissions?: () => void;
   onOpenScripts?: () => void;
   onRunScript?: (name: string, command: string) => void;
   onToggleTerminal?: () => void;
@@ -52,8 +51,8 @@ export interface HeaderProps {
   enginePaused?: boolean;
   onToggleGlobalPause?: () => void;
   onToggleEnginePause?: () => void;
-  view?: "board" | "list" | "agents";
-  onChangeView?: (view: "board" | "list" | "agents") => void;
+  view?: "board" | "list" | "agents" | "missions";
+  onChangeView?: (view: "board" | "list" | "agents" | "missions") => void;
   searchQuery?: string;
   onSearchChange?: (query: string) => void;
   /** Multi-project props */
@@ -81,7 +80,6 @@ export function Header({
   onOpenGitManager,
   onOpenNodes,
   onOpenWorkflowSteps,
-  onOpenMissions,
   onOpenScripts,
   onRunScript,
   onToggleTerminal,
@@ -385,6 +383,15 @@ export function Header({
             >
               <Bot size={16} />
             </button>
+            <button
+              className={`view-toggle-btn${view === "missions" ? " active" : ""}`}
+              onClick={() => onChangeView("missions")}
+              title="Missions view"
+              aria-label="Missions view"
+              aria-pressed={view === "missions"}
+            >
+              <Target size={16} />
+            </button>
           </div>
         )}
 
@@ -516,18 +523,6 @@ export function Header({
             data-testid="workflow-steps-btn"
           >
             <Workflow size={16} />
-          </button>
-        )}
-
-        {/* Missions - desktop only (moved to overflow on mobile/tablet) */}
-        {!isCompact && onOpenMissions && (
-          <button
-            className="btn-icon"
-            onClick={onOpenMissions}
-            title="Mission Manager"
-            data-testid="missions-btn"
-          >
-            <Target size={16} />
           </button>
         )}
 
@@ -800,18 +795,6 @@ export function Header({
               >
                 <Workflow size={16} />
                 <span>Workflow Steps</span>
-              </button>
-            )}
-            {/* Missions - in overflow on mobile */}
-            {onOpenMissions && (
-              <button
-                className="mobile-overflow-item"
-                onClick={() => handleOverflowAction(onOpenMissions)}
-                role="menuitem"
-                data-testid="overflow-missions-btn"
-              >
-                <Target size={16} />
-                <span>Missions</span>
               </button>
             )}
             {/* Settings - always last in overflow menu */}

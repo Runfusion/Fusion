@@ -888,7 +888,6 @@ describe("Header", () => {
         onOpenUsage: noop,
         onOpenActivityLog: noop,
         onOpenWorkflowSteps: noop,
-        onOpenMissions: noop,
         onOpenFiles: noop,
         onOpenGitManager: noop,
         onOpenScripts: noop,
@@ -931,7 +930,6 @@ describe("Header", () => {
         onOpenUsage: noop,
         onOpenActivityLog: noop,
         onOpenWorkflowSteps: noop,
-        onOpenMissions: noop,
         onOpenFiles: noop,
         onOpenGitManager: noop,
       }, "mobile");

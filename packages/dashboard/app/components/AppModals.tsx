@@ -18,7 +18,6 @@ import { NewTaskModal } from "./NewTaskModal";
 import { ActivityLogModal } from "./ActivityLogModal";
 import { GitManagerModal } from "./GitManagerModal";
 import { WorkflowStepManager } from "./WorkflowStepManager";
-import { MissionManager } from "./MissionManager";
 import { AgentListModal } from "./AgentListModal";
 import { MailboxModal } from "./MailboxModal";
 import { SetupWizardModal } from "./SetupWizardModal";
@@ -206,22 +205,6 @@ export function AppModals({
         onClose={modalManager.closeWorkflowSteps}
         addToast={addToast}
         projectId={projectId}
-      />
-
-      <MissionManager
-        isOpen={modalManager.missionsOpen}
-        onClose={modalManager.closeMissions}
-        addToast={addToast}
-        projectId={projectId}
-        resumeSessionId={modalManager.missionResumeSessionId}
-        targetMissionId={modalManager.missionTargetId}
-        availableTasks={tasks.map((task) => ({ id: task.id, title: task.title }))}
-        onSelectTask={(taskId) => {
-          const task = tasks.find((candidate) => candidate.id === taskId);
-          if (task) {
-            modalManager.openDetailTask(task as TaskDetail);
-          }
-        }}
       />
 
       <AgentListModal
