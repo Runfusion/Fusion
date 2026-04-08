@@ -160,6 +160,27 @@ Mobile dropdown behavior follows a consistent viewport-aware anchoring pattern s
   - For scrollable dropdown lists and modal content containers, apply `-webkit-overflow-scrolling: touch` to preserve iOS momentum scrolling.
   - Use base selectors for reusable scroll lists (for example: `.dep-dropdown`, `.model-combobox-list`, `.quick-scripts-dropdown__list`, `.file-browser-list`) and reinforce modal surfaces in the main mobile media query (`@media (max-width: 768px)`).
 
+### Mobile Component Adaptations
+In addition to the global mobile foundation, several power-user surfaces now include component-specific mobile behavior tuned for touch interaction and narrow viewports (`≤768px`).
+
+- **SettingsModal**
+  - The settings layout collapses from sidebar/content columns into a stacked flow (`.settings-layout` uses `flex-direction: column`).
+  - The sidebar becomes a horizontally scrollable tab strip (`.settings-sidebar` switches to row layout with hidden scrollbars and touch momentum scrolling).
+  - Settings content remains independently scrollable (`.settings-content` keeps `flex: 1; min-height: 0; overflow-y: auto`) so tabs stay reachable while content scrolls.
+  - Settings form controls inside `.settings-content` enforce `font-size: 16px` on mobile to prevent iOS zoom-on-focus.
+
+- **AgentsView**
+  - Board mode collapses to a single column (`.agent-board { grid-template-columns: 1fr; }`).
+  - Controls stack vertically (`.agent-controls` + `.agent-controls-actions`) with full-width action buttons and touch-friendly sizing.
+  - State filter stretches full width on mobile.
+  - Tree-view indentation is reduced (`.agent-tree__indent--1..4`) to prevent horizontal overflow at deeper hierarchy levels.
+
+- **Utility components**
+  - **BackgroundTasksIndicator** popover switches to fixed viewport anchoring on mobile (`left/right: 8px`, `bottom: 40px`) so it is not clipped by parent containers.
+  - **ExecutorStatusBar** mobile layout includes tighter spacing and overflow guards (`min-width: 0`, hidden overflow in segments) for narrow screens.
+  - **ActiveAgentsPanel** grid stacks to one column on mobile (`.active-agents-grid { grid-template-columns: 1fr; }`).
+  - **ToastContainer** shifts above footer surfaces with safe-area awareness (`bottom: calc(44px + env(safe-area-inset-bottom, 0px))`, full-width toasts).
+
 ### Executor Status Bar
 A persistent footer status bar at the bottom of the dashboard displays real-time executor statistics in project view. The status bar provides immediate visibility into the engine's state without opening modals or hovering over badges.
 

@@ -68,7 +68,7 @@ export function BackgroundTasksIndicator({
           <div className="background-tasks-indicator__popover-header">
             Background Tasks
           </div>
-          <div className="background-tasks-indicator__sessions">
+          <div className="background-tasks-indicator__popover-list">
             {sessions.map((session) => {
               const Icon = TYPE_ICONS[session.type];
               const isGenerating = session.status === "generating";
@@ -77,7 +77,7 @@ export function BackgroundTasksIndicator({
               return (
                 <div
                   key={session.id}
-                  className="background-tasks-indicator__session"
+                  className="background-tasks-indicator__item"
                   onClick={() => {
                     onOpenSession(session);
                     setPopoverOpen(false);
@@ -112,7 +112,7 @@ export function BackgroundTasksIndicator({
                     />
                   )}
                   <button
-                    className="background-tasks-indicator__dismiss"
+                    className="background-tasks-indicator__item-dismiss"
                     onClick={(e) => {
                       e.stopPropagation();
                       onDismissSession(session.id);

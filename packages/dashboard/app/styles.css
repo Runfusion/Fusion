@@ -4422,6 +4422,19 @@ body {
   background: var(--color-info);
 }
 
+@media (max-width: 768px) {
+  .toast-container {
+    bottom: calc(44px + env(safe-area-inset-bottom, 0px));
+    right: 8px;
+    left: 8px;
+  }
+
+  .toast {
+    width: 100%;
+    font-size: 14px;
+  }
+}
+
 @keyframes toast-in {
   from {
     opacity: 0;
@@ -5630,8 +5643,13 @@ body {
     border-bottom: 1px solid var(--border);
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
     padding: 6px 8px;
     gap: 2px;
+  }
+
+  .settings-sidebar::-webkit-scrollbar {
+    display: none;
   }
 
   .settings-nav-item {
@@ -5656,6 +5674,13 @@ body {
   .settings-content {
     flex: 1;
     min-height: 0;
+    overflow-y: auto;
+  }
+
+  .settings-content input,
+  .settings-content select,
+  .settings-content textarea {
+    font-size: 16px;
   }
 
   .settings-section-heading {
@@ -5667,10 +5692,21 @@ body {
     padding: 0 14px;
   }
 
+  .settings-content .btn,
+  .auth-provider-row .btn {
+    min-height: 44px;
+  }
+
   .auth-provider-row {
     flex-wrap: wrap;
     padding: 12px 14px;
     gap: var(--space-sm);
+  }
+
+  .backup-list ul {
+    max-height: 220px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   /* Card edit button: always visible on mobile (no hover) */
@@ -18214,9 +18250,16 @@ html .column.drag-over * {
 
   .executor-status-bar {
     padding: var(--space-xs) var(--space-md);
-    gap: var(--space-xs);
+    gap: 4px;
     font-size: 11px;
     height: 32px;
+    overflow: hidden;
+  }
+
+  .executor-status-bar__segment {
+    min-width: 0;
+    gap: 4px;
+    overflow: hidden;
   }
 
   .executor-status-bar__label {
@@ -18225,6 +18268,10 @@ html .column.drag-over * {
 
   .executor-status-bar__divider {
     height: 12px;
+  }
+
+  .background-tasks-indicator {
+    flex-shrink: 0;
   }
 }
 
@@ -18300,12 +18347,12 @@ html .column.drag-over * {
   color: var(--text-muted);
 }
 
-.background-tasks-indicator__sessions {
+.background-tasks-indicator__popover-list {
   max-height: 240px;
   overflow-y: auto;
 }
 
-.background-tasks-indicator__session {
+.background-tasks-indicator__item {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -18314,7 +18361,7 @@ html .column.drag-over * {
   cursor: pointer;
 }
 
-.background-tasks-indicator__session:last-child {
+.background-tasks-indicator__item:last-child {
   border-bottom: none;
 }
 
@@ -18341,7 +18388,7 @@ html .column.drag-over * {
   color: var(--text-muted);
 }
 
-.background-tasks-indicator__dismiss {
+.background-tasks-indicator__item-dismiss {
   flex-shrink: 0;
   background: none;
   border: none;
@@ -18349,6 +18396,21 @@ html .column.drag-over * {
   padding: 2px;
   color: var(--text-muted);
   border-radius: 4px;
+}
+
+@media (max-width: 768px) {
+  .background-tasks-indicator__popover {
+    position: fixed;
+    bottom: 40px;
+    left: 8px;
+    right: 8px;
+    min-width: auto;
+    max-width: none;
+  }
+
+  .background-tasks-indicator__pill {
+    min-height: 44px;
+  }
 }
 
 /* === DirectoryPicker === */
@@ -21631,6 +21693,63 @@ html .column.drag-over * {
   }
 }
 
+@media (max-width: 768px) {
+  .agent-board {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-board-actions .btn,
+  .agent-card-actions .btn {
+    min-height: 44px;
+  }
+
+  .agent-controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-sm);
+  }
+
+  .agent-controls-actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .agent-controls-actions .btn {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .agent-state-filter {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .agent-state-filter-select {
+    width: 100%;
+  }
+
+  .agents-view-header {
+    padding: var(--space-sm) var(--space-md);
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
+  .agents-view-title h2 {
+    font-size: 16px;
+  }
+
+  .agent-tree__indent--1 { padding-left: 16px; }
+  .agent-tree__indent--2 { padding-left: 32px; }
+  .agent-tree__indent--3 { padding-left: 48px; }
+  .agent-tree__indent--4 { padding-left: 64px; }
+
+  .agent-tree__toggle {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 /* === Active Agents Panel === */
 .active-agents-panel {
   margin-bottom: var(--space-lg);
@@ -21722,6 +21841,17 @@ html .column.drag-over * {
 .live-agent-streaming-dot {
   color: var(--color-success);
   animation: pulse 1.5s infinite;
+}
+
+@media (max-width: 768px) {
+  .active-agents-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .live-agent-card {
+    min-width: 0;
+    overflow: hidden;
+  }
 }
 
 /* === New Agent Dialog === */
