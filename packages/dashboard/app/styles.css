@@ -19236,6 +19236,92 @@ html .column.drag-over * {
   color: var(--text-primary, #e6edf3);
 }
 
+.workflow-results-edit-toggle {
+  width: auto;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  background: var(--surface-elevated, #161b22);
+  color: var(--text-muted, #8b949e);
+  font-size: 12px;
+  font-weight: 500;
+  gap: 6px;
+}
+
+.workflow-results-edit-toggle:hover {
+  background: var(--surface, #21262d);
+  color: var(--text-primary, #e6edf3);
+}
+
+.workflow-results-edit-toggle svg {
+  flex-shrink: 0;
+}
+
+.workflow-configured-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm, 8px);
+}
+
+.workflow-configured-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm, 8px);
+}
+
+.workflow-configured-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 8px);
+}
+
+.workflow-configured-title-row h4 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-primary, #e6edf3);
+}
+
+.workflow-configured-count {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border, #30363d);
+  color: var(--text-muted, #8b949e);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.workflow-configured-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm, 8px);
+}
+
+.workflow-configured-item {
+  border: 1px solid var(--border, #30363d);
+  border-radius: 8px;
+  padding: var(--space-md, 16px);
+  background: var(--surface-elevated, #161b22);
+}
+
+.workflow-configured-name {
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary, #e6edf3);
+}
+
+.workflow-configured-description {
+  margin: var(--space-xs, 4px) 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary, #c9d1d9);
+}
+
 .workflow-results-editor {
   border: 1px solid var(--border, #30363d);
   border-radius: 8px;

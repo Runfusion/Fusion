@@ -169,17 +169,46 @@ describe("WorkflowResultsTab", () => {
     expect(screen.getByText("No workflow steps configured for this task.")).toBeInTheDocument();
   });
 
-  it("shows 'configured but not run' empty state when enabledWorkflowSteps is non-empty", () => {
+  it("shows configured step details when enabledWorkflowSteps is non-empty and results are empty", async () => {
     render(
       <WorkflowResultsTab
         taskId="FN-001"
         results={[]}
-        enabledWorkflowSteps={["WS-001", "WS-002"]}
+        enabledWorkflowSteps={["WS-101", "WS-102"]}
       />,
     );
 
-    expect(screen.getByTestId("workflow-results-empty")).toBeInTheDocument();
-    expect(screen.getByText("Workflow steps configured but haven't run yet.")).toBeInTheDocument();
+    expect(screen.getByTestId("workflow-configured-steps")).toBeInTheDocument();
+    expect(screen.getByTestId("workflow-configured-header")).toBeInTheDocument();
+    expect(screen.getByTestId("workflow-configured-count")).toHaveTextContent("2 steps");
+
+    const qaStep = await screen.findByTestId("workflow-configured-step-WS-101");
+    const docsStep = await screen.findByTestId("workflow-configured-step-WS-102");
+
+    expect(qaStep).toHaveTextContent("QA Check");
+    expect(qaStep).toHaveTextContent("Run test suite");
+    expect(screen.getByTestId("workflow-configured-phase-WS-101")).toHaveTextContent("Pre-merge");
+
+    expect(docsStep).toHaveTextContent("Docs Review");
+    expect(docsStep).toHaveTextContent("Review docs");
+    expect(screen.getByTestId("workflow-configured-phase-WS-102")).toHaveTextContent("Post-merge");
+
+    expect(screen.getByText("Pre-merge steps run after implementation, before merge. Post-merge steps run after merge succeeds.")).toBeInTheDocument();
+  });
+
+  it("falls back to step ID and default description when definition is missing", () => {
+    render(
+      <WorkflowResultsTab
+        taskId="FN-001"
+        results={[]}
+        enabledWorkflowSteps={["WS-unknown"]}
+      />,
+    );
+
+    const fallbackStep = screen.getByTestId("workflow-configured-step-WS-unknown");
+    expect(fallbackStep).toHaveTextContent("WS-unknown");
+    expect(fallbackStep).toHaveTextContent("Step definition not found.");
+    expect(screen.getByTestId("workflow-configured-phase-WS-unknown")).toHaveTextContent("Pre-merge");
   });
 
   it("shows loading state when loading prop is true", () => {
@@ -363,22 +392,43 @@ describe("WorkflowResultsTab", () => {
   });
 
   describe("workflow step editing", () => {
-    it("shows edit button when canEdit is true", () => {
-      render(<WorkflowResultsTab taskId="FN-001" results={[]} canEdit />);
+    it("shows edit button when canEdit is true and configured steps are present", () => {
+      render(
+        <WorkflowResultsTab
+          taskId="FN-001"
+          results={[]}
+          canEdit
+          enabledWorkflowSteps={["WS-101"]}
+        />,
+      );
 
       expect(screen.getByTestId("workflow-steps-edit-toggle")).toBeInTheDocument();
     });
 
     it("does not show edit button when canEdit is false or undefined", () => {
-      const { rerender } = render(<WorkflowResultsTab taskId="FN-001" results={[]} canEdit={false} />);
+      const { rerender } = render(
+        <WorkflowResultsTab
+          taskId="FN-001"
+          results={[]}
+          canEdit={false}
+          enabledWorkflowSteps={["WS-101"]}
+        />,
+      );
       expect(screen.queryByTestId("workflow-steps-edit-toggle")).not.toBeInTheDocument();
 
-      rerender(<WorkflowResultsTab taskId="FN-001" results={[]} />);
+      rerender(<WorkflowResultsTab taskId="FN-001" results={[]} enabledWorkflowSteps={["WS-101"]} />);
       expect(screen.queryByTestId("workflow-steps-edit-toggle")).not.toBeInTheDocument();
     });
 
     it("shows and hides workflow step checkboxes when edit is toggled", async () => {
-      render(<WorkflowResultsTab taskId="FN-001" results={[]} canEdit />);
+      render(
+        <WorkflowResultsTab
+          taskId="FN-001"
+          results={[]}
+          canEdit
+          enabledWorkflowSteps={["WS-101"]}
+        />,
+      );
 
       expect(screen.queryByTestId("workflow-steps-editor")).not.toBeInTheDocument();
 
@@ -399,7 +449,7 @@ describe("WorkflowResultsTab", () => {
           taskId="FN-001"
           results={[]}
           canEdit
-          enabledWorkflowSteps={[]}
+          enabledWorkflowSteps={["WS-102"]}
           onWorkflowStepsChange={onWorkflowStepsChange}
         />,
       );
@@ -408,7 +458,7 @@ describe("WorkflowResultsTab", () => {
       const stepCheckbox = (await screen.findByTestId("workflow-step-checkbox-WS-101")).querySelector("input") as HTMLInputElement;
       fireEvent.click(stepCheckbox);
 
-      expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-101"]);
+      expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-102", "WS-101"]);
 
       onWorkflowStepsChange.mockClear();
       rerender(
@@ -420,6 +470,10 @@ describe("WorkflowResultsTab", () => {
           onWorkflowStepsChange={onWorkflowStepsChange}
         />,
       );
+
+      if (!screen.queryByTestId("workflow-steps-editor")) {
+        fireEvent.click(screen.getByTestId("workflow-steps-edit-toggle"));
+      }
 
       const selectedCheckbox = (await screen.findByTestId("workflow-step-checkbox-WS-101")).querySelector("input") as HTMLInputElement;
       expect(selectedCheckbox.checked).toBe(true);

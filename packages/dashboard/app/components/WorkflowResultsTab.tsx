@@ -108,11 +108,6 @@ export function WorkflowResultsTab({
   const [isEditing, setIsEditing] = useState(false);
 
   useEffect(() => {
-    if (!canEdit) {
-      setAllWorkflowSteps([]);
-      return;
-    }
-
     let cancelled = false;
     fetchWorkflowSteps(projectId)
       .then((steps) => {
@@ -129,7 +124,7 @@ export function WorkflowResultsTab({
     return () => {
       cancelled = true;
     };
-  }, [canEdit, projectId]);
+  }, [projectId]);
 
   const selectedWorkflowSteps = enabledWorkflowSteps ?? [];
 
@@ -160,7 +155,7 @@ export function WorkflowResultsTab({
     setExpandedOutputs((prev) => ({ ...prev, [stepId]: !prev[stepId] }));
   };
 
-  const toggleWorkflowStep = useCallback((stepId: string, checked: boolean) => {
+  const toggleStep = useCallback((stepId: string, checked: boolean) => {
     if (!onWorkflowStepsChange) return;
 
     if (checked) {
@@ -195,6 +190,114 @@ export function WorkflowResultsTab({
   }, [onWorkflowStepsChange, selectedWorkflowSteps]);
 
   const hasResults = results.length > 0;
+  const hasConfiguredSteps = selectedWorkflowSteps.length > 0;
+
+  useEffect(() => {
+    if (!canEdit) {
+      setIsEditing(false);
+    }
+  }, [canEdit]);
+
+  const configuredSteps = useMemo(() => {
+    return selectedWorkflowSteps.map((stepId) => {
+      const stepInfo = workflowStepLookup.get(stepId);
+      return {
+        id: stepId,
+        name: stepInfo?.name || stepId,
+        description: stepInfo?.description || "Step definition not found.",
+        phase: stepInfo?.phase || "pre-merge",
+      } as WorkflowStepOption;
+    });
+  }, [selectedWorkflowSteps, workflowStepLookup]);
+
+  const renderEditor = () => {
+    if (!canEdit || !isEditing || loading) {
+      return null;
+    }
+
+    return (
+      <div className="workflow-results-editor" data-testid="workflow-steps-editor">
+        <small style={{ marginBottom: "8px", display: "block" }}>
+          Select steps to run after task implementation completes
+        </small>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+          {workflowStepOptions.map((step) => (
+            <label
+              key={step.id}
+              className="checkbox-label"
+              style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}
+              data-testid={step.id === "browser-verification"
+                ? "browser-verification-checkbox"
+                : `workflow-step-checkbox-${step.id}`}
+            >
+              <input
+                type="checkbox"
+                checked={selectedWorkflowSteps.includes(step.id)}
+                onChange={(event) => toggleStep(step.id, event.target.checked)}
+                style={{ marginTop: "2px" }}
+              />
+              <div>
+                <span style={{ fontWeight: 500, fontSize: "13px" }}>
+                  {step.name}
+                  {phaseBadge(step.phase, step.id, "workflow-step-phase")}
+                </span>
+                <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "2px" }}>
+                  {step.description}
+                </div>
+              </div>
+            </label>
+          ))}
+        </div>
+
+        {selectedWorkflowSteps.length > 1 && (
+          <div className="workflow-step-order" data-testid="workflow-step-order">
+            <small className="workflow-step-order-label">Execution order:</small>
+            {selectedWorkflowSteps.map((stepId, index) => {
+              const stepInfo = workflowStepLookup.get(stepId);
+              return (
+                <div key={stepId} className="workflow-step-order-item" data-testid={`workflow-step-order-item-${stepId}`}>
+                  <span className="workflow-step-order-number">{index + 1}</span>
+                  <span className="workflow-step-order-name">{stepInfo?.name || stepId}</span>
+                  <div className="workflow-step-order-actions">
+                    <button
+                      type="button"
+                      className="btn btn-icon btn-sm"
+                      onClick={() => moveWorkflowStepUp(index)}
+                      disabled={index === 0}
+                      data-testid={`workflow-step-move-up-${stepId}`}
+                      title="Move up"
+                    >
+                      <ChevronUp size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-icon btn-sm"
+                      onClick={() => moveWorkflowStepDown(index)}
+                      disabled={index === selectedWorkflowSteps.length - 1}
+                      data-testid={`workflow-step-move-down-${stepId}`}
+                      title="Move down"
+                    >
+                      <ChevronDown size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-icon btn-sm"
+                      onClick={() => removeWorkflowStep(stepId)}
+                      data-testid={`workflow-step-remove-${stepId}`}
+                      title="Remove"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const renderResults = () => {
     if (loading) {
@@ -207,14 +310,9 @@ export function WorkflowResultsTab({
     }
 
     if (!hasResults) {
-      const hasConfiguredSteps = selectedWorkflowSteps.length > 0;
       return (
         <div className="workflow-results-empty" data-testid="workflow-results-empty">
-          <p>
-            {hasConfiguredSteps
-              ? "Workflow steps configured but haven't run yet."
-              : "No workflow steps configured for this task."}
-          </p>
+          <p>No workflow steps configured for this task.</p>
           <p className="workflow-results-empty-hint">
             Pre-merge steps run after implementation, before merge. Post-merge steps run after merge succeeds.
           </p>
@@ -310,109 +408,79 @@ export function WorkflowResultsTab({
     );
   };
 
-  const showEditUI = !!canEdit && isEditing;
+  const editButton = canEdit ? (
+    <button
+      type="button"
+      className="modal-edit-btn workflow-results-edit-toggle"
+      onClick={() => setIsEditing((prev) => !prev)}
+      data-testid="workflow-steps-edit-toggle"
+      aria-label={isEditing ? "Done editing workflow steps" : "Edit workflow steps"}
+      title={isEditing ? "Done" : "Edit"}
+    >
+      {isEditing ? (
+        <>
+          <Check size={14} />
+          Done
+        </>
+      ) : (
+        <>
+          <Pencil size={14} />
+          Edit
+        </>
+      )}
+    </button>
+  ) : null;
+
+  const showConfiguredStepsState = !loading && !hasResults && hasConfiguredSteps;
+  const showEditHeaderForResults = canEdit && hasResults;
 
   return (
     <div className="workflow-results-tab" data-task-id={taskId}>
-      {canEdit && (
-        <div className="workflow-results-edit-header" data-testid="workflow-results-edit-header">
-          <h4>Workflow Steps</h4>
-          <button
-            type="button"
-            className="modal-edit-btn"
-            onClick={() => setIsEditing((prev) => !prev)}
-            data-testid="workflow-steps-edit-toggle"
-            aria-label={isEditing ? "Done editing workflow steps" : "Edit workflow steps"}
-            title={isEditing ? "Done" : "Edit"}
-          >
-            {isEditing ? <Check size={14} /> : <Pencil size={14} />}
-          </button>
-        </div>
-      )}
+      {showConfiguredStepsState ? (
+        <div className="workflow-configured-steps" data-testid="workflow-configured-steps">
+          <div className="workflow-configured-header" data-testid="workflow-configured-header">
+            <div className="workflow-configured-title-row">
+              <h4>Configured Workflow Steps</h4>
+              <span className="workflow-configured-count" data-testid="workflow-configured-count">
+                {configuredSteps.length} step{configuredSteps.length === 1 ? "" : "s"}
+              </span>
+            </div>
+            {editButton}
+          </div>
 
-      {(!showEditUI || hasResults || loading) && renderResults()}
-
-      {showEditUI && !loading && (
-        <div className="workflow-results-editor" data-testid="workflow-steps-editor">
-          <small style={{ marginBottom: "8px", display: "block" }}>
-            Select steps to run after task implementation completes
-          </small>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-            {workflowStepOptions.map((step) => (
-              <label
+          <div className="workflow-configured-list" data-testid="workflow-configured-list">
+            {configuredSteps.map((step) => (
+              <div
                 key={step.id}
-                className="checkbox-label"
-                style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}
-                data-testid={step.id === "browser-verification"
-                  ? "browser-verification-checkbox"
-                  : `workflow-step-checkbox-${step.id}`}
+                className="workflow-configured-item"
+                data-testid={`workflow-configured-step-${step.id}`}
               >
-                <input
-                  type="checkbox"
-                  checked={selectedWorkflowSteps.includes(step.id)}
-                  onChange={(event) => toggleWorkflowStep(step.id, event.target.checked)}
-                  style={{ marginTop: "2px" }}
-                />
-                <div>
-                  <span style={{ fontWeight: 500, fontSize: "13px" }}>
-                    {step.name}
-                    {phaseBadge(step.phase, step.id, "workflow-step-phase")}
-                  </span>
-                  <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "2px" }}>
-                    {step.description}
-                  </div>
+                <div className="workflow-configured-name">
+                  {step.name}
+                  {phaseBadge(step.phase, step.id, "workflow-configured-phase")}
                 </div>
-              </label>
+                <p className="workflow-configured-description">{step.description}</p>
+              </div>
             ))}
           </div>
 
-          {selectedWorkflowSteps.length > 1 && (
-            <div className="workflow-step-order" data-testid="workflow-step-order">
-              <small className="workflow-step-order-label">Execution order:</small>
-              {selectedWorkflowSteps.map((stepId, index) => {
-                const stepInfo = workflowStepLookup.get(stepId);
-                return (
-                  <div key={stepId} className="workflow-step-order-item" data-testid={`workflow-step-order-item-${stepId}`}>
-                    <span className="workflow-step-order-number">{index + 1}</span>
-                    <span className="workflow-step-order-name">{stepInfo?.name || stepId}</span>
-                    <div className="workflow-step-order-actions">
-                      <button
-                        type="button"
-                        className="btn btn-icon btn-sm"
-                        onClick={() => moveWorkflowStepUp(index)}
-                        disabled={index === 0}
-                        data-testid={`workflow-step-move-up-${stepId}`}
-                        title="Move up"
-                      >
-                        <ChevronUp size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-icon btn-sm"
-                        onClick={() => moveWorkflowStepDown(index)}
-                        disabled={index === selectedWorkflowSteps.length - 1}
-                        data-testid={`workflow-step-move-down-${stepId}`}
-                        title="Move down"
-                      >
-                        <ChevronDown size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-icon btn-sm"
-                        onClick={() => removeWorkflowStep(stepId)}
-                        data-testid={`workflow-step-remove-${stepId}`}
-                        title="Remove"
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+          <p className="workflow-results-empty-hint">
+            Pre-merge steps run after implementation, before merge. Post-merge steps run after merge succeeds.
+          </p>
+
+          {renderEditor()}
+        </div>
+      ) : (
+        <>
+          {showEditHeaderForResults && (
+            <div className="workflow-results-edit-header" data-testid="workflow-results-edit-header">
+              <h4>Workflow Steps</h4>
+              {editButton}
             </div>
           )}
-        </div>
+          {renderResults()}
+          {renderEditor()}
+        </>
       )}
     </div>
   );

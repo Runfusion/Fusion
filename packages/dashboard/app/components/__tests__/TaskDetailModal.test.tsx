@@ -4241,7 +4241,7 @@ describe("TaskDetailModal", () => {
       });
     });
 
-    it("renders empty state when workflow results are empty", async () => {
+    it("renders configured workflow steps state when results are empty", async () => {
       const { fetchWorkflowResults } = await import("../../api");
       const mockFetch = vi.mocked(fetchWorkflowResults);
       mockFetch.mockResolvedValueOnce([]);
@@ -4261,8 +4261,8 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByText("Workflow"));
 
       await waitFor(() => {
-        expect(screen.getByTestId("workflow-results-empty")).toBeTruthy();
-        expect(screen.getByText("Workflow steps configured but haven't run yet.")).toBeTruthy();
+        expect(screen.getByTestId("workflow-configured-steps")).toBeTruthy();
+        expect(screen.getByTestId("workflow-configured-step-WS-001")).toHaveTextContent("WS-001");
       });
     });
 
