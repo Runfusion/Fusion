@@ -8470,6 +8470,26 @@ Output ONLY the prompt text (no markdown, no explanations).`;
   });
 
   /**
+   * POST /api/ai-sessions/:id/ping
+   * Lightweight keep-alive touch for active AI sessions.
+   */
+  router.post("/ai-sessions/:id/ping", (req, res) => {
+    if (!aiSessionStore) {
+      res.status(404).json({ error: "AI sessions not available" });
+      return;
+    }
+
+    const { id } = req.params;
+    const updated = aiSessionStore.ping(id);
+    if (!updated) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+
+    res.json({ ok: true });
+  });
+
+  /**
    * DELETE /api/ai-sessions/:id
    * Dismiss/cancel a background AI session.
    * Also cleans up the in-memory agent if still alive.

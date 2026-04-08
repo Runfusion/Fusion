@@ -3,6 +3,8 @@ import {
   fetchTaskDetail,
   updateTask,
   connectPlanningStream,
+  connectSubtaskStream,
+  connectMissionInterviewStream,
   assignTask,
   fetchAgentTasks,
   archiveTask,
@@ -2722,6 +2724,7 @@ describe("Mission mutation coverage with 204 responses", () => {
 
 describe("resilient SSE reconnect", () => {
   const OriginalEventSource = globalThis.EventSource;
+  const originalFetch = globalThis.fetch;
 
   class ControlledEventSource {
     static instances: ControlledEventSource[] = [];
@@ -2776,11 +2779,13 @@ describe("resilient SSE reconnect", () => {
     vi.useFakeTimers();
     ControlledEventSource.instances = [];
     (globalThis as any).EventSource = ControlledEventSource;
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { ok: true }));
   });
 
   afterEach(() => {
     vi.useRealTimers();
     (globalThis as any).EventSource = OriginalEventSource;
+    globalThis.fetch = originalFetch;
   });
 
   it("reconnects with backoff and deduplicates replayed events", () => {
@@ -2848,5 +2853,91 @@ describe("resilient SSE reconnect", () => {
     vi.advanceTimersByTime(30_000);
 
     expect(ControlledEventSource.instances).toHaveLength(1);
+  });
+
+  it("starts planning keep-alive on open and stops on explicit close", () => {
+    const connection = connectPlanningStream("session-keepalive", undefined, {});
+    const stream = ControlledEventSource.instances[0]!;
+
+    stream.emitOpen();
+    vi.advanceTimersByTime(25_000);
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/ai-sessions/session-keepalive/ping",
+      expect.objectContaining({ method: "POST" }),
+    );
+
+    const pingCallsBeforeClose = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+    connection.close();
+
+    vi.advanceTimersByTime(50_000);
+
+    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(pingCallsBeforeClose);
+    expect(stream.readyState).toBe(ControlledEventSource.CLOSED);
+  });
+
+  it("stops subtask keep-alive after complete event", () => {
+    connectSubtaskStream("subtask-session", undefined, {});
+    const stream = ControlledEventSource.instances[0]!;
+
+    stream.emitOpen();
+    vi.advanceTimersByTime(25_000);
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/ai-sessions/subtask-session/ping",
+      expect.objectContaining({ method: "POST" }),
+    );
+
+    const pingCallsBeforeComplete = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+    stream.emitEvent("complete", "");
+
+    vi.advanceTimersByTime(50_000);
+
+    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(pingCallsBeforeComplete);
+    expect(stream.readyState).toBe(ControlledEventSource.CLOSED);
+  });
+
+  it("stops mission interview keep-alive after complete event", () => {
+    connectMissionInterviewStream("mission-session", undefined, {});
+    const stream = ControlledEventSource.instances[0]!;
+
+    stream.emitOpen();
+    vi.advanceTimersByTime(25_000);
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/ai-sessions/mission-session/ping",
+      expect.objectContaining({ method: "POST" }),
+    );
+
+    const pingCallsBeforeComplete = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+    stream.emitEvent("complete", "");
+
+    vi.advanceTimersByTime(50_000);
+
+    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(pingCallsBeforeComplete);
+    expect(stream.readyState).toBe(ControlledEventSource.CLOSED);
+  });
+
+  it("silently ignores keep-alive ping failures", async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error("network down"));
+    const onThinking = vi.fn();
+    const onError = vi.fn();
+
+    connectPlanningStream("session-ping-failure", undefined, {
+      onThinking,
+      onError,
+    });
+
+    const stream = ControlledEventSource.instances[0]!;
+    stream.emitOpen();
+
+    vi.advanceTimersByTime(25_000);
+    await Promise.resolve();
+
+    stream.emitEvent("thinking", JSON.stringify("still-streaming"));
+
+    expect(onThinking).toHaveBeenCalledWith("still-streaming");
+    expect(onError).not.toHaveBeenCalled();
+    expect(stream.readyState).toBe(ControlledEventSource.OPEN);
   });
 });

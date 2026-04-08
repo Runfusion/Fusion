@@ -1430,6 +1430,24 @@ function createResilientEventSource(
   };
 }
 
+function startKeepAlive(
+  sessionId: string,
+  projectId?: string,
+  intervalMs = 25_000,
+): { stop: () => void } {
+  const timer = setInterval(() => {
+    void pingSession(sessionId, projectId).catch(() => {
+      // Best-effort keepalive: ignore failures so streams remain active.
+    });
+  }, intervalMs);
+
+  return {
+    stop: () => {
+      clearInterval(timer);
+    },
+  };
+}
+
 /** Get the SSE stream URL for a planning session */
 export function getPlanningStreamUrl(sessionId: string, projectId?: string): string {
   return buildApiUrl(withProjectId(`/planning/${encodeURIComponent(sessionId)}/stream`, projectId));
@@ -1454,11 +1472,21 @@ export function connectPlanningStream(
   options?: { maxReconnectAttempts?: number },
 ): { close: () => void; isConnected: () => boolean } {
   const url = getPlanningStreamUrl(sessionId, projectId);
+  let keepAlive: { stop: () => void } | null = null;
   let connection: { close: () => void; isConnected: () => boolean } | null = null;
+
+  const stopKeepAlive = () => {
+    keepAlive?.stop();
+    keepAlive = null;
+  };
 
   const resilient = createResilientEventSource(
     url,
     {
+      onOpen: () => {
+        stopKeepAlive();
+        keepAlive = startKeepAlive(sessionId, projectId);
+      },
       onMessage: (event) => {
         if (event.data.startsWith(":")) return;
       },
@@ -1503,13 +1531,21 @@ export function connectPlanningStream(
       maxReconnectAttempts: options?.maxReconnectAttempts,
       onConnectionStateChange: handlers.onConnectionStateChange,
       onFatalError: (message) => {
+        stopKeepAlive();
         handlers.onError?.(message);
       },
     },
   );
 
-  connection = resilient;
-  return resilient;
+  connection = {
+    close: () => {
+      stopKeepAlive();
+      resilient.close();
+    },
+    isConnected: resilient.isConnected,
+  };
+
+  return connection;
 }
 
 // ── Automation / Scheduled Tasks ──────────────────────────────────
@@ -1782,11 +1818,21 @@ export function connectSubtaskStream(
   },
   options?: { maxReconnectAttempts?: number },
 ): { close: () => void; isConnected: () => boolean } {
+  let keepAlive: { stop: () => void } | null = null;
   let connection: { close: () => void; isConnected: () => boolean } | null = null;
+
+  const stopKeepAlive = () => {
+    keepAlive?.stop();
+    keepAlive = null;
+  };
 
   const resilient = createResilientEventSource(
     getSubtaskStreamUrl(sessionId, projectId),
     {
+      onOpen: () => {
+        stopKeepAlive();
+        keepAlive = startKeepAlive(sessionId, projectId);
+      },
       events: {
         thinking: (event) => {
           try {
@@ -1822,13 +1868,21 @@ export function connectSubtaskStream(
       maxReconnectAttempts: options?.maxReconnectAttempts,
       onConnectionStateChange: handlers.onConnectionStateChange,
       onFatalError: (message) => {
+        stopKeepAlive();
         handlers.onError?.(message);
       },
     },
   );
 
-  connection = resilient;
-  return resilient;
+  connection = {
+    close: () => {
+      stopKeepAlive();
+      resilient.close();
+    },
+    isConnected: resilient.isConnected,
+  };
+
+  return connection;
 }
 
 export function createTasksFromBreakdown(
@@ -3131,11 +3185,21 @@ export function connectMissionInterviewStream(
   options?: { maxReconnectAttempts?: number },
 ): { close: () => void; isConnected: () => boolean } {
   const url = buildApiUrl(withProjectId(`/missions/interview/${encodeURIComponent(sessionId)}/stream`, projectId));
+  let keepAlive: { stop: () => void } | null = null;
   let connection: { close: () => void; isConnected: () => boolean } | null = null;
+
+  const stopKeepAlive = () => {
+    keepAlive?.stop();
+    keepAlive = null;
+  };
 
   const resilient = createResilientEventSource(
     url,
     {
+      onOpen: () => {
+        stopKeepAlive();
+        keepAlive = startKeepAlive(sessionId, projectId);
+      },
       onMessage: (event) => {
         if (event.data.startsWith(":")) return;
       },
@@ -3180,13 +3244,21 @@ export function connectMissionInterviewStream(
       maxReconnectAttempts: options?.maxReconnectAttempts,
       onConnectionStateChange: handlers.onConnectionStateChange,
       onFatalError: (message) => {
+        stopKeepAlive();
         handlers.onError?.(message);
       },
     },
   );
 
-  connection = resilient;
-  return resilient;
+  connection = {
+    close: () => {
+      stopKeepAlive();
+      resilient.close();
+    },
+    isConnected: resilient.isConnected,
+  };
+
+  return connection;
 }
 
 // ── AI Sessions (Background Tasks) ─────────────────────────────────────────
@@ -3226,6 +3298,12 @@ export async function fetchAiSession(id: string): Promise<AiSessionDetail | null
 
 export async function deleteAiSession(id: string): Promise<void> {
   await fetch(buildApiUrl(`/ai-sessions/${encodeURIComponent(id)}`), { method: "DELETE" });
+}
+
+export function pingSession(sessionId: string, projectId?: string): Promise<{ ok: boolean }> {
+  return api<{ ok: boolean }>(withProjectId(`/ai-sessions/${encodeURIComponent(sessionId)}/ping`, projectId), {
+    method: "POST",
+  });
 }
 
 // ── Messages API ──────────────────────────────────────────────────────────

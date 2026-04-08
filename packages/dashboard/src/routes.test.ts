@@ -6366,6 +6366,46 @@ describe("Git Management endpoints", () => {
   });
 });
 
+describe("POST /api/ai-sessions/:id/ping", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  it("returns 200 when the session exists", async () => {
+    const mockAiSessionStore = {
+      ping: vi.fn().mockReturnValue(true),
+    };
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { aiSessionStore: mockAiSessionStore as any }));
+
+    const res = await REQUEST(app, "POST", "/api/ai-sessions/session-123/ping");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect(mockAiSessionStore.ping).toHaveBeenCalledWith("session-123");
+  });
+
+  it("returns 404 when the session does not exist", async () => {
+    const mockAiSessionStore = {
+      ping: vi.fn().mockReturnValue(false),
+    };
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { aiSessionStore: mockAiSessionStore as any }));
+
+    const res = await REQUEST(app, "POST", "/api/ai-sessions/missing-session/ping");
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "Session not found" });
+    expect(mockAiSessionStore.ping).toHaveBeenCalledWith("missing-session");
+  });
+});
+
 describe("Terminal session routes", () => {
   let store: TaskStore;
 

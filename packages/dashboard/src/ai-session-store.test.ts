@@ -205,6 +205,30 @@ describe("AiSessionStore", () => {
     expect(projectA.every((session) => session.projectId === "project-a")).toBe(true);
   });
 
+  it("ping updates updatedAt for existing sessions without emitting updates", () => {
+    seedSession({ id: "S-ping", status: "awaiting_input" });
+
+    const staleTs = new Date(Date.now() - 60_000).toISOString();
+    db.prepare("UPDATE ai_sessions SET updatedAt = ? WHERE id = ?").run(staleTs, "S-ping");
+
+    const onUpdated = vi.fn();
+    store.on("ai_session:updated", onUpdated);
+
+    const updated = store.ping("S-ping");
+
+    expect(updated).toBe(true);
+    expect(store.get("S-ping")?.updatedAt).not.toBe(staleTs);
+    expect(onUpdated).not.toHaveBeenCalled();
+  });
+
+  it("ping returns false for nonexistent sessions", () => {
+    const onUpdated = vi.fn();
+    store.on("ai_session:updated", onUpdated);
+
+    expect(store.ping("missing-session")).toBe(false);
+    expect(onUpdated).not.toHaveBeenCalled();
+  });
+
   it("listRecoverable returns awaiting_input and generating sessions", () => {
     seedSession({ id: "S-generating", status: "generating", ageMs: 3_000 });
     seedSession({ id: "S-awaiting", status: "awaiting_input", ageMs: 1_000 });

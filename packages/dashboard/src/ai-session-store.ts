@@ -146,6 +146,20 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
   }
 
   /**
+   * Lightweight heartbeat for active sessions.
+   * Updates only `updatedAt` and intentionally does NOT emit
+   * `ai_session:updated` to avoid high-frequency SSE broadcasts.
+   */
+  ping(id: string): boolean {
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare("UPDATE ai_sessions SET updatedAt = ? WHERE id = ?")
+      .run(now, id) as { changes?: number };
+
+    return Number(result.changes ?? 0) > 0;
+  }
+
+  /**
    * List active sessions (generating or awaiting_input).
    * Optionally filtered by projectId.
    */
