@@ -7208,6 +7208,85 @@ Output ONLY the prompt text (no markdown, no explanations).`;
   });
 
   /**
+   * POST /api/agents/:id/keys
+   * Create a new API key for an agent.
+   * Body: { label?: string }
+   */
+  router.post("/agents/:id/keys", async (req, res) => {
+    try {
+      const { label } = req.body ?? {};
+      if (label !== undefined && typeof label !== "string") {
+        res.status(400).json({ error: "label must be a string" });
+        return;
+      }
+
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const agent = await agentStore.getAgent(req.params.id);
+      if (!agent) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+
+      const result = await agentStore.createApiKey(req.params.id, { label });
+      res.status(201).json(result);
+    } catch (err: any) {
+      if (err.message?.includes("not found")) {
+        res.status(404).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * GET /api/agents/:id/keys
+   * List all API keys for an agent.
+   */
+  router.get("/agents/:id/keys", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const keys = await agentStore.listApiKeys(req.params.id);
+      res.json(keys);
+    } catch (err: any) {
+      if (err.message?.includes("not found")) {
+        res.status(404).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * DELETE /api/agents/:id/keys/:keyId
+   * Revoke an API key for an agent.
+   */
+  router.delete("/agents/:id/keys/:keyId", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const revoked = await agentStore.revokeApiKey(req.params.id, req.params.keyId);
+      res.json(revoked);
+    } catch (err: any) {
+      if (err.message?.includes("not found")) {
+        res.status(404).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
    * GET /api/agents/:id/tasks
    * List tasks explicitly assigned to the given agent.
    */

@@ -3,16 +3,18 @@
  * 
  * Agents are stored at `.fusion/agents/{agentId}.json` with their metadata.
  * Heartbeat events are appended to `.fusion/agents/{agentId}-heartbeats.jsonl`.
+ * API keys are stored in `.fusion/agents/{agentId}-keys.jsonl` (hash-only).
  * 
  * File Structure:
  * - agents/{agentId}.json: Agent metadata (id, name, role, state, taskId, timestamps, metadata)
  * - agents/{agentId}-heartbeats.jsonl: Append-only heartbeat events
+ * - agents/{agentId}-keys.jsonl: API key records with SHA-256 token hashes
  */
 
 import { mkdir, readFile, writeFile, readdir, unlink } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type {
   Agent,
@@ -20,6 +22,8 @@ import type {
   AgentCapability,
   AgentCreateInput,
   AgentUpdateInput,
+  AgentApiKey,
+  AgentApiKeyCreateResult,
   AgentHeartbeatEvent,
   AgentHeartbeatRun,
   AgentDetail,
@@ -362,6 +366,83 @@ export class AgentStore extends EventEmitter {
 
     // Sort by createdAt desc
     return agents.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  /**
+   * Create an API key for an agent.
+   * Persists only the SHA-256 token hash; plaintext token is returned once.
+   */
+  async createApiKey(agentId: string, options?: { label?: string }): Promise<AgentApiKeyCreateResult> {
+    return this.withLock(agentId, async () => {
+      const agent = await this.getAgent(agentId);
+      if (!agent) {
+        throw new Error(`Agent ${agentId} not found`);
+      }
+
+      const token = randomBytes(32).toString("hex");
+      const tokenHash = createHash("sha256").update(token).digest("hex");
+      const createdAt = new Date().toISOString();
+      const label = options?.label?.trim();
+
+      const key: AgentApiKey = {
+        id: `key-${randomUUID().slice(0, 8)}`,
+        agentId,
+        tokenHash,
+        createdAt,
+        ...(label ? { label } : {}),
+      };
+
+      const keyPath = this.getApiKeysPath(agentId);
+      await writeFile(keyPath, `${JSON.stringify(key)}\n`, { flag: "a" });
+
+      return { key, token };
+    });
+  }
+
+  /**
+   * List all API keys for an agent, including revoked keys.
+   */
+  async listApiKeys(agentId: string): Promise<AgentApiKey[]> {
+    const agent = await this.getAgent(agentId);
+    if (!agent) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+
+    return this.readApiKeys(agentId);
+  }
+
+  /**
+   * Revoke an API key for an agent.
+   * Revoking an already-revoked key is a no-op.
+   */
+  async revokeApiKey(agentId: string, keyId: string): Promise<AgentApiKey> {
+    return this.withLock(agentId, async () => {
+      const agent = await this.getAgent(agentId);
+      if (!agent) {
+        throw new Error(`Agent ${agentId} not found`);
+      }
+
+      const keys = await this.readApiKeys(agentId);
+      const keyIndex = keys.findIndex((key) => key.id === keyId);
+      if (keyIndex === -1) {
+        throw new Error(`API key ${keyId} not found for agent ${agentId}`);
+      }
+
+      const existing = keys[keyIndex];
+      if (existing.revokedAt) {
+        return existing;
+      }
+
+      const revoked: AgentApiKey = {
+        ...existing,
+        revokedAt: new Date().toISOString(),
+      };
+
+      keys[keyIndex] = revoked;
+      await this.writeApiKeys(agentId, keys);
+
+      return revoked;
+    });
   }
 
   /**
@@ -736,6 +817,43 @@ export class AgentStore extends EventEmitter {
   // ─────────────────────────────────────────────────────────────────────────
   // Private helpers
   // ─────────────────────────────────────────────────────────────────────────
+
+  private getApiKeysPath(agentId: string): string {
+    return join(this.agentsDir, `${agentId}-keys.jsonl`);
+  }
+
+  private async readApiKeys(agentId: string): Promise<AgentApiKey[]> {
+    const keyPath = this.getApiKeysPath(agentId);
+    if (!existsSync(keyPath)) {
+      return [];
+    }
+
+    const content = await readFile(keyPath, "utf-8");
+    if (!content.trim()) {
+      return [];
+    }
+
+    const keys: AgentApiKey[] = [];
+    const lines = content.split("\n").filter(Boolean);
+    for (const line of lines) {
+      try {
+        const key = JSON.parse(line) as AgentApiKey;
+        if (key.agentId === agentId) {
+          keys.push(key);
+        }
+      } catch {
+        // Skip malformed lines
+      }
+    }
+
+    return keys;
+  }
+
+  private async writeApiKeys(agentId: string, keys: AgentApiKey[]): Promise<void> {
+    const keyPath = this.getApiKeysPath(agentId);
+    const content = keys.map((key) => JSON.stringify(key)).join("\n");
+    await writeFile(keyPath, content ? `${content}\n` : "");
+  }
 
   private async readAgentFile(agentId: string): Promise<AgentData> {
     const path = join(this.agentsDir, `${agentId}.json`);

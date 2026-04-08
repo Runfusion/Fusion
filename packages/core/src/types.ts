@@ -1601,6 +1601,30 @@ export interface AgentUpdateInput {
   instructionsText?: string;
 }
 
+/** An API key associated with an agent for bearer token authentication. */
+export interface AgentApiKey {
+  /** Unique key identifier (e.g., "key-a1b2c3d4") */
+  id: string;
+  /** The agent this key belongs to */
+  agentId: string;
+  /** SHA-256 hash of the plaintext token (hex-encoded, 64 chars) */
+  tokenHash: string;
+  /** Optional human-readable label for the key */
+  label?: string;
+  /** ISO-8601 timestamp when the key was created */
+  createdAt: string;
+  /** ISO-8601 timestamp when the key was revoked, null if active */
+  revokedAt?: string;
+}
+
+/** Result returned when creating a new API key — includes the plaintext token exactly once. */
+export interface AgentApiKeyCreateResult {
+  /** The persisted key metadata (不含 plaintext token) */
+  key: AgentApiKey;
+  /** The plaintext token — shown only at creation, never stored */
+  token: string;
+}
+
 /** Per-task session persistence for an agent */
 export interface AgentTaskSession {
   /** Agent ID */

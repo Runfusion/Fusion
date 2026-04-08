@@ -14,8 +14,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { AgentStore } from "./agent-store.js";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { mkdtempSync, existsSync, writeFileSync } from "node:fs";
+import { mkdtempSync, existsSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import type { AgentCapability, AgentState } from "./types.js";
 
 function makeTmpDir(): string {
@@ -859,6 +860,147 @@ describe("AgentStore", () => {
     });
   });
 
+  // ── API Keys ──────────────────────────────────────────────────────
+
+  describe("API Keys", () => {
+    it("createApiKey returns key metadata and one-time plaintext token", async () => {
+      const agent = await store.createAgent({ name: "KeyAgent", role: "executor" });
+
+      const result = await store.createApiKey(agent.id);
+
+      expect(result.key.id).toMatch(/^key-[a-f0-9]{8}$/);
+      expect(result.key.agentId).toBe(agent.id);
+      expect(result.key.tokenHash).toMatch(/^[a-f0-9]{64}$/);
+      expect(result.token).toMatch(/^[a-f0-9]{64}$/);
+      expect(new Date(result.key.createdAt).getTime()).not.toBeNaN();
+      expect(result.key.revokedAt).toBeUndefined();
+
+      const expectedHash = createHash("sha256").update(result.token).digest("hex");
+      expect(result.key.tokenHash).toBe(expectedHash);
+
+      const keyPath = join(rootDir, "agents", `${agent.id}-keys.jsonl`);
+      expect(existsSync(keyPath)).toBe(true);
+      const persisted = readFileSync(keyPath, "utf-8");
+      expect(persisted).not.toContain(result.token);
+    });
+
+    it("createApiKey with label persists the label", async () => {
+      const agent = await store.createAgent({ name: "LabeledKeyAgent", role: "executor" });
+
+      const { key } = await store.createApiKey(agent.id, { label: "CI Key" });
+      const keys = await store.listApiKeys(agent.id);
+
+      expect(key.label).toBe("CI Key");
+      expect(keys).toHaveLength(1);
+      expect(keys[0].label).toBe("CI Key");
+    });
+
+    it("createApiKey omits empty labels", async () => {
+      const agent = await store.createAgent({ name: "NoLabelKeyAgent", role: "executor" });
+
+      const { key } = await store.createApiKey(agent.id, { label: "   " });
+      expect(key.label).toBeUndefined();
+    });
+
+    it("createApiKey throws when agent is not found", async () => {
+      await expect(store.createApiKey("agent-missing")).rejects.toThrow(
+        "Agent agent-missing not found"
+      );
+    });
+
+    it("listApiKeys returns keys for one agent and empty array for an agent with no keys", async () => {
+      const withKeys = await store.createAgent({ name: "WithKeys", role: "executor" });
+      const noKeys = await store.createAgent({ name: "NoKeys", role: "executor" });
+      const other = await store.createAgent({ name: "Other", role: "reviewer" });
+
+      const first = await store.createApiKey(withKeys.id);
+      const second = await store.createApiKey(withKeys.id);
+      await store.createApiKey(other.id);
+
+      const withKeysList = await store.listApiKeys(withKeys.id);
+      expect(withKeysList).toHaveLength(2);
+      expect(withKeysList.map((key) => key.id)).toEqual([first.key.id, second.key.id]);
+
+      const noKeysList = await store.listApiKeys(noKeys.id);
+      expect(noKeysList).toEqual([]);
+    });
+
+    it("listApiKeys throws when agent is not found", async () => {
+      await expect(store.listApiKeys("agent-missing")).rejects.toThrow(
+        "Agent agent-missing not found"
+      );
+    });
+
+    it("revokeApiKey sets revokedAt and revoked key remains in list", async () => {
+      const agent = await store.createAgent({ name: "RevokeKeyAgent", role: "executor" });
+      const { key } = await store.createApiKey(agent.id);
+
+      const revoked = await store.revokeApiKey(agent.id, key.id);
+      expect(revoked.id).toBe(key.id);
+      expect(revoked.revokedAt).toBeDefined();
+
+      const keys = await store.listApiKeys(agent.id);
+      expect(keys).toHaveLength(1);
+      expect(keys[0].id).toBe(key.id);
+      expect(keys[0].revokedAt).toBe(revoked.revokedAt);
+    });
+
+    it("revokeApiKey already revoked is a no-op", async () => {
+      const agent = await store.createAgent({ name: "RevokeTwiceAgent", role: "executor" });
+      const { key } = await store.createApiKey(agent.id);
+
+      const firstRevocation = await store.revokeApiKey(agent.id, key.id);
+      const secondRevocation = await store.revokeApiKey(agent.id, key.id);
+
+      expect(firstRevocation.revokedAt).toBeDefined();
+      expect(secondRevocation.revokedAt).toBe(firstRevocation.revokedAt);
+    });
+
+    it("revokeApiKey throws when key is not found", async () => {
+      const agent = await store.createAgent({ name: "MissingKeyAgent", role: "executor" });
+
+      await expect(store.revokeApiKey(agent.id, "key-missing")).rejects.toThrow(
+        `API key key-missing not found for agent ${agent.id}`
+      );
+    });
+
+    it("revokeApiKey throws when agent is not found", async () => {
+      await expect(store.revokeApiKey("agent-missing", "key-1234")).rejects.toThrow(
+        "Agent agent-missing not found"
+      );
+    });
+
+    it("multiple keys can be listed and revoking one does not affect others", async () => {
+      const agent = await store.createAgent({ name: "MultiKeyAgent", role: "executor" });
+
+      const key1 = await store.createApiKey(agent.id, { label: "key-1" });
+      const key2 = await store.createApiKey(agent.id, { label: "key-2" });
+      const key3 = await store.createApiKey(agent.id, { label: "key-3" });
+
+      const revoked = await store.revokeApiKey(agent.id, key2.key.id);
+
+      const keys = await store.listApiKeys(agent.id);
+      expect(keys).toHaveLength(3);
+      const byId = new Map(keys.map((key) => [key.id, key]));
+      expect(byId.get(key1.key.id)?.revokedAt).toBeUndefined();
+      expect(byId.get(key2.key.id)?.revokedAt).toBe(revoked.revokedAt);
+      expect(byId.get(key3.key.id)?.revokedAt).toBeUndefined();
+    });
+
+    it("API keys survive store reinitialization", async () => {
+      const agent = await store.createAgent({ name: "KeyPersistence", role: "executor" });
+      const { key } = await store.createApiKey(agent.id, { label: "persist" });
+
+      const store2 = new AgentStore({ rootDir });
+      await store2.init();
+
+      const keys = await store2.listApiKeys(agent.id);
+      expect(keys).toHaveLength(1);
+      expect(keys[0].id).toBe(key.id);
+      expect(keys[0].label).toBe("persist");
+    });
+  });
+
   // ── concurrency (withLock) ────────────────────────────────────────
 
   describe("concurrency", () => {
@@ -899,6 +1041,20 @@ describe("AgentStore", () => {
         expect(event.runId).toBeDefined();
         expect(new Date(event.timestamp).getTime()).not.toBeNaN();
       }
+    });
+
+    it("concurrent createApiKey calls don't corrupt the JSONL file", async () => {
+      const agent = await store.createAgent({ name: "ConcKeys", role: "executor" });
+
+      const results = await Promise.all(
+        Array.from({ length: 10 }, () => store.createApiKey(agent.id))
+      );
+
+      const keys = await store.listApiKeys(agent.id);
+      expect(keys).toHaveLength(10);
+
+      const ids = new Set(results.map(({ key }) => key.id));
+      expect(ids.size).toBe(10);
     });
   });
 
