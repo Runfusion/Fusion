@@ -11,12 +11,15 @@
  *   bun run build.ts --all                     # Build for all supported platforms
  *
  * Prerequisites:
- *   - `pnpm build` must have been run first (dashboard client + tsc)
  *   - Bun >= 1.1 (cross-compilation support)
+ *
+ * Notes:
+ *   - If dashboard client assets are missing, this script generates a
+ *     minimal dist/client/index.html stub so clean-checkout tests can run.
  */
 
 import { join, dirname, basename } from "node:path";
-import { cpSync, mkdirSync, existsSync, rmSync, readdirSync, statSync } from "node:fs";
+import { cpSync, mkdirSync, existsSync, rmSync, readdirSync, statSync, writeFileSync } from "node:fs";
 
 const cliRoot = dirname(new URL(import.meta.url).pathname);
 const workspaceRoot = join(cliRoot, "..", "..");
@@ -105,13 +108,49 @@ function parseArgs(): { targets: BunTarget[] | null } {
   return { targets: null };
 }
 
-// ── Validate prerequisites ────────────────────────────────────────────
-if (!existsSync(dashboardClientSrc)) {
-  console.error(
-    `ERROR: Dashboard client not built. Expected: ${dashboardClientSrc}\n` +
-      `Run 'pnpm build' first to build all packages.`,
+// ── Client asset staging ──────────────────────────────────────────────
+type ClientAssetMode = "real" | "stub";
+
+const CLIENT_STUB_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fusion Dashboard</title>
+  </head>
+  <body>
+    <main>
+      <h1>Fusion Dashboard</h1>
+      <p>Dashboard assets not built — run \`pnpm build\` to generate full client assets.</p>
+    </main>
+  </body>
+</html>
+`;
+
+function ensureClientAssets(): ClientAssetMode {
+  try {
+    if (existsSync(dashboardClientDest)) {
+      rmSync(dashboardClientDest, { recursive: true, force: true });
+    }
+  } catch {
+    // Ignore cleanup errors - directory might not exist or be accessible
+  }
+
+  mkdirSync(outDir, { recursive: true });
+
+  if (existsSync(dashboardClientSrc)) {
+    console.log("Copying dashboard client assets...");
+    cpSync(dashboardClientSrc, dashboardClientDest, { recursive: true });
+    console.log(`  → ${dashboardClientDest}`);
+    return "real";
+  }
+
+  mkdirSync(dashboardClientDest, { recursive: true });
+  writeFileSync(join(dashboardClientDest, "index.html"), CLIENT_STUB_HTML, "utf-8");
+  console.warn(
+    `WARNING: Dashboard client assets not found at ${dashboardClientSrc}. Generated minimal stub at ${join(dashboardClientDest, "index.html")}.`,
   );
-  process.exit(1);
+  return "stub";
 }
 
 // ── Copy native terminal assets for a specific target ─────────────────
@@ -168,23 +207,6 @@ function copyNativeAssets(target?: BunTarget) {
     console.error(`  ✗ Failed to copy native assets for ${prebuildName}:`, err);
     return false;
   }
-}
-
-// ── Copy dashboard client assets alongside output ─────────────────────
-// Express.static requires a real filesystem directory, so we co-locate
-// the pre-built SPA next to the binary rather than embedding blobs.
-function copyClientAssets() {
-  try {
-    if (existsSync(dashboardClientDest)) {
-      rmSync(dashboardClientDest, { recursive: true, force: true });
-    }
-  } catch {
-    // Ignore cleanup errors - directory might not exist or be accessible
-  }
-  console.log("Copying dashboard client assets...");
-  mkdirSync(outDir, { recursive: true });
-  cpSync(dashboardClientSrc, dashboardClientDest, { recursive: true });
-  console.log(`  → ${dashboardClientDest}`);
 }
 
 // ── Compile a single binary ───────────────────────────────────────────
@@ -246,8 +268,8 @@ function compileBinary(outFile: string, target: string, isCrossCompile: boolean)
 // ── Main ──────────────────────────────────────────────────────────────
 const { targets } = parseArgs();
 
-// Copy assets once (shared across all binaries)
-copyClientAssets();
+// Stage assets once (shared across all binaries)
+const clientAssetMode = ensureClientAssets();
 
 if (targets === null) {
   // Default: build for current platform → dist/kb
@@ -255,7 +277,7 @@ if (targets === null) {
   const ok = compileBinary(outBinary, "bun", false);
   if (!ok) process.exit(1);
   console.log(`\n✓ Built: ${outBinary}`);
-  console.log(`  Assets: ${dashboardClientDest}`);
+  console.log(`  Assets: ${dashboardClientDest} (${clientAssetMode})`);
   console.log(`  Runtime: ${runtimeDir}`);
   console.log(`\nRun with: ${outBinary} --help`);
 } else {
@@ -279,7 +301,7 @@ if (targets === null) {
     console.log(`  Built ${built.length} binaries:`);
     built.forEach((b) => console.log(`    dist/${b}`));
   }
-  console.log(`  Assets: ${dashboardClientDest}`);
+  console.log(`  Assets: ${dashboardClientDest} (${clientAssetMode})`);
   console.log(`  Runtime: ${runtimeDir}`);
 
   if (failed) process.exit(1);

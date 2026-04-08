@@ -1,11 +1,25 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
+import { execSync } from "node:child_process";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const cliRoot = join(__dirname, "..", "..");
 const bundlePath = join(cliRoot, "dist", "bin.js");
+const clientIndexPath = join(cliRoot, "dist", "client", "index.html");
 
 describe("CLI bundle output", () => {
+  beforeAll(() => {
+    if (existsSync(bundlePath) && existsSync(clientIndexPath)) {
+      return;
+    }
+
+    execSync("pnpm build", {
+      cwd: cliRoot,
+      stdio: "pipe",
+      timeout: 120_000,
+    });
+  }, 180_000);
+
   it("dist/bin.js exists", () => {
     expect(existsSync(bundlePath)).toBe(true);
   });
@@ -31,8 +45,7 @@ describe("CLI bundle output", () => {
   });
 
   it("dashboard client assets are included", () => {
-    const clientIndex = join(cliRoot, "dist", "client", "index.html");
-    expect(existsSync(clientIndex)).toBe(true);
+    expect(existsSync(clientIndexPath)).toBe(true);
   });
 
   it("runtime native assets are staged after build:exe", () => {
