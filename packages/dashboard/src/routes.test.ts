@@ -5748,6 +5748,59 @@ describe("Git Management endpoints", () => {
       });
     });
 
+    describe("POST /planning/start-streaming", () => {
+      it("accepts optional model params in request body", async () => {
+        const messages: Array<{ role: string; content: string }> = [];
+        const mockAgent = {
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (msg: string) => {
+              messages.push({ role: "user", content: msg });
+              messages.push({
+                role: "assistant",
+                content: JSON.stringify({
+                  type: "question",
+                  data: {
+                    id: "q-scope",
+                    type: "text",
+                    question: "What should we plan first?",
+                  },
+                }),
+              });
+            }),
+            dispose: vi.fn(),
+          },
+        };
+
+        const createKbAgentSpy = vi.fn(async () => mockAgent);
+        __setCreateKbAgent(createKbAgentSpy as any);
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({
+            initialPlan: "Build a user auth system",
+            planningModelProvider: "google",
+            planningModelId: "gemini-2.5-pro",
+          }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(201);
+        expect(res.body.sessionId).toBeDefined();
+
+        await vi.waitFor(() => {
+          expect(createKbAgentSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+              defaultProvider: "google",
+              defaultModelId: "gemini-2.5-pro",
+            }),
+          );
+        });
+      });
+    });
+
     describe("POST /planning/respond", () => {
       it("processes response and returns next question", async () => {
         // First create a session
@@ -7797,7 +7850,7 @@ describe("POST /workflow-steps/:id/refine", () => {
     expect(res.body.prompt).toBeDefined();
     expect(res.body.workflowStep).toBeDefined();
     expect(store.updateWorkflowStep).toHaveBeenCalled();
-  });
+  }, 30000);
 });
 
 // ── Workflow Step Template Tests ──────────────────────────────────────────

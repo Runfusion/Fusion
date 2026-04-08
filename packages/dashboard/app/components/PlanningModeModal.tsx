@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import type { Task, PlanningQuestion, PlanningSummary } from "@fusion/core";
 import {
-  startPlanning,
   startPlanningStreaming,
   respondToPlanning,
   createTaskFromPlanning,
@@ -9,8 +8,10 @@ import {
   fetchAiSession,
   startPlanningBreakdown,
   createTasksFromPlanning,
+  fetchModels,
   type PlanningSession,
   type SubtaskItem,
+  type ModelInfo,
 } from "../api";
 import {
   savePlanningDescription,
@@ -18,6 +19,7 @@ import {
   clearPlanningDescription,
 } from "../hooks/modalPersistence";
 import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, ListTree, GripVertical, ArrowUp, ArrowDown, Plus, Trash2 } from "lucide-react";
+import { CustomModelDropdown } from "./CustomModelDropdown";
 
 interface PlanningModeModalProps {
   isOpen: boolean;
@@ -50,6 +52,26 @@ const EXAMPLE_PLANS = [
   "Refactor the task card component for better performance",
 ];
 
+function getModelSelectionValue(provider?: string, modelId?: string): string {
+  return provider && modelId ? `${provider}/${modelId}` : "";
+}
+
+function parseModelSelection(value: string): { provider?: string; modelId?: string } {
+  if (!value) {
+    return { provider: undefined, modelId: undefined };
+  }
+
+  const slashIndex = value.indexOf("/");
+  if (slashIndex === -1) {
+    return { provider: undefined, modelId: undefined };
+  }
+
+  return {
+    provider: value.slice(0, slashIndex),
+    modelId: value.slice(slashIndex + 1),
+  };
+}
+
 export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreated, tasks, initialPlan: initialPlanProp, projectId, resumeSessionId }: PlanningModeModalProps) {
   const [initialPlan, setInitialPlan] = useState("");
   const [view, setView] = useState<ViewState>({ type: "initial" });
@@ -66,6 +88,52 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const streamConnectionRef = useRef<{ close: () => void; isConnected: () => boolean } | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
+  const [planningModelProvider, setPlanningModelProvider] = useState<string | undefined>(undefined);
+  const [planningModelId, setPlanningModelId] = useState<string | undefined>(undefined);
+  const [loadedModels, setLoadedModels] = useState<ModelInfo[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+  const [favoriteProviders, setFavoriteProviders] = useState<string[]>([]);
+  const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
+
+  const planningSelectionValue = getModelSelectionValue(planningModelProvider, planningModelId);
+
+  const getModelBadgeLabel = useCallback(
+    (provider?: string, modelId?: string) => {
+      if (!provider || !modelId) return "Using default";
+      const matched = loadedModels.find((model) => model.provider === provider && model.id === modelId);
+      return matched ? `${matched.provider}/${matched.id}` : `${provider}/${modelId}`;
+    },
+    [loadedModels],
+  );
+
+  const loadModels = useCallback(async () => {
+    setModelsLoading(true);
+    setModelsError(null);
+
+    try {
+      const response = await fetchModels();
+      setLoadedModels(response.models);
+      setFavoriteProviders(response.favoriteProviders);
+      setFavoriteModels(response.favoriteModels);
+    } catch (err: any) {
+      setModelsError(err?.message || "Failed to load models");
+    } finally {
+      setModelsLoading(false);
+    }
+  }, []);
+
+  const handleToggleFavoriteProvider = useCallback((provider: string) => {
+    setFavoriteProviders((prev) =>
+      prev.includes(provider) ? prev.filter((item) => item !== provider) : [...prev, provider],
+    );
+  }, []);
+
+  const handleToggleFavoriteModel = useCallback((modelId: string) => {
+    setFavoriteModels((prev) =>
+      prev.includes(modelId) ? prev.filter((item) => item !== modelId) : [...prev, modelId],
+    );
+  }, []);
 
   const handleStartPlanning = useCallback(async (planOverride?: string) => {
     const plan = planOverride ?? initialPlan;
@@ -77,7 +145,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
     try {
       // Use streaming mode for real-time AI thinking display
-      const { sessionId } = await startPlanningStreaming(plan.trim(), projectId);
+      const modelOverride =
+        planningModelProvider && planningModelId
+          ? { planningModelProvider, planningModelId }
+          : undefined;
+
+      const { sessionId } = await startPlanningStreaming(plan.trim(), projectId, modelOverride);
       currentSessionIdRef.current = sessionId;
 
       // Connect to SSE stream
@@ -121,7 +194,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setView({ type: "initial" });
       currentSessionIdRef.current = null;
     }
-  }, [initialPlan, projectId]);
+  }, [initialPlan, planningModelId, planningModelProvider, projectId]);
 
   // Focus textarea when opening
   useEffect(() => {
@@ -129,6 +202,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       textareaRef.current?.focus();
     }
   }, [isOpen, view.type]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    void loadModels();
+  }, [isOpen, loadModels]);
 
   // Auto-start planning when initialPlan prop is provided
   useEffect(() => {
@@ -248,6 +328,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setResponseHistory([]);
     setEditedSummary(null);
     setStreamingOutput("");
+    setPlanningModelProvider(undefined);
+    setPlanningModelId(undefined);
     currentSessionIdRef.current = null;
     onClose();
   }, [initialPlan, onClose]);
@@ -348,6 +430,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setResponseHistory([]);
       setEditedSummary(null);
       setStreamingOutput("");
+      setPlanningModelProvider(undefined);
+      setPlanningModelId(undefined);
       currentSessionIdRef.current = null;
       onClose();
     } catch (err: any) {
@@ -440,6 +524,74 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               </div>
 
               <div className="planning-view-footer">
+                <div
+                  className="model-select-row"
+                  style={{
+                    marginRight: "auto",
+                    minWidth: "min(100%, 320px)",
+                    maxWidth: "420px",
+                    textAlign: "left",
+                  }}
+                >
+                  <label htmlFor="planning-modal-model" className="model-select-label">
+                    Planning Model
+                    {modelsLoading && (
+                      <span className="text-muted" style={{ marginLeft: "8px", fontSize: "12px" }}>
+                        Loading models…
+                      </span>
+                    )}
+                  </label>
+                  <CustomModelDropdown
+                    id="planning-modal-model"
+                    label="Planning Model"
+                    value={planningSelectionValue}
+                    onChange={(value) => {
+                      const { provider, modelId } = parseModelSelection(value);
+                      setPlanningModelProvider(provider);
+                      setPlanningModelId(modelId);
+                    }}
+                    models={loadedModels}
+                    disabled={modelsLoading}
+                    favoriteProviders={favoriteProviders}
+                    onToggleFavorite={handleToggleFavoriteProvider}
+                    favoriteModels={favoriteModels}
+                    onToggleModelFavorite={handleToggleFavoriteModel}
+                  />
+                  {modelsError && (
+                    <div className="form-hint" style={{ marginTop: "6px", fontSize: "12px", color: "var(--color-error)" }}>
+                      {modelsError}{" "}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void loadModels();
+                        }}
+                        style={{
+                          fontSize: "12px",
+                          background: "none",
+                          border: "none",
+                          color: "inherit",
+                          textDecoration: "underline",
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  )}
+                  <div className="model-selector-current" style={{ marginTop: "8px" }}>
+                    <span
+                      className={`model-badge ${
+                        planningModelProvider && planningModelId
+                          ? "model-badge-custom"
+                          : "model-badge-default"
+                      }`}
+                    >
+                      {getModelBadgeLabel(planningModelProvider, planningModelId)}
+                    </span>
+                  </div>
+                </div>
+
                 <button
                   className="btn btn-primary planning-start-btn"
                   onClick={() => handleStartPlanning()}

@@ -1214,10 +1214,18 @@ export function startPlanning(initialPlan: string, projectId?: string): Promise<
 }
 
 /** Start a new planning session with AI streaming support */
-export function startPlanningStreaming(initialPlan: string, projectId?: string): Promise<{ sessionId: string }> {
+export function startPlanningStreaming(
+  initialPlan: string,
+  projectId?: string,
+  modelOverride?: { planningModelProvider?: string; planningModelId?: string }
+): Promise<{ sessionId: string }> {
   return api<{ sessionId: string }>(withProjectId("/planning/start-streaming", projectId), {
     method: "POST",
-    body: JSON.stringify({ initialPlan }),
+    body: JSON.stringify({
+      initialPlan,
+      planningModelProvider: modelOverride?.planningModelProvider,
+      planningModelId: modelOverride?.planningModelId,
+    }),
   });
 }
 

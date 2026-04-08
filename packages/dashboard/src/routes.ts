@@ -5559,7 +5559,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.post("/planning/start-streaming", async (req, res) => {
     try {
-      const { initialPlan } = req.body;
+      const { initialPlan, planningModelProvider, planningModelId } = req.body;
 
       if (!initialPlan || typeof initialPlan !== "string") {
         res.status(400).json({ error: "initialPlan is required and must be a string" });
@@ -5571,11 +5571,27 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         return;
       }
 
+      if (planningModelProvider !== undefined && typeof planningModelProvider !== "string") {
+        res.status(400).json({ error: "planningModelProvider must be a string when provided" });
+        return;
+      }
+
+      if (planningModelId !== undefined && typeof planningModelId !== "string") {
+        res.status(400).json({ error: "planningModelId must be a string when provided" });
+        return;
+      }
+
       const ip = req.ip || req.socket.remoteAddress || "unknown";
       const rootDir = store.getRootDir();
 
       const { createSessionWithAgent, RateLimitError } = await import("./planning.js");
-      const sessionId = await createSessionWithAgent(ip, initialPlan, rootDir);
+      const sessionId = await createSessionWithAgent(
+        ip,
+        initialPlan,
+        rootDir,
+        planningModelProvider,
+        planningModelId,
+      );
       res.status(201).json({ sessionId });
     } catch (err: any) {
       if (err.name === "RateLimitError") {

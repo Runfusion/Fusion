@@ -36,10 +36,14 @@ async function initEngine() {
       // Use dynamic import with variable to prevent static analysis
       const engineModule = "@fusion/engine";
       const engine = await import(/* @vite-ignore */ engineModule);
-      createKbAgent = engine.createKbAgent;
+      if (!createKbAgent) {
+        createKbAgent = engine.createKbAgent;
+      }
     } catch {
       // Allow failure in test environments - agent functionality will be stubbed
-      createKbAgent = undefined;
+      if (!createKbAgent) {
+        createKbAgent = undefined;
+      }
     }
   }
 }
@@ -539,7 +543,9 @@ async function getFirstQuestionFromAgent(
 export async function createSessionWithAgent(
   ip: string,
   initialPlan: string,
-  rootDir: string
+  rootDir: string,
+  modelProvider?: string,
+  modelId?: string,
 ): Promise<string> {
   // Check rate limit
   if (!checkRateLimit(ip)) {
@@ -566,7 +572,7 @@ export async function createSessionWithAgent(
   persistSession(session, "generating");
 
   // Initialize AI agent in background - it will stream via planningStreamManager
-  initializeAgent(session, rootDir).catch((err) => {
+  initializeAgent(session, rootDir, modelProvider, modelId).catch((err) => {
     console.error(`[planning] Failed to initialize agent for session ${sessionId}:`, err);
     persistSession(session, "error", undefined, err.message || "Failed to initialize AI agent");
     planningStreamManager.broadcast(sessionId, {
@@ -581,7 +587,12 @@ export async function createSessionWithAgent(
 /**
  * Initialize the AI agent for a session and start the first turn.
  */
-async function initializeAgent(session: Session, rootDir: string): Promise<void> {
+async function initializeAgent(
+  session: Session,
+  rootDir: string,
+  modelProvider?: string,
+  modelId?: string,
+): Promise<void> {
   try {
     // Ensure engine is loaded before using createKbAgent
     await engineReady;
@@ -590,6 +601,12 @@ async function initializeAgent(session: Session, rootDir: string): Promise<void>
       cwd: rootDir,
       systemPrompt: PLANNING_SYSTEM_PROMPT,
       tools: "readonly",
+      ...(modelProvider && modelId
+        ? {
+            defaultProvider: modelProvider,
+            defaultModelId: modelId,
+          }
+        : {}),
       onThinking: (delta: string) => {
         session.thinkingOutput += delta;
         persistThinking(session.id, session.thinkingOutput);

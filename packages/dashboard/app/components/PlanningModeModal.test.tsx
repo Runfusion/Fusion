@@ -14,6 +14,7 @@ const mockCreateTaskFromPlanning = vi.fn();
 const mockStartPlanningBreakdown = vi.fn();
 const mockCreateTasksFromPlanning = vi.fn();
 const mockFetchAiSession = vi.fn();
+const mockFetchModels = vi.fn();
 const mockUploadAttachment = vi.fn();
 const mockDeleteAttachment = vi.fn();
 const mockUpdateTask = vi.fn();
@@ -46,7 +47,7 @@ vi.mock("../api", () => ({
   rejectPlan: (...args: any[]) => mockRejectPlan(...args),
   refineTask: (...args: any[]) => mockRefineTask(...args),
   fetchSettings: vi.fn().mockResolvedValue({ modelPresets: [], autoSelectModelPreset: false, defaultPresetBySize: {} }),
-  fetchModels: vi.fn().mockResolvedValue({ models: [], favoriteProviders: [] }),
+  fetchModels: (...args: any[]) => mockFetchModels(...args),
   fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
   refineText: vi.fn(),
   getRefineErrorMessage: vi.fn((err: any) => err?.message || "Failed to refine"),
@@ -65,6 +66,23 @@ const mockTasks: Task[] = [
     log: [],
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
+  },
+];
+
+const mockModels = [
+  {
+    provider: "anthropic",
+    id: "claude-sonnet-4-5",
+    name: "Claude Sonnet 4.5",
+    reasoning: true,
+    contextWindow: 200000,
+  },
+  {
+    provider: "google",
+    id: "gemini-2.5-pro",
+    name: "Gemini 2.5 Pro",
+    reasoning: true,
+    contextWindow: 1048576,
   },
 ];
 
@@ -116,6 +134,11 @@ describe("PlanningModeModal", () => {
     mockStartPlanningStreaming.mockResolvedValue({ sessionId: "session-123" });
     mockStartPlanningBreakdown.mockResolvedValue({ sessionId: "session-123", subtasks: [] });
     mockFetchAiSession.mockResolvedValue(null);
+    mockFetchModels.mockResolvedValue({
+      models: mockModels,
+      favoriteProviders: [],
+      favoriteModels: [],
+    });
 
     // Default: simulate receiving a question after a brief delay
     mockConnectPlanningStream.mockImplementation((_sessionId: string, _projectId: string | undefined, handlers: any) => {
@@ -193,6 +216,97 @@ describe("PlanningModeModal", () => {
       expect(screen.getByText(/Build a user authentication/)).toBeDefined();
     });
 
+    it("renders planning model dropdown in initial view", async () => {
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+        />
+      );
+
+      const modelTrigger = screen.getByRole("button", { name: "Planning Model" });
+      expect(modelTrigger).toBeDefined();
+      expect(screen.getByText("Using default")).toBeDefined();
+
+      await waitFor(() => {
+        expect(mockFetchModels).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it("updates planning model selection and badge", async () => {
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+        />
+      );
+
+      await waitFor(() => {
+        expect(mockFetchModels).toHaveBeenCalledTimes(1);
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Planning Model" }));
+      fireEvent.click(screen.getByRole("option", { name: /Claude Sonnet 4.5/ }));
+
+      expect(screen.getByText("anthropic/claude-sonnet-4-5")).toBeDefined();
+    });
+
+    it("passes selected planning model to startPlanningStreaming", async () => {
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+        />
+      );
+
+      await waitFor(() => {
+        expect(mockFetchModels).toHaveBeenCalledTimes(1);
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Planning Model" }));
+      fireEvent.click(screen.getByRole("option", { name: /Claude Sonnet 4.5/ }));
+
+      const textarea = screen.getByPlaceholderText(/e.g., Build a user authentication/);
+      fireEvent.change(textarea, { target: { value: "Build auth system" } });
+      fireEvent.click(screen.getByText("Start Planning"));
+
+      await waitFor(() => {
+        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined, {
+          planningModelProvider: "anthropic",
+          planningModelId: "claude-sonnet-4-5",
+        });
+      });
+    });
+
+    it("calls startPlanningStreaming without model override when none selected", async () => {
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+        />
+      );
+
+      const textarea = screen.getByPlaceholderText(/e.g., Build a user authentication/);
+      fireEvent.change(textarea, { target: { value: "Build auth system" } });
+      fireEvent.click(screen.getByText("Start Planning"));
+
+      await waitFor(() => {
+        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined, undefined);
+      });
+    });
+
     it("auto-starts planning when initialPlan prop is provided", async () => {
       render(
         <PlanningModeModal
@@ -206,7 +320,7 @@ describe("PlanningModeModal", () => {
 
       // Wait for startPlanningStreaming to be called (allow time for setTimeout in useEffect)
       await waitFor(() => {
-        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build a login system from new task dialog", undefined);
+        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build a login system from new task dialog", undefined, undefined);
       }, { timeout: 2000 });
 
       // Should transition to question view
@@ -228,7 +342,7 @@ describe("PlanningModeModal", () => {
 
       // The auto-start should happen with the initial plan (allow time for setTimeout in useEffect)
       await waitFor(() => {
-        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Pre-filled plan from new task", undefined);
+        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Pre-filled plan from new task", undefined, undefined);
       }, { timeout: 2000 });
     });
   });
@@ -251,7 +365,7 @@ describe("PlanningModeModal", () => {
 
       // Wait for streaming to be called
       await waitFor(() => {
-        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined);
+        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined, undefined);
       });
 
       // Should transition to question view via streaming

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import {
   createSession,
+  createSessionWithAgent,
   submitResponse,
   cancelSession,
   getSession,
@@ -238,6 +239,51 @@ describe("planning module", () => {
       expect(result.firstQuestion.type).toBe("confirm");
       expect(result.firstQuestion.id).toBe("q-direct-summary");
       expect(result.firstQuestion.question).toContain("Auth System");
+    });
+  });
+
+  describe("createSessionWithAgent", () => {
+    it("passes planning model override to createKbAgent when provided", async () => {
+      const createKbAgentSpy = vi.fn(async () => createMockAgent(STANDARD_QUESTION_RESPONSES));
+      __setCreateKbAgent(createKbAgentSpy as any);
+
+      const sessionId = await createSessionWithAgent(
+        getUniqueIp(),
+        "Build auth system",
+        TEST_ROOT_DIR,
+        "google",
+        "gemini-2.5-pro",
+      );
+
+      expect(sessionId).toBeDefined();
+
+      await vi.waitFor(() => {
+        expect(createKbAgentSpy).toHaveBeenCalledTimes(1);
+      }, { timeout: 10000 });
+
+      expect(createKbAgentSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          defaultProvider: "google",
+          defaultModelId: "gemini-2.5-pro",
+        }),
+      );
+    });
+
+    it("creates agent without model overrides when none provided", async () => {
+      const createKbAgentSpy = vi.fn(async () => createMockAgent(STANDARD_QUESTION_RESPONSES));
+      __setCreateKbAgent(createKbAgentSpy as any);
+
+      const sessionId = await createSessionWithAgent(getUniqueIp(), "Build auth system", TEST_ROOT_DIR);
+
+      expect(sessionId).toBeDefined();
+
+      await vi.waitFor(() => {
+        expect(createKbAgentSpy).toHaveBeenCalledTimes(1);
+      }, { timeout: 10000 });
+
+      const callArg = createKbAgentSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(callArg?.defaultProvider).toBeUndefined();
+      expect(callArg?.defaultModelId).toBeUndefined();
     });
   });
 

@@ -82,7 +82,7 @@ vi.mock("../../api", () => ({
   cancelMissionInterview: (...args: any[]) => mockCancelMissionInterview(...args),
   createMissionFromInterview: (...args: any[]) => mockCreateMissionFromInterview(...args),
   fetchSettings: vi.fn().mockResolvedValue({ modelPresets: [], autoSelectModelPreset: false, defaultPresetBySize: {} }),
-  fetchModels: vi.fn().mockResolvedValue({ models: [], favoriteProviders: [] }),
+  fetchModels: vi.fn().mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] }),
   fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
   refineText: vi.fn(),
   getRefineErrorMessage: vi.fn((err: any) => err?.message || "Failed to refine"),
@@ -168,7 +168,7 @@ describe("ModalReentry", () => {
 
       // Wait for auto-start (which reads the prop)
       await waitFor(() => {
-        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("From prop", undefined);
+        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("From prop", undefined, undefined);
       });
 
       // localStorage should NOT be read since prop was provided
