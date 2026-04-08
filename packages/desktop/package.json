@@ -12,6 +12,7 @@
     "build": "tsc",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "generate:icons": "tsx scripts/generate-icons.ts",
     "pack": "electron-builder",
     "dist": "electron-builder --publish never"
   },
@@ -43,6 +44,7 @@
     "@vitest/coverage-v8": "^3.1.0",
     "electron": "^35.0.0",
     "electron-builder": "^26.0.0",
+    "sharp": "^0.33.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^3.1.0"

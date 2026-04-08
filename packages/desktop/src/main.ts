@@ -1,6 +1,8 @@
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage } from "electron";
+import { app, BrowserWindow, Tray, ipcMain, nativeImage } from "electron";
+import { buildAppMenu } from "./menu.js";
+import { setupTray, updateTrayStatus } from "./tray.js";
 
 export const DASHBOARD_URL = process.env.FUSION_DASHBOARD_URL || "http://localhost:4040";
 
@@ -20,36 +22,6 @@ export function createMainWindow(): BrowserWindow {
   return mainWindow;
 }
 
-export function setupTray(mainWindow: BrowserWindow): Tray {
-  const tray = new Tray(nativeImage.createEmpty());
-  tray.setToolTip("Fusion");
-
-  const menu = Menu.buildFromTemplate([
-    {
-      label: "Show Fusion",
-      click: () => {
-        mainWindow.show();
-        mainWindow.focus();
-      },
-    },
-    {
-      label: "Quit",
-      click: () => {
-        app.quit();
-      },
-    },
-  ]);
-
-  tray.setContextMenu(menu);
-
-  mainWindow.on("close", (event) => {
-    event.preventDefault();
-    mainWindow.hide();
-  });
-
-  return tray;
-}
-
 export function registerIpcHandlers(): void {
   ipcMain.handle("app:get-version", () => app.getVersion());
   ipcMain.on("app:quit", () => app.quit());
@@ -60,7 +32,14 @@ export function run(): void {
 
   app.whenReady().then(() => {
     const mainWindow = createMainWindow();
-    tray = setupTray(mainWindow);
+    const trayInstance = tray ?? new Tray(nativeImage.createEmpty());
+    tray = setupTray(mainWindow, trayInstance);
+
+    buildAppMenu({
+      mainWindow,
+      appName: "Fusion",
+    });
+
     registerIpcHandlers();
   });
 
@@ -74,10 +53,18 @@ export function run(): void {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       const mainWindow = createMainWindow();
-      tray = tray ?? setupTray(mainWindow);
+      const trayInstance = tray ?? new Tray(nativeImage.createEmpty());
+      tray = setupTray(mainWindow, trayInstance);
+
+      buildAppMenu({
+        mainWindow,
+        appName: "Fusion",
+      });
     }
   });
 }
+
+export { setupTray, updateTrayStatus };
 
 const modulePath = fileURLToPath(import.meta.url);
 if (process.argv[1] && resolve(process.argv[1]) === modulePath) {

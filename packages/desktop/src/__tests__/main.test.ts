@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => {
   const browserWindowInstance = {
     loadURL: vi.fn(),
     on: vi.fn(),
+    isVisible: vi.fn(() => true),
     show: vi.fn(),
     focus: vi.fn(),
     hide: vi.fn(),
@@ -28,13 +29,27 @@ const mocks = vi.hoisted(() => {
   };
 
   const trayInstance = {
+    setImage: vi.fn(),
     setToolTip: vi.fn(),
     setContextMenu: vi.fn(),
+    on: vi.fn(),
   };
 
   const Tray = vi.fn(() => trayInstance);
-  const Menu = { buildFromTemplate: vi.fn(() => ({ id: "mock-menu" })) };
-  const nativeImage = { createEmpty: vi.fn(() => ({ id: "mock-image" })) };
+  const Menu = {
+    buildFromTemplate: vi.fn(() => ({ id: "mock-menu" })),
+    setApplicationMenu: vi.fn(),
+  };
+  const nativeImage = {
+    createEmpty: vi.fn(() => ({ id: "mock-image" })),
+    createFromPath: vi.fn(() => ({
+      resize: vi.fn(() => ({ id: "resized-image" })),
+    })),
+  };
+
+  const shell = {
+    openExternal: vi.fn(() => Promise.resolve()),
+  };
 
   return {
     app,
@@ -44,6 +59,7 @@ const mocks = vi.hoisted(() => {
     Tray,
     Menu,
     nativeImage,
+    shell,
     browserWindowInstance,
   };
 });
@@ -55,6 +71,7 @@ vi.mock("electron", () => ({
   Tray: mocks.Tray,
   Menu: mocks.Menu,
   nativeImage: mocks.nativeImage,
+  shell: mocks.shell,
 }));
 
 async function importMainModule() {
@@ -144,14 +161,14 @@ describe("main process", () => {
     expect(mocks.app.whenReady).not.toHaveBeenCalled();
   });
 
-  it("setupTray creates tray menu and hides window on close", async () => {
+  it("setupTray configures tray interactions with provided tray instance", async () => {
     const { setupTray } = await importMainModule();
 
-    setupTray(mocks.browserWindowInstance as never);
+    setupTray(mocks.browserWindowInstance as never, mocks.trayInstance as never);
 
-    expect(mocks.Tray).toHaveBeenCalledTimes(1);
-    expect(mocks.nativeImage.createEmpty).toHaveBeenCalledTimes(1);
-    expect(mocks.trayInstance.setToolTip).toHaveBeenCalledWith("Fusion");
+    expect(mocks.nativeImage.createFromPath).toHaveBeenCalledTimes(1);
+    expect(mocks.trayInstance.setImage).toHaveBeenCalledTimes(1);
+    expect(mocks.trayInstance.setToolTip).toHaveBeenCalledWith("Fusion — Running");
     expect(mocks.Menu.buildFromTemplate).toHaveBeenCalledTimes(1);
 
     const closeCall = mocks.browserWindowInstance.on.mock.calls.find(
