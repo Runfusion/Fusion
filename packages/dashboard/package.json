@@ -35,7 +35,13 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.app.json"
   },
   "dependencies": {
+    "@capacitor/app": "^7.1.2",
     "@capacitor/core": "^7.0.0",
+    "@capacitor/network": "^7.0.4",
+    "@capacitor/push-notifications": "^7.0.6",
+    "@capacitor/share": "^7.0.4",
+    "@capacitor/splash-screen": "^7.0.5",
+    "@capacitor/status-bar": "^7.0.6",
     "@codemirror/basic-setup": "^0.20.0",
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-javascript": "^6.2.3",

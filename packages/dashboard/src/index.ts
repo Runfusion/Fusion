@@ -12,3 +12,5 @@ export {
   RedisBadgePubSub,
   createBadgePubSub,
 } from "./badge-pubsub.js";
+
+export * from "./plugins/index.js";

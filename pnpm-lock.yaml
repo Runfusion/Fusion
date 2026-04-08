@@ -91,9 +91,27 @@ importers:
 
   packages/dashboard:
     dependencies:
+      '@capacitor/app':
+        specifier: ^7.1.2
+        version: 7.1.2(@capacitor/core@7.6.1)
       '@capacitor/core':
         specifier: ^7.0.0
         version: 7.6.1
+      '@capacitor/network':
+        specifier: ^7.0.4
+        version: 7.0.4(@capacitor/core@7.6.1)
+      '@capacitor/push-notifications':
+        specifier: ^7.0.6
+        version: 7.0.6(@capacitor/core@7.6.1)
+      '@capacitor/share':
+        specifier: ^7.0.4
+        version: 7.0.4(@capacitor/core@7.6.1)
+      '@capacitor/splash-screen':
+        specifier: ^7.0.5
+        version: 7.0.5(@capacitor/core@7.6.1)
+      '@capacitor/status-bar':
+        specifier: ^7.0.6
+        version: 7.0.6(@capacitor/core@7.6.1)
       '@codemirror/basic-setup':
         specifier: ^0.20.0
         version: 0.20.0
@@ -622,6 +640,11 @@ packages:
     peerDependencies:
       '@capacitor/core': ^7.6.0
 
+  '@capacitor/app@7.1.2':
+    resolution: {integrity: sha512-d4I/oF/PRu4megL7/IGKYfe5j7yzSON1FRFgq6kH+m5kH6g7V+wyjHRLauCzGNjdRx4S+nWOumINds0qcRBtKg==}
+    peerDependencies:
+      '@capacitor/core': '>=7.0.0'
+
   '@capacitor/cli@7.6.1':
     resolution: {integrity: sha512-MdmelaYbwWldKlNxiLOhfHV8F8hoM6bIHPRB/+k81FTQoOqq3HYIdHVMZVl7s2800ubNnr4lSP3FevxU20lDew==}
     engines: {node: '>=20.0.0'}
@@ -634,6 +657,31 @@ packages:
     resolution: {integrity: sha512-53Pf2Fz6Pnll4ciHl+Z7wM/Xvo8urcSWGrqexwSdhXuDGfb1bZrkv0CxWMg8h1EFmMzJadYkINrS3LkG3lgJWg==}
     peerDependencies:
       '@capacitor/core': ^7.6.0
+
+  '@capacitor/network@7.0.4':
+    resolution: {integrity: sha512-fNhN3968AQWMnzasPJ0B8e+nyk7+R6V9PWIBQWSQRHrKndDgWRHpxkjEzJPgnJr3EjnKLjbwO+UYy+EwBlGs3A==}
+    peerDependencies:
+      '@capacitor/core': '>=7.0.0'
+
+  '@capacitor/push-notifications@7.0.6':
+    resolution: {integrity: sha512-zAhbHpdbc15ImuVGgoFwUZsKI+jjGxy/oO5mgfYKUx8Xl2OskndzhL79PYsCPjyGLbqUR9NRUZJthV9auVT3nw==}
+    peerDependencies:
+      '@capacitor/core': '>=7.0.0'
+
+  '@capacitor/share@7.0.4':
+    resolution: {integrity: sha512-wNXxmXUcChrtbZ5jQv8scFIbIGKo3rk6B7qpWySxfUhYJP5NANgAqQ9Z69m0k/zYsucdh66SBU7XW1ykd9aUug==}
+    peerDependencies:
+      '@capacitor/core': '>=7.0.0'
+
+  '@capacitor/splash-screen@7.0.5':
+    resolution: {integrity: sha512-bPG2SamFL7VT5I3XsgsGgJhkiyxq3OXCOVKEDupSieVdtEiG7j2vLbSD0xL+91zteF/qLuxsjbugGy5LD8mS2A==}
+    peerDependencies:
+      '@capacitor/core': '>=7.0.0'
+
+  '@capacitor/status-bar@7.0.6':
+    resolution: {integrity: sha512-7AVqj46b26QikImQzWfsJmzG8NUJZBGkrVSuoeTo+SX/YH3hXH0MqwwFgMqMGHfa/BICDgSvTjM9miVFlq0+RQ==}
+    peerDependencies:
+      '@capacitor/core': '>=7.0.0'
 
   '@changesets/apply-release-plan@7.1.0':
     resolution: {integrity: sha512-yq8ML3YS7koKQ/9bk1PqO0HMzApIFNwjlwCnwFEXMzNe8NpzeeYYKCmnhWJGkN8g7E51MnWaSbqRcTcdIxUgnQ==}
@@ -5856,6 +5904,10 @@ snapshots:
     dependencies:
       '@capacitor/core': 7.6.1
 
+  '@capacitor/app@7.1.2(@capacitor/core@7.6.1)':
+    dependencies:
+      '@capacitor/core': 7.6.1
+
   '@capacitor/cli@7.6.1':
     dependencies:
       '@ionic/cli-framework-output': 2.2.8
@@ -5883,6 +5935,26 @@ snapshots:
       tslib: 2.8.1
 
   '@capacitor/ios@7.6.1(@capacitor/core@7.6.1)':
+    dependencies:
+      '@capacitor/core': 7.6.1
+
+  '@capacitor/network@7.0.4(@capacitor/core@7.6.1)':
+    dependencies:
+      '@capacitor/core': 7.6.1
+
+  '@capacitor/push-notifications@7.0.6(@capacitor/core@7.6.1)':
+    dependencies:
+      '@capacitor/core': 7.6.1
+
+  '@capacitor/share@7.0.4(@capacitor/core@7.6.1)':
+    dependencies:
+      '@capacitor/core': 7.6.1
+
+  '@capacitor/splash-screen@7.0.5(@capacitor/core@7.6.1)':
+    dependencies:
+      '@capacitor/core': 7.6.1
+
+  '@capacitor/status-bar@7.0.6(@capacitor/core@7.6.1)':
     dependencies:
       '@capacitor/core': 7.6.1
 

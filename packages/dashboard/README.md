@@ -608,3 +608,62 @@ When `FUSION_BADGE_PUBSUB_REDIS_URL` is not set, the dashboard uses an in-memory
 - **Badge Updates**: `useBadgeWebSocket()` shares a single browser socket and subscribes per visible GitHub-linked task card
 - **State Management**: Custom hooks with EventSource for real-time task updates plus a dedicated WebSocket store for badge snapshots
 - **Git Integration**: Server-side git command execution with validation
+
+## Plugin Managers
+
+The dashboard package includes a mobile plugin foundation under `src/plugins/` for Capacitor environments. These managers are framework-agnostic and degrade gracefully in browser/test contexts where native Capacitor APIs are unavailable.
+
+### Included managers
+
+- **`SplashScreenManager`** (`src/plugins/splash-screen.ts`)
+  - Controls splash show/hide behavior
+  - Supports optional auto-hide on init with configurable delay
+- **`StatusBarManager`** (`src/plugins/status-bar.ts`)
+  - Applies light/dark/system status bar styling
+  - Exposes `onThemeChange()` subscription callbacks
+- **`NetworkManager`** (`src/plugins/network.ts`)
+  - Reads initial connectivity state
+  - Monitors connectivity changes and exposes `onStatusChange()` callbacks
+
+### Quick setup with `initializePlugins()`
+
+Use `initializePlugins()` to create and initialize all managers in order:
+
+```ts
+import { initializePlugins } from "@fusion/dashboard";
+
+const { splashScreen, statusBar, network, result } = await initializePlugins({
+  splashAutoHide: true,
+  splashHideDelay: 500,
+  themeMode: "system",
+  startNetworkMonitoring: true,
+});
+
+if (result.errors.length > 0) {
+  console.warn("Some plugins failed to initialize", result.errors);
+}
+```
+
+### Custom setup with individual managers
+
+If you need fine-grained lifecycle control, instantiate managers directly:
+
+```ts
+import {
+  SplashScreenManager,
+  StatusBarManager,
+  NetworkManager,
+} from "@fusion/dashboard";
+
+const splash = new SplashScreenManager({ autoHide: false });
+const statusBar = new StatusBarManager({ themeMode: "dark" });
+const network = new NetworkManager();
+
+await splash.initialize();
+await statusBar.initialize();
+await network.initialize();
+```
+
+### Error handling model
+
+All managers use defensive async APIs and silent fallback handling for unsupported environments (for example, browser development/test runs without native Capacitor bindings). This keeps startup resilient across web, simulator, and device contexts.
