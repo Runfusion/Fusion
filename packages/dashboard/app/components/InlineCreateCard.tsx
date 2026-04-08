@@ -1,10 +1,10 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { Brain, Link, Lightbulb, ListTree, Zap, ChevronDown, ChevronUp } from "lucide-react";
+import { Brain, Link, Lightbulb, ListTree, Zap, ChevronDown, ChevronUp, Bot } from "lucide-react";
 import type { Task, TaskCreateInput, Settings } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
-import { fetchModels, uploadAttachment, fetchSettings, updateGlobalSettings } from "../api";
-import type { ModelInfo } from "../api";
+import { fetchModels, uploadAttachment, fetchSettings, updateGlobalSettings, fetchAgents } from "../api";
+import type { ModelInfo, Agent } from "../api";
 import { ModelSelectionModal } from "./ModelSelectionModal";
 import { applyPresetToSelection } from "../utils/modelPresets";
 
@@ -77,6 +77,10 @@ export function InlineCreateCard({
   const [dependencies, setDependencies] = useState<string[]>([]);
   const [showDeps, setShowDeps] = useState(false);
   const [depSearch, setDepSearch] = useState("");
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [showAgentPicker, setShowAgentPicker] = useState(false);
+  const [agentsLoading, setAgentsLoading] = useState(false);
   const [isModelModalOpen, setIsModelModalOpen] = useState(false);
   const [showPresets, setShowPresets] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -97,6 +101,7 @@ export function InlineCreateCard({
   const justResetRef = useRef(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
+  const agentPickerRef = useRef<HTMLDivElement>(null);
 
   // Persist description to localStorage whenever it changes
   useEffect(() => {
@@ -134,6 +139,19 @@ export function InlineCreateCard({
   useEffect(() => {
     if (!showDeps) setDepSearch("");
   }, [showDeps]);
+
+  useEffect(() => {
+    if (!showAgentPicker) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (agentPickerRef.current?.contains(target)) return;
+      setShowAgentPicker(false);
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showAgentPicker]);
 
   useEffect(() => {
     let cancelled = false;
@@ -206,7 +224,7 @@ export function InlineCreateCard({
         return;
       }
 
-      const hasOpenOverlay = showDeps || isModelModalOpen || showPresets;
+      const hasOpenOverlay = showDeps || showAgentPicker || isModelModalOpen || showPresets;
       const hasDescription = description.trim().length > 0;
       const shouldCancelWhenCollapsed = !isExpanded && !hasDescription && !hasOpenOverlay;
       const shouldCancelWhenExpanded = isExpanded && !hasDescription && !hasOpenOverlay;
@@ -218,7 +236,7 @@ export function InlineCreateCard({
 
     card.addEventListener("focusout", handleFocusOut);
     return () => card.removeEventListener("focusout", handleFocusOut);
-  }, [description, isExpanded, onCancel, showDeps, isModelModalOpen, showPresets]);
+  }, [description, isExpanded, onCancel, showDeps, showAgentPicker, isModelModalOpen, showPresets]);
 
   // Clean up object URLs on unmount to prevent memory leaks
   useEffect(() => {
@@ -277,6 +295,7 @@ export function InlineCreateCard({
         description: description.trim(),
         column: "triage",
         dependencies: dependencies.length ? dependencies : undefined,
+        ...(selectedAgentId ? { assignedAgentId: selectedAgentId } : {}),
         modelPresetId: selectedPresetId,
         modelProvider: hasExecutorOverride ? executorProvider : undefined,
         modelId: hasExecutorOverride ? executorModelId : undefined,
@@ -315,7 +334,9 @@ export function InlineCreateCard({
       setValidatorModelId(undefined);
       setBrowserVerification(false);
       setDependencies([]);
+      setSelectedAgentId(null);
       setShowDeps(false);
+      setShowAgentPicker(false);
       setIsModelModalOpen(false);
       setShowPresets(false);
       addToast(`Created ${task.id}`, "success");
@@ -334,6 +355,7 @@ export function InlineCreateCard({
   }, [
     description,
     dependencies,
+    selectedAgentId,
     hasExecutorOverride,
     executorProvider,
     executorModelId,
@@ -353,8 +375,9 @@ export function InlineCreateCard({
       if (e.key === "Escape") {
         e.preventDefault();
         // Close dropdowns first if open
-        if (showDeps || isModelModalOpen || showPresets) {
+        if (showDeps || showAgentPicker || isModelModalOpen || showPresets) {
           setShowDeps(false);
+          setShowAgentPicker(false);
           setIsModelModalOpen(false);
           setShowPresets(false);
           return;
@@ -381,7 +404,7 @@ export function InlineCreateCard({
         handleSubmit();
       }
     },
-    [handleSubmit, onCancel, description, showDeps, isModelModalOpen, showPresets],
+    [handleSubmit, onCancel, description, showDeps, showAgentPicker, isModelModalOpen, showPresets],
   );
 
   const toggleDep = useCallback((id: string) => {
@@ -393,7 +416,10 @@ export function InlineCreateCard({
   const toggleDepsDropdown = useCallback(() => {
     setShowDeps((prev) => {
       const next = !prev;
-      if (next) setIsModelModalOpen(false);
+      if (next) {
+        setIsModelModalOpen(false);
+        setShowAgentPicker(false);
+      }
       return next;
     });
   }, []);
@@ -401,7 +427,30 @@ export function InlineCreateCard({
   const toggleModelsDropdown = useCallback(() => {
     setIsModelModalOpen(true);
     setShowDeps(false);
+    setShowAgentPicker(false);
   }, []);
+
+  const loadAgents = useCallback(async () => {
+    if (agents.length > 0) {
+      setShowAgentPicker(true);
+      return;
+    }
+
+    setAgentsLoading(true);
+    try {
+      const result = await fetchAgents(undefined, projectId);
+      setAgents(result);
+      setShowAgentPicker(true);
+    } catch (err: any) {
+      addToast(err?.message ? `Failed to load agents: ${err.message}` : "Failed to load agents", "error");
+      setShowAgentPicker(false);
+    } finally {
+      setAgentsLoading(false);
+    }
+  }, [agents.length, projectId, addToast]);
+
+  const selectedAgent = selectedAgentId ? agents.find((agent) => agent.id === selectedAgentId) : undefined;
+  const selectedAgentLabel = selectedAgent?.name ?? selectedAgentId;
 
   const handleExecutorChange = useCallback((value: string) => {
     const next = parseModelSelection(value);
@@ -476,7 +525,9 @@ export function InlineCreateCard({
     setValidatorModelId(undefined);
     setBrowserVerification(false);
     setSelectedPresetId(undefined);
+    setSelectedAgentId(null);
     setShowDeps(false);
+    setShowAgentPicker(false);
     setIsModelModalOpen(false);
     setShowPresets(false);
     setIsExpanded(false);
@@ -498,7 +549,9 @@ export function InlineCreateCard({
     setValidatorModelId(undefined);
     setBrowserVerification(false);
     setSelectedPresetId(undefined);
+    setSelectedAgentId(null);
     setShowDeps(false);
+    setShowAgentPicker(false);
     setIsModelModalOpen(false);
     setShowPresets(false);
     setIsExpanded(false);
@@ -647,6 +700,60 @@ export function InlineCreateCard({
               })()}
             </div>
 
+            <div className="agent-trigger-wrap" ref={agentPickerRef}>
+              <button
+                type="button"
+                className="btn btn-sm dep-trigger"
+                onClick={() => {
+                  if (showAgentPicker) {
+                    setShowAgentPicker(false);
+                  } else {
+                    void loadAgents();
+                  }
+                }}
+                data-testid="inline-create-agent-button"
+              >
+                <Bot size={12} style={{ verticalAlign: "middle" }} />
+                {selectedAgentLabel ? ` ${selectedAgentLabel}` : " Agent"}
+              </button>
+              {showAgentPicker && (
+                <div className="dep-dropdown agent-picker-dropdown" onMouseDown={(e) => e.preventDefault()}>
+                  <div className="dep-dropdown-search-header">Select agent</div>
+                  {agentsLoading && <div className="dep-dropdown-empty">Loading agents...</div>}
+                  {!agentsLoading && agents.filter((a) => a.state !== "terminated").map((a) => (
+                    <div
+                      key={a.id}
+                      className={`dep-dropdown-item${selectedAgentId === a.id ? " selected" : ""}`}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setSelectedAgentId(a.id === selectedAgentId ? null : a.id);
+                        setShowAgentPicker(false);
+                      }}
+                    >
+                      <Bot size={12} style={{ marginRight: 6 }} />
+                      <span className="dep-dropdown-id">{a.role}</span>
+                      <span className="dep-dropdown-title">{a.name}</span>
+                    </div>
+                  ))}
+                  {!agentsLoading && agents.filter((a) => a.state !== "terminated").length === 0 && (
+                    <div className="dep-dropdown-empty">No agents available</div>
+                  )}
+                  {selectedAgentId && (
+                    <div
+                      className="dep-dropdown-item"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setSelectedAgentId(null);
+                        setShowAgentPicker(false);
+                      }}
+                    >
+                      <span className="dep-dropdown-title">Clear selection</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             <button
               type="button"
               className="btn btn-sm"
@@ -667,6 +774,7 @@ export function InlineCreateCard({
                     const next = !prev;
                     if (next) {
                       setShowDeps(false);
+                      setShowAgentPicker(false);
                       setIsModelModalOpen(false);
                     }
                     return next;

@@ -123,6 +123,7 @@ export function createTask(input: TaskCreateInput, projectId?: string): Promise<
     dependencies,
     breakIntoSubtasks,
     enabledWorkflowSteps,
+    assignedAgentId,
     modelPresetId,
     modelProvider,
     modelId,
@@ -142,6 +143,7 @@ export function createTask(input: TaskCreateInput, projectId?: string): Promise<
       dependencies,
       breakIntoSubtasks,
       enabledWorkflowSteps,
+      assignedAgentId,
       modelPresetId,
       modelProvider,
       modelId,
@@ -1885,6 +1887,19 @@ export function fetchAgentChildren(agentId: string, projectId?: string): Promise
     if (err.message.includes("not found")) return [];
     throw err;
   });
+}
+
+/** Assign or unassign a task to an explicit agent */
+export function assignTask(taskId: string, agentId: string | null, projectId?: string): Promise<Task> {
+  return api<Task>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/assign`, projectId), {
+    method: "PATCH",
+    body: JSON.stringify({ agentId }),
+  });
+}
+
+/** Fetch tasks explicitly assigned to an agent */
+export function fetchAgentTasks(agentId: string, projectId?: string): Promise<Task[]> {
+  return api<Task[]>(withProjectId(`/agents/${encodeURIComponent(agentId)}/tasks`, projectId));
 }
 
 // ── Agent Import API ────────────────────────────────────────────────────────

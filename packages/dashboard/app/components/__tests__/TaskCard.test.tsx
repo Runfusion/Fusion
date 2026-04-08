@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Column, Task, TaskDetail } from "@fusion/core";
@@ -8,6 +8,8 @@ import React, { useState } from "react";
 vi.mock("../../api", () => ({
   fetchTaskDetail: vi.fn(),
   uploadAttachment: vi.fn(),
+  fetchMission: vi.fn(),
+  fetchAgent: vi.fn(),
 }));
 
 const mockUseBadgeWebSocket = vi.fn(() => ({
@@ -44,6 +46,7 @@ vi.mock("lucide-react", () => ({
   GitPullRequest: ({ size }: { size?: number }) => <span data-testid="git-pr-icon">🔀</span>,
   CircleDot: ({ size }: { size?: number }) => <span data-testid="circle-dot-icon">⭕</span>,
   Target: ({ size }: { size?: number }) => <span data-testid="target-icon">🎯</span>,
+  Bot: ({ size }: { size?: number }) => <span data-testid="bot-icon">🤖</span>,
 }));
 
 beforeEach(() => {
@@ -3440,5 +3443,67 @@ describe("TaskCard mission badge", () => {
     // onOpenDetail should NOT be called since click is stopped
     expect(onOpenDetail).not.toHaveBeenCalled();
     expect(onOpenMission).toHaveBeenCalledWith("MSN-001");
+  });
+});
+
+describe("TaskCard agent badge", () => {
+  const createTask = (overrides: Partial<Task> = {}): Task => ({
+    id: "FN-001",
+    description: "Test task",
+    column: "todo",
+    dependencies: [],
+    steps: [],
+    currentStep: 0,
+    log: [],
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    columnMovedAt: "2026-01-01T00:00:00Z",
+    ...overrides,
+  } as Task);
+
+  let clearAgentCache: () => void;
+
+  beforeAll(async () => {
+    const mod = await import("../TaskCard");
+    clearAgentCache = (mod as { __test_clearAgentNameCache?: () => void }).__test_clearAgentNameCache ?? (() => undefined);
+  });
+
+  beforeEach(async () => {
+    clearAgentCache?.();
+    const { fetchAgent } = await import("../../api");
+    vi.mocked(fetchAgent).mockReset();
+  });
+
+  it("renders agent badge when task has assignedAgentId", async () => {
+    const { fetchAgent } = await import("../../api");
+    vi.mocked(fetchAgent).mockResolvedValue({
+      id: "agent-001",
+      name: "Autopilot Agent",
+      role: "executor",
+      state: "active",
+      metadata: {},
+      heartbeatHistory: [],
+      completedRuns: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    } as any);
+
+    const task = createTask({ assignedAgentId: "agent-001" });
+    render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} />);
+
+    await waitFor(() => {
+      const badge = screen.getByTitle("Assigned to Autopilot Agent");
+      expect(badge).toBeInTheDocument();
+      expect(badge).toHaveClass("card-agent-badge");
+      expect(screen.getByTestId("bot-icon")).toBeInTheDocument();
+    });
+  });
+
+  it("does not render agent badge when assignedAgentId is undefined", () => {
+    const task = createTask();
+    render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} />);
+
+    expect(screen.queryByTitle(/Assigned to/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("bot-icon")).not.toBeInTheDocument();
   });
 });

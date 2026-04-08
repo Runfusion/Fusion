@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pencil } from "lucide-react";
+import { Pencil, Bot, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, PrInfo, Settings, AgentLogEntry } from "@fusion/core";
+import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, PrInfo, Settings, AgentLogEntry, Agent } from "@fusion/core";
 import { COLUMN_LABELS, VALID_TRANSITIONS } from "@fusion/core";
-import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail, fetchSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults } from "../api";
+import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail, fetchSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent } from "../api";
 import type { WorkflowStepResult } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { useAgentLogs } from "../hooks/useAgentLogs";
@@ -222,6 +222,10 @@ export function TaskDetailModal({
   const [dependencies, setDependencies] = useState<string[]>(task.dependencies || []);
   const [showDepDropdown, setShowDepDropdown] = useState(false);
   const [depSearch, setDepSearch] = useState("");
+  const [assignedAgent, setAssignedAgent] = useState<Agent | null>(null);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [showAgentPicker, setShowAgentPicker] = useState(false);
+  const [agentsLoading, setAgentsLoading] = useState(false);
   const [isSavingSpec, setIsSavingSpec] = useState(false);
   const [isRequestingRevision, setIsRequestingRevision] = useState(false);
   const [isEditingSpec, setIsEditingSpec] = useState(false);
@@ -312,6 +316,36 @@ export function TaskDetailModal({
       setDepSearch("");
     }
   }, [showDepDropdown]);
+
+  useEffect(() => {
+    if (!task.assignedAgentId) {
+      setAssignedAgent(null);
+      return;
+    }
+
+    const knownAgent = agents.find((agent) => agent.id === task.assignedAgentId);
+    if (knownAgent) {
+      setAssignedAgent(knownAgent);
+      return;
+    }
+
+    let cancelled = false;
+    void fetchAgent(task.assignedAgentId, projectId)
+      .then((agent) => {
+        if (!cancelled) setAssignedAgent(agent);
+      })
+      .catch(() => {
+        if (!cancelled) setAssignedAgent(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [task.assignedAgentId, projectId, agents]);
+
+  useEffect(() => {
+    setShowAgentPicker(false);
+  }, [task.id]);
 
   // Reset spec edit state when task changes
   useEffect(() => {
@@ -667,6 +701,49 @@ export function TaskDetailModal({
     }
   }, [task.id, projectId, workflowEnabledSteps, onTaskUpdated, addToast]);
 
+  const loadAgents = useCallback(async () => {
+    setAgentsLoading(true);
+    try {
+      const loadedAgents = await fetchAgents(undefined, projectId);
+      setAgents(loadedAgents);
+      setShowAgentPicker(true);
+    } catch (err: any) {
+      addToast(`Failed to load agents: ${err.message}`, "error");
+      setShowAgentPicker(false);
+    } finally {
+      setAgentsLoading(false);
+    }
+  }, [projectId, addToast]);
+
+  const handleAssignAgent = useCallback(async (agentId: string) => {
+    try {
+      const updatedTask = await assignTask(task.id, agentId, projectId);
+      const selected = agents.find((agent) => agent.id === agentId) ?? null;
+      if (selected) {
+        setAssignedAgent(selected);
+      } else {
+        setAssignedAgent((prev) => (prev?.id === agentId ? prev : null));
+      }
+      setShowAgentPicker(false);
+      onTaskUpdated?.(updatedTask);
+      addToast("Assigned agent updated", "success");
+    } catch (err: any) {
+      addToast(`Failed to assign agent: ${err.message}`, "error");
+    }
+  }, [task.id, projectId, agents, onTaskUpdated, addToast]);
+
+  const handleClearAgent = useCallback(async () => {
+    try {
+      const updatedTask = await assignTask(task.id, null, projectId);
+      setAssignedAgent(null);
+      setShowAgentPicker(false);
+      onTaskUpdated?.(updatedTask);
+      addToast("Agent unassigned", "success");
+    } catch (err: any) {
+      addToast(`Failed to unassign agent: ${err.message}`, "error");
+    }
+  }, [task.id, projectId, onTaskUpdated, addToast]);
+
   const handleAddDep = useCallback(async (depId: string) => {
     const newDeps = [...dependencies, depId];
     setDependencies(newDeps);
@@ -780,6 +857,8 @@ export function TaskDetailModal({
       const bNum = parseInt(b.id.slice(b.id.lastIndexOf("-") + 1), 10) || 0;
       return bNum - aNum;
     });
+
+  const assignedAgentLabel = assignedAgent?.name ?? task.assignedAgentId ?? null;
 
   const transitions = VALID_TRANSITIONS[task.column] || [];
   const prAutomationStatusLabels: Record<string, string> = {
@@ -1000,6 +1079,61 @@ export function TaskDetailModal({
             </div>
           )}
           <MergeDetails task={task} />
+          <div className="detail-section detail-agent-section">
+            <div className="detail-meta-row">
+              <span className="detail-meta-label">
+                <Bot size={14} style={{ verticalAlign: "middle", marginRight: 6 }} />
+                Agent
+              </span>
+              <div className="detail-agent-actions">
+                {assignedAgentLabel ? (
+                  <span className="detail-agent-chip">
+                    <Bot size={14} />
+                    {assignedAgentLabel}
+                    <button
+                      className="detail-agent-clear"
+                      onClick={() => void handleClearAgent()}
+                      title="Unassign agent"
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    className="btn btn-sm"
+                    onClick={() => {
+                      if (showAgentPicker) {
+                        setShowAgentPicker(false);
+                      } else {
+                        void loadAgents();
+                      }
+                    }}
+                  >
+                    Assign Agent
+                  </button>
+                )}
+                {showAgentPicker && (
+                  <div className="agent-picker-dropdown">
+                    {agentsLoading && <div className="agent-picker-loading">Loading agents...</div>}
+                    {!agentsLoading && agents.filter((a) => a.state !== "terminated").map((a) => (
+                      <button
+                        key={a.id}
+                        className={`agent-picker-item${task.assignedAgentId === a.id ? " selected" : ""}`}
+                        onClick={() => void handleAssignAgent(a.id)}
+                      >
+                        <Bot size={14} />
+                        <span className="agent-picker-name">{a.name}</span>
+                        <span className="agent-picker-role">{a.role}</span>
+                      </button>
+                    ))}
+                    {!agentsLoading && agents.filter((a) => a.state !== "terminated").length === 0 && (
+                      <div className="agent-picker-empty">No agents available</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
           <div className="detail-section detail-step-progress">
             <h4>Progress</h4>
             {task.steps && task.steps.length > 0 ? (

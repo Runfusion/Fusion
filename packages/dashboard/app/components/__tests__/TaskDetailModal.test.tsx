@@ -17,6 +17,9 @@ vi.mock("../../api", () => ({
   duplicateTask: vi.fn().mockResolvedValue({}),
   refineTask: vi.fn().mockResolvedValue({}),
   addSteeringComment: vi.fn(),
+  assignTask: vi.fn().mockResolvedValue({}),
+  fetchAgents: vi.fn().mockResolvedValue([]),
+  fetchAgent: vi.fn(),
   // TaskForm dependencies
   fetchModels: vi.fn().mockResolvedValue({ models: [], favoriteProviders: [] }),
   fetchSettings: vi.fn().mockResolvedValue({ modelPresets: [], autoSelectModelPreset: false, defaultPresetBySize: {} }),
@@ -42,6 +45,7 @@ vi.mock("lucide-react", () => ({
   ChevronUp: () => null,
   ChevronDown: () => null,
   X: () => null,
+  Bot: () => null,
   CircleDot: () => null,
   XCircle: () => null,
   GitMerge: () => null,
@@ -4336,6 +4340,125 @@ describe("TaskDetailModal", () => {
       // Definition content should be hidden
       await waitFor(() => {
         expect(container.querySelector(".markdown-body")).toBeNull();
+      });
+    });
+  });
+
+  describe("agent assignment", () => {
+    it("shows Assign Agent button when task has no assigned agent", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ assignedAgentId: undefined })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getByRole("button", { name: "Assign Agent" })).toBeInTheDocument();
+    });
+
+    it("shows assigned agent chip and clear button when task has assignedAgentId", async () => {
+      const { fetchAgent } = await import("../../api");
+      vi.mocked(fetchAgent).mockResolvedValue({
+        id: "agent-002",
+        name: "Pipeline Helper",
+        role: "executor",
+        state: "active",
+        metadata: {},
+        heartbeatHistory: [],
+        completedRuns: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      } as any);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ assignedAgentId: "agent-002" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("Pipeline Helper")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Unassign agent" })).toBeInTheDocument();
+      });
+    });
+
+    it("assigns selected agent via assignTask", async () => {
+      const { fetchAgents, assignTask } = await import("../../api");
+      vi.mocked(fetchAgents).mockResolvedValue([
+        {
+          id: "agent-001",
+          name: "Task Runner",
+          role: "executor",
+          state: "active",
+          metadata: {},
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ] as any);
+      vi.mocked(assignTask).mockResolvedValue(makeTask({ assignedAgentId: "agent-001" }) as any);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ assignedAgentId: undefined })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      await userEvent.click(screen.getByRole("button", { name: "Assign Agent" }));
+      await userEvent.click(screen.getByRole("button", { name: /Task Runner/i }));
+
+      await waitFor(() => {
+        expect(assignTask).toHaveBeenCalledWith("FN-099", "agent-001", undefined);
+      });
+    });
+
+    it("clears assigned agent via assignTask(null)", async () => {
+      const { fetchAgent, assignTask } = await import("../../api");
+      vi.mocked(fetchAgent).mockResolvedValue({
+        id: "agent-005",
+        name: "Doc Bot",
+        role: "executor",
+        state: "active",
+        metadata: {},
+        heartbeatHistory: [],
+        completedRuns: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      } as any);
+      vi.mocked(assignTask).mockResolvedValue(makeTask({ assignedAgentId: undefined }) as any);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ assignedAgentId: "agent-005" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      await userEvent.click(screen.getByRole("button", { name: "Unassign agent" }));
+
+      await waitFor(() => {
+        expect(assignTask).toHaveBeenCalledWith("FN-099", null, undefined);
       });
     });
   });

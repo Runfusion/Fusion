@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   fetchTaskDetail,
   updateTask,
+  assignTask,
+  fetchAgentTasks,
   archiveTask,
   unarchiveTask,
   fetchAuthStatus,
@@ -155,6 +157,52 @@ describe("updateTask", () => {
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Not found" }));
 
     await expect(updateTask("FN-001", { dependencies: [] })).rejects.toThrow("Not found");
+  });
+});
+
+describe("assignTask and fetchAgentTasks", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const ASSIGNED_TASK: Task = {
+    id: "FN-001",
+    description: "Test",
+    column: "todo",
+    dependencies: [],
+    steps: [],
+    currentStep: 0,
+    log: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    assignedAgentId: "agent-001",
+  };
+
+  it("assignTask sends PATCH with agentId payload", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, ASSIGNED_TASK));
+
+    const result = await assignTask("FN-001", "agent-001");
+
+    expect(result.assignedAgentId).toBe("agent-001");
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/assign", {
+      headers: { "Content-Type": "application/json" },
+      method: "PATCH",
+      body: JSON.stringify({ agentId: "agent-001" }),
+    });
+  });
+
+  it("fetchAgentTasks requests assigned tasks for an agent", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, [ASSIGNED_TASK]));
+
+    const result = await fetchAgentTasks("agent-001");
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.id).toBe("FN-001");
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/agents/agent-001/tasks", {
+      headers: { "Content-Type": "application/json" },
+    });
   });
 });
 

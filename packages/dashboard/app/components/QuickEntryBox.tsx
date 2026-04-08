@@ -2,9 +2,9 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import type { ToastType } from "../hooks/useToast";
 import type { Task, TaskCreateInput, Settings } from "@fusion/core";
-import type { ModelInfo, RefinementType } from "../api";
-import { fetchModels, fetchSettings, refineText, getRefineErrorMessage, updateGlobalSettings } from "../api";
-import { Link, Brain, Lightbulb, ListTree, Sparkles, Save, MoreHorizontal, ChevronDown, ChevronUp, ChevronRight } from "lucide-react";
+import type { ModelInfo, RefinementType, Agent } from "../api";
+import { fetchModels, fetchSettings, refineText, getRefineErrorMessage, updateGlobalSettings, fetchAgents } from "../api";
+import { Link, Brain, Lightbulb, ListTree, Sparkles, Save, MoreHorizontal, ChevronDown, ChevronUp, ChevronRight, Bot } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 
 const STORAGE_KEY = "kb-quick-entry-text";
@@ -22,6 +22,8 @@ interface QuickEntryBoxProps {
    * Called when the user clicks the "Subtask" button to trigger subtask breakdown.
    */
   onSubtaskBreakdown?: (description: string) => void;
+  /** Optional project context for API calls */
+  projectId?: string;
   /**
    * When true, the component automatically expands when focused.
    * Set to false to keep the view collapsed until manually toggled.
@@ -70,7 +72,7 @@ function parseModelSelection(value: string): { provider?: string; modelId?: stri
   };
 }
 
-export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels, onPlanningMode, onSubtaskBreakdown, autoExpand = true, favoriteProviders: parentFavoriteProviders, favoriteModels: parentFavoriteModels, onToggleFavorite: parentToggleFavorite, onToggleModelFavorite: parentToggleModelFavorite }: QuickEntryBoxProps) {
+export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels, onPlanningMode, onSubtaskBreakdown, projectId, autoExpand = true, favoriteProviders: parentFavoriteProviders, favoriteModels: parentFavoriteModels, onToggleFavorite: parentToggleFavorite, onToggleModelFavorite: parentToggleModelFavorite }: QuickEntryBoxProps) {
   const [description, setDescription] = useState(() => {
     if (typeof window !== "undefined") {
       return localStorage.getItem(STORAGE_KEY) || "";
@@ -90,6 +92,10 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [dependencies, setDependencies] = useState<string[]>([]);
   const [showDeps, setShowDeps] = useState(false);
   const [depSearch, setDepSearch] = useState("");
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [showAgentPicker, setShowAgentPicker] = useState(false);
+  const [agentsLoading, setAgentsLoading] = useState(false);
   const [isActionsMenuOpen, setIsActionsMenuOpen] = useState(false);
   const [actionsMenuPosition, setActionsMenuPosition] = useState<{ top: number; left: number; width: number } | null>(null);
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
@@ -104,6 +110,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const actionsMenuPortalRef = useRef<HTMLDivElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const modelMenuPortalRef = useRef<HTMLDivElement>(null);
+  const agentPickerRef = useRef<HTMLDivElement>(null);
   const [modelMenuPosition, setModelMenuPosition] = useState<{ top: number; left: number; width: number } | null>(null);
   const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -163,7 +170,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         });
 
       // Also fetch settings for presets
-      fetchSettings()
+      fetchSettings(projectId)
         .then((nextSettings) => {
           if (!cancelled) {
             setSettings(nextSettings);
@@ -177,7 +184,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         cancelled = true;
       };
     }
-  }, [availableModels, parentFavoriteProviders, parentFavoriteModels]);
+  }, [availableModels, parentFavoriteProviders, parentFavoriteModels, projectId]);
 
   const executorSelectionValue = getModelSelectionValue(executorProvider, executorModelId);
   const validatorSelectionValue = getModelSelectionValue(validatorProvider, validatorModelId);
@@ -192,7 +199,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     : selectedModelCount > 0
       ? `${selectedModelCount} model${selectedModelCount === 1 ? "" : "s"}`
       : "Models";
-  const actionSelectionCount = dependencies.length + selectedModelCount;
+  const actionSelectionCount = dependencies.length + selectedModelCount + (selectedAgentId ? 1 : 0);
 
   const getModelBadgeLabel = useCallback(
     (provider?: string, modelId?: string) => {
@@ -324,9 +331,24 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isModelMenuOpen]);
 
+  useEffect(() => {
+    if (!showAgentPicker) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (agentPickerRef.current?.contains(target)) return;
+      setShowAgentPicker(false);
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showAgentPicker]);
+
   const resetForm = useCallback(() => {
     setDescription("");
     setDependencies([]);
+    setSelectedAgentId(null);
+    setShowAgentPicker(false);
     setExecutorProvider(undefined);
     setExecutorModelId(undefined);
     setValidatorProvider(undefined);
@@ -364,6 +386,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         description: trimmed,
         column: "triage",
         dependencies: dependencies.length ? dependencies : undefined,
+        ...(selectedAgentId ? { assignedAgentId: selectedAgentId } : {}),
         modelPresetId: selectedPresetId,
         modelProvider: hasExecutorOverride ? executorProvider : undefined,
         modelId: hasExecutorOverride ? executorModelId : undefined,
@@ -386,6 +409,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     isSubmitting,
     onCreate,
     dependencies,
+    selectedAgentId,
     hasExecutorOverride,
     executorProvider,
     executorModelId,
@@ -429,6 +453,10 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
           setModelMenuPosition(null);
           return;
         }
+        if (showAgentPicker) {
+          setShowAgentPicker(false);
+          return;
+        }
         // Close dependency or refine popover if open
         if (showDeps || isRefineMenuOpen) {
           setShowDeps(false);
@@ -458,6 +486,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       description,
       isExpanded,
       showDeps,
+      showAgentPicker,
       isActionsMenuOpen,
       isModelMenuOpen,
       activeModelSubmenu,
@@ -517,6 +546,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       const next = !prev;
       if (next) {
         setShowDeps(false);
+        setShowAgentPicker(false);
         setIsModelMenuOpen(false);
         setModelMenuPosition(null);
         setActiveModelSubmenu(null);
@@ -761,6 +791,28 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     }
   }, [availableModels, parentFavoriteProviders, parentFavoriteModels]);
 
+  const loadAgents = useCallback(async () => {
+    if (agents.length > 0) {
+      setShowAgentPicker(true);
+      return;
+    }
+
+    setAgentsLoading(true);
+    try {
+      const result = await fetchAgents(undefined, projectId);
+      setAgents(result);
+      setShowAgentPicker(true);
+    } catch (err: any) {
+      addToast(err?.message ? `Failed to load agents: ${err.message}` : "Failed to load agents", "error");
+      setShowAgentPicker(false);
+    } finally {
+      setAgentsLoading(false);
+    }
+  }, [agents.length, projectId, addToast]);
+
+  const selectedAgent = selectedAgentId ? agents.find((agent) => agent.id === selectedAgentId) : undefined;
+  const selectedAgentLabel = selectedAgent?.name ?? selectedAgentId;
+
   // Show expanded controls based on disclosure state (user preference), not textarea focus
   const showExpandedControls = isDisclosureExpanded;
 
@@ -955,6 +1007,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                       setIsModelMenuOpen(false);
                       setModelMenuPosition(null);
                       setActiveModelSubmenu(null);
+                      setShowAgentPicker(false);
                       setShowDeps(true);
                     }}
                   >
@@ -969,6 +1022,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                       setIsActionsMenuOpen(false);
                       setActionsMenuPosition(null);
                       setShowDeps(false);
+                      setShowAgentPicker(false);
                       setActiveModelSubmenu(null);
                       setIsModelMenuOpen(true);
                       updateModelMenuPosition();
@@ -1042,6 +1096,60 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                 </div>
               );
             })()}
+          </div>
+
+          <div className="agent-trigger-wrap" ref={agentPickerRef}>
+            <button
+              type="button"
+              className="btn btn-sm dep-trigger"
+              onClick={() => {
+                if (showAgentPicker) {
+                  setShowAgentPicker(false);
+                } else {
+                  void loadAgents();
+                }
+              }}
+              data-testid="quick-entry-agent-button"
+            >
+              <Bot size={12} style={{ verticalAlign: "middle" }} />
+              {selectedAgentLabel ? ` ${selectedAgentLabel}` : " Agent"}
+            </button>
+            {showAgentPicker && (
+              <div className="dep-dropdown agent-picker-dropdown" onMouseDown={(e) => e.preventDefault()}>
+                <div className="dep-dropdown-search-header">Select agent</div>
+                {agentsLoading && <div className="dep-dropdown-empty">Loading agents...</div>}
+                {!agentsLoading && agents.filter((a) => a.state !== "terminated").map((a) => (
+                  <div
+                    key={a.id}
+                    className={`dep-dropdown-item${selectedAgentId === a.id ? " selected" : ""}`}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      setSelectedAgentId(a.id === selectedAgentId ? null : a.id);
+                      setShowAgentPicker(false);
+                    }}
+                  >
+                    <Bot size={12} style={{ marginRight: 6 }} />
+                    <span className="dep-dropdown-id">{a.role}</span>
+                    <span className="dep-dropdown-title">{a.name}</span>
+                  </div>
+                ))}
+                {!agentsLoading && agents.filter((a) => a.state !== "terminated").length === 0 && (
+                  <div className="dep-dropdown-empty">No agents available</div>
+                )}
+                {selectedAgentId && (
+                  <div
+                    className="dep-dropdown-item"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      setSelectedAgentId(null);
+                      setShowAgentPicker(false);
+                    }}
+                  >
+                    <span className="dep-dropdown-title">Clear selection</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {isModelMenuOpen && portalRoot && modelMenuPosition && createPortal(

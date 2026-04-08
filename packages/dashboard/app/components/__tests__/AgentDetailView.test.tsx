@@ -16,6 +16,7 @@ vi.mock("../../api", () => ({
   fetchAgentRuns: vi.fn(),
   fetchAgentRunDetail: vi.fn(),
   startAgentRun: vi.fn(),
+  fetchAgentTasks: vi.fn(),
 }));
 
 vi.mock("../AgentLogViewer", () => ({
@@ -26,7 +27,7 @@ vi.mock("../AgentLogViewer", () => ({
   ),
 }));
 
-import { fetchAgent, updateAgent, updateAgentState, fetchAgentRunLogs, fetchAgentRuns, fetchAgentRunDetail } from "../../api";
+import { fetchAgent, updateAgent, updateAgentState, fetchAgentRunLogs, fetchAgentRuns, fetchAgentRunDetail, fetchAgentTasks } from "../../api";
 
 const mockFetchAgent = vi.mocked(fetchAgent);
 const mockUpdateAgent = vi.mocked(updateAgent);
@@ -34,6 +35,7 @@ const mockUpdateAgentState = vi.mocked(updateAgentState);
 const mockFetchAgentRunLogs = vi.mocked(fetchAgentRunLogs);
 const mockFetchAgentRuns = vi.mocked(fetchAgentRuns);
 const mockFetchAgentRunDetail = vi.mocked(fetchAgentRunDetail);
+const mockFetchAgentTasks = vi.mocked(fetchAgentTasks);
 
 describe("AgentDetailView", () => {
   const createMockAgent = (overrides: Partial<{
@@ -86,6 +88,7 @@ describe("AgentDetailView", () => {
       ...mockAgent.completedRuns,
     ]);
     mockFetchAgentRunDetail.mockResolvedValue(mockAgent.completedRuns[0]);
+    mockFetchAgentTasks.mockResolvedValue([]);
   });
 
   it("shows loading state initially", () => {
@@ -308,6 +311,8 @@ describe("AgentDetailView", () => {
       expect(screen.getByText("Dashboard")).toBeInTheDocument();
       expect(screen.getByText("Logs")).toBeInTheDocument();
       expect(screen.getByText("Runs")).toBeInTheDocument();
+      expect(screen.getByText("Tasks")).toBeInTheDocument();
+      expect(screen.getByText("Children")).toBeInTheDocument();
       expect(screen.getByText("Settings")).toBeInTheDocument();
     });
   });
@@ -453,6 +458,61 @@ describe("AgentDetailView", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Live Run")).toBeInTheDocument();
+    });
+  });
+
+  describe("Tasks tab", () => {
+    it("renders tasks returned by fetchAgentTasks", async () => {
+      const user = userEvent.setup();
+      mockFetchAgentTasks.mockResolvedValue([
+        {
+          id: "FN-201",
+          title: "Implement assignment API",
+          description: "",
+          column: "in-progress",
+          status: "executing",
+          steps: [],
+          dependencies: [],
+          log: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-02T00:00:00.000Z",
+        },
+      ] as any);
+
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await user.click(await screen.findByText("Tasks"));
+
+      await waitFor(() => {
+        expect(mockFetchAgentTasks).toHaveBeenCalledWith("agent-001", undefined);
+        expect(screen.getByText("FN-201")).toBeInTheDocument();
+        expect(screen.getByText("Implement assignment API")).toBeInTheDocument();
+      });
+    });
+
+    it("shows empty state when no tasks are assigned", async () => {
+      const user = userEvent.setup();
+      mockFetchAgentTasks.mockResolvedValue([]);
+
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await user.click(await screen.findByText("Tasks"));
+
+      await waitFor(() => {
+        expect(screen.getByText("No tasks assigned to this agent")).toBeInTheDocument();
+      });
     });
   });
 
