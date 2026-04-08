@@ -538,10 +538,10 @@ body {
   position: relative;
 }
 
-.mobile-overflow-item--has-indicator .header-badge {
-  top: 6px;
-  left: 20px;
-  right: auto;
+.mobile-overflow-icon-wrapper {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
 }
 
 /* View Toggle */
@@ -22184,70 +22184,73 @@ html .column.drag-over * {
 /* ── Mailbox — Mobile (≤ 768px) ───────────────────────────────────── */
 
 @media (max-width: 768px) {
-  .mailbox-header {
+  .mailbox-modal .mailbox-header {
     flex-wrap: wrap;
     gap: 8px;
   }
 
-  .mailbox-title {
+  .mailbox-modal .mailbox-title {
     flex-shrink: 0;
   }
 
-  .mailbox-header-actions {
+  .mailbox-modal .mailbox-header-actions {
     flex-wrap: wrap;
     gap: 6px;
-    justify-content: flex-end;
   }
 
-  .mailbox-tabs {
+  .mailbox-modal .mailbox-tabs {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
-    padding: 0 12px;
   }
 
-  .mailbox-tabs::-webkit-scrollbar {
+  .mailbox-modal .mailbox-tabs::-webkit-scrollbar {
     display: none;
   }
 
-  .mailbox-tab {
+  .mailbox-modal .mailbox-tab {
     flex-shrink: 0;
     padding: 8px 12px;
+    font-size: 0.8rem;
   }
 
-  .mailbox-content {
-    padding: 12px;
+  .mailbox-modal .mailbox-content {
     max-height: calc(100dvh - 120px);
+    padding: 12px;
   }
 
-  .mailbox-message-detail-header {
+  .mailbox-modal .mailbox-message-detail-header {
     flex-direction: column;
     align-items: flex-start;
   }
 
-  .mailbox-message-detail-actions {
+  .mailbox-modal .mailbox-message-detail-actions {
     flex-wrap: wrap;
   }
 
-  .mailbox-message-participants {
+  .mailbox-modal .mailbox-message-participants {
     flex-direction: column;
     gap: 8px;
   }
 
-  .mailbox-conversation-msg {
-    padding: 8px 10px;
+  .mailbox-modal .mailbox-conversation-msg {
+    padding: 6px 10px;
   }
 
-  .mailbox-agent-select {
+  .mailbox-modal .mailbox-agent-select {
     max-width: 100%;
   }
 
-  .mailbox-compose-fab {
+  .mailbox-modal .mailbox-agents {
+    min-height: 200px;
+  }
+
+  .mailbox-modal .mailbox-compose-fab {
     bottom: 16px;
     right: 16px;
   }
 
-  .mailbox-empty {
+  .mailbox-modal .mailbox-empty {
     padding: 32px 12px;
   }
 }

@@ -648,13 +648,15 @@ export function Header({
               role="menuitem"
               data-testid="overflow-planning-btn"
             >
-              <Lightbulb size={16} />
+              <span className="mobile-overflow-icon-wrapper">
+                <Lightbulb size={16} />
+                {activePlanningSessionCount > 0 && (
+                  <span className="header-badge header-badge--pulse" data-testid="overflow-planning-badge">
+                    {activePlanningSessionCount}
+                  </span>
+                )}
+              </span>
               <span>{activePlanningSessionCount > 0 ? `Resume planning session (${activePlanningSessionCount})` : "Create a task with AI planning"}</span>
-              {activePlanningSessionCount > 0 && (
-                <span className="header-badge header-badge--pulse" data-testid="overflow-planning-badge">
-                  {activePlanningSessionCount}
-                </span>
-              )}
             </button>
             {/* Git Manager - in overflow on mobile */}
             {onOpenGitManager && (

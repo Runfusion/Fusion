@@ -504,6 +504,30 @@ describe("Header", () => {
       expect(onOpenPlanning).toHaveBeenCalled();
     });
 
+    it("renders overflow planning badge inside icon wrapper when sessions are active", () => {
+      const onResumePlanning = vi.fn();
+      render(
+        <Header
+          onOpenPlanning={vi.fn()}
+          onResumePlanning={onResumePlanning}
+          activePlanningSessionCount={3}
+        />
+      );
+
+      fireEvent.click(screen.getByTitle("More header actions"));
+
+      const planningButton = screen.getByTestId("overflow-planning-btn");
+      const iconWrapper = planningButton.querySelector(".mobile-overflow-icon-wrapper");
+      expect(iconWrapper).toBeTruthy();
+
+      const badge = screen.getByTestId("overflow-planning-badge");
+      expect(iconWrapper?.contains(badge)).toBe(true);
+      expect(planningButton.textContent).toContain("Resume planning session (3)");
+
+      fireEvent.click(planningButton);
+      expect(onResumePlanning).toHaveBeenCalledOnce();
+    });
+
     it("closes overflow menu after selecting an action", () => {
       const onOpenSettings = vi.fn();
       render(<Header onOpenSettings={onOpenSettings} />);
