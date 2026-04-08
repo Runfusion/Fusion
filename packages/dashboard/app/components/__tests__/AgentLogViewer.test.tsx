@@ -97,11 +97,13 @@ describe("AgentLogViewer", () => {
     expect(toolDiv).toBeTruthy();
   });
 
-  it("has a monospace font family", () => {
+  it("applies the viewer styling via the agent-log-viewer class", () => {
     const entries = [makeEntry()];
     const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
     const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLElement;
-    expect(viewer.style.fontFamily).toBe("monospace");
+    expect(viewer.classList.contains("agent-log-viewer")).toBe(true);
+    // Theme/layout styles come from CSS classes, not inline style attributes.
+    expect(viewer.style.fontFamily).toBe("");
   });
 
   describe("agent badge deduplication", () => {
@@ -478,15 +480,17 @@ describe("AgentLogViewer", () => {
       expect(timestamp!.textContent).not.toBe("just now");
     });
 
-    it("styles timestamps with muted color and small font inside the badge row", () => {
+    it("uses the timestamp class inside the badge row", () => {
       const entries = [makeEntry({ text: "hello", type: "text", agent: "executor" })];
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
       const badge = container.querySelector(".agent-log-agent-badge") as HTMLElement;
       expect(badge).toBeTruthy();
       const timestamp = badge.parentElement?.querySelector(".agent-log-timestamp") as HTMLElement;
       expect(timestamp).toBeTruthy();
-      expect(timestamp.style.fontSize).toBe("10px");
-      expect(timestamp.style.opacity).toBe("0.7");
+      expect(timestamp.classList.contains("agent-log-timestamp")).toBe(true);
+      // Theme styles are class-based now, not inline.
+      expect(timestamp.style.fontSize).toBe("");
+      expect(timestamp.style.opacity).toBe("");
     });
 
     it("includes timestamp in the badge container for tool entries", () => {
@@ -570,19 +574,21 @@ describe("AgentLogViewer", () => {
   });
 
   describe("horizontal overflow prevention", () => {
-    it("sets overflowX hidden on the viewer container", () => {
+    it("uses the viewer class for overflow-x handling", () => {
       const longString = "A".repeat(300);
       const entries = [makeEntry({ text: longString })];
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
       const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLElement;
-      expect(viewer.style.overflowX).toBe("hidden");
+      expect(viewer.classList.contains("agent-log-viewer")).toBe(true);
+      expect(viewer.style.overflowX).toBe("");
     });
 
-    it("sets overflow-wrap break-word on the viewer container", () => {
+    it("uses the viewer class for overflow-wrap handling", () => {
       const entries = [makeEntry({ text: "x".repeat(250) })];
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
       const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLElement;
-      expect(viewer.style.overflowWrap).toBe("break-word");
+      expect(viewer.classList.contains("agent-log-viewer")).toBe(true);
+      expect(viewer.style.overflowWrap).toBe("");
     });
 
     it("renders pre elements with overflow-x auto for internal scrolling", () => {
@@ -595,11 +601,12 @@ describe("AgentLogViewer", () => {
       expect(pre.style.maxWidth).toBe("100%");
     });
 
-    it("wraps model header on narrow widths via flex-wrap", () => {
+    it("applies model-header wrapping via class", () => {
       const entries = [makeEntry()];
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
       const header = container.querySelector("[data-testid='agent-log-model-header']") as HTMLElement;
-      expect(header.style.flexWrap).toBe("wrap");
+      expect(header.classList.contains("agent-log-model-header")).toBe(true);
+      expect(header.style.flexWrap).toBe("");
     });
   });
 
@@ -614,12 +621,13 @@ describe("AgentLogViewer", () => {
       expect(viewer.style.maxHeight).toBe("");
     });
 
-    it("maintains overflow-y auto for internal scrolling", () => {
+    it("uses class-based overflow-y scrolling", () => {
       const entries = [makeEntry()];
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
       const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLElement;
-      // The viewer itself should remain the scroll container
-      expect(viewer.style.overflowY).toBe("auto");
+      // Scrolling behavior is now defined in CSS.
+      expect(viewer.classList.contains("agent-log-viewer")).toBe(true);
+      expect(viewer.style.overflowY).toBe("");
     });
 
     it("uses agent-log-viewer--streaming class when entries are present", () => {

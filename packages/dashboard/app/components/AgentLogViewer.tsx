@@ -121,80 +121,44 @@ export function AgentLogViewer({ entries, loading, executorModel, validatorModel
       ref={containerRef}
       className="agent-log-viewer agent-log-viewer--streaming"
       data-testid="agent-log-viewer"
-      style={{
-        fontFamily: "monospace",
-        fontSize: "13px",
-        lineHeight: "1.5",
-        overflowY: "auto",
-        overflowX: "hidden",
-        padding: "12px",
-        background: "var(--bg-secondary)",
-        borderRadius: "6px",
-        whiteSpace: "pre-wrap",
-        wordBreak: "break-word",
-        overflowWrap: "break-word",
-      }}
     >
       {/* Model info header */}
-      <div
-        className="agent-log-model-header"
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: "16px",
-          padding: "8px 12px",
-          marginBottom: "12px",
-          background: "var(--bg-tertiary)",
-          borderRadius: "4px",
-          fontSize: "12px",
-          color: "var(--text-muted, #888)",
-          overflow: "hidden",
-          minWidth: 0,
-          alignItems: "center",
-        }}
-        data-testid="agent-log-model-header"
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <span style={{ fontWeight: 600 }}>Executor:</span>
+      <div className="agent-log-model-header" data-testid="agent-log-model-header">
+        <div className="agent-log-model-group">
+          <span className="agent-log-model-label">Executor:</span>
           {hasExecutorOverride ? (
-            <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span className="agent-log-model-value">
               <ProviderIcon provider={executorModel.provider!} size="sm" />
-              <span style={{ color: "var(--text-secondary, #aaa)" }}>
-                {executorModel.provider}/{executorModel.modelId}
-              </span>
+              <span>{executorModel.provider}/{executorModel.modelId}</span>
             </span>
           ) : (
             <span className="model-badge-default">Using default</span>
           )}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <span style={{ fontWeight: 600 }}>Validator:</span>
+        <div className="agent-log-model-group">
+          <span className="agent-log-model-label">Validator:</span>
           {hasValidatorOverride ? (
-            <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span className="agent-log-model-value">
               <ProviderIcon provider={validatorModel.provider!} size="sm" />
-              <span style={{ color: "var(--text-secondary, #aaa)" }}>
-                {validatorModel.provider}/{validatorModel.modelId}
-              </span>
+              <span>{validatorModel.provider}/{validatorModel.modelId}</span>
             </span>
           ) : (
             <span className="model-badge-default">Using default</span>
           )}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <span style={{ fontWeight: 600 }}>Planning/Triage:</span>
+        <div className="agent-log-model-group">
+          <span className="agent-log-model-label">Planning/Triage:</span>
           {hasPlanningOverride ? (
-            <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span className="agent-log-model-value">
               <ProviderIcon provider={planningModel.provider!} size="sm" />
-              <span style={{ color: "var(--text-secondary, #aaa)" }}>
-                {planningModel.provider}/{planningModel.modelId}
-              </span>
+              <span>{planningModel.provider}/{planningModel.modelId}</span>
             </span>
           ) : (
             <span className="model-badge-default">Using default</span>
           )}
         </div>
         {/* Markdown render toggle */}
-        <div style={{ marginLeft: "auto" }}>
+        <div className="agent-log-model-header-toggle">
           <button
             className="agent-log-mode-toggle"
             onClick={() => setRenderMarkdown((prev) => !prev)}
@@ -216,84 +180,30 @@ export function AgentLogViewer({ entries, loading, executorModel, validatorModel
           : false;
 
         const timestampSpan = showBadge ? (
-          <span
-            className="agent-log-timestamp"
-            data-testid="agent-log-timestamp"
-            style={{
-              color: "var(--text-muted, #888)",
-              fontSize: "10px",
-              marginRight: "6px",
-              opacity: 0.7,
-            }}
-          >
+          <span className="agent-log-timestamp" data-testid="agent-log-timestamp">
             {formatTimestamp(entry.timestamp)}
           </span>
         ) : null;
 
         const agentBadge = showBadge ? (
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-            }}
-          >
-            <span
-              className="agent-log-agent-badge"
-              style={{
-                color: "var(--text-muted, #888)",
-                fontSize: "11px",
-                marginRight: "6px",
-                fontWeight: 600,
-                textTransform: "uppercase" as const,
-              }}
-            >
-              [{entry.agent}]
-            </span>
+          <span className="agent-log-badge-row">
+            <span className="agent-log-agent-badge">[{entry.agent}]</span>
             {timestampSpan}
           </span>
         ) : null;
 
         if (entry.type === "tool") {
           return (
-            <div
-              key={i}
-              className="agent-log-tool"
-              style={{
-                color: "var(--accent)",
-                margin: "4px 0",
-                padding: "2px 6px",
-                borderLeft: "3px solid var(--accent)",
-                background: "var(--log-tool-bg)",
-              }}
-            >
+            <div key={i} className="agent-log-tool">
               {agentBadge}⚡ {entry.text}
-              {entry.detail && (
-                <span
-                  className="agent-log-tool-detail"
-                  style={{
-                    color: "var(--text-muted, #888)",
-                    fontSize: "12px",
-                    marginLeft: "6px",
-                  }}
-                >
-                  — {entry.detail}
-                </span>
-              )}
+              {entry.detail && <span className="agent-log-tool-detail">— {entry.detail}</span>}
             </div>
           );
         }
 
         if (entry.type === "thinking") {
           return (
-            <span
-              key={i}
-              className="agent-log-thinking"
-              style={{
-                fontStyle: "italic",
-                color: "var(--text-muted, #888)",
-                opacity: 0.7,
-              }}
-            >
+            <span key={i} className="agent-log-thinking">
               {agentBadge}
               {renderMarkdown ? (
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
@@ -308,60 +218,18 @@ export function AgentLogViewer({ entries, loading, executorModel, validatorModel
 
         if (entry.type === "tool_result") {
           return (
-            <div
-              key={i}
-              className="agent-log-tool-result"
-              style={{
-                color: "var(--color-success)",
-                margin: "2px 0",
-                padding: "2px 6px",
-                borderLeft: "3px solid var(--color-success)",
-                background: "var(--log-success-bg)",
-                fontSize: "12px",
-              }}
-            >
+            <div key={i} className="agent-log-tool-result">
               {agentBadge}✓ {entry.text}
-              {entry.detail && (
-                <span
-                  className="agent-log-tool-detail"
-                  style={{
-                    color: "var(--text-muted, #888)",
-                    marginLeft: "6px",
-                  }}
-                >
-                  — {entry.detail}
-                </span>
-              )}
+              {entry.detail && <span className="agent-log-tool-detail">— {entry.detail}</span>}
             </div>
           );
         }
 
         if (entry.type === "tool_error") {
           return (
-            <div
-              key={i}
-              className="agent-log-tool-error"
-              style={{
-                color: "var(--color-error)",
-                margin: "2px 0",
-                padding: "2px 6px",
-                borderLeft: "3px solid var(--color-error)",
-                background: "var(--log-error-bg)",
-                fontSize: "12px",
-              }}
-            >
+            <div key={i} className="agent-log-tool-error">
               {agentBadge}✗ {entry.text}
-              {entry.detail && (
-                <span
-                  className="agent-log-tool-detail"
-                  style={{
-                    color: "var(--text-muted, #888)",
-                    marginLeft: "6px",
-                  }}
-                >
-                  — {entry.detail}
-                </span>
-              )}
+              {entry.detail && <span className="agent-log-tool-detail">— {entry.detail}</span>}
             </div>
           );
         }
