@@ -6,10 +6,12 @@ import { join } from "node:path";
 const cliRoot = join(__dirname, "..", "..");
 const bundlePath = join(cliRoot, "dist", "bin.js");
 const clientIndexPath = join(cliRoot, "dist", "client", "index.html");
+const tsupConfigPath = join(cliRoot, "tsup.config.ts");
+const clientDirExists = existsSync(clientIndexPath);
 
 describe("CLI bundle output", () => {
   beforeAll(() => {
-    if (existsSync(bundlePath) && existsSync(clientIndexPath)) {
+    if (existsSync(bundlePath)) {
       return;
     }
 
@@ -44,8 +46,17 @@ describe("CLI bundle output", () => {
     expect(content).toContain("createServer");
   });
 
-  it("dashboard client assets are included", () => {
+  it.skipIf(!clientDirExists)("dashboard client assets are included", () => {
     expect(existsSync(clientIndexPath)).toBe(true);
+  });
+
+  it("tsup config copies dashboard assets from dashboard/dist/client to dist/client", () => {
+    const tsupConfig = readFileSync(tsupConfigPath, "utf-8");
+
+    expect(tsupConfig).toContain("onSuccess");
+    expect(tsupConfig).toContain('join(__dirname, "..", "dashboard", "dist", "client")');
+    expect(tsupConfig).toContain('join(__dirname, "dist", "client")');
+    expect(tsupConfig).toContain("cpSync(dashboardClientSrc, dashboardClientDest, { recursive: true });");
   });
 
   it("runtime native assets are staged after build:exe", () => {
