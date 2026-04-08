@@ -17,6 +17,8 @@ const mockTestNtfyNotification = vi.fn();
 const mockFetchBackups = vi.fn();
 const mockCreateBackup = vi.fn();
 const mockImportSettings = vi.fn();
+const mockFetchMemory = vi.fn();
+const mockSaveMemory = vi.fn();
 
 vi.mock("../api", () => ({
   fetchSettings: (...args: unknown[]) => mockFetchSettings(...args),
@@ -31,6 +33,8 @@ vi.mock("../api", () => ({
   testNtfyNotification: (...args: unknown[]) => mockTestNtfyNotification(...args),
   fetchBackups: (...args: unknown[]) => mockFetchBackups(...args),
   createBackup: (...args: unknown[]) => mockCreateBackup(...args),
+  fetchMemory: (...args: unknown[]) => mockFetchMemory(...args),
+  saveMemory: (...args: unknown[]) => mockSaveMemory(...args),
 }));
 
 const noop = () => {};
@@ -67,6 +71,8 @@ describe("SettingsModal", () => {
     mockFetchAuthStatus.mockResolvedValue({ providers: [] });
     mockFetchModels.mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] });
     mockFetchBackups.mockResolvedValue({ backups: [], totalSize: 0 });
+    mockFetchMemory.mockResolvedValue({ content: "## Existing memory\n- Learned pattern" });
+    mockSaveMemory.mockResolvedValue({ success: true });
 
     // jsdom doesn't provide URL.createObjectURL — polyfill it
     if (!URL.createObjectURL) {
@@ -267,6 +273,86 @@ describe("SettingsModal", () => {
       // Check it again
       await userEvent.click(checkbox);
       expect(checkbox).toBeChecked();
+    });
+
+    it("loads and shows memory editor content when navigating to Memory", async () => {
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      expect(mockFetchMemory).not.toHaveBeenCalled();
+
+      await userEvent.click(screen.getByText("Memory"));
+
+      await waitFor(() => {
+        expect(mockFetchMemory).toHaveBeenCalledWith(undefined);
+      });
+
+      const editor = await screen.findByLabelText("Editor for .fusion/memory.md") as HTMLTextAreaElement;
+      expect(editor.value).toContain("Existing memory");
+    });
+
+    it("shows loading state while memory is being fetched", async () => {
+      let resolveMemory: ((value: { content: string }) => void) | undefined;
+      mockFetchMemory.mockReturnValueOnce(
+        new Promise<{ content: string }>((resolve) => {
+          resolveMemory = resolve;
+        })
+      );
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      await userEvent.click(screen.getByText("Memory"));
+
+      expect(screen.getByText("Loading memory…")).toBeDefined();
+
+      resolveMemory?.({ content: "# Loaded" });
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Editor for .fusion/memory.md")).toBeDefined();
+      });
+    });
+
+    it("supports editing and saving memory content", async () => {
+      const addToast = vi.fn();
+      renderModal({ addToast });
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      await userEvent.click(screen.getByText("Memory"));
+
+      const editor = await screen.findByLabelText("Editor for .fusion/memory.md");
+      fireEvent.change(editor, { target: { value: "# Updated memory\n- Reusable learning" } });
+
+      const saveButton = await screen.findByRole("button", { name: "Save Memory" });
+      await userEvent.click(saveButton);
+
+      await waitFor(() => {
+        expect(mockSaveMemory).toHaveBeenCalledWith("# Updated memory\n- Reusable learning", undefined);
+      });
+      expect(addToast).toHaveBeenCalledWith("Memory saved", "success");
+    });
+
+    it("handles empty memory content from API", async () => {
+      mockFetchMemory.mockResolvedValueOnce({ content: "" });
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      await userEvent.click(screen.getByText("Memory"));
+
+      const editor = await screen.findByLabelText("Editor for .fusion/memory.md") as HTMLTextAreaElement;
+      expect(editor.value).toBe("");
     });
   });
 });

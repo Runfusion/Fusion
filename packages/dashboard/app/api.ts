@@ -264,6 +264,17 @@ export function updateSettings(settings: Partial<Settings>, projectId?: string):
   });
 }
 
+export function fetchMemory(projectId?: string): Promise<{ content: string }> {
+  return api<{ content: string }>(withProjectId("/memory", projectId));
+}
+
+export function saveMemory(content: string, projectId?: string): Promise<{ success: boolean }> {
+  return api<{ success: boolean }>(withProjectId("/memory", projectId), {
+    method: "PUT",
+    body: JSON.stringify({ content }),
+  });
+}
+
 /** Fetch global (user-level) settings from ~/.pi/fusion/settings.json */
 export function fetchGlobalSettings(): Promise<GlobalSettings> {
   return api<GlobalSettings>("/settings/global");

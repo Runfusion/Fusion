@@ -6,13 +6,13 @@ import { resolve, sep, join } from "node:path";
 import * as nodeFs from "node:fs";
 import * as nodeChildProcess from "node:child_process";
 import type { TaskStore, Column, MergeResult, ScheduleType, ActivityEventType, ModelPreset, AutomationStep, MessageType, ParticipantType, MessageCreateInput } from "@fusion/core";
-import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, isGhAuthenticated, AUTOMATION_PRESETS, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupAutomation, exportSettings, importSettings, validateImportData, MessageStore } from "@fusion/core";
+import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, isGhAuthenticated, AUTOMATION_PRESETS, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupAutomation, exportSettings, importSettings, validateImportData, MessageStore, MEMORY_FILE_PATH } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
 import { GitHubClient, getCurrentGitHubRepo, parseBadgeUrl } from "./github.js";
 import { githubRateLimiter } from "./github-poll.js";
 import { terminalSessionManager } from "./terminal.js";
 import { getTerminalService } from "./terminal-service.js";
-import { listFiles, readFile, writeFile, listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, copyWorkspaceFile, moveWorkspaceFile, deleteWorkspaceFile, renameWorkspaceFile, getWorkspaceFileForDownload, getWorkspaceFolderForZip, FileServiceError, type FileListResponse, type FileContentResponse, type SaveFileResponse, type FileOperationResponse } from "./file-service.js";
+import { listFiles, readFile, writeFile, listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, copyWorkspaceFile, moveWorkspaceFile, deleteWorkspaceFile, renameWorkspaceFile, getWorkspaceFileForDownload, getWorkspaceFolderForZip, readProjectFile, writeProjectFile, FileServiceError, type FileListResponse, type FileContentResponse, type SaveFileResponse, type FileOperationResponse } from "./file-service.js";
 import { fetchAllProviderUsage } from "./usage.js";
 import {
   getGitHubAppConfig,
@@ -1425,6 +1425,48 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         err.message.includes("modelPresets") || err.message.includes("must include both provider and modelId")
       ) ? 400 : 500;
       res.status(status).json({ error: err.message });
+    }
+  });
+
+  // ── Project Memory Routes ─────────────────────────────────────
+
+  /**
+   * GET /api/memory
+   * Returns the project memory file content.
+   * If .fusion/memory.md does not exist yet, returns an empty string.
+   */
+  router.get("/memory", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const memory = await readProjectFile(scopedStore, MEMORY_FILE_PATH);
+      res.json({ content: memory.content });
+    } catch (err: any) {
+      if (err instanceof FileServiceError && err.code === "ENOENT") {
+        res.json({ content: "" });
+        return;
+      }
+      res.status(500).json({ error: err.message ?? "Failed to read memory" });
+    }
+  });
+
+  /**
+   * PUT /api/memory
+   * Updates the project memory file content.
+   * Body: { content: string }
+   */
+  router.put("/memory", async (req, res) => {
+    try {
+      const { content } = req.body ?? {};
+      if (typeof content !== "string") {
+        res.status(400).json({ error: "content must be a string" });
+        return;
+      }
+
+      const scopedStore = await getScopedStore(req);
+      await writeProjectFile(scopedStore, MEMORY_FILE_PATH, content);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "Failed to save memory" });
     }
   });
 

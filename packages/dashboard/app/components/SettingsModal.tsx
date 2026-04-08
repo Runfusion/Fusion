@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { THINKING_LEVELS, GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent } from "@fusion/core";
-import { fetchSettings, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings } from "../api";
+import { fetchSettings, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemory, saveMemory } from "../api";
 import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { ThemeSelector } from "./ThemeSelector";
 import { CustomModelDropdown } from "./CustomModelDropdown";
+import { FileEditor } from "./FileEditor";
 import { applyPresetToSelection, generateUniquePresetId } from "../utils/modelPresets";
 
 /**
@@ -107,6 +108,11 @@ export function SettingsModal({
   const [backupInfo, setBackupInfo] = useState<BackupListResponse | null>(null);
   const [backupLoading, setBackupLoading] = useState(false);
 
+  // Project memory state
+  const [memoryContent, setMemoryContent] = useState("");
+  const [memoryLoading, setMemoryLoading] = useState(false);
+  const [memoryDirty, setMemoryDirty] = useState(false);
+
   // Import/Export state
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -161,6 +167,35 @@ export function SettingsModal({
         .finally(() => setBackupLoading(false));
     }
   }, [activeSection, projectId]);
+
+  useEffect(() => {
+    if (activeSection !== "memory" || memoryDirty) {
+      return;
+    }
+
+    let cancelled = false;
+    setMemoryLoading(true);
+    fetchMemory(projectId)
+      .then(({ content }) => {
+        if (cancelled) return;
+        setMemoryContent(content);
+        setMemoryDirty(false);
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        addToast(err?.message || "Failed to load project memory", "error");
+        setMemoryContent("");
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setMemoryLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection, memoryDirty, projectId, addToast]);
 
   useEffect(() => {
     if (activeSection === "authentication") {
@@ -477,6 +512,16 @@ export function SettingsModal({
       addToast(err.message, "error");
     }
   }, [form, prefixError, presetDraft, onClose, addToast, projectId]);
+
+  const handleSaveMemory = useCallback(async () => {
+    try {
+      await saveMemory(memoryContent, projectId);
+      setMemoryDirty(false);
+      addToast("Memory saved", "success");
+    } catch (err: any) {
+      addToast(err?.message || "Failed to save memory", "error");
+    }
+  }, [memoryContent, projectId, addToast]);
 
   const savePresetDraft = () => {
     if (!presetDraft) return;
@@ -1485,6 +1530,55 @@ export function SettingsModal({
               </label>
               <small>When enabled, agents will consult and update .fusion/memory.md with durable project learnings</small>
             </div>
+
+            <div style={{ borderTop: "1px solid var(--border)", margin: "var(--space-lg) 0" }} />
+
+            <div className="form-group">
+              <small>This file stores durable project learnings that agents consult during triage and execution.</small>
+            </div>
+
+            {form.memoryEnabled === false && (
+              <div className="settings-empty-state" style={{ marginBottom: "var(--space-md)" }}>
+                Memory is currently disabled. You can view the file, but editing is read-only until memory is re-enabled.
+              </div>
+            )}
+
+            {memoryLoading ? (
+              <div className="settings-empty-state">Loading memory…</div>
+            ) : (
+              <div className="form-group">
+                <div
+                  style={{
+                    height: "400px",
+                    border: "1px solid var(--border)",
+                    borderRadius: "var(--radius)",
+                    overflow: "hidden",
+                  }}
+                >
+                  <FileEditor
+                    content={memoryContent}
+                    onChange={(content) => {
+                      setMemoryContent(content);
+                      setMemoryDirty(true);
+                    }}
+                    readOnly={form.memoryEnabled === false}
+                    filePath=".fusion/memory.md"
+                  />
+                </div>
+              </div>
+            )}
+
+            {memoryDirty && (
+              <div className="form-group">
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={handleSaveMemory}
+                >
+                  Save Memory
+                </button>
+              </div>
+            )}
           </>
         );
       case "backups":
