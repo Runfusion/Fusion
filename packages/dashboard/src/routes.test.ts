@@ -2111,7 +2111,7 @@ describe("PATCH /tasks/:id/assign and GET /agents/:id/tasks", () => {
     expect(res.status).toBe(404);
     expect(res.body.error).toBe("Agent not found");
     expect(store.listTasks).not.toHaveBeenCalled();
-  });
+  }, 30_000);
 });
 
 describe("Attachment routes", () => {

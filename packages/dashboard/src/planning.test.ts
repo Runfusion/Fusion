@@ -19,6 +19,7 @@ import {
   parseAgentResponse,
   generateSubtasksFromPlanning,
   formatInterviewQA,
+  SESSION_TTL_MS,
 } from "./planning.js";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 
@@ -483,23 +484,20 @@ describe("planning module", () => {
   });
 
   describe("session TTL", () => {
-    it("sessions expire after TTL", async () => {
+    it("uses a 7-day TTL constant", () => {
+      expect(SESSION_TTL_MS).toBe(7 * 24 * 60 * 60 * 1000);
+    });
+
+    it("does not expire sessions within the old 30-minute window", async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       try {
         const mockIp = getUniqueIp();
         const { sessionId } = await createSession(mockIp, initialPlan, undefined, TEST_ROOT_DIR);
 
-        // Verify session exists
-        expect(getSession(sessionId)).toBeDefined();
-
-        // Advance time by 31 minutes
+        // Advance beyond the old 30-minute TTL used prior to FN-1146.
         vi.advanceTimersByTime(31 * 60 * 1000);
 
-        // Trigger cleanup by creating a new session
-        await createSession(getUniqueIp(), "Another plan", undefined, TEST_ROOT_DIR);
-
-        // Note: Session should be expired after cleanup runs
-        // We can't directly verify as cleanup is async
+        expect(getSession(sessionId)).toBeDefined();
       } finally {
         vi.useRealTimers();
       }

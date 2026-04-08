@@ -23,6 +23,14 @@ import { setAiSessionStore as setMissionAiSessionStore } from "./mission-intervi
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+const DEFAULT_AI_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const MIN_AI_SESSION_TTL_MS = 10 * 60 * 1000;
+const MAX_AI_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+const DEFAULT_AI_SESSION_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+const MIN_AI_SESSION_CLEANUP_INTERVAL_MS = 60 * 1000;
+const MAX_AI_SESSION_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
 export interface ServerOptions {
   /** Custom merge handler — when provided, used instead of store.mergeTask */
   onMerge?: (taskId: string) => Promise<MergeResult>;
@@ -95,6 +103,18 @@ function normalizeListenArgsForTests(args: unknown[]): unknown[] {
   }
 
   return args;
+}
+
+function resolveBoundedMs(
+  value: number | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, value));
 }
 
 export function createServer(store: TaskStore, options?: ServerOptions): ReturnType<typeof express> {
@@ -302,6 +322,39 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   setSubtaskAiSessionStore(aiSessionStore);
   setMissionAiSessionStore(aiSessionStore);
 
+  const loadSettings = (store as { getSettings?: () => Promise<{ aiSessionTtlMs?: number; aiSessionCleanupIntervalMs?: number }> }).getSettings;
+  if (typeof loadSettings === "function") {
+    void loadSettings
+      .call(store)
+      .then((settings) => {
+        const ttlMs = resolveBoundedMs(
+          settings.aiSessionTtlMs,
+          DEFAULT_AI_SESSION_TTL_MS,
+          MIN_AI_SESSION_TTL_MS,
+          MAX_AI_SESSION_TTL_MS,
+        );
+        const cleanupIntervalMs = resolveBoundedMs(
+          settings.aiSessionCleanupIntervalMs,
+          DEFAULT_AI_SESSION_CLEANUP_INTERVAL_MS,
+          MIN_AI_SESSION_CLEANUP_INTERVAL_MS,
+          MAX_AI_SESSION_CLEANUP_INTERVAL_MS,
+        );
+        aiSessionStore.startScheduledCleanup(cleanupIntervalMs, ttlMs);
+      })
+      .catch((err) => {
+        console.warn("[server] Failed to load settings for AI session cleanup; using defaults", err);
+        aiSessionStore.startScheduledCleanup(
+          DEFAULT_AI_SESSION_CLEANUP_INTERVAL_MS,
+          DEFAULT_AI_SESSION_TTL_MS,
+        );
+      });
+  } else {
+    aiSessionStore.startScheduledCleanup(
+      DEFAULT_AI_SESSION_CLEANUP_INTERVAL_MS,
+      DEFAULT_AI_SESSION_TTL_MS,
+    );
+  }
+
   // REST API
   app.use("/api", createApiRoutes(store, { ...options, aiSessionStore }));
 
@@ -339,6 +392,10 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   dashboardApp.listen = ((...args: Parameters<typeof dashboardApp.listen>) => {
     const normalizedArgs = normalizeListenArgsForTests(args) as Parameters<typeof originalListen>;
     const server = originalListen(...normalizedArgs);
+
+    server.once("close", () => {
+      aiSessionStore.stopScheduledCleanup();
+    });
 
     if (!dashboardApp.__kbWebSocketsAttached) {
       dashboardApp.__kbWebSocketsAttached = true;

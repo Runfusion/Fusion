@@ -1007,6 +1007,55 @@ Timeout in milliseconds for detecting stuck tasks. When a task's agent session s
 - The timeout is read from settings on every poll cycle, so changes take effect immediately
 - When the timeout value is changed (e.g., reduced from 30 to 10 minutes), the system immediately checks for stuck tasks under the new timer rather than waiting for the next poll cycle
 
+### `aiSessionTtlMs` (default: `604800000` / 7 days)
+
+TTL in milliseconds for persisted AI planning, subtask breakdown, and mission interview sessions stored in `ai_sessions`.
+
+**How it works:**
+- `AiSessionStore.cleanupOld(ttlMs)` treats sessions older than this value as expired
+- Expired `generating`/`awaiting_input` sessions are first marked as `error` with "Session expired", then removed
+- Expired `complete`/`error` sessions are removed directly
+- In-memory session maps in planning/subtask/mission modules use the same 7-day TTL to avoid memory/SQLite mismatch
+
+**Valid range:** `600000` (10 minutes) to `2592000000` (30 days)
+
+**Configuration:**
+```json
+{
+  "settings": {
+    "aiSessionTtlMs": 604800000
+  }
+}
+```
+
+**Notes:**
+- Lower values clean up stale sessions faster but reduce how long users can resume old planning flows
+- Higher values preserve session recovery longer at the cost of more rows in `ai_sessions`
+
+### `aiSessionCleanupIntervalMs` (default: `3600000` / 1 hour)
+
+Interval in milliseconds for scheduled SQLite-backed cleanup sweeps of `ai_sessions`.
+
+**How it works:**
+- On server startup, `createServer()` reads this setting and starts `AiSessionStore.startScheduledCleanup(interval, ttl)`
+- Each sweep runs `cleanupOld(aiSessionTtlMs)` using the configured TTL
+- Cleanup is stopped on server shutdown via `AiSessionStore.stopScheduledCleanup()`
+
+**Valid range:** `60000` (1 minute) to `86400000` (24 hours)
+
+**Configuration:**
+```json
+{
+  "settings": {
+    "aiSessionCleanupIntervalMs": 3600000
+  }
+}
+```
+
+**Notes:**
+- Shorter intervals reduce stale-row buildup but increase cleanup query frequency
+- Longer intervals reduce background work but allow expired rows to linger until the next sweep
+
 ### `runStepsInNewSessions` (default: `false`)
 
 When enabled, each task step runs in its own fresh agent session via `StepSessionExecutor` instead of a single monolithic session. This enables per-step error recovery with retry semantics and optional parallel execution for non-conflicting steps.

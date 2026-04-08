@@ -43,8 +43,8 @@ const engineReady = initEngine();
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-/** Session TTL in milliseconds (30 minutes) */
-const SESSION_TTL_MS = 30 * 60 * 1000;
+/** Session TTL in milliseconds (7 days) */
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Cleanup interval in milliseconds (5 minutes) */
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
@@ -182,9 +182,34 @@ const rateLimits = new Map<string, RateLimitEntry>();
 // ── AI Session Persistence ────────────────────────────────────────────────
 
 let _aiSessionStore: AiSessionStore | undefined;
+let _aiSessionDeletedListener: ((sessionId: string) => void) | undefined;
 
 export function setAiSessionStore(store: AiSessionStore): void {
+  if (_aiSessionStore && _aiSessionDeletedListener) {
+    _aiSessionStore.off("ai_session:deleted", _aiSessionDeletedListener);
+  }
+
   _aiSessionStore = store;
+  _aiSessionDeletedListener = (sessionId: string) => {
+    cleanupInMemoryMissionSession(sessionId);
+  };
+  _aiSessionStore.on("ai_session:deleted", _aiSessionDeletedListener);
+}
+
+function cleanupInMemoryMissionSession(sessionId: string): boolean {
+  const session = sessions.get(sessionId);
+  if (!session) {
+    return false;
+  }
+
+  if (session.agent) {
+    try { session.agent.session.dispose?.(); } catch { /* ignore */ }
+    session.agent = undefined;
+  }
+
+  missionInterviewStreamManager.cleanupSession(sessionId);
+  sessions.delete(sessionId);
+  return true;
 }
 
 function persistMissionSession(session: MissionInterviewSession, status: "generating" | "awaiting_input" | "complete" | "error", error?: string): void {
@@ -223,11 +248,7 @@ function cleanupExpiredSessions(): void {
   const now = Date.now();
   for (const [id, session] of sessions) {
     if (now - session.updatedAt.getTime() > SESSION_TTL_MS) {
-      if (session.agent) {
-        try { session.agent.session.dispose?.(); } catch { /* ignore */ }
-      }
-      missionInterviewStreamManager.cleanupSession(id);
-      sessions.delete(id);
+      cleanupInMemoryMissionSession(id);
     }
   }
   for (const [ip, entry] of rateLimits) {
@@ -798,18 +819,11 @@ export async function submitMissionInterviewResponse(
 }
 
 export async function cancelMissionInterviewSession(sessionId: string): Promise<void> {
-  const session = sessions.get(sessionId);
-  if (!session) {
+  const removed = cleanupInMemoryMissionSession(sessionId);
+  if (!removed) {
     throw new SessionNotFoundError(`Mission interview session ${sessionId} not found or expired`);
   }
 
-  if (session.agent) {
-    try { session.agent.session.dispose?.(); } catch { /* ignore */ }
-    session.agent = undefined;
-  }
-
-  missionInterviewStreamManager.cleanupSession(sessionId);
-  sessions.delete(sessionId);
   unpersistMissionSession(sessionId);
 }
 
@@ -822,12 +836,7 @@ export function getMissionInterviewSummary(sessionId: string): MissionPlanSummar
 }
 
 export function cleanupMissionInterviewSession(sessionId: string): void {
-  const session = sessions.get(sessionId);
-  if (session?.agent) {
-    try { session.agent.session.dispose?.(); } catch { /* ignore */ }
-  }
-  missionInterviewStreamManager.cleanupSession(sessionId);
-  sessions.delete(sessionId);
+  cleanupInMemoryMissionSession(sessionId);
   unpersistMissionSession(sessionId);
 }
 
@@ -835,14 +844,18 @@ export function cleanupMissionInterviewSession(sessionId: string): void {
  * Reset all mission interview state. Used for testing only.
  */
 export function __resetMissionInterviewState(): void {
-  for (const [, session] of sessions) {
-    if (session.agent) {
-      try { session.agent.session.dispose?.(); } catch { /* ignore */ }
-    }
+  for (const [id] of sessions) {
+    cleanupInMemoryMissionSession(id);
   }
   sessions.clear();
   rateLimits.clear();
   missionInterviewStreamManager.reset();
+
+  if (_aiSessionStore && _aiSessionDeletedListener) {
+    _aiSessionStore.off("ai_session:deleted", _aiSessionDeletedListener);
+  }
+  _aiSessionDeletedListener = undefined;
+  _aiSessionStore = undefined;
 }
 
 // ── Custom Errors ───────────────────────────────────────────────────────────

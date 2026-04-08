@@ -46,7 +46,7 @@ export type SubtaskStreamEvent =
 
 export type SubtaskStreamCallback = (event: SubtaskStreamEvent, eventId?: number) => void;
 
-const SESSION_TTL_MS = 30 * 60 * 1000;
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 
 const sessions = new Map<string, SubtaskSession & { updatedAt: Date; agent?: any; thinkingOutput: string }>();
@@ -54,12 +54,38 @@ const sessions = new Map<string, SubtaskSession & { updatedAt: Date; agent?: any
 // ── AI Session Persistence ────────────────────────────────────────────────
 
 let _aiSessionStore: AiSessionStore | undefined;
+let _aiSessionDeletedListener: ((sessionId: string) => void) | undefined;
 
 export function setAiSessionStore(store: AiSessionStore): void {
+  if (_aiSessionStore && _aiSessionDeletedListener) {
+    _aiSessionStore.off("ai_session:deleted", _aiSessionDeletedListener);
+  }
+
   _aiSessionStore = store;
+  _aiSessionDeletedListener = (sessionId: string) => {
+    cleanupInMemorySubtaskSession(sessionId);
+  };
+  _aiSessionStore.on("ai_session:deleted", _aiSessionDeletedListener);
 }
 
 type SubtaskInternalSession = SubtaskSession & { updatedAt: Date; agent?: any; thinkingOutput: string };
+
+function cleanupInMemorySubtaskSession(sessionId: string): boolean {
+  const session = sessions.get(sessionId);
+  if (!session) {
+    return false;
+  }
+
+  try {
+    session.agent?.session?.dispose?.();
+  } catch {
+    // ignore cleanup errors
+  }
+
+  subtaskStreamManager.cleanupSession(sessionId);
+  sessions.delete(sessionId);
+  return true;
+}
 
 function persistSubtaskSession(session: SubtaskInternalSession, status: "generating" | "complete" | "error", error?: string): void {
   if (!_aiSessionStore) return;
@@ -125,13 +151,7 @@ function cleanupExpiredSessions(): void {
   const now = Date.now();
   for (const [id, session] of sessions) {
     if (now - session.updatedAt.getTime() > SESSION_TTL_MS) {
-      try {
-        session.agent?.session?.dispose?.();
-      } catch {
-        // ignore cleanup failures
-      }
-      sessions.delete(id);
-      subtaskStreamManager.cleanupSession(id);
+      cleanupInMemorySubtaskSession(id);
     }
   }
 }
@@ -367,42 +387,30 @@ export function getSubtaskSession(sessionId: string): SubtaskSession | undefined
 }
 
 export async function cancelSubtaskSession(sessionId: string): Promise<void> {
-  const session = sessions.get(sessionId);
-  if (!session) {
+  const removed = cleanupInMemorySubtaskSession(sessionId);
+  if (!removed) {
     throw new SessionNotFoundError(`Subtask session ${sessionId} not found or expired`);
   }
-  try {
-    session.agent?.session?.dispose?.();
-  } catch {
-    // ignore dispose errors
-  }
-  subtaskStreamManager.cleanupSession(sessionId);
-  sessions.delete(sessionId);
   unpersistSubtaskSession(sessionId);
 }
 
 export function cleanupSubtaskSession(sessionId: string): void {
-  const session = sessions.get(sessionId);
-  try {
-    session?.agent?.session?.dispose?.();
-  } catch {
-    // ignore cleanup errors
-  }
-  subtaskStreamManager.cleanupSession(sessionId);
-  sessions.delete(sessionId);
+  cleanupInMemorySubtaskSession(sessionId);
   unpersistSubtaskSession(sessionId);
 }
 
 export function __resetSubtaskBreakdownState(): void {
-  for (const [, session] of sessions) {
-    try {
-      session.agent?.session?.dispose?.();
-    } catch {
-      // ignore cleanup errors
-    }
+  for (const [id] of sessions) {
+    cleanupInMemorySubtaskSession(id);
   }
   sessions.clear();
   subtaskStreamManager.reset();
+
+  if (_aiSessionStore && _aiSessionDeletedListener) {
+    _aiSessionStore.off("ai_session:deleted", _aiSessionDeletedListener);
+  }
+  _aiSessionDeletedListener = undefined;
+  _aiSessionStore = undefined;
 }
 
 export class SessionNotFoundError extends Error {

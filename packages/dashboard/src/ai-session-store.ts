@@ -62,6 +62,8 @@ const THINKING_DEBOUNCE_MS = 2000;
 export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
   /** Pending debounce timers for thinking-only writes, keyed by session id. */
   private thinkingTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Interval used for periodic stale-session cleanup. */
+  private cleanupTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(private db: Database) {
     super();
@@ -144,7 +146,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
   }
 
   /**
-   * List active sessions (generating, awaiting_input, or complete).
+   * List active sessions (generating or awaiting_input).
    * Optionally filtered by projectId.
    */
   listActive(projectId?: string): AiSessionSummary[] {
@@ -152,7 +154,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
       return this.db
         .prepare(
           `SELECT id, type, status, title, projectId, updatedAt FROM ai_sessions
-           WHERE status IN ('generating', 'awaiting_input', 'complete') AND projectId = ?
+           WHERE status IN ('generating', 'awaiting_input') AND projectId = ?
            ORDER BY updatedAt DESC`,
         )
         .all(projectId) as unknown as AiSessionSummary[];
@@ -160,7 +162,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
     return this.db
       .prepare(
         `SELECT id, type, status, title, projectId, updatedAt FROM ai_sessions
-         WHERE status IN ('generating', 'awaiting_input', 'complete')
+         WHERE status IN ('generating', 'awaiting_input')
          ORDER BY updatedAt DESC`,
       )
       .all() as unknown as AiSessionSummary[];
@@ -209,16 +211,88 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
   }
 
   /**
-   * Clean up completed/error sessions older than the given age (ms).
+   * Clean up stale sessions older than the given age (ms).
+   *
+   * For stale in-progress sessions (`generating`, `awaiting_input`), status is first
+   * transitioned to `error` with a "Session expired" marker before deletion.
+   * Returns the number of deleted sessions.
    */
   cleanupOld(maxAgeMs: number): number {
     const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
-    const result = this.db
+
+    const stale = this.db
       .prepare(
-        `DELETE FROM ai_sessions WHERE status IN ('complete', 'error') AND updatedAt < ?`,
+        `SELECT id FROM ai_sessions
+         WHERE updatedAt < ?
+           AND status IN ('complete', 'error', 'generating', 'awaiting_input')`,
       )
-      .run(cutoff);
-    return Number((result as any).changes ?? 0);
+      .all(cutoff) as Array<{ id: string }>;
+
+    if (stale.length === 0) {
+      return 0;
+    }
+
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE ai_sessions
+           SET status = 'error',
+               error = CASE
+                 WHEN error IS NULL OR error = '' THEN 'Session expired'
+                 ELSE error
+               END
+           WHERE updatedAt < ?
+             AND status IN ('generating', 'awaiting_input')`,
+        )
+        .run(cutoff);
+
+      this.db
+        .prepare(
+          `DELETE FROM ai_sessions
+           WHERE updatedAt < ?
+             AND status IN ('complete', 'error', 'generating', 'awaiting_input')`,
+        )
+        .run(cutoff);
+    });
+
+    for (const { id } of stale) {
+      this.clearThinkingTimer(id);
+      this.emit("ai_session:deleted", id);
+    }
+
+    return stale.length;
+  }
+
+  /**
+   * Start periodic stale-session cleanup using the provided schedule and TTL.
+   */
+  startScheduledCleanup(cleanupIntervalMs: number, ttlMs: number): void {
+    this.stopScheduledCleanup();
+
+    const runCleanup = () => {
+      try {
+        const deleted = this.cleanupOld(ttlMs);
+        if (deleted > 0) {
+          console.log(`[ai-session-store] Cleaned up ${deleted} stale sessions`);
+        }
+      } catch (err) {
+        console.error("[ai-session-store] Scheduled cleanup failed:", err);
+      }
+    };
+
+    this.cleanupTimer = setInterval(runCleanup, cleanupIntervalMs);
+    this.cleanupTimer.unref?.();
+  }
+
+  /**
+   * Stop periodic stale-session cleanup if currently running.
+   */
+  stopScheduledCleanup(): void {
+    if (!this.cleanupTimer) {
+      return;
+    }
+    clearInterval(this.cleanupTimer);
+    this.cleanupTimer = undefined;
   }
 
   // ── Internal ────────────────────────────────────────────────────────

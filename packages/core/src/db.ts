@@ -59,7 +59,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -516,6 +516,14 @@ export class Database {
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxAgentRatingsCreatedAt ON agentRatings(createdAt)`);
       });
     }
+
+    if (version < 15) {
+      this.applyMigration(15, () => {
+        if (this.hasTable("ai_sessions")) {
+          this.db.exec(`CREATE INDEX IF NOT EXISTS idxAiSessionsUpdatedAt ON ai_sessions(updatedAt)`);
+        }
+      });
+    }
   }
 
   /**
@@ -528,6 +536,16 @@ export class Database {
     this.db
       .prepare("UPDATE __meta SET value = ? WHERE key = 'schemaVersion'")
       .run(String(targetVersion));
+  }
+
+  /**
+   * Check whether a table exists.
+   */
+  private hasTable(table: string): boolean {
+    const row = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(table) as { name: string } | undefined;
+    return Boolean(row);
   }
 
   /**

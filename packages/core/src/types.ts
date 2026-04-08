@@ -863,6 +863,15 @@ export interface ProjectSettings {
    *  than this duration, the task is considered stuck and will be terminated and retried.
    *  Default: undefined (disabled). Suggested value: 600000 (10 minutes). */
   taskStuckTimeoutMs?: number;
+  /** TTL in milliseconds for persisted AI planning/subtask/mission interview sessions.
+   *  Sessions older than this cutoff are expired by the dashboard session cleanup loop.
+   *  Valid range: 600000 (10 minutes) to 2592000000 (30 days).
+   *  Default: 604800000 (7 days). */
+  aiSessionTtlMs?: number;
+  /** Interval in milliseconds for scheduled AI session cleanup sweeps.
+   *  Valid range: 60000 (1 minute) to 86400000 (24 hours).
+   *  Default: 3600000 (1 hour). */
+  aiSessionCleanupIntervalMs?: number;
   /** When true, automatically unpause after rate-limit-triggered globalPause using
    *  escalating backoff. Allows unattended recovery from transient API rate limits.
    *  Default: true. */
@@ -1035,6 +1044,8 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   buildTimeoutMs: 300_000,
   requirePlanApproval: false,
   taskStuckTimeoutMs: undefined,
+  aiSessionTtlMs: 7 * 24 * 60 * 60 * 1000,
+  aiSessionCleanupIntervalMs: 60 * 60 * 1000,
   autoUnpauseEnabled: true,
   autoUnpauseBaseDelayMs: 300_000,
   autoUnpauseMaxDelayMs: 3_600_000,
@@ -1126,6 +1137,8 @@ export const PROJECT_SETTINGS_KEYS: ReadonlyArray<keyof ProjectSettings> = [
   "smartConflictResolution",
   "requirePlanApproval",
   "taskStuckTimeoutMs",
+  "aiSessionTtlMs",
+  "aiSessionCleanupIntervalMs",
   "maxStuckKills",
   "autoUpdatePrStatus",
   "autoCreatePr",

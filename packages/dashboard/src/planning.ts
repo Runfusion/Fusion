@@ -95,8 +95,8 @@ For questions:
 For completion:
 {\n  "type": "complete",\n  "data": {\n    "title": "Task title",\n    "description": "Detailed description",\n    "suggestedSize": "S|M|L",\n    "suggestedDependencies": [],\n    "keyDeliverables": ["Item 1", "Item 2"]\n  }\n}`;
 
-/** Session TTL in milliseconds (30 minutes) */
-const SESSION_TTL_MS = 30 * 60 * 1000;
+/** Session TTL in milliseconds (7 days) */
+export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Cleanup interval in milliseconds (5 minutes) */
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
@@ -154,10 +154,39 @@ const rateLimits = new Map<string, RateLimitEntry>();
 
 /** Optional store for persisting session state across reloads/browsers. */
 let _aiSessionStore: AiSessionStore | undefined;
+let _aiSessionDeletedListener: ((sessionId: string) => void) | undefined;
 
 /** Wire up the AI session persistence store. Called once from server.ts. */
 export function setAiSessionStore(store: AiSessionStore): void {
+  if (_aiSessionStore && _aiSessionDeletedListener) {
+    _aiSessionStore.off("ai_session:deleted", _aiSessionDeletedListener);
+  }
+
   _aiSessionStore = store;
+  _aiSessionDeletedListener = (sessionId: string) => {
+    cleanupInMemorySession(sessionId);
+  };
+  _aiSessionStore.on("ai_session:deleted", _aiSessionDeletedListener);
+}
+
+function cleanupInMemorySession(sessionId: string): boolean {
+  const session = sessions.get(sessionId);
+  if (!session) {
+    return false;
+  }
+
+  if (session.agent) {
+    try {
+      session.agent.session.dispose?.();
+    } catch (err) {
+      console.error(`[planning] Error disposing agent for session ${sessionId}:`, err);
+    }
+    session.agent = undefined;
+  }
+
+  planningStreamManager.cleanupSession(sessionId);
+  sessions.delete(sessionId);
+  return true;
 }
 
 /** Persist the current session state to SQLite (no-op if store not wired). */
@@ -207,8 +236,9 @@ function cleanupExpiredSessions(): void {
   // Clean up expired sessions
   for (const [id, session] of sessions) {
     if (now - session.updatedAt.getTime() > SESSION_TTL_MS) {
-      sessions.delete(id);
-      cleanedSessions++;
+      if (cleanupInMemorySession(id)) {
+        cleanedSessions++;
+      }
     }
   }
 
@@ -1144,25 +1174,11 @@ export function formatInterviewQA(
  * Cancel and cleanup a planning session.
  */
 export async function cancelSession(sessionId: string): Promise<void> {
-  const session = sessions.get(sessionId);
-  if (!session) {
+  const removed = cleanupInMemorySession(sessionId);
+  if (!removed) {
     throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
   }
 
-  // Cleanup AI agent if present
-  if (session.agent) {
-    try {
-      session.agent.session.dispose?.();
-    } catch (err) {
-      console.error(`[planning] Error disposing agent for session ${sessionId}:`, err);
-    }
-    session.agent = undefined;
-  }
-
-  // Cleanup SSE subscriptions
-  planningStreamManager.cleanupSession(sessionId);
-
-  sessions.delete(sessionId);
   unpersistSession(sessionId);
 }
 
@@ -1250,16 +1266,7 @@ export function generateSubtasksFromPlanning(sessionId: string): SubtaskItem[] {
  * Cleanup a session (used after task creation).
  */
 export function cleanupSession(sessionId: string): void {
-  const session = sessions.get(sessionId);
-  if (session?.agent) {
-    try {
-      session.agent.session.dispose?.();
-    } catch {
-      // Ignore errors during cleanup
-    }
-  }
-  planningStreamManager.cleanupSession(sessionId);
-  sessions.delete(sessionId);
+  cleanupInMemorySession(sessionId);
   unpersistSession(sessionId);
 }
 
@@ -1268,18 +1275,18 @@ export function cleanupSession(sessionId: string): void {
  */
 export function __resetPlanningState(): void {
   // Cleanup all agent sessions
-  for (const [id, session] of sessions) {
-    if (session.agent) {
-      try {
-        session.agent.session.dispose?.();
-      } catch {
-        // Ignore errors during cleanup
-      }
-    }
+  for (const [id] of sessions) {
+    cleanupInMemorySession(id);
   }
   sessions.clear();
   rateLimits.clear();
   planningStreamManager.reset();
+
+  if (_aiSessionStore && _aiSessionDeletedListener) {
+    _aiSessionStore.off("ai_session:deleted", _aiSessionDeletedListener);
+  }
+  _aiSessionDeletedListener = undefined;
+  _aiSessionStore = undefined;
 }
 
 /**
