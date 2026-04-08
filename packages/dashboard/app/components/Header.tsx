@@ -59,6 +59,7 @@ export interface HeaderProps {
   onSelectProject?: (project: ProjectInfo) => void;
   onViewAllProjects?: () => void;
   projectId?: string;
+  isElectron?: boolean;
 }
 
 type ViewportMode = "mobile" | "tablet" | "desktop";
@@ -133,6 +134,7 @@ export function Header({
   onSelectProject,
   onViewAllProjects,
   projectId,
+  isElectron = false,
 }: HeaderProps) {
   const mode = useViewportMode();
   const isMobile = mode === "mobile";
@@ -443,7 +445,7 @@ export function Header({
         )}
 
         {/* Desktop actions */}
-        {!isCompact && (
+        {!isCompact && !isElectron && (
           <button className="btn-icon" onClick={onOpenGitHubImport} title="Import from GitHub">
             <GitHubLogo size={16} />
           </button>
@@ -674,14 +676,16 @@ export function Header({
                 <span>Nodes</span>
               </button>
             )}
-            <button
-              className="mobile-overflow-item"
-              onClick={() => handleOverflowAction(onOpenGitHubImport)}
-              role="menuitem"
-            >
-              <GitHubLogo size={16} />
-              <span>Import from GitHub</span>
-            </button>
+            {!isElectron && (
+              <button
+                className="mobile-overflow-item"
+                onClick={() => handleOverflowAction(onOpenGitHubImport)}
+                role="menuitem"
+              >
+                <GitHubLogo size={16} />
+                <span>Import from GitHub</span>
+              </button>
+            )}
             <div
               className="mobile-overflow-group"
               data-testid="overflow-terminal-group"

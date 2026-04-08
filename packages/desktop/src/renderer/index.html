@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fusion</title>
+    <script>
+      // Theme initialization - runs before React to prevent flash
+      (function () {
+        try {
+          var mode = localStorage.getItem("kb-dashboard-theme-mode") || "dark";
+          var colorTheme = localStorage.getItem("kb-dashboard-color-theme") || "default";
+          var validThemes = [
+            "default",
+            "ocean",
+            "forest",
+            "sunset",
+            "zen",
+            "berry",
+            "high-contrast",
+            "industrial",
+            "monochrome",
+            "slate",
+            "ash",
+            "graphite",
+            "silver",
+            "solarized",
+            "factory",
+            "ayu",
+            "one-dark",
+            "nord",
+            "dracula",
+            "gruvbox",
+            "tokyo-night",
+            "catppuccin-mocha",
+            "github-dark",
+            "everforest",
+            "rose-pine",
+            "kanagawa",
+            "night-owl",
+            "palenight",
+            "monokai-pro",
+            "slime",
+          ];
+
+          if (!validThemes.includes(colorTheme)) {
+            colorTheme = "default";
+          }
+
+          var systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          var effectiveMode = mode === "system" ? (systemDark ? "dark" : "light") : mode;
+          document.documentElement.setAttribute("data-theme", effectiveMode);
+          document.documentElement.setAttribute("data-color-theme", colorTheme);
+        } catch (error) {
+          document.documentElement.setAttribute("data-theme", "dark");
+          document.documentElement.setAttribute("data-color-theme", "default");
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./index.tsx"></script>
+  </body>
+</html>

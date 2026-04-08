@@ -1,0 +1,102 @@
+:root {
+  --desktop-titlebar-height: 38px;
+}
+
+.desktop-titlebar {
+  height: var(--desktop-titlebar-height);
+  min-height: var(--desktop-titlebar-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.desktop-titlebar--drag {
+  -webkit-app-region: drag;
+}
+
+.desktop-titlebar__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.desktop-titlebar__logo {
+  width: 16px;
+  height: 16px;
+  color: var(--logo-accent, var(--todo));
+  flex-shrink: 0;
+}
+
+.desktop-titlebar__title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
+}
+
+.desktop-titlebar__controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.desktop-titlebar__controls--no-drag,
+.desktop-titlebar__control {
+  -webkit-app-region: no-drag;
+}
+
+.desktop-titlebar__control {
+  width: 28px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.desktop-titlebar__control:hover {
+  background: var(--card);
+  color: var(--text);
+}
+
+.desktop-titlebar__control:focus-visible {
+  outline: 2px solid var(--todo);
+  outline-offset: 1px;
+}
+
+.desktop-titlebar__control--close:hover {
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
+  color: var(--color-error);
+}
+
+.desktop-app-shell {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.desktop-app-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+body.fusion-desktop {
+  overflow: hidden;
+}

@@ -1,3 +1,5 @@
+import type { ElectronAPI } from "./renderer/types";
+
 export interface FusionDesktopAPI {
   getAppVersion(): Promise<string>;
   quit(): void;
@@ -7,5 +9,6 @@ export interface FusionDesktopAPI {
 declare global {
   interface Window {
     fusionDesktop: FusionDesktopAPI;
+    electronAPI?: ElectronAPI;
   }
 }

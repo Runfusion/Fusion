@@ -43,6 +43,7 @@ type TaskView = "board" | "list" | "agents";
 
 function AppInner() {
   const { toasts, addToast, removeToast } = useToast();
+  const isElectron = typeof window !== "undefined" && Boolean((window as Window & { electronAPI?: unknown }).electronAPI);
   
   // Project management hooks - MUST be called before any conditional logic
   const { projects, loading: projectsLoading, error: projectsError, refresh: refreshProjects, register: registerProject, update: updateProjectHook, unregister: unregisterProjectHook } = useProjects();
@@ -687,6 +688,7 @@ function AppInner() {
   return (
     <>
       <Header
+        isElectron={isElectron}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenGitHubImport={() => setGitHubImportOpen(true)}
         onOpenPlanning={handlePlanningOpen}

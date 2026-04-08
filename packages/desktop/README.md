@@ -129,3 +129,33 @@ Tray icons are generated from `packages/dashboard/app/public/logo.svg`.
 ## Environment
 
 - `FUSION_DASHBOARD_URL` — override the default dashboard URL used by the desktop shell (`http://localhost:4040`)
+
+## Renderer Architecture
+
+The desktop package now includes a renderer layer under `src/renderer/` that adapts the dashboard UI for Electron while preserving web-dashboard compatibility.
+
+### Electron-aware API transport
+
+- `src/renderer/api-electron.ts` provides `createApiClient()` with runtime detection.
+- In browser/web contexts, it uses a standard fetch transport.
+- In Electron contexts, it uses an IPC transport (`electronAPI.invoke("api-request", ...)`) and can resolve the dashboard server port dynamically via `electronAPI.getServerPort()`.
+
+### Desktop shell UI components
+
+- `src/renderer/components/DesktopWrapper.tsx` wraps the dashboard app for Electron-only chrome.
+- `src/renderer/components/TitleBar.tsx` implements a custom frameless title bar with Fusion branding, drag region behavior, and window controls (minimize/maximize/close).
+- The title bar styling lives in `src/renderer/components/TitleBar.css` and uses dashboard theme tokens (`--surface`, `--border`, `--text`, etc.).
+
+### Desktop hooks
+
+Reusable renderer hooks in `src/renderer/hooks/` expose Electron runtime capabilities:
+
+- `useElectron()` — runtime detection + typed `electronAPI` access
+- `useAutoUpdate()` — update-available subscription + install trigger
+- `useDeepLink()` — deep-link subscription and `fusion://task/...` / `fusion://project/...` parsing
+
+### Renderer entrypoint
+
+- `src/renderer/index.html` mirrors dashboard theme initialization logic with Electron-safe defaults.
+- `src/renderer/index.tsx` mounts the dashboard app in `StrictMode` and wraps it in `DesktopWrapper`.
+- Unlike the web dashboard entry (`packages/dashboard/app/main.tsx`), this renderer entry does not register service workers and is intended for desktop-only bootstrapping.
