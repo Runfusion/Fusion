@@ -7398,6 +7398,49 @@ Output ONLY the prompt text (no markdown, no explanations).`;
   });
 
   /**
+   * GET /api/agents/org-tree
+   * Return full agent org chart tree.
+   * Must be registered before /agents/:id to avoid "org-tree" matching :id.
+   */
+  router.get("/agents/org-tree", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const tree = await agentStore.getOrgTree();
+      res.json(tree);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/agents/resolve/:shortname
+   * Resolve an agent by shortname or ID.
+   * Must be registered before /agents/:id to avoid "resolve" matching :id.
+   */
+  router.get("/agents/resolve/:shortname", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const agent = await agentStore.resolveAgent(req.params.shortname);
+      if (!agent) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+
+      res.json({ agent });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
    * GET /api/agents/:id
    * Get agent by ID with heartbeat history.
    */
@@ -8130,6 +8173,32 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       } else {
         res.status(500).json({ error: err.message });
       }
+    }
+  });
+
+  /**
+   * GET /api/agents/:id/chain-of-command
+   * Fetch agent reporting chain from self to top-most manager.
+   * Response 200: Agent[] — [self, manager, grand-manager, ...]
+   * Response 404: { error: "Agent not found" } — When target agent doesn't exist
+   */
+  router.get("/agents/:id/chain-of-command", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const agent = await agentStore.getAgent(req.params.id);
+      if (!agent) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+
+      const chain = await agentStore.getChainOfCommand(req.params.id);
+      res.json(chain);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 

@@ -1862,8 +1862,21 @@ export function cancelSubtaskBreakdown(sessionId: string, projectId?: string): P
 
 // ── Agent API ────────────────────────────────────────────────────────────
 
-import type { Agent, AgentDetail, AgentCapability, AgentState, AgentHeartbeatEvent, AgentHeartbeatRun, AgentCreateInput, AgentUpdateInput, AgentTaskSession, AgentStats, HeartbeatInvocationSource } from "@fusion/core";
-export type { Agent, AgentDetail, AgentCapability, AgentState, AgentHeartbeatEvent, AgentHeartbeatRun, AgentCreateInput, AgentUpdateInput, AgentTaskSession, AgentStats, HeartbeatInvocationSource };
+import type {
+  Agent,
+  AgentDetail,
+  AgentCapability,
+  AgentState,
+  AgentHeartbeatEvent,
+  AgentHeartbeatRun,
+  AgentCreateInput,
+  AgentUpdateInput,
+  AgentTaskSession,
+  AgentStats,
+  HeartbeatInvocationSource,
+  OrgTreeNode,
+} from "@fusion/core";
+export type { Agent, AgentDetail, AgentCapability, AgentState, AgentHeartbeatEvent, AgentHeartbeatRun, AgentCreateInput, AgentUpdateInput, AgentTaskSession, AgentStats, HeartbeatInvocationSource, OrgTreeNode };
 
 function withProjectId(path: string, projectId?: string): string {
   if (!projectId) return path;
@@ -1989,6 +2002,21 @@ export function startAgentRun(
 /** Fetch aggregate agent stats */
 export function fetchAgentStats(projectId?: string): Promise<AgentStats> {
   return api<AgentStats>(withProjectId("/agents/stats", projectId));
+}
+
+/** Fetch the chain of command for an agent (self → manager → grand-manager → ...) */
+export function fetchChainOfCommand(agentId: string, projectId?: string): Promise<Agent[]> {
+  return api<Agent[]>(withProjectId(`/agents/${encodeURIComponent(agentId)}/chain-of-command`, projectId));
+}
+
+/** Fetch the full org tree as nested nodes */
+export function fetchOrgTree(projectId?: string): Promise<OrgTreeNode[]> {
+  return api<OrgTreeNode[]>(withProjectId("/agents/org-tree", projectId));
+}
+
+/** Resolve an agent by shortname or ID */
+export function resolveAgent(shortname: string, projectId?: string): Promise<{ agent: Agent }> {
+  return api<{ agent: Agent }>(withProjectId(`/agents/resolve/${encodeURIComponent(shortname)}`, projectId));
 }
 
 /** Fetch child agents that report to a given parent agent */
