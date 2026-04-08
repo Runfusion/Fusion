@@ -115,6 +115,39 @@ function setupMockAgent(responses?: string[]) {
   return agent;
 }
 
+function setupMockStreamingAgent(options?: {
+  responses?: string[];
+  thinkingPerPrompt?: string[];
+}) {
+  const responses = options?.responses ?? STANDARD_QUESTION_RESPONSES;
+  const thinkingPerPrompt = options?.thinkingPerPrompt ?? [];
+  let promptIndex = 0;
+
+  const createKbAgentSpy = vi.fn(async (agentOptions?: { onThinking?: (delta: string) => void }) => {
+    const messages: Array<{ role: string; content: string }> = [];
+
+    return {
+      session: {
+        state: { messages },
+        prompt: vi.fn(async (message: string) => {
+          messages.push({ role: "user", content: message });
+          const thinking = thinkingPerPrompt[promptIndex];
+          if (thinking) {
+            agentOptions?.onThinking?.(thinking);
+          }
+          const response = responses[promptIndex] ?? responses[responses.length - 1];
+          messages.push({ role: "assistant", content: response });
+          promptIndex += 1;
+        }),
+        dispose: vi.fn(),
+      },
+    };
+  });
+
+  __setCreateKbAgent(createKbAgentSpy as any);
+  return { createKbAgentSpy };
+}
+
 class MockAiSessionStore extends EventEmitter {
   rows = new Map<string, AiSessionRow>();
 
@@ -507,6 +540,75 @@ describe("planning module", () => {
       await expect(submitResponse(row.id, { "q-next": "answer" })).rejects.toThrow(
         "cannot be resumed without project context",
       );
+    });
+
+    it("captures first generated question thinking in lastGeneratedThinking", async () => {
+      setupMockStreamingAgent({
+        responses: STANDARD_QUESTION_RESPONSES,
+        thinkingPerPrompt: ["First question reasoning"],
+      });
+
+      const sessionId = await createSessionWithAgent(getUniqueIp(), initialPlan, TEST_ROOT_DIR);
+
+      await vi.waitFor(() => {
+        expect(getSession(sessionId)?.currentQuestion?.id).toBe("q-scope");
+      });
+
+      expect(getSession(sessionId)?.lastGeneratedThinking).toBe("First question reasoning");
+    });
+
+    it("stores per-turn thinking output in history entries", async () => {
+      setupMockStreamingAgent({
+        responses: STANDARD_QUESTION_RESPONSES,
+        thinkingPerPrompt: ["First question thinking", "Second question thinking"],
+      });
+
+      const sessionId = await createSessionWithAgent(getUniqueIp(), initialPlan, TEST_ROOT_DIR);
+
+      await vi.waitFor(() => {
+        expect(getSession(sessionId)?.currentQuestion?.id).toBe("q-scope");
+      });
+
+      const response = await submitResponse(sessionId, { "q-scope": "medium" }, TEST_ROOT_DIR);
+      expect(response.type).toBe("question");
+
+      const session = getSession(sessionId);
+      expect(session?.history[0]).toMatchObject({
+        question: expect.objectContaining({ id: "q-scope" }),
+        response: { "q-scope": "medium" },
+        thinkingOutput: "First question thinking",
+      });
+    });
+
+    it("persists per-turn thinking in conversationHistory JSON", async () => {
+      const store = new MockAiSessionStore();
+      setAiSessionStore(store as any);
+      setupMockStreamingAgent({
+        responses: STANDARD_QUESTION_RESPONSES,
+        thinkingPerPrompt: ["Persisted first-turn thinking", "Persisted second-turn thinking"],
+      });
+
+      const sessionId = await createSessionWithAgent(getUniqueIp(), initialPlan, TEST_ROOT_DIR);
+
+      await vi.waitFor(() => {
+        expect(getSession(sessionId)?.currentQuestion?.id).toBe("q-scope");
+      });
+
+      await submitResponse(sessionId, { "q-scope": "medium" }, TEST_ROOT_DIR);
+
+      const row = store.get(sessionId);
+      expect(row).not.toBeNull();
+      const persistedHistory = JSON.parse(row!.conversationHistory) as Array<{
+        question: PlanningQuestion;
+        response: Record<string, unknown>;
+        thinkingOutput?: string;
+      }>;
+
+      expect(persistedHistory[0]).toMatchObject({
+        question: expect.objectContaining({ id: "q-scope" }),
+        response: { "q-scope": "medium" },
+        thinkingOutput: "Persisted first-turn thinking",
+      });
     });
   });
 

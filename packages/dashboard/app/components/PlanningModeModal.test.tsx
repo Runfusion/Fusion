@@ -14,6 +14,7 @@ const mockCreateTaskFromPlanning = vi.fn();
 const mockStartPlanningBreakdown = vi.fn();
 const mockCreateTasksFromPlanning = vi.fn();
 const mockFetchAiSession = vi.fn();
+const mockParseConversationHistory = vi.fn();
 const mockFetchModels = vi.fn();
 const mockUploadAttachment = vi.fn();
 const mockDeleteAttachment = vi.fn();
@@ -36,6 +37,7 @@ vi.mock("../api", () => ({
   startPlanningBreakdown: (...args: any[]) => mockStartPlanningBreakdown(...args),
   createTasksFromPlanning: (...args: any[]) => mockCreateTasksFromPlanning(...args),
   fetchAiSession: (...args: any[]) => mockFetchAiSession(...args),
+  parseConversationHistory: (...args: any[]) => mockParseConversationHistory(...args),
   uploadAttachment: (...args: any[]) => mockUploadAttachment(...args),
   deleteAttachment: (...args: any[]) => mockDeleteAttachment(...args),
   updateTask: (...args: any[]) => mockUpdateTask(...args),
@@ -134,6 +136,15 @@ describe("PlanningModeModal", () => {
     mockStartPlanningStreaming.mockResolvedValue({ sessionId: "session-123" });
     mockStartPlanningBreakdown.mockResolvedValue({ sessionId: "session-123", subtasks: [] });
     mockFetchAiSession.mockResolvedValue(null);
+    mockParseConversationHistory.mockImplementation((raw: string) => {
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    });
     mockFetchModels.mockResolvedValue({
       models: mockModels,
       favoriteProviders: [],
@@ -529,6 +540,164 @@ describe("PlanningModeModal", () => {
       await waitFor(() => {
         expect(mockCreateTaskFromPlanning).toHaveBeenCalledWith("session-complete-2", undefined);
       });
+    });
+  });
+
+  describe("Conversation history", () => {
+    it("restores all persisted Q&A pairs when resuming a session", async () => {
+      const resumedQuestion: PlanningQuestion = {
+        id: "q-current",
+        type: "text",
+        question: "What should we prioritize next?",
+        description: "Current question",
+      };
+
+      const restoredHistory = [
+        {
+          question: {
+            id: "q1",
+            type: "single_select",
+            question: "What scope do you need?",
+            options: [
+              { id: "small", label: "Small" },
+              { id: "medium", label: "Medium" },
+            ],
+          },
+          response: { q1: "medium" },
+          thinkingOutput: "Reasoning for scope question",
+        },
+        {
+          question: {
+            id: "q2",
+            type: "text",
+            question: "List your acceptance criteria",
+          },
+          response: { q2: "Must support offline mode" },
+          thinkingOutput: "Reasoning for criteria question",
+        },
+      ];
+
+      mockFetchAiSession.mockResolvedValueOnce({
+        id: "session-awaiting-1",
+        type: "planning",
+        status: "awaiting_input",
+        title: "Resume with history",
+        inputPayload: JSON.stringify({ initialPlan: "Build planning history restore" }),
+        conversationHistory: JSON.stringify(restoredHistory),
+        currentQuestion: JSON.stringify(resumedQuestion),
+        result: null,
+        thinkingOutput: "",
+        error: null,
+        projectId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+          resumeSessionId="session-awaiting-1"
+        />,
+      );
+
+      await waitFor(() => {
+        expect(mockParseConversationHistory).toHaveBeenCalledWith(JSON.stringify(restoredHistory));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("What scope do you need?")).toBeDefined();
+      });
+
+      expect(screen.getByText("List your acceptance criteria")).toBeDefined();
+      expect(screen.getByText("Medium")).toBeDefined();
+      expect(screen.getByText("Must support offline mode")).toBeDefined();
+      expect(screen.getByText("What should we prioritize next?")).toBeDefined();
+    });
+
+    it("starts fresh sessions with empty conversation history", async () => {
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+        />,
+      );
+
+      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+        target: { value: "Build auth system" },
+      });
+      fireEvent.click(screen.getByText("Start Planning"));
+
+      await waitFor(() => {
+        expect(screen.getByText("What is the scope?")).toBeDefined();
+      });
+
+      expect(screen.queryByTestId("conversation-history")).toBeNull();
+    });
+
+    it("appends submitted responses to visible conversation history", async () => {
+      const secondQuestion: PlanningQuestion = {
+        id: "q-requirements",
+        type: "text",
+        question: "What are the key requirements?",
+        description: "Describe the requirements",
+      };
+
+      let streamHandlers: any;
+      mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
+        streamHandlers = handlers;
+        setTimeout(() => {
+          handlers.onQuestion?.(mockQuestion);
+        }, 10);
+
+        return {
+          close: vi.fn(),
+          isConnected: vi.fn().mockReturnValue(true),
+        };
+      });
+
+      mockRespondToPlanning.mockImplementation(async () => {
+        setTimeout(() => {
+          streamHandlers?.onQuestion?.(secondQuestion);
+        }, 10);
+        return { sessionId: "session-123", currentQuestion: null, summary: null };
+      });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+        />,
+      );
+
+      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+        target: { value: "Build auth system" },
+      });
+      fireEvent.click(screen.getByText("Start Planning"));
+
+      await waitFor(() => {
+        expect(screen.getByText("What is the scope?")).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByText("Medium"));
+      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+      await waitFor(() => {
+        expect(screen.getByText("What are the key requirements?")).toBeDefined();
+      });
+
+      expect(screen.getByTestId("conversation-history")).toBeDefined();
+      expect(screen.getByText("What is the scope?")).toBeDefined();
+      expect(screen.getByText("Medium")).toBeDefined();
     });
   });
 

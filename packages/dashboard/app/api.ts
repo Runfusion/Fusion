@@ -3302,6 +3302,12 @@ export interface AiSessionSummary {
   updatedAt: string;
 }
 
+export interface ConversationHistoryEntry {
+  question?: PlanningQuestion;
+  response?: Record<string, unknown>;
+  thinkingOutput?: string;
+}
+
 export interface AiSessionDetail extends AiSessionSummary {
   inputPayload: string;
   conversationHistory: string;
@@ -3310,6 +3316,17 @@ export interface AiSessionDetail extends AiSessionSummary {
   thinkingOutput: string;
   error: string | null;
   createdAt: string;
+}
+
+export function parseConversationHistory(raw: string): ConversationHistoryEntry[] {
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 export async function fetchAiSessions(projectId?: string): Promise<AiSessionSummary[]> {

@@ -6,12 +6,14 @@ import {
   createTaskFromPlanning,
   connectPlanningStream,
   fetchAiSession,
+  parseConversationHistory,
   startPlanningBreakdown,
   createTasksFromPlanning,
   fetchModels,
   type PlanningSession,
   type SubtaskItem,
   type ModelInfo,
+  type ConversationHistoryEntry,
 } from "../api";
 import {
   savePlanningDescription,
@@ -20,6 +22,7 @@ import {
 } from "../hooks/modalPersistence";
 import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, ListTree, GripVertical, ArrowUp, ArrowDown, Plus, Trash2, Minimize2 } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
+import { ConversationHistory } from "./ConversationHistory";
 
 interface PlanningModeModalProps {
   isOpen: boolean;
@@ -77,6 +80,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const [view, setView] = useState<ViewState>({ type: "initial" });
   const [error, setError] = useState<string | null>(null);
   const [responseHistory, setResponseHistory] = useState<QuestionResponse[]>([]);
+  const [conversationHistory, setConversationHistory] = useState<ConversationHistoryEntry[]>([]);
   const [editedSummary, setEditedSummary] = useState<PlanningSummary | null>(null);
   // Use ref instead of state for hasAutoStarted to handle React StrictMode double-render.
   // In StrictMode, components render twice but state persists across renders,
@@ -142,6 +146,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
     setError(null);
     setStreamingOutput("");
+    setConversationHistory([]);
+    setResponseHistory([]);
     setIsReconnecting(false);
     setView({ type: "loading" });
 
@@ -250,6 +256,15 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         if (cancelled || !session) return;
 
         currentSessionIdRef.current = resumeSessionId;
+        const parsedHistory = parseConversationHistory(session.conversationHistory);
+        setConversationHistory(parsedHistory);
+        setResponseHistory(
+          parsedHistory
+            .map((entry) => entry.response)
+            .filter((response): response is QuestionResponse =>
+              Boolean(response && typeof response === "object" && !Array.isArray(response)),
+            ),
+        );
 
         if (session.status === "awaiting_input" && session.currentQuestion) {
           clearPlanningDescription(projectId);
@@ -355,6 +370,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setView({ type: "initial" });
     setError(null);
     setResponseHistory([]);
+    setConversationHistory([]);
     setEditedSummary(null);
     setStreamingOutput("");
     setIsReconnecting(false);
@@ -384,6 +400,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
       const { session } = view;
       const sessionId = session.sessionId;
+      const activeQuestion = session.currentQuestion;
+      if (!activeQuestion) {
+        setError("No active question in session");
+        return;
+      }
+
       setError(null);
 
       // Keep the existing SSE connection alive - do NOT close it!
@@ -392,20 +414,27 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       // This prevents the race condition where events are missed because
       // the frontend disconnects and reconnects after the API call.
 
+      setResponseHistory((prev) => [...prev, responses]);
+      setConversationHistory((prev) => [
+        ...prev,
+        {
+          question: activeQuestion,
+          response: responses,
+        },
+      ]);
       setView({ type: "loading" });
       setStreamingOutput(""); // Clear old thinking output when entering loading state
 
       try {
         // Submit response - AI will broadcast events via the already-connected stream
         await respondToPlanning(sessionId, responses, projectId);
-        setResponseHistory((prev) => [...prev, responses]);
         // Events (question/summary) will arrive via the existing SSE stream
       } catch (err: any) {
         setError(err.message || "Failed to submit response");
         setView({ type: "question", session });
       }
     },
-    [view]
+    [projectId, view]
   );
 
   const handleCreateTask = useCallback(async () => {
@@ -458,6 +487,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setView({ type: "initial" });
       setError(null);
       setResponseHistory([]);
+      setConversationHistory([]);
       setEditedSummary(null);
       setStreamingOutput("");
       setPlanningModelProvider(undefined);
@@ -683,6 +713,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               <QuestionForm
                 question={view.session.currentQuestion}
                 progress={getProgress()}
+                historyEntries={conversationHistory}
                 onSubmit={handleSubmitResponse}
                 onBack={responseHistory.length > 0 ? handleBack : undefined}
               />
@@ -692,6 +723,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           {view.type === "summary" && editedSummary && (
             <SummaryView
               summary={editedSummary}
+              historyEntries={conversationHistory}
               onSummaryChange={setEditedSummary}
               tasks={tasks}
               onCreateTask={handleCreateTask}
@@ -736,11 +768,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 interface QuestionFormProps {
   question: PlanningQuestion;
   progress: number;
+  historyEntries: ConversationHistoryEntry[];
   onSubmit: (responses: QuestionResponse) => void;
   onBack?: () => void;
 }
 
-function QuestionForm({ question, progress, onSubmit, onBack }: QuestionFormProps) {
+function QuestionForm({ question, progress, historyEntries, onSubmit, onBack }: QuestionFormProps) {
   const [response, setResponse] = useState<QuestionResponse>({});
   const [textValue, setTextValue] = useState("");
 
@@ -778,6 +811,13 @@ function QuestionForm({ question, progress, onSubmit, onBack }: QuestionFormProp
   return (
     <div className="planning-question-form">
       <div className="planning-view-scroll planning-question-scroll">
+        {historyEntries.length > 0 && (
+          <>
+            <ConversationHistory entries={historyEntries} />
+            <div className="conversation-separator" />
+          </>
+        )}
+
         <div className="planning-question-panel">
           <div className="planning-progress">
             <div className="planning-progress-bar">
@@ -910,6 +950,7 @@ function QuestionForm({ question, progress, onSubmit, onBack }: QuestionFormProp
 
 interface SummaryViewProps {
   summary: PlanningSummary;
+  historyEntries: ConversationHistoryEntry[];
   onSummaryChange: (summary: PlanningSummary) => void;
   tasks: Task[];
   onCreateTask: () => void;
@@ -920,6 +961,7 @@ interface SummaryViewProps {
 
 function SummaryView({
   summary,
+  historyEntries,
   onSummaryChange,
   tasks,
   onCreateTask,
@@ -943,6 +985,13 @@ function SummaryView({
   return (
     <div className="planning-summary">
       <div className="planning-view-scroll planning-summary-scroll">
+        {historyEntries.length > 0 && (
+          <>
+            <ConversationHistory entries={historyEntries} />
+            <div className="conversation-separator" />
+          </>
+        )}
+
         <div className="planning-summary-header">
           <CheckCircle size={24} style={{ color: "var(--color-success)" }} />
           <h4>Planning Complete!</h4>

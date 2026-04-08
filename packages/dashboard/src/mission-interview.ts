@@ -154,17 +154,25 @@ export type MissionInterviewStreamEvent =
 /** Callback function for streaming events */
 export type MissionInterviewStreamCallback = (event: MissionInterviewStreamEvent, eventId?: number) => void;
 
+interface MissionInterviewHistoryEntry {
+  question: PlanningQuestion;
+  response: unknown;
+  thinkingOutput?: string;
+}
+
 /** In-memory interview session */
 interface MissionInterviewSession {
   id: string;
   ip: string;
   missionId: string;
   missionTitle: string;
-  history: Array<{ question: PlanningQuestion; response: unknown }>;
+  history: MissionInterviewHistoryEntry[];
   currentQuestion?: PlanningQuestion;
   summary?: MissionPlanSummary;
   agent?: AgentResult;
   thinkingOutput: string;
+  /** Thinking output generated while producing currentQuestion */
+  lastGeneratedThinking: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -285,7 +293,7 @@ function buildMissionInterviewSessionFromRow(row: AiSessionRow): MissionIntervie
     ip: payload.ip ?? "",
     missionId: payload.missionId ?? "",
     missionTitle: payload.missionTitle ?? row.title,
-    history: safeParseJson<Array<{ question: PlanningQuestion; response: unknown }>>(
+    history: safeParseJson<MissionInterviewHistoryEntry[]>(
       row.conversationHistory,
       [],
       { throwOnError: true, fieldName: "conversationHistory" },
@@ -303,6 +311,7 @@ function buildMissionInterviewSessionFromRow(row: AiSessionRow): MissionIntervie
         }) ?? undefined)
       : undefined,
     thinkingOutput: row.thinkingOutput,
+    lastGeneratedThinking: row.thinkingOutput || "",
     createdAt,
     updatedAt,
     agent: undefined,
@@ -845,6 +854,7 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
 
     if (parsed.type === "question") {
       session.currentQuestion = parsed.data;
+      session.lastGeneratedThinking = session.thinkingOutput;
       session.updatedAt = new Date();
       persistMissionSession(session, "awaiting_input");
       missionInterviewStreamManager.broadcast(session.id, {
@@ -900,6 +910,7 @@ export async function createMissionInterviewSession(
     missionTitle,
     history: [],
     thinkingOutput: "",
+    lastGeneratedThinking: "",
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -942,6 +953,7 @@ export async function submitMissionInterviewResponse(
   session.history.push({
     question: session.currentQuestion,
     response: responses,
+    thinkingOutput: session.lastGeneratedThinking || "",
   });
   persistMissionSession(session, "generating");
 

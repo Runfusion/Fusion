@@ -6,7 +6,9 @@ import {
   createTasksFromBreakdown,
   cancelSubtaskBreakdown,
   fetchAiSession,
+  parseConversationHistory,
   type SubtaskItem,
+  type ConversationHistoryEntry,
 } from "../api";
 import {
   saveSubtaskDescription,
@@ -14,6 +16,7 @@ import {
   clearSubtaskDescription,
 } from "../hooks/modalPersistence";
 import { CheckCircle, Loader2, ListTree, Plus, Trash2, X, GripVertical, ArrowUp, ArrowDown, Minimize2 } from "lucide-react";
+import { ConversationHistory } from "./ConversationHistory";
 
 interface SubtaskBreakdownModalProps {
   isOpen: boolean;
@@ -64,6 +67,7 @@ function hasDependencyCycle(subtasks: SubtaskItem[]): boolean {
 export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onTasksCreated, parentTaskId, projectId, resumeSessionId }: SubtaskBreakdownModalProps) {
   const [view, setView] = useState<ViewState>({ type: "initial" });
   const [subtasks, setSubtasks] = useState<SubtaskItem[]>([]);
+  const [conversationHistory, setConversationHistory] = useState<ConversationHistoryEntry[]>([]);
   const [thinkingOutput, setThinkingOutput] = useState("");
   const [showThinking, setShowThinking] = useState(true);
   const [isReconnecting, setIsReconnecting] = useState(false);
@@ -102,6 +106,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     streamRef.current = null;
     setView({ type: "initial" });
     setSubtasks([]);
+    setConversationHistory([]);
     setThinkingOutput("");
     setShowThinking(true);
     setIsReconnecting(false);
@@ -134,6 +139,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
   const beginBreakdown = useCallback(async () => {
     if (!localDescription.trim()) return;
     setError(null);
+    setConversationHistory([]);
     setThinkingOutput("");
     setIsReconnecting(false);
 
@@ -191,6 +197,10 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
       try {
         const session = await fetchAiSession(resumeSessionId);
         if (!session) return;
+
+        const parsedHistory = parseConversationHistory(session.conversationHistory);
+        setConversationHistory(parsedHistory);
+
         if (session.status === "generating" || session.status === "awaiting_input") {
           setThinkingOutput(session.thinkingOutput ?? "");
           setView({ type: "generating", sessionId: resumeSessionId });
@@ -407,6 +417,12 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
 
           {view.type === "generating" && (
             <div className="planning-loading">
+              {conversationHistory.length > 0 && (
+                <>
+                  <ConversationHistory entries={conversationHistory} defaultShowThinking={true} />
+                  <div className="conversation-separator" />
+                </>
+              )}
               <Loader2 size={40} className="spin" style={{ color: "var(--todo)" }} />
               <p>AI is generating subtasks...</p>
               <div className="planning-thinking-container">
@@ -425,6 +441,13 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
           {(view.type === "editing" || view.type === "creating") && (
             <div className="planning-summary">
               <div className="planning-view-scroll planning-summary-scroll">
+                {conversationHistory.length > 0 && (
+                  <>
+                    <ConversationHistory entries={conversationHistory} />
+                    <div className="conversation-separator" />
+                  </>
+                )}
+
                 <div className="planning-summary-header">
                   <CheckCircle size={24} style={{ color: "var(--color-success)" }} />
                   <h4>Review your subtasks</h4>

@@ -21,10 +21,14 @@ import type {
   MissionEvent,
   MissionHealth,
 } from "@fusion/core";
+import type { AiSessionRow } from "./ai-session-store.js";
 import {
   __resetMissionInterviewState,
   createMissionInterviewSession,
   missionInterviewStreamManager,
+  setAiSessionStore,
+  getMissionInterviewSession,
+  submitMissionInterviewResponse,
 } from "./mission-interview.js";
 
 // Mock MissionStore factory
@@ -454,6 +458,84 @@ function buildApp(options?: {
   }
 
   return { app, store, missionStore: store.getMissionStore() };
+}
+
+class MockAiSessionStore {
+  rows = new Map<string, AiSessionRow>();
+
+  upsert(row: AiSessionRow): void {
+    this.rows.set(row.id, row);
+  }
+
+  updateThinking(id: string, thinkingOutput: string): void {
+    const row = this.rows.get(id);
+    if (!row) {
+      return;
+    }
+
+    this.rows.set(id, {
+      ...row,
+      thinkingOutput,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  delete(id: string): void {
+    this.rows.delete(id);
+  }
+
+  get(id: string): AiSessionRow | null {
+    return this.rows.get(id) ?? null;
+  }
+
+  listRecoverable(): AiSessionRow[] {
+    return [...this.rows.values()].filter(
+      (row) => row.status === "awaiting_input" || row.status === "generating",
+    );
+  }
+
+  on(): this {
+    return this;
+  }
+
+  off(): this {
+    return this;
+  }
+}
+
+function buildMissionInterviewRow(
+  overrides: Partial<AiSessionRow> & Pick<AiSessionRow, "id" | "status">,
+): AiSessionRow {
+  const now = new Date().toISOString();
+
+  return {
+    id: overrides.id,
+    type: "mission_interview",
+    status: overrides.status,
+    title: overrides.title ?? "Recovered mission interview session",
+    inputPayload:
+      overrides.inputPayload ??
+      JSON.stringify({
+        ip: "127.0.0.1",
+        missionId: "M-RECOVERED",
+        missionTitle: "Recovered mission interview",
+      }),
+    conversationHistory: overrides.conversationHistory ?? "[]",
+    currentQuestion:
+      overrides.currentQuestion ??
+      JSON.stringify({
+        id: "q-existing",
+        type: "text",
+        question: "What are we building?",
+        description: "context",
+      }),
+    result: overrides.result ?? null,
+    thinkingOutput: overrides.thinkingOutput ?? "Recovered thinking",
+    error: overrides.error ?? null,
+    projectId: overrides.projectId ?? null,
+    createdAt: overrides.createdAt ?? now,
+    updatedAt: overrides.updatedAt ?? now,
+  };
 }
 
 describe("Mission API", () => {
@@ -1796,6 +1878,132 @@ describe("Mission API", () => {
       );
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("sessionId");
+    });
+
+    it("captures generated thinking for the next mission interview question", async () => {
+      const store = new MockAiSessionStore();
+      const sessionId = "mission-thinking-capture";
+      store.rows.set(
+        sessionId,
+        buildMissionInterviewRow({
+          id: sessionId,
+          status: "awaiting_input",
+          thinkingOutput: "First-turn mission reasoning",
+        }),
+      );
+      setAiSessionStore(store as any);
+
+      const session = getMissionInterviewSession(sessionId);
+      expect(session).toBeDefined();
+      if (!session) {
+        throw new Error("Expected mission interview session to exist");
+      }
+
+      const messages: Array<{ role: string; content: string }> = [];
+      session.agent = {
+        session: {
+          state: { messages },
+          prompt: vi.fn(async (message: string) => {
+            messages.push({ role: "user", content: message });
+            session.thinkingOutput += "Generated follow-up reasoning";
+            messages.push({
+              role: "assistant",
+              content: JSON.stringify({
+                type: "question",
+                data: {
+                  id: "q-followup",
+                  type: "text",
+                  question: "What should we deliver first?",
+                  description: "Clarify order",
+                },
+              }),
+            });
+          }),
+          dispose: vi.fn(),
+        },
+      } as any;
+
+      const response = await submitMissionInterviewResponse(
+        sessionId,
+        { "q-existing": "Ship collaborative editing" },
+        "/tmp/project",
+      );
+
+      expect(response.type).toBe("question");
+      expect(getMissionInterviewSession(sessionId)?.lastGeneratedThinking).toBe(
+        "Generated follow-up reasoning",
+      );
+    });
+
+    it("stores and persists per-turn mission interview thinking in conversation history", async () => {
+      const store = new MockAiSessionStore();
+      const sessionId = "mission-thinking-history";
+      store.rows.set(
+        sessionId,
+        buildMissionInterviewRow({
+          id: sessionId,
+          status: "awaiting_input",
+          thinkingOutput: "First-turn stored reasoning",
+        }),
+      );
+      setAiSessionStore(store as any);
+
+      const session = getMissionInterviewSession(sessionId);
+      expect(session).toBeDefined();
+      if (!session) {
+        throw new Error("Expected mission interview session to exist");
+      }
+
+      const messages: Array<{ role: string; content: string }> = [];
+      session.agent = {
+        session: {
+          state: { messages },
+          prompt: vi.fn(async (message: string) => {
+            messages.push({ role: "user", content: message });
+            session.thinkingOutput += "Second-turn mission reasoning";
+            messages.push({
+              role: "assistant",
+              content: JSON.stringify({
+                type: "question",
+                data: {
+                  id: "q-next",
+                  type: "text",
+                  question: "Who owns implementation?",
+                  description: "Team ownership",
+                },
+              }),
+            });
+          }),
+          dispose: vi.fn(),
+        },
+      } as any;
+
+      await submitMissionInterviewResponse(
+        sessionId,
+        { "q-existing": "Need milestone planning" },
+        "/tmp/project",
+      );
+
+      const inMemorySession = getMissionInterviewSession(sessionId);
+      expect(inMemorySession?.history[0]).toMatchObject({
+        question: expect.objectContaining({ id: "q-existing" }),
+        response: { "q-existing": "Need milestone planning" },
+        thinkingOutput: "First-turn stored reasoning",
+      });
+
+      const persistedRow = store.get(sessionId);
+      expect(persistedRow).not.toBeNull();
+      const persistedHistory = JSON.parse(persistedRow!.conversationHistory) as Array<{
+        question: { id: string };
+        response: Record<string, unknown>;
+        thinkingOutput?: string;
+      }>;
+
+      expect(persistedHistory[0]).toMatchObject({
+        question: expect.objectContaining({ id: "q-existing" }),
+        response: { "q-existing": "Need milestone planning" },
+        thinkingOutput: "First-turn stored reasoning",
+      });
     });
   });
 

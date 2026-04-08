@@ -188,7 +188,7 @@ function persistSubtaskSession(session: SubtaskInternalSession, status: "generat
     status,
     title: session.initialDescription.slice(0, 120),
     inputPayload: JSON.stringify({ initialDescription: session.initialDescription }),
-    conversationHistory: "[]",
+    conversationHistory: JSON.stringify([{ thinkingOutput: session.thinkingOutput || "" }]),
     currentQuestion: null,
     result: session.subtasks.length > 0 ? JSON.stringify(session.subtasks) : null,
     thinkingOutput: session.thinkingOutput,

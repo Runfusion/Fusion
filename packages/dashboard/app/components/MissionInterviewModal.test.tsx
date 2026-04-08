@@ -8,6 +8,7 @@ const mockCancelMissionInterview = vi.fn();
 const mockCreateMissionFromInterview = vi.fn();
 const mockConnectMissionInterviewStream = vi.fn();
 const mockFetchAiSession = vi.fn();
+const mockParseConversationHistory = vi.fn();
 
 vi.mock("../api", () => ({
   startMissionInterview: (...args: any[]) => mockStartMissionInterview(...args),
@@ -16,6 +17,7 @@ vi.mock("../api", () => ({
   createMissionFromInterview: (...args: any[]) => mockCreateMissionFromInterview(...args),
   connectMissionInterviewStream: (...args: any[]) => mockConnectMissionInterviewStream(...args),
   fetchAiSession: (...args: any[]) => mockFetchAiSession(...args),
+  parseConversationHistory: (...args: any[]) => mockParseConversationHistory(...args),
 }));
 
 vi.mock("../hooks/modalPersistence", () => ({
@@ -44,6 +46,15 @@ describe("MissionInterviewModal", () => {
 
     mockStartMissionInterview.mockResolvedValue({ sessionId: "mission-session-1" });
     mockFetchAiSession.mockResolvedValue(null);
+    mockParseConversationHistory.mockImplementation((raw: string) => {
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    });
     mockConnectMissionInterviewStream.mockImplementation((_sessionId, _projectId, handlers) => {
       streamHandlers = handlers;
       return {

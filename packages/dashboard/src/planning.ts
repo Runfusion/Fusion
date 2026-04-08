@@ -120,11 +120,17 @@ export type PlanningStreamEvent =
 /** Callback function for streaming events */
 export type PlanningStreamCallback = (event: PlanningStreamEvent, eventId?: number) => void;
 
+interface PlanningHistoryEntry {
+  question: PlanningQuestion;
+  response: unknown;
+  thinkingOutput?: string;
+}
+
 interface Session {
   id: string;
   ip: string;
   initialPlan: string;
-  history: Array<{ question: PlanningQuestion; response: unknown }>;
+  history: PlanningHistoryEntry[];
   currentQuestion?: PlanningQuestion;
   summary?: PlanningSummary;
   /** AI agent session for real-time interaction */
@@ -133,6 +139,8 @@ interface Session {
   streamCallback?: PlanningStreamCallback;
   /** Accumulated thinking output for display */
   thinkingOutput: string;
+  /** Thinking output generated while producing currentQuestion */
+  lastGeneratedThinking: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -260,7 +268,7 @@ function buildSessionFromRow(row: AiSessionRow): Session {
     id: row.id,
     ip: payload.ip ?? "",
     initialPlan: payload.initialPlan ?? row.title,
-    history: safeParseJson<Array<{ question: PlanningQuestion; response: unknown }>>(
+    history: safeParseJson<PlanningHistoryEntry[]>(
       row.conversationHistory,
       [],
       { throwOnError: true, fieldName: "conversationHistory" },
@@ -278,6 +286,7 @@ function buildSessionFromRow(row: AiSessionRow): Session {
         }) ?? undefined)
       : undefined,
     thinkingOutput: row.thinkingOutput,
+    lastGeneratedThinking: row.thinkingOutput || "",
     createdAt,
     updatedAt,
     agent: undefined,
@@ -546,6 +555,7 @@ export async function createSession(
     initialPlan,
     history: [],
     thinkingOutput: "",
+    lastGeneratedThinking: "",
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -720,6 +730,7 @@ export async function createSessionWithAgent(
     initialPlan,
     history: [],
     thinkingOutput: "",
+    lastGeneratedThinking: "",
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -952,6 +963,7 @@ async function continueAgentConversation(session: Session, message: string): Pro
 
     if (parsed.type === "question") {
       session.currentQuestion = parsed.data;
+      session.lastGeneratedThinking = session.thinkingOutput;
       session.updatedAt = new Date();
       persistSession(session, "awaiting_input");
       planningStreamManager.broadcast(session.id, {
@@ -1188,6 +1200,7 @@ export async function submitResponse(
   session.history.push({
     question: session.currentQuestion,
     response: responses,
+    thinkingOutput: session.lastGeneratedThinking || "",
   });
   persistSession(session, "generating");
 

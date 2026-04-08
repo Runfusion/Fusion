@@ -7,7 +7,9 @@ import {
   createMissionFromInterview,
   connectMissionInterviewStream,
   fetchAiSession,
+  parseConversationHistory,
   type MissionPlanSummary,
+  type ConversationHistoryEntry,
   type MissionPlanMilestone,
   type MissionPlanSlice,
   type MissionPlanFeature,
@@ -35,6 +37,7 @@ import {
   Trash2,
   Minimize2,
 } from "lucide-react";
+import { ConversationHistory } from "./ConversationHistory";
 
 interface MissionInterviewModalProps {
   isOpen: boolean;
@@ -74,6 +77,7 @@ export function MissionInterviewModal({
   const [view, setView] = useState<ViewState>({ type: "initial" });
   const [error, setError] = useState<string | null>(null);
   const [responseHistory, setResponseHistory] = useState<QuestionResponse[]>([]);
+  const [conversationHistory, setConversationHistory] = useState<ConversationHistoryEntry[]>([]);
   const [editedSummary, setEditedSummary] = useState<MissionPlanSummary | null>(null);
   const [hasProgress, setHasProgress] = useState(false);
   const hasAutoStartedRef = useRef(false);
@@ -92,6 +96,8 @@ export function MissionInterviewModal({
 
       setError(null);
       setStreamingOutput("");
+      setResponseHistory([]);
+      setConversationHistory([]);
       setIsReconnecting(false);
       setView({ type: "loading" });
 
@@ -187,6 +193,16 @@ export function MissionInterviewModal({
 
     fetchAiSession(resumeSessionId).then((session) => {
       if (cancelled || !session) return;
+
+      const parsedHistory = parseConversationHistory(session.conversationHistory);
+      setConversationHistory(parsedHistory);
+      setResponseHistory(
+        parsedHistory
+          .map((entry) => entry.response)
+          .filter((response): response is QuestionResponse =>
+            Boolean(response && typeof response === "object" && !Array.isArray(response)),
+          ),
+      );
 
       if (session.status === "awaiting_input" && session.currentQuestion) {
         try {
@@ -320,6 +336,7 @@ export function MissionInterviewModal({
     setView({ type: "initial" });
     setError(null);
     setResponseHistory([]);
+    setConversationHistory([]);
     setEditedSummary(null);
     setStreamingOutput("");
     setIsReconnecting(false);
@@ -355,12 +372,19 @@ export function MissionInterviewModal({
 
       const { sessionId } = view;
       setError(null);
+      setResponseHistory((prev) => [...prev, responses]);
+      setConversationHistory((prev) => [
+        ...prev,
+        {
+          question: view.question,
+          response: responses,
+        },
+      ]);
       setView({ type: "loading" });
       setStreamingOutput("");
 
       try {
         await respondToMissionInterview(sessionId, responses, projectId);
-        setResponseHistory((prev) => [...prev, responses]);
         setHasProgress(true);
       } catch (err: any) {
         setError(err.message || "Failed to submit response");
@@ -387,6 +411,7 @@ export function MissionInterviewModal({
       setView({ type: "initial" });
       setError(null);
       setResponseHistory([]);
+      setConversationHistory([]);
       setEditedSummary(null);
       setStreamingOutput("");
       setIsReconnecting(false);
@@ -527,6 +552,7 @@ export function MissionInterviewModal({
             <InterviewQuestionForm
               question={view.question}
               progress={getProgress()}
+              historyEntries={conversationHistory}
               onSubmit={handleSubmitResponse}
             />
           )}
@@ -534,6 +560,7 @@ export function MissionInterviewModal({
           {view.type === "summary" && editedSummary && (
             <MissionPlanReview
               summary={editedSummary}
+              historyEntries={conversationHistory}
               onSummaryChange={setEditedSummary}
               onApprove={handleApprovePlan}
               onStartOver={() => {
@@ -541,6 +568,7 @@ export function MissionInterviewModal({
                 setHasProgress(false);
                 setEditedSummary(null);
                 setResponseHistory([]);
+                setConversationHistory([]);
                 streamConnectionRef.current?.close();
                 streamConnectionRef.current = null;
               }}
@@ -558,10 +586,11 @@ export function MissionInterviewModal({
 interface InterviewQuestionFormProps {
   question: PlanningQuestion;
   progress: number;
+  historyEntries: ConversationHistoryEntry[];
   onSubmit: (responses: QuestionResponse) => void;
 }
 
-function InterviewQuestionForm({ question, progress, onSubmit }: InterviewQuestionFormProps) {
+function InterviewQuestionForm({ question, progress, historyEntries, onSubmit }: InterviewQuestionFormProps) {
   const [response, setResponse] = useState<QuestionResponse>({});
   const [textValue, setTextValue] = useState("");
 
@@ -598,6 +627,13 @@ function InterviewQuestionForm({ question, progress, onSubmit }: InterviewQuesti
   return (
     <div className="planning-question-form">
       <div className="planning-view-scroll planning-question-scroll">
+        {historyEntries.length > 0 && (
+          <>
+            <ConversationHistory entries={historyEntries} />
+            <div className="conversation-separator" />
+          </>
+        )}
+
         <div className="planning-question-panel">
           <div className="planning-progress">
             <div className="planning-progress-bar">
@@ -726,6 +762,7 @@ function InterviewQuestionForm({ question, progress, onSubmit }: InterviewQuesti
 
 interface MissionPlanReviewProps {
   summary: MissionPlanSummary;
+  historyEntries: ConversationHistoryEntry[];
   onSummaryChange: (summary: MissionPlanSummary) => void;
   onApprove: () => void;
   onStartOver: () => void;
@@ -734,6 +771,7 @@ interface MissionPlanReviewProps {
 
 function MissionPlanReview({
   summary,
+  historyEntries,
   onSummaryChange,
   onApprove,
   onStartOver,
@@ -838,6 +876,13 @@ function MissionPlanReview({
   return (
     <div className="planning-summary">
       <div className="planning-view-scroll planning-summary-scroll">
+        {historyEntries.length > 0 && (
+          <>
+            <ConversationHistory entries={historyEntries} />
+            <div className="conversation-separator" />
+          </>
+        )}
+
         <div className="planning-summary-header">
           <CheckCircle size={24} style={{ color: "var(--color-success)" }} />
           <h4>Mission Plan Ready</h4>
