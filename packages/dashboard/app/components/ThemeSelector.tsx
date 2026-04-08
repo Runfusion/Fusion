@@ -46,6 +46,11 @@ const COLOR_THEMES: { value: ColorTheme; label: string; className: string }[] = 
   { value: "palenight", label: "Palenight", className: "theme-swatch-palenight" },
   { value: "monokai-pro", label: "Monokai Pro", className: "theme-swatch-monokai-pro" },
   { value: "slime", label: "Slime", className: "theme-swatch-slime" },
+  { value: "brutalist", label: "Brutalist", className: "theme-swatch-brutalist" },
+  { value: "neon-city", label: "Neon City", className: "theme-swatch-neon-city" },
+  { value: "parchment", label: "Parchment", className: "theme-swatch-parchment" },
+  { value: "terminal", label: "Terminal", className: "theme-swatch-terminal" },
+  { value: "glass", label: "Glass", className: "theme-swatch-glass" },
 ];
 
 /**

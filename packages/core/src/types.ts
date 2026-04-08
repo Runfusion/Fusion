@@ -41,6 +41,11 @@ export const COLOR_THEMES = [
   "palenight",
   "monokai-pro",
   "slime",
+  "brutalist",
+  "neon-city",
+  "parchment",
+  "terminal",
+  "glass",
 ] as const;
 export type ColorTheme = (typeof COLOR_THEMES)[number];
 

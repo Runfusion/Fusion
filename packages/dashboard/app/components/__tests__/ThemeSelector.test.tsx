@@ -102,6 +102,11 @@ describe("ThemeSelector", () => {
     expect(screen.getByLabelText("Ash theme")).toBeDefined();
     expect(screen.getByLabelText("Graphite theme")).toBeDefined();
     expect(screen.getByLabelText("Silver theme")).toBeDefined();
+    expect(screen.getByLabelText("Brutalist theme")).toBeDefined();
+    expect(screen.getByLabelText("Neon City theme")).toBeDefined();
+    expect(screen.getByLabelText("Parchment theme")).toBeDefined();
+    expect(screen.getByLabelText("Terminal theme")).toBeDefined();
+    expect(screen.getByLabelText("Glass theme")).toBeDefined();
   });
 
   it("marks current color theme as active", () => {
@@ -382,6 +387,38 @@ describe("ThemeSelector", () => {
     );
 
     expect(screen.getByText(/Dark \/ Silver/)).toBeDefined();
+  });
+
+  it("displays dramatic theme names in preview when selected", () => {
+    const { rerender } = render(
+      <ThemeSelector
+        themeMode="dark"
+        colorTheme="brutalist"
+        onThemeModeChange={vi.fn()}
+        onColorThemeChange={vi.fn()}
+      />
+    );
+
+    const dramaticThemes = [
+      ["brutalist", "Brutalist"],
+      ["neon-city", "Neon City"],
+      ["parchment", "Parchment"],
+      ["terminal", "Terminal"],
+      ["glass", "Glass"],
+    ] as const;
+
+    dramaticThemes.forEach(([value, label]) => {
+      rerender(
+        <ThemeSelector
+          themeMode="dark"
+          colorTheme={value}
+          onThemeModeChange={vi.fn()}
+          onColorThemeChange={vi.fn()}
+        />
+      );
+
+      expect(screen.getByText(new RegExp(`Dark \\/ ${label}`))).toBeDefined();
+    });
   });
 
   it("displays light Catppuccin Mocha in preview when light mode", () => {
