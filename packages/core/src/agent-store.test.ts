@@ -233,6 +233,216 @@ describe("AgentStore", () => {
     });
   });
 
+  // ── config revisions ───────────────────────────────────────────────
+
+  describe("config revisions", () => {
+    it("records revision when name changes", async () => {
+      const created = await store.createAgent({ name: "Original", role: "executor" });
+
+      await store.updateAgent(created.id, { name: "Renamed" });
+
+      const revisions = await store.getConfigRevisions(created.id);
+      expect(revisions).toHaveLength(1);
+      expect(revisions[0].source).toBe("user");
+      expect(revisions[0].diffs).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ field: "name", oldValue: "Original", newValue: "Renamed" }),
+        ]),
+      );
+      expect(revisions[0].summary).toContain("name");
+      expect(revisions[0].before.name).toBe("Original");
+      expect(revisions[0].after.name).toBe("Renamed");
+    });
+
+    it("records revisions for runtimeConfig, permissions, instructionsPath, and instructionsText changes", async () => {
+      const created = await store.createAgent({
+        name: "Configurable",
+        role: "executor",
+        runtimeConfig: { heartbeatIntervalMs: 30000 },
+        permissions: { canReview: false },
+      });
+
+      await store.updateAgent(created.id, { runtimeConfig: { heartbeatIntervalMs: 10000 } });
+      await store.updateAgent(created.id, { permissions: { canReview: true, canExecute: true } });
+      await store.updateAgent(created.id, { instructionsPath: "docs/agent.md" });
+      await store.updateAgent(created.id, { instructionsText: "Follow safety checks." });
+
+      const revisions = await store.getConfigRevisions(created.id);
+      const changedFields = revisions.flatMap((revision) => revision.diffs.map((diff) => diff.field));
+
+      expect(changedFields).toContain("runtimeConfig");
+      expect(changedFields).toContain("permissions");
+      expect(changedFields).toContain("instructionsPath");
+      expect(changedFields).toContain("instructionsText");
+    });
+
+    it("does not create a revision when only non-config fields change", async () => {
+      const created = await store.createAgent({ name: "No Diff", role: "executor" });
+
+      await store.updateAgent(created.id, {
+        totalInputTokens: 120,
+        totalOutputTokens: 80,
+        pauseReason: "manual",
+        lastError: "temporary",
+      });
+
+      const revisions = await store.getConfigRevisions(created.id);
+      expect(revisions).toEqual([]);
+    });
+
+    it("returns revisions in reverse chronological order and respects limit", async () => {
+      const created = await store.createAgent({ name: "Chrono", role: "executor" });
+
+      await store.updateAgent(created.id, { name: "Chrono-1" });
+      await store.updateAgent(created.id, { name: "Chrono-2" });
+      await store.updateAgent(created.id, { name: "Chrono-3" });
+
+      const revisions = await store.getConfigRevisions(created.id);
+      expect(revisions).toHaveLength(3);
+      expect(revisions[0].after.name).toBe("Chrono-3");
+      expect(revisions[1].after.name).toBe("Chrono-2");
+      expect(revisions[2].after.name).toBe("Chrono-1");
+
+      const limited = await store.getConfigRevisions(created.id, 2);
+      expect(limited).toHaveLength(2);
+      expect(limited.map((revision) => revision.after.name)).toEqual(["Chrono-3", "Chrono-2"]);
+    });
+
+    it("getConfigRevisions returns empty for agents with no revisions and non-existent agents", async () => {
+      const created = await store.createAgent({ name: "No Revisions", role: "executor" });
+
+      expect(await store.getConfigRevisions(created.id)).toEqual([]);
+      expect(await store.getConfigRevisions("agent-missing")).toEqual([]);
+    });
+
+    it("getConfigRevision returns matching revision and null when missing", async () => {
+      const created = await store.createAgent({ name: "Find Revision", role: "executor" });
+      await store.updateAgent(created.id, { name: "Find Revision v2" });
+
+      const [revision] = await store.getConfigRevisions(created.id);
+      const found = await store.getConfigRevision(created.id, revision.id);
+
+      expect(found).not.toBeNull();
+      expect(found!.id).toBe(revision.id);
+      expect(await store.getConfigRevision(created.id, "revision-missing")).toBeNull();
+      expect(await store.getConfigRevision("agent-missing", revision.id)).toBeNull();
+    });
+
+    it("rollbackConfig restores previous config and records rollback revision", async () => {
+      const created = await store.createAgent({
+        name: "Rollback Me",
+        role: "executor",
+        runtimeConfig: { heartbeatTimeoutMs: 60000 },
+      });
+
+      await store.updateAgent(created.id, {
+        name: "Rollback Me v2",
+        runtimeConfig: { heartbeatTimeoutMs: 90000 },
+      });
+
+      const [targetRevision] = await store.getConfigRevisions(created.id);
+      const result = await store.rollbackConfig(created.id, targetRevision.id);
+
+      expect(result.agent.name).toBe("Rollback Me");
+      expect(result.agent.runtimeConfig).toEqual({ heartbeatTimeoutMs: 60000 });
+      expect(result.revision.source).toBe("rollback");
+      expect(result.revision.rollbackToRevisionId).toBe(targetRevision.id);
+
+      const revisions = await store.getConfigRevisions(created.id);
+      expect(revisions[0].id).toBe(result.revision.id);
+      expect(revisions[0].source).toBe("rollback");
+    });
+
+    it("rollbackConfig supports chained rollbacks", async () => {
+      const created = await store.createAgent({ name: "Version 1", role: "executor" });
+      await store.updateAgent(created.id, { name: "Version 2" });
+      await store.updateAgent(created.id, { name: "Version 3" });
+
+      const revisions = await store.getConfigRevisions(created.id);
+      const revToV2 = revisions.find((revision) => revision.after.name === "Version 3");
+      const revToV1 = revisions.find((revision) => revision.after.name === "Version 2");
+      expect(revToV2).toBeDefined();
+      expect(revToV1).toBeDefined();
+
+      await store.rollbackConfig(created.id, revToV2!.id);
+      const afterFirstRollback = await store.getAgent(created.id);
+      expect(afterFirstRollback!.name).toBe("Version 2");
+
+      await store.rollbackConfig(created.id, revToV1!.id);
+      const afterSecondRollback = await store.getAgent(created.id);
+      expect(afterSecondRollback!.name).toBe("Version 1");
+    });
+
+    it("rollbackConfig throws for missing revision", async () => {
+      const created = await store.createAgent({ name: "Rollback Missing", role: "executor" });
+
+      await expect(store.rollbackConfig(created.id, "revision-missing")).rejects.toThrow(
+        `Config revision revision-missing not found for agent ${created.id}`,
+      );
+    });
+
+    it("rollbackConfig throws when revision belongs to a different agent", async () => {
+      const agentA = await store.createAgent({ name: "Agent A", role: "executor" });
+      const agentB = await store.createAgent({ name: "Agent B", role: "reviewer" });
+
+      await store.updateAgent(agentA.id, { name: "Agent A v2" });
+      const [revisionA] = await store.getConfigRevisions(agentA.id);
+
+      await expect(store.rollbackConfig(agentB.id, revisionA.id)).rejects.toThrow(
+        `Config revision ${revisionA.id} belongs to agent ${agentA.id}`,
+      );
+    });
+
+    it("emits agent:configRevision on config updates and rollback, but not updateAgentState", async () => {
+      const created = await store.createAgent({ name: "Events", role: "executor" });
+      const handler = vi.fn();
+      store.on("agent:configRevision", handler);
+
+      await store.updateAgent(created.id, { name: "Events v2" });
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler).toHaveBeenLastCalledWith(
+        created.id,
+        expect.objectContaining({ agentId: created.id, source: "user" }),
+      );
+
+      await store.updateAgentState(created.id, "idle");
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      const [firstRevision] = await store.getConfigRevisions(created.id);
+      await store.rollbackConfig(created.id, firstRevision.id);
+      expect(handler).toHaveBeenCalledTimes(2);
+      expect(handler).toHaveBeenLastCalledWith(
+        created.id,
+        expect.objectContaining({ source: "rollback", rollbackToRevisionId: firstRevision.id }),
+      );
+    });
+
+    it("persists revisions to an append-only JSONL file without affecting heartbeat files", async () => {
+      const created = await store.createAgent({ name: "Persisted", role: "executor" });
+
+      await store.updateAgent(created.id, { name: "Persisted v2" });
+      await store.updateAgent(created.id, { name: "Persisted v3" });
+      await store.recordHeartbeat(created.id, "ok");
+
+      const revisionsPath = join(rootDir, "agents", `${created.id}-revisions.jsonl`);
+      const heartbeatsPath = join(rootDir, "agents", `${created.id}-heartbeats.jsonl`);
+
+      expect(existsSync(revisionsPath)).toBe(true);
+      expect(existsSync(heartbeatsPath)).toBe(true);
+
+      const revisionLines = readFileSync(revisionsPath, "utf-8").trim().split("\n").filter(Boolean);
+      expect(revisionLines).toHaveLength(2);
+
+      const parsedRevisions = revisionLines.map((line) => JSON.parse(line) as { agentId: string });
+      expect(parsedRevisions.every((line) => line.agentId === created.id)).toBe(true);
+
+      const heartbeatLines = readFileSync(heartbeatsPath, "utf-8").trim().split("\n").filter(Boolean);
+      expect(heartbeatLines.length).toBeGreaterThan(0);
+      const parsedHeartbeat = JSON.parse(heartbeatLines[0]) as { status: string };
+      expect(parsedHeartbeat.status).toBe("ok");
+    });
+  });
+
   // ── deleteAgent ───────────────────────────────────────────────────
 
   describe("deleteAgent", () => {

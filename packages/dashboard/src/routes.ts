@@ -7380,6 +7380,97 @@ Output ONLY the prompt text (no markdown, no explanations).`;
   });
 
   /**
+   * GET /api/agents/:id/config-revisions
+   * List config revisions for an agent.
+   * Query: limit (default: 50)
+   */
+  router.get("/agents/:id/config-revisions", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const agent = await agentStore.getAgent(req.params.id);
+      if (!agent) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+
+      const rawLimit = req.query.limit;
+      const limit = rawLimit === undefined ? 50 : Number.parseInt(String(rawLimit), 10);
+      if (!Number.isInteger(limit) || limit <= 0) {
+        res.status(400).json({ error: "limit must be a positive integer" });
+        return;
+      }
+
+      const revisions = await agentStore.getConfigRevisions(req.params.id, limit);
+      res.json(revisions);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/agents/:id/config-revisions/:revisionId
+   * Get a specific config revision for an agent.
+   */
+  router.get("/agents/:id/config-revisions/:revisionId", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const agent = await agentStore.getAgent(req.params.id);
+      if (!agent) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+
+      const revision = await agentStore.getConfigRevision(req.params.id, req.params.revisionId);
+      if (!revision) {
+        res.status(404).json({ error: "Config revision not found" });
+        return;
+      }
+
+      res.json(revision);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/agents/:id/config-revisions/:revisionId/rollback
+   * Roll back an agent to a previous config revision.
+   */
+  router.post("/agents/:id/config-revisions/:revisionId/rollback", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const agent = await agentStore.getAgent(req.params.id);
+      if (!agent) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+
+      const result = await agentStore.rollbackConfig(req.params.id, req.params.revisionId);
+      res.json(result);
+    } catch (err: any) {
+      if (err.message?.includes("belongs to agent")) {
+        res.status(400).json({ error: err.message });
+      } else if (err.message?.includes("not found")) {
+        res.status(404).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
    * POST /api/agents/:id/keys
    * Create a new API key for an agent.
    * Body: { label?: string }

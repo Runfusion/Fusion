@@ -4,11 +4,13 @@
  * Agents are stored at `.fusion/agents/{agentId}.json` with their metadata.
  * Heartbeat events are appended to `.fusion/agents/{agentId}-heartbeats.jsonl`.
  * API keys are stored in `.fusion/agents/{agentId}-keys.jsonl` (hash-only).
+ * Config revisions are stored in `.fusion/agents/{agentId}-revisions.jsonl` (append-only snapshots).
  * 
  * File Structure:
  * - agents/{agentId}.json: Agent metadata (id, name, role, state, taskId, timestamps, metadata)
  * - agents/{agentId}-heartbeats.jsonl: Append-only heartbeat events
  * - agents/{agentId}-keys.jsonl: API key records with SHA-256 token hashes
+ * - agents/{agentId}-revisions.jsonl: Config revision history
  */
 
 import { mkdir, readFile, writeFile, readdir, unlink } from "node:fs/promises";
@@ -28,8 +30,10 @@ import type {
   AgentHeartbeatRun,
   AgentDetail,
   AgentTaskSession,
+  AgentConfigRevision,
+  AgentConfigSnapshot,
 } from "./types.js";
-import { AGENT_VALID_TRANSITIONS } from "./types.js";
+import { AGENT_VALID_TRANSITIONS, agentToConfigSnapshot, diffConfigSnapshots } from "./types.js";
 
 /** Events emitted by AgentStore */
 export interface AgentStoreEvents {
@@ -43,6 +47,8 @@ export interface AgentStoreEvents {
   "agent:heartbeat": (agentId: string, event: AgentHeartbeatEvent) => void;
   /** Emitted when an agent state changes */
   "agent:stateChanged": (agentId: string, from: AgentState, to: AgentState) => void;
+  /** Emitted when a config revision is recorded */
+  "agent:configRevision": (agentId: string, revision: AgentConfigRevision) => void;
   /** Emitted when a task is assigned to an agent (taskId is non-empty) */
   "agent:assigned": (agent: Agent, taskId: string) => void;
 }
@@ -212,12 +218,15 @@ export class AgentStore extends EventEmitter {
         throw new Error("Agent name cannot be empty");
       }
 
+      const beforeSnapshot = agentToConfigSnapshot(agent);
+      const updatedAt = new Date().toISOString();
+
       const updated: Agent = {
         ...agent,
         name: nextName ?? agent.name,
         role: updates.role ?? agent.role,
         metadata: updates.metadata !== undefined ? updates.metadata : agent.metadata,
-        updatedAt: new Date().toISOString(),
+        updatedAt,
         ...("title" in updates && { title: updates.title }),
         ...("icon" in updates && { icon: updates.icon }),
         ...("reportsTo" in updates && { reportsTo: updates.reportsTo }),
@@ -232,9 +241,103 @@ export class AgentStore extends EventEmitter {
       };
 
       await this.writeAgent(updated);
+
+      const afterSnapshot = agentToConfigSnapshot(updated);
+      const diffs = diffConfigSnapshots(beforeSnapshot, afterSnapshot);
+
+      if (diffs.length > 0) {
+        const revision = this.createConfigRevision({
+          agentId,
+          before: beforeSnapshot,
+          after: afterSnapshot,
+          diffs,
+          source: "user",
+          createdAt: updatedAt,
+        });
+        await this.appendConfigRevision(revision);
+        this.emit("agent:configRevision", agentId, revision);
+      }
+
       this.emit("agent:updated", updated);
 
       return updated;
+    });
+  }
+
+  /**
+   * Get config revision history for an agent (most recent first).
+   */
+  async getConfigRevisions(agentId: string, limit?: number): Promise<AgentConfigRevision[]> {
+    const revisions = await this.readConfigRevisions(agentId);
+    const ordered = revisions.reverse();
+
+    if (limit === undefined) {
+      return ordered;
+    }
+
+    const normalizedLimit = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 0;
+    return ordered.slice(0, normalizedLimit);
+  }
+
+  /**
+   * Get a specific config revision for an agent.
+   */
+  async getConfigRevision(agentId: string, revisionId: string): Promise<AgentConfigRevision | null> {
+    const revisions = await this.readConfigRevisions(agentId);
+    return revisions.find((revision) => revision.id === revisionId) ?? null;
+  }
+
+  /**
+   * Roll back agent to a previous configuration revision.
+   */
+  async rollbackConfig(agentId: string, revisionId: string): Promise<{ agent: Agent; revision: AgentConfigRevision }> {
+    return this.withLock(agentId, async () => {
+      const agent = await this.getAgent(agentId);
+      if (!agent) {
+        throw new Error(`Agent ${agentId} not found`);
+      }
+
+      const targetRevision = await this.getConfigRevision(agentId, revisionId);
+      if (!targetRevision) {
+        const revisionOwner = await this.findConfigRevisionAcrossAgents(revisionId);
+        if (revisionOwner && revisionOwner.agentId !== agentId) {
+          throw new Error(`Config revision ${revisionId} belongs to agent ${revisionOwner.agentId}`);
+        }
+
+        throw new Error(`Config revision ${revisionId} not found for agent ${agentId}`);
+      }
+
+      if (targetRevision.agentId !== agentId) {
+        throw new Error(`Config revision ${revisionId} belongs to agent ${targetRevision.agentId}`);
+      }
+
+      const beforeSnapshot = agentToConfigSnapshot(agent);
+      const updatedAt = new Date().toISOString();
+      const restoredAgent: Agent = {
+        ...agent,
+        ...this.snapshotToAgentConfig(targetRevision.before),
+        updatedAt,
+      };
+
+      await this.writeAgent(restoredAgent);
+
+      const rollbackRevision = this.createConfigRevision({
+        agentId,
+        before: beforeSnapshot,
+        after: agentToConfigSnapshot(restoredAgent),
+        source: "rollback",
+        rollbackToRevisionId: revisionId,
+        createdAt: updatedAt,
+      });
+
+      await this.appendConfigRevision(rollbackRevision);
+      this.emit("agent:updated", restoredAgent);
+      this.emit("agent:configRevision", agentId, rollbackRevision);
+
+      return {
+        agent: restoredAgent,
+        revision: rollbackRevision,
+      };
     });
   }
 
@@ -363,7 +466,7 @@ export class AgentStore extends EventEmitter {
    */
   async listAgents(filter?: { state?: AgentState; role?: AgentCapability }): Promise<Agent[]> {
     const files = await readdir(this.agentsDir).catch(() => [] as string[]);
-    const agentFiles = files.filter((f) => f.endsWith(".json") && !f.includes("-heartbeats") && !f.includes("-sessions") && !f.includes("-runs"));
+    const agentFiles = files.filter((f) => f.endsWith(".json") && !f.includes("-heartbeats") && !f.includes("-sessions") && !f.includes("-runs") && !f.includes("-revisions"));
 
     const agents: Agent[] = [];
     for (const file of agentFiles) {
@@ -471,6 +574,7 @@ export class AgentStore extends EventEmitter {
     await this.withLock(agentId, async () => {
       const agentPath = join(this.agentsDir, `${agentId}.json`);
       const heartbeatPath = join(this.agentsDir, `${agentId}-heartbeats.jsonl`);
+      const revisionsPath = this.getConfigRevisionsPath(agentId);
 
       // Verify agent exists
       const agent = await this.getAgent(agentId);
@@ -481,6 +585,7 @@ export class AgentStore extends EventEmitter {
       // Delete files
       await unlink(agentPath).catch(() => {});
       await unlink(heartbeatPath).catch(() => {});
+      await unlink(revisionsPath).catch(() => {});
 
       // Clean up sessions and runs directories
       const { rm } = await import("node:fs/promises");
@@ -834,6 +939,125 @@ export class AgentStore extends EventEmitter {
   // ─────────────────────────────────────────────────────────────────────────
   // Private helpers
   // ─────────────────────────────────────────────────────────────────────────
+
+  private getConfigRevisionsPath(agentId: string): string {
+    return join(this.agentsDir, `${agentId}-revisions.jsonl`);
+  }
+
+  private async appendConfigRevision(revision: AgentConfigRevision): Promise<void> {
+    const revisionsPath = this.getConfigRevisionsPath(revision.agentId);
+    await writeFile(revisionsPath, `${JSON.stringify(revision)}\n`, { flag: "a" });
+  }
+
+  private async readConfigRevisions(agentId: string): Promise<AgentConfigRevision[]> {
+    const revisionsPath = this.getConfigRevisionsPath(agentId);
+    if (!existsSync(revisionsPath)) {
+      return [];
+    }
+
+    try {
+      const content = await readFile(revisionsPath, "utf-8");
+      if (!content.trim()) {
+        return [];
+      }
+
+      const revisions: AgentConfigRevision[] = [];
+      const lines = content.split("\n").filter(Boolean);
+      for (const line of lines) {
+        try {
+          const revision = JSON.parse(line) as AgentConfigRevision;
+          if (revision.agentId === agentId) {
+            revisions.push(revision);
+          }
+        } catch {
+          // Skip malformed lines
+        }
+      }
+
+      return revisions;
+    } catch {
+      return [];
+    }
+  }
+
+  private createConfigRevision(params: {
+    agentId: string;
+    before: AgentConfigSnapshot;
+    after: AgentConfigSnapshot;
+    source: AgentConfigRevision["source"];
+    createdAt?: string;
+    rollbackToRevisionId?: string;
+    diffs?: AgentConfigRevision["diffs"];
+  }): AgentConfigRevision {
+    const diffs = params.diffs ?? diffConfigSnapshots(params.before, params.after);
+
+    const changedFields = diffs.map((diff) => diff.field).join(", ");
+    const summary =
+      params.source === "rollback"
+        ? diffs.length > 0
+          ? `Rolled back config fields: ${changedFields}`
+          : `Rolled back to revision ${params.rollbackToRevisionId ?? "unknown"}`
+        : diffs.length > 0
+          ? `Updated ${changedFields}`
+          : "No config changes";
+
+    return {
+      id: `revision-${randomUUID().slice(0, 8)}`,
+      agentId: params.agentId,
+      createdAt: params.createdAt ?? new Date().toISOString(),
+      before: params.before,
+      after: params.after,
+      diffs,
+      summary,
+      source: params.source,
+      ...(params.rollbackToRevisionId ? { rollbackToRevisionId: params.rollbackToRevisionId } : {}),
+    };
+  }
+
+  private snapshotToAgentConfig(
+    snapshot: AgentConfigSnapshot,
+  ): Pick<
+    Agent,
+    | "name"
+    | "role"
+    | "title"
+    | "icon"
+    | "reportsTo"
+    | "runtimeConfig"
+    | "permissions"
+    | "instructionsPath"
+    | "instructionsText"
+    | "metadata"
+  > {
+    return {
+      name: snapshot.name,
+      role: snapshot.role,
+      title: snapshot.title,
+      icon: snapshot.icon,
+      reportsTo: snapshot.reportsTo,
+      runtimeConfig: snapshot.runtimeConfig ? { ...snapshot.runtimeConfig } : undefined,
+      permissions: snapshot.permissions ? { ...snapshot.permissions } : undefined,
+      instructionsPath: snapshot.instructionsPath,
+      instructionsText: snapshot.instructionsText,
+      metadata: { ...snapshot.metadata },
+    };
+  }
+
+  private async findConfigRevisionAcrossAgents(revisionId: string): Promise<AgentConfigRevision | null> {
+    const files = await readdir(this.agentsDir).catch(() => [] as string[]);
+    const revisionFiles = files.filter((file) => file.endsWith("-revisions.jsonl"));
+
+    for (const file of revisionFiles) {
+      const agentId = file.replace(/-revisions\.jsonl$/, "");
+      const revisions = await this.readConfigRevisions(agentId);
+      const match = revisions.find((revision) => revision.id === revisionId);
+      if (match) {
+        return match;
+      }
+    }
+
+    return null;
+  }
 
   private getApiKeysPath(agentId: string): string {
     return join(this.agentsDir, `${agentId}-keys.jsonl`);

@@ -1641,6 +1641,98 @@ export interface AgentTaskSession {
   updatedAt: string;
 }
 
+/** Trackable configuration fields for revision history.
+ *  Excludes budget-related items, state, taskId, token counts, and timestamps. */
+export interface AgentConfigSnapshot {
+  name: string;
+  role: AgentCapability;
+  title?: string;
+  icon?: string;
+  reportsTo?: string;
+  runtimeConfig?: Record<string, unknown>;
+  permissions?: Record<string, boolean>;
+  instructionsPath?: string;
+  instructionsText?: string;
+  metadata: Record<string, unknown>;
+}
+
+/** A single key-value change within a config revision */
+export interface RevisionFieldDiff {
+  field: string;
+  oldValue: unknown;
+  newValue: unknown;
+}
+
+/** A revision entry recording a configuration change to an agent */
+export interface AgentConfigRevision {
+  /** Unique revision identifier */
+  id: string;
+  /** Agent ID this revision belongs to */
+  agentId: string;
+  /** ISO-8601 timestamp when the revision was created */
+  createdAt: string;
+  /** Snapshot of config BEFORE the change */
+  before: AgentConfigSnapshot;
+  /** Snapshot of config AFTER the change */
+  after: AgentConfigSnapshot;
+  /** Field-level diffs between before and after */
+  diffs: RevisionFieldDiff[];
+  /** Description of what changed (e.g., "Updated runtimeConfig, name") */
+  summary: string;
+  /** Who or what triggered the change */
+  source: "user" | "system" | "rollback";
+  /** If this was a rollback, the revision ID that was restored */
+  rollbackToRevisionId?: string;
+}
+
+/** Extract trackable config fields from an Agent into a snapshot */
+export function agentToConfigSnapshot(agent: Agent): AgentConfigSnapshot {
+  return {
+    name: agent.name,
+    role: agent.role,
+    title: agent.title,
+    icon: agent.icon,
+    reportsTo: agent.reportsTo,
+    runtimeConfig: agent.runtimeConfig ? { ...agent.runtimeConfig } : undefined,
+    permissions: agent.permissions ? { ...agent.permissions } : undefined,
+    instructionsPath: agent.instructionsPath,
+    instructionsText: agent.instructionsText,
+    metadata: { ...agent.metadata },
+  };
+}
+
+/** Compare two config snapshots and return field-level diffs */
+export function diffConfigSnapshots(
+  before: AgentConfigSnapshot,
+  after: AgentConfigSnapshot,
+): RevisionFieldDiff[] {
+  const trackedFields: Array<keyof AgentConfigSnapshot> = [
+    "name",
+    "role",
+    "title",
+    "icon",
+    "reportsTo",
+    "runtimeConfig",
+    "permissions",
+    "instructionsPath",
+    "instructionsText",
+    "metadata",
+  ];
+
+  const diffs: RevisionFieldDiff[] = [];
+
+  for (const field of trackedFields) {
+    const oldVal = before[field];
+    const newVal = after[field];
+
+    if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) {
+      diffs.push({ field, oldValue: oldVal, newValue: newVal });
+    }
+  }
+
+  return diffs;
+}
+
 /** Aggregate statistics for agents */
 export interface AgentStats {
   /** Number of agents in active/running state */
