@@ -14,7 +14,7 @@ import { readFile, readdir, rename, stat } from "node:fs/promises";
 import { join, resolve, dirname } from "node:path";
 import type { Database } from "./db.js";
 import { toJson, toJsonNullable, normalizeTaskComments } from "./db.js";
-import type { Task, BoardConfig, ActivityLogEntry, ArchivedTaskEntry } from "./types.js";
+import type { Task, BoardConfig, ActivityLogEntry, ArchivedTaskEntry, WorkflowStep } from "./types.js";
 import type { ScheduledTask } from "./automation.js";
 import { resolveGlobalDir } from "./global-settings.js";
 
@@ -130,7 +130,11 @@ async function migrateConfig(kbDir: string, db: Database): Promise<void> {
   if (!existsSync(configPath)) return;
 
   const raw = await readFile(configPath, "utf-8");
-  const config: BoardConfig = JSON.parse(raw);
+  const config = JSON.parse(raw) as BoardConfig & {
+    nextWorkflowStepId?: number;
+    workflowSteps?: WorkflowStep[];
+  };
+  const workflowSteps = Array.isArray(config.workflowSteps) ? config.workflowSteps : [];
 
   db.prepare(
     `UPDATE config SET 
@@ -144,9 +148,59 @@ async function migrateConfig(kbDir: string, db: Database): Promise<void> {
     config.nextId || 1,
     config.nextWorkflowStepId || 1,
     JSON.stringify(config.settings || {}),
-    JSON.stringify(config.workflowSteps || []),
+    JSON.stringify(workflowSteps),
     new Date().toISOString(),
   );
+
+  const insertWorkflowStep = db.prepare(`
+    INSERT OR IGNORE INTO workflow_steps (
+      id,
+      templateId,
+      name,
+      description,
+      mode,
+      phase,
+      prompt,
+      toolMode,
+      scriptName,
+      enabled,
+      defaultOn,
+      modelProvider,
+      modelId,
+      createdAt,
+      updatedAt
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  for (const step of workflowSteps) {
+    if (!step?.id || !step.name || !step.description) {
+      continue;
+    }
+
+    const mode = step.mode === "script" ? "script" : "prompt";
+    const phase = step.phase === "post-merge" ? "post-merge" : "pre-merge";
+    const createdAt = step.createdAt || new Date().toISOString();
+    const updatedAt = step.updatedAt || createdAt;
+
+    insertWorkflowStep.run(
+      step.id,
+      step.templateId ?? null,
+      step.name,
+      step.description,
+      mode,
+      phase,
+      mode === "prompt" ? step.prompt || "" : "",
+      mode === "prompt" ? step.toolMode ?? null : null,
+      mode === "script" ? step.scriptName ?? null : null,
+      step.enabled === false ? 0 : 1,
+      step.defaultOn === undefined ? null : step.defaultOn ? 1 : 0,
+      mode === "prompt" ? step.modelProvider ?? null : null,
+      mode === "prompt" ? step.modelId ?? null : null,
+      createdAt,
+      updatedAt,
+    );
+  }
+
   db.bumpLastModified();
   console.log("[migrate] Migrated config.json");
 }

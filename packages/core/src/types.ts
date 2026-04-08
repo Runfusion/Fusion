@@ -1169,10 +1169,6 @@ export const PROJECT_SETTINGS_KEYS: ReadonlyArray<keyof ProjectSettings> = [
 export interface BoardConfig {
   nextId: number;
   settings?: Settings;
-  /** Global workflow step definitions */
-  workflowSteps?: WorkflowStep[];
-  /** Auto-incrementing counter for workflow step IDs */
-  nextWorkflowStepId?: number;
 }
 
 export interface MergeResult extends MergeDetails {

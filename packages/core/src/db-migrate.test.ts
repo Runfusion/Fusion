@@ -159,6 +159,18 @@ describe("migrateFromLegacy", () => {
       expect(row.nextWorkflowStepId).toBe(3);
       expect(JSON.parse(row.settings).maxConcurrent).toBe(4);
       expect(JSON.parse(row.workflowSteps)).toHaveLength(1);
+
+      const workflowRows = db.prepare("SELECT * FROM workflow_steps ORDER BY id ASC").all() as any[];
+      expect(workflowRows).toHaveLength(1);
+      expect(workflowRows[0]).toMatchObject({
+        id: "WS-001",
+        name: "Test",
+        description: "Test step",
+        mode: "prompt",
+        phase: "pre-merge",
+        prompt: "test",
+        enabled: 1,
+      });
     });
   });
 

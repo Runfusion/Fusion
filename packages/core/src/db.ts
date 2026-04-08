@@ -59,7 +59,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 16;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -179,6 +179,25 @@ CREATE TABLE IF NOT EXISTS config (
   settings TEXT DEFAULT '{}',
   workflowSteps TEXT DEFAULT '[]',
   updatedAt TEXT
+);
+
+-- Workflow step definitions
+CREATE TABLE IF NOT EXISTS workflow_steps (
+  id TEXT PRIMARY KEY,
+  templateId TEXT,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL,
+  mode TEXT NOT NULL DEFAULT 'prompt',
+  phase TEXT NOT NULL DEFAULT 'pre-merge',
+  prompt TEXT NOT NULL DEFAULT '',
+  toolMode TEXT,
+  scriptName TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  defaultOn INTEGER DEFAULT 0,
+  modelProvider TEXT,
+  modelId TEXT,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
 );
 
 -- Activity log with indexed columns for efficient queries
@@ -521,6 +540,98 @@ export class Database {
       this.applyMigration(15, () => {
         if (this.hasTable("ai_sessions")) {
           this.db.exec(`CREATE INDEX IF NOT EXISTS idxAiSessionsUpdatedAt ON ai_sessions(updatedAt)`);
+        }
+      });
+    }
+
+    if (version < 16) {
+      this.applyMigration(16, () => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS workflow_steps (
+            id TEXT PRIMARY KEY,
+            templateId TEXT,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL,
+            mode TEXT NOT NULL DEFAULT 'prompt',
+            phase TEXT NOT NULL DEFAULT 'pre-merge',
+            prompt TEXT NOT NULL DEFAULT '',
+            toolMode TEXT,
+            scriptName TEXT,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            defaultOn INTEGER DEFAULT 0,
+            modelProvider TEXT,
+            modelId TEXT,
+            createdAt TEXT NOT NULL,
+            updatedAt TEXT NOT NULL
+          )
+        `);
+
+        const configRow = this.db
+          .prepare("SELECT workflowSteps FROM config WHERE id = 1")
+          .get() as { workflowSteps?: string | null } | undefined;
+        const workflowSteps = fromJson<Array<Record<string, unknown>>>(configRow?.workflowSteps);
+
+        if (!Array.isArray(workflowSteps) || workflowSteps.length === 0) {
+          return;
+        }
+
+        const insertWorkflowStep = this.db.prepare(`
+          INSERT OR IGNORE INTO workflow_steps (
+            id,
+            templateId,
+            name,
+            description,
+            mode,
+            phase,
+            prompt,
+            toolMode,
+            scriptName,
+            enabled,
+            defaultOn,
+            modelProvider,
+            modelId,
+            createdAt,
+            updatedAt
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        for (const step of workflowSteps) {
+          const id = typeof step.id === "string" ? step.id : "";
+          const name = typeof step.name === "string" ? step.name : "";
+          const description = typeof step.description === "string" ? step.description : "";
+
+          if (!id || !name || !description) {
+            continue;
+          }
+
+          const mode = step.mode === "script" ? "script" : "prompt";
+          const phase = step.phase === "post-merge" ? "post-merge" : "pre-merge";
+          const createdAt =
+            typeof step.createdAt === "string" && step.createdAt
+              ? step.createdAt
+              : new Date().toISOString();
+          const updatedAt =
+            typeof step.updatedAt === "string" && step.updatedAt
+              ? step.updatedAt
+              : createdAt;
+
+          insertWorkflowStep.run(
+            id,
+            typeof step.templateId === "string" ? step.templateId : null,
+            name,
+            description,
+            mode,
+            phase,
+            typeof step.prompt === "string" ? step.prompt : "",
+            step.toolMode === "coding" || step.toolMode === "readonly" ? step.toolMode : null,
+            typeof step.scriptName === "string" ? step.scriptName : null,
+            step.enabled === false ? 0 : 1,
+            step.defaultOn === true ? 1 : 0,
+            typeof step.modelProvider === "string" ? step.modelProvider : null,
+            typeof step.modelId === "string" ? step.modelId : null,
+            createdAt,
+            updatedAt,
+          );
         }
       });
     }

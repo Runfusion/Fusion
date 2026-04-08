@@ -48,7 +48,7 @@ kb uses a hybrid storage architecture: structured metadata lives in SQLite while
 | Table | Purpose |
 |-------|---------|
 | `tasks` | Task metadata with JSON columns for nested arrays/objects |
-| `config` | Single-row project config (nextId, settings, workflowSteps) |
+| `config` | Single-row project config (nextId, settings) |
 | `activityLog` | Activity log entries with indexed timestamp/type/taskId |
 | `archivedTasks` | Compact archived task entries (full metadata as JSON) |
 | `automations` | Scheduled automation definitions |
@@ -1506,24 +1506,24 @@ Legacy workflow steps without an explicit `phase` field are treated as **pre-mer
 
 ### Storage
 
-Workflow step definitions are stored in `.fusion/config.json`:
-```json
-{
-  "workflowSteps": [
-    {
-      "id": "WS-001",
-      "name": "Documentation Review",
-      "description": "Verify all public APIs have documentation",
-      "mode": "prompt",
-      "phase": "pre-merge",
-      "prompt": "Review the task changes and verify that all new public functions...",
-      "enabled": true,
-      "createdAt": "2026-03-31T00:00:00.000Z",
-      "updatedAt": "2026-03-31T00:00:00.000Z"
-    }
-  ],
-  "nextWorkflowStepId": 2
-}
+Workflow step definitions are stored in the SQLite `workflow_steps` table, while the ID counter remains in the `config` row (`nextWorkflowStepId`):
+
+```sql
+-- workflow_steps
+id: "WS-001"
+templateId: null
+name: "Documentation Review"
+description: "Verify all public APIs have documentation"
+mode: "prompt"
+phase: "pre-merge"
+prompt: "Review the task changes and verify that all new public functions..."
+enabled: 1
+defaultOn: 0
+createdAt: "2026-03-31T00:00:00.000Z"
+updatedAt: "2026-03-31T00:00:00.000Z"
+
+-- config (single row)
+nextWorkflowStepId: 2
 ```
 
 Tasks store their enabled workflow step IDs in `task.json`:

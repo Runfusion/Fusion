@@ -612,34 +612,54 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     if (!row) {
       return { nextId: 1 };
     }
-    const workflowSteps = fromJson<import("./types.js").WorkflowStep[]>(row.workflowSteps);
-    // Normalize legacy steps that don't have a mode field — default to "prompt"
-    if (workflowSteps) {
-      for (const ws of workflowSteps) {
-        if (!ws.mode) {
-          ws.mode = "prompt";
-        }
-      }
-    }
-    return {
+    const config: BoardConfig = {
       nextId: row.nextId || 1,
       settings: fromJson<Settings>(row.settings),
-      workflowSteps,
-      nextWorkflowStepId: row.nextWorkflowStepId || 1,
     };
+
+    // Backward-compatibility for internal callers/tests that still access these fields.
+    // Keep them non-enumerable so config.json writes don't include workflow steps.
+    const workflowSteps = this.listWorkflowSteps();
+    Object.defineProperty(config, "workflowSteps", {
+      value: await workflowSteps,
+      writable: true,
+      configurable: true,
+      enumerable: false,
+    });
+    Object.defineProperty(config, "nextWorkflowStepId", {
+      value: row.nextWorkflowStepId || 1,
+      writable: true,
+      configurable: true,
+      enumerable: false,
+    });
+
+    return config;
   }
 
-  private async writeConfig(config: BoardConfig): Promise<void> {
+  private async writeConfig(
+    config: BoardConfig,
+    options?: { nextWorkflowStepId?: number },
+  ): Promise<void> {
     const now = new Date().toISOString();
+    const row = this.db
+      .prepare("SELECT nextWorkflowStepId FROM config WHERE id = 1")
+      .get() as { nextWorkflowStepId?: number } | undefined;
+    const nextWorkflowStepId = options?.nextWorkflowStepId ?? row?.nextWorkflowStepId ?? 1;
+
+    const legacyWorkflowSteps = (config as { workflowSteps?: unknown }).workflowSteps;
+    const workflowStepsJson = Array.isArray(legacyWorkflowSteps)
+      ? JSON.stringify(legacyWorkflowSteps)
+      : "[]";
+
     // Use INSERT OR REPLACE to ensure the config row exists (handles edge case where row is missing)
     this.db.prepare(
       `INSERT OR REPLACE INTO config (id, nextId, nextWorkflowStepId, settings, workflowSteps, updatedAt) 
        VALUES (1, ?, ?, ?, ?, ?)`,
     ).run(
       config.nextId || 1,
-      config.nextWorkflowStepId || 1,
+      nextWorkflowStepId,
       JSON.stringify(config.settings || {}),
-      JSON.stringify(config.workflowSteps || []),
+      workflowStepsJson,
       now,
     );
     this.db.bumpLastModified();
@@ -706,35 +726,101 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     };
   }
 
-  private async ensureWorkflowStepForTemplate(templateId: string): Promise<import("./types.js").WorkflowStep> {
-    return this.withConfigLock(async () => {
-      const template = this.getBuiltInWorkflowTemplate(templateId);
-      if (!template) {
-        throw new Error(`Workflow step template '${templateId}' not found`);
-      }
+  private toStoredWorkflowStep(row: {
+    id: string;
+    templateId: string | null;
+    name: string;
+    description: string;
+    mode: string;
+    phase: string | null;
+    prompt: string;
+    toolMode: string | null;
+    scriptName: string | null;
+    enabled: number;
+    defaultOn: number | null;
+    modelProvider: string | null;
+    modelId: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }): import("./types.js").WorkflowStep {
+    return {
+      id: row.id,
+      templateId: row.templateId ?? undefined,
+      name: row.name,
+      description: row.description,
+      mode: row.mode === "script" ? "script" : "prompt",
+      phase: row.phase === "post-merge" ? "post-merge" : "pre-merge",
+      prompt: row.prompt || "",
+      toolMode: row.toolMode === "coding" || row.toolMode === "readonly" ? row.toolMode : undefined,
+      scriptName: row.scriptName ?? undefined,
+      enabled: Boolean(row.enabled),
+      defaultOn: row.defaultOn === null || row.defaultOn === undefined ? undefined : Boolean(row.defaultOn),
+      modelProvider: row.modelProvider ?? undefined,
+      modelId: row.modelId ?? undefined,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
 
-      const config = await this.readConfig();
-      const existing = (config.workflowSteps || []).find((ws) =>
-        ws.id === templateId
-        || ws.templateId === templateId
-        || ws.name.toLowerCase() === template.name.toLowerCase(),
-      );
-      if (existing) {
-        return existing;
-      }
+  private getLegacyWorkflowStepSnapshot(id: string, templateId?: string): Record<string, unknown> | undefined {
+    const row = this.db
+      .prepare("SELECT workflowSteps FROM config WHERE id = 1")
+      .get() as { workflowSteps?: string | null } | undefined;
+    const legacySteps = fromJson<Array<Record<string, unknown>>>(row?.workflowSteps);
+    if (!Array.isArray(legacySteps)) {
+      return undefined;
+    }
 
-      const nextWsId = config.nextWorkflowStepId || 1;
-      const step = this.toBuiltInWorkflowStep(template);
-      step.id = `WS-${String(nextWsId).padStart(3, "0")}`;
+    return legacySteps.find((legacy) => {
+      if (!legacy || typeof legacy !== "object") return false;
+      if (legacy.id === id) return true;
+      return Boolean(templateId && legacy.templateId === templateId);
+    });
+  }
 
-      if (!config.workflowSteps) {
-        config.workflowSteps = [];
-      }
-      config.workflowSteps.push(step);
-      config.nextWorkflowStepId = nextWsId + 1;
-      await this.writeConfig(config);
-
+  private applyLegacyWorkflowStepOverrides(step: import("./types.js").WorkflowStep): import("./types.js").WorkflowStep {
+    const legacy = this.getLegacyWorkflowStepSnapshot(step.id, step.templateId);
+    if (!legacy) {
       return step;
+    }
+
+    const normalized = { ...step };
+    if (!Object.prototype.hasOwnProperty.call(legacy, "mode")) {
+      normalized.mode = "prompt";
+    }
+    if (!Object.prototype.hasOwnProperty.call(legacy, "phase")) {
+      normalized.phase = undefined;
+    }
+
+    return normalized;
+  }
+
+  private async ensureWorkflowStepForTemplate(templateId: string): Promise<import("./types.js").WorkflowStep> {
+    const template = this.getBuiltInWorkflowTemplate(templateId);
+    if (!template) {
+      throw new Error(`Workflow step template '${templateId}' not found`);
+    }
+
+    const existing = await this.getWorkflowStep(templateId);
+    if (existing && existing.id !== templateId) {
+      return existing;
+    }
+
+    const allSteps = await this.listWorkflowSteps();
+    const byName = allSteps.find((step) => step.name.toLowerCase() === template.name.toLowerCase());
+    if (byName) {
+      return byName;
+    }
+
+    return this.createWorkflowStep({
+      templateId: template.id,
+      name: template.name,
+      description: template.description,
+      mode: "prompt",
+      phase: "pre-merge",
+      prompt: template.prompt,
+      toolMode: template.toolMode || "readonly",
+      enabled: true,
     });
   }
 
@@ -807,8 +893,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     // When enabledWorkflowSteps is not provided at all (undefined), auto-apply default-on workflow steps
     if (input.enabledWorkflowSteps === undefined) {
       try {
-        const config = await this.readConfig();
-        const defaultOnSteps = (config.workflowSteps || [])
+        const allSteps = await this.listWorkflowSteps();
+        const defaultOnSteps = allSteps
           .filter((ws) => ws.enabled && ws.defaultOn)
           .map((ws) => ws.id);
         if (defaultOnSteps.length > 0) {
@@ -2853,12 +2939,14 @@ ${stepsSection}`;
 
   /**
    * Create a new workflow step definition.
-   * Generates a unique ID (WS-001, WS-002, etc.) and stores in config.json.
+   * Generates a unique ID (WS-001, WS-002, etc.) and stores in the workflow_steps table.
    */
   async createWorkflowStep(input: import("./types.js").WorkflowStepInput): Promise<import("./types.js").WorkflowStep> {
     return this.withConfigLock(async () => {
-      const config = await this.readConfig();
-      const nextWsId = config.nextWorkflowStepId || 1;
+      const counterRow = this.db
+        .prepare("SELECT nextWorkflowStepId FROM config WHERE id = 1")
+        .get() as { nextWorkflowStepId?: number } | undefined;
+      const nextWsId = counterRow?.nextWorkflowStepId || 1;
       const id = `WS-${String(nextWsId).padStart(3, "0")}`;
 
       const mode = input.mode || "prompt";
@@ -2880,39 +2968,131 @@ ${stepsSection}`;
         toolMode: mode === "prompt" ? (input.toolMode || "readonly") : undefined,
         scriptName: mode === "script" ? input.scriptName : undefined,
         enabled: input.enabled !== undefined ? input.enabled : true,
-        defaultOn: input.defaultOn === true ? true : undefined,
+        defaultOn: input.defaultOn !== undefined ? input.defaultOn : undefined,
         modelProvider: mode === "prompt" ? input.modelProvider : undefined,
         modelId: mode === "prompt" ? input.modelId : undefined,
         createdAt: now,
         updatedAt: now,
       };
 
-      if (!config.workflowSteps) {
-        config.workflowSteps = [];
-      }
-      config.workflowSteps.push(step);
-      config.nextWorkflowStepId = nextWsId + 1;
-      await this.writeConfig(config);
+      this.db.prepare(
+        `INSERT INTO workflow_steps (
+          id,
+          templateId,
+          name,
+          description,
+          mode,
+          phase,
+          prompt,
+          toolMode,
+          scriptName,
+          enabled,
+          defaultOn,
+          modelProvider,
+          modelId,
+          createdAt,
+          updatedAt
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        step.id,
+        step.templateId ?? null,
+        step.name,
+        step.description,
+        step.mode,
+        step.phase || "pre-merge",
+        step.prompt,
+        step.toolMode ?? null,
+        step.scriptName ?? null,
+        step.enabled ? 1 : 0,
+        step.defaultOn === undefined ? null : step.defaultOn ? 1 : 0,
+        step.modelProvider ?? null,
+        step.modelId ?? null,
+        step.createdAt,
+        step.updatedAt,
+      );
+
+      const config = await this.readConfig();
+      await this.writeConfig(config, { nextWorkflowStepId: nextWsId + 1 });
 
       return step;
     });
   }
 
   /**
-   * List all workflow step definitions from config.json.
+   * List all workflow step definitions from workflow_steps.
    */
   async listWorkflowSteps(): Promise<import("./types.js").WorkflowStep[]> {
-    const config = await this.readConfig();
-    return config.workflowSteps || [];
+    const rows = this.db.prepare("SELECT * FROM workflow_steps ORDER BY createdAt ASC").all() as Array<{
+      id: string;
+      templateId: string | null;
+      name: string;
+      description: string;
+      mode: string;
+      phase: string | null;
+      prompt: string;
+      toolMode: string | null;
+      scriptName: string | null;
+      enabled: number;
+      defaultOn: number | null;
+      modelProvider: string | null;
+      modelId: string | null;
+      createdAt: string;
+      updatedAt: string;
+    }>;
+    return rows.map((row) => this.applyLegacyWorkflowStepOverrides(this.toStoredWorkflowStep(row)));
   }
 
   /**
    * Get a single workflow step by ID.
    */
   async getWorkflowStep(id: string): Promise<import("./types.js").WorkflowStep | undefined> {
-    const config = await this.readConfig();
-    const stored = (config.workflowSteps || []).find((ws) => ws.id === id);
-    if (stored) return stored;
+    const byId = this.db.prepare("SELECT * FROM workflow_steps WHERE id = ?").get(id) as
+      | {
+          id: string;
+          templateId: string | null;
+          name: string;
+          description: string;
+          mode: string;
+          phase: string | null;
+          prompt: string;
+          toolMode: string | null;
+          scriptName: string | null;
+          enabled: number;
+          defaultOn: number | null;
+          modelProvider: string | null;
+          modelId: string | null;
+          createdAt: string;
+          updatedAt: string;
+        }
+      | undefined;
+    if (byId) {
+      return this.applyLegacyWorkflowStepOverrides(this.toStoredWorkflowStep(byId));
+    }
+
+    const byTemplate = this.db
+      .prepare("SELECT * FROM workflow_steps WHERE templateId = ? ORDER BY createdAt ASC LIMIT 1")
+      .get(id) as
+      | {
+          id: string;
+          templateId: string | null;
+          name: string;
+          description: string;
+          mode: string;
+          phase: string | null;
+          prompt: string;
+          toolMode: string | null;
+          scriptName: string | null;
+          enabled: number;
+          defaultOn: number | null;
+          modelProvider: string | null;
+          modelId: string | null;
+          createdAt: string;
+          updatedAt: string;
+        }
+      | undefined;
+    if (byTemplate) {
+      return this.applyLegacyWorkflowStepOverrides(this.toStoredWorkflowStep(byTemplate));
+    }
 
     const template = this.getBuiltInWorkflowTemplate(id);
     return template ? this.toBuiltInWorkflowStep(template) : undefined;
@@ -2923,58 +3103,106 @@ ${stepsSection}`;
    * @throws Error if the workflow step is not found
    */
   async updateWorkflowStep(id: string, updates: Partial<import("./types.js").WorkflowStepInput>): Promise<import("./types.js").WorkflowStep> {
-    return this.withConfigLock(async () => {
-      const config = await this.readConfig();
-      const steps = config.workflowSteps || [];
-      const index = steps.findIndex((ws) => ws.id === id);
-
-      if (index === -1) {
-        throw new Error(`Workflow step '${id}' not found`);
-      }
-
-      const step = steps[index];
-
-      // Handle mode change
-      if (updates.mode !== undefined) {
-        const newMode = updates.mode;
-        // Validate: script mode requires scriptName
-        if (newMode === "script" && !updates.scriptName?.trim() && !step.scriptName?.trim()) {
-          throw new Error("Script mode requires a scriptName");
+    const row = this.db.prepare("SELECT * FROM workflow_steps WHERE id = ?").get(id) as
+      | {
+          id: string;
+          templateId: string | null;
+          name: string;
+          description: string;
+          mode: string;
+          phase: string | null;
+          prompt: string;
+          toolMode: string | null;
+          scriptName: string | null;
+          enabled: number;
+          defaultOn: number | null;
+          modelProvider: string | null;
+          modelId: string | null;
+          createdAt: string;
+          updatedAt: string;
         }
-        step.mode = newMode;
-        // When switching to script mode, clear prompt and model overrides
-        if (newMode === "script") {
-          step.prompt = "";
-          step.toolMode = undefined;
-          step.modelProvider = undefined;
-          step.modelId = undefined;
-        }
-        // When switching to prompt mode, clear scriptName
-        if (newMode === "prompt") {
-          step.scriptName = undefined;
-          step.toolMode = step.toolMode || "readonly";
-        }
+      | undefined;
+
+    if (!row) {
+      throw new Error(`Workflow step '${id}' not found`);
+    }
+
+    const step = this.toStoredWorkflowStep(row);
+
+    // Handle mode change
+    if (updates.mode !== undefined) {
+      const newMode = updates.mode;
+      // Validate: script mode requires scriptName
+      if (newMode === "script" && !updates.scriptName?.trim() && !step.scriptName?.trim()) {
+        throw new Error("Script mode requires a scriptName");
       }
-
-      if (updates.name !== undefined) step.name = updates.name;
-      if (updates.description !== undefined) step.description = updates.description;
-      if (updates.phase !== undefined) step.phase = updates.phase;
-      if (updates.prompt !== undefined && step.mode === "prompt") step.prompt = updates.prompt;
-      if (updates.toolMode !== undefined && step.mode === "prompt") step.toolMode = updates.toolMode;
-      if (updates.scriptName !== undefined && step.mode === "script") step.scriptName = updates.scriptName;
-      if (updates.enabled !== undefined) step.enabled = updates.enabled;
-      if (updates.defaultOn !== undefined) step.defaultOn = updates.defaultOn;
-      if (step.mode === "prompt") {
-        if ("modelProvider" in updates) step.modelProvider = updates.modelProvider;
-        if ("modelId" in updates) step.modelId = updates.modelId;
+      step.mode = newMode;
+      // When switching to script mode, clear prompt and model overrides
+      if (newMode === "script") {
+        step.prompt = "";
+        step.toolMode = undefined;
+        step.modelProvider = undefined;
+        step.modelId = undefined;
       }
-      step.updatedAt = new Date().toISOString();
+      // When switching to prompt mode, clear scriptName
+      if (newMode === "prompt") {
+        step.scriptName = undefined;
+        step.toolMode = step.toolMode || "readonly";
+      }
+    }
 
-      config.workflowSteps = steps;
-      await this.writeConfig(config);
+    if (updates.name !== undefined) step.name = updates.name;
+    if (updates.description !== undefined) step.description = updates.description;
+    if (updates.phase !== undefined) step.phase = updates.phase;
+    if (updates.prompt !== undefined && step.mode === "prompt") step.prompt = updates.prompt;
+    if (updates.toolMode !== undefined && step.mode === "prompt") step.toolMode = updates.toolMode;
+    if (updates.scriptName !== undefined && step.mode === "script") step.scriptName = updates.scriptName;
+    if (updates.enabled !== undefined) step.enabled = updates.enabled;
+    if (updates.defaultOn !== undefined) step.defaultOn = updates.defaultOn;
+    if (step.mode === "script" && !step.scriptName?.trim()) {
+      throw new Error("Script mode requires a scriptName");
+    }
+    if (step.mode === "prompt") {
+      if ("modelProvider" in updates) step.modelProvider = updates.modelProvider;
+      if ("modelId" in updates) step.modelId = updates.modelId;
+    }
+    step.updatedAt = new Date().toISOString();
 
-      return step;
-    });
+    this.db.prepare(
+      `UPDATE workflow_steps
+       SET templateId = ?,
+           name = ?,
+           description = ?,
+           mode = ?,
+           phase = ?,
+           prompt = ?,
+           toolMode = ?,
+           scriptName = ?,
+           enabled = ?,
+           defaultOn = ?,
+           modelProvider = ?,
+           modelId = ?,
+           updatedAt = ?
+       WHERE id = ?`,
+    ).run(
+      step.templateId ?? null,
+      step.name,
+      step.description,
+      step.mode,
+      step.phase || "pre-merge",
+      step.prompt,
+      step.toolMode ?? null,
+      step.scriptName ?? null,
+      step.enabled ? 1 : 0,
+      step.defaultOn === undefined ? null : step.defaultOn ? 1 : 0,
+      step.modelProvider ?? null,
+      step.modelId ?? null,
+      step.updatedAt,
+      step.id,
+    );
+    this.db.bumpLastModified();
+
+    return step;
   }
 
   /**
@@ -2983,19 +3211,15 @@ ${stepsSection}`;
    * @throws Error if the workflow step is not found
    */
   async deleteWorkflowStep(id: string): Promise<void> {
-    await this.withConfigLock(async () => {
-      const config = await this.readConfig();
-      const steps = config.workflowSteps || [];
-      const index = steps.findIndex((ws) => ws.id === id);
+    const deleted = this.db.prepare("DELETE FROM workflow_steps WHERE id = ?").run(id) as {
+      changes?: number;
+    };
 
-      if (index === -1) {
-        throw new Error(`Workflow step '${id}' not found`);
-      }
+    if ((deleted.changes || 0) === 0) {
+      throw new Error(`Workflow step '${id}' not found`);
+    }
 
-      steps.splice(index, 1);
-      config.workflowSteps = steps;
-      await this.writeConfig(config);
-    });
+    this.db.bumpLastModified();
 
     // Clean up references from existing tasks (best-effort, outside config lock)
     try {
