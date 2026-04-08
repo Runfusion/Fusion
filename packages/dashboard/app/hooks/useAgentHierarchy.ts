@@ -68,7 +68,7 @@ function buildTree(agents: Agent[], expanded: Set<string>): AgentNode[] {
 }
 
 /**
- * Hook for managing agent hierarchy (parent-child relationships).
+ * Hook for managing agent hierarchy (manager-employee relationships).
  * Derives the tree structure from the `reportsTo` field on agents.
  * Expand/collapse state is persisted to localStorage.
  */

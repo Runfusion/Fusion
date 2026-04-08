@@ -102,6 +102,8 @@ interface AgentData {
   lastError?: string;
   instructionsPath?: string;
   instructionsText?: string;
+  soul?: string;
+  memory?: string;
   bundleConfig?: InstructionsBundleConfig;
 }
 interface AgentLock {
@@ -173,6 +175,8 @@ export class AgentStore extends EventEmitter {
       ...(input.permissions && { permissions: input.permissions }),
       ...(input.instructionsPath && { instructionsPath: input.instructionsPath }),
       ...(input.instructionsText && { instructionsText: input.instructionsText }),
+      ...(input.soul && { soul: input.soul }),
+      ...(input.memory && { memory: input.memory }),
       ...(input.bundleConfig && { bundleConfig: input.bundleConfig }),
     };
 
@@ -628,6 +632,8 @@ export class AgentStore extends EventEmitter {
         ...("totalOutputTokens" in updates && { totalOutputTokens: updates.totalOutputTokens }),
         ...("instructionsPath" in updates && { instructionsPath: updates.instructionsPath }),
         ...("instructionsText" in updates && { instructionsText: updates.instructionsText }),
+        ...(updates.soul !== undefined && { soul: updates.soul }),
+        ...(updates.memory !== undefined && { memory: updates.memory }),
         ...("bundleConfig" in updates && { bundleConfig: updates.bundleConfig }),
       };
 
@@ -1544,6 +1550,8 @@ export class AgentStore extends EventEmitter {
     | "permissions"
     | "instructionsPath"
     | "instructionsText"
+    | "soul"
+    | "memory"
     | "bundleConfig"
     | "metadata"
   > {
@@ -1557,6 +1565,8 @@ export class AgentStore extends EventEmitter {
       permissions: snapshot.permissions ? { ...snapshot.permissions } : undefined,
       instructionsPath: snapshot.instructionsPath,
       instructionsText: snapshot.instructionsText,
+      soul: snapshot.soul,
+      memory: snapshot.memory,
       bundleConfig: snapshot.bundleConfig
         ? {
             ...snapshot.bundleConfig,
@@ -1756,6 +1766,8 @@ export class AgentStore extends EventEmitter {
       lastError: data.lastError,
       instructionsPath: data.instructionsPath,
       instructionsText: data.instructionsText,
+      soul: data.soul,
+      memory: data.memory,
       bundleConfig: data.bundleConfig,
     };
   }
@@ -1783,6 +1795,8 @@ export class AgentStore extends EventEmitter {
       lastError: agent.lastError,
       instructionsPath: agent.instructionsPath,
       instructionsText: agent.instructionsText,
+      soul: agent.soul,
+      memory: agent.memory,
       bundleConfig: agent.bundleConfig,
     };
 

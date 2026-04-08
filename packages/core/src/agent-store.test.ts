@@ -81,6 +81,22 @@ describe("AgentStore", () => {
       expect(agent.metadata).toEqual({ version: 2, tags: ["test"] });
     });
 
+    it("persists soul and memory fields on create", async () => {
+      const agent = await store.createAgent({
+        name: "With Soul",
+        role: "executor",
+        soul: "Calm and precise.",
+        memory: "Prefers concise code examples.",
+      });
+
+      expect(agent.soul).toBe("Calm and precise.");
+      expect(agent.memory).toBe("Prefers concise code examples.");
+
+      const persisted = await store.getAgent(agent.id);
+      expect(persisted?.soul).toBe("Calm and precise.");
+      expect(persisted?.memory).toBe("Prefers concise code examples.");
+    });
+
     it("throws when name is empty", async () => {
       await expect(
         store.createAgent({ name: "", role: "executor" })
@@ -540,6 +556,41 @@ describe("AgentStore", () => {
       expect(updated.metadata).toEqual({ preserved: true }); // preserved
     });
 
+    it("updates soul and memory fields", async () => {
+      const created = await store.createAgent({
+        name: "Knowledge Agent",
+        role: "executor",
+      });
+
+      const updated = await store.updateAgent(created.id, {
+        soul: "Collaborative, practical mentor",
+        memory: "Avoids broad rewrites; prefers incremental changes.",
+      });
+
+      expect(updated.soul).toBe("Collaborative, practical mentor");
+      expect(updated.memory).toBe("Avoids broad rewrites; prefers incremental changes.");
+
+      const persisted = await store.getAgent(created.id);
+      expect(persisted?.soul).toBe("Collaborative, practical mentor");
+      expect(persisted?.memory).toBe("Avoids broad rewrites; prefers incremental changes.");
+    });
+
+    it("does not clear soul when updates.soul is undefined", async () => {
+      const created = await store.createAgent({
+        name: "Stable Soul",
+        role: "executor",
+        soul: "Patient reviewer",
+      });
+
+      const updated = await store.updateAgent(created.id, {
+        soul: undefined,
+        memory: "Remembers coding preferences",
+      });
+
+      expect(updated.soul).toBe("Patient reviewer");
+      expect(updated.memory).toBe("Remembers coding preferences");
+    });
+
     it("allows clearing optional fields via explicit undefined", async () => {
       const created = await store.createAgent({
         name: "Clearable",
@@ -619,7 +670,7 @@ describe("AgentStore", () => {
       expect(revisions[0].after.name).toBe("Renamed");
     });
 
-    it("records revisions for runtimeConfig, permissions, instructionsPath, and instructionsText changes", async () => {
+    it("records revisions for runtimeConfig, permissions, instructions, soul, and memory changes", async () => {
       const created = await store.createAgent({
         name: "Configurable",
         role: "executor",
@@ -631,6 +682,8 @@ describe("AgentStore", () => {
       await store.updateAgent(created.id, { permissions: { canReview: true, canExecute: true } });
       await store.updateAgent(created.id, { instructionsPath: "docs/agent.md" });
       await store.updateAgent(created.id, { instructionsText: "Follow safety checks." });
+      await store.updateAgent(created.id, { soul: "Thoughtful collaborator" });
+      await store.updateAgent(created.id, { memory: "Knows the repository architecture" });
 
       const revisions = await store.getConfigRevisions(created.id);
       const changedFields = revisions.flatMap((revision) => revision.diffs.map((diff) => diff.field));
@@ -639,6 +692,8 @@ describe("AgentStore", () => {
       expect(changedFields).toContain("permissions");
       expect(changedFields).toContain("instructionsPath");
       expect(changedFields).toContain("instructionsText");
+      expect(changedFields).toContain("soul");
+      expect(changedFields).toContain("memory");
     });
 
     it("does not create a revision when only non-config fields change", async () => {

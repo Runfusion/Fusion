@@ -1818,6 +1818,10 @@ export interface Agent {
   instructionsPath?: string;
   /** Inline custom instructions appended to the agent's system prompt at execution time. Max 50,000 chars. */
   instructionsText?: string;
+  /** Agent personality/identity description — defines the agent's character, tone, and behavioral traits. Max 10,000 chars. */
+  soul?: string;
+  /** Per-agent accumulated knowledge — stores learnings, preferences, and context the agent has gathered. Max 50,000 chars. */
+  memory?: string;
   /** Structured instruction bundle configuration for managed/external markdown files. */
   bundleConfig?: InstructionsBundleConfig;
 }
@@ -1919,6 +1923,8 @@ export interface AgentCreateInput {
   permissions?: Record<string, boolean>;
   instructionsPath?: string;
   instructionsText?: string;
+  soul?: string;
+  memory?: string;
   bundleConfig?: InstructionsBundleConfig;
 }
 
@@ -1938,6 +1944,8 @@ export interface AgentUpdateInput {
   totalOutputTokens?: number;
   instructionsPath?: string;
   instructionsText?: string;
+  soul?: string;
+  memory?: string;
   bundleConfig?: InstructionsBundleConfig;
 }
 
@@ -2028,6 +2036,8 @@ export interface AgentConfigSnapshot {
   permissions?: Record<string, boolean>;
   instructionsPath?: string;
   instructionsText?: string;
+  soul?: string;
+  memory?: string;
   bundleConfig?: InstructionsBundleConfig;
   metadata: Record<string, unknown>;
 }
@@ -2073,6 +2083,8 @@ export function agentToConfigSnapshot(agent: Agent): AgentConfigSnapshot {
     permissions: agent.permissions ? { ...agent.permissions } : undefined,
     instructionsPath: agent.instructionsPath,
     instructionsText: agent.instructionsText,
+    soul: agent.soul,
+    memory: agent.memory,
     bundleConfig: agent.bundleConfig
       ? {
           ...agent.bundleConfig,
@@ -2098,6 +2110,8 @@ export function diffConfigSnapshots(
     "permissions",
     "instructionsPath",
     "instructionsText",
+    "soul",
+    "memory",
     "bundleConfig",
     "metadata",
   ];

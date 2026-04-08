@@ -8001,6 +8001,122 @@ Output ONLY the prompt text (no markdown, no explanations).`;
   });
 
   /**
+   * GET /api/agents/:id/soul
+   * Fetch agent soul/personality text.
+   */
+  router.get("/agents/:id/soul", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const agent = await agentStore.getAgent(req.params.id);
+      if (!agent) {
+        throw notFound("Agent not found");
+      }
+
+      res.json({ soul: agent.soul ?? null });
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  /**
+   * PATCH /api/agents/:id/soul
+   * Update agent soul/personality text.
+   * Body: { soul: string }
+   */
+  router.patch("/agents/:id/soul", async (req, res) => {
+    try {
+      const { soul } = req.body ?? {};
+      if (typeof soul !== "string") {
+        throw badRequest("soul must be a string");
+      }
+      if (soul.length > 10000) {
+        throw badRequest("soul must be at most 10,000 characters");
+      }
+
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const agent = await agentStore.updateAgent(req.params.id, { soul });
+      res.json(agent);
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err.message?.includes("not found")) {
+        throw notFound(err.message);
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  /**
+   * GET /api/agents/:id/memory
+   * Fetch per-agent memory text.
+   */
+  router.get("/agents/:id/memory", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const agent = await agentStore.getAgent(req.params.id);
+      if (!agent) {
+        throw notFound("Agent not found");
+      }
+
+      res.json({ memory: agent.memory ?? null });
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  /**
+   * PATCH /api/agents/:id/memory
+   * Update per-agent memory text.
+   * Body: { memory: string }
+   */
+  router.patch("/agents/:id/memory", async (req, res) => {
+    try {
+      const { memory } = req.body ?? {};
+      if (typeof memory !== "string") {
+        throw badRequest("memory must be a string");
+      }
+      if (memory.length > 50000) {
+        throw badRequest("memory must be at most 50,000 characters");
+      }
+
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const agent = await agentStore.updateAgent(req.params.id, { memory });
+      res.json(agent);
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err.message?.includes("not found")) {
+        throw notFound(err.message);
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  /**
    * POST /api/agents/:id/state
    * Update agent state.
    * Body: { state: AgentState }
@@ -8553,20 +8669,25 @@ Output ONLY the prompt text (no markdown, no explanations).`;
    * Response 200: Agent[] — Array of agents where reportsTo equals :id
    * Response 404: { error: "Agent not found" } — When parent agent doesn't exist
    */
-  router.get("/agents/:id/children", async (req, res) => {
+  const getAgentEmployeesHandler = async (req: Request, res: Response) => {
     try {
       const scopedStore = await getScopedStore(req);
       const { AgentStore } = await import("@fusion/core");
       const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
 
+      const agentId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      if (!agentId) {
+        throw badRequest("Agent id is required");
+      }
+
       // Validate the parent agent exists
-      const parent = await agentStore.getAgent(req.params.id);
+      const parent = await agentStore.getAgent(agentId);
       if (!parent) {
         throw notFound("Agent not found");
       }
 
-      const children = await agentStore.getAgentsByReportsTo(req.params.id);
+      const children = await agentStore.getAgentsByReportsTo(agentId);
       res.json(children);
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -8574,7 +8695,15 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       }
       rethrowAsApiError(err);
     }
-  });
+  };
+
+  router.get("/agents/:id/children", getAgentEmployeesHandler);
+
+  /**
+   * GET /api/agents/:id/employees
+   * Alias for /api/agents/:id/children.
+   */
+  router.get("/agents/:id/employees", getAgentEmployeesHandler);
 
   // ── Agent Generation Routes ──────────────────────────────────────────────
 

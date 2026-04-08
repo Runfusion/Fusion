@@ -1984,6 +1984,32 @@ export function updateAgentInstructions(
   });
 }
 
+/** Fetch agent soul/personality text */
+export function fetchAgentSoul(agentId: string, projectId?: string): Promise<{ soul: string | null }> {
+  return api<{ soul: string | null }>(withProjectId(`/agents/${encodeURIComponent(agentId)}/soul`, projectId));
+}
+
+/** Update agent soul/personality text */
+export function updateAgentSoul(agentId: string, soul: string, projectId?: string): Promise<Agent> {
+  return api<Agent>(withProjectId(`/agents/${encodeURIComponent(agentId)}/soul`, projectId), {
+    method: "PATCH",
+    body: JSON.stringify({ soul }),
+  });
+}
+
+/** Fetch per-agent memory text */
+export function fetchAgentMemory(agentId: string, projectId?: string): Promise<{ memory: string | null }> {
+  return api<{ memory: string | null }>(withProjectId(`/agents/${encodeURIComponent(agentId)}/memory`, projectId));
+}
+
+/** Update per-agent memory text */
+export function updateAgentMemory(agentId: string, memory: string, projectId?: string): Promise<Agent> {
+  return api<Agent>(withProjectId(`/agents/${encodeURIComponent(agentId)}/memory`, projectId), {
+    method: "PATCH",
+    body: JSON.stringify({ memory }),
+  });
+}
+
 /** Update an agent's state */
 export function updateAgentState(agentId: string, state: AgentState, projectId?: string): Promise<Agent> {
   return api<Agent>(withProjectId(`/agents/${encodeURIComponent(agentId)}/state`, projectId), {
@@ -2073,7 +2099,7 @@ export function resolveAgent(shortname: string, projectId?: string): Promise<{ a
   return api<{ agent: Agent }>(withProjectId(`/agents/resolve/${encodeURIComponent(shortname)}`, projectId));
 }
 
-/** Fetch child agents that report to a given parent agent */
+/** Fetch employees (agents that report to a given parent agent) */
 export function fetchAgentChildren(agentId: string, projectId?: string): Promise<Agent[]> {
   return api<Agent[]>(withProjectId(`/agents/${encodeURIComponent(agentId)}/children`, projectId)).catch((err: Error) => {
     // Return empty array for 404 (agent may have been deleted)
@@ -2081,6 +2107,9 @@ export function fetchAgentChildren(agentId: string, projectId?: string): Promise
     throw err;
   });
 }
+
+/** Alias for fetchAgentChildren with employee-focused naming */
+export const fetchAgentEmployees = fetchAgentChildren;
 
 /** Assign or unassign a task to an explicit agent */
 export function assignTask(taskId: string, agentId: string | null, projectId?: string): Promise<Task> {

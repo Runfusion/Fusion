@@ -69,8 +69,8 @@ function AgentTreeNode({
         <button
           className={`agent-tree__toggle${childCount === 0 ? " agent-tree__toggle--leaf" : ""}`}
           onClick={() => childCount > 0 && onToggle(agent.id)}
-          title={childCount > 0 ? (expanded ? "Collapse" : "Expand") : "No children"}
-          aria-label={childCount > 0 ? (expanded ? "Collapse" : "Expand") : "No children"}
+          title={childCount > 0 ? (expanded ? "Collapse" : "Expand") : "No employees"}
+          aria-label={childCount > 0 ? (expanded ? "Collapse" : "Expand") : "No employees"}
         >
           {childCount > 0 ? (
             expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />
@@ -171,7 +171,7 @@ function OrgChartNode({
         </div>
       </div>
       {children.length > 0 && (
-        <div className="org-chart-children" role="group" aria-label={`${agent.name} reports`}>
+        <div className="org-chart-children" role="group" aria-label={`${agent.name} employees`}>
           {children.map((child) => (
             <OrgChartNode
               key={child.agent.id}

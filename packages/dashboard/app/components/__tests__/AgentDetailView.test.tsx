@@ -13,9 +13,13 @@ vi.mock("../../api", () => ({
   deleteAgent: vi.fn(),
   fetchAgentLogs: vi.fn(),
   fetchAgentRunLogs: vi.fn(),
+  fetchAgentChildren: vi.fn(),
   fetchAgentRuns: vi.fn(),
   fetchAgentRunDetail: vi.fn(),
   startAgentRun: vi.fn(),
+  updateAgentInstructions: vi.fn(),
+  updateAgentSoul: vi.fn(),
+  updateAgentMemory: vi.fn(),
   fetchAgentTasks: vi.fn(),
   fetchChainOfCommand: vi.fn(),
 }));
@@ -28,11 +32,12 @@ vi.mock("../AgentLogViewer", () => ({
   ),
 }));
 
-import { fetchAgent, updateAgent, updateAgentState, fetchAgentRunLogs, fetchAgentRuns, fetchAgentRunDetail, fetchAgentTasks, fetchChainOfCommand } from "../../api";
+import { fetchAgent, updateAgent, updateAgentState, fetchAgentChildren, fetchAgentRunLogs, fetchAgentRuns, fetchAgentRunDetail, fetchAgentTasks, fetchChainOfCommand } from "../../api";
 
 const mockFetchAgent = vi.mocked(fetchAgent);
 const mockUpdateAgent = vi.mocked(updateAgent);
 const mockUpdateAgentState = vi.mocked(updateAgentState);
+const mockFetchAgentChildren = vi.mocked(fetchAgentChildren);
 const mockFetchAgentRunLogs = vi.mocked(fetchAgentRunLogs);
 const mockFetchAgentRuns = vi.mocked(fetchAgentRuns);
 const mockFetchAgentRunDetail = vi.mocked(fetchAgentRunDetail);
@@ -90,6 +95,7 @@ describe("AgentDetailView", () => {
       ...mockAgent.completedRuns,
     ]);
     mockFetchAgentRunDetail.mockResolvedValue(mockAgent.completedRuns[0]);
+    mockFetchAgentChildren.mockResolvedValue([]);
     mockFetchAgentTasks.mockResolvedValue([]);
     mockFetchChainOfCommand.mockResolvedValue([mockAgent]);
   });
@@ -382,8 +388,31 @@ describe("AgentDetailView", () => {
       expect(screen.getByText("Logs")).toBeInTheDocument();
       expect(screen.getByText("Runs")).toBeInTheDocument();
       expect(screen.getByText("Tasks")).toBeInTheDocument();
-      expect(screen.getByText("Children")).toBeInTheDocument();
+      expect(screen.getByText("Employees")).toBeInTheDocument();
+      expect(screen.getByText("Soul")).toBeInTheDocument();
+      expect(screen.getByText("Memory")).toBeInTheDocument();
       expect(screen.getByText("Settings")).toBeInTheDocument();
+    });
+  });
+
+  it("renders Employees tab empty state", async () => {
+    const user = userEvent.setup();
+    mockFetchAgentChildren.mockResolvedValue([]);
+
+    render(
+      <AgentDetailView
+        agentId="agent-001"
+        onClose={vi.fn()}
+        addToast={vi.fn()}
+      />
+    );
+
+    await user.click(await screen.findByText("Employees"));
+
+    await waitFor(() => {
+      expect(mockFetchAgentChildren).toHaveBeenCalledWith("agent-001", undefined);
+      expect(screen.getByText("No employees")).toBeInTheDocument();
+      expect(screen.getByText("This agent has no employees")).toBeInTheDocument();
     });
   });
 

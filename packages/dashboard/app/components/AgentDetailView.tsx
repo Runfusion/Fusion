@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronRight
 } from "lucide-react";
 import type { AgentDetail, AgentState, AgentHeartbeatRun } from "../api";
-import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogs, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, updateAgentInstructions, fetchAgentTasks, fetchChainOfCommand } from "../api";
+import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogs, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentTasks, fetchChainOfCommand } from "../api";
 import type { Agent } from "../api";
 import type { AgentLogEntry, Task } from "@fusion/core";
 import { AgentLogViewer } from "./AgentLogViewer";
@@ -50,14 +50,16 @@ interface AgentDetailViewProps {
   onChildClick?: (childId: string) => void;
 }
 
-type TabId = "dashboard" | "logs" | "config" | "runs" | "children" | "tasks";
+type TabId = "dashboard" | "logs" | "config" | "runs" | "tasks" | "employees" | "soul" | "memory";
 
 const TABS: { id: TabId; label: string; icon: typeof Activity }[] = [
   { id: "dashboard", label: "Dashboard", icon: ActivitySquare },
   { id: "logs", label: "Logs", icon: FileText },
   { id: "runs", label: "Runs", icon: Activity },
   { id: "tasks", label: "Tasks", icon: ListChecks },
-  { id: "children", label: "Children", icon: GitBranch },
+  { id: "employees", label: "Employees", icon: GitBranch },
+  { id: "soul", label: "Soul", icon: Heart },
+  { id: "memory", label: "Memory", icon: FileText },
   { id: "config", label: "Settings", icon: Settings },
 ];
 
@@ -407,8 +409,16 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
             />
           )}
           
-          {activeTab === "config" && (
-            <ConfigTab 
+          {activeTab === "employees" && (
+            <EmployeesTab
+              agentId={agent.id}
+              projectId={projectId}
+              onChildClick={onChildClick}
+            />
+          )}
+
+          {activeTab === "soul" && (
+            <SoulTab
               agent={agent}
               projectId={projectId}
               addToast={addToast}
@@ -416,11 +426,21 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
             />
           )}
 
-          {activeTab === "children" && (
-            <ChildrenTab
-              agentId={agent.id}
+          {activeTab === "memory" && (
+            <MemoryTab
+              agent={agent}
               projectId={projectId}
-              onChildClick={onChildClick}
+              addToast={addToast}
+              onSaved={loadAgent}
+            />
+          )}
+
+          {activeTab === "config" && (
+            <ConfigTab 
+              agent={agent}
+              projectId={projectId}
+              addToast={addToast}
+              onSaved={loadAgent}
             />
           )}
         </div>
@@ -1330,6 +1350,211 @@ function validateAdvancedSettings(
   return errors;
 }
 
+function SoulTab({
+  agent,
+  projectId,
+  addToast,
+  onSaved,
+}: {
+  agent: AgentDetail;
+  projectId?: string;
+  addToast: (message: string, type?: "success" | "error") => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [soul, setSoul] = useState(agent.soul ?? "");
+  const [isSaving, setIsSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
+
+  useEffect(() => {
+    setSoul(agent.soul ?? "");
+    setJustSaved(false);
+  }, [agent.id, agent.soul]);
+
+  const hasChanges = soul !== (agent.soul ?? "");
+
+  const handleSave = async () => {
+    if (soul.length > 10000) {
+      addToast("Soul must be at most 10,000 characters", "error");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await updateAgentSoul(agent.id, soul, projectId);
+      addToast("Soul saved", "success");
+      setJustSaved(true);
+      setTimeout(() => setJustSaved(false), 3000);
+      await onSaved();
+    } catch (err: any) {
+      addToast(`Failed to save soul: ${err.message}`, "error");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="config-tab">
+      <div className="config-section">
+        <h3>Soul</h3>
+        <p className="config-description">
+          Define this agent&apos;s personality and identity.
+        </p>
+
+        <div className="config-fields">
+          <div className="config-field">
+            <label htmlFor="agent-soul">Agent Soul</label>
+            <textarea
+              id="agent-soul"
+              className="input"
+              rows={12}
+              placeholder="Describe this agent's personality, tone, and behavioral traits..."
+              value={soul}
+              onChange={(e) => {
+                setSoul(e.target.value);
+                setJustSaved(false);
+              }}
+              style={{ fontFamily: "monospace", fontSize: "0.875rem", resize: "vertical" }}
+            />
+            <span className="config-hint">Defines the agent&apos;s character and identity. Max 10,000 characters.</span>
+          </div>
+        </div>
+
+        <div className="config-actions">
+          <button
+            className="btn btn--primary"
+            disabled={!hasChanges || isSaving}
+            onClick={() => void handleSave()}
+          >
+            {isSaving ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                Saving…
+              </>
+            ) : (
+              <>
+                <CheckCircle size={16} />
+                Save Soul
+              </>
+            )}
+          </button>
+          {!hasChanges && justSaved && (
+            <span className="config-saved-indicator">
+              <CheckCircle size={14} />
+              Soul saved
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MemoryTab({
+  agent,
+  projectId,
+  addToast,
+  onSaved,
+}: {
+  agent: AgentDetail;
+  projectId?: string;
+  addToast: (message: string, type?: "success" | "error") => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [memory, setMemory] = useState(agent.memory ?? "");
+  const [isSaving, setIsSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
+
+  useEffect(() => {
+    setMemory(agent.memory ?? "");
+    setJustSaved(false);
+  }, [agent.id, agent.memory]);
+
+  const isReadOnly = agent.state === "running";
+  const hasChanges = memory !== (agent.memory ?? "");
+
+  const handleSave = async () => {
+    if (memory.length > 50000) {
+      addToast("Memory must be at most 50,000 characters", "error");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await updateAgentMemory(agent.id, memory, projectId);
+      addToast("Memory saved", "success");
+      setJustSaved(true);
+      setTimeout(() => setJustSaved(false), 3000);
+      await onSaved();
+    } catch (err: any) {
+      addToast(`Failed to save memory: ${err.message}`, "error");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="config-tab">
+      <div className="config-section">
+        <h3>Memory</h3>
+        <p className="config-description">
+          Store accumulated context and learnings for this agent.
+        </p>
+        {isReadOnly && (
+          <p className="config-hint" style={{ marginBottom: 12 }}>
+            Read-only while this agent is running.
+          </p>
+        )}
+
+        <div className="config-fields">
+          <div className="config-field">
+            <label htmlFor="agent-memory">Agent Memory</label>
+            <textarea
+              id="agent-memory"
+              className="input"
+              rows={15}
+              placeholder="Agent's accumulated knowledge, learnings, and preferences..."
+              value={memory}
+              readOnly={isReadOnly}
+              onChange={(e) => {
+                setMemory(e.target.value);
+                setJustSaved(false);
+              }}
+              style={{ fontFamily: "monospace", fontSize: "0.875rem", resize: "vertical" }}
+            />
+            <span className="config-hint">Per-agent memory — stores learnings and context the agent has gathered. Max 50,000 characters.</span>
+          </div>
+        </div>
+
+        <div className="config-actions">
+          <button
+            className="btn btn--primary"
+            disabled={!hasChanges || isSaving || isReadOnly}
+            onClick={() => void handleSave()}
+          >
+            {isSaving ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                Saving…
+              </>
+            ) : (
+              <>
+                <CheckCircle size={16} />
+                Save Memory
+              </>
+            )}
+          </button>
+          {!hasChanges && justSaved && (
+            <span className="config-saved-indicator">
+              <CheckCircle size={14} />
+              Memory saved
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ConfigTab({ 
   agent,
   projectId,
@@ -1797,9 +2022,9 @@ function ConfigTab({
   );
 }
 
-// ── Children Tab ────────────────────────────────────────────────────────────
+// ── Employees Tab ───────────────────────────────────────────────────────────
 
-function ChildrenTab({
+function EmployeesTab({
   agentId,
   projectId,
   onChildClick,
@@ -1822,11 +2047,11 @@ function ChildrenTab({
     return (
       <div className="detail-section">
         <div className="detail-section-header">
-          <h3>Child Agents</h3>
+          <h3>Employees</h3>
         </div>
         <div className="detail-section-body" style={{ display: "flex", alignItems: "center", gap: 8, padding: 16 }}>
           <Loader2 size={16} className="spin" />
-          <span className="text-secondary">Loading children...</span>
+          <span className="text-secondary">Loading employees...</span>
         </div>
       </div>
     );
@@ -1835,15 +2060,15 @@ function ChildrenTab({
   return (
     <div className="detail-section">
       <div className="detail-section-header">
-        <h3>Child Agents</h3>
+        <h3>Employees</h3>
         <span className="text-secondary">({children.length})</span>
       </div>
       <div className="detail-section-body">
         {children.length === 0 ? (
           <div className="agent-empty" style={{ padding: 24 }}>
             <GitBranch size={32} opacity={0.3} />
-            <p>No child agents</p>
-            <p className="text-secondary">This agent has no spawned children</p>
+            <p>No employees</p>
+            <p className="text-secondary">This agent has no employees</p>
           </div>
         ) : (
           <div className="agent-tree__children">
