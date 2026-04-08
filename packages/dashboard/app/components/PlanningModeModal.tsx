@@ -85,6 +85,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const hasAutoStartedRef = useRef(false);
   const [streamingOutput, setStreamingOutput] = useState<string>("");
   const [showThinking, setShowThinking] = useState(true);
+  const [isReconnecting, setIsReconnecting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const streamConnectionRef = useRef<{ close: () => void; isConnected: () => boolean } | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
@@ -141,6 +142,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
     setError(null);
     setStreamingOutput("");
+    setIsReconnecting(false);
     setView({ type: "loading" });
 
     try {
@@ -159,6 +161,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           setStreamingOutput((prev) => prev + data);
         },
         onQuestion: (question) => {
+          setIsReconnecting(false);
           clearPlanningDescription();
           setView({
             type: "question",
@@ -167,6 +170,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           setStreamingOutput("");
         },
         onSummary: (summary) => {
+          setIsReconnecting(false);
           clearPlanningDescription();
           setView({
             type: "summary",
@@ -177,19 +181,25 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           setStreamingOutput("");
         },
         onError: (message) => {
+          setIsReconnecting(false);
           setError(message);
           setView({ type: "initial" });
           setStreamingOutput("");
           currentSessionIdRef.current = null;
         },
         onComplete: () => {
+          setIsReconnecting(false);
           currentSessionIdRef.current = null;
+        },
+        onConnectionStateChange: (state) => {
+          setIsReconnecting(state === "reconnecting");
         },
       });
 
       streamConnectionRef.current = connection;
       setResponseHistory([]);
     } catch (err: any) {
+      setIsReconnecting(false);
       setError(err.message || "Failed to start planning session");
       setView({ type: "initial" });
       currentSessionIdRef.current = null;
@@ -258,18 +268,30 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           const connection = connectPlanningStream(resumeSessionId, projectId, {
             onThinking: (data) => setStreamingOutput((prev) => prev + data),
             onQuestion: (question) => {
+              setIsReconnecting(false);
               clearPlanningDescription();
               setView({ type: "question", session: { sessionId: resumeSessionId, currentQuestion: question, summary: null } });
               setStreamingOutput("");
             },
             onSummary: (summary) => {
+              setIsReconnecting(false);
               clearPlanningDescription();
               setView({ type: "summary", session: { sessionId: resumeSessionId, currentQuestion: null, summary }, summary });
               setEditedSummary(summary);
               setStreamingOutput("");
             },
-            onError: (message) => { setError(message); setView({ type: "initial" }); },
-            onComplete: () => { currentSessionIdRef.current = null; },
+            onError: (message) => {
+              setIsReconnecting(false);
+              setError(message);
+              setView({ type: "initial" });
+            },
+            onComplete: () => {
+              setIsReconnecting(false);
+              currentSessionIdRef.current = null;
+            },
+            onConnectionStateChange: (state) => {
+              setIsReconnecting(state === "reconnecting");
+            },
           });
           streamConnectionRef.current = connection;
         } else if (session.status === "error") {
@@ -287,6 +309,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   useEffect(() => {
     if (!isOpen) {
       hasAutoStartedRef.current = false;
+      setIsReconnecting(false);
     }
   }, [isOpen]);
 
@@ -328,6 +351,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setResponseHistory([]);
     setEditedSummary(null);
     setStreamingOutput("");
+    setIsReconnecting(false);
     setPlanningModelProvider(undefined);
     setPlanningModelId(undefined);
     currentSessionIdRef.current = null;
@@ -475,6 +499,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
         <div className="planning-modal-body">
           {error && <div className="form-error planning-error">{error}</div>}
+          {isReconnecting && <div className="form-hint text-muted">Reconnecting…</div>}
 
           {view.type === "initial" && (
             <div className="planning-initial">

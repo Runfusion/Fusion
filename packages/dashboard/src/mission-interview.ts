@@ -18,6 +18,7 @@ import type { PlanningQuestion } from "@fusion/core";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { AiSessionStore, AiSessionRow } from "./ai-session-store.js";
+import { SessionEventBuffer, type SessionBufferedEvent } from "./sse-buffer.js";
 
 // Dynamic import for @fusion/engine to avoid resolution issues in test environment
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports, @typescript-eslint/no-explicit-any
@@ -151,7 +152,7 @@ export type MissionInterviewStreamEvent =
   | { type: "complete" };
 
 /** Callback function for streaming events */
-export type MissionInterviewStreamCallback = (event: MissionInterviewStreamEvent) => void;
+export type MissionInterviewStreamCallback = (event: MissionInterviewStreamEvent, eventId?: number) => void;
 
 /** In-memory interview session */
 interface MissionInterviewSession {
@@ -242,7 +243,12 @@ process.on("beforeExit", () => clearInterval(cleanupInterval));
 // ── Stream Manager ──────────────────────────────────────────────────────────
 
 export class MissionInterviewStreamManager extends EventEmitter {
-  private sessions = new Map<string, Set<MissionInterviewStreamCallback>>();
+  private readonly sessions = new Map<string, Set<MissionInterviewStreamCallback>>();
+  private readonly buffers = new Map<string, SessionEventBuffer>();
+
+  constructor(private readonly bufferSize = 100) {
+    super();
+  }
 
   subscribe(sessionId: string, callback: MissionInterviewStreamCallback): () => void {
     if (!this.sessions.has(sessionId)) {
@@ -258,16 +264,38 @@ export class MissionInterviewStreamManager extends EventEmitter {
     };
   }
 
-  broadcast(sessionId: string, event: MissionInterviewStreamEvent): void {
+  private getBuffer(sessionId: string): SessionEventBuffer {
+    let buffer = this.buffers.get(sessionId);
+    if (!buffer) {
+      buffer = new SessionEventBuffer(this.bufferSize);
+      this.buffers.set(sessionId, buffer);
+    }
+    return buffer;
+  }
+
+  broadcast(sessionId: string, event: MissionInterviewStreamEvent): number {
+    const serialized = JSON.stringify((event as { data?: unknown }).data ?? {});
+    const eventData = typeof serialized === "string" ? serialized : "{}";
+    const eventId = this.getBuffer(sessionId).push(event.type, eventData);
+
     const callbacks = this.sessions.get(sessionId);
-    if (!callbacks) return;
+    if (!callbacks) return eventId;
+
     for (const callback of callbacks) {
       try {
-        callback(event);
+        callback(event, eventId);
       } catch (err) {
         console.error(`[mission-interview] Error broadcasting to client for session ${sessionId}:`, err);
       }
     }
+
+    return eventId;
+  }
+
+  getBufferedEvents(sessionId: string, sinceId: number): SessionBufferedEvent[] {
+    const buffer = this.buffers.get(sessionId);
+    if (!buffer) return [];
+    return buffer.getEventsSince(sinceId);
   }
 
   hasSubscribers(sessionId: string): boolean {
@@ -277,6 +305,13 @@ export class MissionInterviewStreamManager extends EventEmitter {
 
   cleanupSession(sessionId: string): void {
     this.sessions.delete(sessionId);
+    this.buffers.delete(sessionId);
+  }
+
+  reset(): void {
+    this.sessions.clear();
+    this.buffers.clear();
+    this.removeAllListeners();
   }
 }
 
@@ -807,7 +842,7 @@ export function __resetMissionInterviewState(): void {
   }
   sessions.clear();
   rateLimits.clear();
-  missionInterviewStreamManager.removeAllListeners();
+  missionInterviewStreamManager.reset();
 }
 
 // ── Custom Errors ───────────────────────────────────────────────────────────

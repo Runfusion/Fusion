@@ -8,6 +8,7 @@ import {
   getCurrentQuestion,
   getSummary,
   cleanupSession,
+  planningStreamManager,
   checkRateLimit,
   getRateLimitResetTime,
   __resetPlanningState,
@@ -699,6 +700,70 @@ describe("planning module", () => {
       const formatted = formatInterviewQA(history);
       expect(formatted).toContain("A: enterprise");
       expect(formatted).toContain("A: Slack, jira");
+    });
+  });
+
+  describe("PlanningStreamManager buffering", () => {
+    it("stores broadcast events and returns buffered events since id", () => {
+      const sessionId = "stream-session-1";
+      const received: Array<{ type: string; id?: number }> = [];
+
+      const unsubscribe = planningStreamManager.subscribe(sessionId, (event, eventId) => {
+        received.push({ type: event.type, id: eventId });
+      });
+
+      const firstId = planningStreamManager.broadcast(sessionId, {
+        type: "thinking",
+        data: "delta-1",
+      });
+      const secondId = planningStreamManager.broadcast(sessionId, {
+        type: "question",
+        data: {
+          id: "q-1",
+          type: "text",
+          question: "Question?",
+          description: "desc",
+        },
+      });
+
+      expect(firstId).toBe(1);
+      expect(secondId).toBe(2);
+      expect(received).toEqual([
+        { type: "thinking", id: 1 },
+        { type: "question", id: 2 },
+      ]);
+
+      const buffered = planningStreamManager.getBufferedEvents(sessionId, 1);
+      expect(buffered).toHaveLength(1);
+      expect(buffered[0]).toMatchObject({ id: 2, event: "question" });
+
+      unsubscribe();
+    });
+
+    it("broadcast buffers events even with no subscribers", () => {
+      const sessionId = "stream-session-2";
+
+      const eventId = planningStreamManager.broadcast(sessionId, {
+        type: "complete",
+      });
+
+      expect(eventId).toBe(1);
+      const buffered = planningStreamManager.getBufferedEvents(sessionId, 0);
+      expect(buffered).toHaveLength(1);
+      expect(buffered[0]).toMatchObject({ id: 1, event: "complete", data: "{}" });
+    });
+
+    it("cleanupSession clears buffered events", () => {
+      const sessionId = "stream-session-3";
+
+      planningStreamManager.broadcast(sessionId, {
+        type: "thinking",
+        data: "delta",
+      });
+      expect(planningStreamManager.getBufferedEvents(sessionId, 0)).toHaveLength(1);
+
+      planningStreamManager.cleanupSession(sessionId);
+      expect(planningStreamManager.getBufferedEvents(sessionId, 0)).toEqual([]);
     });
   });
 

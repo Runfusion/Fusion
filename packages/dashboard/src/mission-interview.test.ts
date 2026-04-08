@@ -183,14 +183,37 @@ describe("mission-interview module", () => {
 
       expect(missionInterviewStreamManager.hasSubscribers("session-1")).toBe(true);
 
-      missionInterviewStreamManager.broadcast("session-1", { type: "thinking", data: "analyzing" });
-      expect(callback).toHaveBeenCalledWith({ type: "thinking", data: "analyzing" });
+      const eventId = missionInterviewStreamManager.broadcast("session-1", { type: "thinking", data: "analyzing" });
+      expect(eventId).toBe(1);
+      expect(callback).toHaveBeenCalledWith({ type: "thinking", data: "analyzing" }, 1);
 
       unsubscribe();
       expect(missionInterviewStreamManager.hasSubscribers("session-1")).toBe(false);
 
       missionInterviewStreamManager.cleanupSession("session-1");
       expect(missionInterviewStreamManager.hasSubscribers("session-1")).toBe(false);
+    });
+
+    it("returns buffered events since last event id", () => {
+      const sessionId = "session-buffered";
+
+      missionInterviewStreamManager.broadcast(sessionId, { type: "thinking", data: "delta-1" });
+      missionInterviewStreamManager.broadcast(sessionId, { type: "thinking", data: "delta-2" });
+      missionInterviewStreamManager.broadcast(sessionId, { type: "complete" });
+
+      const buffered = missionInterviewStreamManager.getBufferedEvents(sessionId, 1);
+      expect(buffered).toHaveLength(2);
+      expect(buffered.map((event) => event.id)).toEqual([2, 3]);
+      expect(buffered[1]).toMatchObject({ event: "complete", data: "{}" });
+    });
+
+    it("clears buffered events on cleanup", () => {
+      const sessionId = "session-cleanup";
+      missionInterviewStreamManager.broadcast(sessionId, { type: "thinking", data: "delta" });
+
+      expect(missionInterviewStreamManager.getBufferedEvents(sessionId, 0)).toHaveLength(1);
+      missionInterviewStreamManager.cleanupSession(sessionId);
+      expect(missionInterviewStreamManager.getBufferedEvents(sessionId, 0)).toEqual([]);
     });
   });
 

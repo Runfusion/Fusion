@@ -15,8 +15,8 @@ import type { TaskStore, TaskAttachment } from "@fusion/core";
 import type { TaskDetail } from "@fusion/core";
 import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
 import { __resetBatchImportRateLimiter } from "./routes.js";
-import { __resetPlanningState, __setCreateKbAgent } from "./planning.js";
-import { __resetSubtaskBreakdownState } from "./subtask-breakdown.js";
+import { __resetPlanningState, __setCreateKbAgent, planningStreamManager } from "./planning.js";
+import { __resetSubtaskBreakdownState, subtaskStreamManager } from "./subtask-breakdown.js";
 import * as terminalServiceModule from "./terminal-service.js";
 import { get as performGet, request as performRequest } from "./test-request.js";
 
@@ -601,6 +601,136 @@ describe("POST /subtasks/*", () => {
 
     expect(res.status).toBe(201);
     expect(typeof res.body.sessionId).toBe("string");
+  });
+
+  it("replays buffered subtask events using lastEventId query param", async () => {
+    const start = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/subtasks/start-streaming",
+      JSON.stringify({ description: "Replay buffered subtask stream" }),
+      { "Content-Type": "application/json" },
+    );
+
+    const sessionId = start.body.sessionId as string;
+
+    // Reset any initial stream manager state from background generation.
+    subtaskStreamManager.cleanupSession(sessionId);
+
+    subtaskStreamManager.broadcast(sessionId, { type: "thinking", data: "first" });
+    subtaskStreamManager.broadcast(sessionId, { type: "thinking", data: "second" });
+
+    setTimeout(() => {
+      subtaskStreamManager.broadcast(sessionId, { type: "complete" });
+    }, 0);
+
+    const streamRes = await REQUEST(
+      buildApp(),
+      "GET",
+      `/api/subtasks/${sessionId}/stream?lastEventId=1`,
+    );
+
+    expect(streamRes.status).toBe(200);
+    expect(streamRes.body).toContain("id: 2");
+    expect(streamRes.body).toContain("event: thinking");
+    expect(streamRes.body).toContain("event: complete");
+    expect(streamRes.body).not.toContain("id: 1\nevent: thinking");
+  });
+
+  it("replays buffered subtask events using Last-Event-ID header", async () => {
+    const start = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/subtasks/start-streaming",
+      JSON.stringify({ description: "Replay buffered subtask stream from header" }),
+      { "Content-Type": "application/json" },
+    );
+
+    const sessionId = start.body.sessionId as string;
+
+    subtaskStreamManager.cleanupSession(sessionId);
+    subtaskStreamManager.broadcast(sessionId, { type: "thinking", data: "first" });
+    subtaskStreamManager.broadcast(sessionId, { type: "thinking", data: "second" });
+
+    setTimeout(() => {
+      subtaskStreamManager.broadcast(sessionId, { type: "complete" });
+    }, 0);
+
+    const streamRes = await REQUEST(
+      buildApp(),
+      "GET",
+      `/api/subtasks/${sessionId}/stream`,
+      undefined,
+      { "Last-Event-ID": "1" },
+    );
+
+    expect(streamRes.status).toBe(200);
+    expect(streamRes.body).toContain("id: 2");
+    expect(streamRes.body).toContain("event: thinking");
+    expect(streamRes.body).toContain("event: complete");
+    expect(streamRes.body).not.toContain("id: 1\nevent: thinking");
+  });
+
+  it("skips subtask replay when Last-Event-ID is missing", async () => {
+    const start = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/subtasks/start-streaming",
+      JSON.stringify({ description: "No subtask replay without header" }),
+      { "Content-Type": "application/json" },
+    );
+
+    const sessionId = start.body.sessionId as string;
+
+    subtaskStreamManager.cleanupSession(sessionId);
+    subtaskStreamManager.broadcast(sessionId, { type: "thinking", data: "first" });
+
+    setTimeout(() => {
+      subtaskStreamManager.broadcast(sessionId, { type: "complete" });
+    }, 0);
+
+    const streamRes = await REQUEST(
+      buildApp(),
+      "GET",
+      `/api/subtasks/${sessionId}/stream`,
+    );
+
+    expect(streamRes.status).toBe(200);
+    expect(streamRes.body).not.toContain("id: 1\nevent: thinking");
+    expect(streamRes.body).toContain("id: 2");
+    expect(streamRes.body).toContain("event: complete");
+  });
+
+  it("gracefully ignores invalid Last-Event-ID values for subtask streams", async () => {
+    const start = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/subtasks/start-streaming",
+      JSON.stringify({ description: "Invalid subtask last event id" }),
+      { "Content-Type": "application/json" },
+    );
+
+    const sessionId = start.body.sessionId as string;
+
+    subtaskStreamManager.cleanupSession(sessionId);
+    subtaskStreamManager.broadcast(sessionId, { type: "thinking", data: "first" });
+
+    setTimeout(() => {
+      subtaskStreamManager.broadcast(sessionId, { type: "complete" });
+    }, 0);
+
+    const streamRes = await REQUEST(
+      buildApp(),
+      "GET",
+      `/api/subtasks/${sessionId}/stream`,
+      undefined,
+      { "Last-Event-ID": "not-a-number" },
+    );
+
+    expect(streamRes.status).toBe(200);
+    expect(streamRes.body).not.toContain("id: 1\nevent: thinking");
+    expect(streamRes.body).toContain("id: 2");
+    expect(streamRes.body).toContain("event: complete");
   });
 
   it("creates tasks from a breakdown and resolves dependencies", async () => {
@@ -5798,6 +5928,99 @@ describe("Git Management endpoints", () => {
             }),
           );
         });
+      });
+    });
+
+    describe("GET /planning/:sessionId/stream", () => {
+      it("replays buffered events when Last-Event-ID header is provided", async () => {
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Reconnect planning stream" }),
+          { "Content-Type": "application/json" },
+        );
+
+        const sessionId = startRes.body.sessionId as string;
+
+        planningStreamManager.broadcast(sessionId, { type: "thinking", data: "first" });
+        planningStreamManager.broadcast(sessionId, { type: "thinking", data: "second" });
+
+        setTimeout(() => {
+          planningStreamManager.broadcast(sessionId, { type: "complete" });
+        }, 0);
+
+        const streamRes = await REQUEST(
+          buildApp(),
+          "GET",
+          `/api/planning/${sessionId}/stream`,
+          undefined,
+          { "Last-Event-ID": "1" },
+        );
+
+        expect(streamRes.status).toBe(200);
+        expect(typeof streamRes.body).toBe("string");
+        expect(streamRes.body).toContain("id: 2");
+        expect(streamRes.body).toContain("event: thinking");
+        expect(streamRes.body).toContain("id: 3");
+        expect(streamRes.body).toContain("event: complete");
+        expect(streamRes.body).not.toContain("id: 1\nevent: thinking");
+      });
+
+      it("skips replay when Last-Event-ID is missing", async () => {
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "No replay planning stream" }),
+          { "Content-Type": "application/json" },
+        );
+
+        const sessionId = startRes.body.sessionId as string;
+
+        planningStreamManager.broadcast(sessionId, { type: "thinking", data: "first" });
+
+        setTimeout(() => {
+          planningStreamManager.broadcast(sessionId, { type: "complete" });
+        }, 0);
+
+        const streamRes = await REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+
+        expect(streamRes.status).toBe(200);
+        expect(streamRes.body).not.toContain("id: 1\nevent: thinking");
+        expect(streamRes.body).toContain("id: 2");
+        expect(streamRes.body).toContain("event: complete");
+      });
+
+      it("gracefully ignores invalid Last-Event-ID values", async () => {
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Invalid last event id" }),
+          { "Content-Type": "application/json" },
+        );
+
+        const sessionId = startRes.body.sessionId as string;
+
+        planningStreamManager.broadcast(sessionId, { type: "thinking", data: "first" });
+
+        setTimeout(() => {
+          planningStreamManager.broadcast(sessionId, { type: "complete" });
+        }, 0);
+
+        const streamRes = await REQUEST(
+          buildApp(),
+          "GET",
+          `/api/planning/${sessionId}/stream`,
+          undefined,
+          { "Last-Event-ID": "not-a-number" },
+        );
+
+        expect(streamRes.status).toBe(200);
+        expect(streamRes.body).not.toContain("id: 1\nevent: thinking");
+        expect(streamRes.body).toContain("id: 2");
+        expect(streamRes.body).toContain("event: complete");
       });
     });
 

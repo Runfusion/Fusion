@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   fetchTaskDetail,
   updateTask,
+  connectPlanningStream,
   assignTask,
   fetchAgentTasks,
   archiveTask,
@@ -2716,5 +2717,136 @@ describe("Mission mutation coverage with 204 responses", () => {
 
     const { deleteMission } = await import("./api");
     await expect(deleteMission("bad-id")).rejects.toThrow("Invalid mission ID format");
+  });
+});
+
+describe("resilient SSE reconnect", () => {
+  const OriginalEventSource = globalThis.EventSource;
+
+  class ControlledEventSource {
+    static instances: ControlledEventSource[] = [];
+    static CONNECTING = 0;
+    static OPEN = 1;
+    static CLOSED = 2;
+
+    readyState = ControlledEventSource.OPEN;
+    onopen: ((event: Event) => void) | null = null;
+    onerror: ((event: Event) => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    readonly listeners = new Map<string, Set<(event: MessageEvent) => void>>();
+
+    constructor(public readonly url: string) {
+      ControlledEventSource.instances.push(this);
+    }
+
+    addEventListener(eventName: string, listener: (event: MessageEvent) => void): void {
+      if (!this.listeners.has(eventName)) {
+        this.listeners.set(eventName, new Set());
+      }
+      this.listeners.get(eventName)!.add(listener);
+    }
+
+    removeEventListener(eventName: string, listener: (event: MessageEvent) => void): void {
+      this.listeners.get(eventName)?.delete(listener);
+    }
+
+    close(): void {
+      this.readyState = ControlledEventSource.CLOSED;
+    }
+
+    emitOpen(): void {
+      this.readyState = ControlledEventSource.OPEN;
+      this.onopen?.(new Event("open"));
+    }
+
+    emitConnectionError(state: number): void {
+      this.readyState = state;
+      this.onerror?.(new Event("error"));
+    }
+
+    emitEvent(eventName: string, data: string, lastEventId = ""): void {
+      const event = { data, lastEventId } as MessageEvent;
+      for (const listener of this.listeners.get(eventName) ?? []) {
+        listener(event);
+      }
+    }
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    ControlledEventSource.instances = [];
+    (globalThis as any).EventSource = ControlledEventSource;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    (globalThis as any).EventSource = OriginalEventSource;
+  });
+
+  it("reconnects with backoff and deduplicates replayed events", () => {
+    const onThinking = vi.fn();
+    const onState = vi.fn();
+
+    connectPlanningStream("session-1", undefined, {
+      onThinking,
+      onConnectionStateChange: onState,
+    });
+
+    const firstConnection = ControlledEventSource.instances[0]!;
+    firstConnection.emitOpen();
+    firstConnection.emitEvent("thinking", JSON.stringify("first"), "1");
+
+    firstConnection.emitConnectionError(ControlledEventSource.CLOSED);
+    expect(onState).toHaveBeenCalledWith("reconnecting");
+
+    vi.advanceTimersByTime(1000);
+
+    const secondConnection = ControlledEventSource.instances[1]!;
+    secondConnection.emitOpen();
+
+    // Duplicate replayed event should be ignored by lastEventId tracking.
+    secondConnection.emitEvent("thinking", JSON.stringify("first"), "1");
+    secondConnection.emitEvent("thinking", JSON.stringify("second"), "2");
+
+    expect(onThinking).toHaveBeenCalledTimes(2);
+    expect(onThinking).toHaveBeenNthCalledWith(1, "first");
+    expect(onThinking).toHaveBeenNthCalledWith(2, "second");
+    expect(secondConnection.url).toContain("lastEventId=1");
+  });
+
+  it("stops reconnecting after max attempts and reports fatal error", () => {
+    const onError = vi.fn();
+
+    connectPlanningStream(
+      "session-2",
+      undefined,
+      { onError },
+      { maxReconnectAttempts: 2 },
+    );
+
+    const first = ControlledEventSource.instances[0]!;
+    first.emitConnectionError(ControlledEventSource.CLOSED);
+    vi.advanceTimersByTime(1000);
+
+    const second = ControlledEventSource.instances[1]!;
+    second.emitConnectionError(ControlledEventSource.CLOSED);
+    vi.advanceTimersByTime(2000);
+
+    const third = ControlledEventSource.instances[2]!;
+    third.emitConnectionError(ControlledEventSource.CLOSED);
+
+    expect(onError).toHaveBeenCalledWith("Connection lost");
+  });
+
+  it("manual close cancels pending reconnect", () => {
+    const connection = connectPlanningStream("session-3", undefined, {});
+
+    const first = ControlledEventSource.instances[0]!;
+    first.emitConnectionError(ControlledEventSource.CLOSED);
+
+    connection.close();
+    vi.advanceTimersByTime(30_000);
+
+    expect(ControlledEventSource.instances).toHaveLength(1);
   });
 });

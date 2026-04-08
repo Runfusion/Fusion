@@ -78,6 +78,7 @@ export function MissionInterviewModal({
   const hasAutoStartedRef = useRef(false);
   const [streamingOutput, setStreamingOutput] = useState("");
   const [showThinking, setShowThinking] = useState(true);
+  const [isReconnecting, setIsReconnecting] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const streamConnectionRef = useRef<{ close: () => void; isConnected: () => boolean } | null>(null);
@@ -90,6 +91,7 @@ export function MissionInterviewModal({
 
       setError(null);
       setStreamingOutput("");
+      setIsReconnecting(false);
       setView({ type: "loading" });
 
       try {
@@ -102,12 +104,14 @@ export function MissionInterviewModal({
             setStreamingOutput((prev) => prev + data);
           },
           onQuestion: (question) => {
+            setIsReconnecting(false);
             clearMissionGoal();
             setView({ type: "question", sessionId, question });
             setStreamingOutput("");
             setHasProgress(true);
           },
           onSummary: (summary) => {
+            setIsReconnecting(false);
             clearMissionGoal();
             setView({ type: "summary", sessionId, summary });
             setEditedSummary(summary);
@@ -115,19 +119,25 @@ export function MissionInterviewModal({
             setHasProgress(true);
           },
           onError: (message) => {
+            setIsReconnecting(false);
             setError(message);
             setView({ type: "initial" });
             setStreamingOutput("");
             currentSessionIdRef.current = null;
           },
           onComplete: () => {
+            setIsReconnecting(false);
             currentSessionIdRef.current = null;
+          },
+          onConnectionStateChange: (state) => {
+            setIsReconnecting(state === "reconnecting");
           },
         });
 
         streamConnectionRef.current = connection;
         setResponseHistory([]);
       } catch (err: any) {
+        setIsReconnecting(false);
         setError(err.message || "Failed to start interview session");
         setView({ type: "initial" });
         currentSessionIdRef.current = null;
@@ -164,6 +174,7 @@ export function MissionInterviewModal({
   useEffect(() => {
     if (!isOpen) {
       hasAutoStartedRef.current = false;
+      setIsReconnecting(false);
     }
   }, [isOpen]);
 
@@ -210,24 +221,31 @@ export function MissionInterviewModal({
             setStreamingOutput((prev) => prev + data);
           },
           onQuestion: (question) => {
+            setIsReconnecting(false);
             clearMissionGoal();
             setView({ type: "question", sessionId: session.id, question });
             setStreamingOutput("");
           },
           onSummary: (summary) => {
+            setIsReconnecting(false);
             clearMissionGoal();
             setView({ type: "summary", sessionId: session.id, summary });
             setEditedSummary(summary);
             setStreamingOutput("");
           },
           onError: (message) => {
+            setIsReconnecting(false);
             setError(message);
             setView({ type: "initial" });
             setStreamingOutput("");
             currentSessionIdRef.current = null;
           },
           onComplete: () => {
+            setIsReconnecting(false);
             currentSessionIdRef.current = null;
+          },
+          onConnectionStateChange: (state) => {
+            setIsReconnecting(state === "reconnecting");
           },
         });
 
@@ -297,6 +315,7 @@ export function MissionInterviewModal({
     setResponseHistory([]);
     setEditedSummary(null);
     setStreamingOutput("");
+    setIsReconnecting(false);
     setHasProgress(false);
     setIsCreating(false);
     currentSessionIdRef.current = null;
@@ -363,6 +382,7 @@ export function MissionInterviewModal({
       setResponseHistory([]);
       setEditedSummary(null);
       setStreamingOutput("");
+      setIsReconnecting(false);
       setHasProgress(false);
       setIsCreating(false);
       currentSessionIdRef.current = null;
@@ -397,6 +417,7 @@ export function MissionInterviewModal({
 
         <div className="planning-modal-body">
           {error && <div className="form-error planning-error">{error}</div>}
+          {isReconnecting && <div className="form-hint text-muted">Reconnecting…</div>}
 
           {view.type === "initial" && (
             <div className="planning-initial">

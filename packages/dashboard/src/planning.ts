@@ -22,6 +22,7 @@ import type { SubtaskItem } from "./subtask-breakdown.js";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { AiSessionStore, AiSessionRow } from "./ai-session-store.js";
+import { SessionEventBuffer, type SessionBufferedEvent } from "./sse-buffer.js";
 
 // Dynamic import for @fusion/engine to avoid resolution issues in test environment
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports, @typescript-eslint/no-explicit-any
@@ -117,7 +118,7 @@ export type PlanningStreamEvent =
   | { type: "complete" };
 
 /** Callback function for streaming events */
-export type PlanningStreamCallback = (event: PlanningStreamEvent) => void;
+export type PlanningStreamCallback = (event: PlanningStreamEvent, eventId?: number) => void;
 
 interface Session {
   id: string;
@@ -241,7 +242,12 @@ process.on("beforeExit", () => {
  * Each session can have multiple connected clients receiving streaming updates.
  */
 export class PlanningStreamManager extends EventEmitter {
-  private sessions = new Map<string, Set<PlanningStreamCallback>>();
+  private readonly sessions = new Map<string, Set<PlanningStreamCallback>>();
+  private readonly buffers = new Map<string, SessionEventBuffer>();
+
+  constructor(private readonly bufferSize = 100) {
+    super();
+  }
 
   /**
    * Register a client callback for a planning session.
@@ -251,11 +257,10 @@ export class PlanningStreamManager extends EventEmitter {
     if (!this.sessions.has(sessionId)) {
       this.sessions.set(sessionId, new Set());
     }
-    
+
     const callbacks = this.sessions.get(sessionId)!;
     callbacks.add(callback);
 
-    // Return unsubscribe function
     return () => {
       callbacks.delete(callback);
       if (callbacks.size === 0) {
@@ -264,20 +269,45 @@ export class PlanningStreamManager extends EventEmitter {
     };
   }
 
+  private getBuffer(sessionId: string): SessionEventBuffer {
+    let buffer = this.buffers.get(sessionId);
+    if (!buffer) {
+      buffer = new SessionEventBuffer(this.bufferSize);
+      this.buffers.set(sessionId, buffer);
+    }
+    return buffer;
+  }
+
   /**
    * Broadcast an event to all clients subscribed to a session.
+   * Every event is buffered and assigned a monotonically increasing id.
    */
-  broadcast(sessionId: string, event: PlanningStreamEvent): void {
+  broadcast(sessionId: string, event: PlanningStreamEvent): number {
+    const serialized = JSON.stringify((event as { data?: unknown }).data ?? {});
+    const eventData = typeof serialized === "string" ? serialized : "{}";
+    const eventId = this.getBuffer(sessionId).push(event.type, eventData);
+
     const callbacks = this.sessions.get(sessionId);
-    if (!callbacks) return;
+    if (!callbacks) return eventId;
 
     for (const callback of callbacks) {
       try {
-        callback(event);
+        callback(event, eventId);
       } catch (err) {
         console.error(`[planning] Error broadcasting to client for session ${sessionId}:`, err);
       }
     }
+
+    return eventId;
+  }
+
+  /**
+   * Get buffered events with id > sinceId for the session.
+   */
+  getBufferedEvents(sessionId: string, sinceId: number): SessionBufferedEvent[] {
+    const buffer = this.buffers.get(sessionId);
+    if (!buffer) return [];
+    return buffer.getEventsSince(sinceId);
   }
 
   /**
@@ -296,10 +326,20 @@ export class PlanningStreamManager extends EventEmitter {
   }
 
   /**
-   * Clean up all subscriptions for a session.
+   * Clean up all subscriptions and buffered events for a session.
    */
   cleanupSession(sessionId: string): void {
     this.sessions.delete(sessionId);
+    this.buffers.delete(sessionId);
+  }
+
+  /**
+   * Reset all subscriptions and buffers (test helper).
+   */
+  reset(): void {
+    this.sessions.clear();
+    this.buffers.clear();
+    this.removeAllListeners();
   }
 }
 
@@ -1239,7 +1279,7 @@ export function __resetPlanningState(): void {
   }
   sessions.clear();
   rateLimits.clear();
-  planningStreamManager.removeAllListeners();
+  planningStreamManager.reset();
 }
 
 /**

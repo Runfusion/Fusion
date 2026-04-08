@@ -1301,6 +1301,135 @@ export function createTasksFromPlanning(
 }
 
 
+type StreamConnectionState = "connected" | "reconnecting";
+
+interface ResilientEventSourceOptions {
+  maxReconnectAttempts?: number;
+  onConnectionStateChange?: (state: StreamConnectionState) => void;
+  onFatalError?: (message: string) => void;
+}
+
+interface ResilientEventHandlers {
+  onOpen?: () => void;
+  onMessage?: (event: MessageEvent) => void;
+  events?: Record<string, (event: MessageEvent) => void>;
+}
+
+function appendLastEventId(url: string, lastEventId: number | null): string {
+  if (lastEventId === null || lastEventId <= 0) {
+    return url;
+  }
+
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}lastEventId=${encodeURIComponent(String(lastEventId))}`;
+}
+
+function createResilientEventSource(
+  url: string,
+  handlers: ResilientEventHandlers,
+  options: ResilientEventSourceOptions = {},
+): { close: () => void; isConnected: () => boolean } {
+  const maxReconnectAttempts = options.maxReconnectAttempts ?? 10;
+  let eventSource: EventSource | null = null;
+  let closedByUser = false;
+  let reconnectAttempts = 0;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastSeenEventId: number | null = null;
+  let reconnectingNotified = false;
+
+  const shouldDispatch = (event: MessageEvent): boolean => {
+    const rawId = event.lastEventId;
+    if (!rawId) {
+      return true;
+    }
+
+    const parsedId = Number.parseInt(rawId, 10);
+    if (!Number.isFinite(parsedId)) {
+      return true;
+    }
+
+    if (lastSeenEventId !== null && parsedId <= lastSeenEventId) {
+      return false;
+    }
+
+    lastSeenEventId = parsedId;
+    return true;
+  };
+
+  const connect = (): void => {
+    if (closedByUser) return;
+
+    const nextUrl = appendLastEventId(url, lastSeenEventId);
+    const source = new EventSource(nextUrl);
+    eventSource = source;
+
+    source.onopen = () => {
+      reconnectAttempts = 0;
+      reconnectingNotified = false;
+      options.onConnectionStateChange?.("connected");
+      handlers.onOpen?.();
+    };
+
+    source.onmessage = (event) => {
+      const messageEvent = event as MessageEvent;
+      if (!shouldDispatch(messageEvent)) return;
+      handlers.onMessage?.(messageEvent);
+    };
+
+    for (const [eventName, handler] of Object.entries(handlers.events ?? {})) {
+      source.addEventListener(eventName, (event: Event) => {
+        const messageEvent = event as MessageEvent;
+        if (!shouldDispatch(messageEvent)) return;
+        handler(messageEvent);
+      });
+    }
+
+    source.onerror = () => {
+      if (closedByUser || eventSource !== source) return;
+
+      const readyState = source.readyState;
+      if (readyState === EventSource.CONNECTING) {
+        if (!reconnectingNotified) {
+          reconnectingNotified = true;
+          options.onConnectionStateChange?.("reconnecting");
+        }
+        return;
+      }
+
+      source.close();
+
+      if (reconnectAttempts >= maxReconnectAttempts) {
+        options.onFatalError?.("Connection lost");
+        return;
+      }
+
+      reconnectingNotified = true;
+      options.onConnectionStateChange?.("reconnecting");
+      reconnectAttempts += 1;
+
+      const delayMs = Math.min(1000 * 2 ** (reconnectAttempts - 1), 30000);
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, delayMs);
+    };
+  };
+
+  connect();
+
+  return {
+    close: () => {
+      closedByUser = true;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      eventSource?.close();
+    },
+    isConnected: () => !closedByUser && eventSource?.readyState === EventSource.OPEN,
+  };
+}
+
 /** Get the SSE stream URL for a planning session */
 export function getPlanningStreamUrl(sessionId: string, projectId?: string): string {
   return buildApiUrl(withProjectId(`/planning/${encodeURIComponent(sessionId)}/stream`, projectId));
@@ -1310,7 +1439,6 @@ export function getPlanningStreamUrl(sessionId: string, projectId?: string): str
  * 
  * Returns an object with:
  * - close: function to close the connection
- * - reconnect: function to reconnect after error
  */
 export function connectPlanningStream(
   sessionId: string,
@@ -1321,89 +1449,67 @@ export function connectPlanningStream(
     onSummary?: (data: PlanningSummary) => void;
     onError?: (data: string) => void;
     onComplete?: () => void;
-  }
+    onConnectionStateChange?: (state: StreamConnectionState) => void;
+  },
+  options?: { maxReconnectAttempts?: number },
 ): { close: () => void; isConnected: () => boolean } {
   const url = getPlanningStreamUrl(sessionId, projectId);
-  const eventSource = new EventSource(url);
-  let isClosed = false;
+  let connection: { close: () => void; isConnected: () => boolean } | null = null;
 
-  eventSource.onopen = () => {
-    isClosed = false;
-  };
+  const resilient = createResilientEventSource(
+    url,
+    {
+      onMessage: (event) => {
+        if (event.data.startsWith(":")) return;
+      },
+      events: {
+        thinking: (event) => {
+          try {
+            handlers.onThinking?.(JSON.parse(event.data));
+          } catch {
+            handlers.onThinking?.(event.data);
+          }
+        },
+        question: (event) => {
+          try {
+            handlers.onQuestion?.(JSON.parse(event.data) as PlanningQuestion);
+          } catch (err) {
+            console.error("[planning] Failed to parse question event:", err);
+          }
+        },
+        summary: (event) => {
+          try {
+            handlers.onSummary?.(JSON.parse(event.data) as PlanningSummary);
+          } catch (err) {
+            console.error("[planning] Failed to parse summary event:", err);
+          }
+        },
+        error: (event) => {
+          try {
+            const parsed = JSON.parse(event.data);
+            handlers.onError?.(parsed.message || parsed);
+          } catch {
+            handlers.onError?.(event.data || "Stream error");
+          }
+          connection?.close();
+        },
+        complete: () => {
+          handlers.onComplete?.();
+          connection?.close();
+        },
+      },
+    },
+    {
+      maxReconnectAttempts: options?.maxReconnectAttempts,
+      onConnectionStateChange: handlers.onConnectionStateChange,
+      onFatalError: (message) => {
+        handlers.onError?.(message);
+      },
+    },
+  );
 
-  eventSource.onmessage = (event) => {
-    // Handle comment events (heartbeats)
-    if (event.data.startsWith(":")) return;
-  };
-
-  // Handle specific event types
-  eventSource.addEventListener("thinking", (event: Event) => {
-    try {
-      const messageEvent = event as MessageEvent;
-      const data = JSON.parse(messageEvent.data);
-      handlers.onThinking?.(data);
-    } catch {
-      const messageEvent = event as MessageEvent;
-      handlers.onThinking?.(messageEvent.data);
-    }
-  });
-
-  eventSource.addEventListener("question", (event: Event) => {
-    try {
-      const messageEvent = event as MessageEvent;
-      const data = JSON.parse(messageEvent.data) as PlanningQuestion;
-      handlers.onQuestion?.(data);
-    } catch (err) {
-      console.error("[planning] Failed to parse question event:", err);
-    }
-  });
-
-  eventSource.addEventListener("summary", (event: Event) => {
-    try {
-      const messageEvent = event as MessageEvent;
-      const data = JSON.parse(messageEvent.data) as PlanningSummary;
-      handlers.onSummary?.(data);
-    } catch (err) {
-      console.error("[planning] Failed to parse summary event:", err);
-    }
-  });
-
-  eventSource.addEventListener("error", (event: Event) => {
-    try {
-      const messageEvent = event as MessageEvent;
-      const data = JSON.parse(messageEvent.data);
-      handlers.onError?.(data.message || data);
-    } catch {
-      const messageEvent = event as MessageEvent;
-      handlers.onError?.(messageEvent.data || "Stream error");
-    }
-    close();
-  });
-
-  eventSource.addEventListener("complete", () => {
-    handlers.onComplete?.();
-    close();
-  });
-
-  // Handle connection errors
-  eventSource.onerror = () => {
-    if (!isClosed) {
-      handlers.onError?.("Connection lost");
-      close();
-    }
-  };
-
-  function close() {
-    if (!isClosed) {
-      isClosed = true;
-      eventSource.close();
-    }
-  }
-
-  return {
-    close,
-    isConnected: () => !isClosed && eventSource.readyState === EventSource.OPEN,
-  };
+  connection = resilient;
+  return resilient;
 }
 
 // ── Automation / Scheduled Tasks ──────────────────────────────────
@@ -1672,71 +1778,57 @@ export function connectSubtaskStream(
     onSubtasks?: (data: SubtaskItem[]) => void;
     onError?: (data: string) => void;
     onComplete?: () => void;
-  }
+    onConnectionStateChange?: (state: StreamConnectionState) => void;
+  },
+  options?: { maxReconnectAttempts?: number },
 ): { close: () => void; isConnected: () => boolean } {
-  const eventSource = new EventSource(getSubtaskStreamUrl(sessionId, projectId));
-  let isClosed = false;
+  let connection: { close: () => void; isConnected: () => boolean } | null = null;
 
-  eventSource.onopen = () => {
-    isClosed = false;
-  };
-
-  eventSource.addEventListener("thinking", (event: Event) => {
-    const messageEvent = event as MessageEvent;
-    try {
-      handlers.onThinking?.(JSON.parse(messageEvent.data));
-    } catch {
-      handlers.onThinking?.(messageEvent.data);
-    }
-  });
-
-  eventSource.addEventListener("subtasks", (event: Event) => {
-    try {
-      const messageEvent = event as MessageEvent;
-      handlers.onSubtasks?.(JSON.parse(messageEvent.data) as SubtaskItem[]);
-    } catch (err) {
-      console.error("[subtasks] Failed to parse subtasks event:", err);
-    }
-  });
-
-  eventSource.addEventListener("error", (event: Event) => {
-    try {
-      const messageEvent = event as MessageEvent;
-      const parsedData = JSON.parse(messageEvent.data);
-      const errorMessage = typeof parsedData === "string" && parsedData.length > 0 ? parsedData : null;
-      if (errorMessage) {
-        handlers.onError?.(errorMessage);
-      } else {
-        handlers.onError?.("Stream error");
-      }
-    } catch {
-      handlers.onError?.("Stream error");
-    }
-    isClosed = true;
-    eventSource.close();
-  });
-
-  eventSource.addEventListener("complete", () => {
-    handlers.onComplete?.();
-    isClosed = true;
-    eventSource.close();
-  });
-
-  eventSource.onerror = () => {
-    if (!isClosed) {
-      handlers.onError?.("Connection lost");
-    }
-    isClosed = true;
-    eventSource.close();
-  };
-
-  return {
-    close: () => {
-      isClosed = true;
-      eventSource.close();
+  const resilient = createResilientEventSource(
+    getSubtaskStreamUrl(sessionId, projectId),
+    {
+      events: {
+        thinking: (event) => {
+          try {
+            handlers.onThinking?.(JSON.parse(event.data));
+          } catch {
+            handlers.onThinking?.(event.data);
+          }
+        },
+        subtasks: (event) => {
+          try {
+            handlers.onSubtasks?.(JSON.parse(event.data) as SubtaskItem[]);
+          } catch (err) {
+            console.error("[subtasks] Failed to parse subtasks event:", err);
+          }
+        },
+        error: (event) => {
+          try {
+            const parsedData = JSON.parse(event.data);
+            const errorMessage = typeof parsedData === "string" && parsedData.length > 0 ? parsedData : null;
+            handlers.onError?.(errorMessage || "Stream error");
+          } catch {
+            handlers.onError?.("Stream error");
+          }
+          connection?.close();
+        },
+        complete: () => {
+          handlers.onComplete?.();
+          connection?.close();
+        },
+      },
     },
-    isConnected: () => !isClosed,
-  };
+    {
+      maxReconnectAttempts: options?.maxReconnectAttempts,
+      onConnectionStateChange: handlers.onConnectionStateChange,
+      onFatalError: (message) => {
+        handlers.onError?.(message);
+      },
+    },
+  );
+
+  connection = resilient;
+  return resilient;
 }
 
 export function createTasksFromBreakdown(
@@ -3005,86 +3097,67 @@ export function connectMissionInterviewStream(
     onSummary?: (data: MissionPlanSummary) => void;
     onError?: (data: string) => void;
     onComplete?: () => void;
-  }
+    onConnectionStateChange?: (state: StreamConnectionState) => void;
+  },
+  options?: { maxReconnectAttempts?: number },
 ): { close: () => void; isConnected: () => boolean } {
   const url = buildApiUrl(withProjectId(`/missions/interview/${encodeURIComponent(sessionId)}/stream`, projectId));
-  const eventSource = new EventSource(url);
-  let isClosed = false;
+  let connection: { close: () => void; isConnected: () => boolean } | null = null;
 
-  eventSource.onopen = () => {
-    isClosed = false;
-  };
+  const resilient = createResilientEventSource(
+    url,
+    {
+      onMessage: (event) => {
+        if (event.data.startsWith(":")) return;
+      },
+      events: {
+        thinking: (event) => {
+          try {
+            handlers.onThinking?.(JSON.parse(event.data));
+          } catch {
+            handlers.onThinking?.(event.data);
+          }
+        },
+        question: (event) => {
+          try {
+            handlers.onQuestion?.(JSON.parse(event.data) as PlanningQuestion);
+          } catch (err) {
+            console.error("[mission-interview] Failed to parse question event:", err);
+          }
+        },
+        summary: (event) => {
+          try {
+            handlers.onSummary?.(JSON.parse(event.data) as MissionPlanSummary);
+          } catch (err) {
+            console.error("[mission-interview] Failed to parse summary event:", err);
+          }
+        },
+        error: (event) => {
+          try {
+            const parsed = JSON.parse(event.data);
+            handlers.onError?.(parsed.message || parsed);
+          } catch {
+            handlers.onError?.(event.data || "Stream error");
+          }
+          connection?.close();
+        },
+        complete: () => {
+          handlers.onComplete?.();
+          connection?.close();
+        },
+      },
+    },
+    {
+      maxReconnectAttempts: options?.maxReconnectAttempts,
+      onConnectionStateChange: handlers.onConnectionStateChange,
+      onFatalError: (message) => {
+        handlers.onError?.(message);
+      },
+    },
+  );
 
-  eventSource.onmessage = (event) => {
-    if (event.data.startsWith(":")) return;
-  };
-
-  eventSource.addEventListener("thinking", (event: Event) => {
-    try {
-      const messageEvent = event as MessageEvent;
-      const data = JSON.parse(messageEvent.data);
-      handlers.onThinking?.(data);
-    } catch {
-      const messageEvent = event as MessageEvent;
-      handlers.onThinking?.(messageEvent.data);
-    }
-  });
-
-  eventSource.addEventListener("question", (event: Event) => {
-    try {
-      const messageEvent = event as MessageEvent;
-      const data = JSON.parse(messageEvent.data) as PlanningQuestion;
-      handlers.onQuestion?.(data);
-    } catch (err) {
-      console.error("[mission-interview] Failed to parse question event:", err);
-    }
-  });
-
-  eventSource.addEventListener("summary", (event: Event) => {
-    try {
-      const messageEvent = event as MessageEvent;
-      const data = JSON.parse(messageEvent.data) as MissionPlanSummary;
-      handlers.onSummary?.(data);
-    } catch (err) {
-      console.error("[mission-interview] Failed to parse summary event:", err);
-    }
-  });
-
-  eventSource.addEventListener("error", (event: Event) => {
-    try {
-      const messageEvent = event as MessageEvent;
-      const data = JSON.parse(messageEvent.data);
-      handlers.onError?.(data.message || data);
-    } catch {
-      const messageEvent = event as MessageEvent;
-      handlers.onError?.(messageEvent.data || "Stream error");
-    }
-    close();
-  });
-
-  eventSource.addEventListener("complete", () => {
-    handlers.onComplete?.();
-    close();
-  });
-
-  eventSource.onerror = () => {
-    if (!isClosed) {
-      handlers.onError?.("Connection lost");
-      close();
-    }
-  };
-
-  function close() {
-    if (!isClosed) {
-      isClosed = true;
-      eventSource.close();
-    }
-  }
-
-  return {
-    close,
-    isConnected: () => !isClosed && eventSource.readyState === EventSource.OPEN,
-  };
+  connection = resilient;
+  return resilient;
 }
 
 // ── AI Sessions (Background Tasks) ─────────────────────────────────────────

@@ -37,6 +37,7 @@ import {
   SessionNotFoundError as AgentGenerationSessionNotFoundError,
 } from "./agent-generation.js";
 import { getMissionInterviewSession, cleanupMissionInterviewSession } from "./mission-interview.js";
+import { writeSSEEvent } from "./sse-buffer.js";
 
 /**
  * Minimal interface matching pi-coding-agent's ModelRegistry API surface
@@ -1264,6 +1265,34 @@ export function __resetBatchImportRateLimiter(): void {
     clearInterval(batchImportCleanupInterval);
     batchImportCleanupInterval = undefined;
   }
+}
+
+function parseLastEventId(req: Request): number | undefined {
+  const rawHeader = req.headers["last-event-id"];
+  const rawQuery = req.query.lastEventId;
+
+  const raw = Array.isArray(rawHeader)
+    ? rawHeader[0]
+    : (typeof rawHeader === "string" ? rawHeader : Array.isArray(rawQuery) ? rawQuery[0] : rawQuery);
+
+  if (raw === undefined || raw === null) return undefined;
+
+  const parsed = Number.parseInt(String(raw), 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return undefined;
+
+  return parsed;
+}
+
+function replayBufferedSSE(
+  res: Response,
+  bufferedEvents: Array<{ id: number; event: string; data: string }>,
+): boolean {
+  for (const bufferedEvent of bufferedEvents) {
+    if (!writeSSEEvent(res, bufferedEvent.event, bufferedEvent.data, bufferedEvent.id)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export function createApiRoutes(store: TaskStore, options?: ServerOptions): Router {
@@ -5387,38 +5416,79 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { subtaskStreamManager, getSubtaskSession } = await import("./subtask-breakdown.js");
       const session = getSubtaskSession(sessionId);
       if (!session) {
-        res.write(`event: error\ndata: ${JSON.stringify("Session not found or expired")}\n\n`);
+        writeSSEEvent(res, "error", JSON.stringify("Session not found or expired"));
         res.end();
         return;
       }
 
-      const unsubscribe = subtaskStreamManager.subscribe(sessionId, (event) => {
-        try {
-          const data = (event as { data?: unknown }).data;
-          res.write(`event: ${event.type}\ndata: ${JSON.stringify(data ?? {})}\n\n`);
-          if (event.type === "complete" || event.type === "error") {
-            unsubscribe();
-            res.end();
-          }
-        } catch {
-          unsubscribe();
+      const lastEventId = parseLastEventId(req);
+      if (lastEventId !== undefined) {
+        const buffered = subtaskStreamManager.getBufferedEvents(sessionId, lastEventId);
+        if (!replayBufferedSSE(res, buffered)) {
+          res.end();
+          return;
         }
-      });
+      }
 
       if (session.status === "complete") {
-        res.write(`event: subtasks\ndata: ${JSON.stringify(session.subtasks)}\n\n`);
-        res.write("event: complete\ndata: {}\n\n");
-        unsubscribe();
+        const existing = subtaskStreamManager.getBufferedEvents(sessionId, 0);
+
+        const lastSubtasksEvent = [...existing].reverse().find((event) => event.event === "subtasks");
+        const subtasksEventId = lastSubtasksEvent?.id
+          ?? subtaskStreamManager.broadcast(sessionId, {
+            type: "subtasks",
+            data: session.subtasks,
+          });
+
+        if (lastEventId === undefined || subtasksEventId > lastEventId) {
+          if (!writeSSEEvent(res, "subtasks", JSON.stringify(session.subtasks), subtasksEventId)) {
+            res.end();
+            return;
+          }
+        }
+
+        const lastCompleteEvent = [...existing].reverse().find((event) => event.event === "complete");
+        const completeEventId = lastCompleteEvent?.id
+          ?? subtaskStreamManager.broadcast(sessionId, { type: "complete" });
+
+        if (lastEventId === undefined || completeEventId > lastEventId) {
+          writeSSEEvent(res, "complete", JSON.stringify({}), completeEventId);
+        }
+
         res.end();
         return;
       }
 
       if (session.status === "error") {
-        res.write(`event: error\ndata: ${JSON.stringify(String(session.error || "Unknown error"))}\n\n`);
-        unsubscribe();
+        const errorMessage = String(session.error || "Unknown error");
+        const existing = subtaskStreamManager.getBufferedEvents(sessionId, 0);
+        const lastErrorEvent = [...existing].reverse().find((event) => event.event === "error");
+        const errorEventId = lastErrorEvent?.id
+          ?? subtaskStreamManager.broadcast(sessionId, {
+            type: "error",
+            data: errorMessage,
+          });
+
+        if (lastEventId === undefined || errorEventId > lastEventId) {
+          writeSSEEvent(res, "error", JSON.stringify(errorMessage), errorEventId);
+        }
+
         res.end();
         return;
       }
+
+      const unsubscribe = subtaskStreamManager.subscribe(sessionId, (event, eventId) => {
+        const data = (event as { data?: unknown }).data;
+        if (!writeSSEEvent(res, event.type, JSON.stringify(data ?? {}), eventId)) {
+          unsubscribe();
+          return;
+        }
+
+        if (event.type === "complete" || event.type === "error") {
+          unsubscribe();
+          res.end();
+        }
+      });
 
       const heartbeat = setInterval(() => {
         if (res.writableEnded) {
@@ -5433,7 +5503,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         unsubscribe();
       });
     } catch (err: any) {
-      res.write(`event: error\ndata: ${JSON.stringify(String(err?.message) || "Unknown error")}\n\n`);
+      writeSSEEvent(res, "error", JSON.stringify(String(err?.message) || "Unknown error"));
       res.end();
     }
   });
@@ -6002,30 +6072,65 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     res.write(": connected\n\n");
 
     try {
-      const { planningStreamManager, getSession, SessionNotFoundError } = await import("./planning.js");
-      
+      const { planningStreamManager, getSession } = await import("./planning.js");
+
       // Verify session exists
       const session = getSession(sessionId);
       if (!session) {
-        res.write(`event: error\ndata: ${JSON.stringify({ message: "Session not found or expired" })}\n\n`);
+        writeSSEEvent(res, "error", JSON.stringify({ message: "Session not found or expired" }));
+        res.end();
+        return;
+      }
+
+      const lastEventId = parseLastEventId(req);
+      if (lastEventId !== undefined) {
+        const buffered = planningStreamManager.getBufferedEvents(sessionId, lastEventId);
+        if (!replayBufferedSSE(res, buffered)) {
+          res.end();
+          return;
+        }
+      }
+
+      if (session.summary) {
+        const existing = planningStreamManager.getBufferedEvents(sessionId, 0);
+        const lastSummaryEvent = [...existing].reverse().find((event) => event.event === "summary");
+        const summaryEventId = lastSummaryEvent?.id
+          ?? planningStreamManager.broadcast(sessionId, {
+            type: "summary",
+            data: session.summary,
+          });
+
+        if (lastEventId === undefined || summaryEventId > lastEventId) {
+          if (!writeSSEEvent(res, "summary", JSON.stringify(session.summary), summaryEventId)) {
+            res.end();
+            return;
+          }
+        }
+
+        const lastCompleteEvent = [...existing].reverse().find((event) => event.event === "complete");
+        const completeEventId = lastCompleteEvent?.id
+          ?? planningStreamManager.broadcast(sessionId, { type: "complete" });
+
+        if (lastEventId === undefined || completeEventId > lastEventId) {
+          writeSSEEvent(res, "complete", JSON.stringify({}), completeEventId);
+        }
+
         res.end();
         return;
       }
 
       // Subscribe to session events
-      const unsubscribe = planningStreamManager.subscribe(sessionId, (event) => {
-        try {
-          const data = (event as { data?: unknown }).data;
-          res.write(`event: ${event.type}\ndata: ${JSON.stringify(data ?? {})}\n\n`);
-          
-          // End stream on complete or error
-          if (event.type === "complete" || event.type === "error") {
-            unsubscribe();
-            res.end();
-          }
-        } catch (err) {
-          // Client disconnected
+      const unsubscribe = planningStreamManager.subscribe(sessionId, (event, eventId) => {
+        const data = (event as { data?: unknown }).data;
+        if (!writeSSEEvent(res, event.type, JSON.stringify(data ?? {}), eventId)) {
           unsubscribe();
+          return;
+        }
+
+        // End stream on complete or error
+        if (event.type === "complete" || event.type === "error") {
+          unsubscribe();
+          res.end();
         }
       });
 
@@ -6047,7 +6152,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         clearInterval(heartbeat);
       });
     } catch (err: any) {
-      res.write(`event: error\ndata: ${JSON.stringify({ message: err.message || "Stream error" })}\n\n`);
+      writeSSEEvent(res, "error", JSON.stringify({ message: err.message || "Stream error" }));
       res.end();
     }
   });

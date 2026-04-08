@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { SubtaskBreakdownModal } from "./SubtaskBreakdownModal";
 
 const mockStartSubtaskBreakdown = vi.fn();
@@ -76,6 +76,48 @@ describe("SubtaskBreakdownModal", () => {
     streamHandlers.onSubtasks(SAMPLE_SUBTASKS);
     expect(await screen.findByDisplayValue("First")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Do second")).toBeInTheDocument();
+  });
+
+  it("shows reconnecting indicator without clearing subtask state", async () => {
+    renderModal();
+    await waitFor(() => expect(streamHandlers).toBeDefined());
+
+    streamHandlers.onSubtasks(SAMPLE_SUBTASKS);
+    expect(await screen.findByDisplayValue("First")).toBeInTheDocument();
+
+    act(() => {
+      streamHandlers.onConnectionStateChange?.("reconnecting");
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Reconnecting…")).toBeInTheDocument();
+    });
+    expect(screen.getByDisplayValue("First")).toBeInTheDocument();
+
+    act(() => {
+      streamHandlers.onConnectionStateChange?.("connected");
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument();
+    });
+    expect(screen.getByDisplayValue("First")).toBeInTheDocument();
+  });
+
+  it("preserves thinking output while reconnecting in generating state", async () => {
+    renderModal();
+    await waitFor(() => expect(streamHandlers).toBeDefined());
+
+    act(() => {
+      streamHandlers.onThinking?.("Generating subtasks...");
+    });
+    expect(await screen.findByText("Generating subtasks...")).toBeInTheDocument();
+
+    act(() => {
+      streamHandlers.onConnectionStateChange?.("reconnecting");
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Reconnecting…")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Generating subtasks...")).toBeInTheDocument();
   });
 
   it("adds and removes subtasks", async () => {

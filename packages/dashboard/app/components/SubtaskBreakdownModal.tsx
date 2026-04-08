@@ -66,6 +66,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
   const [subtasks, setSubtasks] = useState<SubtaskItem[]>([]);
   const [thinkingOutput, setThinkingOutput] = useState("");
   const [showThinking, setShowThinking] = useState(true);
+  const [isReconnecting, setIsReconnecting] = useState(false);
   // Local description: synced from prop, can fall back to localStorage
   const [localDescription, setLocalDescription] = useState(initialDescription);
   const [error, setError] = useState<string | null>(null);
@@ -101,6 +102,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     setSubtasks([]);
     setThinkingOutput("");
     setShowThinking(true);
+    setIsReconnecting(false);
     setError(null);
     setDirty(false);
     autoStartedRef.current = false;
@@ -125,6 +127,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     if (!localDescription.trim()) return;
     setError(null);
     setThinkingOutput("");
+    setIsReconnecting(false);
 
     try {
       const { sessionId } = await startSubtaskBreakdown(localDescription.trim(), projectId);
@@ -133,14 +136,19 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
       streamRef.current = connectSubtaskStream(sessionId, projectId, {
         onThinking: (data) => setThinkingOutput((prev) => prev + data),
         onSubtasks: (items) => {
+          setIsReconnecting(false);
           clearSubtaskDescription();
           setSubtasks(items);
           setView({ type: "editing", sessionId });
           setDirty(false);
         },
         onError: (message) => {
+          setIsReconnecting(false);
           setError(message);
           setView({ type: "initial" });
+        },
+        onConnectionStateChange: (state) => {
+          setIsReconnecting(state === "reconnecting");
         },
       });
     } catch (err: any) {
@@ -182,14 +190,19 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
           streamRef.current = connectSubtaskStream(resumeSessionId, projectId, {
             onThinking: (data) => setThinkingOutput((prev) => prev + data),
             onSubtasks: (items) => {
+              setIsReconnecting(false);
               clearSubtaskDescription();
               setSubtasks(items);
               setView({ type: "editing", sessionId: resumeSessionId });
               setDirty(false);
             },
             onError: (message) => {
+              setIsReconnecting(false);
               setError(message);
               setView({ type: "initial" });
+            },
+            onConnectionStateChange: (state) => {
+              setIsReconnecting(state === "reconnecting");
             },
           });
         } else if (session.status === "complete" && session.result) {
@@ -361,6 +374,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
 
         <div className="planning-modal-body">
           {error && <div className="form-error planning-error">{error}</div>}
+          {isReconnecting && <div className="form-hint text-muted">Reconnecting…</div>}
 
           {view.type === "initial" && (
             <div className="planning-initial">

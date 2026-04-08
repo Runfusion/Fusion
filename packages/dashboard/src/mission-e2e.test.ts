@@ -7,7 +7,7 @@
 
 // @vitest-environment node
 
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import { createMissionRouter } from "./mission-routes.js";
 import { request, get } from "./test-request.js";
@@ -19,6 +19,11 @@ import type {
   MissionFeature,
   MissionWithHierarchy,
 } from "@fusion/core";
+import {
+  __resetMissionInterviewState,
+  createMissionInterviewSession,
+  missionInterviewStreamManager,
+} from "./mission-interview.js";
 
 // Mock MissionStore factory
 function createMockMissionStore() {
@@ -701,6 +706,10 @@ describe("Mission API", () => {
   });
 
   describe("Interview endpoints", () => {
+    beforeEach(() => {
+      __resetMissionInterviewState();
+    });
+
     it("should return 400 when missionTitle is missing on interview start", async () => {
       const { app } = buildApp();
       const res = await request(
@@ -738,6 +747,79 @@ describe("Mission API", () => {
       );
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("sessionId");
+    });
+
+    it("replays buffered interview events when Last-Event-ID is provided", async () => {
+      const { app } = buildApp();
+      const sessionId = await createMissionInterviewSession("127.0.0.1", "Replay Mission", "/tmp/project");
+
+      missionInterviewStreamManager.broadcast(sessionId, { type: "thinking", data: "first" });
+      missionInterviewStreamManager.broadcast(sessionId, { type: "thinking", data: "second" });
+
+      setTimeout(() => {
+        missionInterviewStreamManager.broadcast(sessionId, { type: "complete" });
+      }, 0);
+
+      const res = await request(
+        app,
+        "GET",
+        `/api/missions/interview/${sessionId}/stream`,
+        undefined,
+        { "last-event-id": "1" },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body).toContain("id: 2");
+      expect(res.body).toContain("event: thinking");
+      expect(res.body).toContain("id: 3");
+      expect(res.body).toContain("event: complete");
+      expect(res.body).not.toContain("id: 1\nevent: thinking");
+    });
+
+    it("does not replay buffered interview events when Last-Event-ID is missing", async () => {
+      const { app } = buildApp();
+      const sessionId = await createMissionInterviewSession("127.0.0.1", "No Replay Mission", "/tmp/project");
+
+      missionInterviewStreamManager.broadcast(sessionId, { type: "thinking", data: "first" });
+
+      setTimeout(() => {
+        missionInterviewStreamManager.broadcast(sessionId, { type: "complete" });
+      }, 0);
+
+      const res = await request(
+        app,
+        "GET",
+        `/api/missions/interview/${sessionId}/stream`,
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body).not.toContain("id: 1\nevent: thinking");
+      expect(res.body).toContain("id: 2");
+      expect(res.body).toContain("event: complete");
+    });
+
+    it("gracefully ignores invalid Last-Event-ID values for interview streams", async () => {
+      const { app } = buildApp();
+      const sessionId = await createMissionInterviewSession("127.0.0.1", "Invalid Replay Mission", "/tmp/project");
+
+      missionInterviewStreamManager.broadcast(sessionId, { type: "thinking", data: "first" });
+
+      setTimeout(() => {
+        missionInterviewStreamManager.broadcast(sessionId, { type: "complete" });
+      }, 0);
+
+      const res = await request(
+        app,
+        "GET",
+        `/api/missions/interview/${sessionId}/stream`,
+        undefined,
+        { "last-event-id": "not-a-number" },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body).not.toContain("id: 1\nevent: thinking");
+      expect(res.body).toContain("id: 2");
+      expect(res.body).toContain("event: complete");
     });
 
     it("should return 400 when sessionId is missing on create-mission", async () => {

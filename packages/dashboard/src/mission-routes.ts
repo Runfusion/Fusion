@@ -39,6 +39,7 @@ import {
   FEATURE_STATUSES,
   INTERVIEW_STATES,
 } from "@fusion/core";
+import { writeSSEEvent } from "./sse-buffer.js";
 
 // ── Validation Utilities ────────────────────────────────────────────────────
 
@@ -140,6 +141,34 @@ function asyncHandler(fn: (req: TypedRequest, res: Response, next: NextFunction)
 }
 
 // ── Router Factory ──────────────────────────────────────────────────────────
+
+function parseLastEventId(req: Request): number | undefined {
+  const rawHeader = req.headers["last-event-id"];
+  const rawQuery = req.query.lastEventId;
+
+  const raw = Array.isArray(rawHeader)
+    ? rawHeader[0]
+    : (typeof rawHeader === "string" ? rawHeader : Array.isArray(rawQuery) ? rawQuery[0] : rawQuery);
+
+  if (raw === undefined || raw === null) return undefined;
+
+  const parsed = Number.parseInt(String(raw), 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return undefined;
+
+  return parsed;
+}
+
+function replayBufferedSSE(
+  res: Response,
+  bufferedEvents: Array<{ id: number; event: string; data: string }>,
+): boolean {
+  for (const bufferedEvent of bufferedEvents) {
+    if (!writeSSEEvent(res, bufferedEvent.event, bufferedEvent.data, bufferedEvent.id)) {
+      return false;
+    }
+  }
+  return true;
+}
 
 export function createMissionRouter(
   store: TaskStore,
@@ -407,25 +436,60 @@ export function createMissionRouter(
         // Verify session exists
         const session = getMissionInterviewSession(sessionId);
         if (!session) {
-          res.write(`event: error\ndata: ${JSON.stringify({ message: "Session not found or expired" })}\n\n`);
+          writeSSEEvent(res, "error", JSON.stringify({ message: "Session not found or expired" }));
+          res.end();
+          return;
+        }
+
+        const lastEventId = parseLastEventId(req);
+        if (lastEventId !== undefined) {
+          const buffered = missionInterviewStreamManager.getBufferedEvents(sessionId, lastEventId);
+          if (!replayBufferedSSE(res, buffered)) {
+            res.end();
+            return;
+          }
+        }
+
+        if (session.summary) {
+          const existing = missionInterviewStreamManager.getBufferedEvents(sessionId, 0);
+          const lastSummaryEvent = [...existing].reverse().find((event) => event.event === "summary");
+          const summaryEventId = lastSummaryEvent?.id
+            ?? missionInterviewStreamManager.broadcast(sessionId, {
+              type: "summary",
+              data: session.summary,
+            });
+
+          if (lastEventId === undefined || summaryEventId > lastEventId) {
+            if (!writeSSEEvent(res, "summary", JSON.stringify(session.summary), summaryEventId)) {
+              res.end();
+              return;
+            }
+          }
+
+          const lastCompleteEvent = [...existing].reverse().find((event) => event.event === "complete");
+          const completeEventId = lastCompleteEvent?.id
+            ?? missionInterviewStreamManager.broadcast(sessionId, { type: "complete" });
+
+          if (lastEventId === undefined || completeEventId > lastEventId) {
+            writeSSEEvent(res, "complete", JSON.stringify({}), completeEventId);
+          }
+
           res.end();
           return;
         }
 
         // Subscribe to session events
-        const unsubscribe = missionInterviewStreamManager.subscribe(sessionId, (event) => {
-          try {
-            const data = (event as { data?: unknown }).data;
-            res.write(`event: ${event.type}\ndata: ${JSON.stringify(data ?? {})}\n\n`);
-
-            // End stream on complete or error
-            if (event.type === "complete" || event.type === "error") {
-              unsubscribe();
-              res.end();
-            }
-          } catch {
-            // Client disconnected
+        const unsubscribe = missionInterviewStreamManager.subscribe(sessionId, (event, eventId) => {
+          const data = (event as { data?: unknown }).data;
+          if (!writeSSEEvent(res, event.type, JSON.stringify(data ?? {}), eventId)) {
             unsubscribe();
+            return;
+          }
+
+          // End stream on complete or error
+          if (event.type === "complete" || event.type === "error") {
+            unsubscribe();
+            res.end();
           }
         });
 
@@ -447,7 +511,7 @@ export function createMissionRouter(
           clearInterval(heartbeat);
         });
       } catch (err: any) {
-        res.write(`event: error\ndata: ${JSON.stringify({ message: err.message || "Stream error" })}\n\n`);
+        writeSSEEvent(res, "error", JSON.stringify({ message: err.message || "Stream error" }));
         res.end();
       }
     })

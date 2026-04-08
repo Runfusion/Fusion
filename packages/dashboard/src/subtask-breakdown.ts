@@ -2,6 +2,7 @@ import type { TaskStore } from "@fusion/core";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { AiSessionStore, AiSessionRow } from "./ai-session-store.js";
+import { SessionEventBuffer, type SessionBufferedEvent } from "./sse-buffer.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let createKbAgent: any;
@@ -43,7 +44,7 @@ export type SubtaskStreamEvent =
   | { type: "error"; data: string }
   | { type: "complete" };
 
-export type SubtaskStreamCallback = (event: SubtaskStreamEvent) => void;
+export type SubtaskStreamCallback = (event: SubtaskStreamEvent, eventId?: number) => void;
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
@@ -141,7 +142,12 @@ process.on("beforeExit", () => {
 });
 
 export class SubtaskStreamManager extends EventEmitter {
-  private sessions = new Map<string, Set<SubtaskStreamCallback>>();
+  private readonly sessions = new Map<string, Set<SubtaskStreamCallback>>();
+  private readonly buffers = new Map<string, SessionEventBuffer>();
+
+  constructor(private readonly bufferSize = 100) {
+    super();
+  }
 
   subscribe(sessionId: string, callback: SubtaskStreamCallback): () => void {
     if (!this.sessions.has(sessionId)) {
@@ -157,20 +163,49 @@ export class SubtaskStreamManager extends EventEmitter {
     };
   }
 
-  broadcast(sessionId: string, event: SubtaskStreamEvent): void {
+  private getBuffer(sessionId: string): SessionEventBuffer {
+    let buffer = this.buffers.get(sessionId);
+    if (!buffer) {
+      buffer = new SessionEventBuffer(this.bufferSize);
+      this.buffers.set(sessionId, buffer);
+    }
+    return buffer;
+  }
+
+  broadcast(sessionId: string, event: SubtaskStreamEvent): number {
+    const serialized = JSON.stringify((event as { data?: unknown }).data ?? {});
+    const eventData = typeof serialized === "string" ? serialized : "{}";
+    const eventId = this.getBuffer(sessionId).push(event.type, eventData);
+
     const callbacks = this.sessions.get(sessionId);
-    if (!callbacks) return;
+    if (!callbacks) return eventId;
+
     for (const callback of callbacks) {
       try {
-        callback(event);
+        callback(event, eventId);
       } catch {
         // ignore subscriber failures
       }
     }
+
+    return eventId;
+  }
+
+  getBufferedEvents(sessionId: string, sinceId: number): SessionBufferedEvent[] {
+    const buffer = this.buffers.get(sessionId);
+    if (!buffer) return [];
+    return buffer.getEventsSince(sinceId);
   }
 
   cleanupSession(sessionId: string): void {
     this.sessions.delete(sessionId);
+    this.buffers.delete(sessionId);
+  }
+
+  reset(): void {
+    this.sessions.clear();
+    this.buffers.clear();
+    this.removeAllListeners();
   }
 }
 
@@ -367,7 +402,7 @@ export function __resetSubtaskBreakdownState(): void {
     }
   }
   sessions.clear();
-  subtaskStreamManager.removeAllListeners();
+  subtaskStreamManager.reset();
 }
 
 export class SessionNotFoundError extends Error {

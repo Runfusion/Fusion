@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { PlanningModeModal } from "./PlanningModeModal";
 import { TaskDetailModal } from "./TaskDetailModal";
 import type { Task, TaskDetail, PlanningQuestion, PlanningSummary, MergeResult } from "@fusion/core";
@@ -542,6 +542,55 @@ describe("PlanningModeModal", () => {
 
       expect(container.querySelector(".planning-question-form > .planning-view-scroll")).not.toBeNull();
       expect(container.querySelector(".planning-question-form > .planning-actions")).not.toBeNull();
+    });
+
+    it("shows reconnecting indicator without clearing current question state", async () => {
+      let streamHandlers: any;
+
+      mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
+        streamHandlers = handlers;
+        setTimeout(() => {
+          handlers.onQuestion?.(mockQuestion);
+        }, 10);
+
+        return {
+          close: vi.fn(),
+          isConnected: vi.fn().mockReturnValue(true),
+        };
+      });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          tasks={mockTasks}
+        />,
+      );
+
+      const textarea = screen.getByPlaceholderText(/e.g., Build a user authentication/);
+      fireEvent.change(textarea, { target: { value: "Build auth system" } });
+      fireEvent.click(screen.getByText("Start Planning"));
+
+      await waitFor(() => {
+        expect(screen.getByText("What is the scope?")).toBeDefined();
+      });
+
+      act(() => {
+        streamHandlers.onConnectionStateChange?.("reconnecting");
+      });
+
+      expect(screen.getByText("Reconnecting…")).toBeDefined();
+      expect(screen.getByText("What is the scope?")).toBeDefined();
+
+      act(() => {
+        streamHandlers.onConnectionStateChange?.("connected");
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByText("Reconnecting…")).toBeNull();
+      });
+      expect(screen.getByText("What is the scope?")).toBeDefined();
     });
 
     it("receives second question after answering first without hanging (race condition fix)", async () => {
