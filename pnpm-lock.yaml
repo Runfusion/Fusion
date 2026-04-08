@@ -334,12 +334,18 @@ importers:
 
   packages/mobile:
     dependencies:
+      '@capacitor/app':
+        specifier: ^7.1.2
+        version: 7.1.2(@capacitor/core@7.6.1)
       '@capacitor/core':
         specifier: ^7.0.0
         version: 7.6.1
       '@capacitor/push-notifications':
         specifier: ^7.0.0
         version: 7.0.6(@capacitor/core@7.6.1)
+      '@capacitor/share':
+        specifier: ^7.0.4
+        version: 7.0.4(@capacitor/core@7.6.1)
     devDependencies:
       '@capacitor/android':
         specifier: ^7.0.0

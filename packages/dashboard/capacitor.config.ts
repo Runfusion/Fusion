@@ -13,6 +13,8 @@ const config: CapacitorConfig = {
     // to the backend at the configured server url.
     url: process.env.FUSION_BACKEND_URL || undefined,
     cleartext: true, // Allow HTTP connections to local dev servers
+    iosScheme: "fusion",
+    androidScheme: "fusion",
   },
   plugins: {
     SplashScreen: {
