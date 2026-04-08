@@ -20,6 +20,18 @@
   border: 0;
 }
 
+/* === Touch Target Utility ===
+   Ensures interactive elements meet the 44px minimum touch target
+   recommended by Apple HIG and WCAG 2.5.8. Apply to interactive
+   elements that are too small on mobile (links, small buttons, icons). */
+.touch-target {
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* === Design Tokens (Theme-Agnostic Defaults) === */
 :root {
   /* Typography */
@@ -75,6 +87,12 @@
   /* Backward-compatible aliases */
   --radius: var(--radius-md);
   --shadow: var(--shadow-lg);
+
+  /* Mobile breakpoint tokens (documentation only): CSS custom properties cannot be used directly in @media query conditions. */
+  --mobile-breakpoint: 768px;
+  --tablet-breakpoint: 1024px;
+  --small-breakpoint: 480px;
+  --xsmall-breakpoint: 640px;
 }
 
 :root {
@@ -5212,12 +5230,17 @@ body {
    column gets a fixed min-width and snap-scrolling for a polished swipe feel.
    The modal also goes full-screen with reduced spacing. */
 @media (max-width: 768px) {
-  /* Mobile task-entry font sizing: prevent Safari zoom-on-focus by ensuring
-     task entry inputs are at least 16px on mobile viewports */
-  .quick-entry-input,
-  #new-task-description,
-  .inline-create-input,
-  .card-edit-desc-textarea {
+  /* Prevent iOS Safari auto-zoom on focus: all inputs must be >= 16px */
+  input[type="text"],
+  input[type="search"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="url"],
+  input[type="tel"],
+  input:not([type]),
+  select,
+  textarea {
     font-size: 16px;
   }
 
@@ -5229,6 +5252,89 @@ body {
 
   #root {
     overflow: hidden;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+
+  /* Prevent horizontal overflow from wide content */
+  * {
+    max-width: 100vw;
+  }
+
+  pre,
+  code,
+  .code-block {
+    overflow-x: auto;
+    max-width: 100%;
+    word-break: break-all;
+    word-break: break-word;
+  }
+
+  img,
+  svg {
+    max-width: 100%;
+  }
+
+  img {
+    height: auto;
+  }
+
+  table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+  }
+
+  /* Global touch target enforcement on mobile */
+  .btn:not(.btn-icon):not(.btn-badge):not(.btn-sm):not(.btn--sm) {
+    min-height: 44px;
+  }
+
+  .btn-icon {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  input[type="text"],
+  input[type="search"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="url"],
+  select,
+  textarea {
+    min-height: 44px;
+  }
+
+  .detail-tab {
+    min-height: 44px;
+  }
+
+  /* Dropdown items and overflow menu actions */
+  .dep-dropdown-item,
+  .mobile-overflow-item,
+  .mobile-overflow-split-toggle,
+  .list-column-dropdown-item {
+    min-height: 44px;
+  }
+
+  /* Small tappable controls that are explicitly sized below 44px at desktop */
+  .view-toggle-btn,
+  .header-search-clear,
+  .inline-create-toggle,
+  .quick-entry-toggle,
+  .modal-edit-btn,
+  .gm-icon-btn,
+  .activity-log-clear,
+  .terminal-tab-close,
+  .workflow-results-edit-toggle,
+  .agent-tree__toggle,
+  .quick-chat-panel-input button {
+    min-width: 44px;
+    min-height: 44px;
   }
 
   /* Board: flex layout with single horizontal scroll + snap */
@@ -5240,6 +5346,7 @@ body {
     scroll-snap-type: x mandatory;
     scroll-padding-inline: calc(50% - 140px);
     padding: var(--space-md);
+    padding-bottom: max(var(--space-md), env(safe-area-inset-bottom, 0px));
     gap: var(--space-md);
     height: 100%;
   }
@@ -5253,6 +5360,9 @@ body {
   /* Reduce header padding to reclaim horizontal space */
   .header {
     padding: var(--space-md);
+    padding-left: max(var(--space-md), env(safe-area-inset-left, 0px));
+    padding-right: max(var(--space-md), env(safe-area-inset-right, 0px));
+    padding-top: max(var(--space-md), env(safe-area-inset-top, 0px));
   }
 
   /* Hide project selector and back button on mobile (belt-and-suspenders with conditional rendering) */
@@ -5297,6 +5407,15 @@ body {
     max-height: 100dvh;
     border-radius: 0;
     border: none;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .workflow-step-manager-modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: 100vh;
+    max-height: 100dvh;
+    border-radius: 0;
   }
 
   .detail-body {

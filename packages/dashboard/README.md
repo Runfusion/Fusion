@@ -69,6 +69,20 @@ The dashboard header adapts across three responsive tiers to remain usable witho
 ### Mobile Task Entry
 Task entry inputs (the quick entry box in the Triage column and the New Task modal's description field) are sized to prevent browser zoom-on-focus on iOS Safari. On mobile viewports (≤768px), these inputs use a minimum 16px font size, which keeps the viewport stable when users focus the fields.
 
+### Mobile CSS Foundation
+The dashboard stylesheet defines a shared mobile foundation in `app/styles.css` used by all responsive features:
+
+- **Breakpoint tokens (documentation source-of-truth):**
+  - `--mobile-breakpoint: 768px`
+  - `--tablet-breakpoint: 1024px`
+  - `--small-breakpoint: 480px`
+  - `--xsmall-breakpoint: 640px`
+- **Touch target utility:** `.touch-target` enforces a minimum `44px × 44px` hit area. Apply it to compact interactive controls (icon buttons, compact links, custom menu items) that are otherwise hard to tap on mobile.
+- **Mobile interaction conventions:**
+  - Interactive controls should meet the **44px minimum touch target** on mobile.
+  - Text-entry controls (`input`, `select`, `textarea`) use **16px font-size** on mobile to prevent iOS Safari auto-zoom.
+- **Safe-area pattern (notched devices / Capacitor webview):** use `env(safe-area-inset-top|right|bottom|left, 0px)` for root/layout containers (for example `#root`, `.header`, `.modal`, `.board`) so content avoids status bars and home indicators.
+
 ### Executor Status Bar
 A persistent footer status bar at the bottom of the dashboard displays real-time executor statistics in project view. The status bar provides immediate visibility into the engine's state without opening modals or hovering over badges.
 

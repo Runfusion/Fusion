@@ -42,12 +42,10 @@ describe("mobile planning input font size CSS", () => {
       expect(mobileBlock).toContain("font-size: 16px");
     });
 
-    it("only targets planning mode textareas, not all textareas globally", () => {
-      // The selector should specifically target .planning-textarea
-      // not a global textarea selector that would affect all textareas
-      // Match bare textarea selector (not .something-textarea)
-      const globalTextareaPattern = /@media[^{]*max-width[^}]*\{[^}]*\stextarea\s*\{[^}]*font-size:\s*16px/s;
-      expect(css).not.toMatch(globalTextareaPattern);
+    it("applies 16px font-size globally to all text-entry controls on mobile", () => {
+      // Mobile foundation now enforces iOS-safe 16px sizing for all text inputs/selects/textareas.
+      const globalTextEntryPattern = /@media[^{]*max-width[^}]*\{[\s\S]*input\[type=\"text\"\][\s\S]*select,[\s\S]*textarea\s*\{[\s\S]*font-size:\s*16px/s;
+      expect(css).toMatch(globalTextEntryPattern);
     });
 
     it("planning-textarea font-size is within the mobile media query", () => {

@@ -35,30 +35,30 @@ describe("mobile input font size CSS", () => {
     );
     const afterMedia = css.slice(mediaStart);
 
-    it("contains mobile font-size override for task-entry inputs", () => {
-      // Both .quick-entry-input and #new-task-description should be targeted
-      expect(afterMedia).toContain(".quick-entry-input,");
-      expect(afterMedia).toContain("#new-task-description");
+    it("contains mobile font-size override for global text-entry controls", () => {
+      expect(afterMedia).toContain('input[type="text"],');
+      expect(afterMedia).toContain('input[type="search"],');
+      expect(afterMedia).toContain('input[type="tel"],');
+      expect(afterMedia).toContain("input:not([type]),");
+      expect(afterMedia).toContain("select,");
+      expect(afterMedia).toContain("textarea {");
       expect(afterMedia).toContain("font-size: 16px");
     });
 
-    it("task-entry font-size override is inside the mobile @media block", () => {
+    it("global text-entry font-size override is inside the mobile @media block", () => {
       expect(mediaStart).toBeGreaterThanOrEqual(0);
-      
+
       // Find the next @media after the main mobile one to scope our search
       const nextMedia = afterMedia.search(/@media/);
       const mobileBlock = nextMedia > 0 ? afterMedia.slice(0, nextMedia) : afterMedia;
-      
-      // The override should be in the first mobile block
-      expect(mobileBlock).toContain(".quick-entry-input");
+
+      expect(mobileBlock).toContain('input[type="text"],');
       expect(mobileBlock).toContain("font-size: 16px");
     });
 
-    it("only targets task-entry inputs, not all inputs globally", () => {
-      // The selector should specifically target quick-entry and new-task-description
-      // not a global input selector that would affect all inputs
-      const globalInputPattern = /@media[^{]*max-width[^}]*\{[^}]*input\s*\{[^}]*font-size:\s*16px/s;
-      expect(css).not.toMatch(globalInputPattern);
+    it("applies 16px sizing globally rather than only quick-entry fields", () => {
+      const globalInputPattern = /@media[^{]*max-width[^}]*\{[\s\S]*input\[type=\"text\"\][\s\S]*font-size:\s*16px/s;
+      expect(css).toMatch(globalInputPattern);
     });
   });
 });
