@@ -39,6 +39,9 @@
       ]
     }
   },
+  "dependencies": {
+    "electron-updater": "^6.6.0"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^3.1.0",
