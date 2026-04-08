@@ -439,6 +439,7 @@ function createMockMissionAutopilot() {
       lastActivityAt: undefined,
     }),
     checkAndStartMission: vi.fn().mockResolvedValue(undefined),
+    recoverStaleMission: vi.fn().mockResolvedValue(undefined),
     start: vi.fn(),
     stop: vi.fn(),
   };
@@ -2448,12 +2449,13 @@ describe("Mission API", () => {
   });
 
   describe("POST /api/missions/:missionId/resume", () => {
-    it("should resume a blocked mission", async () => {
-      const { app, missionStore } = buildApp();
+    it("re-watches autopilot-enabled missions on resume", async () => {
+      const missionAutopilot = createMockMissionAutopilot();
+      const { app, missionStore } = buildApp({ missionAutopilot });
       const ms = missionStore as ReturnType<typeof createMockMissionStore>;
 
       const mission = ms.createMission({ title: "Test Mission" });
-      ms.updateMission(mission.id, { status: "blocked" });
+      ms.updateMission(mission.id, { status: "blocked", autopilotEnabled: true });
 
       const res = await request(
         app,
@@ -2465,6 +2467,86 @@ describe("Mission API", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.status).toBe("active");
+      expect(missionAutopilot.watchMission).toHaveBeenCalledWith(mission.id);
+    });
+
+    it("triggers stale recovery when active slice is already complete", async () => {
+      const missionAutopilot = createMockMissionAutopilot();
+      const { app, missionStore } = buildApp({ missionAutopilot });
+      const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+      const mission = ms.createMission({ title: "Test Mission" });
+      ms.updateMission(mission.id, { status: "blocked", autopilotEnabled: true });
+
+      const milestone = ms.addMilestone(mission.id, { title: "Milestone" });
+      ms.updateMilestone(milestone.id, { status: "active" });
+
+      const activeSlice = ms.addSlice(milestone.id, { title: "Active Slice" });
+      ms.updateSlice(activeSlice.id, { status: "active" });
+      const doneFeature = ms.addFeature(activeSlice.id, { title: "Done feature" });
+      ms.updateFeature(doneFeature.id, { status: "done" });
+
+      ms.addSlice(milestone.id, { title: "Pending Slice" });
+
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/${mission.id}/resume`,
+        JSON.stringify({}),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(200);
+      expect(missionAutopilot.recoverStaleMission).toHaveBeenCalledWith(mission.id);
+    });
+
+    it("does not trigger stale recovery when active slice still has in-progress features", async () => {
+      const missionAutopilot = createMockMissionAutopilot();
+      const { app, missionStore } = buildApp({ missionAutopilot });
+      const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+      const mission = ms.createMission({ title: "Test Mission" });
+      ms.updateMission(mission.id, { status: "blocked", autopilotEnabled: true });
+
+      const milestone = ms.addMilestone(mission.id, { title: "Milestone" });
+      const activeSlice = ms.addSlice(milestone.id, { title: "Active Slice" });
+      ms.updateSlice(activeSlice.id, { status: "active" });
+      const feature = ms.addFeature(activeSlice.id, { title: "In-progress feature" });
+      ms.updateFeature(feature.id, { status: "in-progress" });
+
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/${mission.id}/resume`,
+        JSON.stringify({}),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(200);
+      expect(missionAutopilot.watchMission).toHaveBeenCalledWith(mission.id);
+      expect(missionAutopilot.recoverStaleMission).not.toHaveBeenCalled();
+    });
+
+    it("skips autopilot re-engagement when mission autopilot is disabled", async () => {
+      const missionAutopilot = createMockMissionAutopilot();
+      const { app, missionStore } = buildApp({ missionAutopilot });
+      const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+      const mission = ms.createMission({ title: "Test Mission" });
+      ms.updateMission(mission.id, { status: "blocked", autopilotEnabled: false });
+
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/${mission.id}/resume`,
+        JSON.stringify({}),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe("active");
+      expect(missionAutopilot.watchMission).not.toHaveBeenCalled();
+      expect(missionAutopilot.recoverStaleMission).not.toHaveBeenCalled();
     });
 
     it("should return 400 if mission is not blocked", async () => {

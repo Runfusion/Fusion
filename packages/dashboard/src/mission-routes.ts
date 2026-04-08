@@ -201,6 +201,7 @@ export function createMissionRouter(
     isWatching(missionId: string): boolean;
     getAutopilotStatus(missionId: string): import("@fusion/core").AutopilotStatus;
     checkAndStartMission(missionId: string): Promise<void>;
+    recoverStaleMission(missionId: string): Promise<void>;
     start(): void;
     stop(): void;
   },
@@ -1727,8 +1728,35 @@ export function createMissionRouter(
         throw badRequest("Mission is not paused (status must be 'blocked' to resume)");
       }
 
-      const updated = missionStore.updateMission(missionId, { status: "active" });
-      res.json(updated);
+      missionStore.updateMission(missionId, { status: "active" });
+
+      // Re-engage autopilot if enabled and autopilot instance is available.
+      // The autopilot may have been stopped or the mission unwatched during
+      // the pause/stop lifecycle — re-register it and trigger progression.
+      if (missionAutopilot && mission.autopilotEnabled) {
+        missionAutopilot.watchMission(missionId);
+
+        // Check whether the current active slice is already complete or
+        // there are no active slices — if so, trigger recovery which
+        // advances to the next pending slice.
+        const hierarchy = missionStore.getMissionWithHierarchy(missionId);
+        if (hierarchy) {
+          const activeSlices = hierarchy.milestones
+            .flatMap((milestone) => milestone.slices)
+            .filter((slice) => slice.status === "active");
+
+          const hasCompletedActiveSlice = activeSlices.some(
+            (slice) => slice.features.length > 0 && slice.features.every((feature) => feature.status === "done"),
+          );
+
+          if (hasCompletedActiveSlice || activeSlices.length === 0) {
+            await missionAutopilot.recoverStaleMission(missionId);
+          }
+        }
+      }
+
+      const refreshed = missionStore.getMission(missionId);
+      res.json(refreshed);
     })
   );
 

@@ -67,6 +67,7 @@ export interface ServerOptions {
     isWatching(missionId: string): boolean;
     getAutopilotStatus(missionId: string): import("@fusion/core").AutopilotStatus;
     checkAndStartMission(missionId: string): Promise<void>;
+    recoverStaleMission(missionId: string): Promise<void>;
     start(): void;
     stop(): void;
   };
