@@ -136,23 +136,19 @@ describe("main process", () => {
     expect(mocks.browserWindowInstance.loadURL).toHaveBeenCalledWith(DASHBOARD_URL);
   });
 
-  it("registerIpcHandlers registers app:get-version via handle", async () => {
-    const { registerIpcHandlers } = await importMainModule();
+  it("exports initializeApp for lifecycle orchestration", async () => {
+    const mainModule = await importMainModule();
 
-    registerIpcHandlers();
-
-    expect(mocks.ipcMain.handle).toHaveBeenCalledWith(
-      "app:get-version",
-      expect.any(Function),
-    );
+    expect(typeof mainModule.initializeApp).toBe("function");
   });
 
-  it("registerIpcHandlers registers app:quit via on", async () => {
-    const { registerIpcHandlers } = await importMainModule();
+  it("createMainWindow registers close and closed handlers", async () => {
+    const { createMainWindow } = await importMainModule();
 
-    registerIpcHandlers();
+    createMainWindow();
 
-    expect(mocks.ipcMain.on).toHaveBeenCalledWith("app:quit", expect.any(Function));
+    expect(mocks.browserWindowInstance.on).toHaveBeenCalledWith("close", expect.any(Function));
+    expect(mocks.browserWindowInstance.on).toHaveBeenCalledWith("closed", expect.any(Function));
   });
 
   it("importing main does not auto-start", async () => {
@@ -161,27 +157,9 @@ describe("main process", () => {
     expect(mocks.app.whenReady).not.toHaveBeenCalled();
   });
 
-  it("setupTray configures tray interactions with provided tray instance", async () => {
-    const { setupTray } = await importMainModule();
+  it("exports run for app entrypoint wiring", async () => {
+    const mainModule = await importMainModule();
 
-    setupTray(mocks.browserWindowInstance as never, mocks.trayInstance as never);
-
-    expect(mocks.nativeImage.createFromPath).toHaveBeenCalledTimes(1);
-    expect(mocks.trayInstance.setImage).toHaveBeenCalledTimes(1);
-    expect(mocks.trayInstance.setToolTip).toHaveBeenCalledWith("Fusion — Running");
-    expect(mocks.Menu.buildFromTemplate).toHaveBeenCalledTimes(1);
-
-    const closeCall = mocks.browserWindowInstance.on.mock.calls.find(
-      (call) => call[0] === "close",
-    );
-    expect(closeCall).toBeDefined();
-
-    const closeHandler = closeCall?.[1] as (event: { preventDefault: () => void }) => void;
-    const event = { preventDefault: vi.fn() };
-
-    closeHandler(event);
-
-    expect(event.preventDefault).toHaveBeenCalledTimes(1);
-    expect(mocks.browserWindowInstance.hide).toHaveBeenCalledTimes(1);
+    expect(typeof mainModule.run).toBe("function");
   });
 });

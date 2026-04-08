@@ -1,66 +1,42 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { ElectronAPI, ElectronApiResponsePayload, WindowControlAction } from "./renderer/types";
+import type { DeepLinkResult, FusionAPI, SystemInfo, UpdateCheckResult } from "./types";
 
-export interface FusionDesktopAPI {
-  getAppVersion(): Promise<string>;
-  quit(): void;
-  onDashboardReady(callback: () => void): () => void;
-}
+export type FusionDesktopAPI = FusionAPI;
 
-const fusionDesktop: FusionDesktopAPI = {
-  getAppVersion(): Promise<string> {
-    return ipcRenderer.invoke("app:get-version");
-  },
-  quit(): void {
-    ipcRenderer.send("app:quit");
-  },
-  onDashboardReady(callback: () => void): () => void {
-    const listener = () => callback();
-    ipcRenderer.on("dashboard:ready", listener);
-    return () => {
-      ipcRenderer.removeListener("dashboard:ready", listener);
-    };
-  },
-};
+contextBridge.exposeInMainWorld("fusionAPI", {
+  // Window control
+  minimize: (): Promise<void> => ipcRenderer.invoke("window:minimize"),
+  maximize: (): Promise<boolean> => ipcRenderer.invoke("window:maximize"),
+  close: (): Promise<void> => ipcRenderer.invoke("window:close"),
+  isMaximized: (): Promise<boolean> => ipcRenderer.invoke("window:isMaximized"),
 
-const electronAPI: ElectronAPI = {
-  invoke(channel: string, payload?: unknown): Promise<unknown> {
-    return ipcRenderer.invoke(channel, payload);
-  },
-  apiRequest(method: string, path: string, body?: unknown): Promise<ElectronApiResponsePayload> {
-    return ipcRenderer.invoke("api-request", { method, path, body });
-  },
-  getServerPort(): Promise<number> {
-    return ipcRenderer.invoke("server:get-port");
-  },
-  windowControl(action: WindowControlAction): Promise<boolean | void> {
-    return ipcRenderer.invoke("window:control", action);
-  },
-  onUpdateAvailable(callback: (info: Record<string, unknown>) => void): () => void {
-    const listener = (_event: unknown, info: Record<string, unknown>) => {
-      callback(info);
-    };
-    ipcRenderer.on("update:available", listener);
-    return () => {
-      ipcRenderer.removeListener("update:available", listener);
-    };
-  },
-  installUpdate(): Promise<void> {
-    return ipcRenderer.invoke("update:install");
-  },
-  onDeepLink(callback: (url: string) => void): () => void {
-    const listener = (_event: unknown, url: string) => {
-      callback(url);
-    };
-    ipcRenderer.on("deep-link", listener);
-    return () => {
-      ipcRenderer.removeListener("deep-link", listener);
-    };
-  },
-  getPlatform() {
-    return ipcRenderer.invoke("system:get-platform");
-  },
-};
+  // App info
+  getSystemInfo: (): Promise<SystemInfo> => ipcRenderer.invoke("app:getSystemInfo"),
+  checkForUpdates: (): Promise<UpdateCheckResult> => ipcRenderer.invoke("app:checkForUpdates"),
 
-contextBridge.exposeInMainWorld("fusionDesktop", fusionDesktop);
-contextBridge.exposeInMainWorld("electronAPI", electronAPI);
+  // Tray status
+  updateTrayStatus: (status: string): Promise<void> => ipcRenderer.invoke("tray:updateStatus", status),
+
+  // Native dialogs
+  showExportDialog: (): Promise<string | null> => ipcRenderer.invoke("native:showExportDialog"),
+  showImportDialog: (): Promise<string | null> => ipcRenderer.invoke("native:showImportDialog"),
+
+  // Deep link events (main → renderer)
+  onDeepLink: (callback: (result: DeepLinkResult) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, result: DeepLinkResult) => callback(result);
+    ipcRenderer.on("deep-link", handler);
+    return () => ipcRenderer.removeListener("deep-link", handler);
+  },
+
+  // Auto-updater events (main → renderer)
+  onUpdateAvailable: (callback: (info: { version: string }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, info: { version: string }) => callback(info);
+    ipcRenderer.on("update-available", handler);
+    return () => ipcRenderer.removeListener("update-available", handler);
+  },
+  onUpdateDownloaded: (callback: () => void): (() => void) => {
+    const handler = () => callback();
+    ipcRenderer.on("update-downloaded", handler);
+    return () => ipcRenderer.removeListener("update-downloaded", handler);
+  },
+});

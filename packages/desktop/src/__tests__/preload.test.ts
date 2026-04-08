@@ -7,7 +7,6 @@ const mocks = vi.hoisted(() => {
 
   const ipcRenderer = {
     invoke: vi.fn(),
-    send: vi.fn(),
     on: vi.fn(),
     removeListener: vi.fn(),
   };
@@ -24,30 +23,22 @@ async function importPreloadModule() {
   await import("../preload.ts");
 }
 
-function getExposedFusionDesktopApi() {
+function getFusionApi() {
   const call = mocks.contextBridge.exposeInMainWorld.mock.calls.find(
-    (entry) => entry[0] === "fusionDesktop",
+    ([name]) => name === "fusionAPI",
   ) as [string, {
-    getAppVersion: () => Promise<string>;
-    quit: () => void;
-    onDashboardReady: (callback: () => void) => () => void;
-  }] | undefined;
-
-  return call?.[1];
-}
-
-function getExposedElectronApi() {
-  const call = mocks.contextBridge.exposeInMainWorld.mock.calls.find(
-    (entry) => entry[0] === "electronAPI",
-  ) as [string, {
-    invoke: (channel: string, payload?: unknown) => Promise<unknown>;
-    apiRequest: (method: string, path: string, body?: unknown) => Promise<unknown>;
-    getServerPort: () => Promise<number>;
-    windowControl: (action: string) => Promise<boolean | void>;
-    onUpdateAvailable: (callback: (info: Record<string, unknown>) => void) => () => void;
-    installUpdate: () => Promise<void>;
-    onDeepLink: (callback: (url: string) => void) => () => void;
-    getPlatform: () => Promise<string>;
+    minimize: () => Promise<void>;
+    maximize: () => Promise<boolean>;
+    close: () => Promise<void>;
+    isMaximized: () => Promise<boolean>;
+    getSystemInfo: () => Promise<unknown>;
+    checkForUpdates: () => Promise<unknown>;
+    updateTrayStatus: (status: string) => Promise<void>;
+    showExportDialog: () => Promise<string | null>;
+    showImportDialog: () => Promise<string | null>;
+    onDeepLink: (callback: (result: unknown) => void) => () => void;
+    onUpdateAvailable: (callback: (info: { version: string }) => void) => () => void;
+    onUpdateDownloaded: (callback: () => void) => () => void;
   }] | undefined;
 
   return call?.[1];
@@ -59,96 +50,144 @@ describe("preload", () => {
     vi.resetModules();
   });
 
-  it("exposes fusionDesktop and electronAPI", async () => {
+  it("contextBridge.exposeInMainWorld is called with fusionAPI", async () => {
     await importPreloadModule();
 
     expect(mocks.contextBridge.exposeInMainWorld).toHaveBeenCalledWith(
-      "fusionDesktop",
-      expect.any(Object),
-    );
-    expect(mocks.contextBridge.exposeInMainWorld).toHaveBeenCalledWith(
-      "electronAPI",
+      "fusionAPI",
       expect.any(Object),
     );
   });
 
-  it("fusionDesktop.getAppVersion calls ipcRenderer.invoke", async () => {
-    mocks.ipcRenderer.invoke.mockResolvedValue("0.1.0");
+  it("minimize invokes window:minimize", async () => {
     await importPreloadModule();
 
-    const api = getExposedFusionDesktopApi();
-    const version = await api?.getAppVersion();
+    const api = getFusionApi();
+    await api?.minimize();
 
-    expect(version).toBe("0.1.0");
-    expect(mocks.ipcRenderer.invoke).toHaveBeenCalledWith("app:get-version");
+    expect(mocks.ipcRenderer.invoke).toHaveBeenCalledWith("window:minimize");
   });
 
-  it("fusionDesktop.quit calls ipcRenderer.send", async () => {
+  it("maximize invokes window:maximize", async () => {
     await importPreloadModule();
 
-    const api = getExposedFusionDesktopApi();
-    api?.quit();
+    const api = getFusionApi();
+    await api?.maximize();
 
-    expect(mocks.ipcRenderer.send).toHaveBeenCalledWith("app:quit");
+    expect(mocks.ipcRenderer.invoke).toHaveBeenCalledWith("window:maximize");
   });
 
-  it("fusionDesktop.onDashboardReady returns unsubscribe function", async () => {
+  it("close invokes window:close", async () => {
     await importPreloadModule();
 
-    const api = getExposedFusionDesktopApi();
+    const api = getFusionApi();
+    await api?.close();
+
+    expect(mocks.ipcRenderer.invoke).toHaveBeenCalledWith("window:close");
+  });
+
+  it("isMaximized invokes window:isMaximized", async () => {
+    await importPreloadModule();
+
+    const api = getFusionApi();
+    await api?.isMaximized();
+
+    expect(mocks.ipcRenderer.invoke).toHaveBeenCalledWith("window:isMaximized");
+  });
+
+  it("getSystemInfo invokes app:getSystemInfo", async () => {
+    await importPreloadModule();
+
+    const api = getFusionApi();
+    await api?.getSystemInfo();
+
+    expect(mocks.ipcRenderer.invoke).toHaveBeenCalledWith("app:getSystemInfo");
+  });
+
+  it("checkForUpdates invokes app:checkForUpdates", async () => {
+    await importPreloadModule();
+
+    const api = getFusionApi();
+    await api?.checkForUpdates();
+
+    expect(mocks.ipcRenderer.invoke).toHaveBeenCalledWith("app:checkForUpdates");
+  });
+
+  it("updateTrayStatus invokes tray:updateStatus with status argument", async () => {
+    await importPreloadModule();
+
+    const api = getFusionApi();
+    await api?.updateTrayStatus("paused");
+
+    expect(mocks.ipcRenderer.invoke).toHaveBeenCalledWith("tray:updateStatus", "paused");
+  });
+
+  it("showExportDialog invokes native:showExportDialog", async () => {
+    await importPreloadModule();
+
+    const api = getFusionApi();
+    await api?.showExportDialog();
+
+    expect(mocks.ipcRenderer.invoke).toHaveBeenCalledWith("native:showExportDialog");
+  });
+
+  it("showImportDialog invokes native:showImportDialog", async () => {
+    await importPreloadModule();
+
+    const api = getFusionApi();
+    await api?.showImportDialog();
+
+    expect(mocks.ipcRenderer.invoke).toHaveBeenCalledWith("native:showImportDialog");
+  });
+
+  it("onDeepLink subscribes to deep-link and returns unsubscribe", async () => {
+    await importPreloadModule();
+
+    const api = getFusionApi();
     const callback = vi.fn();
-    const unsubscribe = api?.onDashboardReady(callback);
+    const unsubscribe = api?.onDeepLink(callback);
 
-    expect(mocks.ipcRenderer.on).toHaveBeenCalledWith(
-      "dashboard:ready",
-      expect.any(Function),
-    );
-    expect(typeof unsubscribe).toBe("function");
+    expect(mocks.ipcRenderer.on).toHaveBeenCalledWith("deep-link", expect.any(Function));
 
     unsubscribe?.();
 
     expect(mocks.ipcRenderer.removeListener).toHaveBeenCalledWith(
-      "dashboard:ready",
+      "deep-link",
       expect.any(Function),
     );
   });
 
-  it("electronAPI methods invoke expected IPC channels", async () => {
+  it("onUpdateAvailable subscribes to update-available and returns unsubscribe", async () => {
     await importPreloadModule();
 
-    const api = getExposedElectronApi();
-    await api?.invoke("api-request", { method: "GET", path: "/tasks" });
-    await api?.apiRequest("POST", "/tasks", { title: "Task" });
-    await api?.getServerPort();
-    await api?.windowControl("maximize");
-    await api?.installUpdate();
-    await api?.getPlatform();
+    const api = getFusionApi();
+    const callback = vi.fn();
+    const unsubscribe = api?.onUpdateAvailable(callback);
 
-    expect(mocks.ipcRenderer.invoke).toHaveBeenCalledWith("api-request", { method: "GET", path: "/tasks" });
-    expect(mocks.ipcRenderer.invoke).toHaveBeenCalledWith("api-request", { method: "POST", path: "/tasks", body: { title: "Task" } });
-    expect(mocks.ipcRenderer.invoke).toHaveBeenCalledWith("server:get-port");
-    expect(mocks.ipcRenderer.invoke).toHaveBeenCalledWith("window:control", "maximize");
-    expect(mocks.ipcRenderer.invoke).toHaveBeenCalledWith("update:install");
-    expect(mocks.ipcRenderer.invoke).toHaveBeenCalledWith("system:get-platform");
+    expect(mocks.ipcRenderer.on).toHaveBeenCalledWith("update-available", expect.any(Function));
+
+    unsubscribe?.();
+
+    expect(mocks.ipcRenderer.removeListener).toHaveBeenCalledWith(
+      "update-available",
+      expect.any(Function),
+    );
   });
 
-  it("electronAPI event subscriptions provide unsubscribe functions", async () => {
+  it("onUpdateDownloaded subscribes to update-downloaded and returns unsubscribe", async () => {
     await importPreloadModule();
 
-    const api = getExposedElectronApi();
-    const onUpdate = vi.fn();
-    const onDeepLink = vi.fn();
+    const api = getFusionApi();
+    const callback = vi.fn();
+    const unsubscribe = api?.onUpdateDownloaded(callback);
 
-    const unsubscribeUpdate = api?.onUpdateAvailable(onUpdate);
-    const unsubscribeDeepLink = api?.onDeepLink(onDeepLink);
+    expect(mocks.ipcRenderer.on).toHaveBeenCalledWith("update-downloaded", expect.any(Function));
 
-    expect(mocks.ipcRenderer.on).toHaveBeenCalledWith("update:available", expect.any(Function));
-    expect(mocks.ipcRenderer.on).toHaveBeenCalledWith("deep-link", expect.any(Function));
+    unsubscribe?.();
 
-    unsubscribeUpdate?.();
-    unsubscribeDeepLink?.();
-
-    expect(mocks.ipcRenderer.removeListener).toHaveBeenCalledWith("update:available", expect.any(Function));
-    expect(mocks.ipcRenderer.removeListener).toHaveBeenCalledWith("deep-link", expect.any(Function));
+    expect(mocks.ipcRenderer.removeListener).toHaveBeenCalledWith(
+      "update-downloaded",
+      expect.any(Function),
+    );
   });
 });

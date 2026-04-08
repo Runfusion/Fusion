@@ -18,6 +18,94 @@ Then, in another terminal, start the desktop app:
 pnpm --filter @fusion/desktop dev
 ```
 
+## IPC Channel Reference
+
+`src/ipc.ts` registers the renderer ↔ main process bridge used by `window.fusionAPI`.
+
+### Renderer → Main (`ipcRenderer.invoke`)
+
+| Channel | Direction | Parameters | Returns |
+|---|---|---|---|
+| `window:minimize` | renderer → main | none | `Promise<void>` |
+| `window:maximize` | renderer → main | none | `Promise<boolean>` (new maximized state) |
+| `window:close` | renderer → main | none | `Promise<void>` |
+| `window:isMaximized` | renderer → main | none | `Promise<boolean>` |
+| `app:getSystemInfo` | renderer → main | none | `Promise<{ platform; arch; electronVersion; nodeVersion; appVersion; }>` |
+| `app:checkForUpdates` | renderer → main | none | `Promise<{ status: "checking" } \| { status: "error"; error: string }>` |
+| `tray:updateStatus` | renderer → main | `status: "running" \| "paused" \| "stopped"` | `Promise<void>` |
+| `native:showExportDialog` | renderer → main | none | `Promise<string \| null>` |
+| `native:showImportDialog` | renderer → main | none | `Promise<string \| null>` |
+
+### Main → Renderer Events (`ipcRenderer.on`)
+
+| Channel | Direction | Payload |
+|---|---|---|
+| `deep-link` | main → renderer | `DeepLinkResult` (`{ type, id, raw }`) |
+| `update-available` | main → renderer | update info object (includes `version`) |
+| `update-downloaded` | main → renderer | no payload is currently forwarded by preload |
+
+## Main Process Lifecycle
+
+`src/main.ts` orchestrates module startup in this order:
+
+1. `loadWindowState()`
+2. `createMainWindow(state)`
+3. `buildAppMenu({ mainWindow, appName: "Fusion" })`
+4. `setupTray(mainWindow, tray)`
+5. `registerIpcHandlers(mainWindow, tray)`
+6. `registerDeepLinkProtocol()`
+7. `setupDeepLinkHandler(mainWindow)`
+8. `setupAutoUpdater(mainWindow)`
+9. `mainWindow.maximize()` when restored state was maximized
+
+### Window state and close-to-tray behavior
+
+- Startup restores width/height from persisted state (fallback: `DEFAULT_WINDOW_STATE`).
+- Position (`x`, `y`) is restored only when both values are present.
+- On window close:
+  - state is saved via `saveWindowState(mainWindow)`
+  - if app is **not quitting**, close is prevented and the window hides to tray
+  - if app **is quitting**, close proceeds normally
+
+### Quit cleanup
+
+- `before-quit` sets `app.isQuitting = true`
+- Tray instance is destroyed (`tray.destroy()`)
+- `mainWindow` is nulled on `closed` for clean re-creation on macOS `activate`
+
+## Preload API (`window.fusionAPI`)
+
+`src/preload.ts` exposes a safe, context-isolated bridge:
+
+- Window control: `minimize()`, `maximize()`, `close()`, `isMaximized()`
+- App/system: `getSystemInfo()`, `checkForUpdates()`
+- Tray: `updateTrayStatus(status)`
+- Native dialogs: `showExportDialog()`, `showImportDialog()`
+- Event subscriptions (return unsubscribe functions):
+  - `onDeepLink(callback)`
+  - `onUpdateAvailable(callback)`
+  - `onUpdateDownloaded(callback)`
+
+All preload typings are declared in `src/types.d.ts` (`FusionAPI`, `SystemInfo`, `UpdateCheckResult`, `DeepLinkResult`).
+
+## Module Integration Overview
+
+```text
+renderer (window.fusionAPI)
+        │
+        ▼
+   preload.ts (contextBridge)
+        │
+        ▼
+     ipc.ts handlers ───────────► native.ts (dialogs, updater, window state)
+        │
+        ├────────────────────────► tray.ts (status + tray menu wiring)
+        │
+        └────────────────────────► main.ts lifecycle orchestration
+                                      ├─ menu.ts (application menu)
+                                      └─ deep-link.ts (fusion:// protocol + routing)
+```
+
 ## System Tray
 
 - Left-clicking the tray icon toggles the main window visibility.

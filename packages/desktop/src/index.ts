@@ -1,15 +1,9 @@
-export {
-  createMainWindow,
-  setupTray,
-  updateTrayStatus,
-  registerIpcHandlers,
-  DASHBOARD_URL,
-  run,
-} from "./main.js";
+export { DASHBOARD_URL, createMainWindow, initializeApp, run } from "./main.js";
+export { registerIpcHandlers } from "./ipc.js";
 
-export { createTrayIcon, buildTrayContextMenu, getTrayTooltip } from "./tray.js";
-export { buildMenuTemplate, buildAppMenu } from "./menu.js";
+export * from "./tray.js";
+export * from "./menu.js";
+export * from "./native.js";
+export * from "./deep-link.js";
 
-export type { EngineStatus, TrayMenuOptions } from "./tray.js";
-export type { AppMenuOptions } from "./menu.js";
-export type { FusionDesktopAPI } from "./preload.js";
+export type { FusionAPI, SystemInfo, UpdateCheckResult } from "./types";
