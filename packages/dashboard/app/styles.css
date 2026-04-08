@@ -4700,6 +4700,10 @@ body {
   gap: var(--space-md);
 }
 
+.modal-edit-form .form-group textarea {
+  min-height: 160px;
+}
+
 .modal-edit-input {
   width: 100%;
   padding: var(--space-sm) var(--space-md);
@@ -5133,8 +5137,81 @@ body {
 }
 
 /* NewTaskModal description with refine button */
+.description-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.description-auto-save-status {
+  font-size: 11px;
+  color: var(--color-success);
+  opacity: 0;
+  text-transform: none;
+  letter-spacing: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.description-auto-save-status.is-visible {
+  opacity: 1;
+}
+
 .description-with-refine {
   position: relative;
+}
+
+.description-expand-btn {
+  position: absolute;
+  top: 8px;
+  right: 40px;
+}
+
+.description-fullscreen-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.description--fullscreen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10000;
+  background: var(--surface);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+}
+
+.description--fullscreen textarea {
+  flex: 1;
+  padding-right: 70px;
+  min-height: unset;
+  resize: none;
+  border-radius: var(--radius-md);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.description--fullscreen .refine-button {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  z-index: 10001;
+}
+
+.description--fullscreen .description-expand-btn {
+  position: fixed;
+  top: 8px;
+  right: 40px;
+  z-index: 10001;
 }
 
 /* AI-assisted description actions — sits directly below description in TaskForm */

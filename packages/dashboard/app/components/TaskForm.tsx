@@ -4,7 +4,7 @@ import type { ToastType } from "../hooks/useToast";
 import { fetchModels, fetchSettings, fetchWorkflowSteps, refineText, getRefineErrorMessage, updateGlobalSettings, type RefinementType, type ModelInfo } from "../api";
 import { applyPresetToSelection, getRecommendedPresetForSize } from "../utils/modelPresets";
 import { CustomModelDropdown } from "./CustomModelDropdown";
-import { Sparkles, ChevronUp, ChevronDown, X } from "lucide-react";
+import { Sparkles, ChevronUp, ChevronDown, X, Maximize2, Minimize2 } from "lucide-react";
 
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 
@@ -57,6 +57,9 @@ export interface TaskFormProps {
   addToast: (message: string, type?: ToastType) => void;
   isActive?: boolean;
 
+  // Auto-save callback (edit mode)
+  onAutoSaveDescription?: (description: string) => Promise<void>;
+
   // AI-assisted creation callbacks (create mode only)
   onPlanningMode?: (initialPlan: string) => void;
   onSubtaskBreakdown?: (description: string) => void;
@@ -93,6 +96,7 @@ export function TaskForm({
   disabled = false,
   addToast,
   isActive = true,
+  onAutoSaveDescription,
   onPlanningMode,
   onSubtaskBreakdown,
   onClose,
@@ -105,16 +109,23 @@ export function TaskForm({
   const [modelsLoading, setModelsLoading] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([]);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
 
   // AI Refinement state
   const [isRefineMenuOpen, setIsRefineMenuOpen] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
   const refineMenuRef = useRef<HTMLDivElement>(null);
 
   const depDropdownRef = useRef<HTMLDivElement>(null);
   const descTextareaRef = useRef<HTMLTextAreaElement>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const autoSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSaveStatusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isAutoSavingRef = useRef(false);
+  const initialDescriptionRef = useRef(description.trim());
+  const lastAutoSavedDescriptionRef = useRef(description.trim());
 
   // Load available models, settings, workflow steps when active
   useEffect(() => {
@@ -201,6 +212,92 @@ export function TaskForm({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [showDepDropdown]);
 
+  // Exit description fullscreen mode when edit controls are unavailable
+  useEffect(() => {
+    if (mode !== "edit" || disabled) {
+      setIsDescriptionExpanded(false);
+    }
+  }, [mode, disabled]);
+
+  // Reset auto-save tracking when entering edit mode
+  useEffect(() => {
+    if (mode !== "edit") {
+      setAutoSaveStatus("idle");
+      return;
+    }
+    const trimmed = description.trim();
+    initialDescriptionRef.current = trimmed;
+    lastAutoSavedDescriptionRef.current = trimmed;
+    setAutoSaveStatus("idle");
+  }, [mode]);
+
+  // Debounced auto-save for edit mode description changes
+  useEffect(() => {
+    if (mode !== "edit" || !onAutoSaveDescription || !isActive) return;
+
+    const trimmedDescription = description.trim();
+    const initialDescription = initialDescriptionRef.current;
+
+    if (trimmedDescription === initialDescription || trimmedDescription === lastAutoSavedDescriptionRef.current) {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+        autoSaveTimeoutRef.current = null;
+      }
+      if (!isAutoSavingRef.current) {
+        setAutoSaveStatus("idle");
+      }
+      return;
+    }
+
+    if (autoSaveTimeoutRef.current) {
+      clearTimeout(autoSaveTimeoutRef.current);
+    }
+
+    autoSaveTimeoutRef.current = setTimeout(async () => {
+      if (isAutoSavingRef.current) return;
+
+      isAutoSavingRef.current = true;
+      setAutoSaveStatus("saving");
+
+      try {
+        await onAutoSaveDescription(trimmedDescription);
+        lastAutoSavedDescriptionRef.current = trimmedDescription;
+        setAutoSaveStatus("saved");
+
+        if (autoSaveStatusTimeoutRef.current) {
+          clearTimeout(autoSaveStatusTimeoutRef.current);
+        }
+        autoSaveStatusTimeoutRef.current = setTimeout(() => {
+          setAutoSaveStatus("idle");
+          autoSaveStatusTimeoutRef.current = null;
+        }, 2000);
+      } catch {
+        setAutoSaveStatus("idle");
+      } finally {
+        isAutoSavingRef.current = false;
+        autoSaveTimeoutRef.current = null;
+      }
+    }, 1500);
+
+    return () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+        autoSaveTimeoutRef.current = null;
+      }
+    };
+  }, [mode, description, onAutoSaveDescription, isActive]);
+
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+      }
+      if (autoSaveStatusTimeoutRef.current) {
+        clearTimeout(autoSaveStatusTimeoutRef.current);
+      }
+    };
+  }, []);
+
   // Close refine menu when clicking outside
   useEffect(() => {
     if (!isRefineMenuOpen) return;
@@ -271,6 +368,17 @@ export function TaskForm({
     el.style.height = "auto";
     el.style.height = el.scrollHeight + "px";
   }, [onDescriptionChange]);
+
+  const handleToggleDescriptionExpand = useCallback(() => {
+    setIsDescriptionExpanded((prev) => !prev);
+  }, []);
+
+  const handleDescriptionFullscreenKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!isDescriptionExpanded || e.key !== "Escape") return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDescriptionExpanded(false);
+  }, [isDescriptionExpanded]);
 
   // AI Refinement handler
   const handleRefine = useCallback(async (type: RefinementType) => {
@@ -396,17 +504,54 @@ export function TaskForm({
 
       {/* Description field */}
       <div className="form-group">
-        <label htmlFor="task-form-description">Description</label>
-        <div className="description-with-refine" ref={refineMenuRef}>
+        <label htmlFor="task-form-description" className="description-label-row">
+          <span>Description</span>
+          <span
+            className={`description-auto-save-status${autoSaveStatus === "idle" ? "" : " is-visible"}`}
+            aria-live="polite"
+          >
+            {autoSaveStatus === "saving" ? "Saving..." : autoSaveStatus === "saved" ? "Saved" : ""}
+          </span>
+        </label>
+        <div
+          className={`description-with-refine${isDescriptionExpanded ? " description--fullscreen" : ""}`}
+          ref={refineMenuRef}
+          onKeyDown={handleDescriptionFullscreenKeyDown}
+        >
+          {isDescriptionExpanded && (
+            <div className="description-fullscreen-header">
+              <span>Editing Description</span>
+              <button
+                type="button"
+                className="btn btn-sm description-expand-btn"
+                onClick={handleToggleDescriptionExpand}
+                aria-label="Collapse description"
+                title="Collapse description"
+              >
+                <Minimize2 size={14} />
+              </button>
+            </div>
+          )}
           <textarea
             ref={descTextareaRef}
             id="task-form-description"
             value={description}
             onChange={handleDescriptionInput}
             placeholder="What needs to be done?"
-            rows={3}
+            rows={mode === "edit" ? 8 : 3}
             disabled={disabled || isRefining}
           />
+          {mode === "edit" && !disabled && !isDescriptionExpanded && (
+            <button
+              type="button"
+              className="btn btn-sm description-expand-btn"
+              onClick={handleToggleDescriptionExpand}
+              aria-label="Expand description"
+              title="Expand description"
+            >
+              <Maximize2 size={14} />
+            </button>
+          )}
           {description.trim() && !disabled && (
             <button
               type="button"

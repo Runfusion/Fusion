@@ -440,6 +440,15 @@ export function TaskDetailModal({
     }
   }, [task.id, editTitle, editDescription, editDependencies, editExecutorModel, editValidatorModel, editPlanningModel, editSelectedWorkflowSteps, editPendingImages, addToast, projectId]);
 
+  const handleAutoSaveDescription = useCallback(async (description: string) => {
+    try {
+      await updateTask(task.id, { description }, projectId);
+      addToast("Description saved", "success");
+    } catch (err: any) {
+      addToast(`Failed to save: ${err.message}`, "error");
+    }
+  }, [task.id, addToast, projectId]);
+
   // Handle keyboard shortcuts for edit mode
   const handleEditKeyDown = useCallback((e: KeyboardEvent) => {
     if (!isEditing) return;
@@ -924,6 +933,7 @@ export function TaskDetailModal({
                 disabled={isSaving}
                 addToast={addToast}
                 isActive={isEditing}
+                onAutoSaveDescription={handleAutoSaveDescription}
               />
             </div>
           ) : (

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { useState } from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { TaskForm } from "../TaskForm";
 import type { Task, Column } from "@fusion/core";
@@ -9,6 +10,8 @@ vi.mock("lucide-react", () => ({
   ChevronUp: () => null,
   ChevronDown: () => null,
   X: () => null,
+  Maximize2: () => null,
+  Minimize2: () => null,
 }));
 
 // Mock the api module
@@ -72,6 +75,48 @@ function renderTaskForm(props: Partial<React.ComponentProps<typeof TaskForm>> = 
   return { ...result, props: mergedProps };
 }
 
+function renderTaskFormWithDescriptionState(props: Partial<React.ComponentProps<typeof TaskForm>> = {}) {
+  const defaultProps: React.ComponentProps<typeof TaskForm> = {
+    mode: "edit",
+    title: "Task",
+    onTitleChange: vi.fn(),
+    description: "",
+    onDescriptionChange: vi.fn(),
+    dependencies: [],
+    onDependenciesChange: vi.fn(),
+    executorModel: "",
+    onExecutorModelChange: vi.fn(),
+    validatorModel: "",
+    onValidatorModelChange: vi.fn(),
+    presetMode: "default",
+    onPresetModeChange: vi.fn(),
+    selectedPresetId: "",
+    onSelectedPresetIdChange: vi.fn(),
+    selectedWorkflowSteps: [],
+    onWorkflowStepsChange: vi.fn(),
+    pendingImages: [],
+    onImagesChange: vi.fn(),
+    tasks: [],
+    addToast: vi.fn(),
+    isActive: true,
+  };
+
+  const mergedProps = { ...defaultProps, ...props };
+
+  function ControlledTaskForm() {
+    const [description, setDescription] = useState(mergedProps.description);
+    return (
+      <TaskForm
+        {...mergedProps}
+        description={description}
+        onDescriptionChange={setDescription}
+      />
+    );
+  }
+
+  return render(<ControlledTaskForm />);
+}
+
 // Mock URL.createObjectURL / revokeObjectURL
 globalThis.URL.createObjectURL = vi.fn(() => "blob:mock-url");
 globalThis.URL.revokeObjectURL = vi.fn();
@@ -84,14 +129,14 @@ describe("TaskForm", () => {
   it("renders description field with AI refine button when text is present", () => {
     renderTaskForm({ description: "Some text" });
 
-    expect(screen.getByLabelText(/Description/i)).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: /Description/i })).toBeTruthy();
     expect(screen.getByTestId("refine-button")).toBeTruthy();
   });
 
   it("does not show refine button when description is empty", () => {
     renderTaskForm({ description: "" });
 
-    expect(screen.getByLabelText(/Description/i)).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: /Description/i })).toBeTruthy();
     expect(screen.queryByTestId("refine-button")).toBeNull();
   });
 
@@ -163,6 +208,156 @@ describe("TaskForm", () => {
     expect(screen.queryByRole("button", { name: "Plan" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Subtask" })).toBeNull();
     expect(screen.getByLabelText(/Title/i)).toBeTruthy();
+  });
+
+  it("renders description expand button in edit mode and toggles fullscreen", () => {
+    const { container } = renderTaskForm({
+      mode: "edit",
+      title: "My task",
+      onTitleChange: vi.fn(),
+      description: "Long task description",
+    });
+
+    const expandButton = screen.getByRole("button", { name: "Expand description" });
+    expect(expandButton).toBeTruthy();
+
+    fireEvent.click(expandButton);
+    expect(container.querySelector(".description-with-refine.description--fullscreen")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Collapse description" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Collapse description" }));
+    expect(container.querySelector(".description-with-refine.description--fullscreen")).toBeNull();
+  });
+
+  it("collapses fullscreen description editor on Escape", () => {
+    const { container } = renderTaskForm({
+      mode: "edit",
+      title: "My task",
+      onTitleChange: vi.fn(),
+      description: "Long task description",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand description" }));
+    const textarea = screen.getByRole("textbox", { name: /Description/i });
+    fireEvent.keyDown(textarea, { key: "Escape" });
+
+    expect(container.querySelector(".description-with-refine.description--fullscreen")).toBeNull();
+  });
+
+  it("uses 8 rows for description textarea in edit mode", () => {
+    renderTaskForm({
+      mode: "edit",
+      title: "My task",
+      onTitleChange: vi.fn(),
+      description: "Edit mode description",
+    });
+
+    const textarea = screen.getByRole("textbox", { name: /Description/i }) as HTMLTextAreaElement;
+    expect(textarea.getAttribute("rows")).toBe("8");
+  });
+
+  it("debounces auto-save in edit mode and calls onAutoSaveDescription after 1.5s", async () => {
+    vi.useFakeTimers();
+    try {
+      const onAutoSaveDescription = vi.fn().mockResolvedValue(undefined);
+
+      renderTaskFormWithDescriptionState({
+        mode: "edit",
+        title: "My task",
+        onTitleChange: vi.fn(),
+        description: "Initial description",
+        onAutoSaveDescription,
+      });
+
+      fireEvent.change(screen.getByRole("textbox", { name: /Description/i }), {
+        target: { value: "Updated description" },
+      });
+
+      vi.advanceTimersByTime(1499);
+      expect(onAutoSaveDescription).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(1);
+      await vi.runOnlyPendingTimersAsync();
+      expect(onAutoSaveDescription).toHaveBeenCalledWith("Updated description");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not auto-save in create mode", () => {
+    vi.useFakeTimers();
+    try {
+      const onAutoSaveDescription = vi.fn().mockResolvedValue(undefined);
+
+      renderTaskFormWithDescriptionState({
+        mode: "create",
+        description: "",
+        onAutoSaveDescription,
+      });
+
+      fireEvent.change(screen.getByRole("textbox", { name: /Description/i }), {
+        target: { value: "Create mode text" },
+      });
+
+      vi.advanceTimersByTime(1600);
+      expect(onAutoSaveDescription).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not auto-save when onAutoSaveDescription is not provided", () => {
+    vi.useFakeTimers();
+    try {
+      renderTaskFormWithDescriptionState({
+        mode: "edit",
+        title: "My task",
+        onTitleChange: vi.fn(),
+        description: "Initial",
+        onAutoSaveDescription: undefined,
+      });
+
+      fireEvent.change(screen.getByRole("textbox", { name: /Description/i }), {
+        target: { value: "Updated" },
+      });
+
+      vi.advanceTimersByTime(1600);
+      expect(screen.queryByText("Saved")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resets debounce timer on rapid typing and only auto-saves once", async () => {
+    vi.useFakeTimers();
+    try {
+      const onAutoSaveDescription = vi.fn().mockResolvedValue(undefined);
+
+      renderTaskFormWithDescriptionState({
+        mode: "edit",
+        title: "My task",
+        onTitleChange: vi.fn(),
+        description: "",
+        onAutoSaveDescription,
+      });
+
+      const textarea = screen.getByRole("textbox", { name: /Description/i });
+      fireEvent.change(textarea, { target: { value: "A" } });
+      vi.advanceTimersByTime(500);
+      fireEvent.change(textarea, { target: { value: "AB" } });
+      vi.advanceTimersByTime(500);
+      fireEvent.change(textarea, { target: { value: "ABC" } });
+
+      vi.advanceTimersByTime(1499);
+      expect(onAutoSaveDescription).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(1);
+      await vi.runOnlyPendingTimersAsync();
+      expect(onAutoSaveDescription).toHaveBeenCalledTimes(1);
+      expect(onAutoSaveDescription).toHaveBeenCalledWith("ABC");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("image paste adds to pending images", () => {
@@ -240,7 +435,7 @@ describe("TaskForm", () => {
       dependencies: ["FN-001"],
     });
 
-    const textarea = screen.getByLabelText(/Description/i) as HTMLTextAreaElement;
+    const textarea = screen.getByRole("textbox", { name: /Description/i }) as HTMLTextAreaElement;
     expect(textarea.disabled).toBe(true);
 
     // The dep button should be disabled
