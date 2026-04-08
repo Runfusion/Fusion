@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CentralCore } from "./central-core.js";
+import { NodeConnection, type ConnectionResult } from "./node-connection.js";
 import type {
   RegisteredProject,
   ProjectHealth,
@@ -26,6 +27,7 @@ describe("CentralCore", () => {
   afterEach(async () => {
     await central.close();
     vi.useRealTimers();
+    vi.restoreAllMocks();
     rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -724,6 +726,150 @@ describe("CentralCore", () => {
       expect(stored?.status).toBe("online");
       expect(emittedNodeId).toBe(node.id);
       expect(emittedStatus).toBe("online");
+    });
+
+    it("should test node connection and emit node:connection:test", async () => {
+      const connectionResult = {
+        success: true,
+        url: "http://remote.example:3000",
+        latencyMs: 12,
+        nodeInfo: {
+          name: "remote",
+          version: "1.0.0",
+          uptime: 5,
+          capabilities: ["executor"],
+        },
+      };
+      const testSpy = vi.spyOn(NodeConnection.prototype, "test").mockResolvedValue(connectionResult);
+
+      let emittedResult: unknown;
+      central.on("node:connection:test", (result) => {
+        emittedResult = result;
+      });
+
+      const result = await central.testNodeConnection({
+        host: "remote.example",
+        port: 3000,
+        apiKey: "secret",
+      });
+
+      expect(result).toEqual(connectionResult);
+      expect(emittedResult).toEqual(connectionResult);
+      expect(testSpy).toHaveBeenCalledWith({
+        host: "remote.example",
+        port: 3000,
+        apiKey: "secret",
+      });
+    });
+
+    it("should return failed testNodeConnection results", async () => {
+      const connectionResult: ConnectionResult = {
+        success: false,
+        url: "http://offline.example:3000",
+        error: {
+          type: "connection-refused",
+          message: "fetch failed: ECONNREFUSED",
+        },
+      };
+      vi.spyOn(NodeConnection.prototype, "test").mockResolvedValue(connectionResult);
+
+      const result = await central.testNodeConnection({
+        host: "offline.example",
+        port: 3000,
+      });
+
+      expect(result).toEqual(connectionResult);
+    });
+
+    it("should connect to remote node and register when test succeeds", async () => {
+      const connectionResult = {
+        success: true,
+        url: "http://remote.example:3000",
+        latencyMs: 10,
+        nodeInfo: {
+          name: "remote",
+          version: "1.0.0",
+          uptime: 30,
+          capabilities: ["executor"],
+        },
+      };
+      vi.spyOn(NodeConnection.prototype, "test").mockResolvedValue(connectionResult);
+      const registerSpy = vi.spyOn(central, "registerNode");
+      const healthSpy = vi.spyOn(central, "checkNodeHealth").mockResolvedValue("online");
+
+      let emittedResult: unknown;
+      central.on("node:connection:test", (result) => {
+        emittedResult = result;
+      });
+
+      const output = await central.connectToRemoteNode({
+        name: "remote-node",
+        host: "remote.example",
+        port: 3000,
+        apiKey: "secret",
+        maxConcurrent: 4,
+      });
+
+      expect(output.result).toEqual(connectionResult);
+      expect(output.node).toBeDefined();
+      expect(output.node?.name).toBe("remote-node");
+      expect(output.node?.type).toBe("remote");
+      expect(output.node?.url).toBe("http://remote.example:3000");
+      expect(emittedResult).toEqual(connectionResult);
+      expect(registerSpy).toHaveBeenCalledWith({
+        name: "remote-node",
+        type: "remote",
+        url: "http://remote.example:3000",
+        apiKey: "secret",
+        maxConcurrent: 4,
+      });
+      expect(healthSpy).toHaveBeenCalledWith(output.node!.id);
+    });
+
+    it("should reject duplicate node names before testing connection", async () => {
+      await central.registerNode({ name: "existing-node", type: "local" });
+
+      const testSpy = vi.spyOn(NodeConnection.prototype, "test");
+
+      await expect(
+        central.connectToRemoteNode({
+          name: "existing-node",
+          host: "remote.example",
+          port: 3000,
+        })
+      ).rejects.toThrow("Node already exists with name: existing-node");
+
+      expect(testSpy).not.toHaveBeenCalled();
+    });
+
+    it("should return connection result without registration when test fails", async () => {
+      const connectionResult: ConnectionResult = {
+        success: false,
+        url: "http://offline.example:3000",
+        error: {
+          type: "timeout",
+          message: "Connection timed out after 10000ms",
+        },
+      };
+      vi.spyOn(NodeConnection.prototype, "test").mockResolvedValue(connectionResult);
+      const registerSpy = vi.spyOn(central, "registerNode");
+      const healthSpy = vi.spyOn(central, "checkNodeHealth");
+
+      let emittedResult: unknown;
+      central.on("node:connection:test", (result) => {
+        emittedResult = result;
+      });
+
+      const output = await central.connectToRemoteNode({
+        name: "offline-node",
+        host: "offline.example",
+        port: 3000,
+      });
+
+      expect(output).toEqual({ result: connectionResult });
+      expect(registerSpy).not.toHaveBeenCalled();
+      expect(healthSpy).not.toHaveBeenCalled();
+      expect(emittedResult).toEqual(connectionResult);
     });
   });
 

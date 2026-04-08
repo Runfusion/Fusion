@@ -136,6 +136,14 @@ export type { MissionStoreEvents, MissionSummary } from "./mission-store.js";
 export { CentralCore } from "./central-core.js";
 export type { CentralCoreEvents } from "./central-core.js";
 export { CentralDatabase, createCentralDatabase } from "./central-db.js";
+export { NodeConnection } from "./node-connection.js";
+export type {
+  ConnectionErrorType,
+  ConnectionOptions,
+  ConnectionResult,
+  TestAndRegisterOptions,
+  TestAndRegisterResult,
+} from "./node-connection.js";
 export type {
   CentralActivityLogEntry,
   GlobalConcurrencyState,

@@ -47,6 +47,8 @@ import type {
 } from "./types.js";
 import { CentralDatabase, toJson, toJsonNullable, fromJson } from "./central-db.js";
 import { resolveGlobalDir } from "./global-settings.js";
+import { NodeConnection } from "./node-connection.js";
+import type { ConnectionOptions, ConnectionResult } from "./node-connection.js";
 
 // ── Event Types ───────────────────────────────────────────────────────────
 
@@ -69,6 +71,8 @@ export interface CentralCoreEvents {
   "node:updated": [node: NodeConfig];
   /** Emitted when node health status changes */
   "node:health:changed": [node: NodeConfig];
+  /** Emitted after a remote node connection test completes */
+  "node:connection:test": [result: ConnectionResult];
   /** Emitted when global concurrency state changes */
   "concurrency:changed": [state: GlobalConcurrencyState];
 }
@@ -722,6 +726,72 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     }
 
     return nextStatus;
+  }
+
+  /**
+   * Test connectivity to a remote Fusion node without registering it.
+   */
+  async testNodeConnection(options: ConnectionOptions): Promise<ConnectionResult> {
+    this.ensureInitialized();
+
+    const connection = new NodeConnection();
+    const result = await connection.test(options);
+    this.emit("node:connection:test", result);
+    return result;
+  }
+
+  /**
+   * Test a remote node connection and register it when successful.
+   */
+  async connectToRemoteNode(input: {
+    name: string;
+    host: string;
+    port: number;
+    secure?: boolean;
+    apiKey?: string;
+    timeoutMs?: number;
+    maxConcurrent?: number;
+  }): Promise<{ result: ConnectionResult; node?: NodeConfig }> {
+    this.ensureInitialized();
+
+    const name = input.name.trim();
+    if (!name) {
+      throw new Error("Node name is required");
+    }
+    if (name.length > 64) {
+      throw new Error("Node name must be 1-64 characters");
+    }
+
+    const existingByName = await this.getNodeByName(name);
+    if (existingByName) {
+      throw new Error(`Node already exists with name: ${name}`);
+    }
+
+    const connection = new NodeConnection();
+    const result = await connection.test({
+      host: input.host,
+      port: input.port,
+      secure: input.secure,
+      apiKey: input.apiKey,
+      timeoutMs: input.timeoutMs,
+    });
+
+    this.emit("node:connection:test", result);
+
+    if (!result.success) {
+      return { result };
+    }
+
+    const node = await this.registerNode({
+      name,
+      type: "remote",
+      url: result.url,
+      apiKey: input.apiKey,
+      maxConcurrent: input.maxConcurrent,
+    });
+    await this.checkNodeHealth(node.id);
+
+    return { result, node };
   }
 
   /**

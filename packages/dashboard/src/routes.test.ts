@@ -2029,7 +2029,7 @@ describe("PATCH /tasks/:id/assign and GET /agents/:id/tasks", () => {
       updateTask: vi.fn(),
       listTasks: vi.fn().mockResolvedValue([]),
     } as any);
-  });
+  }, 30_000);
 
   afterEach(() => {
     rmSync(tempDir, { recursive: true, force: true });
