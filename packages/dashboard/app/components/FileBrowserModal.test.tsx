@@ -145,6 +145,33 @@ describe("FileBrowserModal", () => {
     });
   });
 
+  it("keeps mobile close button visible and clickable", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      writable: true,
+      configurable: true,
+      value: 375,
+    });
+
+    const { container } = render(
+      <FileBrowserModal
+        initialWorkspace="project"
+        isOpen={true}
+        onClose={mockOnClose}
+      />,
+    );
+
+    fireEvent(window, new Event("resize"));
+
+    const closeButton = container.querySelector("button.modal-close");
+    expect(closeButton).toBeInTheDocument();
+    expect(closeButton).toBeVisible();
+
+    fireEvent.click(closeButton!);
+    await waitFor(() => {
+      expect(mockOnClose).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("closes on Escape and saves on Cmd+S", () => {
     mockUseWorkspaceFileEditor.mockReturnValue({
       ...defaultEditorState,

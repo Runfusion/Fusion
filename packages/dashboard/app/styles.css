@@ -11820,6 +11820,15 @@ html .column.drag-over * {
   gap: var(--space-sm);
   font-size: 15px;
   font-weight: 600;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.file-browser-header-title > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .file-browser-header-actions {
@@ -12067,6 +12076,10 @@ html .column.drag-over * {
   font-weight: 400;
   font-size: 13px;
   margin-left: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .file-browser-body {
@@ -12300,6 +12313,31 @@ html .column.drag-over * {
 
   .file-browser-body {
     flex-direction: column;
+  }
+
+  .file-browser-modal-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--space-sm);
+  }
+
+  .file-browser-header-title {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .file-browser-header-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .file-browser-modal-header .modal-close {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .file-browser-sidebar {

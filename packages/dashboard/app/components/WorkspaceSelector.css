@@ -109,3 +109,21 @@
   font-size: 11px;
   color: var(--text-muted);
 }
+
+@media (max-width: 768px) {
+  .workspace-selector-trigger {
+    min-width: 0;
+    max-width: min(56vw, 160px);
+  }
+
+  .workspace-selector-menu {
+    left: auto;
+    right: 0;
+    min-width: min(300px, calc(100vw - 24px));
+    max-width: calc(100vw - 24px);
+  }
+
+  .workspace-selector-option-meta {
+    max-width: 120px;
+  }
+}
