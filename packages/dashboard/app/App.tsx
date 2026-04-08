@@ -8,6 +8,7 @@ import { AgentsView } from "./components/AgentsView";
 import { NodesView } from "./components/NodesView";
 import { AppModals } from "./components/AppModals";
 import { ExecutorStatusBar } from "./components/ExecutorStatusBar";
+import { SessionNotificationBanner } from "./components/SessionNotificationBanner";
 import { MobileNavBar } from "./components/MobileNavBar";
 import { QuickChatFAB } from "./components/QuickChatFAB";
 import { useBackgroundSessions } from "./hooks/useBackgroundSessions";
@@ -25,6 +26,7 @@ import { useAuthOnboarding } from "./hooks/useAuthOnboarding";
 import { useViewState } from "./hooks/useViewState";
 import { useProjectActions } from "./hooks/useProjectActions";
 import { useTaskHandlers } from "./hooks/useTaskHandlers";
+import type { AiSessionSummary } from "./api";
 
 function AppInner() {
   const { toasts, addToast, removeToast } = useToast();
@@ -45,6 +47,7 @@ function AppInner() {
 
   // Background AI sessions
   const { sessions: bgSessions, generating: bgGenerating, needsInput: bgNeedsInput, planningSessions: bgPlanningSessions, dismissSession: bgDismiss } = useBackgroundSessions(currentProject?.id);
+  const sessionsNeedingInput = bgSessions.filter((session) => session.status === "awaiting_input");
 
   const viewportMode = useViewportMode();
   const isMobile = viewportMode === "mobile";
@@ -163,6 +166,22 @@ function AppInner() {
   const handleOpenNodes = useCallback(() => {
     setNodesOpen((prev) => !prev);
   }, []);
+
+  const handleOpenBackgroundSession = useCallback((session: AiSessionSummary) => {
+    if (session.type === "planning") {
+      modalManager.openPlanningWithSession(session.id);
+    } else if (session.type === "subtask") {
+      modalManager.openSubtaskWithSession(session.id);
+    } else if (session.type === "mission_interview") {
+      modalManager.openMissionWithSession(session.id);
+    }
+  }, [modalManager]);
+
+  const handleDismissAllNeedingInputSessions = useCallback(() => {
+    for (const session of sessionsNeedingInput) {
+      bgDismiss(session.id);
+    }
+  }, [bgDismiss, sessionsNeedingInput]);
 
   // Render main content based on view mode
   const renderMainContent = () => {
@@ -291,6 +310,14 @@ function AppInner() {
         projectId={currentProject?.id}
         mobileNavEnabled={isMobile}
       />
+      {viewMode === "project" && currentProject && !nodesOpen && (
+        <SessionNotificationBanner
+          sessions={sessionsNeedingInput}
+          onResumeSession={handleOpenBackgroundSession}
+          onDismissSession={bgDismiss}
+          onDismissAll={handleDismissAllNeedingInputSessions}
+        />
+      )}
       <div
         className={`project-content${viewMode === "project" && currentProject ? " project-content--with-footer" : ""}${isMobile ? " project-content--with-mobile-nav" : ""}`}
       >
@@ -304,15 +331,7 @@ function AppInner() {
           backgroundSessions={bgSessions}
           backgroundGenerating={bgGenerating}
           backgroundNeedsInput={bgNeedsInput}
-          onOpenBackgroundSession={(session) => {
-            if (session.type === "planning") {
-              modalManager.openPlanningWithSession(session.id);
-            } else if (session.type === "subtask") {
-              modalManager.openSubtaskWithSession(session.id);
-            } else if (session.type === "mission_interview") {
-              modalManager.openMissionWithSession(session.id);
-            }
-          }}
+          onOpenBackgroundSession={handleOpenBackgroundSession}
           onDismissBackgroundSession={bgDismiss}
         />
       )}
