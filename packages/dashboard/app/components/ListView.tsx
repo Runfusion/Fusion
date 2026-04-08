@@ -8,6 +8,7 @@ import { QuickEntryBox } from "./QuickEntryBox";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { isTaskStuck } from "../utils/taskStuck";
 import type { ToastType } from "../hooks/useToast";
+import { useViewportMode } from "../hooks/useViewportMode";
 
 const COLUMN_COLOR_MAP: Record<Column, string> = {
   triage: "var(--triage)",
@@ -99,6 +100,8 @@ export function ListView({
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<Column | null>(null);
   const [selectedColumn, setSelectedColumn] = useState<Column | null>(null);
+  const viewportMode = useViewportMode();
+  const isMobile = viewportMode === "mobile";
 
   // Column visibility state - initialize from localStorage or default to all columns
   const [visibleColumns, setVisibleColumns] = useState<Set<ListColumn>>(() => {
@@ -762,6 +765,134 @@ export function ListView({
         {filteredCount === 0 ? (
           <div className="list-empty">
             {filter ? "No tasks match your filter" : "No tasks yet"}
+          </div>
+        ) : isMobile ? (
+          <div className="list-cards">
+            {COLUMNS.map((column) => {
+              if (selectedColumn && column !== selectedColumn) return null;
+              if (hideDoneTasks && (column === "done" || column === "archived") && !selectedColumn) return null;
+
+              const columnTasks = groupedTasks[column];
+              const isEmpty = columnTasks.length === 0;
+              if (filter && isEmpty) return null;
+
+              const isCollapsed = collapsedSections.has(column);
+
+              return (
+                <Fragment key={column}>
+                  <div
+                    className={`list-card-section-header${isCollapsed ? " list-section-header--collapsed" : ""}`}
+                    onClick={() => toggleSection(column)}
+                    aria-expanded={!isCollapsed}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        toggleSection(column);
+                      }
+                    }}
+                  >
+                    <ChevronRight
+                      size={14}
+                      className={`list-section-chevron${!isCollapsed ? " list-section-chevron--expanded" : ""}`}
+                    />
+                    <span className={`list-section-dot dot-${column}`} />
+                    <span className="list-section-title">{COLUMN_LABELS[column]}</span>
+                    <span className="list-section-count">{columnTasks.length}</span>
+                  </div>
+
+                  {!isCollapsed && (
+                    <>
+                      {isEmpty ? (
+                        <div className="list-empty-cell list-card-empty">No tasks</div>
+                      ) : (
+                        columnTasks.map((task) => {
+                          const isFailed = task.status === "failed";
+                          const isPaused = task.paused === true;
+                          const isStuckState = isTaskStuck(task, taskStuckTimeoutMs);
+                          const isAgentActive =
+                            !globalPaused &&
+                            !isFailed &&
+                            !isPaused &&
+                            !isStuckState &&
+                            (task.column === "in-progress" || ACTIVE_STATUSES.has(task.status as string));
+                          const hasStatus = typeof task.status === "string" && task.status.trim().length > 0;
+                          const hasDependencies = Boolean(task.dependencies && task.dependencies.length > 0);
+                          const hasSteps = task.steps.length > 0;
+                          const isSelectionMode = selectedTaskIds.size > 0;
+
+                          return (
+                            <div
+                              key={task.id}
+                              className={`list-card${isSelectionMode ? " list-card--selectable" : ""}`}
+                              onClick={() => handleRowClick(task)}
+                              data-id={task.id}
+                            >
+                              {isSelectionMode && (
+                                <label className="list-card-checkbox" onClick={(e) => e.stopPropagation()}>
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedTaskIds.has(task.id)}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      toggleTaskSelection(task.id);
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                    disabled={task.column === "archived"}
+                                    aria-label={`Select ${task.id}`}
+                                  />
+                                </label>
+                              )}
+
+                              <div className="list-card-row">
+                                <span className="list-card-id">{task.id}</span>
+                                <span className="list-card-spacer" />
+                                {isStuckState ? (
+                                  <span className="list-status-badge stuck">Stuck</span>
+                                ) : hasStatus ? (
+                                  <span className={`list-status-badge${isFailed ? " failed" : ""}${isAgentActive ? " pulsing" : ""}`}>
+                                    {task.status}
+                                  </span>
+                                ) : null}
+                              </div>
+
+                              <div className="list-card-row">
+                                <div className="list-card-title">{task.title || task.description}</div>
+                              </div>
+
+                              {(hasDependencies || hasSteps) && (
+                                <div className="list-card-row list-card-meta">
+                                  {hasDependencies && (
+                                    <span className="list-dep-badge" title={task.dependencies.join(", ")}>
+                                      <Link size={12} /> {task.dependencies.length}
+                                    </span>
+                                  )}
+                                  {hasSteps && (
+                                    <div className="list-progress">
+                                      <div className="list-progress-bar">
+                                        <div
+                                          className="list-progress-fill"
+                                          style={{
+                                            width: `${getStepProgressPercent(task.steps)}%`,
+                                            backgroundColor: COLUMN_COLOR_MAP[task.column],
+                                          }}
+                                        />
+                                      </div>
+                                      <span className="list-progress-label">{getStepProgress(task.steps)}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })
+                      )}
+                    </>
+                  )}
+                </Fragment>
+              );
+            })}
           </div>
         ) : (
           <table className="list-table">

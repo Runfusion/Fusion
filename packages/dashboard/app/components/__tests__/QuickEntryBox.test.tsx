@@ -2137,6 +2137,101 @@ describe("QuickEntryBox", () => {
     });
   });
 
+  describe("QuickEntryBox Mobile", () => {
+    it("keeps actions trigger touch-target classes on mobile", () => {
+      vi.spyOn(window, "innerWidth", "get").mockReturnValue(375);
+
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      const actionsTrigger = screen.getByTestId("quick-entry-actions-trigger");
+      expect(actionsTrigger.className).toContain("quick-entry-actions-trigger");
+      expect(actionsTrigger.className).toContain("btn");
+    });
+
+    it("keeps Plan, Subtask, and Refine buttons in touch-target button classes", () => {
+      vi.spyOn(window, "innerWidth", "get").mockReturnValue(375);
+
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      expect(screen.getByRole("button", { name: /Plan/i }).className).toContain("btn");
+      expect(screen.getByRole("button", { name: /Subtask/i }).className).toContain("btn");
+      expect(screen.getByRole("button", { name: /Refine/i }).className).toContain("btn");
+    });
+
+    it("keeps model menu portal within mobile viewport", () => {
+      const viewportWidth = 375;
+      vi.spyOn(window, "innerWidth", "get").mockReturnValue(viewportWidth);
+
+      renderQuickEntryBox({});
+      expandQuickEntry();
+      openModelsFromActions();
+
+      const menu = screen.getByTestId("model-nested-menu");
+      const menuLeft = parseFloat(menu.style.left);
+      const menuWidth = parseFloat(menu.style.width);
+
+      expect(menuLeft).toBeGreaterThanOrEqual(0);
+      expect(menuLeft + menuWidth).toBeLessThanOrEqual(viewportWidth);
+    });
+
+    it("opens dep dropdown in mobile mode without viewport overflow regressions", () => {
+      const viewportWidth = 320;
+      vi.spyOn(window, "innerWidth", "get").mockReturnValue(viewportWidth);
+
+      renderQuickEntryBox({});
+      expandQuickEntry();
+      openDepsFromActions();
+
+      const depDropdown = document.querySelector(".dep-dropdown") as HTMLElement;
+      expect(depDropdown).toBeTruthy();
+
+      const rect = depDropdown.getBoundingClientRect();
+      expect(rect.left).toBeGreaterThanOrEqual(0);
+      expect(rect.right).toBeLessThanOrEqual(viewportWidth);
+    });
+
+    it("responds to clicks for toggle, plan, subtask, refine, and actions trigger", async () => {
+      const onPlanningMode = vi.fn();
+      const onSubtaskBreakdown = vi.fn();
+
+      renderQuickEntryBox({ onPlanningMode, onSubtaskBreakdown });
+
+      const toggle = screen.getByTestId("quick-entry-toggle");
+      const input = screen.getByTestId("quick-entry-input");
+      const ensureExpanded = () => {
+        if (toggle.getAttribute("aria-expanded") !== "true") {
+          fireEvent.click(toggle);
+        }
+      };
+
+      ensureExpanded();
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+      fireEvent.change(input, { target: { value: "Mobile interaction task" } });
+      fireEvent.click(screen.getByRole("button", { name: /Plan/i }));
+      expect(onPlanningMode).toHaveBeenCalledWith("Mobile interaction task");
+
+      ensureExpanded();
+      fireEvent.change(input, { target: { value: "Break this down" } });
+      fireEvent.click(screen.getByRole("button", { name: /Subtask/i }));
+      expect(onSubtaskBreakdown).toHaveBeenCalledWith("Break this down");
+
+      ensureExpanded();
+      fireEvent.change(input, { target: { value: "Refine this" } });
+      fireEvent.click(screen.getByRole("button", { name: /Refine/i }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("refine-clarify")).toBeInTheDocument();
+      });
+
+      ensureExpanded();
+      fireEvent.click(screen.getByTestId("quick-entry-actions-trigger"));
+      expect(screen.getByTestId("quick-entry-actions-deps")).toBeInTheDocument();
+    });
+  });
+
   describe("agent selector", () => {
     it("opens the agent picker from the agent button", async () => {
       vi.mocked(fetchAgents).mockResolvedValue([

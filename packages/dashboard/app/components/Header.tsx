@@ -4,6 +4,9 @@ import type { ProjectInfo } from "../api";
 import { fetchScripts } from "../api";
 import { ProjectSelector } from "./ProjectSelector";
 import { QuickScriptsDropdown } from "./QuickScriptsDropdown";
+import { useViewportMode, type ViewportMode } from "../hooks/useViewportMode";
+
+export { useViewportMode };
 
 // GitHub logo icon (Octocat mark) - uses currentColor for theme compatibility
 function GitHubLogo({ size = 16 }: { size?: number }) {
@@ -64,45 +67,6 @@ export interface HeaderProps {
   mobileNavEnabled?: boolean;
 }
 
-export type ViewportMode = "mobile" | "tablet" | "desktop";
-
-function getViewportMode(): ViewportMode {
-  if (typeof window === "undefined") return "desktop";
-  if (window.matchMedia("(max-width: 768px)").matches) return "mobile";
-  if (window.matchMedia("(min-width: 769px) and (max-width: 1024px)").matches) return "tablet";
-  return "desktop";
-}
-
-export function useViewportMode(): ViewportMode {
-  const [mode, setMode] = useState<ViewportMode>(getViewportMode);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const mobileQuery = window.matchMedia("(max-width: 768px)");
-    const tabletQuery = window.matchMedia("(min-width: 769px) and (max-width: 1024px)");
-
-    const updateMode = () => {
-      if (mobileQuery.matches) {
-        setMode("mobile");
-      } else if (tabletQuery.matches) {
-        setMode("tablet");
-      } else {
-        setMode("desktop");
-      }
-    };
-
-    mobileQuery.addEventListener("change", updateMode);
-    tabletQuery.addEventListener("change", updateMode);
-    return () => {
-      mobileQuery.removeEventListener("change", updateMode);
-      tabletQuery.removeEventListener("change", updateMode);
-    };
-  }, []);
-
-  return mode;
-}
-
 export function Header({
   onOpenSettings,
   onOpenGitHubImport,
@@ -139,7 +103,7 @@ export function Header({
   isElectron = false,
   mobileNavEnabled,
 }: HeaderProps) {
-  const mode = useViewportMode();
+  const mode: ViewportMode = useViewportMode();
   const isMobile = mode === "mobile";
   const isTablet = mode === "tablet";
   const isCompact = isMobile || isTablet;

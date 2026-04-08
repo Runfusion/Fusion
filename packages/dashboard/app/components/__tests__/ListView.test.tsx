@@ -53,6 +53,45 @@ const renderListView = (props: Partial<React.ComponentProps<typeof ListView>> = 
   return render(<ListView {...defaultProps} {...props} />);
 };
 
+function ensureMatchMedia() {
+  if (!window.matchMedia) {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      value: vi.fn(),
+    });
+  }
+}
+
+function mockMobileViewport() {
+  ensureMatchMedia();
+  Object.defineProperty(window, "innerWidth", { value: 375, configurable: true });
+  return vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+    matches: query === "(max-width: 768px)",
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
+}
+
+function mockDesktopViewport() {
+  ensureMatchMedia();
+  Object.defineProperty(window, "innerWidth", { value: 1280, configurable: true });
+  return vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
+}
+
 describe("ListView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -2089,5 +2128,150 @@ describe("ListView - Bulk Selection", () => {
     expect(menu.textContent).toContain("Plan");
     expect(menu.textContent).toContain("Executor");
     expect(menu.textContent).toContain("Validator");
+  });
+
+  describe("ListView Mobile Cards", () => {
+    afterEach(() => {
+      const maybeMock = window.matchMedia as unknown as { mockRestore?: () => void };
+      maybeMock.mockRestore?.();
+      localStorage.removeItem("kb-dashboard-selected-tasks");
+    });
+
+    it("renders card layout instead of table on mobile", () => {
+      mockMobileViewport();
+
+      const { container } = renderListView({
+        tasks: [createMockTask({ id: "FN-001", title: "Mobile task" })],
+      });
+
+      expect(container.querySelector(".list-cards")).toBeInTheDocument();
+      expect(container.querySelector("table.list-table")).toBeNull();
+    });
+
+    it("renders table layout on desktop", () => {
+      mockDesktopViewport();
+
+      const { container } = renderListView({
+        tasks: [createMockTask({ id: "FN-001", title: "Desktop task" })],
+      });
+
+      expect(container.querySelector("table.list-table")).toBeInTheDocument();
+      expect(container.querySelector(".list-cards")).toBeNull();
+    });
+
+    it("shows task id, title, and status inside mobile cards", () => {
+      mockMobileViewport();
+
+      const { container } = renderListView({
+        tasks: [createMockTask({ id: "FN-001", title: "Card title", status: "executing" })],
+      });
+
+      const card = container.querySelector('.list-card[data-id="FN-001"]');
+      expect(card).toBeInTheDocument();
+      expect(within(card as HTMLElement).getByText("FN-001")).toBeInTheDocument();
+      expect(within(card as HTMLElement).getByText("Card title")).toBeInTheDocument();
+      expect(within(card as HTMLElement).getByText("executing")).toBeInTheDocument();
+    });
+
+    it("shows progress bar for cards with steps", () => {
+      mockMobileViewport();
+
+      const { container } = renderListView({
+        tasks: [
+          createMockTask({
+            id: "FN-001",
+            title: "Progress task",
+            steps: [
+              { name: "Step 1", status: "done" },
+              { name: "Step 2", status: "pending" },
+            ],
+          }),
+        ],
+      });
+
+      const card = container.querySelector('.list-card[data-id="FN-001"]') as HTMLElement;
+      expect(card.querySelector(".list-progress-fill")).toBeInTheDocument();
+      expect(within(card).getByText("1/2")).toBeInTheDocument();
+    });
+
+    it("shows dependency badge for cards with dependencies", () => {
+      mockMobileViewport();
+
+      const { container } = renderListView({
+        tasks: [
+          createMockTask({
+            id: "FN-001",
+            title: "Dependency task",
+            dependencies: ["FN-002"],
+          }),
+        ],
+      });
+
+      const card = container.querySelector('.list-card[data-id="FN-001"]') as HTMLElement;
+      const depBadge = card.querySelector(".list-dep-badge");
+      expect(depBadge).toBeInTheDocument();
+      expect(depBadge?.textContent).toContain("1");
+    });
+
+    it("opens task detail when a mobile card is clicked", async () => {
+      mockMobileViewport();
+      const task = createMockTask({ id: "FN-001", title: "Open me" });
+      const mockOnOpenDetail = vi.fn();
+      const detail: TaskDetail = {
+        ...task,
+        prompt: "Prompt content",
+      };
+
+      (fetchTaskDetail as ReturnType<typeof vi.fn>).mockResolvedValueOnce(detail);
+
+      const { container } = renderListView({
+        tasks: [task],
+        onOpenDetail: mockOnOpenDetail,
+      });
+
+      fireEvent.click(container.querySelector('.list-card[data-id="FN-001"]') as HTMLElement);
+
+      await waitFor(() => {
+        expect(fetchTaskDetail).toHaveBeenCalledWith("FN-001", undefined);
+      });
+      expect(mockOnOpenDetail).toHaveBeenCalledWith(detail);
+    });
+
+    it("collapses and expands mobile section headers", () => {
+      mockMobileViewport();
+
+      const { container } = renderListView({
+        tasks: [createMockTask({ id: "FN-001", title: "Collapsible task" })],
+      });
+
+      const sectionHeader = screen.getByRole("button", { name: /Triage/i });
+      expect(container.querySelector('.list-card[data-id="FN-001"]')).toBeInTheDocument();
+
+      fireEvent.click(sectionHeader);
+      expect(container.querySelector('.list-card[data-id="FN-001"]')).toBeNull();
+
+      fireEvent.click(sectionHeader);
+      expect(container.querySelector('.list-card[data-id="FN-001"]')).toBeInTheDocument();
+    });
+
+    it("supports selection mode from mobile card checkboxes", () => {
+      mockMobileViewport();
+      localStorage.setItem("kb-dashboard-selected-tasks", JSON.stringify(["FN-001"]));
+
+      renderListView({
+        tasks: [
+          createMockTask({ id: "FN-001", title: "Selected task" }),
+          createMockTask({ id: "FN-002", title: "Selectable task" }),
+        ],
+        availableModels: [
+          { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
+        ],
+      });
+
+      fireEvent.click(screen.getByLabelText("Select FN-002"));
+
+      expect(screen.getByText("2 selected")).toBeInTheDocument();
+      expect(screen.getByText("Bulk Edit Models:")).toBeInTheDocument();
+    });
   });
 });

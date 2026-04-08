@@ -7332,6 +7332,168 @@ body {
   }
 }
 
+/* === List View Mobile Cards (FN-1140) === */
+@media (max-width: 768px) {
+  /* Hide the table on mobile — card layout is rendered via JS */
+  .list-table {
+    display: none;
+  }
+
+  /* Mobile card layout */
+  .list-cards {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    padding: var(--space-sm) var(--space-md);
+    padding-bottom: max(var(--space-md), env(safe-area-inset-bottom, 0px));
+  }
+
+  .list-card-section-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-md) var(--space-md) var(--space-sm);
+    cursor: pointer;
+    min-height: 44px;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .list-card-section-header:active {
+    opacity: 0.7;
+  }
+
+  .list-card-section-header:focus-visible {
+    outline: 2px solid var(--todo);
+    outline-offset: 1px;
+    border-radius: var(--radius-sm);
+  }
+
+  .list-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: var(--space-md);
+    margin: var(--space-xs) 0;
+    cursor: pointer;
+    transition: background var(--transition-fast), border-color var(--transition-fast);
+    min-height: 44px;
+    position: relative;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .list-card:hover {
+    background: var(--card-hover);
+    border-color: var(--text-muted);
+  }
+
+  .list-card:active {
+    background: var(--surface);
+    transform: scale(0.99);
+  }
+
+  .list-card-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+  }
+
+  .list-card-row + .list-card-row {
+    margin-top: var(--space-sm);
+  }
+
+  .list-card-id {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .list-card-spacer {
+    flex: 1;
+  }
+
+  .list-card-title {
+    font-size: 14px;
+    line-height: 1.4;
+    color: var(--text);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+  }
+
+  .list-card-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+  }
+
+  .list-card-checkbox {
+    position: absolute;
+    top: var(--space-xs);
+    left: var(--space-xs);
+    min-width: 44px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .list-card--selectable {
+    padding-left: 44px;
+  }
+
+  .list-card-empty {
+    padding: var(--space-lg) var(--space-md);
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-muted);
+    font-style: italic;
+    background: transparent;
+  }
+
+  /* Drop zones hidden on mobile — drag not practical on touch */
+  .list-drop-zones {
+    display: none;
+  }
+
+  /* Toolbar stacking on mobile */
+  .list-toolbar {
+    padding: var(--space-sm) var(--space-md);
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
+  .list-stats {
+    width: 100%;
+    order: 10;
+    text-align: center;
+    margin-left: 0;
+    font-size: 11px;
+  }
+
+  .list-selection-stats {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .bulk-edit-toolbar {
+    flex-wrap: wrap;
+    width: 100%;
+    margin-left: 0;
+    margin-top: var(--space-sm);
+  }
+
+  .bulk-edit-dropdown {
+    min-width: 140px;
+    flex: 1;
+  }
+}
+
 /* === Terminal Modal === */
 .terminal-modal {
   width: 90vw;
@@ -23617,5 +23779,30 @@ html .column.drag-over * {
   .settings-content,
   .activity-log-content {
     -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* === Quick Entry Mobile Touch + Overflow Fixes (FN-1140) === */
+@media (max-width: 768px) {
+  .quick-entry-actions-trigger {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .quick-entry-actions .btn {
+    min-height: 44px;
+  }
+
+  .quick-entry-box .dep-dropdown {
+    max-width: calc(100vw - 32px);
+    left: 8px;
+  }
+}
+
+@media (max-width: 640px) {
+  .quick-entry-toggle {
+    min-height: 44px;
+    min-width: 44px;
+    padding: var(--space-xs);
   }
 }
