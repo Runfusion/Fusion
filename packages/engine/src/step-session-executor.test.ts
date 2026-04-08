@@ -6,7 +6,8 @@ import {
   buildStepPrompt,
   StepSessionExecutor,
 } from "./step-session-executor.js";
-import type { TaskDetail, Settings } from "@fusion/core";
+import { AgentLogger } from "./agent-logger.js";
+import type { TaskDetail, Settings, TaskStore } from "@fusion/core";
 
 // ── Shared test fixtures ──────────────────────────────────────────────
 
@@ -1601,6 +1602,78 @@ describe("StepSessionExecutor", () => {
       // Calling cleanup twice should be safe
       await executor.cleanup();
       await executor.cleanup();
+    });
+  });
+
+  describe("logging", () => {
+    it("appends agent logs during step execution", async () => {
+      const task = makeTaskDetail({
+        prompt: makeStepPrompt("FN-001", 1),
+        steps: [{ name: "Step 0", status: "pending" }],
+      });
+      const settings = makeSettings({ maxParallelSteps: 1 });
+      const appendAgentLog = vi.fn().mockResolvedValue(undefined);
+      const store = { appendAgentLog } as unknown as TaskStore;
+
+      let onText: ((delta: string) => void) | undefined;
+      let onToolStart: ((name: string, args?: Record<string, unknown>) => void) | undefined;
+      let onToolEnd: ((name: string, isError: boolean, result?: unknown) => void) | undefined;
+
+      const session = makeMockSession(async () => {
+        onText?.("step output");
+        onToolStart?.("read", { path: "src/foo.ts" });
+        onToolEnd?.("read", false, "ok");
+      });
+
+      mockedCreateKbAgent.mockImplementation(async (opts: any) => {
+        onText = opts.onText;
+        onToolStart = opts.onToolStart;
+        onToolEnd = opts.onToolEnd;
+        return { session } as any;
+      });
+
+      const executor = new StepSessionExecutor({
+        store,
+        taskDetail: task,
+        worktreePath: "/project/.worktrees/main",
+        rootDir: "/project",
+        settings,
+      });
+
+      await executor.executeAll();
+
+      expect(appendAgentLog).toHaveBeenCalledWith("FN-001", "step output", "text", undefined, "executor");
+      expect(appendAgentLog).toHaveBeenCalledWith("FN-001", "read", "tool", "src/foo.ts", "executor");
+      expect(appendAgentLog).toHaveBeenCalledWith("FN-001", "read", "tool_result", "ok", "executor");
+    });
+
+    it("flushes AgentLogger in attempt finally block", async () => {
+      const task = makeTaskDetail({
+        prompt: makeStepPrompt("FN-001", 1),
+        steps: [{ name: "Step 0", status: "pending" }],
+      });
+      const settings = makeSettings({ maxParallelSteps: 1 });
+      const store = { appendAgentLog: vi.fn().mockResolvedValue(undefined) } as unknown as TaskStore;
+      const flushSpy = vi.spyOn(AgentLogger.prototype, "flush").mockResolvedValue(undefined);
+
+      const session = makeMockSession(async () => {
+        throw new Error("step failed");
+      });
+      mockedCreateKbAgent.mockResolvedValue({ session } as any);
+
+      const executor = new StepSessionExecutor({
+        store,
+        taskDetail: task,
+        worktreePath: "/project/.worktrees/main",
+        rootDir: "/project",
+        settings,
+      });
+
+      const resultPromise = executor.executeAll();
+      await vi.advanceTimersByTimeAsync(30_000);
+      await resultPromise;
+
+      expect(flushSpy).toHaveBeenCalled();
     });
   });
 });

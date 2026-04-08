@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { HeartbeatMonitor, HeartbeatTriggerScheduler, type AgentSession, type HeartbeatExecutionOptions, HEARTBEAT_SYSTEM_PROMPT } from "./agent-heartbeat.js";
+import { AgentLogger } from "./agent-logger.js";
 import type { AgentStore, AgentHeartbeatRun, TaskStore, TaskDetail, Agent, MessageStore, Message, AgentBudgetStatus } from "@fusion/core";
 
 // Mock logger to suppress noise in test output
@@ -982,6 +983,7 @@ describe("HeartbeatMonitor", () => {
           column: "triage",
         }),
         logEntry: vi.fn().mockResolvedValue({}),
+        appendAgentLog: vi.fn().mockResolvedValue(undefined),
         ...overrides,
       } as unknown as TaskStore;
     }
@@ -1275,6 +1277,39 @@ describe("HeartbeatMonitor", () => {
           taskId: "FN-001",
         });
       });
+
+      it("records agent logs, context taskId, and stdoutExcerpt for successful runs", async () => {
+        const store = createStoreWithAgentForExec();
+        const appendAgentLog = vi.fn().mockResolvedValue(undefined);
+        mockTaskStore = createMockTaskStore({ appendAgentLog });
+
+        const mockSession = createMockAgentSession();
+        let onText: ((delta: string) => void) | undefined;
+        let onToolStart: ((name: string, args?: Record<string, unknown>) => void) | undefined;
+        let onToolEnd: ((name: string, isError: boolean, result?: unknown) => void) | undefined;
+
+        mockedCreateKbAgent.mockImplementation(async (opts: any) => {
+          onText = opts.onText;
+          onToolStart = opts.onToolStart;
+          onToolEnd = opts.onToolEnd;
+          return { session: mockSession as any };
+        });
+
+        mockSession.prompt = vi.fn().mockImplementation(async () => {
+          onText?.("Heartbeat produced visible output");
+          onToolStart?.("read", { path: "README.md" });
+          onToolEnd?.("read", false, "done");
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+        const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+        expect(appendAgentLog).toHaveBeenCalledWith("FN-001", "Heartbeat produced visible output", "text", undefined, "executor");
+        expect(appendAgentLog).toHaveBeenCalledWith("FN-001", "read", "tool", "README.md", "executor");
+        expect(appendAgentLog).toHaveBeenCalledWith("FN-001", "read", "tool_result", "done", "executor");
+        expect(result.contextSnapshot?.taskId).toBe("FN-001");
+        expect(result.stdoutExcerpt).toContain("Heartbeat produced visible output");
+      });
     });
 
     describe("heartbeat_done tool", () => {
@@ -1386,6 +1421,33 @@ describe("HeartbeatMonitor", () => {
         expect(mockSession.dispose).toHaveBeenCalled();
         // Agent should be untracked
         expect(monitor.getTrackedAgents()).not.toContain("agent-001");
+      });
+
+      it("flushes AgentLogger on execution failure", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        const flushSpy = vi.spyOn(AgentLogger.prototype, "flush").mockResolvedValue(undefined);
+
+        mockedCreateKbAgent.mockResolvedValue({
+          session: mockSession as any,
+        });
+        mockSession.prompt = vi.fn().mockRejectedValue(new Error("Prompt failed"));
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+        await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+        expect(flushSpy).toHaveBeenCalled();
+      });
+
+      it("flushes AgentLogger when session creation fails", async () => {
+        const store = createStoreWithAgentForExec();
+        const flushSpy = vi.spyOn(AgentLogger.prototype, "flush").mockResolvedValue(undefined);
+        mockedCreateKbAgent.mockRejectedValue(new Error("Model unavailable"));
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+        await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+        expect(flushSpy).toHaveBeenCalled();
       });
     });
 

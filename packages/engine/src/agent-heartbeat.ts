@@ -17,10 +17,11 @@
  * - onTerminated: Called when an unresponsive agent is terminated
  */
 
-import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, AgentHeartbeatConfig, AgentBudgetStatus, Message, MessageStore, TaskStore, TaskDetail } from "@fusion/core";
+import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, AgentHeartbeatConfig, AgentBudgetStatus, Message, MessageStore, TaskStore, TaskDetail, AgentRole, Agent } from "@fusion/core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import { createTaskCreateTool, createTaskLogTool, taskCreateParams } from "./agent-tools.js";
+import { AgentLogger } from "./agent-logger.js";
 import { heartbeatLog } from "./logger.js";
 
 // Lazy import for pi — avoids pulling the pi SDK into the module graph
@@ -519,8 +520,37 @@ export class HeartbeatMonitor {
     return this.withAgentStartLock(agentId, async () => {
       heartbeatLog.log(`Executing heartbeat for ${agentId} (source=${source})`);
 
+      let preloadedAgent: Agent | null = null;
+      try {
+        preloadedAgent = await this.store.getAgent(agentId);
+      } catch {
+        // If preloading fails, resolve again in the execution path below.
+      }
+
+      const resolvedTaskId = explicitTaskId ?? preloadedAgent?.taskId;
+      const runContextSnapshot = {
+        ...(contextSnapshot ?? {}),
+        ...(resolvedTaskId ? { taskId: resolvedTaskId } : {}),
+      };
+
       // Start run
-      const run = await this.startRun(agentId, { source, triggerDetail, contextSnapshot });
+      const run = await this.startRun(agentId, {
+        source,
+        triggerDetail,
+        contextSnapshot: Object.keys(runContextSnapshot).length > 0 ? runContextSnapshot : undefined,
+      });
+
+      let agentLogger: AgentLogger | null = null;
+      const flushAgentLogger = async (): Promise<void> => {
+        if (!agentLogger) {
+          return;
+        }
+        try {
+          await agentLogger.flush();
+        } catch (error) {
+          heartbeatLog.warn(`Failed to flush heartbeat logs for ${agentId}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      };
 
       try {
         // Budget governance: check if agent can run
@@ -550,7 +580,7 @@ export class HeartbeatMonitor {
         }
 
         // Resolve agent
-        const agent = await this.store.getAgent(agentId);
+        const agent = preloadedAgent ?? await this.store.getAgent(agentId);
         if (!agent) {
           heartbeatLog.warn(`Agent ${agentId} not found — completing run as failed`);
           await this.completeRun(agentId, run.id, {
@@ -562,6 +592,17 @@ export class HeartbeatMonitor {
 
         // Resolve task assignment
         const taskId = explicitTaskId ?? agent.taskId;
+        if (taskId && run.contextSnapshot?.taskId !== taskId) {
+          const updatedRun: AgentHeartbeatRun = {
+            ...run,
+            contextSnapshot: {
+              ...(run.contextSnapshot ?? {}),
+              taskId,
+            },
+          };
+          await this.store.saveRun(updatedRun);
+        }
+
         if (!taskId) {
           heartbeatLog.log(`Agent ${agentId} has no task assignment — graceful exit`);
           await this.completeRun(agentId, run.id, {
@@ -597,9 +638,19 @@ export class HeartbeatMonitor {
         }
 
         // Track usage via callbacks
+        const STDOUT_EXCERPT_LIMIT = 4000;
         let outputLength = 0;
         let toolCallCount = 0;
         let heartbeatSummary: string | undefined;
+        let stdoutExcerpt = "";
+
+        const appendStdoutExcerpt = (delta: string): void => {
+          if (stdoutExcerpt.length >= STDOUT_EXCERPT_LIMIT) {
+            return;
+          }
+          const remaining = STDOUT_EXCERPT_LIMIT - stdoutExcerpt.length;
+          stdoutExcerpt += delta.slice(0, remaining);
+        };
 
         // Create heartbeat_done tool
         const heartbeatDoneTool: ToolDefinition = {
@@ -628,6 +679,12 @@ export class HeartbeatMonitor {
         const heartbeatTools = this.createHeartbeatTools(agentId, taskStore, taskId);
         heartbeatTools.push(heartbeatDoneTool);
 
+        agentLogger = new AgentLogger({
+          store: taskStore,
+          taskId,
+          agent: agent.role as AgentRole,
+        });
+
         // Create agent session
         const { session } = await createKbAgent({
           cwd: rootDir,
@@ -636,8 +693,21 @@ export class HeartbeatMonitor {
           customTools: heartbeatTools,
           defaultProvider: agent.runtimeConfig?.modelProvider as string | undefined,
           defaultModelId: agent.runtimeConfig?.modelId as string | undefined,
-          onText: (delta) => { outputLength += delta.length; },
-          onToolEnd: () => { toolCallCount++; },
+          onText: (delta) => {
+            outputLength += delta.length;
+            appendStdoutExcerpt(delta);
+            agentLogger?.onText(delta);
+          },
+          onThinking: (delta) => {
+            agentLogger?.onThinking(delta);
+          },
+          onToolStart: (name, args) => {
+            agentLogger?.onToolStart(name, args);
+          },
+          onToolEnd: (name, isError, result) => {
+            toolCallCount++;
+            agentLogger?.onToolEnd(name, isError, result);
+          },
         });
 
         // Track for monitoring
@@ -664,23 +734,28 @@ export class HeartbeatMonitor {
 
           // Estimate output tokens (rough: ~4 chars per token)
           const estimatedOutputTokens = Math.ceil(outputLength / 4);
+          await flushAgentLogger();
 
           // Complete run successfully
           await this.completeRun(agentId, run.id, {
             status: "completed",
             usageJson: { inputTokens: 0, outputTokens: estimatedOutputTokens, cachedTokens: 0 },
             resultJson: { summary: heartbeatSummary, toolCallCount },
+            stdoutExcerpt: stdoutExcerpt || undefined,
           });
 
           heartbeatLog.log(`Heartbeat completed for ${agentId} (${toolCallCount} tool calls, ~${estimatedOutputTokens} output tokens)`);
         } catch (err) {
           const errorMessage = err instanceof Error ? err.message : String(err);
           heartbeatLog.error(`Heartbeat execution failed for ${agentId}: ${errorMessage}`);
+          await flushAgentLogger();
           await this.completeRun(agentId, run.id, {
             status: "failed",
             stderrExcerpt: errorMessage,
+            stdoutExcerpt: stdoutExcerpt || undefined,
           });
         } finally {
+          await flushAgentLogger();
           this.untrackAgent(agentId);
           try { session.dispose(); } catch { /* ignore */ }
         }
@@ -689,6 +764,7 @@ export class HeartbeatMonitor {
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         heartbeatLog.error(`Heartbeat execution error for ${agentId}: ${errorMessage}`);
+        await flushAgentLogger();
 
         // Attempt to complete the run as failed if it's still active
         try {

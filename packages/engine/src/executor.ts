@@ -854,6 +854,7 @@ export class TaskExecutor {
         executorLog.log(`${task.id}: using step-session mode (maxParallel=${settings.maxParallelSteps ?? 2})`);
 
         const stepExecutor = new StepSessionExecutor({
+          store: this.store,
           taskDetail: detail,
           worktreePath,
           rootDir: this.rootDir,

@@ -5,16 +5,16 @@
  * parallel execution for non-conflicting steps (via git worktree isolation),
  * and clean lifecycle management (pause, cleanup).
  *
- * The class is a standalone engine subsystem. It does not depend on TaskStore
- * or any integration layer — it receives TaskDetail (read-only) and emits
- * results via callbacks.
+ * The class is a standalone engine subsystem with minimal integration surface.
+ * It receives TaskDetail (read-only), a TaskStore for agent logs, and emits
+ * execution progress via callbacks.
  */
 
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentSession, ToolDefinition } from "@mariozechner/pi-coding-agent";
-import type { TaskDetail, Settings, TaskStep, StepStatus } from "@fusion/core";
+import type { TaskDetail, Settings, TaskStep, StepStatus, TaskStore } from "@fusion/core";
 
 import { createKbAgent, promptWithFallback, describeModel } from "./pi.js";
 import { generateWorktreeName } from "./worktree-names.js";
@@ -49,6 +49,8 @@ export interface ParallelWave {
 
 /** Options for creating a StepSessionExecutor. */
 export interface StepSessionExecutorOptions {
+  /** Optional task store used to persist agent logs for each step session. */
+  store?: TaskStore;
   /** The task to execute (read-only). */
   taskDetail: TaskDetail;
   /** Path to the primary git worktree for this task. */
@@ -463,6 +465,11 @@ interface SessionHandle {
   dispose: () => void;
 }
 
+/** Fallback store used when step logging persistence is not configured. */
+const NOOP_TASK_STORE: Pick<TaskStore, "appendAgentLog"> = {
+  appendAgentLog: async () => undefined,
+};
+
 /**
  * StepSessionExecutor — runs each task step in its own fresh agent session.
  *
@@ -473,10 +480,10 @@ interface SessionHandle {
  * - **Per-step retry**: failed steps retry up to 3 times with exponential backoff
  * - **Clean lifecycle**: pause via `terminateAllSessions()`, cleanup via `cleanup()`
  *
- * The class is a standalone engine subsystem — it does not depend on `TaskStore`.
- * It receives `TaskDetail` (read-only) in its options and emits results via
- * callbacks (`onStepStart`, `onStepComplete`). The integration layer (FN-1040)
- * is responsible for persisting step status updates and agent logs.
+ * The class is a standalone engine subsystem.
+ * It receives `TaskDetail` (read-only) and an optional `TaskStore` in its options,
+ * then emits results via callbacks (`onStepStart`, `onStepComplete`).
+ * The integration layer (FN-1040) is responsible for persisting step status updates.
  *
  * @example
  * ```ts
@@ -499,6 +506,7 @@ interface SessionHandle {
  */
 export class StepSessionExecutor {
   private options: StepSessionExecutorOptions;
+  private store: TaskStore;
   private activeSessions: Map<number, SessionHandle> = new Map();
   private parallelWorktrees: Map<number, string> = new Map();
   private parallelBranches: Map<number, string> = new Map();
@@ -508,6 +516,7 @@ export class StepSessionExecutor {
 
   constructor(options: StepSessionExecutorOptions) {
     this.options = options;
+    this.store = options.store ?? (NOOP_TASK_STORE as TaskStore);
     // Clamp maxParallelSteps to 1–4 range
     this.maxParallel = Math.max(1, Math.min(4, options.settings.maxParallelSteps ?? 2));
   }
@@ -684,29 +693,43 @@ export class StepSessionExecutor {
           await sleep(delay);
         }
 
+        const agentLogger = new AgentLogger({
+          store: this.store,
+          taskId: taskDetail.id,
+          agent: "executor",
+        });
+        let session: AgentSession | null = null;
+
         try {
           // Create fresh agent session for this attempt
-          const { session } = await createKbAgent({
+          const createResult = await createKbAgent({
             cwd: worktreePath,
             systemPrompt: `You are an AI agent executing step ${stepIndex} of task ${taskDetail.id}. Follow instructions precisely.`,
             defaultProvider: taskDetail.modelProvider,
             defaultModelId: taskDetail.modelId,
             defaultThinkingLevel: taskDetail.thinkingLevel,
-            onText: () => {
+            onText: (delta) => {
+              agentLogger.onText(delta);
               stuckTaskDetector?.recordActivity(trackingKey);
             },
-            onToolStart: () => {
+            onThinking: (delta) => {
+              agentLogger.onThinking(delta);
+            },
+            onToolStart: (name, args) => {
+              agentLogger.onToolStart(name, args);
               stuckTaskDetector?.recordActivity(trackingKey);
             },
-            onToolEnd: () => {
+            onToolEnd: (name, isError, result) => {
+              agentLogger.onToolEnd(name, isError, result);
               stuckTaskDetector?.recordActivity(trackingKey);
             },
           });
+          session = createResult.session;
 
           // Track session for termination and stuck-task detection
-          const handle: SessionHandle = { dispose: () => session.dispose() };
+          const handle: SessionHandle = { dispose: () => session?.dispose() };
           this.activeSessions.set(stepIndex, handle);
-          stuckTaskDetector?.trackTask(trackingKey, { dispose: () => session.dispose() });
+          stuckTaskDetector?.trackTask(trackingKey, { dispose: () => session?.dispose() });
 
           stepExecLog.log(
             `Step ${stepIndex} attempt ${attempt + 1} session created ` +
@@ -716,19 +739,10 @@ export class StepSessionExecutor {
           // Send prompt
           await promptWithFallback(session, stepPrompt);
 
-          // Success — clean up session
-          this.activeSessions.delete(stepIndex);
-          stuckTaskDetector?.untrackTask(trackingKey);
-          try { session.dispose(); } catch { /* best-effort */ }
-
           const result: StepResult = { stepIndex, success: true, retries };
           this.options.onStepComplete?.(stepIndex, result);
           return result;
         } catch (err) {
-          // Clean up failed session
-          this.activeSessions.delete(stepIndex);
-          stuckTaskDetector?.untrackTask(trackingKey);
-
           const errorMessage = err instanceof Error ? err.message : String(err);
           stepExecLog.warn(
             `Step ${stepIndex} attempt ${attempt + 1} failed: ${errorMessage}`,
@@ -744,6 +758,21 @@ export class StepSessionExecutor {
             };
             this.options.onStepComplete?.(stepIndex, result);
             return result;
+          }
+        } finally {
+          try {
+            await agentLogger.flush();
+          } catch (err) {
+            const flushError = err instanceof Error ? err.message : String(err);
+            stepExecLog.warn(`Failed to flush agent logs for step ${stepIndex}: ${flushError}`);
+          }
+
+          this.activeSessions.delete(stepIndex);
+          stuckTaskDetector?.untrackTask(trackingKey);
+          try {
+            session?.dispose();
+          } catch {
+            /* best-effort */
           }
         }
       }
