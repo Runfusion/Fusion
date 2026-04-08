@@ -83,6 +83,15 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
 });
 
+// Dynamic import fallback for @fusion/engine with injectable override for tests.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let createKbAgentForRefine: any;
+
+/** @internal Inject a mock createKbAgent function for workflow-step refine route tests. */
+export function __setCreateKbAgentForRefine(mock: typeof createKbAgentForRefine): void {
+  createKbAgentForRefine = mock;
+}
+
 function validateOptionalModelField(value: unknown, name: string): string | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "string") {
@@ -6902,9 +6911,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Use AI to refine the description into a detailed agent prompt
       let refinedPrompt: string;
       try {
-        // Dynamic import to avoid resolution issues in tests
-        const engineModule = "@fusion/engine";
-        const { createKbAgent } = await import(/* @vite-ignore */ engineModule);
+        let createKbAgent = createKbAgentForRefine;
+        if (!createKbAgent) {
+          // Dynamic import to avoid resolution issues in tests
+          const engineModule = "@fusion/engine";
+          const engine = await import(/* @vite-ignore */ engineModule);
+          createKbAgent = engine.createKbAgent;
+        }
+
         const settings = await scopedStore.getSettings();
 
         const systemPrompt = `You are an expert at creating detailed agent prompts for workflow steps.

@@ -14,7 +14,7 @@ import { githubRateLimiter } from "./github-poll.js";
 import type { TaskStore, TaskAttachment } from "@fusion/core";
 import type { TaskDetail } from "@fusion/core";
 import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
-import { __resetBatchImportRateLimiter } from "./routes.js";
+import { __resetBatchImportRateLimiter, __setCreateKbAgentForRefine } from "./routes.js";
 import { __resetPlanningState, __setCreateKbAgent, planningStreamManager } from "./planning.js";
 import { __resetSubtaskBreakdownState, subtaskStreamManager } from "./subtask-breakdown.js";
 import * as terminalServiceModule from "./terminal-service.js";
@@ -8053,6 +8053,10 @@ describe("POST /workflow-steps/:id/refine", () => {
     store = createMockStore();
   });
 
+  afterEach(() => {
+    __setCreateKbAgentForRefine(undefined);
+  });
+
   function buildApp() {
     const app = express();
     app.use(express.json());
@@ -8097,6 +8101,47 @@ describe("POST /workflow-steps/:id/refine", () => {
     expect(res.body.error).toContain("Cannot refine prompt for script-mode");
   });
 
+  it("returns AI-refined prompt when engine is available", async () => {
+    const ws = { id: "WS-001", name: "Docs", description: "Check docs", mode: "prompt", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    (store.getWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(ws);
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      planningProvider: "anthropic",
+      planningModelId: "claude-sonnet-4-5",
+    });
+
+    const updatedWs = { ...ws, prompt: "Refined prompt from AI" };
+    (store.updateWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updatedWs);
+
+    let onText: ((delta: string) => void) | undefined;
+    const session = {
+      on: vi.fn((event: string, cb: (delta: string) => void) => {
+        if (event === "text") {
+          onText = cb;
+        }
+      }),
+      prompt: vi.fn(async () => {
+        onText?.("Refined ");
+        onText?.("prompt from AI");
+      }),
+      dispose: vi.fn(),
+    };
+
+    const createKbAgentMock = vi.fn(async () => ({ session }));
+    __setCreateKbAgentForRefine(createKbAgentMock);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps/WS-001/refine", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.prompt).toBe("Refined prompt from AI");
+    expect(res.body.workflowStep.prompt).toBe("Refined prompt from AI");
+    expect(createKbAgentMock).toHaveBeenCalledTimes(1);
+    expect(session.prompt).toHaveBeenCalledWith(expect.stringContaining("Name: Docs"));
+    expect(session.dispose).toHaveBeenCalledTimes(1);
+    expect(store.updateWorkflowStep).toHaveBeenCalledWith("WS-001", { prompt: "Refined prompt from AI" });
+  });
+
   it("falls back to description when AI is unavailable", async () => {
     const ws = { id: "WS-001", name: "Docs", description: "Check docs", mode: "prompt", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
     (store.getWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(ws);
@@ -8104,16 +8149,19 @@ describe("POST /workflow-steps/:id/refine", () => {
     const updatedWs = { ...ws, prompt: "Check docs" };
     (store.updateWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updatedWs);
 
+    __setCreateKbAgentForRefine(async () => {
+      throw new Error("AI unavailable");
+    });
+
     const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps/WS-001/refine", JSON.stringify({}), {
       "Content-Type": "application/json",
     });
 
-    // AI import will fail in test env, falling back to description
     expect(res.status).toBe(200);
-    expect(res.body.prompt).toBeDefined();
-    expect(res.body.workflowStep).toBeDefined();
-    expect(store.updateWorkflowStep).toHaveBeenCalled();
-  }, 30000);
+    expect(res.body.prompt).toBe("Check docs");
+    expect(res.body.workflowStep.prompt).toBe("Check docs");
+    expect(store.updateWorkflowStep).toHaveBeenCalledWith("WS-001", { prompt: "Check docs" });
+  });
 });
 
 // ── Workflow Step Template Tests ──────────────────────────────────────────
