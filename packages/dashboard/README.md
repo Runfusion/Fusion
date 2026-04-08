@@ -429,7 +429,7 @@ When the merge strategy is **Pull request**:
 - Required checks must pass before kb merges the PR; optional checks do not block auto-merge
 - A blocking review state (for example, active changes requested) prevents auto-merge until cleared
 - Closed PRs do not auto-merge
-- GitHub access must be available via `gh auth login` or `GITHUB_TOKEN`
+- GitHub access for PR-first workflows must be available via `gh auth login`
 - kb expects the task branch to already be pushed using the standard branch name `kb/<task-id-lower>`
 
 **Non-goal:** the dashboard does not implicitly push branches before PR creation. Use your normal git workflow or automation to publish task branches first.

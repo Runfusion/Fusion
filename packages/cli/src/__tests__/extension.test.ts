@@ -3,8 +3,16 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+vi.mock("@fusion/core/gh-cli", () => ({
+  isGhAvailable: vi.fn(() => true),
+  isGhAuthenticated: vi.fn(() => true),
+  runGhJsonAsync: vi.fn(),
+  getGhErrorMessage: vi.fn((error: unknown) => (error instanceof Error ? error.message : String(error))),
+}));
+
 import kbExtension from "../extension.js";
 import { TaskStore } from "@fusion/core";
+import { isGhAvailable, isGhAuthenticated, runGhJsonAsync } from "@fusion/core/gh-cli";
 
 // ── Mock ExtensionAPI that captures registrations ──────────────────
 
@@ -62,6 +70,10 @@ describe("fn pi extension", () => {
   let api: ReturnType<typeof createMockAPI>;
 
   beforeEach(async () => {
+    vi.mocked(isGhAvailable).mockReturnValue(true);
+    vi.mocked(isGhAuthenticated).mockReturnValue(true);
+    vi.mocked(runGhJsonAsync).mockReset();
+
     tmpDir = await mkdtemp(join(tmpdir(), "kb-ext-test-"));
     api = createMockAPI();
     kbExtension(api);
@@ -959,6 +971,78 @@ describe("fn pi extension", () => {
       expect(result.details.taskId).toBe(taskResult.details.taskId);
       expect(persisted?.status).toBe("triaged");
       expect(linkedTask.sliceId).toBe(slice.details.sliceId);
+    });
+  });
+
+  describe("GitHub import tools", () => {
+    it("fn_task_import_github requires gh auth", async () => {
+      const tool = api.tools.get("fn_task_import_github")!;
+      vi.mocked(isGhAvailable).mockReturnValue(false);
+
+      await expect(
+        tool.execute("gh-1", { ownerRepo: "acme/demo" }, undefined, undefined, makeCtx(tmpDir)),
+      ).rejects.toThrow("GitHub CLI (gh) is not available or not authenticated. Run 'gh auth login'.");
+    });
+
+    it("fn_task_import_github imports issues via gh api", async () => {
+      const tool = api.tools.get("fn_task_import_github")!;
+      vi.mocked(runGhJsonAsync).mockResolvedValueOnce([
+        {
+          number: 1,
+          title: "Issue one",
+          body: "First issue body",
+          html_url: "https://github.com/acme/demo/issues/1",
+        },
+        {
+          number: 2,
+          title: "Issue two",
+          body: "Second issue body",
+          html_url: "https://github.com/acme/demo/issues/2",
+        },
+      ] as never);
+
+      const result = await tool.execute(
+        "gh-2",
+        { ownerRepo: "acme/demo", limit: 5 },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      expect(result.content[0].text).toContain("Imported 2 tasks from acme/demo");
+      expect(result.details.createdTasks).toHaveLength(2);
+      expect(vi.mocked(runGhJsonAsync)).toHaveBeenCalledWith([
+        "api",
+        "repos/acme/demo/issues?state=open&per_page=5",
+      ]);
+    });
+
+    it("fn_task_browse_github_issues lists issues via gh api", async () => {
+      const tool = api.tools.get("fn_task_browse_github_issues")!;
+      vi.mocked(runGhJsonAsync).mockResolvedValueOnce([
+        {
+          number: 10,
+          title: "Investigate latency",
+          body: null,
+          html_url: "https://github.com/acme/demo/issues/10",
+          labels: [{ name: "perf" }],
+        },
+      ] as never);
+
+      const result = await tool.execute(
+        "gh-3",
+        { owner: "acme", repo: "demo", limit: 10 },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      expect(result.content[0].text).toContain("Found 1 open issues in acme/demo");
+      expect(result.details.issues[0]).toMatchObject({ number: 10, labels: ["perf"] });
+      expect(vi.mocked(runGhJsonAsync)).toHaveBeenCalledWith([
+        "api",
+        "repos/acme/demo/issues?state=open&per_page=10",
+      ]);
     });
   });
 });

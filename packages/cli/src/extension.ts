@@ -8,6 +8,12 @@ import {
   type Column,
   type Task,
 } from "@fusion/core";
+import {
+  getGhErrorMessage,
+  isGhAuthenticated,
+  isGhAvailable,
+  runGhJsonAsync,
+} from "@fusion/core/gh-cli";
 import { resolve, basename, extname } from "node:path";
 import { readFile } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -49,6 +55,57 @@ function formatTaskLine(t: Task): string {
   const deps = t.dependencies.length ? ` [deps: ${t.dependencies.join(", ")}]` : "";
   const paused = t.paused ? " (paused)" : "";
   return `${t.id}  ${label}${deps}${paused}`;
+}
+
+interface GitHubIssueApiResult {
+  number: number;
+  title: string;
+  body: string | null;
+  html_url: string;
+  labels?: Array<{ name: string }>;
+  pull_request?: unknown;
+}
+
+function ensureGhCliAuth(): void {
+  if (!isGhAvailable() || !isGhAuthenticated()) {
+    throw new Error("GitHub CLI (gh) is not available or not authenticated. Run 'gh auth login'.");
+  }
+}
+
+async function fetchGitHubIssuesViaGh(
+  owner: string,
+  repo: string,
+  options: { limit?: number; labels?: string[] } = {},
+): Promise<GitHubIssueApiResult[]> {
+  ensureGhCliAuth();
+
+  const queryParams = new URLSearchParams();
+  queryParams.append("state", "open");
+  queryParams.append("per_page", String(Math.min(options.limit ?? 30, 100)));
+  if (options.labels && options.labels.length > 0) {
+    queryParams.append("labels", options.labels.join(","));
+  }
+
+  const path = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues?${queryParams.toString()}`;
+
+  try {
+    const issues = await runGhJsonAsync<GitHubIssueApiResult[]>(["api", path]);
+    return issues.filter((issue) => !issue.pull_request);
+  } catch (error) {
+    throw new Error(getGhErrorMessage(error));
+  }
+}
+
+async function fetchGitHubIssueViaGh(owner: string, repo: string, issueNumber: number): Promise<GitHubIssueApiResult> {
+  ensureGhCliAuth();
+
+  const path = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${issueNumber}`;
+
+  try {
+    return await runGhJsonAsync<GitHubIssueApiResult>(["api", path]);
+  } catch (error) {
+    throw new Error(getGhErrorMessage(error));
+  }
 }
 
 // ── Extension entry point ──────────────────────────────────────────
@@ -668,8 +725,7 @@ export default function kbExtension(pi: ExtensionAPI) {
     promptSnippet: "Import GitHub issues as Fusion tasks",
     promptGuidelines: [
       "Use for syncing GitHub issue backlog to Fusion board",
-      "Uses gh CLI authentication when available (run 'gh auth login')",
-      "Falls back to GITHUB_TOKEN env var for private repositories without gh CLI",
+      "Uses gh CLI authentication (run 'gh auth login')",
       "Use --limit to control how many issues to import (default: 30)",
       "Use --labels to filter by specific labels",
     ],
@@ -693,51 +749,53 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      // Import the function dynamically to avoid circular dependencies
-      const { runTaskImportFromGitHub } = await import("./commands/task.js");
-
+      const [owner, repo] = params.ownerRepo.split("/");
       const limit = params.limit ?? 30;
       const labels = params.labels;
 
-      // Capture console output
-      const originalLog = console.log;
-      const originalError = console.error;
-      const logs: string[] = [];
+      const issues = await fetchGitHubIssuesViaGh(owner, repo, { limit, labels });
 
-      console.log = (...args: unknown[]) => {
-        const line = args.map(String).join(" ");
-        logs.push(line);
-        originalLog.apply(console, args);
-      };
-      console.error = (...args: unknown[]) => {
-        const line = args.map(String).join(" ");
-        logs.push(line);
-        originalError.apply(console, args);
-      };
-
-      try {
-        await runTaskImportFromGitHub(params.ownerRepo, { limit, labels });
-      } finally {
-        console.log = originalLog;
-        console.error = originalError;
+      if (issues.length === 0) {
+        return {
+          content: [{ type: "text", text: `No open issues found in ${owner}/${repo}.` }],
+          details: { createdTasks: [], summary: `Imported 0 tasks from ${owner}/${repo}` },
+        };
       }
 
-      // Parse created task IDs from logs
+      const store = await getStore(ctx.cwd);
+      const existingTasks = await store.listTasks();
       const createdTasks: Array<{ id: string; title: string }> = [];
-      for (const line of logs) {
-        const match = line.match(/Created (KB-\d+):\s*(.+)$/);
-        if (match) {
-          createdTasks.push({ id: match[1], title: match[2].trim() });
+
+      for (const issue of issues) {
+        const sourceUrl = issue.html_url;
+        const alreadyImported = existingTasks.some((task) => task.description.includes(sourceUrl));
+        if (alreadyImported) {
+          continue;
         }
+
+        const title = issue.title.slice(0, 200);
+        const body = issue.body?.trim() || "(no description)";
+        const description = `${body}\n\nSource: ${sourceUrl}`;
+
+        const task = await store.createTask({
+          title: title || undefined,
+          description,
+          column: "triage",
+          dependencies: [],
+        });
+
+        await store.logEntry(task.id, "Imported from GitHub", sourceUrl);
+        createdTasks.push({ id: task.id, title: task.title || issue.title });
+
+        existingTasks.push({ ...task, description });
       }
 
-      const summary = logs.find((l) => l.includes("✓ Imported")) || "Import complete";
-
+      const summary = `✓ Imported ${createdTasks.length} tasks from ${owner}/${repo}`;
       return {
         content: [
           {
             type: "text",
-            text: `${summary}\n\nCreated tasks:\n${createdTasks.map((t) => `  ${t.id}: ${t.title}`).join("\n") || "  None"}`,
+            text: `${summary}\n\nCreated tasks:\n${createdTasks.map((task) => `  ${task.id}: ${task.title}`).join("\n") || "  None"}`,
           },
         ],
         details: { createdTasks, summary },
@@ -757,8 +815,7 @@ export default function kbExtension(pi: ExtensionAPI) {
     promptSnippet: "Import a specific GitHub issue as a Fusion task",
     promptGuidelines: [
       "Use for importing a single known issue by its number",
-      "Uses gh CLI authentication when available (run 'gh auth login')",
-      "Falls back to GITHUB_TOKEN env var for private repositories without gh CLI",
+      "Uses gh CLI authentication (run 'gh auth login')",
       "Skips import if the issue is already imported (checks for existing Source URL)",
     ],
     parameters: Type.Object({
@@ -776,52 +833,10 @@ export default function kbExtension(pi: ExtensionAPI) {
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const { owner, repo, issueNumber } = params;
-      const token = process.env.GITHUB_TOKEN;
+      const issue = await fetchGitHubIssueViaGh(owner, repo, issueNumber);
 
-      // Build URL for single issue
-      const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${issueNumber}`;
-
-      const headers: Record<string, string> = {
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "fusion-cli/1.0",
-      };
-
-      if (token) {
-        headers.Authorization = `Bearer ${token}`;
-      }
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-      let issue: { number: number; title: string; body: string | null; html_url: string };
-
-      try {
-        const response = await fetch(url, {
-          headers,
-          signal: controller.signal,
-        });
-
-        if (!response.ok) {
-          if (response.status === 404) {
-            throw new Error(`Issue #${issueNumber} not found in ${owner}/${repo}`);
-          }
-          if (response.status === 401 || response.status === 403) {
-            throw new Error(
-              `Authentication failed. ${token ? "Check your GITHUB_TOKEN." : "Set GITHUB_TOKEN env var."}`
-            );
-          }
-          throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
-        }
-
-        issue = await response.json() as typeof issue;
-
-        // Check if it's a pull request
-        if ("pull_request" in issue && issue.pull_request) {
-          throw new Error(`#${issueNumber} is a pull request, not an issue`);
-        }
-      } finally {
-        clearTimeout(timeoutId);
+      if (issue.pull_request) {
+        throw new Error(`#${issueNumber} is a pull request, not an issue`);
       }
 
       // Check if already imported
@@ -855,6 +870,8 @@ export default function kbExtension(pi: ExtensionAPI) {
         dependencies: [],
       });
 
+      await store.logEntry(task.id, "Imported from GitHub", sourceUrl);
+
       return {
         content: [
           {
@@ -883,7 +900,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       "Returns a list you can reference when importing specific issues",
       "Use --limit to control how many issues to show (default: 30)",
       "Use --labels to filter by specific labels",
-      "Requires GITHUB_TOKEN env var for private repositories",
+      "Uses gh CLI authentication (run 'gh auth login')",
     ],
     parameters: Type.Object({
       owner: Type.String({
@@ -908,57 +925,7 @@ export default function kbExtension(pi: ExtensionAPI) {
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const { owner, repo, limit = 30, labels } = params;
-      const token = process.env.GITHUB_TOKEN;
-
-      // Build query parameters
-      const queryParams = new URLSearchParams();
-      queryParams.append("state", "open");
-      queryParams.append("per_page", String(Math.min(limit, 100)));
-      if (labels && labels.length > 0) {
-        queryParams.append("labels", labels.join(","));
-      }
-
-      const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues?${queryParams}`;
-
-      const headers: Record<string, string> = {
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "fusion-cli/1.0",
-      };
-
-      if (token) {
-        headers.Authorization = `Bearer ${token}`;
-      }
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-      let issues: Array<{ number: number; title: string; html_url: string; labels: Array<{ name: string }> }>;
-
-      try {
-        const response = await fetch(url, {
-          headers,
-          signal: controller.signal,
-        });
-
-        if (!response.ok) {
-          if (response.status === 404) {
-            throw new Error(`Repository not found: ${owner}/${repo}`);
-          }
-          if (response.status === 401 || response.status === 403) {
-            throw new Error(
-              `Authentication failed. ${token ? "Check your GITHUB_TOKEN." : "Set GITHUB_TOKEN env var."}`
-            );
-          }
-          throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
-        }
-
-        const allIssues = await response.json() as typeof issues;
-        // Filter out pull requests
-        issues = allIssues.filter((i) => !("pull_request" in i && i.pull_request)).slice(0, limit);
-      } finally {
-        clearTimeout(timeoutId);
-      }
+      const issues = await fetchGitHubIssuesViaGh(owner, repo, { limit, labels });
 
       if (issues.length === 0) {
         return {
@@ -984,7 +951,8 @@ export default function kbExtension(pi: ExtensionAPI) {
 
       for (const issue of issues) {
         const isImported = importedUrls.has(issue.html_url);
-        const labelStr = issue.labels.length > 0 ? ` [${issue.labels.map((l) => l.name).join(", ")}]` : "";
+        const issueLabels = issue.labels ?? [];
+        const labelStr = issueLabels.length > 0 ? ` [${issueLabels.map((label) => label.name).join(", ")}]` : "";
         const importedStr = isImported ? " ✓ Imported" : "";
         lines.push(`  #${issue.number}: ${issue.title.slice(0, 80)}${issue.title.length > 80 ? "…" : ""}${labelStr}${importedStr}`);
         lines.push(`     ${issue.html_url}`);
@@ -996,12 +964,12 @@ export default function kbExtension(pi: ExtensionAPI) {
         content: [{ type: "text", text: lines.join("\n") }],
         details: {
           count: issues.length,
-          issues: issues.map((i) => ({
-            number: i.number,
-            title: i.title,
-            url: i.html_url,
-            labels: i.labels.map((l) => l.name),
-            imported: importedUrls.has(i.html_url),
+          issues: issues.map((issue) => ({
+            number: issue.number,
+            title: issue.title,
+            url: issue.html_url,
+            labels: (issue.labels ?? []).map((label) => label.name),
+            imported: importedUrls.has(issue.html_url),
           })),
         },
       };

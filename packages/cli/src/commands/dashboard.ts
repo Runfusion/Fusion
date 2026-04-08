@@ -395,7 +395,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   // pause is deduplicated across concurrent agents.
   //
   const usageLimitPauser = new UsageLimitPauser(store);
-  const githubClient = new GitHubClient(process.env.GITHUB_TOKEN);
+  const githubClient = new GitHubClient();
 
   // AI-powered merge handler (used by the web UI for manual merges).
   // Wrapped with the shared semaphore so merges count toward the global

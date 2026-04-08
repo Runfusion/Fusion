@@ -65,6 +65,8 @@ vi.mock("@fusion/core/gh-cli", () => ({
   isGhAvailable: vi.fn(),
   isGhAuthenticated: vi.fn(),
   getCurrentRepo: vi.fn(),
+  runGhJsonAsync: vi.fn(),
+  getGhErrorMessage: vi.fn((error: unknown) => (error instanceof Error ? error.message : String(error))),
 }));
 
 // Mock project-context
@@ -79,7 +81,12 @@ import { createInterface } from "node:readline/promises";
 import { TaskStore } from "@fusion/core";
 import { watchFile, unwatchFile, statSync, existsSync, readFileSync } from "node:fs";
 import { runTaskShow, runTaskCreate, runTaskList, runTaskDuplicate, runTaskRefine, runTaskDelete, runTaskRetry, runTaskLogs, runTaskComment, runTaskComments, runTaskPrCreate, runTaskPlan, runTaskMove, runTaskAttach, runTaskPause, runTaskUnpause, runTaskArchive, runTaskUnarchive, runTaskSteer, runTaskImportFromGitHub, runTaskImportGitHubInteractive, runTaskUpdate, runTaskLog, runTaskMerge, type LogsOptions } from "./task.js";
-import { isGhAvailable, isGhAuthenticated, getCurrentRepo } from "@fusion/core/gh-cli";
+import {
+  getCurrentRepo,
+  isGhAuthenticated,
+  isGhAvailable,
+  runGhJsonAsync,
+} from "@fusion/core/gh-cli";
 import { GitHubClient } from "@fusion/dashboard";
 import { createSession, submitResponse } from "@fusion/dashboard/planning";
 import { resolveProject } from "../project-context.js";
@@ -606,6 +613,8 @@ describe("project-aware task command behavior", () => {
   it("routes GitHub import commands through the resolved project store", async () => {
     const listTasks = vi.fn().mockResolvedValue([]);
     const createTask = vi.fn().mockResolvedValue(makeTask({ id: "FN-200" }));
+    vi.mocked(isGhAvailable).mockReturnValue(true);
+    vi.mocked(isGhAuthenticated).mockReturnValue(true);
 
     vi.mocked(resolveProject).mockResolvedValue({
       projectId: "proj_test",
@@ -615,22 +624,21 @@ describe("project-aware task command behavior", () => {
       store: { listTasks, createTask } as unknown as TaskStore,
     });
 
-    const fetchSpy = vi.spyOn(global, "fetch" as any).mockResolvedValue({
-      ok: true,
-      json: async () => ([{ number: 1, title: "Issue 1", body: "Body", html_url: "https://github.com/acme/demo/issues/1", labels: [] }]),
-    } as Response);
+    vi.mocked(runGhJsonAsync).mockResolvedValueOnce([
+      { number: 1, title: "Issue 1", body: "Body", html_url: "https://github.com/acme/demo/issues/1", labels: [] },
+    ] as never);
 
     await runTaskImportFromGitHub("acme/demo", { limit: 1 }, "demo-project");
     expect(resolveProject).toHaveBeenCalledWith("demo-project");
     expect(listTasks).toHaveBeenCalled();
-
-    fetchSpy.mockRestore();
   });
 
   it("routes interactive GitHub import through the resolved project store", async () => {
     const listTasks = vi.fn().mockResolvedValue([]);
     const createTask = vi.fn().mockResolvedValue(makeTask({ id: "FN-201" }));
     const mockQuestion = vi.fn().mockResolvedValue("all");
+    vi.mocked(isGhAvailable).mockReturnValue(true);
+    vi.mocked(isGhAuthenticated).mockReturnValue(true);
 
     vi.mocked(createInterface).mockReturnValue({
       question: mockQuestion,
@@ -645,18 +653,15 @@ describe("project-aware task command behavior", () => {
       store: { listTasks, createTask } as unknown as TaskStore,
     });
 
-    const fetchSpy = vi.spyOn(global, "fetch" as any).mockResolvedValue({
-      ok: true,
-      json: async () => ([{ number: 2, title: "Issue 2", body: "Body", html_url: "https://github.com/acme/demo/issues/2", labels: [] }]),
-    } as Response);
+    vi.mocked(runGhJsonAsync).mockResolvedValueOnce([
+      { number: 2, title: "Issue 2", body: "Body", html_url: "https://github.com/acme/demo/issues/2", labels: [] },
+    ] as never);
 
     await runTaskImportGitHubInteractive("acme/demo", { limit: 1 }, "demo-project");
 
     expect(resolveProject).toHaveBeenCalledWith("demo-project");
     expect(listTasks).toHaveBeenCalled();
     expect(createTask).toHaveBeenCalled();
-
-    fetchSpy.mockRestore();
   });
 
   it("surfaces project resolution failures from shared context when project flag is explicit", async () => {
@@ -850,14 +855,13 @@ describe("runTaskImportGitHubInteractive", () => {
   let errorSpy: ReturnType<typeof vi.spyOn>;
   let mockCreateTask: ReturnType<typeof vi.fn>;
   let mockListTasks: ReturnType<typeof vi.fn>;
-  let fetchSpy: ReturnType<typeof vi.fn>;
-  const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    fetchSpy = vi.fn();
-    globalThis.fetch = fetchSpy as any;
+    vi.mocked(isGhAvailable).mockReturnValue(true);
+    vi.mocked(isGhAuthenticated).mockReturnValue(true);
+    vi.mocked(runGhJsonAsync).mockReset();
 
     mockCreateTask = vi.fn().mockImplementation((input: { description: string; title?: string }) => ({
       id: `KB-${String(mockCreateTask.mock.calls.length).padStart(3, "0")}`,
@@ -882,7 +886,6 @@ describe("runTaskImportGitHubInteractive", () => {
   });
 
   afterEach(() => {
-    globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
   });
 
@@ -897,15 +900,11 @@ describe("runTaskImportGitHubInteractive", () => {
   });
 
   it("imports selected issues via interactive mode", async () => {
-    fetchSpy.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve([
-        mockIssue(1, "First Issue", "Description 1"),
-        mockIssue(2, "Second Issue", "Description 2"),
-        mockIssue(3, "Third Issue", "Description 3"),
-      ]),
-    } as Response);
+    vi.mocked(runGhJsonAsync).mockResolvedValueOnce([
+      mockIssue(1, "First Issue", "Description 1"),
+      mockIssue(2, "Second Issue", "Description 2"),
+      mockIssue(3, "Third Issue", "Description 3"),
+    ] as never);
 
     // Mock readline to select issues 1 and 3
     const mockReadline = {
@@ -932,14 +931,10 @@ describe("runTaskImportGitHubInteractive", () => {
   });
 
   it('imports all issues when "all" is selected', async () => {
-    fetchSpy.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve([
-        mockIssue(1, "First Issue", "Description 1"),
-        mockIssue(2, "Second Issue", "Description 2"),
-      ]),
-    } as Response);
+    vi.mocked(runGhJsonAsync).mockResolvedValueOnce([
+      mockIssue(1, "First Issue", "Description 1"),
+      mockIssue(2, "Second Issue", "Description 2"),
+    ] as never);
 
     // Mock readline to select "all"
     const mockReadline = {
@@ -963,14 +958,10 @@ describe("runTaskImportGitHubInteractive", () => {
       },
     ]);
 
-    fetchSpy.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve([
-        mockIssue(1, "First Issue", "Description 1"),
-        mockIssue(2, "Second Issue", "Description 2"),
-      ]),
-    } as Response);
+    vi.mocked(runGhJsonAsync).mockResolvedValueOnce([
+      mockIssue(1, "First Issue", "Description 1"),
+      mockIssue(2, "Second Issue", "Description 2"),
+    ] as never);
 
     const mockReadline = {
       question: vi.fn().mockResolvedValueOnce("all"),
@@ -995,11 +986,7 @@ describe("runTaskImportGitHubInteractive", () => {
   });
 
   it("handles empty issues list", async () => {
-    fetchSpy.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve([]),
-    } as Response);
+    vi.mocked(runGhJsonAsync).mockResolvedValueOnce([] as never);
 
     await runTaskImportGitHubInteractive("owner/repo");
 
@@ -1021,11 +1008,7 @@ describe("runTaskImportGitHubInteractive", () => {
   });
 
   it("handles API errors gracefully", async () => {
-    fetchSpy.mockResolvedValueOnce({
-      ok: false,
-      status: 404,
-      statusText: "Not Found",
-    } as Response);
+    vi.mocked(runGhJsonAsync).mockRejectedValueOnce(new Error("Repository not found"));
 
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
@@ -1037,13 +1020,9 @@ describe("runTaskImportGitHubInteractive", () => {
   });
 
   it("re-prompts on invalid input", async () => {
-    fetchSpy.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve([
-        mockIssue(1, "First Issue", "Description 1"),
-      ]),
-    } as Response);
+    vi.mocked(runGhJsonAsync).mockResolvedValueOnce([
+      mockIssue(1, "First Issue", "Description 1"),
+    ] as never);
 
     // First invalid input, then valid
     const mockReadline = {
@@ -1061,13 +1040,9 @@ describe("runTaskImportGitHubInteractive", () => {
   });
 
   it("re-prompts on out of range selection", async () => {
-    fetchSpy.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve([
-        mockIssue(1, "First Issue", "Description 1"),
-      ]),
-    } as Response);
+    vi.mocked(runGhJsonAsync).mockResolvedValueOnce([
+      mockIssue(1, "First Issue", "Description 1"),
+    ] as never);
 
     // First out of range, then valid
     const mockReadline = {
@@ -1089,22 +1064,6 @@ describe("runTaskImportGitHubInteractive", () => {
 import { fetchGitHubIssues, runTaskImportFromGitHub, type GitHubIssue } from "./task.js";
 
 describe("fetchGitHubIssues", () => {
-  let fetchSpy: ReturnType<typeof vi.fn>;
-  const originalFetch = globalThis.fetch;
-  const originalEnv = process.env.GITHUB_TOKEN;
-
-  beforeEach(() => {
-    fetchSpy = vi.fn();
-    globalThis.fetch = fetchSpy as any;
-    delete process.env.GITHUB_TOKEN;
-  });
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-    process.env.GITHUB_TOKEN = originalEnv;
-    vi.restoreAllMocks();
-  });
-
   const mockIssue: GitHubIssue = {
     number: 1,
     title: "Test Issue",
@@ -1115,36 +1074,28 @@ describe("fetchGitHubIssues", () => {
     updated_at: "2024-01-02T00:00:00Z",
   };
 
+  beforeEach(() => {
+    vi.mocked(isGhAvailable).mockReturnValue(true);
+    vi.mocked(isGhAuthenticated).mockReturnValue(true);
+    vi.mocked(runGhJsonAsync).mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("fetches issues successfully", async () => {
-    fetchSpy.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve([mockIssue]),
-    } as Response);
+    vi.mocked(runGhJsonAsync).mockResolvedValueOnce([mockIssue] as never);
 
     const issues = await fetchGitHubIssues("owner", "repo");
 
     expect(issues).toHaveLength(1);
     expect(issues[0].number).toBe(1);
     expect(issues[0].title).toBe("Test Issue");
-    expect(fetchSpy).toHaveBeenCalledOnce();
-    const url = fetchSpy.mock.calls[0][0] as string;
-    expect(url).toContain("https://api.github.com/repos/owner/repo/issues");
-    expect(url).toContain("state=open");
-  });
-
-  it("includes Authorization header when GITHUB_TOKEN is set", async () => {
-    process.env.GITHUB_TOKEN = "test-token";
-    fetchSpy.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve([mockIssue]),
-    } as Response);
-
-    await fetchGitHubIssues("owner", "repo");
-
-    const headers = fetchSpy.mock.calls[0][1]?.headers as Record<string, string>;
-    expect(headers.Authorization).toBe("Bearer test-token");
+    expect(runGhJsonAsync).toHaveBeenCalledWith([
+      "api",
+      "repos/owner/repo/issues?state=open&per_page=30",
+    ]);
   });
 
   it("respects limit option", async () => {
@@ -1152,39 +1103,31 @@ describe("fetchGitHubIssues", () => {
       ...mockIssue,
       number: i + 1,
     }));
-    fetchSpy.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve(manyIssues),
-    } as Response);
+    vi.mocked(runGhJsonAsync).mockResolvedValueOnce(manyIssues as never);
 
     const issues = await fetchGitHubIssues("owner", "repo", { limit: 10 });
 
     expect(issues).toHaveLength(10);
-    const url = fetchSpy.mock.calls[0][0] as string;
-    expect(url).toContain("per_page=10");
+    expect(runGhJsonAsync).toHaveBeenCalledWith([
+      "api",
+      "repos/owner/repo/issues?state=open&per_page=10",
+    ]);
   });
 
   it("respects labels option", async () => {
-    fetchSpy.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve([mockIssue]),
-    } as Response);
+    vi.mocked(runGhJsonAsync).mockResolvedValueOnce([mockIssue] as never);
 
     await fetchGitHubIssues("owner", "repo", { labels: ["bug", "enhancement"] });
 
-    const url = fetchSpy.mock.calls[0][0] as string;
-    expect(url).toContain("labels=bug%2Cenhancement");
+    expect(runGhJsonAsync).toHaveBeenCalledWith([
+      "api",
+      "repos/owner/repo/issues?state=open&per_page=30&labels=bug%2Cenhancement",
+    ]);
   });
 
   it("filters out pull requests", async () => {
-    const pr = { ...mockIssue, pull_request: {} };
-    fetchSpy.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve([mockIssue, pr]),
-    } as Response);
+    const pr = { ...mockIssue, number: 2, pull_request: {} };
+    vi.mocked(runGhJsonAsync).mockResolvedValueOnce([mockIssue, pr] as never);
 
     const issues = await fetchGitHubIssues("owner", "repo");
 
@@ -1192,34 +1135,28 @@ describe("fetchGitHubIssues", () => {
     expect(issues[0].number).toBe(1);
   });
 
-  it("throws error for 404", async () => {
-    fetchSpy.mockResolvedValueOnce({
-      ok: false,
-      status: 404,
-      statusText: "Not Found",
-    } as Response);
+  it("throws error when gh CLI is unavailable", async () => {
+    vi.mocked(isGhAvailable).mockReturnValue(false);
+
+    await expect(fetchGitHubIssues("owner", "repo")).rejects.toThrow(
+      "GitHub CLI (gh) is not available or not authenticated. Run 'gh auth login'.",
+    );
+    expect(runGhJsonAsync).not.toHaveBeenCalled();
+  });
+
+  it("throws error when gh CLI is not authenticated", async () => {
+    vi.mocked(isGhAuthenticated).mockReturnValue(false);
+
+    await expect(fetchGitHubIssues("owner", "repo")).rejects.toThrow(
+      "GitHub CLI (gh) is not available or not authenticated. Run 'gh auth login'.",
+    );
+    expect(runGhJsonAsync).not.toHaveBeenCalled();
+  });
+
+  it("surfaces gh api errors", async () => {
+    vi.mocked(runGhJsonAsync).mockRejectedValueOnce(new Error("Repository not found"));
 
     await expect(fetchGitHubIssues("owner", "repo")).rejects.toThrow("Repository not found");
-  });
-
-  it("throws error for 401/403", async () => {
-    fetchSpy.mockResolvedValueOnce({
-      ok: false,
-      status: 403,
-      statusText: "Forbidden",
-    } as Response);
-
-    await expect(fetchGitHubIssues("owner", "repo")).rejects.toThrow("Authentication failed");
-  });
-
-  it("throws generic error for other status codes", async () => {
-    fetchSpy.mockResolvedValueOnce({
-      ok: false,
-      status: 500,
-      statusText: "Server Error",
-    } as Response);
-
-    await expect(fetchGitHubIssues("owner", "repo")).rejects.toThrow("GitHub API error: 500");
   });
 });
 
@@ -1228,14 +1165,13 @@ describe("runTaskImportFromGitHub", () => {
   let errorSpy: ReturnType<typeof vi.spyOn>;
   let mockCreateTask: ReturnType<typeof vi.fn>;
   let mockListTasks: ReturnType<typeof vi.fn>;
-  let fetchSpy: ReturnType<typeof vi.fn>;
-  const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    fetchSpy = vi.fn();
-    globalThis.fetch = fetchSpy as any;
+    vi.mocked(isGhAvailable).mockReturnValue(true);
+    vi.mocked(isGhAuthenticated).mockReturnValue(true);
+    vi.mocked(runGhJsonAsync).mockReset();
 
     mockCreateTask = vi.fn().mockImplementation((input: { description: string; title?: string }) => ({
       id: `KB-${String(mockCreateTask.mock.calls.length).padStart(3, "0")}`,
@@ -1260,7 +1196,6 @@ describe("runTaskImportFromGitHub", () => {
   });
 
   afterEach(() => {
-    globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
   });
 
@@ -1275,14 +1210,10 @@ describe("runTaskImportFromGitHub", () => {
   });
 
   it("imports issues and creates tasks", async () => {
-    fetchSpy.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve([
-        mockIssue(1, "First Issue", "Description 1"),
-        mockIssue(2, "Second Issue", "Description 2"),
-      ]),
-    } as Response);
+    vi.mocked(runGhJsonAsync).mockResolvedValueOnce([
+      mockIssue(1, "First Issue", "Description 1"),
+      mockIssue(2, "Second Issue", "Description 2"),
+    ] as never);
 
     await runTaskImportFromGitHub("owner/repo");
 
@@ -1310,14 +1241,10 @@ describe("runTaskImportFromGitHub", () => {
       },
     ]);
 
-    fetchSpy.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve([
-        mockIssue(1, "First Issue", "Description 1"),
-        mockIssue(2, "Second Issue", "Description 2"),
-      ]),
-    } as Response);
+    vi.mocked(runGhJsonAsync).mockResolvedValueOnce([
+      mockIssue(1, "First Issue", "Description 1"),
+      mockIssue(2, "Second Issue", "Description 2"),
+    ] as never);
 
     await runTaskImportFromGitHub("owner/repo");
 
@@ -1329,11 +1256,7 @@ describe("runTaskImportFromGitHub", () => {
   });
 
   it("handles empty issues list", async () => {
-    fetchSpy.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve([]),
-    } as Response);
+    vi.mocked(runGhJsonAsync).mockResolvedValueOnce([] as never);
 
     await runTaskImportFromGitHub("owner/repo");
 
@@ -1355,11 +1278,7 @@ describe("runTaskImportFromGitHub", () => {
   });
 
   it("handles API errors gracefully", async () => {
-    fetchSpy.mockResolvedValueOnce({
-      ok: false,
-      status: 404,
-      statusText: "Not Found",
-    } as Response);
+    vi.mocked(runGhJsonAsync).mockRejectedValueOnce(new Error("Repository not found"));
 
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
@@ -1370,11 +1289,7 @@ describe("runTaskImportFromGitHub", () => {
   });
 
   it("uses (no description) for empty body", async () => {
-    fetchSpy.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve([mockIssue(1, "No Body Issue", null)]),
-    } as Response);
+    vi.mocked(runGhJsonAsync).mockResolvedValueOnce([mockIssue(1, "No Body Issue", null)] as never);
 
     await runTaskImportFromGitHub("owner/repo");
 
@@ -1388,11 +1303,7 @@ describe("runTaskImportFromGitHub", () => {
 
   it("truncates long titles to 200 chars", async () => {
     const longTitle = "A".repeat(250);
-    fetchSpy.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve([mockIssue(1, longTitle, "Body")]),
-    } as Response);
+    vi.mocked(runGhJsonAsync).mockResolvedValueOnce([mockIssue(1, longTitle, "Body")] as never);
 
     await runTaskImportFromGitHub("owner/repo");
 
@@ -2414,35 +2325,43 @@ describe("runTaskPrCreate", () => {
   it("exits with error when no GitHub auth available", async () => {
     const task = makeInReviewTask();
     mockGetTask.mockResolvedValueOnce(task);
-    
+
     vi.mocked(isGhAvailable).mockReturnValue(false);
     vi.mocked(isGhAuthenticated).mockReturnValue(false);
-    
+
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
       throw new Error("process.exit");
     }) as (code?: number) => never);
 
     await expect(runTaskPrCreate("FN-001", {})).rejects.toThrow("process.exit");
 
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Not authenticated with GitHub"));
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Error: GitHub CLI (gh) is not available or not authenticated. Run 'gh auth login'.",
+    );
     expect(exitSpy).toHaveBeenCalledWith(1);
     exitSpy.mockRestore();
   });
 
-  it("uses GITHUB_TOKEN when gh CLI not available", async () => {
+  it("exits with error when gh CLI is unavailable even if GITHUB_TOKEN is set", async () => {
     const task = makeInReviewTask();
     mockGetTask.mockResolvedValueOnce(task);
-    
+
     vi.mocked(isGhAvailable).mockReturnValue(false);
     vi.mocked(isGhAuthenticated).mockReturnValue(false);
     process.env.GITHUB_TOKEN = "test-token";
-    
-    mockCreatePr.mockResolvedValueOnce(makePrInfo());
 
-    await runTaskPrCreate("FN-001", {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit");
+    }) as (code?: number) => never);
 
-    expect(GitHubClient).toHaveBeenCalledWith("test-token");
-    expect(mockUpdatePrInfo).toHaveBeenCalled();
+    await expect(runTaskPrCreate("FN-001", {})).rejects.toThrow("process.exit");
+
+    expect(GitHubClient).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Error: GitHub CLI (gh) is not available or not authenticated. Run 'gh auth login'.",
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
   });
 
   it("exits with error when no repository detected", async () => {

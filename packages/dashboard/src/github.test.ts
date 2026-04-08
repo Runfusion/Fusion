@@ -75,10 +75,11 @@ describe("GitHubClient", () => {
       base: "main",
     };
 
-    it("creates PR using gh CLI when available", async () => {
+    it("createPr succeeds with gh CLI only (no token)", async () => {
       mockRunGh.mockReturnValue("https://github.com/test-owner/test-repo/pull/42\n");
+      const ghOnlyClient = new GitHubClient();
 
-      const result = await client.createPr(mockPrParams);
+      const result = await ghOnlyClient.createPr(mockPrParams);
 
       expect(mockRunGh).toHaveBeenCalledWith([
         "pr", "create",
@@ -181,12 +182,12 @@ describe("GitHubClient", () => {
       vi.restoreAllMocks();
     });
 
-    it("throws error when gh CLI fails and no token available", async () => {
+    it("throws gh-auth-focused error when gh CLI fails and no token is available", async () => {
       mockRunGh.mockImplementation(() => {
-        throw new Error("gh command failed: not authenticated");
+        throw new Error("GitHub CLI is not authenticated. Run 'gh auth login'.");
       });
 
-      await expect(client.createPr(mockPrParams)).rejects.toThrow();
+      await expect(client.createPr(mockPrParams)).rejects.toThrow("gh auth login");
     });
   });
 

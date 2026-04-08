@@ -6,7 +6,13 @@ import { createSession, submitResponse, RateLimitError, SessionNotFoundError, In
 import { watchFile, unwatchFile, statSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { GitHubClient } from "@fusion/dashboard";
-import { isGhAvailable, isGhAuthenticated, getCurrentRepo } from "@fusion/core/gh-cli";
+import {
+  getGhErrorMessage,
+  getCurrentRepo,
+  isGhAuthenticated,
+  isGhAvailable,
+  runGhJsonAsync,
+} from "@fusion/core/gh-cli";
 import { resolveProject, type ProjectContext } from "../project-context.js";
 
 const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"];
@@ -843,7 +849,10 @@ export async function fetchGitHubIssues(
   options: FetchGitHubIssuesOptions = {}
 ): Promise<GitHubIssue[]> {
   const { limit = 30, labels, since } = options;
-  const token = process.env.GITHUB_TOKEN;
+
+  if (!isGhAvailable() || !isGhAuthenticated()) {
+    throw new Error("GitHub CLI (gh) is not available or not authenticated. Run 'gh auth login'.");
+  }
 
   // Build query parameters - only open issues, no PRs
   const params = new URLSearchParams();
@@ -856,46 +865,13 @@ export async function fetchGitHubIssues(
     params.append("since", since);
   }
 
-  const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues?${params}`;
-
-  const headers: Record<string, string> = {
-    Accept: "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "fn/1.0",
-  };
-
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000);
+  const path = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues?${params.toString()}`;
 
   try {
-    const response = await fetch(url, {
-      headers,
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw new Error(`Repository not found or not accessible: ${owner}/${repo}`);
-      }
-      if (response.status === 401 || response.status === 403) {
-        throw new Error(
-          `Authentication failed or rate limited. ${
-            token ? "Check your GITHUB_TOKEN." : "Set GITHUB_TOKEN env var."
-          }`
-        );
-      }
-      throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
-    }
-
-    // Filter out pull requests (they have a pull_request property)
-    const issues = (await response.json()) as GitHubIssue[];
-    return issues.filter((issue) => !("pull_request" in issue && issue.pull_request)).slice(0, limit);
-  } finally {
-    clearTimeout(timeoutId);
+    const issues = await runGhJsonAsync<Array<GitHubIssue & { pull_request?: unknown }>>(["api", path]);
+    return issues.filter((issue) => !issue.pull_request).slice(0, limit);
+  } catch (error) {
+    throw new Error(getGhErrorMessage(error));
   }
 }
 
@@ -1140,10 +1116,8 @@ export async function runTaskPrCreate(id: string, options: PrCreateOptions = {},
   }
 
   // Validate GitHub auth
-  const hasGhAuth = isGhAvailable() && isGhAuthenticated();
-  const hasToken = !!process.env.GITHUB_TOKEN;
-  if (!hasGhAuth && !hasToken) {
-    console.error("Error: Not authenticated with GitHub. Run 'gh auth login' or set GITHUB_TOKEN.");
+  if (!isGhAvailable() || !isGhAuthenticated()) {
+    console.error("Error: GitHub CLI (gh) is not available or not authenticated. Run 'gh auth login'.");
     process.exit(1);
   }
 
@@ -1166,8 +1140,7 @@ export async function runTaskPrCreate(id: string, options: PrCreateOptions = {},
   }
 
   // Create PR via GitHubClient
-  const githubToken = process.env.GITHUB_TOKEN;
-  const client = new GitHubClient(githubToken);
+  const client = new GitHubClient();
 
   try {
     const prInfo = await client.createPr({

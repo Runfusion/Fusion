@@ -4255,7 +4255,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       // Create the PR
-      const client = new GitHubClient(githubToken);
+      const client = new GitHubClient();
 
       const prInfo = await client.createPr({
         owner,
@@ -4543,7 +4543,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       // Fetch fresh PR status + merge readiness
-      const client = new GitHubClient(githubToken);
+      const client = new GitHubClient();
       const mergeStatus = await client.getPrMergeStatus(owner, repo, task.prInfo.number);
 
       const prInfo = {

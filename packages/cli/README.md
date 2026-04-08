@@ -58,7 +58,7 @@ When execution finishes and the reviewer signs off, the task moves to "in review
 
 `autoMerge` still controls whether Fusion performs completion automatically at all. If `autoMerge` is disabled, tasks stay in **In Review** until you finish the merge yourself.
 
-For PR-first mode, authenticate GitHub with `gh auth login` or `GITHUB_TOKEN`, and make sure the task branch already exists on GitHub as `kb/<task-id-lower>`. Fusion does **not** push branches for you before PR creation.
+For PR-first mode, authenticate GitHub with `gh auth login`, and make sure the task branch already exists on GitHub as `kb/<task-id-lower>`. Fusion does **not** push branches for you before PR creation.
 
 Worktrees can be cleaned up after merge or reused by the next task to keep build caches warm.
 
