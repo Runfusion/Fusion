@@ -998,18 +998,18 @@ function formatResponseForAgent(
   responses: Record<string, unknown>
 ): string {
   const responseValue = responses[question.id];
-  
+
   switch (question.type) {
     case "text":
       return `Question: ${question.question}\n\nAnswer: ${responseValue}`;
-    
+
     case "single_select":
       if (typeof responseValue === "string") {
         const option = question.options?.find((o) => o.id === responseValue);
         return `Question: ${question.question}\n\nSelected: ${option?.label || responseValue}`;
       }
       return `Question: ${question.question}\n\nAnswer: ${responseValue}`;
-    
+
     case "multi_select":
       if (Array.isArray(responseValue)) {
         const selected = responseValue.map((id) => {
@@ -1019,13 +1019,68 @@ function formatResponseForAgent(
         return `Question: ${question.question}\n\nSelected: ${selected.join(", ")}`;
       }
       return `Question: ${question.question}\n\nAnswer: ${responseValue}`;
-    
+
     case "confirm":
       return `Question: ${question.question}\n\nAnswer: ${responseValue === true ? "Yes" : "No"}`;
-    
+
     default:
       return `Question: ${question.question}\n\nAnswer: ${JSON.stringify(responseValue)}`;
   }
+}
+
+function formatInterviewAnswer(question: PlanningQuestion, responseValue: unknown): string {
+  switch (question.type) {
+    case "text":
+      return typeof responseValue === "string" ? responseValue : String(responseValue ?? "");
+
+    case "single_select":
+      if (typeof responseValue === "string") {
+        const option = question.options?.find((candidate) => candidate.id === responseValue);
+        return option?.label || responseValue;
+      }
+      return String(responseValue ?? "");
+
+    case "multi_select":
+      if (Array.isArray(responseValue)) {
+        const selected = responseValue.map((id) => {
+          if (typeof id !== "string") {
+            return String(id);
+          }
+          const option = question.options?.find((candidate) => candidate.id === id);
+          return option?.label || id;
+        });
+        return selected.join(", ");
+      }
+      return String(responseValue ?? "");
+
+    case "confirm":
+      return responseValue === true ? "Yes" : "No";
+
+    default:
+      return JSON.stringify(responseValue);
+  }
+}
+
+/**
+ * Format planning interview Q&A history for task descriptions and logs.
+ */
+export function formatInterviewQA(
+  history: Array<{ question: PlanningQuestion; response: unknown }>
+): string {
+  if (history.length === 0) {
+    return "";
+  }
+
+  const entries = history.map(({ question, response }) => {
+    const responseValue =
+      response && typeof response === "object" && !Array.isArray(response)
+        ? (response as Record<string, unknown>)[question.id]
+        : response;
+
+    return `**Q: ${question.question}**\nA: ${formatInterviewAnswer(question, responseValue)}`;
+  });
+
+  return `## Planning Interview Context\n\n${entries.join("\n\n")}`;
 }
 
 /**
@@ -1088,6 +1143,10 @@ export function generateSubtasksFromPlanning(sessionId: string): SubtaskItem[] {
   if (!session.summary) return [];
 
   const { summary } = session;
+  const qaSection = formatInterviewQA(session.history);
+  const descriptionWithContext = qaSection
+    ? `${summary.description}\n\n${qaSection}`
+    : summary.description;
 
   // If key deliverables exist, create one subtask per deliverable
   if (summary.keyDeliverables.length > 0) {
@@ -1097,7 +1156,7 @@ export function generateSubtasksFromPlanning(sessionId: string): SubtaskItem[] {
       return {
         id,
         title: deliverable,
-        description: summary.description,
+        description: descriptionWithContext,
         suggestedSize: index === 0 ? "S" as const : index === summary.keyDeliverables.length - 1 ? "S" as const : "M" as const,
         dependsOn,
       };
@@ -1109,21 +1168,21 @@ export function generateSubtasksFromPlanning(sessionId: string): SubtaskItem[] {
     {
       id: "subtask-1",
       title: "Define implementation approach",
-      description: summary.description,
+      description: descriptionWithContext,
       suggestedSize: "S" as const,
       dependsOn: [],
     },
     {
       id: "subtask-2",
       title: "Implement core changes",
-      description: summary.description,
+      description: descriptionWithContext,
       suggestedSize: "M" as const,
       dependsOn: ["subtask-1"],
     },
     {
       id: "subtask-3",
       title: "Verify and polish",
-      description: summary.description,
+      description: descriptionWithContext,
       suggestedSize: "S" as const,
       dependsOn: ["subtask-2"],
     },

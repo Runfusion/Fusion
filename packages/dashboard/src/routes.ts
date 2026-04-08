@@ -5847,7 +5847,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         return;
       }
 
-      const { getSession, cleanupSession } = await import("./planning.js");
+      const { getSession, cleanupSession, formatInterviewQA } = await import("./planning.js");
 
       const session = getSession(planningSessionId);
       if (!session) {
@@ -5859,6 +5859,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         res.status(400).json({ error: "Planning session is not complete" });
         return;
       }
+
+      const qaSection = formatInterviewQA(session.history);
+      const logDetails = qaSection
+        ? `Source: ${session.initialPlan.slice(0, 200)}\n\n${qaSection}`
+        : `Source: ${session.initialPlan.slice(0, 200)}`;
 
       // Validate each subtask
       for (const item of subtasks) {
@@ -5901,11 +5906,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           createdTasks[index] = updated;
         }
 
-        await store.logEntry(
-          created.id,
-          "Created via Planning Mode (multi-task)",
-          `Source: ${session.initialPlan.slice(0, 200)}`
-        );
+        await store.logEntry(created.id, "Created via Planning Mode (multi-task)", logDetails);
       }
 
       // Cleanup the planning session

@@ -16,6 +16,7 @@ import {
   InvalidSessionStateError,
   parseAgentResponse,
   generateSubtasksFromPlanning,
+  formatInterviewQA,
 } from "./planning.js";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 
@@ -558,6 +559,103 @@ describe("planning module", () => {
     });
   });
 
+  describe("formatInterviewQA", () => {
+    it("returns empty string for empty history", () => {
+      expect(formatInterviewQA([])).toBe("");
+    });
+
+    it("formats text, single_select, multi_select, and confirm responses", () => {
+      const history: Array<{ question: PlanningQuestion; response: unknown }> = [
+        {
+          question: {
+            id: "q-text",
+            type: "text",
+            question: "What constraints should we consider?",
+          },
+          response: { "q-text": "Must support offline mode" },
+        },
+        {
+          question: {
+            id: "q-single",
+            type: "single_select",
+            question: "What is the target scope?",
+            options: [
+              { id: "small", label: "Small" },
+              { id: "medium", label: "Medium" },
+            ],
+          },
+          response: { "q-single": "medium" },
+        },
+        {
+          question: {
+            id: "q-multi",
+            type: "multi_select",
+            question: "Which platforms are required?",
+            options: [
+              { id: "web", label: "Web" },
+              { id: "ios", label: "iOS" },
+              { id: "android", label: "Android" },
+            ],
+          },
+          response: { "q-multi": ["web", "android"] },
+        },
+        {
+          question: {
+            id: "q-confirm",
+            type: "confirm",
+            question: "Should we include backward compatibility?",
+          },
+          response: { "q-confirm": true },
+        },
+      ];
+
+      expect(formatInterviewQA(history)).toBe(
+        [
+          "## Planning Interview Context",
+          "",
+          "**Q: What constraints should we consider?**",
+          "A: Must support offline mode",
+          "",
+          "**Q: What is the target scope?**",
+          "A: Medium",
+          "",
+          "**Q: Which platforms are required?**",
+          "A: Web, Android",
+          "",
+          "**Q: Should we include backward compatibility?**",
+          "A: Yes",
+        ].join("\n")
+      );
+    });
+
+    it("handles missing options gracefully", () => {
+      const history: Array<{ question: PlanningQuestion; response: unknown }> = [
+        {
+          question: {
+            id: "q-single",
+            type: "single_select",
+            question: "Which tier?",
+            options: [{ id: "starter", label: "Starter" }],
+          },
+          response: { "q-single": "enterprise" },
+        },
+        {
+          question: {
+            id: "q-multi",
+            type: "multi_select",
+            question: "Which integrations?",
+            options: [{ id: "slack", label: "Slack" }],
+          },
+          response: { "q-multi": ["slack", "jira"] },
+        },
+      ];
+
+      const formatted = formatInterviewQA(history);
+      expect(formatted).toContain("A: enterprise");
+      expect(formatted).toContain("A: Slack, jira");
+    });
+  });
+
   describe("generateSubtasksFromPlanning", () => {
     /** Helper: create a session and complete it to get a summary */
     async function createCompletedSession(
@@ -566,9 +664,9 @@ describe("planning module", () => {
     ): Promise<string> {
       const { sessionId } = await createSession(ip, plan, undefined, TEST_ROOT_DIR);
       // Complete the session by submitting 3 responses
-      await submitResponse(sessionId, { scope: "medium" });
-      await submitResponse(sessionId, { requirements: "Test requirements" });
-      await submitResponse(sessionId, { confirm: true });
+      await submitResponse(sessionId, { "q-scope": "medium" });
+      await submitResponse(sessionId, { "q-requirements": "Test requirements" });
+      await submitResponse(sessionId, { "q-confirm": true });
       return sessionId;
     }
 
@@ -621,6 +719,41 @@ describe("planning module", () => {
         suggestedSize: "S",
         dependsOn: ["subtask-2"],
       });
+    });
+
+    it("appends planning interview context to subtask descriptions when history exists", async () => {
+      const mockIp = getUniqueIp();
+      const sessionId = await createCompletedSession(mockIp, "Build auth system with context");
+
+      const result = generateSubtasksFromPlanning(sessionId);
+
+      expect(result.length).toBeGreaterThan(0);
+      expect(result[0]?.description).toContain("## Planning Interview Context");
+      expect(result[0]?.description).toContain("**Q: What is the scope of this plan?**");
+      expect(result[0]?.description).toContain("A: Medium");
+      expect(result[0]?.description).toContain("**Q: What are the key requirements?**");
+      expect(result[0]?.description).toContain("A: Test requirements");
+      expect(result[0]?.description).toContain("**Q: Are there specific technologies to use?**");
+      expect(result[0]?.description).toContain("A: Yes");
+    });
+
+    it("keeps subtask descriptions unchanged when history is empty", async () => {
+      const mockIp = getUniqueIp();
+      const sessionId = await createCompletedSession(mockIp, "Build auth without context");
+
+      const session = getSession(sessionId);
+      expect(session?.summary).toBeDefined();
+      if (!session?.summary) {
+        throw new Error("Expected summary to exist for completed session");
+      }
+
+      session.history = [];
+
+      const result = generateSubtasksFromPlanning(sessionId);
+      expect(result.length).toBeGreaterThan(0);
+      for (const subtask of result) {
+        expect(subtask.description).toBe(session.summary.description);
+      }
     });
 
     it("generates fallback subtasks when keyDeliverables is empty", async () => {
