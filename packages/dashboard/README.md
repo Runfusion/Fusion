@@ -169,6 +169,12 @@ In addition to the global mobile foundation, several power-user surfaces now inc
   - Settings content remains independently scrollable (`.settings-content` keeps `flex: 1; min-height: 0; overflow-y: auto`) so tabs stay reachable while content scrolls.
   - Settings form controls inside `.settings-content` enforce `font-size: 16px` on mobile to prevent iOS zoom-on-focus.
 
+- **Core modals (TaskDetail, NewTask, GitManager)**
+  - At `@media (max-width: 768px)`, core modals use full-screen-friendly layout rules: header rows wrap, sticky action rows include safe-area bottom padding, and tab/nav strips stay horizontally scrollable.
+  - `TaskDetailModal` mobile overrides include wrapping title metadata (`.detail-title-row`), full-screen refine overlay sizing (`.detail-refine-modal`), and edit-form padding cleanup for embedded `TaskForm` fields.
+  - `NewTaskModal` / `TaskForm` mobile overrides remove desktop body max-height constraints, stack model selector rows vertically, and clamp dropdown/popover surfaces (`.dep-dropdown`, `.refine-menu--modal`) to modal bounds.
+  - `GitManagerModal` now applies sidebar-to-horizontal-nav and single-column status-grid layout at the shared `768px` breakpoint (with the existing `640px` block retained for extra-compact typography/sizing).
+
 - **AgentsView**
   - Board mode collapses to a single column (`.agent-board { grid-template-columns: 1fr; }`).
   - Controls stack vertically (`.agent-controls` + `.agent-controls-actions`) with full-width action buttons and touch-friendly sizing.

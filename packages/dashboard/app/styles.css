@@ -5701,7 +5701,7 @@ body {
   .modal-actions {
     flex-wrap: wrap;
     gap: var(--space-sm);
-    padding: 12px 14px;
+    padding: 12px 14px calc(12px + env(safe-area-inset-bottom, 0px));
   }
 
   .modal-actions .btn {
@@ -5933,6 +5933,7 @@ body {
     right: 0;
     min-width: 0;
     width: 100%;
+    max-width: 100%;
     max-height: 200px;
   }
 
@@ -5948,6 +5949,138 @@ body {
 
   .model-combobox-option {
     min-height: 44px;
+  }
+
+  /* Task detail modal: prevent header clipping + full-screen refine flow */
+  .detail-title-row {
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+  }
+
+  .modal-header-actions {
+    flex-shrink: 0;
+  }
+
+  .detail-refine-overlay {
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .detail-refine-modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: 100dvh;
+    border-radius: 0;
+    border: none;
+  }
+
+  .detail-refine-textarea {
+    font-size: 16px;
+  }
+
+  .modal-edit-form .form-group {
+    padding: 0;
+  }
+
+  /* New task + task form: stacked mobile fields and bounded popovers */
+  .new-task-modal {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .new-task-modal .modal-body {
+    max-height: unset;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+    padding: 14px 0;
+  }
+
+  .new-task-modal .form-group {
+    padding: 0 14px;
+  }
+
+  .task-form .dep-dropdown {
+    left: 0;
+    right: 0;
+    max-width: 100%;
+  }
+
+  .model-select-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-xs);
+  }
+
+  .model-select-label {
+    width: auto;
+    text-align: left;
+  }
+
+  .refine-menu--modal {
+    left: 14px;
+    right: 14px;
+  }
+
+  .task-form-description-actions {
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+  }
+
+  .task-form .checkbox-label {
+    flex-wrap: wrap;
+  }
+
+  .task-form .checkbox-label > div {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* Settings modal: keep model preset rows stackable on narrow screens */
+  .settings-preset-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  /* Git manager: align breakpoint behavior with global 768px mobile modal rules */
+  .gm-layout {
+    flex-direction: column;
+  }
+
+  .gm-sidebar {
+    flex-direction: row;
+    width: 100%;
+    min-width: unset;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: var(--space-xs) var(--space-sm);
+    gap: var(--space-xs);
+  }
+
+  .gm-nav-item {
+    border-left: none;
+    border-bottom: 2px solid transparent;
+    text-align: center;
+    justify-content: center;
+    min-height: 44px;
+  }
+
+  .gm-nav-item.active {
+    border-left-color: transparent;
+    border-bottom-color: var(--todo);
+  }
+
+  .gm-content {
+    min-height: 200px;
+    padding: var(--space-md);
+    padding-bottom: max(var(--space-md), env(safe-area-inset-bottom, 0px));
+  }
+
+  .gm-status-grid {
+    grid-template-columns: 1fr;
   }
 }
 
