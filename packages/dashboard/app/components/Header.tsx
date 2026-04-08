@@ -272,10 +272,17 @@ export function Header({
             aria-label="Fusion logo"
             role="img"
           >
-            <circle cx="44" cy="44" r="20" fill="currentColor" />
-            <circle cx="84" cy="44" r="20" fill="currentColor" />
-            <circle cx="44" cy="84" r="20" fill="currentColor" />
-            <circle cx="84" cy="84" r="20" fill="currentColor" />
+            <circle
+              cx="64"
+              cy="64"
+              r="52"
+              stroke="currentColor"
+              strokeWidth="8"
+            />
+            <path
+              d="M26 101C44 82 62 64 82 45C90 37 98 30 104 24C96 35 89 47 81 60C70 79 57 95 43 108C38 112 32 108 26 101Z"
+              fill="currentColor"
+            />
           </svg>
           <h1 className="logo">Fusion</h1>
         </div>

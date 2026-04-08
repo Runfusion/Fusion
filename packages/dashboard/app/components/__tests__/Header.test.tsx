@@ -49,9 +49,16 @@ describe("Header", () => {
     const logo = screen.getByLabelText("Fusion logo");
     expect(logo).toBeDefined();
     expect(logo.tagName.toLowerCase()).toBe("svg");
-    // The SVG should have the currentColor" fill
-    const circles = logo.querySelectorAll("circle");
-    expect(circles).toHaveLength(4);
+
+    // The SVG should expose currentColor-driven geometry for theme-aware coloring
+    const currentColorShapes = logo.querySelectorAll(
+      '[fill="currentColor"], [stroke="currentColor"]'
+    );
+    expect(currentColorShapes.length).toBeGreaterThan(0);
+
+    // The new logo keeps a single outer circle boundary
+    const outerCircle = logo.querySelector("circle[stroke='currentColor']");
+    expect(outerCircle).not.toBeNull();
   });
 
   it("renders the logo before the h1 element", () => {
