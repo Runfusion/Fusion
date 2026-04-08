@@ -1,4 +1,4 @@
-import { resolveDependencyOrder, type TaskStore, type Task, type MissionStore, type PrInfo } from "@fusion/core";
+import { getCurrentRepo, resolveDependencyOrder, type TaskStore, type Task, type MissionStore, type PrInfo } from "@fusion/core";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -6,7 +6,6 @@ import type { AgentSemaphore } from "./concurrency.js";
 import { generateReservedWorktreeName, slugify } from "./worktree-names.js";
 import { schedulerLog } from "./logger.js";
 import { type PrMonitor, type PrComment } from "./pr-monitor.js";
-import { getCurrentGitHubRepo } from "./github.js";
 
 /**
  * Check whether two sets of file scope paths overlap.
@@ -170,7 +169,7 @@ export class Scheduler {
       if (this.options.prMonitor) {
         if (to === "in-review" && task.prInfo) {
           // Start monitoring existing PR
-          const repo = getCurrentGitHubRepo(this.store.getRootDir());
+          const repo = getCurrentRepo(this.store.getRootDir());
           if (repo) {
             this.options.prMonitor.startMonitoring(task.id, repo.owner, repo.repo, task.prInfo);
           }
@@ -263,7 +262,7 @@ export class Scheduler {
         return;
       }
 
-      const repo = getCurrentGitHubRepo(this.store.getRootDir());
+      const repo = getCurrentRepo(this.store.getRootDir());
       if (repo) {
         this.options.prMonitor.startMonitoring(task.id, repo.owner, repo.repo, task.prInfo);
       }

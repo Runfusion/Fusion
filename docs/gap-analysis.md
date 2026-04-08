@@ -204,13 +204,13 @@ Assessment:
 Cross-reference:
 - Existing tasks **FN-1201** and **FN-1202** already target server-vs-client persistence boundaries.
 
-### Finding 6.3 — Duplication in GitHub remote parsing logic across packages (**Medium**)
+### Finding 6.3 — GitHub remote parsing logic consolidation (**Resolved**)
 
-- `packages/core/src/gh-cli.ts` implements `parseRepoFromRemote()` + gh execution wrappers.
-- `packages/engine/src/github.ts` separately implements similar `parseGitHubRemote()` and `getCurrentGitHubRepo()` logic.
+- `packages/core/src/gh-cli.ts` is the canonical home for `parseRepoFromRemote()` and `getCurrentRepo()`.
+- Engine and dashboard consumers now import the shared `@fusion/core` helpers directly.
 
 Impact:
-- Risk of drift in URL parsing behavior and edge-case handling between scheduler/engine and core CLI helpers.
+- Eliminates drift risk in URL parsing behavior and keeps GitHub remote resolution logic centralized.
 
 ### Finding 6.4 — Layering is healthy: no core → engine/dashboard circular import leak (**Good / no gap**)
 

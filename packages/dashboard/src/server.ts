@@ -13,7 +13,7 @@ import { getOrCreateProjectStore, evictAllProjectStores } from "./project-store-
 import { getTerminalService, type TerminalSession, STALE_SESSION_THRESHOLD_MS } from "./terminal-service.js";
 import { WebSocketServer, type WebSocket } from "ws";
 import { terminalSessionManager } from "./terminal.js";
-import { getCurrentGitHubRepo, parseBadgeUrl } from "./github.js";
+import { parseBadgeUrl } from "./github.js";
 import { WebSocketManager, type BadgeSnapshot } from "./websocket.js";
 import type { BadgePubSub } from "./badge-pubsub.js";
 import { createBadgePubSub, type BadgePubSubMessage } from "./badge-pubsub.js";

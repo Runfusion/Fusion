@@ -8,9 +8,9 @@ import { tmpdir } from "node:os";
 import * as nodeFs from "node:fs";
 import * as nodeChildProcess from "node:child_process";
 import type { TaskStore, Column, MergeResult, ScheduleType, ActivityEventType, ModelPreset, AutomationStep, MessageType, ParticipantType, MessageCreateInput } from "@fusion/core";
-import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, isGhAuthenticated, AUTOMATION_PRESETS, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupAutomation, exportSettings, importSettings, validateImportData, MessageStore, MEMORY_FILE_PATH } from "@fusion/core";
+import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, getCurrentRepo, isGhAuthenticated, AUTOMATION_PRESETS, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupAutomation, exportSettings, importSettings, validateImportData, MessageStore, MEMORY_FILE_PATH } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
-import { GitHubClient, getCurrentGitHubRepo, parseBadgeUrl } from "./github.js";
+import { GitHubClient, parseBadgeUrl } from "./github.js";
 import { githubRateLimiter } from "./github-poll.js";
 import { terminalSessionManager } from "./terminal.js";
 import { getTerminalService } from "./terminal-service.js";
@@ -4233,7 +4233,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         owner = o;
         repo = r;
       } else {
-        const gitRepo = getCurrentGitHubRepo(scopedStore.getRootDir());
+        const gitRepo = getCurrentRepo(scopedStore.getRootDir());
         if (!gitRepo) {
           throw badRequest("Could not determine GitHub repository. Set GITHUB_REPOSITORY env var or configure git remote.");
         }
@@ -4520,7 +4520,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           owner = o;
           repo = r;
         } else {
-          const gitRepo = getCurrentGitHubRepo(scopedStore.getRootDir());
+          const gitRepo = getCurrentRepo(scopedStore.getRootDir());
           if (!gitRepo) {
             throw badRequest("Could not determine GitHub repository");
           }
@@ -4644,7 +4644,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           owner = o;
           repo = r;
         } else {
-          const gitRepo = getCurrentGitHubRepo(scopedStore.getRootDir());
+          const gitRepo = getCurrentRepo(scopedStore.getRootDir());
           if (!gitRepo) {
             throw badRequest("Could not determine GitHub repository");
           }
@@ -10980,7 +10980,7 @@ function getDefaultGitHubRepo(store: TaskStore): { owner: string; repo: string }
   }
 
   const rootDir = typeof store.getRootDir === "function" ? store.getRootDir() : process.cwd();
-  return getCurrentGitHubRepo(rootDir);
+  return getCurrentRepo(rootDir);
 }
 
 function isBatchStatusStale(info: { lastCheckedAt?: string } | undefined, updatedAt?: string): boolean {
@@ -11022,7 +11022,7 @@ async function refreshPrInBackground(store: TaskStore, taskId: string, currentPr
         owner = o;
         repo = r;
       } else {
-        const gitRepo = getCurrentGitHubRepo(store.getRootDir());
+        const gitRepo = getCurrentRepo(store.getRootDir());
         if (!gitRepo) return; // Silent fail - can't determine repo
         owner = gitRepo.owner;
         repo = gitRepo.repo;
@@ -11066,7 +11066,7 @@ async function refreshIssueInBackground(
         owner = o;
         repo = r;
       } else {
-        const gitRepo = getCurrentGitHubRepo(store.getRootDir());
+        const gitRepo = getCurrentRepo(store.getRootDir());
         if (!gitRepo) return;
         owner = gitRepo.owner;
         repo = gitRepo.repo;
