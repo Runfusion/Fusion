@@ -35,8 +35,7 @@ export function useAgents(projectId?: string) {
 
   // SSE subscription for agent events
   useEffect(() => {
-    if (!projectId) return;
-    const query = `?projectId=${encodeURIComponent(projectId)}`;
+    const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
     const es = new EventSource(`/api/events${query}`);
 
     const refresh = () => {

@@ -88,6 +88,8 @@ export interface HeartbeatExecutionOptions {
   triggerDetail?: string;
   /** Optional task ID override (uses agent.taskId if not set) */
   taskId?: string;
+  /** Optional structured context persisted on the run record */
+  contextSnapshot?: Record<string, unknown>;
 }
 
 /** Session interface for disposing agent resources */
@@ -297,6 +299,8 @@ export class HeartbeatMonitor {
       resultJson?: Record<string, unknown>;
       stdoutExcerpt?: string;
       stderrExcerpt?: string;
+      /** When true, preserve current agent state instead of forcing a terminal transition. */
+      skipStateTransition?: boolean;
     }
   ): Promise<void> {
     // Load and update the run
@@ -345,18 +349,20 @@ export class HeartbeatMonitor {
     }
 
     // Transition agent state based on result
-    try {
-      if (result.status === "failed") {
-        await this.store.updateAgentState(agentId, "error");
-        await this.store.updateAgent(agentId, { lastError: result.stderrExcerpt ?? "Run failed" });
-      } else if (result.status === "terminated") {
-        await this.store.updateAgentState(agentId, "terminated");
-      } else {
-        // Completed successfully - back to active
-        await this.store.updateAgentState(agentId, "active");
+    if (!result.skipStateTransition) {
+      try {
+        if (result.status === "failed") {
+          await this.store.updateAgentState(agentId, "error");
+          await this.store.updateAgent(agentId, { lastError: result.stderrExcerpt ?? "Run failed" });
+        } else if (result.status === "terminated") {
+          await this.store.updateAgentState(agentId, "terminated");
+        } else {
+          // Completed successfully - back to active
+          await this.store.updateAgentState(agentId, "active");
+        }
+      } catch {
+        // State transition may fail if already in target state
       }
-    } catch {
-      // State transition may fail if already in target state
     }
 
     // End the heartbeat run tracking
@@ -478,7 +484,7 @@ export class HeartbeatMonitor {
    * @throws Error if taskStore or rootDir are not configured
    */
   async executeHeartbeat(options: HeartbeatExecutionOptions): Promise<AgentHeartbeatRun> {
-    const { agentId, source, triggerDetail, taskId: explicitTaskId } = options;
+    const { agentId, source, triggerDetail, taskId: explicitTaskId, contextSnapshot } = options;
 
     // Validate execution dependencies
     if (!this.taskStore || !this.rootDir) {
@@ -492,7 +498,7 @@ export class HeartbeatMonitor {
       heartbeatLog.log(`Executing heartbeat for ${agentId} (source=${source})`);
 
       // Start run
-      const run = await this.startRun(agentId, { source, triggerDetail });
+      const run = await this.startRun(agentId, { source, triggerDetail, contextSnapshot });
 
       try {
         // Resolve agent
@@ -524,6 +530,7 @@ export class HeartbeatMonitor {
           await this.completeRun(agentId, run.id, {
             status: "completed",
             resultJson: { reason: "invalid_state", state: agent.state },
+            skipStateTransition: true,
           });
           return (await this.store.getRunDetail(agentId, run.id))!;
         }
@@ -932,19 +939,19 @@ export class HeartbeatTriggerScheduler {
     }
 
     // Skip if no interval configured
-    const intervalMs = config.heartbeatIntervalMs;
-    if (!intervalMs || typeof intervalMs !== "number" || intervalMs <= 0) {
+    const rawIntervalMs = config.heartbeatIntervalMs;
+    if (!rawIntervalMs || typeof rawIntervalMs !== "number" || !Number.isFinite(rawIntervalMs) || rawIntervalMs <= 0) {
       heartbeatLog.log(`Skipping timer registration for ${agentId} (no interval)`);
       return;
     }
 
+    const intervalMs = Math.max(1000, Math.round(rawIntervalMs));
+
     // Clear existing timer if re-registering
     this.unregisterAgent(agentId);
 
-    const maxConcurrent = config.maxConcurrentRuns ?? 1;
-
     const handle = setInterval(() => {
-      void this.onTimerTick(agentId, intervalMs, maxConcurrent);
+      void this.onTimerTick(agentId, intervalMs);
     }, intervalMs);
 
     this.timers.set(agentId, { intervalMs, handle });
@@ -1021,7 +1028,7 @@ export class HeartbeatTriggerScheduler {
    * Handle a timer tick for an agent.
    * Checks for active runs before invoking the callback.
    */
-  private async onTimerTick(agentId: string, intervalMs: number, maxConcurrent: number): Promise<void> {
+  private async onTimerTick(agentId: string, intervalMs: number): Promise<void> {
     if (!this.running) return;
 
     try {

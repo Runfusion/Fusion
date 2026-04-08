@@ -53,7 +53,7 @@ export interface ServerOptions {
   /** Optional HeartbeatMonitor for triggering agent execution runs */
   heartbeatMonitor?: {
     startRun(agentId: string, options?: { source: import("@fusion/core").HeartbeatInvocationSource; triggerDetail?: string; contextSnapshot?: Record<string, unknown> }): Promise<import("@fusion/core").AgentHeartbeatRun>;
-    executeHeartbeat(options: { agentId: string; source: import("@fusion/core").HeartbeatInvocationSource; triggerDetail?: string; taskId?: string }): Promise<import("@fusion/core").AgentHeartbeatRun>;
+    executeHeartbeat(options: { agentId: string; source: import("@fusion/core").HeartbeatInvocationSource; triggerDetail?: string; taskId?: string; contextSnapshot?: Record<string, unknown> }): Promise<import("@fusion/core").AgentHeartbeatRun>;
   };
 }
 

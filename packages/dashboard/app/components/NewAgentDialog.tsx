@@ -78,6 +78,9 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
   const [title, setTitle] = useState("");
   const [icon, setIcon] = useState("");
   const [role, setRole] = useState<AgentCapability>("custom");
+  const [reportsTo, setReportsTo] = useState("");
+  const [instructionsPath, setInstructionsPath] = useState("");
+  const [instructionsText, setInstructionsText] = useState("");
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig>({
     model: "",
     thinkingLevel: "off",
@@ -175,6 +178,9 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
     setTitle("");
     setIcon("");
     setRole("custom");
+    setReportsTo("");
+    setInstructionsPath("");
+    setInstructionsText("");
     setRuntimeConfig({ model: "", thinkingLevel: "off", maxTurns: 10 });
     setSelectedPresetId(null);
     setError(null);
@@ -196,6 +202,9 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
         role,
         ...(title.trim() ? { title: title.trim() } : {}),
         ...(icon.trim() ? { icon: icon.trim() } : {}),
+        ...(reportsTo.trim() ? { reportsTo: reportsTo.trim() } : {}),
+        ...(instructionsPath.trim() ? { instructionsPath: instructionsPath.trim() } : {}),
+        ...(instructionsText.trim() ? { instructionsText: instructionsText.trim() } : {}),
         ...(Object.keys(runtimeCfg).length > 0 ? { runtimeConfig: runtimeCfg } : {}),
       }, projectId);
       handleClose();
@@ -303,6 +312,39 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
                   ))}
                 </div>
               </div>
+              <div className="agent-dialog-field">
+                <label htmlFor="agent-reports-to">Reports To <span className="agent-dialog-optional">(optional agent ID)</span></label>
+                <input
+                  id="agent-reports-to"
+                  type="text"
+                  className="input"
+                  placeholder="e.g. agent-1234abcd"
+                  value={reportsTo}
+                  onChange={e => setReportsTo(e.target.value)}
+                />
+              </div>
+              <div className="agent-dialog-field">
+                <label htmlFor="agent-instructions-path">Instructions Path <span className="agent-dialog-optional">(optional)</span></label>
+                <input
+                  id="agent-instructions-path"
+                  type="text"
+                  className="input"
+                  placeholder="e.g. .fusion/agents/reviewer.md"
+                  value={instructionsPath}
+                  onChange={e => setInstructionsPath(e.target.value)}
+                />
+              </div>
+              <div className="agent-dialog-field">
+                <label htmlFor="agent-instructions-text">Inline Instructions <span className="agent-dialog-optional">(optional)</span></label>
+                <textarea
+                  id="agent-instructions-text"
+                  className="input"
+                  rows={4}
+                  placeholder="Add custom behavior instructions..."
+                  value={instructionsText}
+                  onChange={e => setInstructionsText(e.target.value)}
+                />
+              </div>
               {/* AI-assisted generation */}
               <div className="agent-dialog-ai-generate">
                 <button
@@ -394,6 +436,24 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
                   <span className="agent-dialog-summary-row-label">Role</span>
                   <span>{selectedRole?.icon} {selectedRole?.label}</span>
                 </div>
+                {reportsTo.trim() && (
+                  <div className="agent-dialog-summary-row">
+                    <span className="agent-dialog-summary-row-label">Reports To</span>
+                    <span>{reportsTo.trim()}</span>
+                  </div>
+                )}
+                {instructionsPath.trim() && (
+                  <div className="agent-dialog-summary-row">
+                    <span className="agent-dialog-summary-row-label">Instructions File</span>
+                    <span>{instructionsPath.trim()}</span>
+                  </div>
+                )}
+                {instructionsText.trim() && (
+                  <div className="agent-dialog-summary-row">
+                    <span className="agent-dialog-summary-row-label">Inline Instructions</span>
+                    <span>{instructionsText.trim().length} chars</span>
+                  </div>
+                )}
                 <div className="agent-dialog-summary-row">
                   <span className="agent-dialog-summary-row-label">Model</span>
                   <span>

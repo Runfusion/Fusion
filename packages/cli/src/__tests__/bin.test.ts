@@ -22,6 +22,15 @@ const runNodeAdd = vi.fn();
 const runNodeRemove = vi.fn();
 const runNodeShow = vi.fn();
 const runNodeHealth = vi.fn();
+const runAgentStop = vi.fn();
+const runAgentStart = vi.fn();
+const runAgentMailbox = vi.fn();
+const runAgentImport = vi.fn();
+const runMessageInbox = vi.fn();
+const runMessageOutbox = vi.fn();
+const runMessageSend = vi.fn();
+const runMessageRead = vi.fn();
+const runMessageDelete = vi.fn();
 
 vi.mock("../commands/dashboard.js", () => ({
   runDashboard: vi.fn(),
@@ -92,6 +101,24 @@ vi.mock("../commands/node.js", () => ({
   runNodeRemove,
   runNodeShow,
   runNodeHealth,
+}));
+
+vi.mock("../commands/agent.js", () => ({
+  runAgentStop,
+  runAgentStart,
+}));
+
+vi.mock("../commands/agent-import.js", () => ({
+  runAgentImport,
+}));
+
+vi.mock("../commands/message.js", () => ({
+  runMessageInbox,
+  runMessageOutbox,
+  runMessageSend,
+  runMessageRead,
+  runMessageDelete,
+  runAgentMailbox,
 }));
 
 describe("bin", () => {
@@ -171,6 +198,20 @@ describe("bin", () => {
   it("passes projectName through to git fetch handler without leaking args", async () => {
     await runBin(["git", "fetch", "origin", "--project", "demo"]);
     expect(runGitFetch).toHaveBeenCalledWith("origin", "demo");
+  });
+
+  it("passes projectName through to agent import handler", async () => {
+    await runBin(["agent", "import", "./agents.sh", "--dry-run", "--skip-existing", "--project", "demo"]);
+    expect(runAgentImport).toHaveBeenCalledWith("./agents.sh", {
+      dryRun: true,
+      skipExisting: true,
+      project: "demo",
+    });
+  });
+
+  it("parses multi-word message send content and project flag", async () => {
+    await runBin(["message", "send", "agent-123", "Hello", "from", "CLI", "--project", "demo"]);
+    expect(runMessageSend).toHaveBeenCalledWith("agent-123", "Hello from CLI", "demo");
   });
 
   it("routes project subcommands and aliases", async () => {

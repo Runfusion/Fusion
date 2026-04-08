@@ -165,6 +165,25 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
     void loadAgents();
   }, [loadAgents]);
 
+  // Refresh agent list on SSE events (independent from useAgents hook state)
+  useEffect(() => {
+    const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    const es = new EventSource(`/api/events${query}`);
+
+    const refresh = () => {
+      void loadAgents();
+    };
+
+    es.addEventListener("agent:created", refresh);
+    es.addEventListener("agent:updated", refresh);
+    es.addEventListener("agent:deleted", refresh);
+    es.addEventListener("agent:stateChanged", refresh);
+
+    return () => {
+      es.close();
+    };
+  }, [projectId, loadAgents]);
+
   const handleStateChange = async (agentId: string, newState: AgentState) => {
     try {
       await updateAgentState(agentId, newState, projectId);
@@ -253,8 +272,11 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
     }
     const lastHeartbeat = new Date(agent.lastHeartbeatAt).getTime();
     const elapsed = Date.now() - lastHeartbeat;
-    const timeoutMs = 60000; // 60 second timeout
-    if (elapsed > timeoutMs) {
+    const runtimeConfig = agent.runtimeConfig as Record<string, unknown> | undefined;
+    const configuredTimeout = typeof runtimeConfig?.heartbeatTimeoutMs === "number"
+      ? runtimeConfig.heartbeatTimeoutMs
+      : 60000;
+    if (elapsed > configuredTimeout) {
       return { label: "Unresponsive", icon: <Activity size={14} />, color: "var(--state-error-text)" };
     }
     return { label: "Healthy", icon: <Heart size={14} />, color: "var(--state-active-text)" };

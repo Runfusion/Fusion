@@ -907,6 +907,8 @@ describe("refineTask", () => {
 
 import {
   startAgentRun,
+  createAgent,
+  updateAgent,
   fetchGitStatus,
   fetchGitCommits,
   fetchCommitDiff,
@@ -921,6 +923,71 @@ import {
   pullBranch,
   pushBranch,
 } from "./api";
+
+describe("agent API wrappers", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("creates agents with full create payload and project scope", async () => {
+    const createdAgent = { id: "agent-001", name: "reviewer", role: "reviewer", state: "idle" };
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, createdAgent, 201));
+
+    await createAgent({
+      name: "reviewer",
+      role: "reviewer",
+      title: "Review Agent",
+      icon: "🔍",
+      reportsTo: "agent-parent",
+      runtimeConfig: { heartbeatIntervalMs: 15000, maxConcurrentRuns: 2 },
+      permissions: { read: true, write: false },
+      instructionsPath: ".fusion/agents/reviewer.md",
+      instructionsText: "Prioritize security and edge cases.",
+    }, "proj_123");
+
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/agents?projectId=proj_123", {
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+      body: JSON.stringify({
+        name: "reviewer",
+        role: "reviewer",
+        title: "Review Agent",
+        icon: "🔍",
+        reportsTo: "agent-parent",
+        runtimeConfig: { heartbeatIntervalMs: 15000, maxConcurrentRuns: 2 },
+        permissions: { read: true, write: false },
+        instructionsPath: ".fusion/agents/reviewer.md",
+        instructionsText: "Prioritize security and edge cases.",
+      }),
+    });
+  });
+
+  it("updates agents with runtime + instruction fields", async () => {
+    const updatedAgent = { id: "agent-001", name: "reviewer", role: "reviewer", state: "active" };
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, updatedAgent));
+
+    await updateAgent("agent-001", {
+      runtimeConfig: { heartbeatTimeoutMs: 45000, maxConcurrentRuns: 3 },
+      instructionsPath: ".fusion/agents/reviewer.md",
+      instructionsText: "Handle migrations cautiously.",
+      pauseReason: "maintenance",
+      reportsTo: undefined,
+    }, "proj_123");
+
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/agents/agent-001?projectId=proj_123", {
+      headers: { "Content-Type": "application/json" },
+      method: "PATCH",
+      body: JSON.stringify({
+        runtimeConfig: { heartbeatTimeoutMs: 45000, maxConcurrentRuns: 3 },
+        instructionsPath: ".fusion/agents/reviewer.md",
+        instructionsText: "Handle migrations cautiously.",
+        pauseReason: "maintenance",
+      }),
+    });
+  });
+});
 
 describe("startAgentRun", () => {
   const originalFetch = globalThis.fetch;

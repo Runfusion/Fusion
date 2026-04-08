@@ -352,6 +352,40 @@ describe("InProcessRuntime", () => {
         expect(scheduler!.getRegisteredAgents().length).toBeGreaterThanOrEqual(0);
       }
     });
+
+    it("routes assignment triggers through executeHeartbeat", async () => {
+      await runtime.start();
+
+      const monitor = runtime.getHeartbeatMonitor();
+      expect(monitor).toBeDefined();
+      const executeSpy = vi
+        .spyOn(monitor!, "executeHeartbeat")
+        .mockResolvedValue({ id: "run-test" } as any);
+
+      const store = (runtime as any).agentStore;
+      expect(store).toBeDefined();
+
+      const agent = await store.createAgent({
+        name: "Assignable",
+        role: "executor",
+      });
+
+      await store.assignTask(agent.id, "FN-001");
+
+      await vi.waitFor(() => {
+        expect(executeSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            agentId: agent.id,
+            source: "assignment",
+            taskId: "FN-001",
+            contextSnapshot: expect.objectContaining({
+              taskId: "FN-001",
+              wakeReason: "assignment",
+            }),
+          }),
+        );
+      });
+    });
   });
 
   describe("configuration", () => {

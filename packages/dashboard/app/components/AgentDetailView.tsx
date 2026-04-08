@@ -1175,6 +1175,9 @@ function ConfigTab({
     if (rc.heartbeatTimeoutMs !== undefined && rc.heartbeatTimeoutMs !== null) {
       initial.heartbeatTimeoutMs = String(rc.heartbeatTimeoutMs);
     }
+    if (rc.maxConcurrentRuns !== undefined && rc.maxConcurrentRuns !== null) {
+      initial.maxConcurrentRuns = String(rc.maxConcurrentRuns);
+    }
     if (rc.messageResponseMode === "immediate" || rc.messageResponseMode === "on-heartbeat") {
       initial.messageResponseMode = rc.messageResponseMode;
     }
@@ -1202,7 +1205,7 @@ function ConfigTab({
     }
     // Check heartbeat values
     const rc = agent.runtimeConfig ?? {};
-    for (const key of ["heartbeatIntervalMs", "heartbeatTimeoutMs", "messageResponseMode"] as const) {
+    for (const key of ["heartbeatIntervalMs", "heartbeatTimeoutMs", "maxConcurrentRuns", "messageResponseMode"] as const) {
       const current = heartbeatValues[key]?.trim() ?? "";
       const persisted = rc[key] !== undefined && rc[key] !== null ? String(rc[key]) : "";
       if (current !== persisted) return true;
@@ -1251,6 +1254,7 @@ function ConfigTab({
     for (const [key, config] of Object.entries({
       heartbeatIntervalMs: { label: "Heartbeat Interval", min: 1000 },
       heartbeatTimeoutMs: { label: "Heartbeat Timeout", min: 5000 },
+      maxConcurrentRuns: { label: "Max Concurrent Runs", min: 1 },
     })) {
       const raw = heartbeatValues[key]?.trim();
       if (!raw) continue;
@@ -1289,7 +1293,7 @@ function ConfigTab({
 
     // Build the runtimeConfig payload — only include non-empty values
     const newRuntimeConfig: Record<string, unknown> = { ...agent.runtimeConfig };
-    for (const key of ["heartbeatIntervalMs", "heartbeatTimeoutMs"] as const) {
+    for (const key of ["heartbeatIntervalMs", "heartbeatTimeoutMs", "maxConcurrentRuns"] as const) {
       const raw = heartbeatValues[key]?.trim();
       if (!raw) {
         delete newRuntimeConfig[key];
@@ -1417,6 +1421,24 @@ function ConfigTab({
               <span className="config-error">{errors.heartbeatTimeoutMs}</span>
             ) : (
               <span className="config-hint">Time without heartbeat before agent is considered unresponsive. Leave empty for system default (60000ms)</span>
+            )}
+          </div>
+
+          <div className="config-field">
+            <label htmlFor="hb-maxConcurrentRuns">Max Concurrent Runs</label>
+            <input
+              id="hb-maxConcurrentRuns"
+              type="text"
+              inputMode="numeric"
+              className={cn("input", !!errors.maxConcurrentRuns && "input--error")}
+              placeholder="1"
+              value={heartbeatValues.maxConcurrentRuns ?? ""}
+              onChange={(e) => handleHeartbeatFieldChange("maxConcurrentRuns", e.target.value)}
+            />
+            {errors.maxConcurrentRuns ? (
+              <span className="config-error">{errors.maxConcurrentRuns}</span>
+            ) : (
+              <span className="config-hint">Maximum simultaneous heartbeat runs for this agent. Leave empty for system default (1).</span>
             )}
           </div>
 

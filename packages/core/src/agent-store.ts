@@ -207,23 +207,28 @@ export class AgentStore extends EventEmitter {
         throw new Error(`Agent ${agentId} not found`);
       }
 
+      const nextName = "name" in updates && typeof updates.name === "string" ? updates.name.trim() : undefined;
+      if (nextName !== undefined && !nextName) {
+        throw new Error("Agent name cannot be empty");
+      }
+
       const updated: Agent = {
         ...agent,
-        name: updates.name?.trim() ?? agent.name,
+        name: nextName ?? agent.name,
         role: updates.role ?? agent.role,
         metadata: updates.metadata !== undefined ? updates.metadata : agent.metadata,
         updatedAt: new Date().toISOString(),
-        ...(updates.title !== undefined && { title: updates.title }),
-        ...(updates.icon !== undefined && { icon: updates.icon }),
-        ...(updates.reportsTo !== undefined && { reportsTo: updates.reportsTo }),
-        ...(updates.runtimeConfig !== undefined && { runtimeConfig: updates.runtimeConfig }),
-        ...(updates.pauseReason !== undefined && { pauseReason: updates.pauseReason }),
-        ...(updates.permissions !== undefined && { permissions: updates.permissions }),
-        ...(updates.lastError !== undefined && { lastError: updates.lastError }),
-        ...(updates.totalInputTokens !== undefined && { totalInputTokens: updates.totalInputTokens }),
-        ...(updates.totalOutputTokens !== undefined && { totalOutputTokens: updates.totalOutputTokens }),
-        ...(updates.instructionsPath !== undefined && { instructionsPath: updates.instructionsPath }),
-        ...(updates.instructionsText !== undefined && { instructionsText: updates.instructionsText }),
+        ...("title" in updates && { title: updates.title }),
+        ...("icon" in updates && { icon: updates.icon }),
+        ...("reportsTo" in updates && { reportsTo: updates.reportsTo }),
+        ...("runtimeConfig" in updates && { runtimeConfig: updates.runtimeConfig }),
+        ...("pauseReason" in updates && { pauseReason: updates.pauseReason }),
+        ...("permissions" in updates && { permissions: updates.permissions }),
+        ...("lastError" in updates && { lastError: updates.lastError }),
+        ...("totalInputTokens" in updates && { totalInputTokens: updates.totalInputTokens }),
+        ...("totalOutputTokens" in updates && { totalOutputTokens: updates.totalOutputTokens }),
+        ...("instructionsPath" in updates && { instructionsPath: updates.instructionsPath }),
+        ...("instructionsText" in updates && { instructionsText: updates.instructionsText }),
       };
 
       await this.writeAgent(updated);
@@ -310,33 +315,45 @@ export class AgentStore extends EventEmitter {
 
   /**
    * Reset an agent from any state back to "idle".
-   * Clears lastError, taskId, and ends any active heartbeat run.
-   * Uses updateAgentState internally for proper validation and event emission.
+   * Clears transient execution state (taskId, lastError, pauseReason)
+   * and ends any active heartbeat run.
    * @param agentId - The agent ID
    * @returns The reset agent
    * @throws Error if agent not found or transition is invalid
    */
   async resetAgent(agentId: string): Promise<Agent> {
+    let agent = await this.getAgent(agentId);
+    if (!agent) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+
     // End any active heartbeat run before transitioning
     const activeRun = await this.getActiveHeartbeatRun(agentId);
     if (activeRun) {
       await this.endHeartbeatRun(activeRun.id, "terminated");
     }
 
-    // Transition state via updateAgentState (validates transition, emits events)
-    const agent = await this.updateAgentState(agentId, "idle");
+    // Normalize to terminated first when idle is not directly reachable.
+    if (agent.state !== "idle" && agent.state !== "terminated") {
+      agent = await this.updateAgentState(agentId, "terminated");
+    }
 
-    // Clear taskId and lastError on top of the state transition
-    const reset: Agent = {
-      ...agent,
-      taskId: undefined,
-      lastError: undefined,
-      updatedAt: new Date().toISOString(),
-    };
+    if (agent.state !== "idle") {
+      agent = await this.updateAgentState(agentId, "idle");
+    }
 
-    await this.writeAgent(reset);
+    if (agent.taskId !== undefined) {
+      agent = await this.assignTask(agentId, undefined);
+    }
 
-    return reset;
+    if (agent.lastError !== undefined || agent.pauseReason !== undefined) {
+      agent = await this.updateAgent(agentId, {
+        lastError: undefined,
+        pauseReason: undefined,
+      });
+    }
+
+    return agent;
   }
 
   /**

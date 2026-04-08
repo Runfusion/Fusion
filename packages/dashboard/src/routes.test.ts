@@ -7876,6 +7876,131 @@ describe("POST /workflow-step-templates/:id/create", () => {
   });
 });
 
+describe("Agent create/update routes", () => {
+  let tempDir: string;
+  let fusionDir: string;
+  let agentId: string;
+
+  beforeEach(async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "kb-routes-agents-fields-"));
+    fusionDir = join(tempDir, ".fusion");
+    mkdirSync(fusionDir, { recursive: true });
+
+    const { AgentStore } = await import("@fusion/core");
+    const agentStore = new AgentStore({ rootDir: fusionDir });
+    await agentStore.init();
+    const agent = await agentStore.createAgent({
+      name: "Initial Agent",
+      role: "executor",
+    });
+    agentId = agent.id;
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  function buildAgentApp() {
+    const store = createMockStore({
+      getFusionDir: vi.fn().mockReturnValue(fusionDir),
+    } as any);
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("POST /api/agents accepts all AgentCreateInput fields", async () => {
+    const res = await REQUEST(
+      buildAgentApp(),
+      "POST",
+      "/api/agents",
+      JSON.stringify({
+        name: "Full Agent",
+        role: "reviewer",
+        metadata: { team: "qa" },
+        title: "QA Reviewer",
+        icon: "🧪",
+        reportsTo: agentId,
+        runtimeConfig: { heartbeatIntervalMs: 60000 },
+        permissions: { read: true },
+        instructionsPath: "docs/reviewer.md",
+        instructionsText: "Check test quality.",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      name: "Full Agent",
+      role: "reviewer",
+      metadata: { team: "qa" },
+      title: "QA Reviewer",
+      icon: "🧪",
+      reportsTo: agentId,
+      runtimeConfig: { heartbeatIntervalMs: 60000 },
+      permissions: { read: true },
+      instructionsPath: "docs/reviewer.md",
+      instructionsText: "Check test quality.",
+    });
+  });
+
+  it("PATCH /api/agents/:id accepts all AgentUpdateInput fields", async () => {
+    const res = await REQUEST(
+      buildAgentApp(),
+      "PATCH",
+      `/api/agents/${agentId}`,
+      JSON.stringify({
+        name: "Updated Agent",
+        role: "engineer",
+        metadata: { area: "infra" },
+        title: "Infra Engineer",
+        icon: "⚙️",
+        reportsTo: "agent-parent",
+        runtimeConfig: { heartbeatTimeoutMs: 120000 },
+        pauseReason: "manual",
+        permissions: { deploy: true },
+        totalInputTokens: 42,
+        totalOutputTokens: 21,
+        instructionsPath: "agents/infra.md",
+        instructionsText: "Focus on reliability.",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      id: agentId,
+      name: "Updated Agent",
+      role: "engineer",
+      metadata: { area: "infra" },
+      title: "Infra Engineer",
+      icon: "⚙️",
+      reportsTo: "agent-parent",
+      runtimeConfig: { heartbeatTimeoutMs: 120000 },
+      pauseReason: "manual",
+      permissions: { deploy: true },
+      totalInputTokens: 42,
+      totalOutputTokens: 21,
+      instructionsPath: "agents/infra.md",
+      instructionsText: "Focus on reliability.",
+    });
+  });
+
+  it("POST /api/agents/:id/state returns 400 for invalid state transitions", async () => {
+    const res = await REQUEST(
+      buildAgentApp(),
+      "POST",
+      `/api/agents/${agentId}/state`,
+      JSON.stringify({ state: "terminated" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Invalid state transition");
+  });
+});
+
 describe("POST /api/agents/:id/runs", () => {
   let tempDir: string;
   let fusionDir: string;

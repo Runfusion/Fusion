@@ -864,7 +864,7 @@ async function main() {
           }
           case "send": {
             const toId = args[2];
-            const content = args[3];
+            const content = args.slice(3).join(" ").trim();
             if (!toId || !content) {
               console.error("Usage: fn message send <agent-id> <content>");
               process.exit(1);

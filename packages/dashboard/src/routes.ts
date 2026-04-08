@@ -6893,14 +6893,69 @@ Output ONLY the prompt text (no markdown, no explanations).`;
     }
   });
 
+  function validateAgentInstructionsPayload(
+    res: Response,
+    instructionsPath: unknown,
+    instructionsText: unknown,
+  ): boolean {
+    if (instructionsPath !== undefined && instructionsPath !== null && instructionsPath !== "") {
+      if (typeof instructionsPath !== "string") {
+        res.status(400).json({ error: "instructionsPath must be a string" });
+        return false;
+      }
+      if (instructionsPath.length > 500) {
+        res.status(400).json({ error: "instructionsPath must be at most 500 characters" });
+        return false;
+      }
+      if (instructionsPath.includes("..")) {
+        res.status(400).json({ error: "instructionsPath must not contain parent directory traversal (..)" });
+        return false;
+      }
+      const isAbsoluteUnix = instructionsPath.startsWith("/");
+      const isAbsoluteWindows = /^[A-Za-z]:[\\/]/.test(instructionsPath);
+      if (isAbsoluteUnix || isAbsoluteWindows) {
+        res.status(400).json({ error: "instructionsPath must be a project-relative path" });
+        return false;
+      }
+      if (!instructionsPath.endsWith(".md")) {
+        res.status(400).json({ error: "instructionsPath must end in .md" });
+        return false;
+      }
+    }
+
+    if (instructionsText !== undefined && instructionsText !== null && instructionsText !== "") {
+      if (typeof instructionsText !== "string") {
+        res.status(400).json({ error: "instructionsText must be a string" });
+        return false;
+      }
+      if (instructionsText.length > 50000) {
+        res.status(400).json({ error: "instructionsText must be at most 50,000 characters" });
+        return false;
+      }
+    }
+
+    return true;
+  }
+
   /**
    * POST /api/agents
    * Create a new agent.
-   * Body: { name: string, role: string, metadata?: object }
    */
   router.post("/agents", async (req, res) => {
     try {
-      const { name, role, metadata } = req.body;
+      const {
+        name,
+        role,
+        metadata,
+        title,
+        icon,
+        reportsTo,
+        runtimeConfig,
+        permissions,
+        instructionsPath,
+        instructionsText,
+      } = req.body ?? {};
+
       if (!name || typeof name !== "string") {
         res.status(400).json({ error: "name is required" });
         return;
@@ -6909,16 +6964,58 @@ Output ONLY the prompt text (no markdown, no explanations).`;
         res.status(400).json({ error: "role is required" });
         return;
       }
+      if (metadata !== undefined && (typeof metadata !== "object" || metadata === null || Array.isArray(metadata))) {
+        res.status(400).json({ error: "metadata must be an object" });
+        return;
+      }
+      if (title !== undefined && title !== null && typeof title !== "string") {
+        res.status(400).json({ error: "title must be a string" });
+        return;
+      }
+      if (icon !== undefined && icon !== null && typeof icon !== "string") {
+        res.status(400).json({ error: "icon must be a string" });
+        return;
+      }
+      if (reportsTo !== undefined && reportsTo !== null && typeof reportsTo !== "string") {
+        res.status(400).json({ error: "reportsTo must be a string" });
+        return;
+      }
+      if (runtimeConfig !== undefined && (typeof runtimeConfig !== "object" || runtimeConfig === null || Array.isArray(runtimeConfig))) {
+        res.status(400).json({ error: "runtimeConfig must be an object" });
+        return;
+      }
+      if (permissions !== undefined && (typeof permissions !== "object" || permissions === null || Array.isArray(permissions))) {
+        res.status(400).json({ error: "permissions must be an object" });
+        return;
+      }
+      if (!validateAgentInstructionsPayload(res, instructionsPath, instructionsText)) {
+        return;
+      }
 
       const scopedStore = await getScopedStore(req);
       const { AgentStore } = await import("@fusion/core");
       const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
 
-      const agent = await agentStore.createAgent({ name, role: role as import("@fusion/core").AgentCapability, metadata });
+      const agent = await agentStore.createAgent({
+        name,
+        role: role as import("@fusion/core").AgentCapability,
+        metadata,
+        title: title ?? undefined,
+        icon: icon ?? undefined,
+        reportsTo: reportsTo ?? undefined,
+        runtimeConfig,
+        permissions,
+        instructionsPath: instructionsPath ?? undefined,
+        instructionsText: instructionsText ?? undefined,
+      });
       res.status(201).json(agent);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err.message?.includes("required") || err.message?.includes("cannot be empty")) {
+        res.status(400).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
     }
   });
 
@@ -7079,18 +7176,119 @@ Output ONLY the prompt text (no markdown, no explanations).`;
    */
   router.patch("/agents/:id", async (req, res) => {
     try {
-      const { name, role, metadata, runtimeConfig } = req.body;
+      const body = req.body ?? {};
+      const updates: import("@fusion/core").AgentUpdateInput = {};
+
+      if ("name" in body) {
+        if (body.name !== null && typeof body.name !== "string") {
+          res.status(400).json({ error: "name must be a string" });
+          return;
+        }
+        updates.name = body.name ?? undefined;
+      }
+
+      if ("role" in body) {
+        if (body.role !== null && typeof body.role !== "string") {
+          res.status(400).json({ error: "role must be a string" });
+          return;
+        }
+        updates.role = body.role ?? undefined;
+      }
+
+      if ("metadata" in body) {
+        if (body.metadata !== null && (typeof body.metadata !== "object" || Array.isArray(body.metadata))) {
+          res.status(400).json({ error: "metadata must be an object" });
+          return;
+        }
+        updates.metadata = body.metadata ?? undefined;
+      }
+
+      if ("title" in body) {
+        if (body.title !== null && typeof body.title !== "string") {
+          res.status(400).json({ error: "title must be a string" });
+          return;
+        }
+        updates.title = body.title ?? undefined;
+      }
+
+      if ("icon" in body) {
+        if (body.icon !== null && typeof body.icon !== "string") {
+          res.status(400).json({ error: "icon must be a string" });
+          return;
+        }
+        updates.icon = body.icon ?? undefined;
+      }
+
+      if ("reportsTo" in body) {
+        if (body.reportsTo !== null && typeof body.reportsTo !== "string") {
+          res.status(400).json({ error: "reportsTo must be a string" });
+          return;
+        }
+        updates.reportsTo = body.reportsTo ?? undefined;
+      }
+
+      if ("pauseReason" in body) {
+        if (body.pauseReason !== null && typeof body.pauseReason !== "string") {
+          res.status(400).json({ error: "pauseReason must be a string" });
+          return;
+        }
+        updates.pauseReason = body.pauseReason ?? undefined;
+      }
+
+      if ("runtimeConfig" in body) {
+        if (body.runtimeConfig !== null && (typeof body.runtimeConfig !== "object" || Array.isArray(body.runtimeConfig))) {
+          res.status(400).json({ error: "runtimeConfig must be an object" });
+          return;
+        }
+        updates.runtimeConfig = body.runtimeConfig ?? undefined;
+      }
+
+      if ("permissions" in body) {
+        if (body.permissions !== null && (typeof body.permissions !== "object" || Array.isArray(body.permissions))) {
+          res.status(400).json({ error: "permissions must be an object" });
+          return;
+        }
+        updates.permissions = body.permissions ?? undefined;
+      }
+
+      if ("totalInputTokens" in body) {
+        if (body.totalInputTokens !== null && typeof body.totalInputTokens !== "number") {
+          res.status(400).json({ error: "totalInputTokens must be a number" });
+          return;
+        }
+        updates.totalInputTokens = body.totalInputTokens ?? undefined;
+      }
+
+      if ("totalOutputTokens" in body) {
+        if (body.totalOutputTokens !== null && typeof body.totalOutputTokens !== "number") {
+          res.status(400).json({ error: "totalOutputTokens must be a number" });
+          return;
+        }
+        updates.totalOutputTokens = body.totalOutputTokens ?? undefined;
+      }
+
+      if (!validateAgentInstructionsPayload(res, body.instructionsPath, body.instructionsText)) {
+        return;
+      }
+      if ("instructionsPath" in body) {
+        updates.instructionsPath = body.instructionsPath ?? undefined;
+      }
+      if ("instructionsText" in body) {
+        updates.instructionsText = body.instructionsText ?? undefined;
+      }
 
       const scopedStore = await getScopedStore(req);
       const { AgentStore } = await import("@fusion/core");
       const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
 
-      const agent = await agentStore.updateAgent(req.params.id, { name, role, metadata, runtimeConfig });
+      const agent = await agentStore.updateAgent(req.params.id, updates);
       res.json(agent);
     } catch (err: any) {
       if (err.message?.includes("not found")) {
         res.status(404).json({ error: err.message });
+      } else if (err.message?.includes("cannot be empty")) {
+        res.status(400).json({ error: err.message });
       } else {
         res.status(500).json({ error: err.message });
       }
@@ -7104,38 +7302,9 @@ Output ONLY the prompt text (no markdown, no explanations).`;
    */
   router.patch("/agents/:id/instructions", async (req, res) => {
     try {
-      const { instructionsPath, instructionsText } = req.body;
-
-      // Validate instructionsPath if provided
-      if (instructionsPath !== undefined && instructionsPath !== "") {
-        if (typeof instructionsPath !== "string") {
-          res.status(400).json({ error: "instructionsPath must be a string" });
-          return;
-        }
-        if (instructionsPath.length > 500) {
-          res.status(400).json({ error: "instructionsPath must be at most 500 characters" });
-          return;
-        }
-        if (instructionsPath.includes("..")) {
-          res.status(400).json({ error: "instructionsPath must not contain parent directory traversal (..)" });
-          return;
-        }
-        if (!instructionsPath.endsWith(".md")) {
-          res.status(400).json({ error: "instructionsPath must end in .md" });
-          return;
-        }
-      }
-
-      // Validate instructionsText if provided
-      if (instructionsText !== undefined && instructionsText !== "") {
-        if (typeof instructionsText !== "string") {
-          res.status(400).json({ error: "instructionsText must be a string" });
-          return;
-        }
-        if (instructionsText.length > 50000) {
-          res.status(400).json({ error: "instructionsText must be at most 50,000 characters" });
-          return;
-        }
+      const { instructionsPath, instructionsText } = req.body ?? {};
+      if (!validateAgentInstructionsPayload(res, instructionsPath, instructionsText)) {
+        return;
       }
 
       const scopedStore = await getScopedStore(req);
@@ -7143,7 +7312,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
 
-      const agent = await agentStore.updateAgent(req.params.id, { instructionsPath, instructionsText });
+      const agent = await agentStore.updateAgent(req.params.id, {
+        instructionsPath: instructionsPath ?? undefined,
+        instructionsText: instructionsText ?? undefined,
+      });
       res.json(agent);
     } catch (err: any) {
       if (err.message?.includes("not found")) {
@@ -7177,7 +7349,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
     } catch (err: any) {
       if (err.message?.includes("not found")) {
         res.status(404).json({ error: err.message });
-      } else if (err.message?.includes("Invalid state transition") || err.message?.includes("Cannot transition from terminated")) {
+      } else if (/invalid state transition/i.test(err.message ?? "")) {
         res.status(400).json({ error: err.message });
       } else {
         res.status(500).json({ error: err.message });
@@ -7316,7 +7488,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
    * Body: { status?: "ok"|"missed"|"recovered", triggerExecution?: boolean }
    *
    * When triggerExecution is true AND HeartbeatMonitor is available,
-   * also starts a heartbeat run after recording the heartbeat event.
+   * also executes a heartbeat run after recording the heartbeat event.
    */
   router.post("/agents/:id/heartbeat", async (req, res) => {
     try {
@@ -7332,18 +7504,14 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       // Optionally trigger execution
       let run: import("@fusion/core").AgentHeartbeatRun | undefined;
       if (triggerExecution && hasHeartbeatExecutor && heartbeatMonitor) {
-        run = await heartbeatMonitor.startRun(req.params.id, {
-          source: "on_demand",
-          triggerDetail: "Triggered from heartbeat",
-        });
-
-        // Fire-and-forget execution
-        void heartbeatMonitor.executeHeartbeat({
+        run = await heartbeatMonitor.executeHeartbeat({
           agentId: req.params.id,
           source: "on_demand",
           triggerDetail: "Triggered from heartbeat",
-        }).catch((err: any) => {
-          console.error(`[heartbeat] Background execution failed for ${req.params.id}:`, err.message);
+          contextSnapshot: {
+            wakeReason: "on_demand",
+            triggerDetail: "Triggered from heartbeat",
+          },
         });
       }
 
@@ -7407,11 +7575,9 @@ Output ONLY the prompt text (no markdown, no explanations).`;
    * Manually start a heartbeat run for an agent.
    * Body: { source?: HeartbeatInvocationSource, triggerDetail?: string, taskId?: string }
    *
-   * When HeartbeatMonitor is available, delegates to startRun() which enriches
-   * the run with execution context, transitions the agent to "running", and
-   * fires the onRunStarted event. The route returns the run immediately with
-   * "active" status while execution continues in the background via
-   * executeHeartbeat() fire-and-forget.
+   * When HeartbeatMonitor is available, delegates to executeHeartbeat() with
+   * a structured wake context snapshot. This ensures a single authoritative run
+   * record is created and fully completed without duplicate startRun calls.
    *
    * Returns 409 Conflict if the agent already has an active run.
    */
@@ -7443,21 +7609,13 @@ Output ONLY the prompt text (no markdown, no explanations).`;
           return;
         }
 
-        // Delegate to HeartbeatMonitor for enriched run creation
-        const run = await heartbeatMonitor.startRun(req.params.id, {
-          source: invocationSource,
-          triggerDetail: trigger,
-          contextSnapshot,
-        });
-
-        // Fire-and-forget execution in the background
-        void heartbeatMonitor.executeHeartbeat({
+        // Execute heartbeat end-to-end (single run record, no duplicate startRun call)
+        const run = await heartbeatMonitor.executeHeartbeat({
           agentId: req.params.id,
           source: invocationSource,
           triggerDetail: trigger,
           taskId,
-        }).catch((err: any) => {
-          console.error(`[heartbeat] Background execution failed for ${req.params.id}:`, err.message);
+          contextSnapshot,
         });
 
         res.status(201).json(run);
@@ -7479,7 +7637,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
         // Enrich with invocation source, trigger detail, and context snapshot
         (run as any).invocationSource = invocationSource;
-        (run as any).triggerDetail = triggerDetail;
+        (run as any).triggerDetail = trigger;
         (run as any).contextSnapshot = contextSnapshot;
 
         await agentStore.saveRun(run);

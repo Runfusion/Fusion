@@ -175,6 +175,43 @@ describe("AgentStore", () => {
       expect(updated.metadata).toEqual({ preserved: true }); // preserved
     });
 
+    it("allows clearing optional fields via explicit undefined", async () => {
+      const created = await store.createAgent({
+        name: "Clearable",
+        role: "executor",
+        title: "Worker",
+        instructionsText: "Initial instructions",
+      });
+
+      const withTransientState = await store.updateAgent(created.id, {
+        pauseReason: "manual",
+        lastError: "oops",
+      });
+      expect(withTransientState.pauseReason).toBe("manual");
+      expect(withTransientState.lastError).toBe("oops");
+
+      const cleared = await store.updateAgent(created.id, {
+        title: undefined,
+        instructionsText: undefined,
+        pauseReason: undefined,
+        lastError: undefined,
+      });
+
+      expect(cleared.title).toBeUndefined();
+      expect(cleared.instructionsText).toBeUndefined();
+      expect(cleared.pauseReason).toBeUndefined();
+      expect(cleared.lastError).toBeUndefined();
+    });
+
+    it("rejects whitespace-only names", async () => {
+      const created = await store.createAgent({
+        name: "Rename Me",
+        role: "executor",
+      });
+
+      await expect(store.updateAgent(created.id, { name: "   " })).rejects.toThrow("Agent name cannot be empty");
+    });
+
     it("throws for non-existent agent ID", async () => {
       await expect(
         store.updateAgent("agent-missing", { name: "Nope" })
@@ -555,7 +592,10 @@ describe("AgentStore", () => {
       await s.recordHeartbeat(agent.id, "missed");
       await s.updateAgentState(agent.id, "active");
       await s.assignTask(agent.id, "KB-999");
-      await s.updateAgent(agent.id, { lastError: "something broke" });
+      await s.updateAgent(agent.id, {
+        pauseReason: "manual",
+        lastError: "something broke",
+      });
       await s.updateAgentState(agent.id, "terminated");
       return agent;
     }
@@ -567,11 +607,36 @@ describe("AgentStore", () => {
       expect(reset.state).toBe("idle");
     });
 
+    it("can reset directly from running", async () => {
+      const agent = await store.createAgent({ name: "RunningReset", role: "executor" });
+      await store.recordHeartbeat(agent.id, "ok");
+      await store.updateAgentState(agent.id, "active");
+      await store.updateAgentState(agent.id, "running");
+      await store.assignTask(agent.id, "KB-123");
+      await store.updateAgent(agent.id, {
+        pauseReason: "stalled",
+        lastError: "runner failed",
+      });
+
+      const reset = await store.resetAgent(agent.id);
+      expect(reset.state).toBe("idle");
+      expect(reset.taskId).toBeUndefined();
+      expect(reset.pauseReason).toBeUndefined();
+      expect(reset.lastError).toBeUndefined();
+    });
+
     it("clears lastError", async () => {
       const agent = await createTerminatedAgent(store, "ResetClearsError");
       const reset = await store.resetAgent(agent.id);
 
       expect(reset.lastError).toBeUndefined();
+    });
+
+    it("clears pauseReason", async () => {
+      const agent = await createTerminatedAgent(store, "ResetClearsPause");
+      const reset = await store.resetAgent(agent.id);
+
+      expect(reset.pauseReason).toBeUndefined();
     });
 
     it("clears taskId", async () => {

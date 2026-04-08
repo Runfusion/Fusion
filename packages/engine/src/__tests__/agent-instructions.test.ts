@@ -66,13 +66,13 @@ describe("resolveAgentInstructions", () => {
     expect(result).toBe("# Custom Instructions\nUse strict TypeScript.");
   });
 
-  it("returns file contents when instructionsPath is absolute", async () => {
+  it("ignores absolute instructionsPath for safety", async () => {
     const filePath = join(testDir, "absolute-instructions.md");
     await writeFile(filePath, "Absolute path instructions.");
 
-    const agent = makeAgent({ instructionsPath: filePath });
+    const agent = makeAgent({ instructionsPath: filePath, instructionsText: "Inline fallback." });
     const result = await resolveAgentInstructions(agent, testDir);
-    expect(result).toBe("Absolute path instructions.");
+    expect(result).toBe("Inline fallback.");
   });
 
   it("concatenates instructionsText and file contents with double newline", async () => {
@@ -135,6 +135,47 @@ describe("resolveAgentInstructions", () => {
     });
     const result = await resolveAgentInstructions(agent, testDir);
     expect(result).toBe("Text only.");
+  });
+
+  it("rejects path traversal in instructionsPath", async () => {
+    const agent = makeAgent({
+      instructionsText: "Safe inline.",
+      instructionsPath: "../secrets.md",
+    });
+
+    const result = await resolveAgentInstructions(agent, testDir);
+    expect(result).toBe("Safe inline.");
+  });
+
+  it("rejects non-markdown instruction files", async () => {
+    const txtPath = join(testDir, "instructions.txt");
+    await writeFile(txtPath, "should not be read");
+
+    const agent = makeAgent({
+      instructionsText: "Inline only.",
+      instructionsPath: "instructions.txt",
+    });
+
+    const result = await resolveAgentInstructions(agent, testDir);
+    expect(result).toBe("Inline only.");
+  });
+
+  it("truncates oversized inline instructions", async () => {
+    const oversized = "x".repeat(50010);
+    const agent = makeAgent({ instructionsText: oversized });
+
+    const result = await resolveAgentInstructions(agent, testDir);
+    expect(result.length).toBe(50000);
+  });
+
+  it("truncates oversized instructions files", async () => {
+    const filePath = join(testDir, "large.md");
+    await writeFile(filePath, "y".repeat(50020));
+
+    const agent = makeAgent({ instructionsPath: "large.md" });
+    const result = await resolveAgentInstructions(agent, testDir);
+
+    expect(result.length).toBe(50000);
   });
 });
 

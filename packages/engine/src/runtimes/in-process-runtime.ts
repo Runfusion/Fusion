@@ -234,14 +234,13 @@ export class InProcessRuntime
           async (agentId, source, context: WakeContext) => {
             if (!this.heartbeatMonitor) return;
 
-            // Convert WakeContext to WakeupOptions
-            const options = {
+            await this.heartbeatMonitor.executeHeartbeat({
+              agentId,
               source,
               triggerDetail: context.triggerDetail,
+              taskId: typeof context.taskId === "string" ? context.taskId : undefined,
               contextSnapshot: { ...context },
-            };
-
-            await this.heartbeatMonitor.startRun(agentId, options);
+            });
           },
         );
         this.triggerScheduler.start();
@@ -469,7 +468,7 @@ export class InProcessRuntime
   async executeHeartbeat(
     agentId: string,
     source: HeartbeatInvocationSource,
-    options?: { taskId?: string; triggerDetail?: string }
+    options?: { taskId?: string; triggerDetail?: string; contextSnapshot?: Record<string, unknown> }
   ): Promise<AgentHeartbeatRun | null> {
     if (this.status !== "active") {
       throw new Error(`Cannot execute heartbeat: runtime status is ${this.status}`);

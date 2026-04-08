@@ -262,7 +262,6 @@ describe("Agent runs routes (without HeartbeatMonitor)", () => {
 describe("Agent runs routes (with HeartbeatMonitor)", () => {
   let store: MockStore;
   let app: ReturnType<typeof import("../server.js").createServer>;
-  let mockStartRun: ReturnType<typeof vi.fn>;
   let mockExecuteHeartbeat: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
@@ -271,14 +270,12 @@ describe("Agent runs routes (with HeartbeatMonitor)", () => {
     mockListAgents.mockResolvedValue([]);
     mockGetActiveHeartbeatRun.mockResolvedValue(null);
 
-    mockStartRun = vi.fn();
     mockExecuteHeartbeat = vi.fn();
 
     store = new MockStore();
     const { createServer } = await import("../server.js");
     app = createServer(store as any, {
       heartbeatMonitor: {
-        startRun: mockStartRun,
         executeHeartbeat: mockExecuteHeartbeat,
       },
     });
@@ -289,9 +286,8 @@ describe("Agent runs routes (with HeartbeatMonitor)", () => {
   });
 
   describe("POST /api/agents/:id/runs", () => {
-    it("delegates to heartbeatMonitor.startRun when available", async () => {
+    it("delegates to heartbeatMonitor.executeHeartbeat when available", async () => {
       const mockRun = createMockRun({ invocationSource: "on_demand", triggerDetail: "Triggered from dashboard" });
-      mockStartRun.mockResolvedValue(mockRun);
       mockExecuteHeartbeat.mockResolvedValue({ ...mockRun, status: "completed" });
 
       const response = await request(
@@ -303,26 +299,20 @@ describe("Agent runs routes (with HeartbeatMonitor)", () => {
       );
 
       expect(response.status).toBe(201);
-      expect(mockStartRun).toHaveBeenCalledWith("agent-001", {
-        source: "on_demand",
-        triggerDetail: "Triggered from dashboard",
-        contextSnapshot: {
-          wakeReason: "on_demand",
-          triggerDetail: "Triggered from dashboard",
-        },
-      });
-      // executeHeartbeat should be called fire-and-forget
       expect(mockExecuteHeartbeat).toHaveBeenCalledWith({
         agentId: "agent-001",
         source: "on_demand",
         triggerDetail: "Triggered from dashboard",
         taskId: undefined,
+        contextSnapshot: {
+          wakeReason: "on_demand",
+          triggerDetail: "Triggered from dashboard",
+        },
       });
     });
 
     it("passes custom source and triggerDetail to heartbeatMonitor", async () => {
       const mockRun = createMockRun();
-      mockStartRun.mockResolvedValue(mockRun);
       mockExecuteHeartbeat.mockResolvedValue(mockRun);
 
       await request(
@@ -333,9 +323,11 @@ describe("Agent runs routes (with HeartbeatMonitor)", () => {
         { "content-type": "application/json" },
       );
 
-      expect(mockStartRun).toHaveBeenCalledWith("agent-001", {
+      expect(mockExecuteHeartbeat).toHaveBeenCalledWith({
+        agentId: "agent-001",
         source: "timer",
         triggerDetail: "Scheduled run",
+        taskId: undefined,
         contextSnapshot: {
           wakeReason: "timer",
           triggerDetail: "Scheduled run",
@@ -349,7 +341,6 @@ describe("Agent runs routes (with HeartbeatMonitor)", () => {
       const mockEvent = { id: "evt-001", agentId: "agent-001", status: "ok", timestamp: "2026-01-01T00:00:00.000Z" };
       mockRecordHeartbeat.mockResolvedValue(mockEvent);
       const mockRun = createMockRun({ invocationSource: "on_demand" });
-      mockStartRun.mockResolvedValue(mockRun);
       mockExecuteHeartbeat.mockResolvedValue(mockRun);
 
       const response = await request(
@@ -361,8 +352,15 @@ describe("Agent runs routes (with HeartbeatMonitor)", () => {
       );
 
       expect(response.status).toBe(200);
-      expect(mockStartRun).toHaveBeenCalled();
-      expect(mockExecuteHeartbeat).toHaveBeenCalled();
+      expect(mockExecuteHeartbeat).toHaveBeenCalledWith({
+        agentId: "agent-001",
+        source: "on_demand",
+        triggerDetail: "Triggered from heartbeat",
+        contextSnapshot: {
+          wakeReason: "on_demand",
+          triggerDetail: "Triggered from heartbeat",
+        },
+      });
       // Response should include both event and run
       expect((response.body as any).event).toBeDefined();
       expect((response.body as any).run).toBeDefined();

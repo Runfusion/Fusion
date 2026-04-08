@@ -1070,6 +1070,7 @@ describe("HeartbeatMonitor", () => {
         expect(result.status).toBe("completed");
         expect(result.resultJson).toEqual({ reason: "invalid_state", state: "terminated" });
         expect(mockedCreateKbAgent).not.toHaveBeenCalled();
+        expect(store.updateAgentState).not.toHaveBeenCalledWith("agent-001", "active");
       });
 
       it("completes as failed when agent not found in store", async () => {
@@ -1230,6 +1231,33 @@ describe("HeartbeatMonitor", () => {
         const callArgs = mockedCreateKbAgent.mock.calls[0]![0];
         expect(callArgs.defaultProvider).toBeUndefined();
         expect(callArgs.defaultModelId).toBeUndefined();
+      });
+
+      it("persists contextSnapshot on run records", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({
+          session: mockSession as any,
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        const result = await monitor.executeHeartbeat({
+          agentId: "agent-001",
+          source: "assignment",
+          triggerDetail: "task-assigned",
+          contextSnapshot: {
+            wakeReason: "assignment",
+            triggerDetail: "task-assigned",
+            taskId: "FN-001",
+          },
+        });
+
+        expect(result.contextSnapshot).toEqual({
+          wakeReason: "assignment",
+          triggerDetail: "task-assigned",
+          taskId: "FN-001",
+        });
       });
     });
 
@@ -1898,6 +1926,21 @@ describe("HeartbeatTriggerScheduler", () => {
         wakeReason: "timer",
         triggerDetail: "scheduled",
         intervalMs: 5000,
+      });
+    });
+
+    it("clamps configured interval to a minimum of 1000ms", async () => {
+      scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 10 });
+
+      await vi.advanceTimersByTimeAsync(999);
+      expect(callback).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(callback).toHaveBeenCalledOnce();
+      expect(callback).toHaveBeenCalledWith("agent-001", "timer", {
+        wakeReason: "timer",
+        triggerDetail: "scheduled",
+        intervalMs: 1000,
       });
     });
 
