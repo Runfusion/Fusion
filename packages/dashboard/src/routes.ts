@@ -2626,6 +2626,45 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  // Assign or unassign a task to an explicit agent
+  router.patch("/tasks/:id/assign", async (req, res) => {
+    try {
+      const { agentId } = req.body as { agentId?: string | null };
+      if (agentId !== null && typeof agentId !== "string") {
+        res.status(400).json({ error: "agentId must be a string or null" });
+        return;
+      }
+      if (typeof agentId === "string" && agentId.trim().length === 0) {
+        res.status(400).json({ error: "agentId must be a non-empty string or null" });
+        return;
+      }
+
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      if (typeof agentId === "string") {
+        const agent = await agentStore.getAgent(agentId);
+        if (!agent) {
+          res.status(404).json({ error: "Agent not found" });
+          return;
+        }
+      }
+
+      const task = await scopedStore.updateTask(req.params.id, {
+        assignedAgentId: agentId === null ? null : agentId,
+      });
+      res.json(task);
+    } catch (err: any) {
+      if (err?.code === "ENOENT" || err?.message?.includes("not found")) {
+        res.status(404).json({ error: err.message ?? "Task not found" });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
   // Delete task
   router.delete("/tasks/:id", async (req, res) => {
     try {
@@ -7165,6 +7204,30 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       } else {
         res.status(500).json({ error: err.message });
       }
+    }
+  });
+
+  /**
+   * GET /api/agents/:id/tasks
+   * List tasks explicitly assigned to the given agent.
+   */
+  router.get("/agents/:id/tasks", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const agent = await agentStore.getAgent(req.params.id);
+      if (!agent) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+
+      const tasks = await scopedStore.listTasks();
+      res.json(tasks.filter((task) => task.assignedAgentId === req.params.id));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 

@@ -166,6 +166,56 @@ describe("TaskStore", () => {
     });
   });
 
+  describe("assignedAgentId persistence", () => {
+    it("creates a task with assignedAgentId when provided", async () => {
+      const task = await store.createTask({
+        description: "Assigned task",
+        assignedAgentId: "agent-123",
+      });
+
+      expect(task.assignedAgentId).toBe("agent-123");
+
+      const detail = await store.getTask(task.id);
+      expect(detail.assignedAgentId).toBe("agent-123");
+    });
+
+    it("updates a task to set assignedAgentId", async () => {
+      const task = await store.createTask({ description: "Unassigned task" });
+
+      const updated = await store.updateTask(task.id, { assignedAgentId: "agent-456" });
+      expect(updated.assignedAgentId).toBe("agent-456");
+
+      const detail = await store.getTask(task.id);
+      expect(detail.assignedAgentId).toBe("agent-456");
+    });
+
+    it("updates a task to clear assignedAgentId with null", async () => {
+      const task = await store.createTask({
+        description: "Assigned then cleared",
+        assignedAgentId: "agent-789",
+      });
+
+      const cleared = await store.updateTask(task.id, { assignedAgentId: null });
+      expect(cleared.assignedAgentId).toBeUndefined();
+
+      const detail = await store.getTask(task.id);
+      expect(detail.assignedAgentId).toBeUndefined();
+    });
+
+    it("returns assignedAgentId values from listTasks", async () => {
+      const assigned = await store.createTask({
+        description: "Assigned task in list",
+        assignedAgentId: "agent-list",
+      });
+      await store.createTask({ description: "Unassigned task in list" });
+
+      const tasks = await store.listTasks();
+      const listedAssigned = tasks.find((t) => t.id === assigned.id);
+
+      expect(listedAssigned?.assignedAgentId).toBe("agent-list");
+    });
+  });
+
   // ── Lock serialization test ──────────────────────────────────────
 
   describe("write lock serialization", () => {

@@ -1874,6 +1874,116 @@ describe("PATCH /tasks/:id", () => {
 });
 
 
+describe("PATCH /tasks/:id/assign and GET /agents/:id/tasks", () => {
+  let tempDir: string;
+  let fusionDir: string;
+  let agentId: string;
+  let store: TaskStore;
+
+  beforeEach(async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "kb-routes-task-assign-"));
+    fusionDir = join(tempDir, ".fusion");
+    mkdirSync(fusionDir, { recursive: true });
+
+    const { AgentStore } = await import("@fusion/core");
+    const agentStore = new AgentStore({ rootDir: fusionDir });
+    await agentStore.init();
+    const agent = await agentStore.createAgent({
+      name: "Assignment test agent",
+      role: "executor",
+    });
+    agentId = agent.id;
+
+    store = createMockStore({
+      getFusionDir: vi.fn().mockReturnValue(fusionDir),
+      updateTask: vi.fn(),
+      listTasks: vi.fn().mockResolvedValue([]),
+    } as any);
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("assigns a task to an existing agent", async () => {
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      id: "FN-200",
+      assignedAgentId: agentId,
+    });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/FN-200/assign", JSON.stringify({ agentId }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-200", { assignedAgentId: agentId });
+    expect(res.body.assignedAgentId).toBe(agentId);
+  });
+
+  it("returns 404 when assigning to a non-existent agent", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "PATCH",
+      "/api/tasks/FN-200/assign",
+      JSON.stringify({ agentId: "agent-missing" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("Agent not found");
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("unassigns a task when agentId is null", async () => {
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      id: "FN-200",
+      assignedAgentId: undefined,
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "PATCH",
+      "/api/tasks/FN-200/assign",
+      JSON.stringify({ agentId: null }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-200", { assignedAgentId: null });
+    expect(res.body.assignedAgentId).toBeUndefined();
+  });
+
+  it("returns tasks assigned to the specified agent", async () => {
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { ...FAKE_TASK_DETAIL, id: "FN-001", assignedAgentId: agentId },
+      { ...FAKE_TASK_DETAIL, id: "FN-002", assignedAgentId: "agent-other" },
+      { ...FAKE_TASK_DETAIL, id: "FN-003" },
+    ]);
+
+    const res = await GET(buildApp(), `/api/agents/${agentId}/tasks`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.map((task: { id: string }) => task.id)).toEqual(["FN-001"]);
+  });
+
+  it("returns 404 for /api/agents/:id/tasks when agent does not exist", async () => {
+    const res = await GET(buildApp(), "/api/agents/agent-missing/tasks");
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("Agent not found");
+    expect(store.listTasks).not.toHaveBeenCalled();
+  });
+});
+
 describe("Attachment routes", () => {
   const FAKE_ATTACHMENT: TaskAttachment = {
     filename: "1234-screenshot.png",

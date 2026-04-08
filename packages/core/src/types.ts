@@ -571,6 +571,8 @@ export interface Task {
   nextRecoveryAt?: string;
   /** Thinking level for AI agent sessions — controls reasoning effort (off/minimal/low/medium/high) */
   thinkingLevel?: ThinkingLevel;
+  /** Explicitly assigned agent ID for task-agent linking. Distinct from Agent.taskId active execution state. */
+  assignedAgentId?: string;
   /** Path to the persisted agent session file, enabling pause/resume without
    *  losing conversation context. Set when execution starts; cleared on
    *  completion or terminal failure. */
@@ -632,6 +634,8 @@ export interface TaskCreateInput {
   missionId?: string;
   /** Slice ID to link this task to (for mission hierarchy) */
   sliceId?: string;
+  /** Optional explicit agent assignment for this task */
+  assignedAgentId?: string;
 }
 
 // ── Settings Scope Types ────────────────────────────────────────────────

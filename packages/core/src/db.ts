@@ -59,7 +59,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 13;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -167,7 +167,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   enabledWorkflowSteps TEXT DEFAULT '[]',
   modifiedFiles TEXT DEFAULT '[]',
   missionId TEXT,
-  sliceId TEXT
+  sliceId TEXT,
+  assignedAgentId TEXT
 );
 
 -- Config table (single row with project settings)
@@ -451,7 +452,7 @@ export class Database {
     }
 
     // Future migrations go here:
-    // if (version < 13) { this.applyMigration(13, () => { ... }); }
+    // if (version < 14) { this.applyMigration(14, () => { ... }); }
 
     if (version < 10) {
       this.applyMigration(10, () => {
@@ -488,6 +489,13 @@ export class Database {
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxMessagesTo ON messages(toId, toType, read)`);
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxMessagesFrom ON messages(fromId, fromType)`);
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxMessagesCreatedAt ON messages(createdAt)`);
+      });
+    }
+
+    if (version < 13) {
+      this.applyMigration(13, () => {
+        this.addColumnIfMissing("tasks", "assignedAgentId", "TEXT");
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxTasksAssignedAgentId ON tasks(assignedAgentId)`);
       });
     }
   }
