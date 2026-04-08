@@ -313,6 +313,15 @@ describe("Node routes", () => {
     });
   });
 
+  it("GET /api/nodes/:id/metrics returns 501 for remote nodes", async () => {
+    mockGetNode.mockResolvedValue(makeNode({ id: "node_2", type: "remote" }));
+
+    const res = await request(app, "GET", "/api/nodes/node_2/metrics");
+
+    expect(res.status).toBe(501);
+    expect(res.body).toEqual({ error: "Remote node metrics not yet implemented" });
+  });
+
   it("PATCH /api/projects/:id assigns project to node when nodeId is provided", async () => {
     const res = await request(
       app,

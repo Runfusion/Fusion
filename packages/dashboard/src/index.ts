@@ -3,6 +3,19 @@ export { GitHubClient, isPrMergeReady, type PrMergeStatus, type PrCheckStatus, t
 export { rateLimit, RATE_LIMITS, type RateLimitOptions } from "./rate-limit.js";
 export { GitHubPollingService, type GitHubPollingServiceOptions, type TaskWatchInput, type WatchedBadgeType } from "./github-poll.js";
 export {
+  ApiError,
+  type ApiErrorResponse,
+  type SendErrorOptions,
+  sendErrorResponse,
+  catchHandler,
+  badRequest,
+  unauthorized,
+  notFound,
+  conflict,
+  rateLimited,
+  internalError,
+} from "./api-error.js";
+export {
   type BadgePubSub,
   type BadgePubSubEvents,
   type BadgePubSubMessage,

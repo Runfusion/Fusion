@@ -40,6 +40,15 @@ import {
   INTERVIEW_STATES,
 } from "@fusion/core";
 import { writeSSEEvent } from "./sse-buffer.js";
+import {
+  ApiError,
+  badRequest,
+  catchHandler,
+  conflict,
+  internalError,
+  notFound,
+  rateLimited,
+} from "./api-error.js";
 
 // ── Validation Utilities ────────────────────────────────────────────────────
 
@@ -130,14 +139,10 @@ function validateOrderedIds(body: unknown): string[] {
   return orderedIds;
 }
 
-// ── Async Handler Wrapper ───────────────────────────────────────────────────
-
 type TypedRequest = Request<Record<string, string>>;
 
-function asyncHandler(fn: (req: TypedRequest, res: Response, next: NextFunction) => Promise<void>) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    Promise.resolve(fn(req as TypedRequest, res, next)).catch(next);
-  };
+function catchTypedHandler(fn: (req: TypedRequest, res: Response, next: NextFunction) => Promise<void>) {
+  return catchHandler((req, res, next) => fn(req as TypedRequest, res, next));
 }
 
 // ── Router Factory ──────────────────────────────────────────────────────────
@@ -229,7 +234,7 @@ export function createMissionRouter(
    */
   router.get(
     "/",
-    asyncHandler(async (_req, res) => {
+    catchTypedHandler(async (_req, res) => {
       const missions = missionStore.listMissions();
       // Sort by createdAt desc
       missions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -248,7 +253,7 @@ export function createMissionRouter(
    */
   router.post(
     "/",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { title, description, autoAdvance, autopilotEnabled } = req.body;
 
       const validatedTitle = validateTitle(title);
@@ -285,7 +290,7 @@ export function createMissionRouter(
   /**
    * Helper to resolve rootDir for the current request's project scope.
    */
-  async function getRootDirForRequest(req: TypedRequest): Promise<string> {
+  async function getRootDirForRequest(req: Request): Promise<string> {
     const projectId = getProjectIdFromRequest(req);
     const scopedStore = projectId ? await getOrCreateProjectStore(projectId) : store;
     return scopedStore.getRootDir();
@@ -299,17 +304,15 @@ export function createMissionRouter(
    */
   router.post(
     "/interview/start",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { missionTitle } = req.body;
 
       if (!missionTitle || typeof missionTitle !== "string" || !missionTitle.trim()) {
-        res.status(400).json({ error: "missionTitle is required and must be a non-empty string" });
-        return;
+        throw badRequest("missionTitle is required and must be a non-empty string");
       }
 
       if (missionTitle.length > 500) {
-        res.status(400).json({ error: "missionTitle must be 500 characters or less" });
-        return;
+        throw badRequest("missionTitle must be 500 characters or less");
       }
 
       try {
@@ -325,9 +328,9 @@ export function createMissionRouter(
         res.status(201).json({ sessionId });
       } catch (err: any) {
         if (err.name === "RateLimitError") {
-          res.status(429).json({ error: err.message });
+          throw rateLimited(err.message);
         } else {
-          res.status(500).json({ error: err.message || "Failed to start interview session" });
+          throw internalError(err.message || "Failed to start interview session");
         }
       }
     })
@@ -340,17 +343,15 @@ export function createMissionRouter(
    */
   router.post(
     "/interview/respond",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { sessionId, responses } = req.body;
 
       if (!sessionId || typeof sessionId !== "string") {
-        res.status(400).json({ error: "sessionId is required" });
-        return;
+        throw badRequest("sessionId is required");
       }
 
       if (!responses || typeof responses !== "object") {
-        res.status(400).json({ error: "responses is required and must be an object" });
-        return;
+        throw badRequest("responses is required and must be an object");
       }
 
       try {
@@ -365,11 +366,11 @@ export function createMissionRouter(
         res.json(result);
       } catch (err: any) {
         if (err.name === "SessionNotFoundError") {
-          res.status(404).json({ error: err.message });
+          throw notFound(err.message);
         } else if (err.name === "InvalidSessionStateError") {
-          res.status(400).json({ error: err.message });
+          throw badRequest(err.message);
         } else {
-          res.status(500).json({ error: err.message || "Failed to process response" });
+          throw internalError(err.message || "Failed to process response");
         }
       }
     })
@@ -382,12 +383,11 @@ export function createMissionRouter(
    */
   router.post(
     "/interview/cancel",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { sessionId } = req.body;
 
       if (!sessionId || typeof sessionId !== "string") {
-        res.status(400).json({ error: "sessionId is required" });
-        return;
+        throw badRequest("sessionId is required");
       }
 
       try {
@@ -400,9 +400,9 @@ export function createMissionRouter(
         res.json({ success: true });
       } catch (err: any) {
         if (err.name === "SessionNotFoundError") {
-          res.status(404).json({ error: err.message });
+          throw notFound(err.message);
         } else {
-          res.status(500).json({ error: err.message || "Failed to cancel session" });
+          throw internalError(err.message || "Failed to cancel session");
         }
       }
     })
@@ -415,7 +415,7 @@ export function createMissionRouter(
    */
   router.get(
     "/interview/:sessionId/stream",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { sessionId } = req.params;
 
       // Set SSE headers
@@ -526,12 +526,11 @@ export function createMissionRouter(
    */
   router.post(
     "/interview/create-mission",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { sessionId, summary: editedSummary } = req.body;
 
       if (!sessionId || typeof sessionId !== "string") {
-        res.status(400).json({ error: "sessionId is required" });
-        return;
+        throw badRequest("sessionId is required");
       }
 
       try {
@@ -544,15 +543,13 @@ export function createMissionRouter(
 
         const session = getMissionInterviewSession(sessionId);
         if (!session) {
-          res.status(404).json({ error: `Interview session ${sessionId} not found or expired` });
-          return;
+          throw notFound(`Interview session ${sessionId} not found or expired`);
         }
 
         // Use edited summary if provided, otherwise use the session's generated summary
         const summary = editedSummary || getMissionInterviewSummary(sessionId);
         if (!summary || !Array.isArray(summary.milestones)) {
-          res.status(400).json({ error: "Interview session is not complete or summary is missing" });
-          return;
+          throw badRequest("Interview session is not complete or summary is missing");
         }
 
         // Create the full mission hierarchy
@@ -611,9 +608,9 @@ export function createMissionRouter(
         res.status(201).json(result);
       } catch (err: any) {
         if (err.name === "SessionNotFoundError") {
-          res.status(404).json({ error: err.message });
+          throw notFound(err.message);
         } else {
-          res.status(500).json({ error: err.message || "Failed to create mission" });
+          throw internalError(err.message || "Failed to create mission");
         }
       }
     })
@@ -625,18 +622,16 @@ export function createMissionRouter(
    */
   router.get(
     "/:missionId",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
 
       if (!validateMissionId(missionId)) {
-        res.status(400).json({ error: "Invalid mission ID format" });
-        return;
+        throw badRequest("Invalid mission ID format");
       }
 
       const mission = missionStore.getMissionWithHierarchy(missionId);
       if (!mission) {
-        res.status(404).json({ error: "Mission not found" });
-        return;
+        throw notFound("Mission not found");
       }
 
       res.json(mission);
@@ -649,13 +644,12 @@ export function createMissionRouter(
    */
   router.patch(
     "/:missionId",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
       const { title, description, status, autoAdvance, autopilotEnabled } = req.body;
 
       if (!validateMissionId(missionId)) {
-        res.status(400).json({ error: "Invalid mission ID format" });
-        return;
+        throw badRequest("Invalid mission ID format");
       }
 
       const updates: Partial<Mission> = {};
@@ -677,8 +671,7 @@ export function createMissionRouter(
       }
 
       if (Object.keys(updates).length === 0) {
-        res.status(400).json({ error: "No valid fields to update" });
-        return;
+        throw badRequest("No valid fields to update");
       }
 
       try {
@@ -686,8 +679,7 @@ export function createMissionRouter(
         res.json(mission);
       } catch (err: any) {
         if (err.message?.includes("not found")) {
-          res.status(404).json({ error: "Mission not found" });
-          return;
+          throw notFound("Mission not found");
         }
         throw err;
       }
@@ -700,18 +692,16 @@ export function createMissionRouter(
    */
   router.delete(
     "/:missionId",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
 
       if (!validateMissionId(missionId)) {
-        res.status(400).json({ error: "Invalid mission ID format" });
-        return;
+        throw badRequest("Invalid mission ID format");
       }
 
       const existing = missionStore.getMission(missionId);
       if (!existing) {
-        res.status(404).json({ error: "Mission not found" });
-        return;
+        throw notFound("Mission not found");
       }
 
       missionStore.deleteMission(missionId);
@@ -725,18 +715,16 @@ export function createMissionRouter(
    */
   router.get(
     "/:missionId/status",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
 
       if (!validateMissionId(missionId)) {
-        res.status(400).json({ error: "Invalid mission ID format" });
-        return;
+        throw badRequest("Invalid mission ID format");
       }
 
       const mission = missionStore.getMission(missionId);
       if (!mission) {
-        res.status(404).json({ error: "Mission not found" });
-        return;
+        throw notFound("Mission not found");
       }
 
       const status = missionStore.computeMissionStatus(missionId);
@@ -750,18 +738,16 @@ export function createMissionRouter(
    */
   router.get(
     "/:missionId/events",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
 
       if (!validateMissionId(missionId)) {
-        res.status(400).json({ error: "Invalid mission ID format" });
-        return;
+        throw badRequest("Invalid mission ID format");
       }
 
       const mission = missionStore.getMission(missionId);
       if (!mission) {
-        res.status(404).json({ error: "Mission not found" });
-        return;
+        throw notFound("Mission not found");
       }
 
       const parseIntParam = (value: string | string[] | undefined, fallback: number): number => {
@@ -797,24 +783,21 @@ export function createMissionRouter(
    */
   router.get(
     "/:missionId/health",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
 
       if (!validateMissionId(missionId)) {
-        res.status(400).json({ error: "Invalid mission ID format" });
-        return;
+        throw badRequest("Invalid mission ID format");
       }
 
       const mission = missionStore.getMission(missionId);
       if (!mission) {
-        res.status(404).json({ error: "Mission not found" });
-        return;
+        throw notFound("Mission not found");
       }
 
       const health = missionStore.getMissionHealth(missionId);
       if (!health) {
-        res.status(404).json({ error: "Mission not found" });
-        return;
+        throw notFound("Mission not found");
       }
 
       res.json(health);
@@ -829,18 +812,16 @@ export function createMissionRouter(
    */
   router.get(
     "/:missionId/interview-state",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
 
       if (!validateMissionId(missionId)) {
-        res.status(400).json({ error: "Invalid mission ID format" });
-        return;
+        throw badRequest("Invalid mission ID format");
       }
 
       const mission = missionStore.getMission(missionId);
       if (!mission) {
-        res.status(404).json({ error: "Mission not found" });
-        return;
+        throw notFound("Mission not found");
       }
 
       res.json({ state: mission.interviewState });
@@ -853,13 +834,12 @@ export function createMissionRouter(
    */
   router.post(
     "/:missionId/interview-state",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
       const { state } = req.body;
 
       if (!validateMissionId(missionId)) {
-        res.status(400).json({ error: "Invalid mission ID format" });
-        return;
+        throw badRequest("Invalid mission ID format");
       }
 
       const validatedState = validateInterviewState(state);
@@ -869,8 +849,7 @@ export function createMissionRouter(
         res.json(mission);
       } catch (err: any) {
         if (err.message?.includes("not found")) {
-          res.status(404).json({ error: "Mission not found" });
-          return;
+          throw notFound("Mission not found");
         }
         throw err;
       }
@@ -885,18 +864,16 @@ export function createMissionRouter(
    */
   router.get(
     "/:missionId/milestones",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
 
       if (!validateMissionId(missionId)) {
-        res.status(400).json({ error: "Invalid mission ID format" });
-        return;
+        throw badRequest("Invalid mission ID format");
       }
 
       const mission = missionStore.getMission(missionId);
       if (!mission) {
-        res.status(404).json({ error: "Mission not found" });
-        return;
+        throw notFound("Mission not found");
       }
 
       const milestones = missionStore.listMilestones(missionId);
@@ -912,19 +889,17 @@ export function createMissionRouter(
    */
   router.post(
     "/:missionId/milestones",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
       const { title, description, dependencies } = req.body;
 
       if (!validateMissionId(missionId)) {
-        res.status(400).json({ error: "Invalid mission ID format" });
-        return;
+        throw badRequest("Invalid mission ID format");
       }
 
       const mission = missionStore.getMission(missionId);
       if (!mission) {
-        res.status(404).json({ error: "Mission not found" });
-        return;
+        throw notFound("Mission not found");
       }
 
       const validatedTitle = validateTitle(title);
@@ -948,18 +923,16 @@ export function createMissionRouter(
    */
   router.post(
     "/:missionId/milestones/reorder",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
 
       if (!validateMissionId(missionId)) {
-        res.status(400).json({ error: "Invalid mission ID format" });
-        return;
+        throw badRequest("Invalid mission ID format");
       }
 
       const mission = missionStore.getMission(missionId);
       if (!mission) {
-        res.status(404).json({ error: "Mission not found" });
-        return;
+        throw notFound("Mission not found");
       }
 
       const orderedIds = validateOrderedIds(req.body);
@@ -970,13 +943,11 @@ export function createMissionRouter(
       const allIdsValid = orderedIds.every((id) => existingIds.has(id));
 
       if (!allIdsValid) {
-        res.status(400).json({ error: "Invalid milestone IDs in orderedIds" });
-        return;
+        throw badRequest("Invalid milestone IDs in orderedIds");
       }
 
       if (orderedIds.length !== existingIds.size) {
-        res.status(400).json({ error: "orderedIds must include all milestones" });
-        return;
+        throw badRequest("orderedIds must include all milestones");
       }
 
       missionStore.reorderMilestones(missionId, orderedIds);
@@ -990,18 +961,16 @@ export function createMissionRouter(
    */
   router.get(
     "/milestones/:milestoneId",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { milestoneId } = req.params;
 
       if (!validateMilestoneId(milestoneId)) {
-        res.status(400).json({ error: "Invalid milestone ID format" });
-        return;
+        throw badRequest("Invalid milestone ID format");
       }
 
       const milestone = missionStore.getMilestone(milestoneId);
       if (!milestone) {
-        res.status(404).json({ error: "Milestone not found" });
-        return;
+        throw notFound("Milestone not found");
       }
 
       res.json(milestone);
@@ -1014,13 +983,12 @@ export function createMissionRouter(
    */
   router.patch(
     "/milestones/:milestoneId",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { milestoneId } = req.params;
       const { title, description, status, dependencies } = req.body;
 
       if (!validateMilestoneId(milestoneId)) {
-        res.status(400).json({ error: "Invalid milestone ID format" });
-        return;
+        throw badRequest("Invalid milestone ID format");
       }
 
       const updates: Partial<Milestone> = {};
@@ -1039,8 +1007,7 @@ export function createMissionRouter(
       }
 
       if (Object.keys(updates).length === 0) {
-        res.status(400).json({ error: "No valid fields to update" });
-        return;
+        throw badRequest("No valid fields to update");
       }
 
       try {
@@ -1048,8 +1015,7 @@ export function createMissionRouter(
         res.json(milestone);
       } catch (err: any) {
         if (err.message?.includes("not found")) {
-          res.status(404).json({ error: "Milestone not found" });
-          return;
+          throw notFound("Milestone not found");
         }
         throw err;
       }
@@ -1062,18 +1028,16 @@ export function createMissionRouter(
    */
   router.delete(
     "/milestones/:milestoneId",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { milestoneId } = req.params;
 
       if (!validateMilestoneId(milestoneId)) {
-        res.status(400).json({ error: "Invalid milestone ID format" });
-        return;
+        throw badRequest("Invalid milestone ID format");
       }
 
       const existing = missionStore.getMilestone(milestoneId);
       if (!existing) {
-        res.status(404).json({ error: "Milestone not found" });
-        return;
+        throw notFound("Milestone not found");
       }
 
       missionStore.deleteMilestone(milestoneId);
@@ -1089,18 +1053,16 @@ export function createMissionRouter(
    */
   router.get(
     "/milestones/:milestoneId/interview-state",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { milestoneId } = req.params;
 
       if (!validateMilestoneId(milestoneId)) {
-        res.status(400).json({ error: "Invalid milestone ID format" });
-        return;
+        throw badRequest("Invalid milestone ID format");
       }
 
       const milestone = missionStore.getMilestone(milestoneId);
       if (!milestone) {
-        res.status(404).json({ error: "Milestone not found" });
-        return;
+        throw notFound("Milestone not found");
       }
 
       res.json({ state: milestone.interviewState });
@@ -1113,13 +1075,12 @@ export function createMissionRouter(
    */
   router.post(
     "/milestones/:milestoneId/interview-state",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { milestoneId } = req.params;
       const { state } = req.body;
 
       if (!validateMilestoneId(milestoneId)) {
-        res.status(400).json({ error: "Invalid milestone ID format" });
-        return;
+        throw badRequest("Invalid milestone ID format");
       }
 
       const validatedState = validateInterviewState(state);
@@ -1129,8 +1090,7 @@ export function createMissionRouter(
         res.json(milestone);
       } catch (err: any) {
         if (err.message?.includes("not found")) {
-          res.status(404).json({ error: "Milestone not found" });
-          return;
+          throw notFound("Milestone not found");
         }
         throw err;
       }
@@ -1145,18 +1105,16 @@ export function createMissionRouter(
    */
   router.get(
     "/milestones/:milestoneId/slices",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { milestoneId } = req.params;
 
       if (!validateMilestoneId(milestoneId)) {
-        res.status(400).json({ error: "Invalid milestone ID format" });
-        return;
+        throw badRequest("Invalid milestone ID format");
       }
 
       const milestone = missionStore.getMilestone(milestoneId);
       if (!milestone) {
-        res.status(404).json({ error: "Milestone not found" });
-        return;
+        throw notFound("Milestone not found");
       }
 
       const slices = missionStore.listSlices(milestoneId);
@@ -1172,19 +1130,17 @@ export function createMissionRouter(
    */
   router.post(
     "/milestones/:milestoneId/slices",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { milestoneId } = req.params;
       const { title, description } = req.body;
 
       if (!validateMilestoneId(milestoneId)) {
-        res.status(400).json({ error: "Invalid milestone ID format" });
-        return;
+        throw badRequest("Invalid milestone ID format");
       }
 
       const milestone = missionStore.getMilestone(milestoneId);
       if (!milestone) {
-        res.status(404).json({ error: "Milestone not found" });
-        return;
+        throw notFound("Milestone not found");
       }
 
       const validatedTitle = validateTitle(title);
@@ -1206,18 +1162,16 @@ export function createMissionRouter(
    */
   router.post(
     "/milestones/:milestoneId/slices/reorder",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { milestoneId } = req.params;
 
       if (!validateMilestoneId(milestoneId)) {
-        res.status(400).json({ error: "Invalid milestone ID format" });
-        return;
+        throw badRequest("Invalid milestone ID format");
       }
 
       const milestone = missionStore.getMilestone(milestoneId);
       if (!milestone) {
-        res.status(404).json({ error: "Milestone not found" });
-        return;
+        throw notFound("Milestone not found");
       }
 
       const orderedIds = validateOrderedIds(req.body);
@@ -1228,13 +1182,11 @@ export function createMissionRouter(
       const allIdsValid = orderedIds.every((id) => existingIds.has(id));
 
       if (!allIdsValid) {
-        res.status(400).json({ error: "Invalid slice IDs in orderedIds" });
-        return;
+        throw badRequest("Invalid slice IDs in orderedIds");
       }
 
       if (orderedIds.length !== existingIds.size) {
-        res.status(400).json({ error: "orderedIds must include all slices" });
-        return;
+        throw badRequest("orderedIds must include all slices");
       }
 
       missionStore.reorderSlices(milestoneId, orderedIds);
@@ -1248,18 +1200,16 @@ export function createMissionRouter(
    */
   router.get(
     "/slices/:sliceId",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { sliceId } = req.params;
 
       if (!validateSliceId(sliceId)) {
-        res.status(400).json({ error: "Invalid slice ID format" });
-        return;
+        throw badRequest("Invalid slice ID format");
       }
 
       const slice = missionStore.getSlice(sliceId);
       if (!slice) {
-        res.status(404).json({ error: "Slice not found" });
-        return;
+        throw notFound("Slice not found");
       }
 
       res.json(slice);
@@ -1272,13 +1222,12 @@ export function createMissionRouter(
    */
   router.patch(
     "/slices/:sliceId",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { sliceId } = req.params;
       const { title, description, status } = req.body;
 
       if (!validateSliceId(sliceId)) {
-        res.status(400).json({ error: "Invalid slice ID format" });
-        return;
+        throw badRequest("Invalid slice ID format");
       }
 
       const updates: Partial<Slice> = {};
@@ -1294,8 +1243,7 @@ export function createMissionRouter(
       }
 
       if (Object.keys(updates).length === 0) {
-        res.status(400).json({ error: "No valid fields to update" });
-        return;
+        throw badRequest("No valid fields to update");
       }
 
       try {
@@ -1303,8 +1251,7 @@ export function createMissionRouter(
         res.json(slice);
       } catch (err: any) {
         if (err.message?.includes("not found")) {
-          res.status(404).json({ error: "Slice not found" });
-          return;
+          throw notFound("Slice not found");
         }
         throw err;
       }
@@ -1317,18 +1264,16 @@ export function createMissionRouter(
    */
   router.delete(
     "/slices/:sliceId",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { sliceId } = req.params;
 
       if (!validateSliceId(sliceId)) {
-        res.status(400).json({ error: "Invalid slice ID format" });
-        return;
+        throw badRequest("Invalid slice ID format");
       }
 
       const existing = missionStore.getSlice(sliceId);
       if (!existing) {
-        res.status(404).json({ error: "Slice not found" });
-        return;
+        throw notFound("Slice not found");
       }
 
       missionStore.deleteSlice(sliceId);
@@ -1342,12 +1287,11 @@ export function createMissionRouter(
    */
   router.post(
     "/slices/:sliceId/activate",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { sliceId } = req.params;
 
       if (!validateSliceId(sliceId)) {
-        res.status(400).json({ error: "Invalid slice ID format" });
-        return;
+        throw badRequest("Invalid slice ID format");
       }
 
       try {
@@ -1355,8 +1299,7 @@ export function createMissionRouter(
         res.json(slice);
       } catch (err: any) {
         if (err.message?.includes("not found")) {
-          res.status(404).json({ error: "Slice not found" });
-          return;
+          throw notFound("Slice not found");
         }
         throw err;
       }
@@ -1371,18 +1314,16 @@ export function createMissionRouter(
    */
   router.get(
     "/slices/:sliceId/features",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { sliceId } = req.params;
 
       if (!validateSliceId(sliceId)) {
-        res.status(400).json({ error: "Invalid slice ID format" });
-        return;
+        throw badRequest("Invalid slice ID format");
       }
 
       const slice = missionStore.getSlice(sliceId);
       if (!slice) {
-        res.status(404).json({ error: "Slice not found" });
-        return;
+        throw notFound("Slice not found");
       }
 
       const features = missionStore.listFeatures(sliceId);
@@ -1396,19 +1337,17 @@ export function createMissionRouter(
    */
   router.post(
     "/slices/:sliceId/features",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { sliceId } = req.params;
       const { title, description, acceptanceCriteria } = req.body;
 
       if (!validateSliceId(sliceId)) {
-        res.status(400).json({ error: "Invalid slice ID format" });
-        return;
+        throw badRequest("Invalid slice ID format");
       }
 
       const slice = missionStore.getSlice(sliceId);
       if (!slice) {
-        res.status(404).json({ error: "Slice not found" });
-        return;
+        throw notFound("Slice not found");
       }
 
       const validatedTitle = validateTitle(title);
@@ -1432,18 +1371,16 @@ export function createMissionRouter(
    */
   router.get(
     "/features/:featureId",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { featureId } = req.params;
 
       if (!validateFeatureId(featureId)) {
-        res.status(400).json({ error: "Invalid feature ID format" });
-        return;
+        throw badRequest("Invalid feature ID format");
       }
 
       const feature = missionStore.getFeature(featureId);
       if (!feature) {
-        res.status(404).json({ error: "Feature not found" });
-        return;
+        throw notFound("Feature not found");
       }
 
       res.json(feature);
@@ -1456,13 +1393,12 @@ export function createMissionRouter(
    */
   router.patch(
     "/features/:featureId",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { featureId } = req.params;
       const { title, description, acceptanceCriteria, status } = req.body;
 
       if (!validateFeatureId(featureId)) {
-        res.status(400).json({ error: "Invalid feature ID format" });
-        return;
+        throw badRequest("Invalid feature ID format");
       }
 
       const updates: Partial<MissionFeature> = {};
@@ -1481,8 +1417,7 @@ export function createMissionRouter(
       }
 
       if (Object.keys(updates).length === 0) {
-        res.status(400).json({ error: "No valid fields to update" });
-        return;
+        throw badRequest("No valid fields to update");
       }
 
       try {
@@ -1490,8 +1425,7 @@ export function createMissionRouter(
         res.json(feature);
       } catch (err: any) {
         if (err.message?.includes("not found")) {
-          res.status(404).json({ error: "Feature not found" });
-          return;
+          throw notFound("Feature not found");
         }
         throw err;
       }
@@ -1504,18 +1438,16 @@ export function createMissionRouter(
    */
   router.delete(
     "/features/:featureId",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { featureId } = req.params;
 
       if (!validateFeatureId(featureId)) {
-        res.status(400).json({ error: "Invalid feature ID format" });
-        return;
+        throw badRequest("Invalid feature ID format");
       }
 
       const existing = missionStore.getFeature(featureId);
       if (!existing) {
-        res.status(404).json({ error: "Feature not found" });
-        return;
+        throw notFound("Feature not found");
       }
 
       missionStore.deleteFeature(featureId);
@@ -1529,24 +1461,21 @@ export function createMissionRouter(
    */
   router.post(
     "/features/:featureId/link-task",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { featureId } = req.params;
       const { taskId } = req.body;
 
       if (!validateFeatureId(featureId)) {
-        res.status(400).json({ error: "Invalid feature ID format" });
-        return;
+        throw badRequest("Invalid feature ID format");
       }
 
       if (!taskId || typeof taskId !== "string") {
-        res.status(400).json({ error: "taskId is required and must be a string" });
-        return;
+        throw badRequest("taskId is required and must be a string");
       }
 
       const existing = missionStore.getFeature(featureId);
       if (!existing) {
-        res.status(404).json({ error: "Feature not found" });
-        return;
+        throw notFound("Feature not found");
       }
 
       try {
@@ -1554,8 +1483,7 @@ export function createMissionRouter(
         res.json(feature);
       } catch (err: any) {
         if (err.message?.includes("already linked")) {
-          res.status(409).json({ error: err.message });
-          return;
+          throw conflict(err.message);
         }
         throw err;
       }
@@ -1568,23 +1496,20 @@ export function createMissionRouter(
    */
   router.post(
     "/features/:featureId/unlink-task",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { featureId } = req.params;
 
       if (!validateFeatureId(featureId)) {
-        res.status(400).json({ error: "Invalid feature ID format" });
-        return;
+        throw badRequest("Invalid feature ID format");
       }
 
       const existing = missionStore.getFeature(featureId);
       if (!existing) {
-        res.status(404).json({ error: "Feature not found" });
-        return;
+        throw notFound("Feature not found");
       }
 
       if (!existing.taskId) {
-        res.status(400).json({ error: "Feature is not linked to a task" });
-        return;
+        throw badRequest("Feature is not linked to a task");
       }
 
       const feature = missionStore.unlinkFeatureFromTask(featureId);
@@ -1601,19 +1526,17 @@ export function createMissionRouter(
    */
   router.post(
     "/features/:featureId/triage",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { featureId } = req.params;
       const { taskTitle, taskDescription } = req.body || {};
 
       if (!validateFeatureId(featureId)) {
-        res.status(400).json({ error: "Invalid feature ID format" });
-        return;
+        throw badRequest("Invalid feature ID format");
       }
 
       const existing = missionStore.getFeature(featureId);
       if (!existing) {
-        res.status(404).json({ error: "Feature not found" });
-        return;
+        throw notFound("Feature not found");
       }
 
       try {
@@ -1625,12 +1548,10 @@ export function createMissionRouter(
         res.json(feature);
       } catch (err: any) {
         if (err.message?.includes("already")) {
-          res.status(400).json({ error: err.message });
-          return;
+          throw badRequest(err.message);
         }
         if (err.message?.includes("TaskStore")) {
-          res.status(503).json({ error: "TaskStore not available for triage operations" });
-          return;
+          throw new ApiError(503, "TaskStore not available for triage operations");
         }
         throw err;
       }
@@ -1644,18 +1565,16 @@ export function createMissionRouter(
    */
   router.post(
     "/slices/:sliceId/triage-all",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { sliceId } = req.params;
 
       if (!validateSliceId(sliceId)) {
-        res.status(400).json({ error: "Invalid slice ID format" });
-        return;
+        throw badRequest("Invalid slice ID format");
       }
 
       const slice = missionStore.getSlice(sliceId);
       if (!slice) {
-        res.status(404).json({ error: "Slice not found" });
-        return;
+        throw notFound("Slice not found");
       }
 
       try {
@@ -1663,8 +1582,7 @@ export function createMissionRouter(
         res.json({ triaged, count: triaged.length });
       } catch (err: any) {
         if (err.message?.includes("TaskStore")) {
-          res.status(503).json({ error: "TaskStore not available for triage operations" });
-          return;
+          throw new ApiError(503, "TaskStore not available for triage operations");
         }
         throw err;
       }
@@ -1680,23 +1598,20 @@ export function createMissionRouter(
    */
   router.post(
     "/:missionId/pause",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
 
       if (!validateMissionId(missionId)) {
-        res.status(400).json({ error: "Invalid mission ID format" });
-        return;
+        throw badRequest("Invalid mission ID format");
       }
 
       const mission = missionStore.getMission(missionId);
       if (!mission) {
-        res.status(404).json({ error: "Mission not found" });
-        return;
+        throw notFound("Mission not found");
       }
 
       if (mission.status === "blocked") {
-        res.status(400).json({ error: "Mission is already paused (blocked)" });
-        return;
+        throw badRequest("Mission is already paused (blocked)");
       }
 
       const updated = missionStore.updateMission(missionId, { status: "blocked" });
@@ -1710,23 +1625,20 @@ export function createMissionRouter(
    */
   router.post(
     "/:missionId/resume",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
 
       if (!validateMissionId(missionId)) {
-        res.status(400).json({ error: "Invalid mission ID format" });
-        return;
+        throw badRequest("Invalid mission ID format");
       }
 
       const mission = missionStore.getMission(missionId);
       if (!mission) {
-        res.status(404).json({ error: "Mission not found" });
-        return;
+        throw notFound("Mission not found");
       }
 
       if (mission.status !== "blocked") {
-        res.status(400).json({ error: "Mission is not paused (status must be 'blocked' to resume)" });
-        return;
+        throw badRequest("Mission is not paused (status must be 'blocked' to resume)");
       }
 
       const updated = missionStore.updateMission(missionId, { status: "active" });
@@ -1740,18 +1652,16 @@ export function createMissionRouter(
    */
   router.post(
     "/:missionId/stop",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
 
       if (!validateMissionId(missionId)) {
-        res.status(400).json({ error: "Invalid mission ID format" });
-        return;
+        throw badRequest("Invalid mission ID format");
       }
 
       const hierarchy = missionStore.getMissionWithHierarchy(missionId);
       if (!hierarchy) {
-        res.status(404).json({ error: "Mission not found" });
-        return;
+        throw notFound("Mission not found");
       }
 
       // Set mission status to blocked
@@ -1787,29 +1697,25 @@ export function createMissionRouter(
    */
   router.post(
     "/:missionId/start",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
 
       if (!validateMissionId(missionId)) {
-        res.status(400).json({ error: "Invalid mission ID format" });
-        return;
+        throw badRequest("Invalid mission ID format");
       }
 
       const mission = missionStore.getMission(missionId);
       if (!mission) {
-        res.status(404).json({ error: "Mission not found" });
-        return;
+        throw notFound("Mission not found");
       }
 
       if (mission.status !== "planning") {
-        res.status(409).json({ error: "Mission must be in 'planning' status to start" });
-        return;
+        throw conflict("Mission must be in 'planning' status to start");
       }
 
       const nextSlice = missionStore.findNextPendingSlice(missionId);
       if (!nextSlice) {
-        res.status(400).json({ error: "No pending slices found" });
-        return;
+        throw badRequest("No pending slices found");
       }
 
       // Set autoAdvance: true so activateSlice() will auto-triage features
@@ -1833,18 +1739,16 @@ export function createMissionRouter(
    */
   router.get(
     "/:missionId/autopilot",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
 
       if (!validateMissionId(missionId)) {
-        res.status(400).json({ error: "Invalid mission ID format" });
-        return;
+        throw badRequest("Invalid mission ID format");
       }
 
       const mission = missionStore.getMission(missionId);
       if (!mission) {
-        res.status(404).json({ error: "Mission not found" });
-        return;
+        throw notFound("Mission not found");
       }
 
       if (missionAutopilot) {
@@ -1871,24 +1775,21 @@ export function createMissionRouter(
    */
   router.patch(
     "/:missionId/autopilot",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
       const { enabled } = req.body;
 
       if (!validateMissionId(missionId)) {
-        res.status(400).json({ error: "Invalid mission ID format" });
-        return;
+        throw badRequest("Invalid mission ID format");
       }
 
       if (enabled === undefined || typeof enabled !== "boolean") {
-        res.status(400).json({ error: "enabled is required and must be a boolean" });
-        return;
+        throw badRequest("enabled is required and must be a boolean");
       }
 
       const mission = missionStore.getMission(missionId);
       if (!mission) {
-        res.status(404).json({ error: "Mission not found" });
-        return;
+        throw notFound("Mission not found");
       }
 
       // Update the mission's autopilotEnabled field
@@ -1927,28 +1828,24 @@ export function createMissionRouter(
    */
   router.post(
     "/:missionId/autopilot/start",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
 
       if (!validateMissionId(missionId)) {
-        res.status(400).json({ error: "Invalid mission ID format" });
-        return;
+        throw badRequest("Invalid mission ID format");
       }
 
       const mission = missionStore.getMission(missionId);
       if (!mission) {
-        res.status(404).json({ error: "Mission not found" });
-        return;
+        throw notFound("Mission not found");
       }
 
       if (!mission.autopilotEnabled) {
-        res.status(400).json({ error: "Autopilot is not enabled for this mission" });
-        return;
+        throw badRequest("Autopilot is not enabled for this mission");
       }
 
       if (!missionAutopilot) {
-        res.status(503).json({ error: "Autopilot service is not available" });
-        return;
+        throw new ApiError(503, "Autopilot service is not available");
       }
 
       missionAutopilot.watchMission(missionId);
@@ -1969,18 +1866,16 @@ export function createMissionRouter(
    */
   router.post(
     "/:missionId/autopilot/stop",
-    asyncHandler(async (req, res) => {
+    catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
 
       if (!validateMissionId(missionId)) {
-        res.status(400).json({ error: "Invalid mission ID format" });
-        return;
+        throw badRequest("Invalid mission ID format");
       }
 
       const mission = missionStore.getMission(missionId);
       if (!mission) {
-        res.status(404).json({ error: "Mission not found" });
-        return;
+        throw notFound("Mission not found");
       }
 
       if (missionAutopilot) {

@@ -8,6 +8,7 @@ import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
 import { createApiRoutes } from "./routes.js";
 import { createSSE } from "./sse.js";
 import { rateLimit, RATE_LIMITS } from "./rate-limit.js";
+import { ApiError, sendErrorResponse } from "./api-error.js";
 import { getOrCreateProjectStore, evictAllProjectStores } from "./project-store-resolver.js";
 import { getTerminalService, type TerminalSession, STALE_SESSION_THRESHOLD_MS } from "./terminal-service.js";
 import { WebSocketServer, type WebSocket } from "ws";
@@ -179,7 +180,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       const scopedStore = await getOrCreateProjectStore(projectId);
       createSSE(scopedStore, scopedStore.getMissionStore(), aiSessionStore)(req, res);
     } catch (err: any) {
-      res.status(500).json({ error: err.message ?? "Failed to open project event stream" });
+      sendErrorResponse(res, 500, err.message ?? "Failed to open project event stream");
     }
   });
 
@@ -394,21 +395,31 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
 
   // API 404 Handler - Return JSON for unmatched API routes (instead of falling through to SPA)
   app.use("/api", (_req: express.Request, res: express.Response) => {
-    res.status(404).json({ error: "Not found" });
+    sendErrorResponse(res, 404, "Not found");
   });
 
   // API Error Handling Middleware - MUST be after API routes but before SPA fallback
   // This ensures API errors return JSON instead of falling through to the SPA fallback (which returns HTML)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  app.use("/api", (err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    console.error("[api:error]", err);
-    
-    // Ensure we send a JSON response even if headers already sent (though this is a edge case)
+  app.use("/api", (err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     if (res.headersSent) {
       return;
     }
-    
-    res.status(500).json({ error: "Internal server error" });
+
+    if (err instanceof ApiError) {
+      sendErrorResponse(res, err.statusCode, err.message, { details: err.details });
+      return;
+    }
+
+    const fallbackMessage = "Internal server error";
+    const message =
+      process.env.NODE_ENV === "production"
+        ? fallbackMessage
+        : err instanceof Error && err.message
+          ? err.message
+          : fallbackMessage;
+
+    sendErrorResponse(res, 500, message);
   });
 
   if (!isHeadless) {

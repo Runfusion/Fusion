@@ -38,6 +38,16 @@ import {
 } from "./agent-generation.js";
 import { getMissionInterviewSession, cleanupMissionInterviewSession } from "./mission-interview.js";
 import { writeSSEEvent } from "./sse-buffer.js";
+import {
+  ApiError,
+  badRequest,
+  conflict,
+  internalError,
+  notFound,
+  rateLimited,
+  sendErrorResponse,
+  unauthorized,
+} from "./api-error.js";
 
 /**
  * Minimal interface matching pi-coding-agent's ModelRegistry API surface
@@ -125,6 +135,18 @@ function assertConsistentOptionalPair(
     provider: normalizedProvider,
     modelId: normalizedModelId,
   };
+}
+
+function rethrowAsApiError(error: unknown, fallbackMessage = "Internal server error"): never {
+  if (error instanceof ApiError) {
+    throw error;
+  }
+
+  if (error instanceof Error && error.message) {
+    throw internalError(error.message);
+  }
+
+  throw internalError(fallbackMessage);
 }
 
 function slugifyPresetName(name: string): string {
@@ -793,6 +815,9 @@ function fetchGitRemote(remote: string = "origin", cwd?: string): GitFetchResult
     const output = execSync(`git fetch ${remote}`, { encoding: "utf-8", timeout: 30000, cwd });
     return { fetched: true, message: output.trim() || "Fetch completed" };
   } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
     const message = err.message || String(err);
     if (message.includes("Could not resolve host") || message.includes("Connection refused")) {
       throw new Error("Failed to connect to remote");
@@ -817,9 +842,13 @@ function pullGitBranch(cwd?: string): GitPullResult {
     const output = execSync("git pull", { encoding: "utf-8", timeout: 30000, cwd });
     return { success: true, message: output.trim() };
   } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
     const message = err.message || String(err);
     if (message.includes("CONFLICT") || message.includes("Merge conflict")) {
-      return { success: false, message: "Merge conflict detected. Resolve manually.", conflict: true };
+      const success = false;
+      return { success, message: "Merge conflict detected. Resolve manually.", conflict: true };
     }
     throw new Error(message || "Pull failed");
   }
@@ -839,6 +868,9 @@ function pushGitBranch(cwd?: string): GitPushResult {
     const output = execSync("git push", { encoding: "utf-8", timeout: 30000, cwd });
     return { success: true, message: output.trim() || "Push completed" };
   } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
     const message = err.message || String(err);
     if (message.includes("rejected") || message.includes("non-fast-forward")) {
       throw new Error("Push rejected. Pull latest changes first.");
@@ -934,6 +966,9 @@ function addGitRemote(name: string, url: string, cwd?: string): void {
   try {
     execSync(`git remote add ${name} ${url}`, { encoding: "utf-8", timeout: 10000, cwd });
   } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
     const message = err.message || String(err);
     if (message.includes("already exists")) {
       throw new Error(`Remote '${name}' already exists`);
@@ -952,6 +987,9 @@ function removeGitRemote(name: string, cwd?: string): void {
   try {
     execSync(`git remote remove ${name}`, { encoding: "utf-8", timeout: 10000, cwd });
   } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
     const message = err.message || String(err);
     if (message.includes("No such remote")) {
       throw new Error(`Remote '${name}' does not exist`);
@@ -973,6 +1011,9 @@ function renameGitRemote(oldName: string, newName: string, cwd?: string): void {
   try {
     execSync(`git remote rename ${oldName} ${newName}`, { encoding: "utf-8", timeout: 10000, cwd });
   } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
     const message = err.message || String(err);
     if (message.includes("No such remote")) {
       throw new Error(`Remote '${oldName}' does not exist`);
@@ -997,6 +1038,9 @@ function setGitRemoteUrl(name: string, url: string, cwd?: string): void {
   try {
     execSync(`git remote set-url ${name} ${url}`, { encoding: "utf-8", timeout: 10000, cwd });
   } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
     const message = err.message || String(err);
     if (message.includes("No such remote")) {
       throw new Error(`Remote '${name}' does not exist`);
@@ -1405,7 +1449,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         githubTokenConfigured: Boolean(githubToken),
       });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -1421,10 +1468,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const globalKeySet = new Set<string>(GLOBAL_SETTINGS_KEYS);
       const globalFieldsFound = Object.keys(clientSettings).filter((k) => globalKeySet.has(k));
       if (globalFieldsFound.length > 0) {
-        res.status(400).json({
-          error: `Cannot update global settings via this endpoint. Use PUT /settings/global instead. Global fields found: ${globalFieldsFound.join(", ")}`,
-        });
-        return;
+        throw badRequest(`Cannot update global settings via this endpoint. Use PUT /settings/global instead. Global fields found: ${globalFieldsFound.join(", ")}`);
       }
 
       if (Object.prototype.hasOwnProperty.call(clientSettings, "modelPresets")) {
@@ -1433,16 +1477,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       // Validate backup settings if provided
       if (clientSettings.autoBackupSchedule !== undefined && !validateBackupSchedule(clientSettings.autoBackupSchedule)) {
-        res.status(400).json({ error: "Invalid cron expression for autoBackupSchedule" });
-        return;
+        throw badRequest("Invalid cron expression for autoBackupSchedule");
       }
       if (clientSettings.autoBackupRetention !== undefined && !validateBackupRetention(clientSettings.autoBackupRetention)) {
-        res.status(400).json({ error: "autoBackupRetention must be between 1 and 100" });
-        return;
+        throw badRequest("autoBackupRetention must be between 1 and 100");
       }
       if (clientSettings.autoBackupDir !== undefined && !validateBackupDir(clientSettings.autoBackupDir)) {
-        res.status(400).json({ error: "autoBackupDir must be a relative path without '..' traversal" });
-        return;
+        throw badRequest("autoBackupDir must be a relative path without '..' traversal");
       }
 
       const settings = await scopedStore.updateSettings(clientSettings);
@@ -1459,10 +1500,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       
       res.json(settings);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = typeof err?.message === "string" && (
         err.message.includes("modelPresets") || err.message.includes("must include both provider and modelId")
       ) ? 400 : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -1479,11 +1523,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const memory = await readProjectFile(scopedStore, MEMORY_FILE_PATH);
       res.json({ content: memory.content });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err instanceof FileServiceError && err.code === "ENOENT") {
         res.json({ content: "" });
         return;
       }
-      res.status(500).json({ error: err.message ?? "Failed to read memory" });
+      rethrowAsApiError(err, "Failed to read memory");
     }
   });
 
@@ -1496,15 +1543,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const { content } = req.body ?? {};
       if (typeof content !== "string") {
-        res.status(400).json({ error: "content must be a string" });
-        return;
+        throw badRequest("content must be a string");
       }
 
       const scopedStore = await getScopedStore(req);
       await writeProjectFile(scopedStore, MEMORY_FILE_PATH, content);
       res.json({ success: true });
     } catch (err: any) {
-      res.status(500).json({ error: err.message ?? "Failed to save memory" });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to save memory");
     }
   });
 
@@ -1521,7 +1570,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const settings = await globalStore.getSettings();
       res.json(settings);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -1535,7 +1587,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const settings = await store.updateGlobalSettings(req.body);
       res.json(settings);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -1550,7 +1605,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const scopes = await scopedStore.getSettingsByScope();
       res.json(scopes);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -1566,15 +1624,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       // Validate ntfy is enabled
       if (!settings.ntfyEnabled) {
-        res.status(400).json({ error: "ntfy notifications are not enabled" });
-        return;
+        throw badRequest("ntfy notifications are not enabled");
       }
 
       // Validate topic exists and matches required format
       const topic = settings.ntfyTopic;
       if (!topic || !/^[a-zA-Z0-9_-]{1,64}$/.test(topic)) {
-        res.status(400).json({ error: "ntfy topic is not configured or invalid" });
-        return;
+        throw badRequest("ntfy topic is not configured or invalid");
       }
 
       // Send test notification to ntfy.sh
@@ -1592,13 +1648,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
 
       if (!response.ok) {
-        res.status(502).json({ error: `ntfy.sh returned ${response.status}: ${response.statusText}` });
-        return;
+        throw new ApiError(502, `ntfy.sh returned ${response.status}: ${response.statusText}`);
       }
 
       res.json({ success: true });
     } catch (err: any) {
-      res.status(500).json({ error: err.message ?? "Failed to send test notification" });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to send test notification");
     }
   });
 
@@ -1621,7 +1679,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const exportData = await exportSettings(scopedStore, { scope });
       res.json(exportData);
     } catch (err: any) {
-      res.status(500).json({ error: err.message ?? "Failed to export settings" });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to export settings");
     }
   });
 
@@ -1639,24 +1700,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Validate the import data
       const validationErrors = validateImportData(data);
       if (validationErrors.length > 0) {
-        res.status(400).json({
-          success: false,
-          error: `Validation failed: ${validationErrors.join("; ")}`,
-        });
-        return;
+        throw badRequest(`Validation failed: ${validationErrors.join("; ")}`);
       }
 
       // Perform the import
       const result = await importSettings(scopedStore, data, { scope, merge });
 
       if (!result.success) {
-        res.status(500).json({
-          success: false,
-          error: result.error ?? "Import failed",
+        throw new ApiError(500, result.error ?? "Import failed", {
           globalCount: result.globalCount,
           projectCount: result.projectCount,
         });
-        return;
       }
 
       res.json({
@@ -1665,7 +1719,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         projectCount: result.projectCount,
       });
     } catch (err: any) {
-      res.status(500).json({ error: err.message ?? "Failed to import settings" });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to import settings");
     }
   });
 
@@ -1702,7 +1759,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         lastActivityAt,
       });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -1729,7 +1789,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         totalSize,
       });
     } catch (err: any) {
-      res.status(500).json({ error: err.message ?? "Failed to list backups" });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to list backups");
     }
   });
 
@@ -1752,13 +1815,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           deletedCount: result.deletedCount,
         });
       } else {
-        res.status(500).json({
-          success: false,
-          error: result.output,
-        });
+        throw new ApiError(500, result.output);
       }
     } catch (err: any) {
-      res.status(500).json({ error: err.message ?? "Failed to create backup" });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to create backup");
     }
   });
 
@@ -1773,19 +1836,20 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const offset = typeof req.query.offset === "string" ? Number.parseInt(req.query.offset, 10) : undefined;
 
       if (limit !== undefined && (!Number.isFinite(limit) || limit < 0)) {
-        res.status(400).json({ error: "limit must be a non-negative integer" });
-        return;
+        throw badRequest("limit must be a non-negative integer");
       }
 
       if (offset !== undefined && (!Number.isFinite(offset) || offset < 0)) {
-        res.status(400).json({ error: "offset must be a non-negative integer" });
-        return;
+        throw badRequest("offset must be a non-negative integer");
       }
 
       const tasks = await scopedStore.listTasks({ limit, offset });
       res.json(tasks);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -1810,12 +1874,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         thinkingLevel,
       } = req.body;
       if (!description || typeof description !== "string") {
-        res.status(400).json({ error: "description is required" });
-        return;
+        throw badRequest("description is required");
       }
       if (breakIntoSubtasks !== undefined && typeof breakIntoSubtasks !== "boolean") {
-        res.status(400).json({ error: "breakIntoSubtasks must be a boolean" });
-        return;
+        throw badRequest("breakIntoSubtasks must be a boolean");
       }
 
       const validatedModelProvider = validateOptionalModelField(modelProvider, "modelProvider");
@@ -1828,8 +1890,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Validate thinkingLevel if provided
       const validThinkingLevels = ["off", "minimal", "low", "medium", "high"];
       if (thinkingLevel !== undefined && thinkingLevel !== null && !validThinkingLevels.includes(thinkingLevel)) {
-        res.status(400).json({ error: `thinkingLevel must be one of: ${validThinkingLevels.join(", ")}` });
-        return;
+        throw badRequest(`thinkingLevel must be one of: ${validThinkingLevels.join(", ")}`);
       }
 
       const executorModel = normalizeModelSelectionPair(validatedModelProvider, validatedModelId);
@@ -1839,8 +1900,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Validate enabledWorkflowSteps if provided
       if (enabledWorkflowSteps !== undefined) {
         if (!Array.isArray(enabledWorkflowSteps) || !enabledWorkflowSteps.every((id: unknown) => typeof id === "string")) {
-          res.status(400).json({ error: "enabledWorkflowSteps must be an array of strings" });
-          return;
+          throw badRequest("enabledWorkflowSteps must be an array of strings");
         }
       }
 
@@ -1897,8 +1957,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       );
       res.status(201).json(task);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.message?.includes("must be a string") || err.message?.includes("must be an array of strings") ? 400 : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -1908,16 +1971,16 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const scopedStore = await getScopedStore(req);
       const { column } = req.body;
       if (!column || !COLUMNS.includes(column as Column)) {
-        res.status(400).json({
-          error: `Invalid column. Must be one of: ${COLUMNS.join(", ")}`,
-        });
-        return;
+        throw badRequest(`Invalid column. Must be one of: ${COLUMNS.join(", ")}`);
       }
       const task = await scopedStore.moveTask(req.params.id, column as Column);
       res.json(task);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.message.includes("Invalid transition") ? 400 : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -1930,10 +1993,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const result = await merge(req.params.id);
       res.json(result);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.message.includes("Cannot merge") ? 400
         : err.message.includes("conflict") ? 409
         : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -1943,8 +2009,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const scopedStore = await getScopedStore(req);
       const task = await scopedStore.getTask(req.params.id);
       if (task.status !== "failed" && task.status !== "stuck-killed") {
-        res.status(400).json({ error: `Task is not in a retryable state (current status: ${task.status || 'none'})` });
-        return;
+        throw badRequest(`Task is not in a retryable state (current status: ${task.status || 'none'})`);
       }
       await scopedStore.updateTask(req.params.id, {
         status: null,
@@ -1956,7 +2021,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const updated = await scopedStore.moveTask(req.params.id, "todo");
       res.json(updated);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -1967,8 +2035,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const newTask = await scopedStore.duplicateTask(req.params.id);
       res.status(201).json(newTask);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.code === "ENOENT" ? 404 : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -1978,25 +2049,26 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const scopedStore = await getScopedStore(req);
       const { feedback } = req.body;
       if (!feedback || typeof feedback !== "string") {
-        res.status(400).json({ error: "feedback is required and must be a string" });
-        return;
+        throw badRequest("feedback is required and must be a string");
       }
       // Trim before checking length to catch whitespace-only input
       const trimmedFeedback = feedback.trim();
       if (trimmedFeedback.length === 0 || trimmedFeedback.length > 2000) {
-        res.status(400).json({ error: "feedback must be between 1 and 2000 characters" });
-        return;
+        throw badRequest("feedback must be between 1 and 2000 characters");
       }
 
       const refinedTask = await scopedStore.refineTask(req.params.id, trimmedFeedback);
       await scopedStore.logEntry(req.params.id, "Refinement requested", trimmedFeedback);
       res.status(201).json(refinedTask);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.code === "ENOENT" ? 404
         : err.message?.includes("must be in 'done' or 'in-review'") ? 400
         : err.message?.includes("Feedback is required") ? 400
         : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -2007,8 +2079,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const task = await scopedStore.archiveTask(req.params.id);
       res.json(task);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.message?.includes("must be in") ? 400 : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -2019,8 +2094,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const task = await scopedStore.unarchiveTask(req.params.id);
       res.json(task);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.message?.includes("must be in") ? 400 : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -2031,7 +2109,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const archived = await scopedStore.archiveAllDone();
       res.json({ archived });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -2048,16 +2129,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       // Validate taskIds
       if (!Array.isArray(taskIds)) {
-        res.status(400).json({ error: "taskIds must be an array" });
-        return;
+        throw badRequest("taskIds must be an array");
       }
       if (taskIds.length === 0) {
-        res.status(400).json({ error: "taskIds must contain at least one task ID" });
-        return;
+        throw badRequest("taskIds must contain at least one task ID");
       }
       if (taskIds.some((id) => typeof id !== "string" || id.trim().length === 0)) {
-        res.status(400).json({ error: "taskIds must contain non-empty strings" });
-        return;
+        throw badRequest("taskIds must contain non-empty strings");
       }
 
       // Validate that at least one model field is being updated
@@ -2065,8 +2143,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const hasValidatorModel = validatorModelProvider !== undefined || validatorModelId !== undefined;
       const hasPlanningModel = planningModelProvider !== undefined || planningModelId !== undefined;
       if (!hasExecutorModel && !hasValidatorModel && !hasPlanningModel) {
-        res.status(400).json({ error: "At least one model field must be provided" });
-        return;
+        throw badRequest("At least one model field must be provided");
       }
 
       // Validate model field pairs (both provider and modelId must be provided together or neither)
@@ -2095,8 +2172,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         validatedValidator = validateModelPair(validatorModelProvider, validatorModelId, "Validator model");
         validatedPlanning = validateModelPair(planningModelProvider, planningModelId, "Planning model");
       } catch (err: any) {
-        res.status(400).json({ error: err.message });
-        return;
+      if (err instanceof ApiError) {
+        throw err;
+      }
+        throw badRequest(err.message);
       }
 
       // Verify all tasks exist
@@ -2106,9 +2185,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           const task = await scopedStore.getTask(taskId);
           tasksById.set(taskId, task);
         } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
           if (err?.code === "ENOENT" || err?.message?.includes("not found")) {
-            res.status(404).json({ error: `Task ${taskId} not found` });
-            return;
+            throw notFound(`Task ${taskId} not found`);
           }
           throw err;
         }
@@ -2141,8 +2222,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           const updated = await scopedStore.updateTask(taskId, updates);
           return { success: true, task: updated };
         } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
           console.error(`Failed to update task ${taskId}:`, err);
-          return { success: false, taskId, error: err.message };
+          const success = false;
+          return { success, taskId, error: err.message };
         }
       });
 
@@ -2167,7 +2252,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       res.json({ updated, count: updated.length });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Failed to batch update models" });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to batch update models");
     }
   });
 
@@ -2176,8 +2264,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const scopedStore = await getScopedStore(req);
       if (!req.file) {
-        res.status(400).json({ error: "No file provided" });
-        return;
+        throw badRequest("No file provided");
       }
       const attachment = await scopedStore.addAttachment(
         req.params.id as string,
@@ -2187,8 +2274,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       );
       res.status(201).json(attachment);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.message.includes("Invalid mime type") || err.message.includes("File too large") ? 400 : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -2200,10 +2290,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       res.setHeader("Content-Type", mimeType);
       createReadStream(path).pipe(res);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.code === "ENOENT") {
-        res.status(404).json({ error: "Attachment not found" });
+        throw notFound("Attachment not found");
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -2215,10 +2308,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const task = await scopedStore.deleteAttachment(req.params.id, req.params.filename);
       res.json(task);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.code === "ENOENT") {
-        res.status(404).json({ error: "Attachment not found" });
+        throw notFound("Attachment not found");
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -2232,10 +2328,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const logs = await scopedStore.getAgentLogs(req.params.id);
       res.json(logs);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.code === "ENOENT") {
-        res.status(404).json({ error: `Task ${req.params.id} not found` });
+        throw notFound(`Task ${req.params.id} not found`);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -2346,10 +2445,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       res.json(files);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.code === "ENOENT") {
-        res.status(404).json({ error: `Task ${req.params.id} not found` });
+        throw notFound(`Task ${req.params.id} not found`);
       } else {
-        res.status(500).json({ error: err.message || "Internal server error" });
+        rethrowAsApiError(err, "Internal server error");
       }
     }
   });
@@ -2365,10 +2467,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const task = await scopedStore.getTask(req.params.id);
       res.json(task.workflowStepResults || []);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.code === "ENOENT") {
-        res.status(404).json({ error: `Task ${req.params.id} not found` });
+        throw notFound(`Task ${req.params.id} not found`);
       } else {
-        res.status(500).json({ error: err.message || "Internal server error" });
+        rethrowAsApiError(err, "Internal server error");
       }
     }
   });
@@ -2380,13 +2485,16 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const task = await scopedStore.getTask(req.params.id);
       res.json(task);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       // ENOENT means the task directory/file genuinely doesn't exist → 404.
       // Any other error (e.g. JSON parse failure from a concurrent partial write,
       // or a transient FS error) should surface as 500 so clients can retry.
       if (err.code === "ENOENT") {
-        res.status(404).json({ error: `Task ${req.params.id} not found` });
+        throw notFound(`Task ${req.params.id} not found`);
       } else {
-        res.status(500).json({ error: err.message || "Internal server error" });
+        rethrowAsApiError(err, "Internal server error");
       }
     }
   });
@@ -2398,7 +2506,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const task = await scopedStore.pauseTask(req.params.id, true);
       res.json(task);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -2409,7 +2520,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const task = await scopedStore.pauseTask(req.params.id, false);
       res.json(task);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -2421,12 +2535,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       // Verify task is in triage column with awaiting-approval status
       if (task.column !== "triage") {
-        res.status(400).json({ error: "Task must be in 'triage' column to approve plan" });
-        return;
+        throw badRequest("Task must be in 'triage' column to approve plan");
       }
       if (task.status !== "awaiting-approval") {
-        res.status(400).json({ error: "Task must have status 'awaiting-approval' to approve plan" });
-        return;
+        throw badRequest("Task must have status 'awaiting-approval' to approve plan");
       }
 
       // Log the approval
@@ -2438,8 +2550,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       res.json({ ...updated, status: undefined });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.code === "ENOENT" ? 404 : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -2451,12 +2566,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       // Verify task is in triage column with awaiting-approval status
       if (task.column !== "triage") {
-        res.status(400).json({ error: "Task must be in 'triage' column to reject plan" });
-        return;
+        throw badRequest("Task must be in 'triage' column to reject plan");
       }
       if (task.status !== "awaiting-approval") {
-        res.status(400).json({ error: "Task must have status 'awaiting-approval' to reject plan" });
-        return;
+        throw badRequest("Task must have status 'awaiting-approval' to reject plan");
       }
 
       // Log the rejection
@@ -2474,8 +2587,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const updated = await scopedStore.getTask(task.id);
       res.json(updated);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.code === "ENOENT" ? 404 : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -2485,8 +2601,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const task = await scopedStore.getTask(req.params.id);
       res.json(task.comments || []);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.code === "ENOENT" ? 404 : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -2495,22 +2614,22 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const scopedStore = await getScopedStore(req);
       const { text, author } = req.body;
       if (!text || typeof text !== "string") {
-        res.status(400).json({ error: "text is required and must be a string" });
-        return;
+        throw badRequest("text is required and must be a string");
       }
       if (text.length === 0 || text.length > 2000) {
-        res.status(400).json({ error: "text must be between 1 and 2000 characters" });
-        return;
+        throw badRequest("text must be between 1 and 2000 characters");
       }
       if (author !== undefined && typeof author !== "string") {
-        res.status(400).json({ error: "author must be a string" });
-        return;
+        throw badRequest("author must be a string");
       }
       const task = await scopedStore.addTaskComment(req.params.id, text, author?.trim() || "user");
       res.json(task);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.code === "ENOENT" ? 404 : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -2519,20 +2638,21 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const scopedStore = await getScopedStore(req);
       const { text } = req.body;
       if (!text || typeof text !== "string") {
-        res.status(400).json({ error: "text is required and must be a string" });
-        return;
+        throw badRequest("text is required and must be a string");
       }
       if (text.length === 0 || text.length > 2000) {
-        res.status(400).json({ error: "text must be between 1 and 2000 characters" });
-        return;
+        throw badRequest("text must be between 1 and 2000 characters");
       }
       const task = await scopedStore.updateTaskComment(req.params.id, req.params.commentId, text);
       res.json(task);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.code === "ENOENT" ? 404
         : err.message?.includes("not found") ? 404
         : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -2542,10 +2662,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const task = await scopedStore.deleteTaskComment(req.params.id, req.params.commentId);
       res.json(task);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.code === "ENOENT" ? 404
         : err.message?.includes("not found") ? 404
         : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -2555,18 +2678,19 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const scopedStore = await getScopedStore(req);
       const { text } = req.body;
       if (!text || typeof text !== "string") {
-        res.status(400).json({ error: "text is required and must be a string" });
-        return;
+        throw badRequest("text is required and must be a string");
       }
       if (text.length === 0 || text.length > 2000) {
-        res.status(400).json({ error: "text must be between 1 and 2000 characters" });
-        return;
+        throw badRequest("text must be between 1 and 2000 characters");
       }
       const task = await scopedStore.addSteeringComment(req.params.id, text, "user");
       res.json(task);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.code === "ENOENT" ? 404 : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -2576,12 +2700,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const scopedStore = await getScopedStore(req);
       const { feedback } = req.body;
       if (!feedback || typeof feedback !== "string") {
-        res.status(400).json({ error: "feedback is required and must be a string" });
-        return;
+        throw badRequest("feedback is required and must be a string");
       }
       if (feedback.length === 0 || feedback.length > 2000) {
-        res.status(400).json({ error: "feedback must be between 1 and 2000 characters" });
-        return;
+        throw badRequest("feedback must be between 1 and 2000 characters");
       }
 
       // Get current task state
@@ -2590,11 +2712,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Check if task can transition to triage
       const canTransition = VALID_TRANSITIONS[task.column]?.includes("triage");
       if (!canTransition) {
-        res.status(400).json({
-          error: `Cannot request spec revision for tasks in '${task.column}' column. ` +
-                 `Move task to 'todo' or 'in-progress' first.`,
-        });
-        return;
+        throw badRequest(
+          `Cannot request spec revision for tasks in '${task.column}' column. Move task to 'todo' or 'in-progress' first.`,
+        );
       }
 
       // Log the revision request
@@ -2608,10 +2728,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       res.json(updated);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.code === "ENOENT" ? 404
         : err.message?.includes("Invalid transition") ? 400
         : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -2626,11 +2749,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Check if task can transition to triage
       const canTransition = VALID_TRANSITIONS[task.column]?.includes("triage");
       if (!canTransition) {
-        res.status(400).json({
-          error: `Cannot rebuild spec for tasks in '${task.column}' column. ` +
-                 `Move task to a valid column first.`,
-        });
-        return;
+        throw badRequest(`Cannot rebuild spec for tasks in '${task.column}' column. Move task to a valid column first.`);
       }
 
       // Log the rebuild request
@@ -2644,10 +2763,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       res.json(updated);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.code === "ENOENT" ? 404
         : err.message?.includes("Invalid transition") ? 400
         : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -2701,8 +2823,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
       res.json(task);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.message?.includes("must be a string") || err.message?.includes("must be an array of strings") || err.message?.includes("thinkingLevel must be one of") ? 400 : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -2711,12 +2836,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const { agentId } = req.body as { agentId?: string | null };
       if (agentId !== null && typeof agentId !== "string") {
-        res.status(400).json({ error: "agentId must be a string or null" });
-        return;
+        throw badRequest("agentId must be a string or null");
       }
       if (typeof agentId === "string" && agentId.trim().length === 0) {
-        res.status(400).json({ error: "agentId must be a non-empty string or null" });
-        return;
+        throw badRequest("agentId must be a non-empty string or null");
       }
 
       const scopedStore = await getScopedStore(req);
@@ -2727,8 +2850,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       if (typeof agentId === "string") {
         const agent = await agentStore.getAgent(agentId);
         if (!agent) {
-          res.status(404).json({ error: "Agent not found" });
-          return;
+          throw notFound("Agent not found");
         }
       }
 
@@ -2737,10 +2859,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
       res.json(task);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err?.code === "ENOENT" || err?.message?.includes("not found")) {
-        res.status(404).json({ error: err.message ?? "Task not found" });
+        throw notFound(err.message ?? "Task not found");
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -2752,7 +2877,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const task = await scopedStore.deleteTask(req.params.id);
       res.json(task);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -2767,7 +2895,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const remotes = getGitHubRemotes(rootDir);
       res.json(remotes);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -2780,13 +2911,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const remotes = listGitRemotes(rootDir);
       res.json(remotes);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -2799,29 +2932,29 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const { name, url } = req.body;
       if (!name || typeof name !== "string") {
-        res.status(400).json({ error: "name is required" });
-        return;
+        throw badRequest("name is required");
       }
       if (!url || typeof url !== "string") {
-        res.status(400).json({ error: "url is required" });
-        return;
+        throw badRequest("url is required");
       }
       addGitRemote(name, url, rootDir);
       res.status(201).json({ name, added: true });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("Invalid remote name")) {
-        res.status(400).json({ error: err.message });
+        throw badRequest(err.message);
       } else if (err.message?.includes("Invalid git URL")) {
-        res.status(400).json({ error: err.message });
+        throw badRequest(err.message);
       } else if (err.message?.includes("already exists")) {
-        res.status(409).json({ error: err.message });
+        throw conflict(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -2834,19 +2967,21 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const { name } = req.params;
       removeGitRemote(name, rootDir);
       res.json({ name, removed: true });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("Invalid remote name")) {
-        res.status(400).json({ error: err.message });
+        throw badRequest(err.message);
       } else if (err.message?.includes("does not exist")) {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -2860,26 +2995,27 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const { name } = req.params;
       const { newName } = req.body;
       if (!newName || typeof newName !== "string") {
-        res.status(400).json({ error: "newName is required" });
-        return;
+        throw badRequest("newName is required");
       }
       renameGitRemote(name, newName, rootDir);
       res.json({ oldName: name, newName, renamed: true });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("Invalid")) {
-        res.status(400).json({ error: err.message });
+        throw badRequest(err.message);
       } else if (err.message?.includes("does not exist")) {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else if (err.message?.includes("already exists")) {
-        res.status(409).json({ error: err.message });
+        throw conflict(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -2893,24 +3029,25 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const { name } = req.params;
       const { url } = req.body;
       if (!url || typeof url !== "string") {
-        res.status(400).json({ error: "url is required" });
-        return;
+        throw badRequest("url is required");
       }
       setGitRemoteUrl(name, url, rootDir);
       res.json({ name, url, updated: true });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("Invalid")) {
-        res.status(400).json({ error: err.message });
+        throw badRequest(err.message);
       } else if (err.message?.includes("does not exist")) {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -2924,17 +3061,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const status = getGitStatus(rootDir);
       if (!status) {
-        res.status(500).json({ error: "Failed to get git status" });
-        return;
+        throw internalError("Failed to get git status");
       }
       res.json(status);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -2947,14 +3085,16 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const limit = Math.min(parseInt(req.query.limit as string, 10) || 20, 100);
       const commits = getGitCommits(limit, rootDir);
       res.json(commits);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -2967,23 +3107,23 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const { hash } = req.params;
       // Validate hash format (only hex characters, 7-40 chars)
       if (!/^[a-f0-9]{7,40}$/i.test(hash)) {
-        res.status(400).json({ error: "Invalid commit hash format" });
-        return;
+        throw badRequest("Invalid commit hash format");
       }
       const diff = getCommitDiff(hash, rootDir);
       if (!diff) {
-        res.status(404).json({ error: "Commit not found" });
-        return;
+        throw notFound("Commit not found");
       }
       res.json(diff);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -2996,13 +3136,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const commits = getAheadCommits(rootDir);
       res.json(commits);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -3017,14 +3159,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
 
       const { name } = req.params;
       if (!isValidBranchName(name)) {
-        res.status(400).json({ error: "Invalid remote name" });
-        return;
+        throw badRequest("Invalid remote name");
       }
 
       const ref = req.query.ref as string | undefined;
@@ -3034,8 +3174,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       let remoteRef: string;
       if (ref) {
         if (!isValidGitRef(ref)) {
-          res.status(400).json({ error: "Invalid ref name" });
-          return;
+          throw badRequest("Invalid ref name");
         }
         // Strip any leading "refs/" or remote prefix the user might accidentally include
         const cleanRef = ref.replace(/^refs\/(heads\/)?/, "");
@@ -3084,7 +3223,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const commits = getRemoteCommits(remoteRef, limit, rootDir);
       res.json(commits);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -3097,13 +3239,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const branches = getGitBranches(rootDir);
       res.json(branches);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -3117,19 +3261,20 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const { name } = req.params;
       if (!isValidGitRef(name)) {
-        res.status(400).json({ error: "Invalid branch name" });
-        return;
+        throw badRequest("Invalid branch name");
       }
       const limit = Math.min(Math.max(parseInt(String(req.query.limit)) || 10, 1), 100);
       const commits = getGitCommitsForBranch(name, limit, rootDir);
       res.json(commits);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -3142,15 +3287,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       // Get tasks to correlate with worktrees
       const tasks = await store.listTasks();
       const worktrees = getGitWorktrees(tasks, rootDir);
       res.json(worktrees);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -3165,23 +3312,24 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const { name, base } = req.body;
       if (!name || typeof name !== "string") {
-        res.status(400).json({ error: "name is required" });
-        return;
+        throw badRequest("name is required");
       }
       const branchName = createGitBranch(name, base, rootDir);
       res.status(201).json({ name: branchName, created: true });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message.includes("Invalid branch name")) {
-        res.status(400).json({ error: err.message });
+        throw badRequest(err.message);
       } else if (err.message.includes("already exists")) {
-        res.status(409).json({ error: err.message });
+        throw conflict(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -3194,19 +3342,21 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const { name } = req.params;
       checkoutGitBranch(name, rootDir);
       res.json({ checkedOut: name });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message.includes("Invalid branch name")) {
-        res.status(400).json({ error: err.message });
+        throw badRequest(err.message);
       } else if (err.message.includes("Uncommitted changes")) {
-        res.status(409).json({ error: err.message });
+        throw conflict(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -3220,22 +3370,24 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const { name } = req.params;
       const force = req.query.force === "true";
       deleteGitBranch(name, force, rootDir);
       res.json({ deleted: name });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message.includes("Invalid branch name")) {
-        res.status(400).json({ error: err.message });
+        throw badRequest(err.message);
       } else if (err.message.includes("Cannot delete branch") || err.message.includes("is currently checked out")) {
-        res.status(409).json({ error: err.message });
+        throw conflict(err.message);
       } else if (err.message.includes("not fully merged")) {
-        res.status(409).json({ error: "Branch has unmerged commits. Use force=true to delete anyway." });
+        throw conflict("Branch has unmerged commits. Use force=true to delete anyway.");
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -3249,19 +3401,21 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const { remote } = req.body;
       const result = fetchGitRemote(remote || "origin", rootDir);
       res.json(result);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message.includes("Invalid remote name")) {
-        res.status(400).json({ error: err.message });
+        throw badRequest(err.message);
       } else if (err.message.includes("Failed to connect")) {
-        res.status(503).json({ error: err.message });
+        throw new ApiError(503, err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -3274,17 +3428,20 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const result = pullGitBranch(rootDir);
       if (result.conflict) {
-        res.status(409).json(result);
-      } else {
-        res.json(result);
+        throw new ApiError(409, result.message ?? "Merge conflict detected. Resolve manually.", {
+          ...result,
+        });
       }
+      res.json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -3296,18 +3453,20 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const result = pushGitBranch(rootDir);
       res.json(result);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message.includes("rejected") || err.message.includes("Pull latest")) {
-        res.status(409).json({ error: err.message });
+        throw conflict(err.message);
       } else if (err.message.includes("Failed to connect")) {
-        res.status(503).json({ error: err.message });
+        throw new ApiError(503, err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -3322,13 +3481,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const stashes = getGitStashList(rootDir);
       res.json(stashes);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -3341,17 +3502,19 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const { message } = req.body;
       const result = createGitStash(message, rootDir);
       res.status(201).json({ message: result });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("No local changes")) {
-        res.status(400).json({ error: err.message });
+        throw badRequest(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -3365,19 +3528,20 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const index = parseInt(req.params.index, 10);
       if (isNaN(index) || index < 0) {
-        res.status(400).json({ error: "Invalid stash index" });
-        return;
+        throw badRequest("Invalid stash index");
       }
       const { drop } = req.body;
       const result = applyGitStash(index, drop === true, rootDir);
       res.json({ message: result });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -3389,18 +3553,19 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const index = parseInt(req.params.index, 10);
       if (isNaN(index) || index < 0) {
-        res.status(400).json({ error: "Invalid stash index" });
-        return;
+        throw badRequest("Invalid stash index");
       }
       const result = dropGitStash(index, rootDir);
       res.json({ message: result });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -3412,13 +3577,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const diff = getGitWorkingDiff(rootDir);
       res.json(diff);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -3430,13 +3597,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const changes = getGitFileChanges(rootDir);
       res.json(changes);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -3449,18 +3618,19 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const { files } = req.body;
       if (!Array.isArray(files) || files.length === 0) {
-        res.status(400).json({ error: "files array is required" });
-        return;
+        throw badRequest("files array is required");
       }
       const staged = stageGitFiles(files, rootDir);
       res.json({ staged });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -3473,18 +3643,19 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const { files } = req.body;
       if (!Array.isArray(files) || files.length === 0) {
-        res.status(400).json({ error: "files array is required" });
-        return;
+        throw badRequest("files array is required");
       }
       const unstaged = unstageGitFiles(files, rootDir);
       res.json({ unstaged });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -3497,21 +3668,22 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const { message } = req.body;
       if (!message || typeof message !== "string" || !message.trim()) {
-        res.status(400).json({ error: "Commit message is required" });
-        return;
+        throw badRequest("Commit message is required");
       }
       const result = createGitCommit(message, rootDir);
       res.status(201).json(result);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("No staged changes")) {
-        res.status(400).json({ error: err.message });
+        throw badRequest(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -3525,18 +3697,19 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const rootDir = store.getRootDir();
       if (!isGitRepo(rootDir)) {
-        res.status(400).json({ error: "Not a git repository" });
-        return;
+        throw badRequest("Not a git repository");
       }
       const { files } = req.body;
       if (!Array.isArray(files) || files.length === 0) {
-        res.status(400).json({ error: "files array is required" });
-        return;
+        throw badRequest("files array is required");
       }
       const discarded = discardGitChanges(files, rootDir);
       res.json({ discarded });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -3553,20 +3726,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { owner, repo, limit = 30, labels } = req.body;
 
       if (!owner || typeof owner !== "string") {
-        res.status(400).json({ error: "owner is required" });
-        return;
+        throw badRequest("owner is required");
       }
       if (!repo || typeof repo !== "string") {
-        res.status(400).json({ error: "repo is required" });
-        return;
+        throw badRequest("repo is required");
       }
 
       // Check gh authentication
       if (!isGhAuthenticated()) {
-        res.status(401).json({
-          error: "Not authenticated with GitHub. Run `gh auth login`.",
-        });
-        return;
+        throw unauthorized("Not authenticated with GitHub. Run `gh auth login`.");
       }
 
       const client = new GitHubClient();
@@ -3575,24 +3743,26 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         const issues = await client.listIssues(owner, repo, { limit, labels });
         res.json(issues);
       } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
         // Handle specific error cases from gh CLI
         const errorMessage = err instanceof Error ? err.message : String(err);
-        
+
         if (errorMessage.includes("not found") || errorMessage.includes("404")) {
-          res.status(404).json({ error: `Repository not found: ${owner}/${repo}` });
-          return;
+          throw notFound(`Repository not found: ${owner}/${repo}`);
         }
         if (errorMessage.includes("authentication") || errorMessage.includes("401") || errorMessage.includes("403")) {
-          res.status(401).json({
-            error: "Not authenticated with GitHub. Run `gh auth login`.",
-          });
-          return;
+          throw unauthorized("Not authenticated with GitHub. Run `gh auth login`.");
         }
-        
-        res.status(502).json({ error: `GitHub CLI error: ${errorMessage}` });
+
+        throw new ApiError(502, `GitHub CLI error: ${errorMessage}`);
       }
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -3607,24 +3777,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { owner, repo, issueNumber } = req.body;
 
       if (!owner || typeof owner !== "string") {
-        res.status(400).json({ error: "owner is required" });
-        return;
+        throw badRequest("owner is required");
       }
       if (!repo || typeof repo !== "string") {
-        res.status(400).json({ error: "repo is required" });
-        return;
+        throw badRequest("repo is required");
       }
       if (!issueNumber || typeof issueNumber !== "number" || issueNumber < 1) {
-        res.status(400).json({ error: "issueNumber is required and must be a positive number" });
-        return;
+        throw badRequest("issueNumber is required and must be a positive number");
       }
 
       // Check gh authentication
       if (!isGhAuthenticated()) {
-        res.status(401).json({
-          error: "Not authenticated with GitHub. Run `gh auth login`.",
-        });
-        return;
+        throw unauthorized("Not authenticated with GitHub. Run `gh auth login`.");
       }
 
       const client = new GitHubClient();
@@ -3644,25 +3808,22 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         // getIssue returns null when the issue doesn't exist OR when it's a PR
         // We return a 400 error indicating it might be a PR (consistent with old behavior)
         if (issue === null) {
-          res.status(400).json({ error: `#${issueNumber} is a pull request, not an issue` });
-          return;
+          throw badRequest(`#${issueNumber} is a pull request, not an issue`);
         }
       } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
         const errorMessage = err instanceof Error ? err.message : String(err);
         
         if (errorMessage.includes("not found") || errorMessage.includes("404")) {
-          res.status(404).json({ error: `Issue #${issueNumber} not found in ${owner}/${repo}` });
-          return;
+          throw notFound(`Issue #${issueNumber} not found in ${owner}/${repo}`);
         }
         if (errorMessage.includes("authentication") || errorMessage.includes("401") || errorMessage.includes("403")) {
-          res.status(401).json({
-            error: "Not authenticated with GitHub. Run `gh auth login`.",
-          });
-          return;
+          throw unauthorized("Not authenticated with GitHub. Run `gh auth login`.");
         }
-        
-        res.status(502).json({ error: `GitHub CLI error: ${errorMessage}` });
-        return;
+
+        throw new ApiError(502, `GitHub CLI error: ${errorMessage}`);
       }
 
       // Check if already imported
@@ -3670,11 +3831,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const sourceUrl = issue.html_url;
       for (const existingTask of existingTasks) {
         if (existingTask.description.includes(sourceUrl)) {
-          res.status(409).json({
-            error: `Issue #${issueNumber} already imported as ${existingTask.id}`,
+          throw new ApiError(409, `Issue #${issueNumber} already imported as ${existingTask.id}`, {
             existingTaskId: existingTask.id,
           });
-          return;
         }
       }
 
@@ -3695,7 +3854,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       res.status(201).json(task);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -3731,8 +3893,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       if (resetTime && now < resetTime) {
         const retryAfter = Math.ceil((resetTime - now) / 1000);
         res.setHeader("Retry-After", String(retryAfter));
-        res.status(429).json({ error: "Batch import rate limit exceeded. Try again in a few seconds." });
-        return;
+        throw rateLimited("Batch import rate limit exceeded. Try again in a few seconds.");
       }
 
       clients.set(ip, now + batchImportWindowMs);
@@ -3746,35 +3907,29 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       // Validate owner
       if (!owner || typeof owner !== "string") {
-        res.status(400).json({ error: "owner is required" });
-        return;
+        throw badRequest("owner is required");
       }
 
       // Validate repo
       if (!repo || typeof repo !== "string") {
-        res.status(400).json({ error: "repo is required" });
-        return;
+        throw badRequest("repo is required");
       }
 
       // Validate issueNumbers
       if (!Array.isArray(issueNumbers)) {
-        res.status(400).json({ error: "issueNumbers is required and must be an array" });
-        return;
+        throw badRequest("issueNumbers is required and must be an array");
       }
 
       if (issueNumbers.length === 0) {
-        res.status(400).json({ error: "issueNumbers must contain at least 1 issue number" });
-        return;
+        throw badRequest("issueNumbers must contain at least 1 issue number");
       }
 
       if (issueNumbers.length > 50) {
-        res.status(400).json({ error: "issueNumbers cannot contain more than 50 issue numbers" });
-        return;
+        throw badRequest("issueNumbers cannot contain more than 50 issue numbers");
       }
 
       if (!issueNumbers.every((n) => typeof n === "number" && n > 0 && Number.isInteger(n))) {
-        res.status(400).json({ error: "issueNumbers must contain only positive integers" });
-        return;
+        throw badRequest("issueNumbers must contain only positive integers");
       }
 
       const token = process.env.GITHUB_TOKEN;
@@ -3866,6 +4021,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           // Add to existingTasks to avoid duplicate imports within the same batch
           existingTasks.push({ ...task, description });
         } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
           results.push({
             issueNumber,
             success: false,
@@ -3876,7 +4034,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       res.json({ results });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -3891,20 +4052,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { owner, repo, limit = 30 } = req.body;
 
       if (!owner || typeof owner !== "string") {
-        res.status(400).json({ error: "owner is required" });
-        return;
+        throw badRequest("owner is required");
       }
       if (!repo || typeof repo !== "string") {
-        res.status(400).json({ error: "repo is required" });
-        return;
+        throw badRequest("repo is required");
       }
 
       // Check gh authentication
       if (!isGhAuthenticated()) {
-        res.status(401).json({
-          error: "Not authenticated with GitHub. Run `gh auth login`.",
-        });
-        return;
+        throw unauthorized("Not authenticated with GitHub. Run `gh auth login`.");
       }
 
       const client = new GitHubClient();
@@ -3913,24 +4069,26 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         const pulls = await client.listPullRequests(owner, repo, { limit });
         res.json(pulls);
       } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
         // Handle specific error cases from gh CLI
         const errorMessage = err instanceof Error ? err.message : String(err);
 
         if (errorMessage.includes("not found") || errorMessage.includes("404")) {
-          res.status(404).json({ error: `Repository not found: ${owner}/${repo}` });
-          return;
+          throw notFound(`Repository not found: ${owner}/${repo}`);
         }
         if (errorMessage.includes("authentication") || errorMessage.includes("401") || errorMessage.includes("403")) {
-          res.status(401).json({
-            error: "Not authenticated with GitHub. Run `gh auth login`.",
-          });
-          return;
+          throw unauthorized("Not authenticated with GitHub. Run `gh auth login`.");
         }
 
-        res.status(502).json({ error: `GitHub CLI error: ${errorMessage}` });
+        throw new ApiError(502, `GitHub CLI error: ${errorMessage}`);
       }
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -3945,24 +4103,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { owner, repo, prNumber } = req.body;
 
       if (!owner || typeof owner !== "string") {
-        res.status(400).json({ error: "owner is required" });
-        return;
+        throw badRequest("owner is required");
       }
       if (!repo || typeof repo !== "string") {
-        res.status(400).json({ error: "repo is required" });
-        return;
+        throw badRequest("repo is required");
       }
       if (!prNumber || typeof prNumber !== "number" || prNumber < 1) {
-        res.status(400).json({ error: "prNumber is required and must be a positive number" });
-        return;
+        throw badRequest("prNumber is required and must be a positive number");
       }
 
       // Check gh authentication
       if (!isGhAuthenticated()) {
-        res.status(401).json({
-          error: "Not authenticated with GitHub. Run `gh auth login`.",
-        });
-        return;
+        throw unauthorized("Not authenticated with GitHub. Run `gh auth login`.");
       }
 
       const client = new GitHubClient();
@@ -3982,25 +4134,22 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         pr = await client.getPullRequest(owner, repo, prNumber);
 
         if (pr === null) {
-          res.status(404).json({ error: `PR #${prNumber} not found in ${owner}/${repo}` });
-          return;
+          throw notFound(`PR #${prNumber} not found in ${owner}/${repo}`);
         }
       } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
         const errorMessage = err instanceof Error ? err.message : String(err);
 
         if (errorMessage.includes("not found") || errorMessage.includes("404")) {
-          res.status(404).json({ error: `PR #${prNumber} not found in ${owner}/${repo}` });
-          return;
+          throw notFound(`PR #${prNumber} not found in ${owner}/${repo}`);
         }
         if (errorMessage.includes("authentication") || errorMessage.includes("401") || errorMessage.includes("403")) {
-          res.status(401).json({
-            error: "Not authenticated with GitHub. Run `gh auth login`.",
-          });
-          return;
+          throw unauthorized("Not authenticated with GitHub. Run `gh auth login`.");
         }
 
-        res.status(502).json({ error: `GitHub CLI error: ${errorMessage}` });
-        return;
+        throw new ApiError(502, `GitHub CLI error: ${errorMessage}`);
       }
 
       // Check if already imported
@@ -4008,11 +4157,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const sourceUrl = pr.html_url;
       for (const existingTask of existingTasks) {
         if (existingTask.description.includes(sourceUrl)) {
-          res.status(409).json({
-            error: `PR #${prNumber} already imported as ${existingTask.id}`,
+          throw new ApiError(409, `PR #${prNumber} already imported as ${existingTask.id}`, {
             existingTaskId: existingTask.id,
           });
-          return;
         }
       }
 
@@ -4033,7 +4180,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       res.status(201).json(task);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -4054,20 +4204,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { title, body, base } = req.body;
 
       if (!title || typeof title !== "string") {
-        res.status(400).json({ error: "title is required and must be a string" });
-        return;
+        throw badRequest("title is required and must be a string");
       }
 
       // Get task and validate
       const task = await scopedStore.getTask(req.params.id);
       if (task.column !== "in-review") {
-        res.status(400).json({ error: "Task must be in 'in-review' column to create a PR" });
-        return;
+        throw badRequest("Task must be in 'in-review' column to create a PR");
       }
 
       if (task.prInfo) {
-        res.status(409).json({ error: `Task already has PR #${task.prInfo.number}: ${task.prInfo.url}` });
-        return;
+        throw conflict(`Task already has PR #${task.prInfo.number}: ${task.prInfo.url}`);
       }
 
       // Determine branch name from task
@@ -4085,8 +4232,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       } else {
         const gitRepo = getCurrentGitHubRepo(scopedStore.getRootDir());
         if (!gitRepo) {
-          res.status(400).json({ error: "Could not determine GitHub repository. Set GITHUB_REPOSITORY env var or configure git remote." });
-          return;
+          throw badRequest("Could not determine GitHub repository. Set GITHUB_REPOSITORY env var or configure git remote.");
         }
         owner = gitRepo.owner;
         repo = gitRepo.repo;
@@ -4096,11 +4242,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const repoKey = `${owner}/${repo}`;
       if (!githubRateLimiter.canMakeRequest(repoKey)) {
         const resetTime = githubRateLimiter.getResetTime(repoKey);
-        res.status(429).json({
-          error: "GitHub API rate limit exceeded for this repository",
+        const retryAfter = resetTime
+          ? Math.max(0, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
+          : undefined;
+        throw new ApiError(429, "GitHub API rate limit exceeded for this repository", {
+          retryAfter,
           resetAt: resetTime?.toISOString(),
         });
-        return;
       }
 
       // Create the PR
@@ -4121,14 +4269,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       res.status(201).json(prInfo);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.code === "ENOENT") {
-        res.status(404).json({ error: `Task ${req.params.id} not found` });
+        throw notFound(`Task ${req.params.id} not found`);
       } else if (err.message?.includes("already exists")) {
-        res.status(409).json({ error: err.message });
+        throw conflict(err.message);
       } else if (err.message?.includes("No commits between")) {
-        res.status(400).json({ error: "Branch has no commits. Push changes before creating PR." });
+        throw badRequest("Branch has no commits. Push changes before creating PR.");
       } else {
-        res.status(500).json({ error: err.message || "Failed to create PR" });
+        rethrowAsApiError(err, "Failed to create PR");
       }
     }
   });
@@ -4150,23 +4301,20 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.post("/github/webhooks", async (req, res) => {
     const config = getGitHubAppConfig();
     if (!config) {
-      res.status(503).json({ error: "GitHub App not configured" });
-      return;
+      throw new ApiError(503, "GitHub App not configured");
     }
 
     // Get raw body (Buffer from express.raw() middleware)
     const rawBody = req.body as Buffer;
     if (!Buffer.isBuffer(rawBody)) {
-      res.status(400).json({ error: "Invalid request body" });
-      return;
+      throw badRequest("Invalid request body");
     }
 
     // Verify signature
     const signatureHeader = req.headers["x-hub-signature-256"] as string | undefined;
     const verification = verifyWebhookSignature(rawBody, signatureHeader, config.webhookSecret);
     if (!verification.valid) {
-      res.status(403).json({ error: verification.error ?? "Invalid signature" });
-      return;
+      throw new ApiError(403, verification.error ?? "Invalid signature");
     }
 
     // Parse payload after verification
@@ -4174,8 +4322,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       payload = JSON.parse(rawBody.toString("utf-8"));
     } catch {
-      res.status(400).json({ error: "Invalid JSON payload" });
-      return;
+      throw badRequest("Invalid JSON payload");
     }
 
     // Classify event
@@ -4202,8 +4349,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
     // Missing required data
     if (!classification.owner || !classification.repo || classification.number === undefined || !classification.installationId) {
-      res.status(400).json({ error: "Missing repository or installation data" });
-      return;
+      throw badRequest("Missing repository or installation data");
     }
 
     // Fetch installation token
@@ -4213,8 +4359,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       config.privateKey,
     );
     if (!installationToken) {
-      res.status(500).json({ error: "Failed to fetch installation token" });
-      return;
+      throw internalError("Failed to fetch installation token");
     }
 
     // Fetch canonical badge state
@@ -4311,8 +4456,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const task = await scopedStore.getTask(req.params.id);
 
       if (!task.prInfo) {
-        res.status(404).json({ error: "Task has no associated PR" });
-        return;
+        throw notFound("Task has no associated PR");
       }
 
       // Check if data is stale (>5 minutes since last check)
@@ -4333,10 +4477,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         refreshPrInBackground(scopedStore, task.id, task.prInfo, githubToken);
       }
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.code === "ENOENT") {
-        res.status(404).json({ error: `Task ${req.params.id} not found` });
+        throw notFound(`Task ${req.params.id} not found`);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -4352,8 +4499,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const task = await scopedStore.getTask(req.params.id);
 
       if (!task.prInfo) {
-        res.status(404).json({ error: "Task has no associated PR" });
-        return;
+        throw notFound("Task has no associated PR");
       }
 
       // Get owner/repo from badge URL first, then fall back to env/git
@@ -4373,8 +4519,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         } else {
           const gitRepo = getCurrentGitHubRepo(scopedStore.getRootDir());
           if (!gitRepo) {
-            res.status(400).json({ error: "Could not determine GitHub repository" });
-            return;
+            throw badRequest("Could not determine GitHub repository");
           }
           owner = gitRepo.owner;
           repo = gitRepo.repo;
@@ -4385,11 +4530,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const repoKey = `${owner}/${repo}`;
       if (!githubRateLimiter.canMakeRequest(repoKey)) {
         const resetTime = githubRateLimiter.getResetTime(repoKey);
-        res.status(429).json({
-          error: "GitHub API rate limit exceeded for this repository",
+        const retryAfter = resetTime
+          ? Math.max(0, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
+          : undefined;
+        throw new ApiError(429, "GitHub API rate limit exceeded for this repository", {
+          retryAfter,
           resetAt: resetTime?.toISOString(),
         });
-        return;
       }
 
       // Fetch fresh PR status + merge readiness
@@ -4413,12 +4560,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         automationStatus: task.status ?? null,
       });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.code === "ENOENT") {
-        res.status(404).json({ error: `Task ${req.params.id} not found` });
+        throw notFound(`Task ${req.params.id} not found`);
       } else if (err.message?.includes("not found")) {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -4434,8 +4584,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const task = await scopedStore.getTask(req.params.id);
 
       if (!task.issueInfo) {
-        res.status(404).json({ error: "Task has no associated issue" });
-        return;
+        throw notFound("Task has no associated issue");
       }
 
       const fiveMinutesMs = 5 * 60 * 1000;
@@ -4452,10 +4601,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         refreshIssueInBackground(scopedStore, task.id, task.issueInfo, githubToken);
       }
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.code === "ENOENT") {
-        res.status(404).json({ error: `Task ${req.params.id} not found` });
+        throw notFound(`Task ${req.params.id} not found`);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -4471,8 +4623,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const task = await scopedStore.getTask(req.params.id);
 
       if (!task.issueInfo) {
-        res.status(404).json({ error: "Task has no associated issue" });
-        return;
+        throw notFound("Task has no associated issue");
       }
 
       let owner: string;
@@ -4492,8 +4643,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         } else {
           const gitRepo = getCurrentGitHubRepo(scopedStore.getRootDir());
           if (!gitRepo) {
-            res.status(400).json({ error: "Could not determine GitHub repository" });
-            return;
+            throw badRequest("Could not determine GitHub repository");
           }
           owner = gitRepo.owner;
           repo = gitRepo.repo;
@@ -4503,19 +4653,20 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const repoKey = `${owner}/${repo}`;
       if (!githubRateLimiter.canMakeRequest(repoKey)) {
         const resetTime = githubRateLimiter.getResetTime(repoKey);
-        res.status(429).json({
-          error: "GitHub API rate limit exceeded for this repository",
+        const retryAfter = resetTime
+          ? Math.max(0, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
+          : undefined;
+        throw new ApiError(429, "GitHub API rate limit exceeded for this repository", {
+          retryAfter,
           resetAt: resetTime?.toISOString(),
         });
-        return;
       }
 
       const client = new GitHubClient(githubToken);
       const issueInfo = await client.getIssueStatus(owner, repo, task.issueInfo.number);
 
       if (!issueInfo) {
-        res.status(404).json({ error: `Issue #${task.issueInfo.number} not found in ${owner}/${repo}` });
-        return;
+        throw notFound(`Issue #${task.issueInfo.number} not found in ${owner}/${repo}`);
       }
 
       const updatedIssueInfo = {
@@ -4526,12 +4677,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await scopedStore.updateIssueInfo(task.id, updatedIssueInfo);
       res.json(updatedIssueInfo);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.code === "ENOENT") {
-        res.status(404).json({ error: `Task ${req.params.id} not found` });
+        throw notFound(`Task ${req.params.id} not found`);
       } else if (err.message?.includes("not found")) {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -4546,16 +4700,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const scopedStore = await getScopedStore(req);
       const { taskIds } = (req.body ?? {}) as import("@fusion/core").BatchStatusRequest;
       if (!Array.isArray(taskIds)) {
-        res.status(400).json({ error: "taskIds must be an array" });
-        return;
+        throw badRequest("taskIds must be an array");
       }
       if (taskIds.some((taskId) => typeof taskId !== "string" || taskId.trim().length === 0)) {
-        res.status(400).json({ error: "taskIds must contain non-empty strings" });
-        return;
+        throw badRequest("taskIds must contain non-empty strings");
       }
       if (taskIds.length > 100) {
-        res.status(400).json({ error: "taskIds must contain at most 100 items" });
-        return;
+        throw badRequest("taskIds must contain at most 100 items");
       }
       if (taskIds.length === 0) {
         res.json({ results: {} } satisfies BatchStatusResponse);
@@ -4622,6 +4773,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
             }
           }
         } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
           if (err?.code === "ENOENT") {
             appendBatchStatusError(results, taskId, `Task ${taskId} not found`);
           } else {
@@ -4635,11 +4789,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         const repoKey = `${group.owner}/${group.repo}`;
         if (!githubRateLimiter.canMakeRequest(repoKey)) {
           const resetTime = githubRateLimiter.getResetTime(repoKey);
-          res.status(429).json({
-            error: "GitHub API rate limit exceeded for this repository",
+          const retryAfter = resetTime
+            ? Math.max(0, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
+            : undefined;
+          throw new ApiError(429, "GitHub API rate limit exceeded for this repository", {
+            retryAfter,
             resetAt: resetTime?.toISOString(),
           });
-          return false;
         }
 
         try {
@@ -4665,6 +4821,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
             entry.stale = entry.prInfo ? isBatchStatusStale(entry.prInfo, task.updatedAt) : false;
           }
         } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
           for (const taskId of group.taskIds) {
             appendBatchStatusError(results, taskId, err.message || `Failed to refresh issue badges for ${repoKey}`);
           }
@@ -4677,11 +4836,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         const repoKey = `${group.owner}/${group.repo}`;
         if (!githubRateLimiter.canMakeRequest(repoKey)) {
           const resetTime = githubRateLimiter.getResetTime(repoKey);
-          res.status(429).json({
-            error: "GitHub API rate limit exceeded for this repository",
+          const retryAfter = resetTime
+            ? Math.max(0, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
+            : undefined;
+          throw new ApiError(429, "GitHub API rate limit exceeded for this repository", {
+            retryAfter,
             resetAt: resetTime?.toISOString(),
           });
-          return false;
         }
 
         try {
@@ -4707,6 +4868,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
             entry.stale = entry.issueInfo ? isBatchStatusStale(entry.issueInfo, task.updatedAt) : false;
           }
         } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
           for (const taskId of group.taskIds) {
             appendBatchStatusError(results, taskId, err.message || `Failed to refresh PR badges for ${repoKey}`);
           }
@@ -4730,7 +4894,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       res.json({ results } satisfies BatchStatusResponse);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Failed to batch refresh GitHub status" });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to batch refresh GitHub status");
     }
   });
 
@@ -4749,26 +4916,26 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { command } = req.body;
       
       if (!command || typeof command !== "string") {
-        res.status(400).json({ error: "command is required and must be a string" });
-        return;
+        throw badRequest("command is required and must be a string");
       }
       
       if (command.length > 4096) {
-        res.status(400).json({ error: "command exceeds maximum length of 4096 characters" });
-        return;
+        throw badRequest("command exceeds maximum length of 4096 characters");
       }
       
       const rootDir = store.getRootDir();
       const result = terminalSessionManager.createSession(command, rootDir);
       
       if (result.error) {
-        res.status(403).json({ error: result.error });
-        return;
+        throw new ApiError(403, result.error);
       }
       
       res.status(201).json({ sessionId: result.sessionId });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Failed to execute command" });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to execute command");
     }
   });
 
@@ -4790,16 +4957,19 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       if (!killed) {
         const session = terminalSessionManager.getSession(id);
         if (!session) {
-          res.status(404).json({ error: "Session not found" });
+          throw notFound("Session not found");
         } else {
-          res.status(400).json({ error: "Session is not running" });
+          throw badRequest("Session is not running");
         }
         return;
       }
       
       res.json({ killed: true, sessionId: id });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -4813,8 +4983,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const session = terminalSessionManager.getSession(req.params.id);
       
       if (!session) {
-        res.status(404).json({ error: "Session not found" });
-        return;
+        throw notFound("Session not found");
       }
       
       res.json({
@@ -4826,7 +4995,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         startTime: session.startTime.toISOString(),
       });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -4841,8 +5013,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const session = terminalSessionManager.getSession(id);
       
       if (!session) {
-        res.status(404).json({ error: "Session not found" });
-        return;
+        throw notFound("Session not found");
       }
 
       // Set up SSE headers
@@ -4888,7 +5059,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         terminalSessionManager.off("output", onOutput);
       });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -4919,8 +5093,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           pty_spawn_failed: 500,
         } as const;
 
-        res.status(statusByCode[result.code]).json({ error: result.error, code: result.code });
-        return;
+        throw new ApiError(statusByCode[result.code], result.error, { code: result.code });
       }
 
       res.status(201).json({
@@ -4929,7 +5102,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         cwd: result.session.cwd,
       });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Failed to create terminal session" });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to create terminal session");
     }
   });
 
@@ -4953,7 +5129,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         }))
       );
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Failed to list sessions" });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to list sessions");
     }
   });
 
@@ -4972,16 +5151,19 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       if (!killed) {
         const session = terminalService.getSession(id);
         if (!session) {
-          res.status(404).json({ error: "Session not found" });
+          throw notFound("Session not found");
         } else {
-          res.status(400).json({ error: "Failed to kill session" });
+          throw badRequest("Failed to kill session");
         }
         return;
       }
 
       res.json({ killed: true });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -5000,14 +5182,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const result = await listFiles(scopedStore, req.params.id, typeof subPath === "string" ? subPath : undefined);
       res.json(result);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err instanceof FileServiceError) {
         const status = err.code === "ENOTASK" ? 404
           : err.code === "ENOENT" ? 404
           : err.code === "EACCES" ? 403
           : 400;
-        res.status(status).json({ error: err.message, code: err.code });
+        throw new ApiError(status, err.message, { code: err.code });
       } else {
-        res.status(500).json({ error: err.message || "Internal server error" });
+        rethrowAsApiError(err, "Internal server error");
       }
     }
   });
@@ -5024,6 +5209,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const result = await readFile(scopedStore, req.params.id, filePath);
       res.json(result);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err instanceof FileServiceError) {
         const status = err.code === "ENOENT" ? 404
           : err.code === "ENOTASK" ? 404
@@ -5031,9 +5219,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           : err.code === "ETOOLARGE" ? 413
           : err.code === "EINVAL" && err.message.includes("Binary file") ? 415
           : 400;
-        res.status(status).json({ error: err.message, code: err.code });
+        throw new ApiError(status, err.message, { code: err.code });
       } else {
-        res.status(500).json({ error: err.message || "Internal server error" });
+        rethrowAsApiError(err, "Internal server error");
       }
     }
   });
@@ -5051,22 +5239,24 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { content } = req.body;
       
       if (typeof content !== "string") {
-        res.status(400).json({ error: "content is required and must be a string" });
-        return;
+        throw badRequest("content is required and must be a string");
       }
 
       const result = await writeFile(scopedStore, req.params.id, filePath, content);
       res.json(result);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err instanceof FileServiceError) {
         const status = err.code === "ENOENT" ? 404
           : err.code === "ENOTASK" ? 404
           : err.code === "EACCES" ? 403
           : err.code === "ETOOLARGE" ? 413
           : 400;
-        res.status(status).json({ error: err.message, code: err.code });
+        throw new ApiError(status, err.message, { code: err.code });
       } else {
-        res.status(500).json({ error: err.message || "Internal server error" });
+        rethrowAsApiError(err, "Internal server error");
       }
     }
   });
@@ -5092,7 +5282,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           })),
       });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Internal server error" });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Internal server error");
     }
   });
 
@@ -5109,14 +5302,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const result = await listWorkspaceFiles(store, workspaceId, typeof subPath === "string" ? subPath : undefined);
       res.json(result);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err instanceof FileServiceError) {
         const status = err.code === "ENOTASK" ? 404
           : err.code === "ENOENT" ? 404
           : err.code === "EACCES" ? 403
           : 400;
-        res.status(status).json({ error: err.message, code: err.code });
+        throw new ApiError(status, err.message, { code: err.code });
       } else {
-        res.status(500).json({ error: err.message || "Internal server error" });
+        rethrowAsApiError(err, "Internal server error");
       }
     }
   });
@@ -5136,6 +5332,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const result = await readWorkspaceFile(store, workspace, filePath);
       res.json(result);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err instanceof FileServiceError) {
         const status = err.code === "ENOTASK" ? 404
           : err.code === "ENOENT" ? 404
@@ -5143,9 +5342,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           : err.code === "ETOOLARGE" ? 413
           : err.code === "EINVAL" && err.message.includes("Binary file") ? 415
           : 400;
-        res.status(status).json({ error: err.message, code: err.code });
+        throw new ApiError(status, err.message, { code: err.code });
       } else {
-        res.status(500).json({ error: err.message || "Internal server error" });
+        rethrowAsApiError(err, "Internal server error");
       }
     }
   });
@@ -5166,22 +5365,24 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         : "project";
       
       if (typeof content !== "string") {
-        res.status(400).json({ error: "content is required and must be a string" });
-        return;
+        throw badRequest("content is required and must be a string");
       }
 
       const result = await writeWorkspaceFile(store, workspace, filePath, content);
       res.json(result);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err instanceof FileServiceError) {
         const status = err.code === "ENOTASK" ? 404
           : err.code === "ENOENT" ? 404
           : err.code === "EACCES" ? 403
           : err.code === "ETOOLARGE" ? 413
           : 400;
-        res.status(status).json({ error: err.message, code: err.code });
+        throw new ApiError(status, err.message, { code: err.code });
       } else {
-        res.status(500).json({ error: err.message || "Internal server error" });
+        rethrowAsApiError(err, "Internal server error");
       }
     }
   });
@@ -5212,22 +5413,24 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { destination } = req.body;
 
       if (!destination || typeof destination !== "string") {
-        res.status(400).json({ error: "destination is required and must be a string" });
-        return;
+        throw badRequest("destination is required and must be a string");
       }
 
       const result = await copyWorkspaceFile(store, workspace, filePath, destination);
       res.json(result);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err instanceof FileServiceError) {
         const status = err.code === "ENOTASK" ? 404
           : err.code === "ENOENT" ? 404
           : err.code === "EEXIST" ? 409
           : err.code === "EACCES" ? 403
           : 400;
-        res.status(status).json({ error: err.message, code: err.code });
+        throw new ApiError(status, err.message, { code: err.code });
       } else {
-        res.status(500).json({ error: err.message || "Internal server error" });
+        rethrowAsApiError(err, "Internal server error");
       }
     }
   });
@@ -5245,22 +5448,24 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { destination } = req.body;
 
       if (!destination || typeof destination !== "string") {
-        res.status(400).json({ error: "destination is required and must be a string" });
-        return;
+        throw badRequest("destination is required and must be a string");
       }
 
       const result = await moveWorkspaceFile(store, workspace, filePath, destination);
       res.json(result);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err instanceof FileServiceError) {
         const status = err.code === "ENOTASK" ? 404
           : err.code === "ENOENT" ? 404
           : err.code === "EEXIST" ? 409
           : err.code === "EACCES" ? 403
           : 400;
-        res.status(status).json({ error: err.message, code: err.code });
+        throw new ApiError(status, err.message, { code: err.code });
       } else {
-        res.status(500).json({ error: err.message || "Internal server error" });
+        rethrowAsApiError(err, "Internal server error");
       }
     }
   });
@@ -5279,14 +5484,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const result = await deleteWorkspaceFile(store, workspace, filePath);
       res.json(result);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err instanceof FileServiceError) {
         const status = err.code === "ENOTASK" ? 404
           : err.code === "ENOENT" ? 404
           : err.code === "EACCES" ? 403
           : 400;
-        res.status(status).json({ error: err.message, code: err.code });
+        throw new ApiError(status, err.message, { code: err.code });
       } else {
-        res.status(500).json({ error: err.message || "Internal server error" });
+        rethrowAsApiError(err, "Internal server error");
       }
     }
   });
@@ -5304,22 +5512,24 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { newName } = req.body;
 
       if (!newName || typeof newName !== "string") {
-        res.status(400).json({ error: "newName is required and must be a string" });
-        return;
+        throw badRequest("newName is required and must be a string");
       }
 
       const result = await renameWorkspaceFile(store, workspace, filePath, newName);
       res.json(result);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err instanceof FileServiceError) {
         const status = err.code === "ENOTASK" ? 404
           : err.code === "ENOENT" ? 404
           : err.code === "EEXIST" ? 409
           : err.code === "EACCES" ? 403
           : 400;
-        res.status(status).json({ error: err.message, code: err.code });
+        throw new ApiError(status, err.message, { code: err.code });
       } else {
-        res.status(500).json({ error: err.message || "Internal server error" });
+        rethrowAsApiError(err, "Internal server error");
       }
     }
   });
@@ -5343,15 +5553,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const stream = createReadStream(absolutePath);
       stream.pipe(res);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err instanceof FileServiceError) {
         const status = err.code === "ENOTASK" ? 404
           : err.code === "ENOENT" ? 404
           : err.code === "EISDIR" ? 400
           : err.code === "EACCES" ? 403
           : 400;
-        res.status(status).json({ error: err.message, code: err.code });
+        throw new ApiError(status, err.message, { code: err.code });
       } else {
-        res.status(500).json({ error: err.message || "Internal server error" });
+        rethrowAsApiError(err, "Internal server error");
       }
     }
   });
@@ -5377,15 +5590,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       archive.directory(absolutePath, dirName);
       await archive.finalize();
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err instanceof FileServiceError) {
         const status = err.code === "ENOTASK" ? 404
           : err.code === "ENOENT" ? 404
           : err.code === "ENOTDIR" ? 400
           : err.code === "EACCES" ? 403
           : 400;
-        res.status(status).json({ error: err.message, code: err.code });
+        throw new ApiError(status, err.message, { code: err.code });
       } else {
-        res.status(500).json({ error: err.message || "Internal server error" });
+        rethrowAsApiError(err, "Internal server error");
       }
     }
   });
@@ -5397,13 +5613,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { description } = req.body;
 
       if (!description || typeof description !== "string") {
-        res.status(400).json({ error: "description is required and must be a string" });
-        return;
+        throw badRequest("description is required and must be a string");
       }
 
       if (description.length > 1000) {
-        res.status(400).json({ error: "description must be 1000 characters or less" });
-        return;
+        throw badRequest("description must be 1000 characters or less");
       }
 
       const scopedStore = await getScopedStore(req);
@@ -5411,7 +5625,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const session = await createSubtaskSession(description, scopedStore, scopedStore.getRootDir());
       res.status(201).json({ sessionId: session.sessionId });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Failed to start subtask breakdown" });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to start subtask breakdown");
     }
   });
 
@@ -5516,6 +5733,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         unsubscribe();
       });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       writeSSEEvent(res, "error", JSON.stringify(String(err?.message) || "Unknown error"));
       res.end();
     }
@@ -5530,21 +5750,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       };
 
       if (!sessionId || typeof sessionId !== "string") {
-        res.status(400).json({ error: "sessionId is required" });
-        return;
+        throw badRequest("sessionId is required");
       }
 
       if (!Array.isArray(subtasks) || subtasks.length === 0) {
-        res.status(400).json({ error: "subtasks must be a non-empty array" });
-        return;
+        throw badRequest("subtasks must be a non-empty array");
       }
 
       const scopedStore = await getScopedStore(req);
       const { getSubtaskSession, cleanupSubtaskSession } = await import("./subtask-breakdown.js");
       const session = getSubtaskSession(sessionId);
       if (!session) {
-        res.status(404).json({ error: `Subtask session ${sessionId} not found or expired` });
-        return;
+        throw notFound(`Subtask session ${sessionId} not found or expired`);
       }
 
       // Fetch parent task to inherit model settings if parentTaskId is provided
@@ -5563,8 +5780,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       for (const item of subtasks) {
         if (!item || typeof item.tempId !== "string" || typeof item.title !== "string" || !item.title.trim()) {
-          res.status(400).json({ error: "Each subtask must include tempId and title" });
-          return;
+          throw badRequest("Each subtask must include tempId and title");
         }
 
         const task = await scopedStore.createTask({
@@ -5615,7 +5831,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       cleanupSubtaskSession(sessionId);
       res.status(201).json({ tasks: createdTasks, parentTaskClosed });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Failed to create tasks from breakdown" });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to create tasks from breakdown");
     }
   });
 
@@ -5623,18 +5842,20 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const { sessionId } = req.body;
       if (!sessionId || typeof sessionId !== "string") {
-        res.status(400).json({ error: "sessionId is required" });
-        return;
+        throw badRequest("sessionId is required");
       }
 
       const { cancelSubtaskSession } = await import("./subtask-breakdown.js");
       await cancelSubtaskSession(sessionId);
       res.json({ success: true });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.name === "SessionNotFoundError") {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else {
-        res.status(500).json({ error: err.message || "Failed to cancel subtask session" });
+        rethrowAsApiError(err, "Failed to cancel subtask session");
       }
     }
   });
@@ -5650,13 +5871,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { initialPlan } = req.body;
 
       if (!initialPlan || typeof initialPlan !== "string") {
-        res.status(400).json({ error: "initialPlan is required and must be a string" });
-        return;
+        throw badRequest("initialPlan is required and must be a string");
       }
 
       if (initialPlan.length > 500) {
-        res.status(400).json({ error: "initialPlan must be 500 characters or less" });
-        return;
+        throw badRequest("initialPlan must be 500 characters or less");
       }
 
       const scopedStore = await getScopedStore(req);
@@ -5667,10 +5886,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const result = await createSession(ip, initialPlan, scopedStore, rootDir);
       res.status(201).json(result);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.name === "RateLimitError") {
-        res.status(429).json({ error: err.message });
+        throw rateLimited(err.message);
       } else {
-        res.status(500).json({ error: err.message || "Failed to start planning session" });
+        rethrowAsApiError(err, "Failed to start planning session");
       }
     }
   });
@@ -5689,23 +5911,19 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { initialPlan, planningModelProvider, planningModelId } = req.body;
 
       if (!initialPlan || typeof initialPlan !== "string") {
-        res.status(400).json({ error: "initialPlan is required and must be a string" });
-        return;
+        throw badRequest("initialPlan is required and must be a string");
       }
 
       if (initialPlan.length > 500) {
-        res.status(400).json({ error: "initialPlan must be 500 characters or less" });
-        return;
+        throw badRequest("initialPlan must be 500 characters or less");
       }
 
       if (planningModelProvider !== undefined && typeof planningModelProvider !== "string") {
-        res.status(400).json({ error: "planningModelProvider must be a string when provided" });
-        return;
+        throw badRequest("planningModelProvider must be a string when provided");
       }
 
       if (planningModelId !== undefined && typeof planningModelId !== "string") {
-        res.status(400).json({ error: "planningModelId must be a string when provided" });
-        return;
+        throw badRequest("planningModelId must be a string when provided");
       }
 
       const scopedStore = await getScopedStore(req);
@@ -5722,10 +5940,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       );
       res.status(201).json({ sessionId });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.name === "RateLimitError") {
-        res.status(429).json({ error: err.message });
+        throw rateLimited(err.message);
       } else {
-        res.status(500).json({ error: err.message || "Failed to start planning session" });
+        rethrowAsApiError(err, "Failed to start planning session");
       }
     }
   });
@@ -5741,25 +5962,26 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { sessionId, responses } = req.body;
 
       if (!sessionId || typeof sessionId !== "string") {
-        res.status(400).json({ error: "sessionId is required" });
-        return;
+        throw badRequest("sessionId is required");
       }
 
       if (!responses || typeof responses !== "object") {
-        res.status(400).json({ error: "responses is required and must be an object" });
-        return;
+        throw badRequest("responses is required and must be an object");
       }
 
       const { submitResponse, SessionNotFoundError, InvalidSessionStateError } = await import("./planning.js");
       const result = await submitResponse(sessionId, responses, store.getRootDir());
       res.json(result);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.name === "SessionNotFoundError") {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else if (err.name === "InvalidSessionStateError") {
-        res.status(400).json({ error: err.message });
+        throw badRequest(err.message);
       } else {
-        res.status(500).json({ error: err.message || "Failed to process response" });
+        rethrowAsApiError(err, "Failed to process response");
       }
     }
   });
@@ -5774,18 +5996,20 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { sessionId } = req.body;
 
       if (!sessionId || typeof sessionId !== "string") {
-        res.status(400).json({ error: "sessionId is required" });
-        return;
+        throw badRequest("sessionId is required");
       }
 
       const { cancelSession, SessionNotFoundError } = await import("./planning.js");
       await cancelSession(sessionId);
       res.json({ success: true });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.name === "SessionNotFoundError") {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else {
-        res.status(500).json({ error: err.message || "Failed to cancel session" });
+        rethrowAsApiError(err, "Failed to cancel session");
       }
     }
   });
@@ -5801,8 +6025,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { sessionId } = req.body;
 
       if (!sessionId || typeof sessionId !== "string") {
-        res.status(400).json({ error: "sessionId is required" });
-        return;
+        throw badRequest("sessionId is required");
       }
 
       const scopedStore = await getScopedStore(req);
@@ -5815,24 +6038,20 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       if (!session) {
         if (!aiSessionStore) {
-          res.status(404).json({ error: `Planning session ${sessionId} not found or expired` });
-          return;
+          throw notFound(`Planning session ${sessionId} not found or expired`);
         }
 
         const persistedSession = aiSessionStore.get(sessionId);
         if (!persistedSession || persistedSession.type !== "planning") {
-          res.status(404).json({ error: `Planning session ${sessionId} not found or expired` });
-          return;
+          throw notFound(`Planning session ${sessionId} not found or expired`);
         }
 
         if (persistedSession.status !== "complete") {
-          res.status(400).json({ error: "Planning session is not complete" });
-          return;
+          throw badRequest("Planning session is not complete");
         }
 
         if (!persistedSession.result) {
-          res.status(400).json({ error: "Planning session result is not available" });
-          return;
+          throw badRequest("Planning session result is not available");
         }
 
         try {
@@ -5867,8 +6086,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
               : [],
           };
         } catch {
-          res.status(400).json({ error: "Planning session result is invalid" });
-          return;
+          throw badRequest("Planning session result is invalid");
         }
 
         try {
@@ -5888,8 +6106,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       if (!summary) {
-        res.status(400).json({ error: "Planning session is not complete" });
-        return;
+        throw badRequest("Planning session is not complete");
       }
 
       // Create the task
@@ -5917,7 +6134,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       res.status(201).json(task);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Failed to create task" });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to create task");
     }
   });
 
@@ -5932,34 +6152,33 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { sessionId } = req.body;
 
       if (!sessionId || typeof sessionId !== "string") {
-        res.status(400).json({ error: "sessionId is required" });
-        return;
+        throw badRequest("sessionId is required");
       }
 
       const { getSession, generateSubtasksFromPlanning } = await import("./planning.js");
 
       const session = getSession(sessionId);
       if (!session) {
-        res.status(404).json({ error: `Planning session ${sessionId} not found or expired` });
-        return;
+        throw notFound(`Planning session ${sessionId} not found or expired`);
       }
 
       if (!session.summary) {
-        res.status(400).json({ error: "Planning session is not complete" });
-        return;
+        throw badRequest("Planning session is not complete");
       }
 
       const subtasks = generateSubtasksFromPlanning(sessionId);
       if (subtasks.length === 0) {
-        res.status(400).json({ error: "Could not generate subtasks from planning session" });
-        return;
+        throw badRequest("Could not generate subtasks from planning session");
       }
 
       // Return a synthetic session ID (based on the planning session) and the generated subtasks
       // We use the planning session ID directly as the breakdown session ID
       res.json({ sessionId, subtasks });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Failed to start planning breakdown" });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to start planning breakdown");
     }
   });
 
@@ -5983,13 +6202,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       };
 
       if (!planningSessionId || typeof planningSessionId !== "string") {
-        res.status(400).json({ error: "planningSessionId is required" });
-        return;
+        throw badRequest("planningSessionId is required");
       }
 
       if (!Array.isArray(subtasks) || subtasks.length === 0) {
-        res.status(400).json({ error: "subtasks must be a non-empty array" });
-        return;
+        throw badRequest("subtasks must be a non-empty array");
       }
 
       const scopedStore = await getScopedStore(req);
@@ -5997,13 +6214,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const session = getSession(planningSessionId);
       if (!session) {
-        res.status(404).json({ error: `Planning session ${planningSessionId} not found or expired` });
-        return;
+        throw notFound(`Planning session ${planningSessionId} not found or expired`);
       }
 
       if (!session.summary) {
-        res.status(400).json({ error: "Planning session is not complete" });
-        return;
+        throw badRequest("Planning session is not complete");
       }
 
       const qaSection = formatInterviewQA(session.history);
@@ -6014,8 +6229,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Validate each subtask
       for (const item of subtasks) {
         if (!item || typeof item.id !== "string" || typeof item.title !== "string" || !item.title.trim()) {
-          res.status(400).json({ error: "Each subtask must include id and title" });
-          return;
+          throw badRequest("Each subtask must include id and title");
         }
       }
 
@@ -6060,7 +6274,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       res.status(201).json({ tasks: createdTasks });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Failed to create tasks from planning" });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to create tasks from planning");
     }
   });
 
@@ -6170,6 +6387,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         clearInterval(heartbeat);
       });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       writeSSEEvent(res, "error", JSON.stringify({ message: err.message || "Stream error" }));
       res.end();
     }
@@ -6204,10 +6424,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Check rate limit first
       if (!checkRateLimit(ip)) {
         const resetTime = getRateLimitResetTime(ip);
-        res.status(429).json({
-          error: `Rate limit exceeded. Maximum 10 refinement requests per hour. Reset at ${resetTime?.toISOString() || "unknown"}`,
-        });
-        return;
+        throw rateLimited(`Rate limit exceeded. Maximum 10 refinement requests per hour. Reset at ${resetTime?.toISOString() || "unknown"}`);
       }
 
       // Validate request body
@@ -6216,12 +6433,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         validated = validateRefineRequest(text, type);
       } catch (err) {
         if (err instanceof ValidationError) {
-          res.status(400).json({ error: err.message });
-          return;
+          throw badRequest(err.message);
         }
         if (err instanceof InvalidTypeError) {
-          res.status(422).json({ error: err.message });
-          return;
+          throw new ApiError(422, err.message);
         }
         throw err;
       }
@@ -6230,13 +6445,16 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const refined = await refineText(validated.text, validated.type, rootDir);
       res.json({ refined });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       // Check error by name since error classes are from dynamic import
       if (err?.name === "RateLimitError") {
-        res.status(429).json({ error: err.message });
+        throw rateLimited(err.message);
       } else if (err?.name === "AiServiceError") {
-        res.status(500).json({ error: err.message || "AI service error" });
+        rethrowAsApiError(err, "AI service error");
       } else {
-        res.status(500).json({ error: err?.message || "Failed to refine text" });
+        rethrowAsApiError(err, "Failed to refine text");
       }
     }
   });
@@ -6276,19 +6494,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Check rate limit first
       if (!checkRateLimit(ip)) {
         const resetTime = getRateLimitResetTime(ip);
-        res.status(429).json({
-          error: `Rate limit exceeded. Maximum 10 summarization requests per hour. Reset at ${resetTime?.toISOString() || "unknown"}`,
-        });
-        return;
+        throw rateLimited(`Rate limit exceeded. Maximum 10 summarization requests per hour. Reset at ${resetTime?.toISOString() || "unknown"}`);
       }
 
       // Validate request body
       try {
         validateDescription(description);
       } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
         if (err?.name === "ValidationError") {
-          res.status(400).json({ error: err.message });
-          return;
+          throw badRequest(err.message);
         }
         throw err;
       }
@@ -6321,24 +6538,24 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const title = await summarizeTitle(description, rootDir, resolvedProvider, resolvedModelId);
 
       if (!title) {
-        res.status(400).json({
-          error: `Description must be at least ${MIN_DESCRIPTION_LENGTH} characters for summarization`,
-        });
-        return;
+        throw badRequest(`Description must be at least ${MIN_DESCRIPTION_LENGTH} characters for summarization`);
       }
 
       res.json({ title });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       // Check error by name since error classes are from dynamic import
       if (err?.name === "RateLimitError") {
-        res.status(429).json({ error: err.message });
+        throw rateLimited(err.message);
       } else if (err?.name === "AiServiceError") {
-        res.status(503).json({ error: err.message || "AI service temporarily unavailable" });
+        throw new ApiError(503, err.message || "AI service temporarily unavailable");
       } else if (err?.name === "ValidationError") {
-        res.status(400).json({ error: err.message });
+        throw badRequest(err.message);
       } else {
         console.error("[ai-summarize] Unexpected error:", err);
-        res.status(500).json({ error: err?.message || "Failed to generate title" });
+        rethrowAsApiError(err, "Failed to generate title");
       }
     }
   });
@@ -6356,7 +6573,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const providers = await fetchAllProviderUsage();
       res.json({ providers });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || "Failed to fetch usage data" });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to fetch usage data");
     }
   });
 
@@ -6373,43 +6593,46 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const schedules = await automationStore.listSchedules();
       res.json(schedules);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
   // POST /automations — create a new schedule
   router.post("/automations", async (req: Request, res: Response) => {
     if (!automationStore) {
-      return res.status(503).json({ error: "Automation store not available" });
+      throw new ApiError(503, "Automation store not available");
     }
     try {
       const { name, description, scheduleType, cronExpression, command, enabled, timeoutMs, steps } = req.body;
 
       // Validation
       if (!name?.trim()) {
-        return res.status(400).json({ error: "Name is required" });
+        throw badRequest("Name is required");
       }
       const hasSteps = Array.isArray(steps) && steps.length > 0;
       if (!hasSteps && !command?.trim()) {
-        return res.status(400).json({ error: "Command is required when no steps are provided" });
+        throw badRequest("Command is required when no steps are provided");
       }
       const validTypes = ["hourly", "daily", "weekly", "monthly", "custom", "every15Minutes", "every30Minutes", "every2Hours", "every6Hours", "every12Hours", "weekdays"];
       if (!scheduleType || !validTypes.includes(scheduleType)) {
-        return res.status(400).json({ error: `Invalid schedule type. Must be one of: ${validTypes.join(", ")}` });
+        throw badRequest(`Invalid schedule type. Must be one of: ${validTypes.join(", ")}`);
       }
       if (scheduleType === "custom") {
         if (!cronExpression?.trim()) {
-          return res.status(400).json({ error: "Cron expression is required for custom schedule type" });
+          throw badRequest("Cron expression is required for custom schedule type");
         }
         if (!AutomationStore.isValidCron(cronExpression)) {
-          return res.status(400).json({ error: `Invalid cron expression: "${cronExpression}"` });
+          throw badRequest(`Invalid cron expression: "${cronExpression}"`);
         }
       }
       // Validate steps if provided
       if (hasSteps) {
         const stepErr = validateAutomationSteps(steps);
         if (stepErr) {
-          return res.status(400).json({ error: stepErr });
+          throw badRequest(stepErr);
         }
       }
 
@@ -6425,31 +6648,37 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
       res.status(201).json(schedule);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
   // GET /automations/:id — get a single schedule
   router.get("/automations/:id", async (req, res) => {
     if (!automationStore) {
-      return res.status(503).json({ error: "Automation store not available" });
+      throw new ApiError(503, "Automation store not available");
     }
     try {
       const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
       const schedule = await automationStore.getSchedule(id);
       res.json(schedule);
     } catch (err: any) {
-      if (err.code === "ENOENT") {
-        return res.status(404).json({ error: "Schedule not found" });
+      if (err instanceof ApiError) {
+        throw err;
       }
-      res.status(500).json({ error: err.message });
+      if (err.code === "ENOENT") {
+        throw notFound("Schedule not found");
+      }
+      rethrowAsApiError(err);
     }
   });
 
   // PATCH /automations/:id — update a schedule
   router.patch("/automations/:id", async (req, res) => {
     if (!automationStore) {
-      return res.status(503).json({ error: "Automation store not available" });
+      throw new ApiError(503, "Automation store not available");
     }
     try {
       const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
@@ -6458,7 +6687,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Validate cron if switching to custom
       if (scheduleType === "custom" && cronExpression) {
         if (!AutomationStore.isValidCron(cronExpression)) {
-          return res.status(400).json({ error: `Invalid cron expression: "${cronExpression}"` });
+          throw badRequest(`Invalid cron expression: "${cronExpression}"`);
         }
       }
 
@@ -6466,7 +6695,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       if (Array.isArray(steps) && steps.length > 0) {
         const stepErr = validateAutomationSteps(steps);
         if (stepErr) {
-          return res.status(400).json({ error: stepErr });
+          throw badRequest(stepErr);
         }
       }
 
@@ -6482,37 +6711,43 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
       res.json(schedule);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.code === "ENOENT") {
-        return res.status(404).json({ error: "Schedule not found" });
+        throw notFound("Schedule not found");
       }
       if (err.message?.includes("cannot be empty") || err.message?.includes("Invalid cron")) {
-        return res.status(400).json({ error: err.message });
+        throw badRequest(err.message);
       }
-      res.status(500).json({ error: err.message });
+      rethrowAsApiError(err);
     }
   });
 
   // DELETE /automations/:id — delete a schedule
   router.delete("/automations/:id", async (req, res) => {
     if (!automationStore) {
-      return res.status(503).json({ error: "Automation store not available" });
+      throw new ApiError(503, "Automation store not available");
     }
     try {
       const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
       const deleted = await automationStore.deleteSchedule(id);
       res.json(deleted);
     } catch (err: any) {
-      if (err.code === "ENOENT") {
-        return res.status(404).json({ error: "Schedule not found" });
+      if (err instanceof ApiError) {
+        throw err;
       }
-      res.status(500).json({ error: err.message });
+      if (err.code === "ENOENT") {
+        throw notFound("Schedule not found");
+      }
+      rethrowAsApiError(err);
     }
   });
 
   // POST /automations/:id/run — trigger a manual run
   router.post("/automations/:id/run", async (req, res) => {
     if (!automationStore) {
-      return res.status(503).json({ error: "Automation store not available" });
+      throw new ApiError(503, "Automation store not available");
     }
     try {
       const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
@@ -6533,17 +6768,20 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const updated = await automationStore.recordRun(schedule.id, result);
       res.json({ schedule: updated, result });
     } catch (err: any) {
-      if (err.code === "ENOENT") {
-        return res.status(404).json({ error: "Schedule not found" });
+      if (err instanceof ApiError) {
+        throw err;
       }
-      res.status(500).json({ error: err.message });
+      if (err.code === "ENOENT") {
+        throw notFound("Schedule not found");
+      }
+      rethrowAsApiError(err);
     }
   });
 
   // POST /automations/:id/toggle — toggle enabled/disabled
   router.post("/automations/:id/toggle", async (req, res) => {
     if (!automationStore) {
-      return res.status(503).json({ error: "Automation store not available" });
+      throw new ApiError(503, "Automation store not available");
     }
     try {
       const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
@@ -6553,34 +6791,40 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
       res.json(updated);
     } catch (err: any) {
-      if (err.code === "ENOENT") {
-        return res.status(404).json({ error: "Schedule not found" });
+      if (err instanceof ApiError) {
+        throw err;
       }
-      res.status(500).json({ error: err.message });
+      if (err.code === "ENOENT") {
+        throw notFound("Schedule not found");
+      }
+      rethrowAsApiError(err);
     }
   });
 
   // POST /automations/:id/steps/reorder — reorder steps
   router.post("/automations/:id/steps/reorder", async (req, res) => {
     if (!automationStore) {
-      return res.status(503).json({ error: "Automation store not available" });
+      throw new ApiError(503, "Automation store not available");
     }
     try {
       const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
       const { stepIds } = req.body;
       if (!Array.isArray(stepIds)) {
-        return res.status(400).json({ error: "stepIds must be an array" });
+        throw badRequest("stepIds must be an array");
       }
       const schedule = await automationStore.reorderSteps(id, stepIds);
       res.json(schedule);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.code === "ENOENT") {
-        return res.status(404).json({ error: "Schedule not found" });
+        throw notFound("Schedule not found");
       }
       if (err.message?.includes("mismatch") || err.message?.includes("Unknown step") || err.message?.includes("no steps")) {
-        return res.status(400).json({ error: err.message });
+        throw badRequest(err.message);
       }
-      res.status(500).json({ error: err.message });
+      rethrowAsApiError(err);
     }
   });
 
@@ -6603,8 +6847,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       if (limitParam !== undefined) {
         const parsed = Number.parseInt(limitParam as string, 10);
         if (!Number.isFinite(parsed) || parsed < 0) {
-          res.status(400).json({ error: "limit must be a non-negative integer" });
-          return;
+          throw badRequest("limit must be a non-negative integer");
         }
         limit = Math.min(parsed, 1000); // Max 1000
       }
@@ -6612,8 +6855,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Validate type if provided
       const validTypes = ["task:created", "task:moved", "task:updated", "task:deleted", "task:merged", "task:failed", "settings:updated"];
       if (typeParam !== undefined && !validTypes.includes(typeParam as string)) {
-        res.status(400).json({ error: `Invalid type. Must be one of: ${validTypes.join(", ")}` });
-        return;
+        throw badRequest(`Invalid type. Must be one of: ${validTypes.join(", ")}`);
       }
 
       const options: { limit?: number; since?: string; type?: ActivityEventType } = {
@@ -6625,7 +6867,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const entries = await store.getActivityLog(options);
       res.json(entries);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -6639,7 +6884,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await store.clearActivityLog();
       res.json({ success: true });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -6656,7 +6904,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const steps = await scopedStore.listWorkflowSteps();
       res.json(steps);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -6672,59 +6923,48 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { name, description, mode, phase, prompt, toolMode, scriptName, enabled, defaultOn, modelProvider, modelId } = req.body;
 
       if (!name || typeof name !== "string" || !name.trim()) {
-        res.status(400).json({ error: "name is required" });
-        return;
+        throw badRequest("name is required");
       }
       if (!description || typeof description !== "string" || !description.trim()) {
-        res.status(400).json({ error: "description is required" });
-        return;
+        throw badRequest("description is required");
       }
 
       // Validate mode
       const resolvedMode: "prompt" | "script" = mode || "prompt";
       if (resolvedMode !== "prompt" && resolvedMode !== "script") {
-        res.status(400).json({ error: "mode must be 'prompt' or 'script'" });
-        return;
+        throw badRequest("mode must be 'prompt' or 'script'");
       }
 
       // Validate phase
       if (phase !== undefined && phase !== "pre-merge" && phase !== "post-merge") {
-        res.status(400).json({ error: "phase must be 'pre-merge' or 'post-merge'" });
-        return;
+        throw badRequest("phase must be 'pre-merge' or 'post-merge'");
       }
 
       if (prompt !== undefined && typeof prompt !== "string") {
-        res.status(400).json({ error: "prompt must be a string" });
-        return;
+        throw badRequest("prompt must be a string");
       }
       if (toolMode !== undefined && toolMode !== "readonly" && toolMode !== "coding") {
-        res.status(400).json({ error: "toolMode must be 'readonly' or 'coding'" });
-        return;
+        throw badRequest("toolMode must be 'readonly' or 'coding'");
       }
       if (scriptName !== undefined && typeof scriptName !== "string") {
-        res.status(400).json({ error: "scriptName must be a string" });
-        return;
+        throw badRequest("scriptName must be a string");
       }
       if (enabled !== undefined && typeof enabled !== "boolean") {
-        res.status(400).json({ error: "enabled must be a boolean" });
-        return;
+        throw badRequest("enabled must be a boolean");
       }
       if (defaultOn !== undefined && typeof defaultOn !== "boolean") {
-        res.status(400).json({ error: "defaultOn must be a boolean" });
-        return;
+        throw badRequest("defaultOn must be a boolean");
       }
 
       // Validate script mode: scriptName must reference a named script in settings
       if (resolvedMode === "script") {
         if (!scriptName?.trim()) {
-          res.status(400).json({ error: "scriptName is required when mode is 'script'" });
-          return;
+          throw badRequest("scriptName is required when mode is 'script'");
         }
         const settings = await scopedStore.getSettings();
         const scripts = settings.scripts || {};
         if (!(scriptName.trim() in scripts)) {
-          res.status(400).json({ error: `Script '${scriptName.trim()}' not found in project settings. Available scripts: ${Object.keys(scripts).join(", ") || "none"}` });
-          return;
+          throw badRequest(`Script '${scriptName.trim()}' not found in project settings. Available scripts: ${Object.keys(scripts).join(", ") || "none"}`);
         }
       }
 
@@ -6734,8 +6974,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Check for name conflicts
       const existing = await scopedStore.listWorkflowSteps();
       if (existing.some((ws) => ws.name.toLowerCase() === name.trim().toLowerCase())) {
-        res.status(409).json({ error: `A workflow step named '${name.trim()}' already exists` });
-        return;
+        throw conflict(`A workflow step named '${name.trim()}' already exists`);
       }
 
       const step = await scopedStore.createWorkflowStep({
@@ -6753,8 +6992,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
       res.status(201).json(step);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = typeof err?.message === "string" && (err.message.includes("must include both provider and modelId") || err.message.includes("Script mode requires")) ? 400 : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -6772,64 +7014,55 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const updates: Record<string, unknown> = {};
       if (name !== undefined) {
         if (typeof name !== "string" || !name.trim()) {
-          res.status(400).json({ error: "name must be a non-empty string" });
-          return;
+          throw badRequest("name must be a non-empty string");
         }
         updates.name = name.trim();
       }
       if (description !== undefined) {
         if (typeof description !== "string" || !description.trim()) {
-          res.status(400).json({ error: "description must be a non-empty string" });
-          return;
+          throw badRequest("description must be a non-empty string");
         }
         updates.description = description.trim();
       }
       if (mode !== undefined) {
         if (mode !== "prompt" && mode !== "script") {
-          res.status(400).json({ error: "mode must be 'prompt' or 'script'" });
-          return;
+          throw badRequest("mode must be 'prompt' or 'script'");
         }
         updates.mode = mode;
       }
       if (phase !== undefined) {
         if (phase !== "pre-merge" && phase !== "post-merge") {
-          res.status(400).json({ error: "phase must be 'pre-merge' or 'post-merge'" });
-          return;
+          throw badRequest("phase must be 'pre-merge' or 'post-merge'");
         }
         updates.phase = phase;
       }
       if (prompt !== undefined) {
         if (typeof prompt !== "string") {
-          res.status(400).json({ error: "prompt must be a string" });
-          return;
+          throw badRequest("prompt must be a string");
         }
         updates.prompt = prompt;
       }
       if (toolMode !== undefined) {
         if (toolMode !== "readonly" && toolMode !== "coding") {
-          res.status(400).json({ error: "toolMode must be 'readonly' or 'coding'" });
-          return;
+          throw badRequest("toolMode must be 'readonly' or 'coding'");
         }
         updates.toolMode = toolMode;
       }
       if (scriptName !== undefined) {
         if (typeof scriptName !== "string") {
-          res.status(400).json({ error: "scriptName must be a string" });
-          return;
+          throw badRequest("scriptName must be a string");
         }
         updates.scriptName = scriptName;
       }
       if (enabled !== undefined) {
         if (typeof enabled !== "boolean") {
-          res.status(400).json({ error: "enabled must be a boolean" });
-          return;
+          throw badRequest("enabled must be a boolean");
         }
         updates.enabled = enabled;
       }
       if (defaultOn !== undefined) {
         if (typeof defaultOn !== "boolean") {
-          res.status(400).json({ error: "defaultOn must be a boolean" });
-          return;
+          throw badRequest("defaultOn must be a boolean");
         }
         updates.defaultOn = defaultOn;
       }
@@ -6843,14 +7076,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       if (resultingMode === "script") {
         if (!resultingScriptName?.trim()) {
-          res.status(400).json({ error: "scriptName is required when mode is 'script'" });
-          return;
+          throw badRequest("scriptName is required when mode is 'script'");
         }
         const settings = await scopedStore.getSettings();
         const scripts = settings.scripts || {};
         if (!(resultingScriptName.trim() in scripts)) {
-          res.status(400).json({ error: `Script '${resultingScriptName.trim()}' not found in project settings. Available scripts: ${Object.keys(scripts).join(", ") || "none"}` });
-          return;
+          throw badRequest(`Script '${resultingScriptName.trim()}' not found in project settings. Available scripts: ${Object.keys(scripts).join(", ") || "none"}`);
         }
       }
 
@@ -6864,11 +7095,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const step = await scopedStore.updateWorkflowStep(req.params.id, updates);
       res.json(step);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("not found")) {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else {
         const status = typeof err?.message === "string" && (err.message.includes("must include both provider and modelId") || err.message.includes("Script mode requires")) ? 400 : 500;
-        res.status(status).json({ error: err.message });
+        throw new ApiError(status, err.message);
       }
     }
   });
@@ -6884,10 +7118,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await scopedStore.deleteWorkflowStep(req.params.id);
       res.status(204).send();
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("not found")) {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -6903,18 +7140,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const scopedStore = await getScopedStore(req);
       const step = await scopedStore.getWorkflowStep(req.params.id);
       if (!step) {
-        res.status(404).json({ error: `Workflow step '${req.params.id}' not found` });
-        return;
+        throw notFound(`Workflow step '${req.params.id}' not found`);
       }
 
       if (step.mode === "script") {
-        res.status(400).json({ error: "Cannot refine prompt for script-mode workflow steps" });
-        return;
+        throw badRequest("Cannot refine prompt for script-mode workflow steps");
       }
 
       if (!step.description?.trim()) {
-        res.status(400).json({ error: "Workflow step has no description to refine" });
-        return;
+        throw badRequest("Workflow step has no description to refine");
       }
 
       // Use AI to refine the description into a detailed agent prompt
@@ -6974,7 +7208,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const updated = await scopedStore.updateWorkflowStep(step.id, { prompt: refinedPrompt });
       res.json({ prompt: refinedPrompt, workflowStep: updated });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -6990,7 +7227,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const { WORKFLOW_STEP_TEMPLATES } = await import("@fusion/core");
       res.json({ templates: WORKFLOW_STEP_TEMPLATES });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -7006,15 +7246,13 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const template = WORKFLOW_STEP_TEMPLATES.find((t) => t.id === req.params.id);
 
       if (!template) {
-        res.status(404).json({ error: `Template '${req.params.id}' not found` });
-        return;
+        throw notFound(`Template '${req.params.id}' not found`);
       }
 
       // Check for name conflicts with existing workflow steps
       const existing = await scopedStore.listWorkflowSteps();
       if (existing.some((ws) => ws.name.toLowerCase() === template.name.toLowerCase())) {
-        res.status(409).json({ error: `A workflow step named '${template.name}' already exists` });
-        return;
+        throw conflict(`A workflow step named '${template.name}' already exists`);
       }
 
       const step = await scopedStore.createWorkflowStep({
@@ -7028,7 +7266,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       res.status(201).json(step);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -7046,13 +7287,11 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const scriptName = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
 
       if (!scriptName) {
-        res.status(400).json({ error: "Script name is required" });
-        return;
+        throw badRequest("Script name is required");
       }
 
       if (!/^[a-zA-Z0-9_-]+$/.test(scriptName)) {
-        res.status(400).json({ error: "Script name must contain only alphanumeric characters, hyphens, and underscores (no spaces)" });
-        return;
+        throw badRequest("Script name must contain only alphanumeric characters, hyphens, and underscores (no spaces)");
       }
 
       // Get the script from settings
@@ -7060,8 +7299,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const currentScripts = settings.scripts ?? {};
 
       if (currentScripts[scriptName] === undefined) {
-        res.status(404).json({ error: `Script '${scriptName}' not found` });
-        return;
+        throw notFound(`Script '${scriptName}' not found`);
       }
 
       const baseCommand = currentScripts[scriptName];
@@ -7069,12 +7307,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       // Validate args if provided
       if (args !== undefined && !Array.isArray(args)) {
-        res.status(400).json({ error: "args must be an array of strings" });
-        return;
+        throw badRequest("args must be an array of strings");
       }
       if (args && !args.every((a: unknown) => typeof a === "string")) {
-        res.status(400).json({ error: "args must be an array of strings" });
-        return;
+        throw badRequest("args must be an array of strings");
       }
 
       // Build the full command with args
@@ -7109,8 +7345,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
           pty_spawn_failed: 500,
         } as const;
         const status = result.code ? (statusByCode[result.code] ?? 500) : 500;
-        res.status(status).json({ error: result.error || "Failed to create terminal session" });
-        return;
+        throw new ApiError(status, result.error || "Failed to create terminal session");
       }
 
       const sessionId = result.session.id;
@@ -7123,7 +7358,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
         command: fullCommand,
       });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -7152,7 +7390,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const agents = await agentStore.listAgents(filter as { state?: "idle" | "active" | "paused" | "terminated"; role?: import("@fusion/core").AgentCapability });
       res.json(agents);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -7163,36 +7404,36 @@ Output ONLY the prompt text (no markdown, no explanations).`;
   ): boolean {
     if (instructionsPath !== undefined && instructionsPath !== null && instructionsPath !== "") {
       if (typeof instructionsPath !== "string") {
-        res.status(400).json({ error: "instructionsPath must be a string" });
+        throw badRequest("instructionsPath must be a string");
         return false;
       }
       if (instructionsPath.length > 500) {
-        res.status(400).json({ error: "instructionsPath must be at most 500 characters" });
+        throw badRequest("instructionsPath must be at most 500 characters");
         return false;
       }
       if (instructionsPath.includes("..")) {
-        res.status(400).json({ error: "instructionsPath must not contain parent directory traversal (..)" });
+        throw badRequest("instructionsPath must not contain parent directory traversal (..)");
         return false;
       }
       const isAbsoluteUnix = instructionsPath.startsWith("/");
       const isAbsoluteWindows = /^[A-Za-z]:[\\/]/.test(instructionsPath);
       if (isAbsoluteUnix || isAbsoluteWindows) {
-        res.status(400).json({ error: "instructionsPath must be a project-relative path" });
+        throw badRequest("instructionsPath must be a project-relative path");
         return false;
       }
       if (!instructionsPath.endsWith(".md")) {
-        res.status(400).json({ error: "instructionsPath must end in .md" });
+        throw badRequest("instructionsPath must end in .md");
         return false;
       }
     }
 
     if (instructionsText !== undefined && instructionsText !== null && instructionsText !== "") {
       if (typeof instructionsText !== "string") {
-        res.status(400).json({ error: "instructionsText must be a string" });
+        throw badRequest("instructionsText must be a string");
         return false;
       }
       if (instructionsText.length > 50000) {
-        res.status(400).json({ error: "instructionsText must be at most 50,000 characters" });
+        throw badRequest("instructionsText must be at most 50,000 characters");
         return false;
       }
     }
@@ -7229,36 +7470,28 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       } = req.body ?? {};
 
       if (!name || typeof name !== "string") {
-        res.status(400).json({ error: "name is required" });
-        return;
+        throw badRequest("name is required");
       }
       if (!role || typeof role !== "string") {
-        res.status(400).json({ error: "role is required" });
-        return;
+        throw badRequest("role is required");
       }
       if (metadata !== undefined && (typeof metadata !== "object" || metadata === null || Array.isArray(metadata))) {
-        res.status(400).json({ error: "metadata must be an object" });
-        return;
+        throw badRequest("metadata must be an object");
       }
       if (title !== undefined && title !== null && typeof title !== "string") {
-        res.status(400).json({ error: "title must be a string" });
-        return;
+        throw badRequest("title must be a string");
       }
       if (icon !== undefined && icon !== null && typeof icon !== "string") {
-        res.status(400).json({ error: "icon must be a string" });
-        return;
+        throw badRequest("icon must be a string");
       }
       if (reportsTo !== undefined && reportsTo !== null && typeof reportsTo !== "string") {
-        res.status(400).json({ error: "reportsTo must be a string" });
-        return;
+        throw badRequest("reportsTo must be a string");
       }
       if (runtimeConfig !== undefined && (typeof runtimeConfig !== "object" || runtimeConfig === null || Array.isArray(runtimeConfig))) {
-        res.status(400).json({ error: "runtimeConfig must be an object" });
-        return;
+        throw badRequest("runtimeConfig must be an object");
       }
       if (permissions !== undefined && (typeof permissions !== "object" || permissions === null || Array.isArray(permissions))) {
-        res.status(400).json({ error: "permissions must be an object" });
-        return;
+        throw badRequest("permissions must be an object");
       }
       if (!validateAgentInstructionsPayload(res, instructionsPath, instructionsText)) {
         return;
@@ -7283,10 +7516,13 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       });
       res.status(201).json(agent);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("required") || err.message?.includes("cannot be empty")) {
-        res.status(400).json({ error: err.message });
+        throw badRequest(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -7339,8 +7575,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       } else if (typeof source === "string" && source.trim()) {
         const sourcePath = resolve(source);
         if (!existsSync(sourcePath)) {
-          res.status(400).json({ error: `source does not exist: ${sourcePath}` });
-          return;
+          throw badRequest(`source does not exist: ${sourcePath}`);
         }
 
         const isArchive = sourcePath.endsWith(".tar.gz")
@@ -7352,8 +7587,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
         } else if (nodeFs.statSync(sourcePath).isDirectory()) {
           pkg = parseCompanyDirectory(sourcePath);
         } else {
-          res.status(400).json({ error: "Source must be a server-side directory or archive path" });
-          return;
+          throw badRequest("Source must be a server-side directory or archive path");
         }
       } else if (typeof manifest === "string") {
         const { manifest: singleAgent } = parseSingleAgentManifest(manifest);
@@ -7365,8 +7599,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
           tasks: [],
         };
       } else {
-        res.status(400).json({ error: "Provide one of: agents (array), source (path), or manifest (string)" });
-        return;
+        throw badRequest("Provide one of: agents (array), source (path), or manifest (string)");
       }
 
       const { inputs, result } = convertAgentCompanies(pkg as any, conversionOptions);
@@ -7374,8 +7607,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const companySlug = typeof pkg.company?.slug === "string" ? pkg.company.slug : undefined;
 
       if (inputs.length === 0 && result.errors.length === 0 && result.skipped.length === 0) {
-        res.status(400).json({ error: "No agents found in manifest" });
-        return;
+        throw badRequest("No agents found in manifest");
       }
 
       if (dryRun) {
@@ -7413,6 +7645,9 @@ Output ONLY the prompt text (no markdown, no explanations).`;
           const agent = await agentStore.createAgent(input);
           created.push({ id: agent.id, name: agent.name });
         } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
           errors.push({ name: input.name, error: err.message });
         }
       }
@@ -7425,11 +7660,13 @@ Output ONLY the prompt text (no markdown, no explanations).`;
         errors,
       });
     } catch (err: any) {
-      if (err?.name === "AgentCompaniesParseError") {
-        res.status(400).json({ error: err.message });
-        return;
+      if (err instanceof ApiError) {
+        throw err;
       }
-      res.status(500).json({ error: err.message });
+      if (err?.name === "AgentCompaniesParseError") {
+        throw badRequest(err.message);
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -7461,7 +7698,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const successRate = total > 0 ? completedRuns / total : 0;
       res.json({ activeCount, assignedTaskCount, completedRuns, failedRuns, successRate });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -7480,7 +7720,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const tree = await agentStore.getOrgTree();
       res.json(tree);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -7498,13 +7741,15 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       const agent = await agentStore.resolveAgent(req.params.shortname);
       if (!agent) {
-        res.status(404).json({ error: "Agent not found" });
-        return;
+        throw notFound("Agent not found");
       }
 
       res.json({ agent });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -7521,12 +7766,14 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       const agent = await agentStore.getAgentDetail(req.params.id, 50);
       if (!agent) {
-        res.status(404).json({ error: "Agent not found" });
-        return;
+        throw notFound("Agent not found");
       }
       res.json(agent);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -7541,88 +7788,77 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       if ("name" in body) {
         if (body.name !== null && typeof body.name !== "string") {
-          res.status(400).json({ error: "name must be a string" });
-          return;
+          throw badRequest("name must be a string");
         }
         updates.name = body.name ?? undefined;
       }
 
       if ("role" in body) {
         if (body.role !== null && typeof body.role !== "string") {
-          res.status(400).json({ error: "role must be a string" });
-          return;
+          throw badRequest("role must be a string");
         }
         updates.role = body.role ?? undefined;
       }
 
       if ("metadata" in body) {
         if (body.metadata !== null && (typeof body.metadata !== "object" || Array.isArray(body.metadata))) {
-          res.status(400).json({ error: "metadata must be an object" });
-          return;
+          throw badRequest("metadata must be an object");
         }
         updates.metadata = body.metadata ?? undefined;
       }
 
       if ("title" in body) {
         if (body.title !== null && typeof body.title !== "string") {
-          res.status(400).json({ error: "title must be a string" });
-          return;
+          throw badRequest("title must be a string");
         }
         updates.title = body.title ?? undefined;
       }
 
       if ("icon" in body) {
         if (body.icon !== null && typeof body.icon !== "string") {
-          res.status(400).json({ error: "icon must be a string" });
-          return;
+          throw badRequest("icon must be a string");
         }
         updates.icon = body.icon ?? undefined;
       }
 
       if ("reportsTo" in body) {
         if (body.reportsTo !== null && typeof body.reportsTo !== "string") {
-          res.status(400).json({ error: "reportsTo must be a string" });
-          return;
+          throw badRequest("reportsTo must be a string");
         }
         updates.reportsTo = body.reportsTo ?? undefined;
       }
 
       if ("pauseReason" in body) {
         if (body.pauseReason !== null && typeof body.pauseReason !== "string") {
-          res.status(400).json({ error: "pauseReason must be a string" });
-          return;
+          throw badRequest("pauseReason must be a string");
         }
         updates.pauseReason = body.pauseReason ?? undefined;
       }
 
       if ("runtimeConfig" in body) {
         if (body.runtimeConfig !== null && (typeof body.runtimeConfig !== "object" || Array.isArray(body.runtimeConfig))) {
-          res.status(400).json({ error: "runtimeConfig must be an object" });
-          return;
+          throw badRequest("runtimeConfig must be an object");
         }
         updates.runtimeConfig = body.runtimeConfig ?? undefined;
       }
 
       if ("permissions" in body) {
         if (body.permissions !== null && (typeof body.permissions !== "object" || Array.isArray(body.permissions))) {
-          res.status(400).json({ error: "permissions must be an object" });
-          return;
+          throw badRequest("permissions must be an object");
         }
         updates.permissions = body.permissions ?? undefined;
       }
 
       if ("totalInputTokens" in body) {
         if (body.totalInputTokens !== null && typeof body.totalInputTokens !== "number") {
-          res.status(400).json({ error: "totalInputTokens must be a number" });
-          return;
+          throw badRequest("totalInputTokens must be a number");
         }
         updates.totalInputTokens = body.totalInputTokens ?? undefined;
       }
 
       if ("totalOutputTokens" in body) {
         if (body.totalOutputTokens !== null && typeof body.totalOutputTokens !== "number") {
-          res.status(400).json({ error: "totalOutputTokens must be a number" });
-          return;
+          throw badRequest("totalOutputTokens must be a number");
         }
         updates.totalOutputTokens = body.totalOutputTokens ?? undefined;
       }
@@ -7645,12 +7881,15 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const agent = await agentStore.updateAgent(req.params.id, updates);
       res.json(agent);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("not found")) {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else if (err.message?.includes("cannot be empty")) {
-        res.status(400).json({ error: err.message });
+        throw badRequest(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -7668,14 +7907,16 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       const agent = await agentStore.getAgent(req.params.id);
       if (!agent) {
-        res.status(404).json({ error: "Agent not found" });
-        return;
+        throw notFound("Agent not found");
       }
 
       const state = computeAccessState(agent);
       res.json(serializeAccessState(state));
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -7688,24 +7929,20 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const { permissions } = req.body ?? {};
 
       if (permissions === undefined || permissions === null || typeof permissions !== "object" || Array.isArray(permissions)) {
-        res.status(400).json({ error: "permissions must be an object" });
-        return;
+        throw badRequest("permissions must be an object");
       }
 
       const { AgentStore, isValidPermission } = await import("@fusion/core");
 
       for (const [key, value] of Object.entries(permissions as Record<string, unknown>)) {
         if (key.startsWith("budget:")) {
-          res.status(400).json({ error: "Budget permissions are not supported" });
-          return;
+          throw badRequest("Budget permissions are not supported");
         }
         if (!isValidPermission(key)) {
-          res.status(400).json({ error: `Invalid permission: ${key}` });
-          return;
+          throw badRequest(`Invalid permission: ${key}`);
         }
         if (typeof value !== "boolean") {
-          res.status(400).json({ error: `Permission value for ${key} must be boolean` });
-          return;
+          throw badRequest(`Permission value for ${key} must be boolean`);
         }
       }
 
@@ -7718,10 +7955,13 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       });
       res.json(agent);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("not found")) {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -7749,10 +7989,13 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       });
       res.json(agent);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("not found")) {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -7766,8 +8009,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
     try {
       const { state } = req.body;
       if (!state || typeof state !== "string") {
-        res.status(400).json({ error: "state is required" });
-        return;
+        throw badRequest("state is required");
       }
 
       const scopedStore = await getScopedStore(req);
@@ -7778,12 +8020,15 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const agent = await agentStore.updateAgentState(req.params.id, state as import("@fusion/core").AgentState);
       res.json(agent);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("not found")) {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else if (/invalid state transition/i.test(err.message ?? "")) {
-        res.status(400).json({ error: err.message });
+        throw badRequest(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -7802,10 +8047,13 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       await agentStore.deleteAgent(req.params.id);
       res.status(204).send();
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("not found")) {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -7824,21 +8072,22 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       const agent = await agentStore.getAgent(req.params.id);
       if (!agent) {
-        res.status(404).json({ error: "Agent not found" });
-        return;
+        throw notFound("Agent not found");
       }
 
       const rawLimit = req.query.limit;
       const limit = rawLimit === undefined ? 50 : Number.parseInt(String(rawLimit), 10);
       if (!Number.isInteger(limit) || limit <= 0) {
-        res.status(400).json({ error: "limit must be a positive integer" });
-        return;
+        throw badRequest("limit must be a positive integer");
       }
 
       const revisions = await agentStore.getConfigRevisions(req.params.id, limit);
       res.json(revisions);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -7855,19 +8104,20 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       const agent = await agentStore.getAgent(req.params.id);
       if (!agent) {
-        res.status(404).json({ error: "Agent not found" });
-        return;
+        throw notFound("Agent not found");
       }
 
       const revision = await agentStore.getConfigRevision(req.params.id, req.params.revisionId);
       if (!revision) {
-        res.status(404).json({ error: "Config revision not found" });
-        return;
+        throw notFound("Config revision not found");
       }
 
       res.json(revision);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -7884,19 +8134,21 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       const agent = await agentStore.getAgent(req.params.id);
       if (!agent) {
-        res.status(404).json({ error: "Agent not found" });
-        return;
+        throw notFound("Agent not found");
       }
 
       const result = await agentStore.rollbackConfig(req.params.id, req.params.revisionId);
       res.json(result);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("belongs to agent")) {
-        res.status(400).json({ error: err.message });
+        throw badRequest(err.message);
       } else if (err.message?.includes("not found")) {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -7910,8 +8162,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
     try {
       const { label } = req.body ?? {};
       if (label !== undefined && typeof label !== "string") {
-        res.status(400).json({ error: "label must be a string" });
-        return;
+        throw badRequest("label must be a string");
       }
 
       const scopedStore = await getScopedStore(req);
@@ -7921,17 +8172,19 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       const agent = await agentStore.getAgent(req.params.id);
       if (!agent) {
-        res.status(404).json({ error: "Agent not found" });
-        return;
+        throw notFound("Agent not found");
       }
 
       const result = await agentStore.createApiKey(req.params.id, { label });
       res.status(201).json(result);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("not found")) {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -7950,10 +8203,13 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const keys = await agentStore.listApiKeys(req.params.id);
       res.json(keys);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("not found")) {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -7972,10 +8228,13 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const revoked = await agentStore.revokeApiKey(req.params.id, req.params.keyId);
       res.json(revoked);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("not found")) {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -7993,14 +8252,16 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       const agent = await agentStore.getAgent(req.params.id);
       if (!agent) {
-        res.status(404).json({ error: "Agent not found" });
-        return;
+        throw notFound("Agent not found");
       }
 
       const tasks = await scopedStore.listTasks();
       res.json(tasks.filter((task) => task.assignedAgentId === req.params.id));
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -8039,10 +8300,13 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       res.json(run ? { event, run } : event);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("not found")) {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -8064,7 +8328,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const history = await agentStore.getHeartbeatHistory(req.params.id, limit);
       res.json(history);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -8084,10 +8351,13 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const runs = await agentStore.getRecentRuns(req.params.id, limit);
       res.json(runs);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("not found")) {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -8127,8 +8397,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
         const activeRun = await agentStore.getActiveHeartbeatRun(req.params.id);
         if (activeRun) {
-          res.status(409).json({ error: "Agent already has an active run", runId: activeRun.id });
-          return;
+          throw new ApiError(409, "Agent already has an active run", { runId: activeRun.id });
         }
 
         // Execute heartbeat end-to-end (single run record, no duplicate startRun call)
@@ -8151,8 +8420,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
         // Check for existing active run
         const activeRun = await agentStore.getActiveHeartbeatRun(req.params.id);
         if (activeRun) {
-          res.status(409).json({ error: "Agent already has an active run", runId: activeRun.id });
-          return;
+          throw new ApiError(409, "Agent already has an active run", { runId: activeRun.id });
         }
 
         const run = await agentStore.startHeartbeatRun(req.params.id);
@@ -8166,10 +8434,13 @@ Output ONLY the prompt text (no markdown, no explanations).`;
         res.status(201).json(run);
       }
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("not found")) {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -8187,15 +8458,17 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       const run = await agentStore.getRunDetail(req.params.id, req.params.runId);
       if (!run) {
-        res.status(404).json({ error: "Run not found" });
-        return;
+        throw notFound("Run not found");
       }
       res.json(run);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("not found")) {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -8216,8 +8489,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       const run = await agentStore.getRunDetail(req.params.id, req.params.runId);
       if (!run) {
-        res.status(404).json({ error: "Run not found" });
-        return;
+        throw notFound("Run not found");
       }
 
       // Only use the run's context snapshot for task ID — do not fall back
@@ -8236,10 +8508,13 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       );
       res.json(logs);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.message?.includes("not found")) {
-        res.status(404).json({ error: err.message });
+        throw notFound(err.message);
       } else {
-        res.status(500).json({ error: err.message });
+        rethrowAsApiError(err);
       }
     }
   });
@@ -8259,14 +8534,16 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       const agent = await agentStore.getAgent(req.params.id);
       if (!agent) {
-        res.status(404).json({ error: "Agent not found" });
-        return;
+        throw notFound("Agent not found");
       }
 
       const chain = await agentStore.getChainOfCommand(req.params.id);
       res.json(chain);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -8286,14 +8563,16 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       // Validate the parent agent exists
       const parent = await agentStore.getAgent(req.params.id);
       if (!parent) {
-        res.status(404).json({ error: "Agent not found" });
-        return;
+        throw notFound("Agent not found");
       }
 
       const children = await agentStore.getAgentsByReportsTo(req.params.id);
       res.json(children);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -8309,18 +8588,15 @@ Output ONLY the prompt text (no markdown, no explanations).`;
     try {
       const { role } = req.body as { role?: string };
       if (!role || typeof role !== "string") {
-        res.status(400).json({ error: "role is required and must be a string" });
-        return;
+        throw badRequest("role is required and must be a string");
       }
 
       const trimmedRole = role.trim();
       if (trimmedRole.length === 0) {
-        res.status(400).json({ error: "role must not be empty" });
-        return;
+        throw badRequest("role must not be empty");
       }
       if (trimmedRole.length > 1000) {
-        res.status(400).json({ error: "role must not exceed 1000 characters" });
-        return;
+        throw badRequest("role must not exceed 1000 characters");
       }
 
       const ip = req.ip || req.socket.remoteAddress || "unknown";
@@ -8331,12 +8607,14 @@ Output ONLY the prompt text (no markdown, no explanations).`;
         roleDescription: session.roleDescription,
       });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err instanceof AgentGenerationRateLimitError) {
-        res.status(429).json({ error: err.message });
-        return;
+        throw rateLimited(err.message);
       }
       console.error("[agent-generation] Error starting session:", err);
-      res.status(500).json({ error: err.message || "Failed to start agent generation session" });
+      rethrowAsApiError(err, "Failed to start agent generation session");
     }
   });
 
@@ -8350,8 +8628,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
     try {
       const { sessionId } = req.body as { sessionId?: string };
       if (!sessionId || typeof sessionId !== "string") {
-        res.status(400).json({ error: "sessionId is required" });
-        return;
+        throw badRequest("sessionId is required");
       }
 
       const scopedStore = await getScopedStore(req);
@@ -8360,12 +8637,14 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const spec = await generateAgentSpec(sessionId, rootDir);
       res.json({ spec });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err instanceof AgentGenerationSessionNotFoundError) {
-        res.status(404).json({ error: err.message });
-        return;
+        throw notFound(err.message);
       }
       console.error("[agent-generation] Error generating spec:", err);
-      res.status(500).json({ error: err.message || "Failed to generate agent specification" });
+      rethrowAsApiError(err, "Failed to generate agent specification");
     }
   });
 
@@ -8380,13 +8659,15 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const session = getAgentGenerationSession(sessionId);
 
       if (!session) {
-        res.status(404).json({ error: `Session ${sessionId} not found or expired` });
-        return;
+        throw notFound(`Session ${sessionId} not found or expired`);
       }
 
       res.json({ session });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -8401,7 +8682,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       cleanupAgentGenerationSession(sessionId);
       res.json({ success: true });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -8434,13 +8718,11 @@ Output ONLY the prompt text (no markdown, no explanations).`;
    */
   router.get("/ai-sessions/:id", (req, res) => {
     if (!aiSessionStore) {
-      res.status(404).json({ error: "AI sessions not available" });
-      return;
+      throw notFound("AI sessions not available");
     }
     const session = aiSessionStore.get(req.params.id);
     if (!session) {
-      res.status(404).json({ error: "Session not found" });
-      return;
+      throw notFound("Session not found");
     }
     res.json(session);
   });
@@ -8451,15 +8733,13 @@ Output ONLY the prompt text (no markdown, no explanations).`;
    */
   router.post("/ai-sessions/:id/ping", (req, res) => {
     if (!aiSessionStore) {
-      res.status(404).json({ error: "AI sessions not available" });
-      return;
+      throw notFound("AI sessions not available");
     }
 
     const { id } = req.params;
     const updated = aiSessionStore.ping(id);
     if (!updated) {
-      res.status(404).json({ error: "Session not found" });
-      return;
+      throw notFound("Session not found");
     }
 
     res.json({ ok: true });
@@ -8472,14 +8752,12 @@ Output ONLY the prompt text (no markdown, no explanations).`;
    */
   router.delete("/ai-sessions/:id", (req, res) => {
     if (!aiSessionStore) {
-      res.status(404).json({ error: "AI sessions not available" });
-      return;
+      throw notFound("AI sessions not available");
     }
     const { id } = req.params;
     const session = aiSessionStore.get(id);
     if (!session) {
-      res.status(404).json({ error: "Session not found" });
-      return;
+      throw notFound("Session not found");
     }
 
     aiSessionStore.delete(id);
@@ -8524,12 +8802,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       // Validate: must be absolute, no .. traversal
       const resolvedPath = resolve(rawPath);
       if (rawPath.includes("..")) {
-        res.status(400).json({ error: "Path must not contain '..' traversal" });
-        return;
+        throw badRequest("Path must not contain '..' traversal");
       }
       if (resolvedPath !== resolve(resolvedPath)) {
-        res.status(400).json({ error: "Path must be absolute" });
-        return;
+        throw badRequest("Path must be absolute");
       }
 
       // Check path exists and is a directory
@@ -8537,12 +8813,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       try {
         pathStat = await stat(resolvedPath);
       } catch {
-        res.status(404).json({ error: "Directory not found" });
-        return;
+        throw notFound("Directory not found");
       }
       if (!pathStat.isDirectory()) {
-        res.status(400).json({ error: "Path is not a directory" });
-        return;
+        throw badRequest("Path is not a directory");
       }
 
       // Read directory entries
@@ -8571,7 +8845,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       res.json({ currentPath: resolvedPath, parentPath, entries });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -8599,7 +8876,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       
       res.json(projects);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -8614,24 +8894,20 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const { name, path, isolationMode = "in-process" } = req.body;
       
       if (!name || typeof name !== "string" || !name.trim()) {
-        res.status(400).json({ error: "name is required and must be a non-empty string" });
-        return;
+        throw badRequest("name is required and must be a non-empty string");
       }
       if (!path || typeof path !== "string" || !path.trim()) {
-        res.status(400).json({ error: "path is required and must be a non-empty string" });
-        return;
+        throw badRequest("path is required and must be a non-empty string");
       }
       if (!["in-process", "child-process"].includes(isolationMode)) {
-        res.status(400).json({ error: "isolationMode must be 'in-process' or 'child-process'" });
-        return;
+        throw badRequest("isolationMode must be 'in-process' or 'child-process'");
       }
       
       // Check if path exists and has .fusion/ directory
       const { existsSync } = await import("node:fs");
       const { join } = await import("node:path");
       if (!existsSync(path)) {
-        res.status(400).json({ error: "Project path does not exist" });
-        return;
+        throw badRequest("Project path does not exist");
       }
       const hasFusionDir = existsSync(join(path, ".fusion"));
       
@@ -8652,10 +8928,13 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       
       res.status(201).json({ ...activeProject, _meta: { hasFusionDir: hasFusionDir ? undefined : false } });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.message?.includes("already registered") ? 409 
         : err.message?.includes("Duplicate path") ? 409
         : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -8676,8 +8955,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const searchPath = basePath || process.env.HOME || process.env.USERPROFILE || ".";
       
       if (!existsSync(searchPath)) {
-        res.status(400).json({ error: "Base path does not exist" });
-        return;
+        throw badRequest("Base path does not exist");
       }
 
       // Get list of existing projects to check for duplicates
@@ -8716,7 +8994,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       
       res.json({ projects: detected });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -8734,13 +9015,15 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       await central.close();
       
       if (!project) {
-        res.status(404).json({ error: "Project not found" });
-        return;
+        throw notFound("Project not found");
       }
       
       res.json(project);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -8764,8 +9047,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const project = await central.updateProject(req.params.id, updates);
       if (!project) {
         await central.close();
-        res.status(404).json({ error: "Project not found" });
-        return;
+        throw notFound("Project not found");
       }
 
       let resultProject = project;
@@ -8776,8 +9058,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
           resultProject = await central.assignProjectToNode(req.params.id, nodeId.trim());
         } else {
           await central.close();
-          res.status(400).json({ error: "nodeId must be a non-empty string or null" });
-          return;
+          throw badRequest("nodeId must be a non-empty string or null");
         }
       }
 
@@ -8785,8 +9066,11 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       
       res.json(resultProject);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.message?.includes("not found") ? 404 : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -8805,8 +9089,11 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       
       res.json({ success: true });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.message?.includes("not found") ? 404 : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -8825,16 +9112,14 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const project = await central.getProject(req.params.id);
       if (!project) {
         await central.close();
-        res.status(404).json({ error: "Project not found" });
-        return;
+        throw notFound("Project not found");
       }
 
       const health = await central.getProjectHealth(req.params.id);
       await central.close();
       
       if (!health) {
-        res.status(404).json({ error: "Project health not found" });
-        return;
+        throw notFound("Project health not found");
       }
 
       // If this dashboard serves the requested project, compute live counts
@@ -8864,7 +9149,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       res.json(health);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -8883,8 +9171,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       await central.close();
       
       if (!project) {
-        res.status(404).json({ error: "Project not found" });
-        return;
+        throw notFound("Project not found");
       }
       
       res.json({
@@ -8892,7 +9179,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
         rootDir: project.path,
       });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -8912,8 +9202,11 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       
       res.json(project);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.message?.includes("not found") ? 404 : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -8933,8 +9226,11 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       
       res.json(project);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.message?.includes("not found") ? 404 : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -8957,7 +9253,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       nodes.sort((a, b) => a.name.localeCompare(b.name));
       res.json(nodes);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -8971,34 +9270,29 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const { name, type, url, apiKey, maxConcurrent, capabilities } = req.body;
 
       if (!name || typeof name !== "string" || !name.trim()) {
-        res.status(400).json({ error: "name is required and must be a non-empty string" });
-        return;
+        throw badRequest("name is required and must be a non-empty string");
       }
 
       if (type !== "local" && type !== "remote") {
-        res.status(400).json({ error: "type must be 'local' or 'remote'" });
-        return;
+        throw badRequest("type must be 'local' or 'remote'");
       }
 
       if (type === "remote" && (!url || typeof url !== "string" || !url.trim())) {
-        res.status(400).json({ error: "url is required for remote nodes" });
-        return;
+        throw badRequest("url is required for remote nodes");
       }
 
       if (
         maxConcurrent !== undefined
         && (typeof maxConcurrent !== "number" || !Number.isFinite(maxConcurrent) || maxConcurrent < 1)
       ) {
-        res.status(400).json({ error: "maxConcurrent must be a number >= 1" });
-        return;
+        throw badRequest("maxConcurrent must be a number >= 1");
       }
 
       if (
         capabilities !== undefined
         && (!Array.isArray(capabilities) || capabilities.some((capability) => typeof capability !== "string"))
       ) {
-        res.status(400).json({ error: "capabilities must be an array of strings" });
-        return;
+        throw badRequest("capabilities must be an array of strings");
       }
 
       const { CentralCore } = await import("@fusion/core");
@@ -9017,8 +9311,11 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       await central.close();
       res.status(201).json(node);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.message?.includes("already exists") ? 409 : err.message?.includes("must") ? 400 : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -9036,13 +9333,15 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       await central.close();
 
       if (!node) {
-        res.status(404).json({ error: "Node not found" });
-        return;
+        throw notFound("Node not found");
       }
 
       res.json(node);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -9071,8 +9370,11 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       res.json(node);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.message?.includes("not found") ? 404 : err.message?.includes("must") ? 400 : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -9089,8 +9391,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const existing = await central.getNode(req.params.id);
       if (!existing) {
         await central.close();
-        res.status(404).json({ error: "Node not found" });
-        return;
+        throw notFound("Node not found");
       }
 
       await central.unregisterNode(req.params.id);
@@ -9098,7 +9399,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       res.json({ success: true });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -9117,8 +9421,11 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       res.json({ status: healthStatus });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const status = err.message?.includes("not found") ? 404 : 500;
-      res.status(status).json({ error: err.message });
+      throw new ApiError(status, err.message);
     }
   });
 
@@ -9136,8 +9443,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       await central.close();
 
       if (!node) {
-        res.status(404).json({ error: "Node not found" });
-        return;
+        throw notFound("Node not found");
       }
 
       if (node.type === "local") {
@@ -9149,9 +9455,12 @@ Output ONLY the prompt text (no markdown, no explanations).`;
         return;
       }
 
-      res.json({ error: "Remote node metrics not yet implemented" });
+      throw new ApiError(501, "Remote node metrics not yet implemented");
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -9177,7 +9486,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       
       res.json(entries);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -9197,7 +9509,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       
       res.json(state);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -9220,7 +9535,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       
       res.json({ hasProjects, singleProjectPath });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -9255,7 +9573,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
         })),
       });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -9274,8 +9595,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       };
 
       if (!Array.isArray(projects)) {
-        res.status(400).json({ error: "projects must be an array" });
-        return;
+        throw badRequest("projects must be an array");
       }
 
       const central = new CentralCore();
@@ -9294,7 +9614,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
         await central.close();
       }
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -9309,8 +9632,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const scopedStore = await getScopedStore(req);
       const task = await scopedStore.getTask(req.params.id);
       if (!task) {
-        res.status(404).json({ error: "Task not found" });
-        return;
+        throw notFound("Task not found");
       }
 
       // Done tasks: diff from the squash commit's first parent.
@@ -9475,7 +9797,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       res.json({ files, stats });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -9650,10 +9975,13 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       res.json(files);
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       if (err.code === "ENOENT") {
-        res.status(404).json({ error: `Task ${req.params.id} not found` });
+        throw notFound(`Task ${req.params.id} not found`);
       } else {
-        res.status(500).json({ error: err.message || "Internal server error" });
+        rethrowAsApiError(err, "Internal server error");
       }
     }
   });
@@ -9671,7 +9999,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const settings = await scopedStore.getSettings();
       res.json(settings.scripts ?? {});
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -9687,12 +10018,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const { name, command } = req.body;
       
       if (!name || typeof name !== "string" || !name.trim()) {
-        res.status(400).json({ error: "name is required" });
-        return;
+        throw badRequest("name is required");
       }
       if (command === undefined || typeof command !== "string") {
-        res.status(400).json({ error: "command is required" });
-        return;
+        throw badRequest("command is required");
       }
       
       const settings = await scopedStore.getSettings();
@@ -9703,7 +10032,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       await scopedStore.updateSettings({ scripts });
       res.json(scripts);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -9722,7 +10054,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       await scopedStore.updateSettings({ scripts });
       res.json(scripts);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -9765,7 +10100,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const mailbox = await msgStore.getMailbox(DASHBOARD_USER_ID, "user");
       res.json({ messages, total: messages.length, unreadCount: mailbox.unreadCount });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -9785,7 +10123,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const messages = await msgStore.getOutbox(DASHBOARD_USER_ID, "user", filter);
       res.json({ messages, total: messages.length });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -9799,7 +10140,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const mailbox = await msgStore.getMailbox(DASHBOARD_USER_ID, "user");
       res.json({ unreadCount: mailbox.unreadCount });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -9814,7 +10158,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const count = await msgStore.markAllAsRead(DASHBOARD_USER_ID, "user");
       res.json({ markedAsRead: count });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -9829,20 +10176,16 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       // Validate required fields
       if (!toId || typeof toId !== "string") {
-        res.status(400).json({ error: "toId is required" });
-        return;
+        throw badRequest("toId is required");
       }
       if (!toType || !VALID_PARTICIPANT_TYPES.includes(toType)) {
-        res.status(400).json({ error: `toType must be one of: ${VALID_PARTICIPANT_TYPES.join(", ")}` });
-        return;
+        throw badRequest(`toType must be one of: ${VALID_PARTICIPANT_TYPES.join(", ")}`);
       }
       if (!content || typeof content !== "string" || content.length === 0 || content.length > 2000) {
-        res.status(400).json({ error: "content is required and must be 1-2000 characters" });
-        return;
+        throw badRequest("content is required and must be 1-2000 characters");
       }
       if (!type || !VALID_MESSAGE_TYPES.includes(type)) {
-        res.status(400).json({ error: `type must be one of: ${VALID_MESSAGE_TYPES.join(", ")}` });
-        return;
+        throw badRequest(`type must be one of: ${VALID_MESSAGE_TYPES.join(", ")}`);
       }
 
       const msgStore = await getMessageStore(req);
@@ -9857,7 +10200,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       });
       res.status(201).json(message);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -9869,8 +10215,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
     try {
       const { participantType, participantId } = req.params;
       if (!VALID_PARTICIPANT_TYPES.includes(participantType as ParticipantType)) {
-        res.status(400).json({ error: `participantType must be one of: ${VALID_PARTICIPANT_TYPES.join(", ")}` });
-        return;
+        throw badRequest(`participantType must be one of: ${VALID_PARTICIPANT_TYPES.join(", ")}`);
       }
 
       const msgStore = await getMessageStore(req);
@@ -9880,7 +10225,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       );
       res.json(messages);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -9893,12 +10241,14 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const msgStore = await getMessageStore(req);
       const message = await msgStore.getMessage(req.params.id);
       if (!message) {
-        res.status(404).json({ error: "Message not found" });
-        return;
+        throw notFound("Message not found");
       }
       res.json(message);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -9912,11 +10262,13 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const message = await msgStore.markAsRead(req.params.id);
       res.json(message);
     } catch (err: any) {
-      if (err.message.includes("not found")) {
-        res.status(404).json({ error: err.message });
-        return;
+      if (err instanceof ApiError) {
+        throw err;
       }
-      res.status(500).json({ error: err.message });
+      if (err.message.includes("not found")) {
+        throw notFound(err.message);
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -9930,11 +10282,13 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       await msgStore.deleteMessage(req.params.id);
       res.status(204).send();
     } catch (err: any) {
-      if (err.message.includes("not found")) {
-        res.status(404).json({ error: err.message });
-        return;
+      if (err instanceof ApiError) {
+        throw err;
       }
-      res.status(500).json({ error: err.message });
+      if (err.message.includes("not found")) {
+        throw notFound(err.message);
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -9950,8 +10304,30 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const inbox = await msgStore.getInbox(agentId, "agent");
       res.json({ ...mailbox, messages: inbox });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
+  });
+
+  router.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+    if (res.headersSent) {
+      next(err);
+      return;
+    }
+
+    if (err instanceof ApiError) {
+      sendErrorResponse(res, err.statusCode, err.message, { details: err.details });
+      return;
+    }
+
+    if (err instanceof Error) {
+      sendErrorResponse(res, 500, err.message);
+      return;
+    }
+
+    sendErrorResponse(res, 500, "Internal server error");
   });
 
   return router;
@@ -10028,6 +10404,9 @@ async function executeSingleCommand(
 
     return { success: true, output, startedAt, completedAt: new Date().toISOString() };
   } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
     const stdout = err.stdout ?? "";
     const stderr = err.stderr ?? "";
     let output = stdout;
@@ -10314,6 +10693,9 @@ function registerModelsRoute(router: Router, modelRegistry?: ModelRegistryLike, 
 
       res.json({ models, favoriteProviders, favoriteModels });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       const message = err instanceof Error ? err.message : String(err);
       console.log(`[models] Failed to load models: ${message}`);
       res.json({ models: [], favoriteProviders: [], favoriteModels: [] });
@@ -10377,7 +10759,10 @@ function registerAuthRoutes(router: Router, authStorage?: AuthStorageLike): void
 
       res.json({ providers });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -10395,22 +10780,19 @@ function registerAuthRoutes(router: Router, authStorage?: AuthStorageLike): void
     try {
       const { provider } = req.body;
       if (!provider || typeof provider !== "string") {
-        res.status(400).json({ error: "provider is required" });
-        return;
+        throw badRequest("provider is required");
       }
 
       // Prevent concurrent logins for the same provider
       if (loginInProgress.has(provider)) {
-        res.status(409).json({ error: `Login already in progress for ${provider}` });
-        return;
+        throw conflict(`Login already in progress for ${provider}`);
       }
 
       const storage = getAuthStorage();
       const oauthProviders = storage.getOAuthProviders();
       const found = oauthProviders.find((p) => p.id === provider);
       if (!found) {
-        res.status(400).json({ error: `Unknown provider: ${provider}` });
-        return;
+        throw badRequest(`Unknown provider: ${provider}`);
       }
 
       const abortController = new AbortController();
@@ -10461,10 +10843,13 @@ function registerAuthRoutes(router: Router, authStorage?: AuthStorageLike): void
       clearTimeout(timeout);
       res.json({ url: authInfo.url, instructions: authInfo.instructions });
     } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
       // Clean up on error
       const provider = req.body?.provider;
       if (provider) loginInProgress.delete(provider);
-      res.status(500).json({ error: err.message });
+      rethrowAsApiError(err);
     }
   });
 
@@ -10478,15 +10863,17 @@ function registerAuthRoutes(router: Router, authStorage?: AuthStorageLike): void
     try {
       const { provider } = req.body;
       if (!provider || typeof provider !== "string") {
-        res.status(400).json({ error: "provider is required" });
-        return;
+        throw badRequest("provider is required");
       }
 
       const storage = getAuthStorage();
       storage.logout(provider);
       res.json({ success: true });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -10503,34 +10890,33 @@ function registerAuthRoutes(router: Router, authStorage?: AuthStorageLike): void
     try {
       const { provider, apiKey } = req.body;
       if (!provider || typeof provider !== "string") {
-        res.status(400).json({ error: "provider is required" });
-        return;
+        throw badRequest("provider is required");
       }
       if (!apiKey || typeof apiKey !== "string" || !apiKey.trim()) {
-        res.status(400).json({ error: "apiKey is required and must be a non-empty string" });
-        return;
+        throw badRequest("apiKey is required and must be a non-empty string");
       }
 
       const storage = getAuthStorage();
 
       // Check that the storage supports API key management
       if (!storage.setApiKey) {
-        res.status(400).json({ error: "API key management is not supported" });
-        return;
+        throw badRequest("API key management is not supported");
       }
 
       // Validate the provider is an API-key-backed provider
       const apiKeyProviders = storage.getApiKeyProviders?.() ?? [];
       const found = apiKeyProviders.find((p) => p.id === provider);
       if (!found) {
-        res.status(400).json({ error: `Unknown API key provider: ${provider}` });
-        return;
+        throw badRequest(`Unknown API key provider: ${provider}`);
       }
 
       storage.setApiKey(provider, apiKey.trim());
       res.json({ success: true });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -10544,20 +10930,21 @@ function registerAuthRoutes(router: Router, authStorage?: AuthStorageLike): void
     try {
       const { provider } = req.body;
       if (!provider || typeof provider !== "string") {
-        res.status(400).json({ error: "provider is required" });
-        return;
+        throw badRequest("provider is required");
       }
 
       const storage = getAuthStorage();
       if (!storage.clearApiKey) {
-        res.status(400).json({ error: "API key management is not supported" });
-        return;
+        throw badRequest("API key management is not supported");
       }
 
       storage.clearApiKey(provider);
       res.json({ success: true });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
     }
   });
 }

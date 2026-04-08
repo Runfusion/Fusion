@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
+import { sendErrorResponse } from "./api-error.js";
 
 export interface RateLimitOptions {
   /** Time window in milliseconds (default: 60000 = 1 minute) */
@@ -66,7 +67,7 @@ export function rateLimit(options: RateLimitOptions = {}) {
 
     if (record.count > max) {
       res.setHeader("Retry-After", String(resetSeconds));
-      res.status(429).json({ error: message });
+      sendErrorResponse(res, 429, message);
       return;
     }
 

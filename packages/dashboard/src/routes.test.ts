@@ -178,6 +178,59 @@ describe("GET /tasks", () => {
   });
 });
 
+describe("Standardized error responses", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("returns 400 validation errors as { error } without success field", async () => {
+    const res = await GET(buildApp(), "/api/tasks?limit=-1");
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: expect.stringContaining("limit") });
+    expect(res.body).not.toHaveProperty("success");
+  });
+
+  it("returns 404 not-found errors as { error }", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockRejectedValueOnce(Object.assign(new Error("Task NOPE not found"), { code: "ENOENT" }));
+
+    const res = await GET(buildApp(), "/api/tasks/NOPE");
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: expect.stringContaining("not found") });
+  });
+
+  it("returns 500 errors as { error } and logs to console.error", async () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    (store.getSettings as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Config read failed"));
+
+    const res = await GET(buildApp(), "/api/settings");
+
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: "Config read failed" });
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "[api:error]",
+      expect.objectContaining({
+        method: "GET",
+        path: "/api/settings",
+        statusCode: 500,
+        message: "Config read failed",
+      }),
+    );
+
+    consoleErrorSpy.mockRestore();
+  });
+});
+
 describe("GET /projects", () => {
   function buildApp() {
     const app = express();
@@ -3555,7 +3608,7 @@ describe("Pause/Unpause endpoints", () => {
 
       expect(res.status).toBe(429);
       expect(res.body.error).toContain("rate limit exceeded");
-      expect(res.body.resetAt).toBe("2026-03-30T12:05:00.000Z");
+      expect(res.body.details?.resetAt).toBe("2026-03-30T12:05:00.000Z");
 
       canMakeRequestSpy.mockRestore();
       getResetTimeSpy.mockRestore();
@@ -3860,7 +3913,7 @@ describe("POST /github/issues/import", () => {
 
     expect(res.status).toBe(409);
     expect(res.body.error).toContain("already imported");
-    expect(res.body.existingTaskId).toBe("FN-002");
+    expect(res.body.details?.existingTaskId).toBe("FN-002");
     expect(store.createTask).not.toHaveBeenCalled();
   });
 
@@ -6745,7 +6798,7 @@ describe("Terminal session routes", () => {
       expect(res.status).toBe(503);
       expect(res.body).toEqual({
         error: "Maximum terminal sessions reached. Please close an existing terminal and try again.",
-        code: "max_sessions",
+        details: { code: "max_sessions" },
       });
 
       vi.restoreAllMocks();
@@ -6774,7 +6827,7 @@ describe("Terminal session routes", () => {
       );
 
       expect(res.status).toBe(status);
-      expect(res.body).toEqual({ error, code });
+      expect(res.body).toEqual({ error, details: { code } });
 
       vi.restoreAllMocks();
     });
@@ -8854,7 +8907,7 @@ describe("POST /api/agents/:id/runs", () => {
     const res2 = await REQUEST(buildApp(), "POST", `/api/agents/${agentId}/runs`);
     expect(res2.status).toBe(409);
     expect(res2.body.error).toContain("active run");
-    expect(res2.body.runId).toBeTruthy();
+    expect(res2.body.details?.runId).toBeTruthy();
   });
 });
 
