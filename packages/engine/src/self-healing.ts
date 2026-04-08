@@ -213,9 +213,10 @@ export class SelfHealingManager {
           status: "failed",
           error: `Task stuck ${newCount} times — exceeded maximum of ${maxKills} stuck kills`,
         });
+        await this.store.moveTask(taskId, "in-review");
         await this.store.logEntry(
           taskId,
-          `Permanently failed: agent stuck ${newCount} times (max: ${maxKills})`,
+          `Permanently failed: agent stuck ${newCount} times (max: ${maxKills}) — moved to in-review`,
         );
         return false;
       }

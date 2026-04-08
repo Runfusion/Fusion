@@ -975,11 +975,15 @@ export class TaskExecutor {
               recoveryRetryCount: null,
               nextRecoveryAt: null,
             });
+            await this.store.moveTask(task.id, "in-review");
+            executorLog.log(`✗ ${task.id} transient retries exhausted → in-review`);
             this.options.onError?.(task, err);
           } else {
             executorLog.error(`✗ ${task.id} step-session execution failed:`, err.message);
             await this.store.logEntry(task.id, `Step-session execution failed: ${err.message}`);
             await this.store.updateTask(task.id, { status: "failed", error: err.message });
+            await this.store.moveTask(task.id, "in-review");
+            executorLog.log(`✗ ${task.id} step-session execution failed → in-review`);
             this.options.onError?.(task, err);
           }
         } finally {
@@ -1514,12 +1518,16 @@ export class TaskExecutor {
             recoveryRetryCount: null,
             nextRecoveryAt: null,
           });
+          await this.store.moveTask(task.id, "in-review");
+          executorLog.log(`✗ ${task.id} transient retries exhausted → in-review`);
           this.options.onError?.(task, err);
           return;
         }
         executorLog.error(`✗ ${task.id} execution failed:`, err.message);
         await this.store.logEntry(task.id, `Execution failed: ${err.message}`);
         await this.store.updateTask(task.id, { status: "failed", error: err.message });
+        await this.store.moveTask(task.id, "in-review");
+        executorLog.log(`✗ ${task.id} execution failed → in-review`);
         this.options.onError?.(task, err);
       }
     } finally {

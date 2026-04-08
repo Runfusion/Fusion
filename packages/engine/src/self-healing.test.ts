@@ -210,7 +210,7 @@ describe("SelfHealingManager", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-001", { stuckKillCount: 3 });
     });
 
-    it("returns false and marks failed when budget exceeded", async () => {
+    it("moves task to in-review when stuck-kill budget is exhausted", async () => {
       (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: "FN-001",
         stuckKillCount: 6,
@@ -226,9 +226,10 @@ describe("SelfHealingManager", () => {
         status: "failed",
         error: expect.stringContaining("exceeded maximum of 6"),
       });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-001",
-        expect.stringContaining("Permanently failed"),
+        expect.stringContaining("moved to in-review"),
       );
     });
 

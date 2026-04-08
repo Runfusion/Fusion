@@ -254,6 +254,7 @@ describe("TaskExecutor with semaphore", () => {
     });
 
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "failed", error: expect.any(String) });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
     expect(onError).toHaveBeenCalled();
   });
 
@@ -4909,7 +4910,7 @@ describe("TaskExecutor bounded recovery retries", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
-  it("escalates to failure when recovery retries are exhausted", async () => {
+  it("moves task to in-review when transient retries are exhausted (single-session)", async () => {
     const store = createMockStore();
     const onError = vi.fn();
 
@@ -4932,12 +4933,13 @@ describe("TaskExecutor bounded recovery retries", () => {
       updatedAt: new Date().toISOString(),
     });
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       status: "failed",
       error: "socket hang up",
       recoveryRetryCount: null,
       nextRecoveryAt: null,
-    }));
+    });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
     expect(onError).toHaveBeenCalled();
   });
@@ -8591,7 +8593,7 @@ describe("StepSessionExecutor integration", () => {
     expect(onComplete).not.toHaveBeenCalled();
   });
 
-  it("exception from executeAll marks task as failed", async () => {
+  it("moves task to in-review when step-session execution fails", async () => {
     const store = createStepSessionStore();
 
     mockExecuteAll.mockRejectedValue(new Error("Infrastructure failure"));
@@ -8605,6 +8607,28 @@ describe("StepSessionExecutor integration", () => {
       status: "failed",
       error: "Infrastructure failure",
     }));
+    expect(store.moveTask).toHaveBeenCalledWith("FN-200", "in-review");
+    expect(onError).toHaveBeenCalled();
+  });
+
+  it("moves task to in-review when transient retries are exhausted (step-session)", async () => {
+    const store = createStepSessionStore();
+
+    mockExecuteAll.mockRejectedValue(new Error("socket hang up"));
+
+    const onError = vi.fn();
+    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+
+    await executor.execute(createTaskWithSteps({ recoveryRetryCount: 3 }));
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-200", {
+      status: "failed",
+      error: "socket hang up",
+      recoveryRetryCount: null,
+      nextRecoveryAt: null,
+    });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-200", "in-review");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-200", "todo");
     expect(onError).toHaveBeenCalled();
   });
 
