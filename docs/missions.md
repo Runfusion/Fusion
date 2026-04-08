@@ -1,0 +1,100 @@
+# Missions
+
+[← Docs index](./README.md)
+
+Missions provide structured planning across multiple related tasks.
+
+## Mission Hierarchy
+
+Fusion models delivery as:
+
+**Mission → Milestone → Slice → Feature → Task**
+
+Example:
+
+```text
+Mission: Improve Reliability
+  Milestone: Stabilize execution pipeline
+    Slice: Retry and recovery hardening
+      Feature: Stuck task recovery improvements
+        Task: FN-210
+        Task: FN-214
+```
+
+## Creating Missions
+
+### Dashboard
+
+Use the Mission Manager UI to create missions and build hierarchy interactively.
+
+### CLI
+
+```bash
+fn mission create "Reliability initiative" "Reduce execution failures and improve recovery"
+fn mission list
+fn mission show mission_123
+fn mission activate-slice slice_456
+fn mission delete mission_123 --force
+```
+
+## Mission Interview and Planning Workflow
+
+The dashboard supports mission planning workflows where you can:
+
+- Define mission outcomes
+- Break work into milestones/slices/features
+- Associate features to executable tasks
+- Track progress at each layer
+
+## Slice Activation and Progress
+
+Slices represent staged execution windows.
+
+- Pending slices remain inactive
+- Active slices are currently allowed to progress
+- Completion rolls up through feature → slice → milestone → mission
+
+Manual activation is available through `fn mission activate-slice <slice-id>`.
+
+## Mission Autopilot
+
+When `autopilotEnabled` is on, Fusion can watch completion events and progress missions automatically.
+
+State machine:
+
+- `inactive`
+- `watching`
+- `activating`
+- `completing`
+
+Typical flow:
+
+1. Mission is watched
+2. Task completion updates feature status
+3. If a slice is complete, autopilot activates next pending slice
+4. When milestones are all complete, mission transitions to complete
+
+## `autopilotEnabled` vs `autoAdvance`
+
+- **`autopilotEnabled`**: enables background monitoring/orchestration behavior
+- **`autoAdvance`**: allows automatic slice activation when current slice completes
+
+Combination behavior:
+
+- `autopilotEnabled=true`, `autoAdvance=true` → full autonomous progression
+- `autopilotEnabled=true`, `autoAdvance=false` → monitored mission with manual slice activation
+
+## Autopilot API Endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/missions/:missionId/autopilot` | Get autopilot status for mission |
+| `PATCH /api/missions/:missionId/autopilot` | Enable/disable autopilot (`{ enabled: boolean }`) |
+| `POST /api/missions/:missionId/autopilot/start` | Start watching manually |
+| `POST /api/missions/:missionId/autopilot/stop` | Stop watching manually |
+
+## Screenshot
+
+![Mission manager](./screenshots/mission-manager.png)
+
+See also: [Multi-Project](./multi-project.md) and [Task Management](./task-management.md).
