@@ -594,75 +594,96 @@ describe("PlanningModeModal", () => {
     });
 
     it("receives second question after answering first without hanging (race condition fix)", async () => {
-      const secondQuestion: PlanningQuestion = {
-        id: "q-requirements",
-        type: "text",
-        question: "What are the key requirements?",
-        description: "Describe the requirements",
-      };
+      // Use fake timers to avoid CI flakiness from tiny setTimeout delays in this race-condition scenario.
+      vi.useFakeTimers();
 
-      // Track how many times connectPlanningStream is called
-      let streamConnectionCount = 0;
-      let streamHandlers: any = null;
-
-      mockConnectPlanningStream.mockImplementation((_sessionId: string, _projectId: string | undefined, handlers: any) => {
-        streamConnectionCount++;
-        streamHandlers = handlers;
-        
-        // Only send first question on initial connection
-        if (streamConnectionCount === 1) {
-          setTimeout(() => {
-            handlers.onQuestion?.(mockQuestion);
-          }, 10);
-        }
-        
-        return {
-          close: vi.fn(),
-          isConnected: vi.fn().mockReturnValue(true),
+      try {
+        const secondQuestion: PlanningQuestion = {
+          id: "q-requirements",
+          type: "text",
+          question: "What are the key requirements?",
+          description: "Describe the requirements",
         };
-      });
 
-      mockRespondToPlanning.mockImplementation(async () => {
-        // Simulate server broadcasting second question via the existing SSE connection
-        // This should use the same handlers from the initial connection
-        setTimeout(() => {
-          if (streamHandlers) {
-            streamHandlers.onQuestion?.(secondQuestion);
+        // Track how many times connectPlanningStream is called
+        let streamConnectionCount = 0;
+        let streamHandlers: any = null;
+        let deliverSecondQuestion: (() => void) | null = null;
+
+        mockConnectPlanningStream.mockImplementation((_sessionId: string, _projectId: string | undefined, handlers: any) => {
+          streamConnectionCount++;
+          streamHandlers = handlers;
+
+          // Emit the first question synchronously on initial connection.
+          if (streamConnectionCount === 1) {
+            handlers.onQuestion?.(mockQuestion);
           }
-        }, 5);
-        return { sessionId: "session-123", currentQuestion: null, summary: null };
-      });
 
-      render(
-        <PlanningModeModal
-          isOpen={true}
-          onClose={mockOnClose}
-          onTaskCreated={mockOnTaskCreated}
-          tasks={mockTasks}
-        />
-      );
+          return {
+            close: vi.fn(),
+            isConnected: vi.fn().mockReturnValue(true),
+          };
+        });
 
-      const textarea = screen.getByPlaceholderText(/e.g., Build a user authentication/);
-      fireEvent.change(textarea, { target: { value: "Build auth system" } });
-      fireEvent.click(screen.getByText("Start Planning"));
+        mockRespondToPlanning.mockImplementation(async () => {
+          return new Promise((resolve) => {
+            deliverSecondQuestion = () => {
+              streamHandlers?.onQuestion?.(secondQuestion);
+              resolve({ sessionId: "session-123", currentQuestion: null, summary: null });
+            };
+          });
+        });
 
-      // Wait for first question
-      await waitFor(() => {
+        render(
+          <PlanningModeModal
+            isOpen={true}
+            onClose={mockOnClose}
+            onTaskCreated={mockOnTaskCreated}
+            tasks={mockTasks}
+          />
+        );
+
+        const textarea = screen.getByPlaceholderText(/e.g., Build a user authentication/);
+        fireEvent.change(textarea, { target: { value: "Build auth system" } });
+        fireEvent.click(screen.getByText("Start Planning"));
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
         expect(screen.getByText("What is the scope?")).toBeDefined();
-      });
 
-      // Answer the first question
-      fireEvent.click(screen.getByText("Medium"));
-      fireEvent.click(screen.getByText("Continue"));
+        // Answer the first question.
+        fireEvent.click(screen.getByText("Medium"));
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
 
-      // Wait for second question to appear (should NOT hang)
-      await waitFor(() => {
+        const continueButton = screen.getByRole("button", { name: "Continue" });
+        expect(continueButton.hasAttribute("disabled")).toBe(false);
+        fireEvent.click(continueButton);
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+        expect(mockRespondToPlanning).toHaveBeenCalledTimes(1);
+        expect(deliverSecondQuestion).not.toBeNull();
+
+        act(() => {
+          deliverSecondQuestion?.();
+        });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+
+        // Verify second question appears without hanging.
         expect(screen.getByText("What are the key requirements?")).toBeDefined();
-      }, { timeout: 3000 });
 
-      // Verify SSE connection was established only ONCE (not reconnected)
-      // This confirms the race condition fix - the same connection is reused
-      expect(streamConnectionCount).toBe(1);
+        // Verify SSE connection was established only ONCE (not reconnected).
+        // This confirms the race condition fix - the same connection is reused.
+        expect(streamConnectionCount).toBe(1);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
