@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const runTaskCreate = vi.fn();
 const runTaskList = vi.fn();
 const runDesktop = vi.fn();
+const runServe = vi.fn();
 const runTaskPlan = vi.fn();
 const runTaskImportFromGitHub = vi.fn();
 const runSettingsShow = vi.fn();
@@ -39,6 +40,10 @@ vi.mock("../commands/dashboard.js", () => ({
 
 vi.mock("../commands/desktop.js", () => ({
   runDesktop,
+}));
+
+vi.mock("../commands/serve.js", () => ({
+  runServe,
 }));
 
 vi.mock("../commands/task.js", () => ({
@@ -277,6 +282,16 @@ describe("bin", () => {
     expect(errorSpy).toHaveBeenCalledWith("Unknown subcommand: node wat");
   });
 
+  it("routes serve command with port, host, paused, and interactive flags", async () => {
+    await runBin(["serve", "--port", "5050", "--host", "127.0.0.1", "--paused", "--interactive"]);
+
+    expect(runServe).toHaveBeenCalledWith(5050, {
+      paused: true,
+      interactive: true,
+      host: "127.0.0.1",
+    });
+  });
+
   it("routes desktop command flags", async () => {
     await runBin(["desktop", "--dev", "--paused", "--interactive"]);
 
@@ -323,6 +338,7 @@ describe("bin", () => {
     const help = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(help).toContain("fn project list | ls");
     expect(help).toContain("fn node list | ls");
+    expect(help).toContain("fn serve [--port <port>] [--host <host>] [--paused]");
     expect(help).toContain("fn task comments <id>");
     expect(help).toContain("--project, -P <name>");
   });

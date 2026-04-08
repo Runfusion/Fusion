@@ -43,6 +43,8 @@ const MAX_AI_SESSION_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 export interface ServerOptions {
   /** Custom merge handler — when provided, used instead of store.mergeTask */
   onMerge?: (taskId: string) => Promise<MergeResult>;
+  /** When true, run API/websocket server only (skip frontend static assets + SPA fallback) */
+  headless?: boolean;
   /** Maximum concurrent worktrees / execution slots (default 2) */
   maxConcurrent?: number;
   /** Optional GitHub token for PR operations — falls back to GITHUB_TOKEN env var */
@@ -142,6 +144,8 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   // Initialize terminal service with project root
   getTerminalService(store.getRootDir());
 
+  const isHeadless = options?.headless === true;
+
   // Serve built React app
   // Resolution order:
   //   1. FUSION_CLIENT_DIR env override (explicit)
@@ -157,7 +161,9 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
         ? join(__dirname, "..", "dist", "client")
         : join(__dirname, "..", "client");
 
-  app.use(express.static(clientDir));
+  if (!isHeadless) {
+    app.use(express.static(clientDir));
+  }
 
   // Rate limiting — stricter limit on SSE connections
   app.get("/api/events", rateLimit(RATE_LIMITS.sse), async (req, res) => {
@@ -375,6 +381,14 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     );
   }
 
+  app.get("/api/health", (_req, res) => {
+    res.json({
+      status: "ok",
+      version: process.env.npm_package_version ?? "0.4.0",
+      uptime: Math.floor(process.uptime()),
+    });
+  });
+
   // REST API
   app.use("/api", createApiRoutes(store, { ...options, aiSessionStore }));
 
@@ -397,10 +411,12 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     res.status(500).json({ error: "Internal server error" });
   });
 
-  // SPA fallback
-  app.get("/{*splat}", (_req, res) => {
-    res.sendFile(join(clientDir, "index.html"));
-  });
+  if (!isHeadless) {
+    // SPA fallback
+    app.get("/{*splat}", (_req, res) => {
+      res.sendFile(join(clientDir, "index.html"));
+    });
+  }
 
   const dashboardApp = app as DashboardExpressApp;
   dashboardApp.terminalWsServer = null;

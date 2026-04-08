@@ -91,6 +91,33 @@ async function REQUEST(
   return performRequest(app, method, path, body, headers);
 }
 
+describe("createServer health and headless mode", () => {
+  it("returns liveness payload from /api/health", async () => {
+    const store = createMockStore();
+    const app = createServer(store);
+
+    const res = await GET(app, "/api/health");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      status: "ok",
+      version: expect.any(String),
+      uptime: expect.any(Number),
+    });
+  });
+
+  it("serves API routes but no frontend when headless=true", async () => {
+    const store = createMockStore();
+    const app = createServer(store, { headless: true });
+
+    const tasksRes = await GET(app, "/api/tasks");
+    expect(tasksRes.status).toBe(200);
+
+    const rootRes = await GET(app, "/");
+    expect(rootRes.status).toBe(404);
+  });
+});
+
 describe("API Error Handling Middleware", () => {
   let store: TaskStore;
 

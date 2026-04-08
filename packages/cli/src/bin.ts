@@ -39,6 +39,7 @@ if (isBunBinary) {
 
 // Dynamic imports so the pi-coding-agent config module sees PI_PACKAGE_DIR
 const { runDashboard } = await import("./commands/dashboard.js");
+const { runServe } = await import("./commands/serve.js");
 const { runDesktop } = await import("./commands/desktop.js");
 const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskLogs, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate, runTaskArchive, runTaskUnarchive, runTaskRefine, runTaskPlan, runTaskDelete, runTaskRetry, runTaskComment, runTaskComments, runTaskSteer, runTaskPrCreate } = await import("./commands/task.js");
 const { runSettingsShow, runSettingsSet } = await import("./commands/settings.js");
@@ -63,6 +64,8 @@ Usage:
   fn dashboard --paused               Start with automation paused
   fn dashboard --dev                  Start web UI only (no AI engine)
   fn dashboard --interactive          Start with interactive port selection
+  fn serve [--port <port>] [--host <host>] [--paused]
+                                      Start Fusion as a headless node (API + engine, no UI)
   fn desktop                          Launch the Fusion desktop app (Electron)
   fn desktop --dev                    Launch with hot-reload (connects to Vite dev server)
   fn desktop --paused                 Launch with automation paused
@@ -138,7 +141,8 @@ Usage:
 
 Options:
   --project, -P <name>       Target a specific project (bypasses CWD detection)
-  --port, -p <port>          Dashboard port (default: 4040)
+  --port, -p <port>          Dashboard/serve port (default: 4040)
+  --host <host>              Serve host (default: 0.0.0.0)
   --interactive              Interactive mode (port selection for dashboard, issue selection for import)
   --paused                   Start with engine paused (automation disabled)
   --dev                      Start dashboard only (no AI engine)
@@ -296,6 +300,19 @@ async function main() {
         const dev = args.includes("--dev");
         const interactive = args.includes("--interactive");
         await runDashboard(port, { paused, dev, interactive });
+        break;
+      }
+
+      case "serve": {
+        const portIdx = args.indexOf("--port");
+        const portIdxShort = args.indexOf("-p");
+        const pi = portIdx !== -1 ? portIdx : portIdxShort;
+        const port = pi !== -1 ? parseInt(args[pi + 1], 10) : 4040;
+        const paused = args.includes("--paused");
+        const interactive = args.includes("--interactive");
+        const hostIdx = args.indexOf("--host");
+        const host = hostIdx !== -1 && hostIdx + 1 < args.length ? args[hostIdx + 1] : undefined;
+        await runServe(port, { paused, interactive, host });
         break;
       }
 
