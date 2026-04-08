@@ -22,13 +22,20 @@
   "scripts": {
     "build": "vite build && tsc",
     "build:client": "vite build",
+    "cap:open:android": "cap open android",
+    "cap:open:ios": "cap open ios",
+    "cap:run:android": "cap run android",
+    "cap:run:ios": "cap run ios",
+    "cap:sync": "cap sync",
     "dev": "pnpm build && pnpm typecheck && pnpm dev:serve",
     "dev:serve": "vite dev",
+    "mobile:prepare": "pnpm build:client && pnpm cap:sync",
+    "postinstall": "chmod +x node_modules/.pnpm/node-pty*/node_modules/node-pty/prebuilds/darwin-*/spawn-helper node_modules/.pnpm/node-pty*/node_modules/node-pty/prebuilds/darwin-*/*.node 2>/dev/null || true",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.app.json",
-    "postinstall": "chmod +x node_modules/.pnpm/node-pty*/node_modules/node-pty/prebuilds/darwin-*/spawn-helper node_modules/.pnpm/node-pty*/node_modules/node-pty/prebuilds/darwin-*/*.node 2>/dev/null || true"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.app.json"
   },
   "dependencies": {
+    "@capacitor/core": "^7.0.0",
     "@codemirror/basic-setup": "^0.20.0",
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-javascript": "^6.2.3",
@@ -58,6 +65,9 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/cli": "^7.0.0",
+    "@capacitor/ios": "^7.0.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.5.0",

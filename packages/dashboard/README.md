@@ -386,6 +386,55 @@ The dashboard includes several runtime safeguards to stay responsive during long
 - **SSE cleanup and reconnects**: Task and log streaming hooks explicitly clean up EventSource listeners/connections, automatically refetch the task snapshot after a stream reconnect, and avoid duplicate stream setup during rerenders.
 - **Foreground recovery refresh**: The task board refreshes its task snapshot when the browser tab becomes visible again so long-lived hidden tabs do not keep showing stale board/list data after missed live events.
 
+## Mobile Development (Capacitor)
+
+Capacitor wraps the existing Fusion dashboard web build into native iOS and Android shells, so mobile uses the same React UI and API surface as desktop web.
+
+### Prerequisites
+
+- **iOS**: Xcode + CocoaPods installed
+- **Android**: Android Studio + Android SDK installed
+
+### Setup
+
+```bash
+pnpm install
+pnpm --filter @fusion/dashboard mobile:prepare
+```
+
+`mobile:prepare` runs `build:client` and then `cap:sync`, copying `dist/client` assets into native platform projects.
+
+### Running / Opening Native Projects
+
+```bash
+pnpm --filter @fusion/dashboard cap:open:ios
+pnpm --filter @fusion/dashboard cap:open:android
+```
+
+You can also run directly:
+
+```bash
+pnpm --filter @fusion/dashboard cap:run:ios
+pnpm --filter @fusion/dashboard cap:run:android
+```
+
+### Development with a Live Backend
+
+Set `FUSION_BACKEND_URL` before sync/run commands so the mobile shell connects to a running Fusion backend (default dashboard backend port is `4040`):
+
+```bash
+FUSION_BACKEND_URL=http://YOUR_IP:4040 pnpm --filter @fusion/dashboard cap:sync
+```
+
+### Mobile Scripts
+
+- `cap:sync`
+- `cap:open:ios`
+- `cap:open:android`
+- `cap:run:ios`
+- `cap:run:android`
+- `mobile:prepare`
+
 ## Development
 
 ```bash
