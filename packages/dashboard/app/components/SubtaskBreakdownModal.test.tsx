@@ -7,6 +7,9 @@ const mockRetrySubtaskSession = vi.fn();
 const mockConnectSubtaskStream = vi.fn();
 const mockCreateTasksFromBreakdown = vi.fn();
 const mockCancelSubtaskBreakdown = vi.fn();
+const mockAcquireSessionLock = vi.fn();
+const mockReleaseSessionLock = vi.fn();
+const mockForceAcquireSessionLock = vi.fn();
 
 vi.mock("../api", () => ({
   startSubtaskBreakdown: (...args: any[]) => mockStartSubtaskBreakdown(...args),
@@ -14,6 +17,9 @@ vi.mock("../api", () => ({
   connectSubtaskStream: (...args: any[]) => mockConnectSubtaskStream(...args),
   createTasksFromBreakdown: (...args: any[]) => mockCreateTasksFromBreakdown(...args),
   cancelSubtaskBreakdown: (...args: any[]) => mockCancelSubtaskBreakdown(...args),
+  acquireSessionLock: (...args: any[]) => mockAcquireSessionLock(...args),
+  releaseSessionLock: (...args: any[]) => mockReleaseSessionLock(...args),
+  forceAcquireSessionLock: (...args: any[]) => mockForceAcquireSessionLock(...args),
 }));
 
 vi.mock("../hooks/modalPersistence", () => ({
@@ -49,6 +55,9 @@ describe("SubtaskBreakdownModal", () => {
     });
     mockCreateTasksFromBreakdown.mockResolvedValue({ tasks: [{ id: "FN-101" }, { id: "FN-102" }] });
     mockCancelSubtaskBreakdown.mockResolvedValue(undefined);
+    mockAcquireSessionLock.mockResolvedValue({ acquired: true, currentHolder: null });
+    mockReleaseSessionLock.mockResolvedValue(undefined);
+    mockForceAcquireSessionLock.mockResolvedValue({ acquired: true, currentHolder: null });
     vi.stubGlobal("confirm", vi.fn(() => true));
   });
 
@@ -71,6 +80,27 @@ describe("SubtaskBreakdownModal", () => {
     renderModal();
     await waitFor(() => expect(mockStartSubtaskBreakdown).toHaveBeenCalledWith("Build a complex feature", undefined));
     expect(await screen.findByText("AI is generating subtasks...")).toBeInTheDocument();
+  });
+
+  it("shows lock overlay and allows take-control", async () => {
+    window.sessionStorage.setItem("fusion-tab-id", "tab-self");
+    mockAcquireSessionLock.mockResolvedValueOnce({ acquired: false, currentHolder: "tab-other" });
+
+    renderModal();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("session-lock-overlay")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("Take Control"));
+
+    await waitFor(() => {
+      expect(mockForceAcquireSessionLock).toHaveBeenCalledWith("session-123", "tab-self");
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("session-lock-overlay")).not.toBeInTheDocument();
+    });
   });
 
   it("hides send to background button in initial state", () => {
@@ -495,7 +525,7 @@ describe("SubtaskBreakdownModal", () => {
       fireEvent.click(retryButton);
 
       await waitFor(() => {
-        expect(mockRetrySubtaskSession).toHaveBeenCalledWith("session-123", undefined);
+        expect(mockRetrySubtaskSession).toHaveBeenCalledWith("session-123", undefined, expect.any(String));
       });
       expect(mockConnectSubtaskStream).toHaveBeenCalledTimes(2);
     });

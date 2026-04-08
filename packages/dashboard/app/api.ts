@@ -1245,11 +1245,12 @@ export function startPlanningStreaming(
 export function respondToPlanning(
   sessionId: string,
   responses: Record<string, unknown>,
-  projectId?: string
+  projectId?: string,
+  tabId?: string,
 ): Promise<PlanningSession> {
   return api<PlanningSession>(withProjectId("/planning/respond", projectId), {
     method: "POST",
-    body: JSON.stringify({ sessionId, responses }),
+    body: JSON.stringify({ sessionId, responses, tabId }),
   });
 }
 
@@ -1257,20 +1258,22 @@ export function respondToPlanning(
 export function retryPlanningSession(
   sessionId: string,
   projectId?: string,
+  tabId?: string,
 ): Promise<{ success: boolean; sessionId: string }> {
   return api<{ success: boolean; sessionId: string }>(
     withProjectId(`/planning/${encodeURIComponent(sessionId)}/retry`, projectId),
     {
       method: "POST",
+      ...(tabId ? { body: JSON.stringify({ tabId }) } : {}),
     },
   );
 }
 
 /** Cancel an active planning session */
-export function cancelPlanning(sessionId: string, projectId?: string): Promise<void> {
+export function cancelPlanning(sessionId: string, projectId?: string, tabId?: string): Promise<void> {
   return api<void>(withProjectId("/planning/cancel", projectId), {
     method: "POST",
-    body: JSON.stringify({ sessionId }),
+    body: JSON.stringify({ sessionId, tabId }),
   });
 }
 
@@ -1819,11 +1822,13 @@ export function startSubtaskBreakdown(description: string, projectId?: string): 
 export function retrySubtaskSession(
   sessionId: string,
   projectId?: string,
+  tabId?: string,
 ): Promise<{ success: boolean; sessionId: string }> {
   return api<{ success: boolean; sessionId: string }>(
     withProjectId(`/subtasks/${encodeURIComponent(sessionId)}/retry`, projectId),
     {
       method: "POST",
+      ...(tabId ? { body: JSON.stringify({ tabId }) } : {}),
     },
   );
 }
@@ -1933,10 +1938,10 @@ export function createTasksFromBreakdown(
   });
 }
 
-export function cancelSubtaskBreakdown(sessionId: string, projectId?: string): Promise<void> {
+export function cancelSubtaskBreakdown(sessionId: string, projectId?: string, tabId?: string): Promise<void> {
   return api<void>(withProjectId("/subtasks/cancel", projectId), {
     method: "POST",
-    body: JSON.stringify({ sessionId }),
+    body: JSON.stringify({ sessionId, tabId }),
   });
 }
 
@@ -3252,11 +3257,12 @@ export function startMissionInterview(missionTitle: string, projectId?: string):
 export function respondToMissionInterview(
   sessionId: string,
   responses: Record<string, unknown>,
-  projectId?: string
+  projectId?: string,
+  tabId?: string,
 ): Promise<MissionInterviewResponse> {
   return api<MissionInterviewResponse>(withProjectId("/missions/interview/respond", projectId), {
     method: "POST",
-    body: JSON.stringify({ sessionId, responses }),
+    body: JSON.stringify({ sessionId, responses, tabId }),
   });
 }
 
@@ -3264,20 +3270,22 @@ export function respondToMissionInterview(
 export function retryMissionInterviewSession(
   sessionId: string,
   projectId?: string,
+  tabId?: string,
 ): Promise<{ success: boolean; sessionId: string }> {
   return api<{ success: boolean; sessionId: string }>(
     withProjectId(`/missions/interview/${encodeURIComponent(sessionId)}/retry`, projectId),
     {
       method: "POST",
+      ...(tabId ? { body: JSON.stringify({ tabId }) } : {}),
     },
   );
 }
 
 /** Cancel an active mission interview session */
-export function cancelMissionInterview(sessionId: string, projectId?: string): Promise<void> {
+export function cancelMissionInterview(sessionId: string, projectId?: string, tabId?: string): Promise<void> {
   return api<void>(withProjectId("/missions/interview/cancel", projectId), {
     method: "POST",
-    body: JSON.stringify({ sessionId }),
+    body: JSON.stringify({ sessionId, tabId }),
   });
 }
 
@@ -3392,6 +3400,7 @@ export interface AiSessionSummary {
   status: "generating" | "awaiting_input" | "complete" | "error";
   title: string;
   projectId: string | null;
+  lockedByTab: string | null;
   updatedAt: string;
 }
 
@@ -3409,6 +3418,7 @@ export interface AiSessionDetail extends AiSessionSummary {
   thinkingOutput: string;
   error: string | null;
   createdAt: string;
+  lockedAt: string | null;
 }
 
 export function parseConversationHistory(raw: string): ConversationHistoryEntry[] {
@@ -3434,6 +3444,38 @@ export async function fetchAiSession(id: string): Promise<AiSessionDetail | null
   const res = await fetch(buildApiUrl(`/ai-sessions/${encodeURIComponent(id)}`));
   if (!res.ok) return null;
   return res.json();
+}
+
+export async function acquireSessionLock(
+  sessionId: string,
+  tabId: string,
+): Promise<{ acquired: boolean; currentHolder: string | null }> {
+  const result = await api<{ acquired: boolean; currentHolder?: string | null }>(
+    `/ai-sessions/${encodeURIComponent(sessionId)}/lock`,
+    {
+      method: "POST",
+      body: JSON.stringify({ tabId }),
+    },
+  );
+
+  return {
+    acquired: result.acquired,
+    currentHolder: result.currentHolder ?? null,
+  };
+}
+
+export function releaseSessionLock(sessionId: string, tabId: string): Promise<void> {
+  return api<void>(`/ai-sessions/${encodeURIComponent(sessionId)}/lock`, {
+    method: "DELETE",
+    body: JSON.stringify({ tabId }),
+  });
+}
+
+export function forceAcquireSessionLock(sessionId: string, tabId: string): Promise<void> {
+  return api<void>(`/ai-sessions/${encodeURIComponent(sessionId)}/lock/force`, {
+    method: "POST",
+    body: JSON.stringify({ tabId }),
+  });
 }
 
 export async function deleteAiSession(id: string): Promise<void> {

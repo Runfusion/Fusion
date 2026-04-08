@@ -10,6 +10,9 @@ const mockCreateMissionFromInterview = vi.fn();
 const mockConnectMissionInterviewStream = vi.fn();
 const mockFetchAiSession = vi.fn();
 const mockParseConversationHistory = vi.fn();
+const mockAcquireSessionLock = vi.fn();
+const mockReleaseSessionLock = vi.fn();
+const mockForceAcquireSessionLock = vi.fn();
 
 vi.mock("../api", () => ({
   startMissionInterview: (...args: any[]) => mockStartMissionInterview(...args),
@@ -20,6 +23,9 @@ vi.mock("../api", () => ({
   connectMissionInterviewStream: (...args: any[]) => mockConnectMissionInterviewStream(...args),
   fetchAiSession: (...args: any[]) => mockFetchAiSession(...args),
   parseConversationHistory: (...args: any[]) => mockParseConversationHistory(...args),
+  acquireSessionLock: (...args: any[]) => mockAcquireSessionLock(...args),
+  releaseSessionLock: (...args: any[]) => mockReleaseSessionLock(...args),
+  forceAcquireSessionLock: (...args: any[]) => mockForceAcquireSessionLock(...args),
 }));
 
 vi.mock("../hooks/modalPersistence", () => ({
@@ -65,6 +71,9 @@ describe("MissionInterviewModal", () => {
         isConnected: vi.fn().mockReturnValue(true),
       };
     });
+    mockAcquireSessionLock.mockResolvedValue({ acquired: true, currentHolder: null });
+    mockReleaseSessionLock.mockResolvedValue(undefined);
+    mockForceAcquireSessionLock.mockResolvedValue({ acquired: true, currentHolder: null });
   });
 
   function renderModal() {
@@ -76,6 +85,32 @@ describe("MissionInterviewModal", () => {
       />,
     );
   }
+
+  it("shows lock overlay and allows take-control", async () => {
+    window.sessionStorage.setItem("fusion-tab-id", "tab-self");
+    mockAcquireSessionLock.mockResolvedValueOnce({ acquired: false, currentHolder: "tab-other" });
+
+    renderModal();
+
+    fireEvent.change(screen.getByLabelText("What do you want to build?"), {
+      target: { value: "Build a mission planning workflow" },
+    });
+    fireEvent.click(screen.getByText("Start Interview"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("session-lock-overlay")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("Take Control"));
+
+    await waitFor(() => {
+      expect(mockForceAcquireSessionLock).toHaveBeenCalledWith("mission-session-1", "tab-self");
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("session-lock-overlay")).not.toBeInTheDocument();
+    });
+  });
 
   it("shows reconnecting indicator without clearing current question", async () => {
     renderModal();
@@ -189,7 +224,7 @@ describe("MissionInterviewModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
     await waitFor(() => {
-      expect(mockRetryMissionInterviewSession).toHaveBeenCalledWith("mission-session-1", undefined);
+      expect(mockRetryMissionInterviewSession).toHaveBeenCalledWith("mission-session-1", undefined, expect.any(String));
     });
     await waitFor(() => {
       expect(screen.getByText("What is the target scope?")).toBeInTheDocument();

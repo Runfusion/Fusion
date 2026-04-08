@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import express from "express";
+import { Database, TaskStore } from "@fusion/core";
 import {
   createSession,
   createSessionWithAgent,
@@ -25,8 +31,10 @@ import {
   formatInterviewQA,
   SESSION_TTL_MS,
 } from "./planning.js";
+import { createApiRoutes } from "./routes.js";
+import { request, get } from "./test-request.js";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
-import type { AiSessionRow } from "./ai-session-store.js";
+import { AiSessionStore, type AiSessionRow } from "./ai-session-store.js";
 
 // ── Mock Agent Factory ──────────────────────────────────────────────────────
 
@@ -1382,5 +1390,348 @@ describe("planning module", () => {
         expect(result[i]?.dependsOn).toEqual([`subtask-${i}`]);
       }
     });
+  });
+});
+
+describe("AiSessionStore locking", () => {
+  let tmpRoot: string;
+  let db: Database;
+  let store: AiSessionStore;
+
+  function makeSessionRow(
+    id: string,
+    status: AiSessionRow["status"] = "awaiting_input",
+  ): AiSessionRow {
+    const now = new Date().toISOString();
+    return {
+      id,
+      type: "planning",
+      status,
+      title: `Session ${id}`,
+      inputPayload: JSON.stringify({ initialPlan: "Locking test" }),
+      conversationHistory: "[]",
+      currentQuestion: null,
+      result: null,
+      thinkingOutput: "",
+      error: null,
+      projectId: null,
+      createdAt: now,
+      updatedAt: now,
+      lockedByTab: null,
+      lockedAt: null,
+    };
+  }
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), "kb-session-lock-"));
+    db = new Database(join(tmpRoot, ".fusion"));
+    db.init();
+    store = new AiSessionStore(db);
+    store.upsert(makeSessionRow("session-lock-1"));
+  });
+
+  afterEach(async () => {
+    store.stopScheduledCleanup();
+    try {
+      db.close();
+    } catch {
+      // no-op
+    }
+    await rm(tmpRoot, { recursive: true, force: true });
+  });
+
+  it("acquires lock, detects conflicts, and allows re-entrant acquire", () => {
+    const firstAcquire = store.acquireLock("session-lock-1", "tab-a");
+    expect(firstAcquire).toEqual({ acquired: true, currentHolder: null });
+
+    const holderAfterAcquire = store.getLockHolder("session-lock-1");
+    expect(holderAfterAcquire.tabId).toBe("tab-a");
+    expect(holderAfterAcquire.lockedAt).toBeTruthy();
+
+    const conflict = store.acquireLock("session-lock-1", "tab-b");
+    expect(conflict).toEqual({ acquired: false, currentHolder: "tab-a" });
+
+    const reentrant = store.acquireLock("session-lock-1", "tab-a");
+    expect(reentrant).toEqual({ acquired: true, currentHolder: null });
+    expect(store.getLockHolder("session-lock-1").tabId).toBe("tab-a");
+  });
+
+  it("releases locks only for the current owner", () => {
+    store.acquireLock("session-lock-1", "tab-a");
+
+    const nonOwnerRelease = store.releaseLock("session-lock-1", "tab-b");
+    expect(nonOwnerRelease).toBe(false);
+    expect(store.getLockHolder("session-lock-1").tabId).toBe("tab-a");
+
+    const ownerRelease = store.releaseLock("session-lock-1", "tab-a");
+    expect(ownerRelease).toBe(true);
+    expect(store.getLockHolder("session-lock-1")).toEqual({ tabId: null, lockedAt: null });
+  });
+
+  it("force acquires lock and clears stale locks", () => {
+    store.acquireLock("session-lock-1", "tab-a");
+
+    store.forceAcquireLock("session-lock-1", "tab-b");
+    expect(store.getLockHolder("session-lock-1").tabId).toBe("tab-b");
+
+    const staleTimestamp = new Date(Date.now() - 35 * 60 * 1000).toISOString();
+    db.prepare("UPDATE ai_sessions SET lockedAt = ? WHERE id = ?").run(staleTimestamp, "session-lock-1");
+
+    const releasedCount = store.releaseStaleLocks();
+    expect(releasedCount).toBe(1);
+    expect(store.getLockHolder("session-lock-1")).toEqual({ tabId: null, lockedAt: null });
+  });
+
+  it("emits ai_session:updated events on lock changes", () => {
+    const onUpdated = vi.fn();
+    store.on("ai_session:updated", onUpdated);
+
+    store.acquireLock("session-lock-1", "tab-a");
+    store.releaseLock("session-lock-1", "tab-a");
+    store.forceAcquireLock("session-lock-1", "tab-b");
+
+    const staleTimestamp = new Date(Date.now() - 35 * 60 * 1000).toISOString();
+    db.prepare("UPDATE ai_sessions SET lockedAt = ? WHERE id = ?").run(staleTimestamp, "session-lock-1");
+    store.releaseStaleLocks();
+
+    expect(onUpdated).toHaveBeenCalled();
+
+    const emittedLocks = onUpdated.mock.calls
+      .map(([summary]) => summary.lockedByTab)
+      .filter((value) => value !== undefined);
+
+    expect(emittedLocks).toContain("tab-a");
+    expect(emittedLocks).toContain("tab-b");
+    expect(emittedLocks).toContain(null);
+  });
+
+  it("preserves lock state in upsert update events", () => {
+    store.acquireLock("session-lock-1", "tab-a");
+
+    const onUpdated = vi.fn();
+    store.on("ai_session:updated", onUpdated);
+
+    store.upsert({
+      ...makeSessionRow("session-lock-1", "generating"),
+      lockedByTab: null,
+      lockedAt: null,
+    });
+
+    const latestSummary = onUpdated.mock.calls.at(-1)?.[0];
+    expect(latestSummary?.lockedByTab).toBe("tab-a");
+  });
+});
+
+describe("planning routes lock enforcement", () => {
+  let tmpRoot: string;
+  let taskStore: TaskStore;
+  let db: Database;
+  let aiSessionStore: AiSessionStore;
+  let app: express.Express;
+
+  function makePersistedRow(id: string, type: AiSessionRow["type"] = "planning"): AiSessionRow {
+    const now = new Date().toISOString();
+    return {
+      id,
+      type,
+      status: "awaiting_input",
+      title: `Session ${id}`,
+      inputPayload: JSON.stringify({ initialPlan: "Route lock test" }),
+      conversationHistory: "[]",
+      currentQuestion: null,
+      result: null,
+      thinkingOutput: "",
+      error: null,
+      projectId: null,
+      createdAt: now,
+      updatedAt: now,
+      lockedByTab: null,
+      lockedAt: null,
+    };
+  }
+
+  beforeEach(async () => {
+    __resetPlanningState();
+    setupMockAgent();
+
+    tmpRoot = mkdtempSync(join(tmpdir(), "kb-planning-lock-routes-"));
+    taskStore = new TaskStore(tmpRoot);
+    await taskStore.init();
+
+    db = new Database(join(tmpRoot, ".fusion-locks"));
+    db.init();
+    aiSessionStore = new AiSessionStore(db);
+    setAiSessionStore(aiSessionStore as any);
+
+    app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(taskStore, { aiSessionStore }));
+  });
+
+  afterEach(async () => {
+    __setCreateKbAgent(undefined as any);
+    __resetPlanningState();
+
+    try {
+      taskStore.close();
+    } catch {
+      // no-op
+    }
+
+    try {
+      db.close();
+    } catch {
+      // no-op
+    }
+
+    await rm(tmpRoot, { recursive: true, force: true });
+  });
+
+  it("acquires and releases locks via API routes", async () => {
+    aiSessionStore.upsert(makePersistedRow("session-route-lock"));
+
+    const acquire = await request(
+      app,
+      "POST",
+      "/api/ai-sessions/session-route-lock/lock",
+      JSON.stringify({ tabId: "tab-a" }),
+      { "content-type": "application/json" },
+    );
+    expect(acquire.status).toBe(200);
+    expect(acquire.body).toEqual({ acquired: true });
+
+    const conflictAcquire = await request(
+      app,
+      "POST",
+      "/api/ai-sessions/session-route-lock/lock",
+      JSON.stringify({ tabId: "tab-b" }),
+      { "content-type": "application/json" },
+    );
+    expect(conflictAcquire.status).toBe(200);
+    expect(conflictAcquire.body).toEqual({ acquired: false, currentHolder: "tab-a" });
+
+    const release = await request(
+      app,
+      "DELETE",
+      "/api/ai-sessions/session-route-lock/lock",
+      JSON.stringify({ tabId: "tab-a" }),
+      { "content-type": "application/json" },
+    );
+    expect(release.status).toBe(200);
+    expect(release.body).toEqual({ success: true });
+
+    const forceAcquire = await request(
+      app,
+      "POST",
+      "/api/ai-sessions/session-route-lock/lock/force",
+      JSON.stringify({ tabId: "tab-c" }),
+      { "content-type": "application/json" },
+    );
+    expect(forceAcquire.status).toBe(200);
+    expect(forceAcquire.body).toEqual({ success: true });
+
+    const beaconRelease = await request(
+      app,
+      "DELETE",
+      "/api/ai-sessions/session-route-lock/lock/beacon?tabId=tab-c",
+    );
+    expect(beaconRelease.status).toBe(200);
+  });
+
+  it("returns 409 for planning/respond when another tab holds the lock and allows legacy requests without tabId", async () => {
+    const { sessionId } = await createSession(getUniqueIp(), "Route lock planning", taskStore, tmpRoot);
+    aiSessionStore.acquireLock(sessionId, "tab-owner");
+
+    const conflictResponse = await request(
+      app,
+      "POST",
+      "/api/planning/respond",
+      JSON.stringify({ sessionId, responses: { "q-scope": "small" }, tabId: "tab-other" }),
+      { "content-type": "application/json" },
+    );
+
+    expect(conflictResponse.status).toBe(409);
+    expect(conflictResponse.body).toEqual({
+      error: "Session locked by another tab",
+      lockedByTab: "tab-owner",
+    });
+
+    const legacyResponse = await request(
+      app,
+      "POST",
+      "/api/planning/respond",
+      JSON.stringify({ sessionId, responses: { "q-scope": "small" } }),
+      { "content-type": "application/json" },
+    );
+
+    expect(legacyResponse.status).toBe(200);
+    expect((legacyResponse.body as { type: string }).type).toBe("question");
+  });
+
+  it("returns 409 for subtasks/cancel when lock is held by another tab", async () => {
+    aiSessionStore.upsert(makePersistedRow("subtask-route-lock", "subtask"));
+    aiSessionStore.acquireLock("subtask-route-lock", "tab-a");
+
+    const response = await request(
+      app,
+      "POST",
+      "/api/subtasks/cancel",
+      JSON.stringify({ sessionId: "subtask-route-lock", tabId: "tab-b" }),
+      { "content-type": "application/json" },
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({
+      error: "Session locked by another tab",
+      lockedByTab: "tab-a",
+    });
+  });
+
+  it("returns 409 for retry endpoints when lock is held by another tab", async () => {
+    aiSessionStore.upsert(makePersistedRow("planning-route-retry", "planning"));
+    aiSessionStore.acquireLock("planning-route-retry", "tab-a");
+
+    const planningRetry = await request(
+      app,
+      "POST",
+      "/api/planning/planning-route-retry/retry",
+      JSON.stringify({ tabId: "tab-b" }),
+      { "content-type": "application/json" },
+    );
+    expect(planningRetry.status).toBe(409);
+    expect(planningRetry.body).toEqual({
+      error: "Session locked by another tab",
+      lockedByTab: "tab-a",
+    });
+
+    aiSessionStore.upsert(makePersistedRow("subtask-route-retry", "subtask"));
+    aiSessionStore.acquireLock("subtask-route-retry", "tab-a");
+
+    const subtaskRetry = await request(
+      app,
+      "POST",
+      "/api/subtasks/subtask-route-retry/retry",
+      JSON.stringify({ tabId: "tab-b" }),
+      { "content-type": "application/json" },
+    );
+    expect(subtaskRetry.status).toBe(409);
+    expect(subtaskRetry.body).toEqual({
+      error: "Session locked by another tab",
+      lockedByTab: "tab-a",
+    });
+  });
+
+  it("keeps planning SSE stream read-only and unaffected by locks", async () => {
+    const { sessionId } = await createSession(getUniqueIp(), "SSE lock check", taskStore, tmpRoot);
+    await submitResponse(sessionId, { "q-scope": "small" }, tmpRoot);
+    await submitResponse(sessionId, { "q-requirements": "Need auth" }, tmpRoot);
+    await submitResponse(sessionId, { "q-confirm": true }, tmpRoot);
+
+    aiSessionStore.acquireLock(sessionId, "tab-owner");
+
+    const streamResponse = await get(app, `/api/planning/${sessionId}/stream`);
+    expect(streamResponse.status).toBe(200);
+    expect(String(streamResponse.body)).toContain("event: summary");
+    expect(String(streamResponse.body)).toContain("event: complete");
   });
 });

@@ -21,9 +21,11 @@ import {
   getPlanningDescription,
   clearPlanningDescription,
 } from "../hooks/modalPersistence";
-import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, ListTree, GripVertical, ArrowUp, ArrowDown, Plus, Trash2, Minimize2, RefreshCw } from "lucide-react";
+import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, ListTree, GripVertical, ArrowUp, ArrowDown, Plus, Trash2, Minimize2, RefreshCw, Lock } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ConversationHistory } from "./ConversationHistory";
+import { useSessionLock } from "../hooks/useSessionLock";
+import { getSessionTabId } from "../utils/getSessionTabId";
 
 interface PlanningModeModalProps {
   isOpen: boolean;
@@ -96,6 +98,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const streamConnectionRef = useRef<{ close: () => void; isConnected: () => boolean } | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
+  const [lockSessionId, setLockSessionId] = useState<string | null>(resumeSessionId ?? null);
+  const sessionTabId = useMemo(() => getSessionTabId(), []);
+  const {
+    isLockedByOther,
+    takeControl,
+    isLoading: isLockLoading,
+  } = useSessionLock(isOpen ? lockSessionId : null);
   const [planningModelProvider, setPlanningModelProvider] = useState<string | undefined>(undefined);
   const [planningModelId, setPlanningModelId] = useState<string | undefined>(undefined);
   const [loadedModels, setLoadedModels] = useState<ModelInfo[]>([]);
@@ -225,6 +234,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
       const { sessionId } = await startPlanningStreaming(plan.trim(), projectId, modelOverride);
       currentSessionIdRef.current = sessionId;
+      setLockSessionId(sessionId);
 
       connectToPlanningStream(sessionId);
       setResponseHistory([]);
@@ -233,6 +243,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setError(err.message || "Failed to start planning session");
       setView({ type: "initial" });
       currentSessionIdRef.current = null;
+      setLockSessionId(null);
     }
   }, [connectToPlanningStream, initialPlan, planningModelId, planningModelProvider, projectId]);
 
@@ -280,6 +291,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         if (cancelled || !session) return;
 
         currentSessionIdRef.current = resumeSessionId;
+        setLockSessionId(resumeSessionId);
         const parsedHistory = parseConversationHistory(session.conversationHistory);
         setConversationHistory(parsedHistory);
         setResponseHistory(
@@ -325,6 +337,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       hasAutoStartedRef.current = false;
       setIsReconnecting(false);
       setIsRetrying(false);
+      setLockSessionId(null);
     }
   }, [isOpen]);
 
@@ -378,6 +391,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setPlanningModelProvider(undefined);
     setPlanningModelId(undefined);
     currentSessionIdRef.current = null;
+    setLockSessionId(null);
     onClose();
   }, [initialPlan, onClose, projectId]);
 
@@ -428,14 +442,14 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
       try {
         // Submit response - AI will broadcast events via the already-connected stream
-        await respondToPlanning(sessionId, responses, projectId);
+        await respondToPlanning(sessionId, responses, projectId, sessionTabId);
         // Events (question/summary) will arrive via the existing SSE stream
       } catch (err: any) {
         setError(err.message || "Failed to submit response");
         setView({ type: "question", session });
       }
     },
-    [projectId, view]
+    [projectId, sessionTabId, view]
   );
 
   const handleRetryFromError = useCallback(async () => {
@@ -453,7 +467,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
     try {
       currentSessionIdRef.current = retryTarget.sessionId;
-      await retryPlanningSession(retryTarget.sessionId, projectId);
+      setLockSessionId(retryTarget.sessionId);
+      await retryPlanningSession(retryTarget.sessionId, projectId, sessionTabId);
     } catch (err: any) {
       streamConnectionRef.current?.close();
       streamConnectionRef.current = null;
@@ -466,7 +481,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     } finally {
       setIsRetrying(false);
     }
-  }, [connectToPlanningStream, projectId, view]);
+  }, [connectToPlanningStream, projectId, sessionTabId, view]);
 
   const handleCreateTask = useCallback(async () => {
     if (view.type !== "summary") return;
@@ -492,6 +507,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
     try {
       const result = await startPlanningBreakdown(view.session.sessionId, projectId);
+      setLockSessionId(result.sessionId);
       setView({
         type: "breakdown",
         sessionId: result.sessionId,
@@ -524,6 +540,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setPlanningModelProvider(undefined);
       setPlanningModelId(undefined);
       currentSessionIdRef.current = null;
+      setLockSessionId(null);
       onClose();
     } catch (err: any) {
       setError(err.message || "Failed to create tasks");
@@ -825,6 +842,25 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 }
               }}
             />
+          )}
+
+          {isLockedByOther && (
+            <div className="session-lock-overlay" data-testid="session-lock-overlay">
+              <div className="session-lock-banner">
+                <Lock size={16} />
+                <span>This session is active in another tab</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void takeControl();
+                  }}
+                  disabled={isLockLoading}
+                  className="btn btn-primary session-lock-take-control"
+                >
+                  {isLockLoading ? "Taking control..." : "Take Control"}
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </div>

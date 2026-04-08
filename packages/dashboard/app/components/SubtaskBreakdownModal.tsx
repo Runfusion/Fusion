@@ -16,8 +16,10 @@ import {
   getSubtaskDescription,
   clearSubtaskDescription,
 } from "../hooks/modalPersistence";
-import { CheckCircle, Loader2, ListTree, Plus, Trash2, X, GripVertical, ArrowUp, ArrowDown, Minimize2, RefreshCw } from "lucide-react";
+import { CheckCircle, Loader2, ListTree, Plus, Trash2, X, GripVertical, ArrowUp, ArrowDown, Minimize2, RefreshCw, Lock } from "lucide-react";
 import { ConversationHistory } from "./ConversationHistory";
+import { useSessionLock } from "../hooks/useSessionLock";
+import { getSessionTabId } from "../utils/getSessionTabId";
 
 interface SubtaskBreakdownModalProps {
   isOpen: boolean;
@@ -91,6 +93,12 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
   const sessionId = view.type === "generating" || view.type === "editing" || view.type === "creating" || view.type === "error"
     ? view.sessionId
     : null;
+  const sessionTabId = useMemo(() => getSessionTabId(), []);
+  const {
+    isLockedByOther,
+    takeControl,
+    isLoading: isLockLoading,
+  } = useSessionLock(isOpen ? sessionId : null);
 
   const isInvalid = useMemo(() => {
     if (subtasks.length === 0) return true;
@@ -131,14 +139,14 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     }
     if (sessionId) {
       try {
-        await cancelSubtaskBreakdown(sessionId, projectId);
+        await cancelSubtaskBreakdown(sessionId, projectId, sessionTabId);
       } catch {
         // ignore cancel errors
       }
     }
     resetState();
     onClose();
-  }, [dirty, onClose, resetState, sessionId, view.type, projectId]);
+  }, [dirty, onClose, resetState, sessionId, sessionTabId, view.type, projectId]);
 
   const connectToSubtaskStream = useCallback(
     (activeSessionId: string) => {
@@ -389,7 +397,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     connectToSubtaskStream(retrySessionId);
 
     try {
-      await retrySubtaskSession(retrySessionId, projectId);
+      await retrySubtaskSession(retrySessionId, projectId, sessionTabId);
     } catch (err: any) {
       streamRef.current?.close();
       streamRef.current = null;
@@ -402,7 +410,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     } finally {
       setIsRetrying(false);
     }
-  }, [connectToSubtaskStream, projectId, view]);
+  }, [connectToSubtaskStream, projectId, sessionTabId, view]);
 
   if (!isOpen) return null;
 
@@ -674,6 +682,25 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
                   ) : (
                     <>Create Tasks</>
                   )}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {isLockedByOther && (
+            <div className="session-lock-overlay" data-testid="session-lock-overlay">
+              <div className="session-lock-banner">
+                <Lock size={16} />
+                <span>This session is active in another tab</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void takeControl();
+                  }}
+                  disabled={isLockLoading}
+                  className="btn btn-primary session-lock-take-control"
+                >
+                  {isLockLoading ? "Taking control..." : "Take Control"}
                 </button>
               </div>
             </div>

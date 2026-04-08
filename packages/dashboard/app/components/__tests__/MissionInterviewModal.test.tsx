@@ -14,6 +14,9 @@ vi.mock("../../api", () => ({
   connectMissionInterviewStream: vi.fn(),
   fetchAiSession: vi.fn(),
   parseConversationHistory: vi.fn(),
+  acquireSessionLock: vi.fn(),
+  releaseSessionLock: vi.fn(),
+  forceAcquireSessionLock: vi.fn(),
 }));
 
 vi.mock("../../hooks/modalPersistence", () => ({
@@ -29,6 +32,9 @@ const mockCreateMissionFromInterview = vi.mocked(api.createMissionFromInterview)
 const mockConnectMissionInterviewStream = vi.mocked(api.connectMissionInterviewStream);
 const mockFetchAiSession = vi.mocked(api.fetchAiSession);
 const mockParseConversationHistory = vi.mocked(api.parseConversationHistory);
+const mockAcquireSessionLock = vi.mocked(api.acquireSessionLock);
+const mockReleaseSessionLock = vi.mocked(api.releaseSessionLock);
+const mockForceAcquireSessionLock = vi.mocked(api.forceAcquireSessionLock);
 const mockGetMissionGoal = vi.mocked(modalPersistence.getMissionGoal);
 
 const sampleQuestionSingle: PlanningQuestion = {
@@ -96,6 +102,9 @@ describe("MissionInterviewModal", () => {
       }
     });
     mockGetMissionGoal.mockReturnValue("");
+    mockAcquireSessionLock.mockResolvedValue({ acquired: true, currentHolder: null });
+    mockReleaseSessionLock.mockResolvedValue(undefined);
+    mockForceAcquireSessionLock.mockResolvedValue({ acquired: true, currentHolder: null });
 
     mockConnectMissionInterviewStream.mockImplementation((_sessionId, _projectId, handlers) => {
       streamHandlers = handlers;
@@ -236,6 +245,7 @@ describe("MissionInterviewModal", () => {
         "mission-session-1",
         { scope: "mvp" },
         undefined,
+        expect.any(String),
       );
     });
   });
@@ -367,7 +377,7 @@ describe("MissionInterviewModal", () => {
     await user.click(await screen.findByLabelText("Close"));
 
     await waitFor(() => {
-      expect(mockCancelMissionInterview).toHaveBeenCalledWith("mission-session-1", undefined);
+      expect(mockCancelMissionInterview).toHaveBeenCalledWith("mission-session-1", undefined, expect.any(String));
     });
   });
 

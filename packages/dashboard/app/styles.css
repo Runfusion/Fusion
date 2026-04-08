@@ -13605,6 +13605,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 
 .planning-error {
@@ -13628,6 +13629,33 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   padding: 16px 24px 24px;
   border-top: 1px solid var(--border);
   flex-shrink: 0;
+}
+
+.session-lock-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 20%;
+  z-index: 10;
+  backdrop-filter: blur(2px);
+}
+
+.session-lock-banner {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.session-lock-take-control {
+  margin-left: auto;
 }
 
 /* Initial View */

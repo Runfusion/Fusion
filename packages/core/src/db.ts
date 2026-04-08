@@ -59,7 +59,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 18;
+const SCHEMA_VERSION = 19;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -729,6 +729,17 @@ export class Database {
           )
         `);
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxTaskDocumentRevisionsTaskKey ON task_document_revisions(taskId, key)`);
+      });
+    }
+
+    if (version < 19) {
+      this.applyMigration(19, () => {
+        if (!this.hasTable("ai_sessions")) {
+          return;
+        }
+        this.addColumnIfMissing("ai_sessions", "lockedByTab", "TEXT");
+        this.addColumnIfMissing("ai_sessions", "lockedAt", "TEXT");
+        this.db.exec("CREATE INDEX IF NOT EXISTS idxAiSessionsLock ON ai_sessions(lockedByTab)");
       });
     }
   }

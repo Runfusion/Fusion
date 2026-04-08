@@ -32,6 +32,8 @@ export interface AiSessionRow {
   projectId: string | null;
   createdAt: string;
   updatedAt: string;
+  lockedByTab: string | null;
+  lockedAt: string | null;
 }
 
 /** Summary returned by listActive (omits large fields) */
@@ -41,6 +43,7 @@ export interface AiSessionSummary {
   status: AiSessionStatus;
   title: string;
   projectId: string | null;
+  lockedByTab: string | null;
   updatedAt: string;
 }
 
@@ -81,8 +84,8 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
 
     this.db
       .prepare(
-        `INSERT INTO ai_sessions (id, type, status, title, inputPayload, conversationHistory, currentQuestion, result, thinkingOutput, error, projectId, createdAt, updatedAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO ai_sessions (id, type, status, title, inputPayload, conversationHistory, currentQuestion, result, thinkingOutput, error, projectId, createdAt, updatedAt, lockedByTab, lockedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
          ON CONFLICT(id) DO UPDATE SET
            status = excluded.status,
            title = excluded.title,
@@ -112,7 +115,10 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
     // Cancel any pending thinking debounce for this session
     this.clearThinkingTimer(session.id);
 
-    this.emit("ai_session:updated", toSummary(session, now));
+    const row = this.get(session.id);
+    if (row) {
+      this.emit("ai_session:updated", toSummary(row, row.updatedAt));
+    }
   }
 
   /**
@@ -194,7 +200,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
     if (projectId) {
       return this.db
         .prepare(
-          `SELECT id, type, status, title, projectId, updatedAt FROM ai_sessions
+          `SELECT id, type, status, title, projectId, lockedByTab, updatedAt FROM ai_sessions
            WHERE status IN ('generating', 'awaiting_input', 'error') AND projectId = ?
            ORDER BY updatedAt DESC`,
         )
@@ -202,7 +208,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
     }
     return this.db
       .prepare(
-        `SELECT id, type, status, title, projectId, updatedAt FROM ai_sessions
+        `SELECT id, type, status, title, projectId, lockedByTab, updatedAt FROM ai_sessions
          WHERE status IN ('generating', 'awaiting_input', 'error')
          ORDER BY updatedAt DESC`,
       )
@@ -231,6 +237,121 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
          ORDER BY updatedAt DESC`,
       )
       .all() as unknown as AiSessionRow[];
+  }
+
+  acquireLock(sessionId: string, tabId: string): { acquired: boolean; currentHolder: string | null } {
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare(
+        `UPDATE ai_sessions
+         SET lockedByTab = ?, lockedAt = ?
+         WHERE id = ? AND (lockedByTab IS NULL OR lockedByTab = ?)`,
+      )
+      .run(tabId, now, sessionId, tabId) as { changes?: number };
+
+    const acquired = Number(result.changes ?? 0) > 0;
+    if (acquired) {
+      const row = this.get(sessionId);
+      if (row) {
+        this.emit("ai_session:updated", toSummary(row, row.updatedAt));
+      }
+      return { acquired: true, currentHolder: null };
+    }
+
+    const holder = this.db
+      .prepare("SELECT lockedByTab FROM ai_sessions WHERE id = ?")
+      .get(sessionId) as { lockedByTab: string | null } | undefined;
+
+    return {
+      acquired: false,
+      currentHolder: holder?.lockedByTab ?? null,
+    };
+  }
+
+  releaseLock(sessionId: string, tabId: string): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE ai_sessions
+         SET lockedByTab = NULL, lockedAt = NULL
+         WHERE id = ? AND lockedByTab = ?`,
+      )
+      .run(sessionId, tabId) as { changes?: number };
+
+    const released = Number(result.changes ?? 0) > 0;
+    if (!released) {
+      return false;
+    }
+
+    const row = this.get(sessionId);
+    if (row) {
+      this.emit("ai_session:updated", toSummary(row, row.updatedAt));
+    }
+
+    return true;
+  }
+
+  forceAcquireLock(sessionId: string, tabId: string): void {
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare(
+        `UPDATE ai_sessions
+         SET lockedByTab = ?, lockedAt = ?
+         WHERE id = ?`,
+      )
+      .run(tabId, now, sessionId) as { changes?: number };
+
+    if (Number(result.changes ?? 0) === 0) {
+      return;
+    }
+
+    const row = this.get(sessionId);
+    if (row) {
+      this.emit("ai_session:updated", toSummary(row, row.updatedAt));
+    }
+  }
+
+  getLockHolder(sessionId: string): { tabId: string | null; lockedAt: string | null } {
+    const row = this.db
+      .prepare("SELECT lockedByTab, lockedAt FROM ai_sessions WHERE id = ?")
+      .get(sessionId) as { lockedByTab: string | null; lockedAt: string | null } | undefined;
+
+    return {
+      tabId: row?.lockedByTab ?? null,
+      lockedAt: row?.lockedAt ?? null,
+    };
+  }
+
+  releaseStaleLocks(maxAgeMs = 30 * 60 * 1000): number {
+    const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
+    const staleRows = this.db
+      .prepare(
+        `SELECT id FROM ai_sessions
+         WHERE lockedByTab IS NOT NULL
+           AND lockedAt < ?`,
+      )
+      .all(cutoff) as Array<{ id: string }>;
+
+    if (staleRows.length === 0) {
+      return 0;
+    }
+
+    const result = this.db
+      .prepare(
+        `UPDATE ai_sessions
+         SET lockedByTab = NULL, lockedAt = NULL
+         WHERE lockedByTab IS NOT NULL
+           AND lockedAt < ?`,
+      )
+      .run(cutoff) as { changes?: number };
+
+    for (const rowInfo of staleRows) {
+      const row = this.get(rowInfo.id);
+      if (row) {
+        this.emit("ai_session:updated", toSummary(row, row.updatedAt));
+      }
+    }
+
+    return Number(result.changes ?? 0);
   }
 
   /**
@@ -392,6 +513,7 @@ function toSummary(session: AiSessionRow, updatedAt: string): AiSessionSummary {
     status: session.status,
     title: session.title,
     projectId: session.projectId,
+    lockedByTab: session.lockedByTab ?? null,
     updatedAt,
   };
 }

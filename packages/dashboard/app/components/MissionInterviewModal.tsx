@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import type { PlanningQuestion } from "@fusion/core";
 import {
   startMissionInterview,
@@ -38,8 +38,11 @@ import {
   Trash2,
   Minimize2,
   RefreshCw,
+  Lock,
 } from "lucide-react";
 import { ConversationHistory } from "./ConversationHistory";
+import { useSessionLock } from "../hooks/useSessionLock";
+import { getSessionTabId } from "../utils/getSessionTabId";
 
 interface MissionInterviewModalProps {
   isOpen: boolean;
@@ -92,6 +95,13 @@ export function MissionInterviewModal({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const streamConnectionRef = useRef<{ close: () => void; isConnected: () => boolean } | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
+  const [lockSessionId, setLockSessionId] = useState<string | null>(resumeSessionId ?? null);
+  const sessionTabId = useMemo(() => getSessionTabId(), []);
+  const {
+    isLockedByOther,
+    takeControl,
+    isLoading: isLockLoading,
+  } = useSessionLock(isOpen ? lockSessionId : null);
 
   const connectToMissionInterviewStream = useCallback(
     (sessionId: string) => {
@@ -157,6 +167,7 @@ export function MissionInterviewModal({
       try {
         const { sessionId } = await startMissionInterview(goal.trim(), projectId);
         currentSessionIdRef.current = sessionId;
+        setLockSessionId(sessionId);
         clearMissionGoal(projectId);
 
         connectToMissionInterviewStream(sessionId);
@@ -166,6 +177,7 @@ export function MissionInterviewModal({
         setError(err.message || "Failed to start interview session");
         setView({ type: "initial" });
         currentSessionIdRef.current = null;
+        setLockSessionId(null);
       }
     },
     [connectToMissionInterviewStream, missionGoal, projectId]
@@ -201,6 +213,7 @@ export function MissionInterviewModal({
       hasAutoStartedRef.current = false;
       setIsReconnecting(false);
       setIsRetrying(false);
+      setLockSessionId(null);
     }
   }, [isOpen]);
 
@@ -215,6 +228,7 @@ export function MissionInterviewModal({
 
       const parsedHistory = parseConversationHistory(session.conversationHistory);
       setConversationHistory(parsedHistory);
+      setLockSessionId(session.id);
       setResponseHistory(
         parsedHistory
           .map((entry) => entry.response)
@@ -318,7 +332,7 @@ export function MissionInterviewModal({
 
     if (view.type === "question" || view.type === "summary" || view.type === "error") {
       try {
-        await cancelMissionInterview(view.sessionId, projectId);
+        await cancelMissionInterview(view.sessionId, projectId, sessionTabId);
       } catch {
         // Ignore errors on cancel
       }
@@ -336,8 +350,9 @@ export function MissionInterviewModal({
     setHasProgress(false);
     setIsCreating(false);
     currentSessionIdRef.current = null;
+    setLockSessionId(null);
     onClose();
-  }, [missionGoal, hasProgress, view, onClose, projectId]);
+  }, [missionGoal, hasProgress, view, onClose, projectId, sessionTabId]);
 
   // Escape key handler
   useEffect(() => {
@@ -377,14 +392,14 @@ export function MissionInterviewModal({
       setStreamingOutput("");
 
       try {
-        await respondToMissionInterview(sessionId, responses, projectId);
+        await respondToMissionInterview(sessionId, responses, projectId, sessionTabId);
         setHasProgress(true);
       } catch (err: any) {
         setError(err.message || "Failed to submit response");
         setView({ type: "question", sessionId, question: view.question });
       }
     },
-    [view, projectId]
+    [view, projectId, sessionTabId]
   );
 
   const handleRetryFromError = useCallback(async () => {
@@ -401,7 +416,8 @@ export function MissionInterviewModal({
 
     try {
       currentSessionIdRef.current = retrySessionId;
-      await retryMissionInterviewSession(retrySessionId, projectId);
+      setLockSessionId(retrySessionId);
+      await retryMissionInterviewSession(retrySessionId, projectId, sessionTabId);
     } catch (err: any) {
       streamConnectionRef.current?.close();
       streamConnectionRef.current = null;
@@ -414,7 +430,7 @@ export function MissionInterviewModal({
     } finally {
       setIsRetrying(false);
     }
-  }, [connectToMissionInterviewStream, projectId, view]);
+  }, [connectToMissionInterviewStream, projectId, sessionTabId, view]);
 
   const handleApprovePlan = useCallback(async () => {
     if (view.type !== "summary") return;
@@ -441,6 +457,7 @@ export function MissionInterviewModal({
       setHasProgress(false);
       setIsCreating(false);
       currentSessionIdRef.current = null;
+      setLockSessionId(null);
       onClose();
     } catch (err: any) {
       setError(err.message || "Failed to create mission");
@@ -628,11 +645,31 @@ export function MissionInterviewModal({
                 setEditedSummary(null);
                 setResponseHistory([]);
                 setConversationHistory([]);
+                setLockSessionId(null);
                 streamConnectionRef.current?.close();
                 streamConnectionRef.current = null;
               }}
               isCreating={isCreating}
             />
+          )}
+
+          {isLockedByOther && (
+            <div className="session-lock-overlay" data-testid="session-lock-overlay">
+              <div className="session-lock-banner">
+                <Lock size={16} />
+                <span>This session is active in another tab</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void takeControl();
+                  }}
+                  disabled={isLockLoading}
+                  className="btn btn-primary session-lock-take-control"
+                >
+                  {isLockLoading ? "Taking control..." : "Take Control"}
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </div>

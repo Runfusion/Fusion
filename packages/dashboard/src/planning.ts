@@ -236,6 +236,8 @@ function persistSession(session: Session, status: "generating" | "awaiting_input
     projectId: projectId ?? null,
     createdAt: session.createdAt.toISOString(),
     updatedAt: new Date().toISOString(),
+    lockedByTab: null,
+    lockedAt: null,
   };
   _aiSessionStore.upsert(row);
 }

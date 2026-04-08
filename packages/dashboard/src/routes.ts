@@ -1350,6 +1350,23 @@ function replayBufferedSSE(
   return true;
 }
 
+function checkSessionLock(
+  sessionId: string,
+  tabId: string | undefined,
+  store: AiSessionStore | undefined,
+): { allowed: true } | { allowed: false; currentHolder: string | null } {
+  if (!tabId || !store) {
+    return { allowed: true };
+  }
+
+  const result = store.acquireLock(sessionId, tabId);
+  if (result.acquired) {
+    return { allowed: true };
+  }
+
+  return { allowed: false, currentHolder: result.currentHolder };
+}
+
 export function createApiRoutes(store: TaskStore, options?: ServerOptions): Router {
   const router = Router();
 
@@ -1424,6 +1441,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   // HeartbeatMonitor for triggering agent execution runs
   const heartbeatMonitor = options?.heartbeatMonitor;
   const hasHeartbeatExecutor = Boolean(heartbeatMonitor);
+  const aiSessionStore = options?.aiSessionStore;
 
   // Scheduler config (includes persisted settings)
   router.get("/config", async (req, res) => {
@@ -5843,9 +5861,19 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
   router.post("/subtasks/cancel", async (req, res) => {
     try {
-      const { sessionId } = req.body;
+      const { sessionId, tabId } = req.body;
       if (!sessionId || typeof sessionId !== "string") {
         throw badRequest("sessionId is required");
+      }
+
+      const normalizedTabId = typeof tabId === "string" && tabId.trim().length > 0 ? tabId.trim() : undefined;
+      const lockCheck = checkSessionLock(sessionId, normalizedTabId, aiSessionStore);
+      if (!lockCheck.allowed) {
+        res.status(409).json({
+          error: "Session locked by another tab",
+          lockedByTab: lockCheck.currentHolder,
+        });
+        return;
       }
 
       const { cancelSubtaskSession } = await import("./subtask-breakdown.js");
@@ -5868,6 +5896,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { sessionId } = req.params;
       if (!sessionId || typeof sessionId !== "string") {
         throw badRequest("sessionId is required");
+      }
+
+      const tabId = typeof req.body?.tabId === "string" && req.body.tabId.trim().length > 0
+        ? req.body.tabId.trim()
+        : undefined;
+      const lockCheck = checkSessionLock(sessionId, tabId, aiSessionStore);
+      if (!lockCheck.allowed) {
+        res.status(409).json({
+          error: "Session locked by another tab",
+          lockedByTab: lockCheck.currentHolder,
+        });
+        return;
       }
 
       const scopedStore = await getScopedStore(req);
@@ -5987,7 +6027,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.post("/planning/respond", async (req, res) => {
     try {
-      const { sessionId, responses } = req.body;
+      const { sessionId, responses, tabId } = req.body;
 
       if (!sessionId || typeof sessionId !== "string") {
         throw badRequest("sessionId is required");
@@ -5995,6 +6035,16 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       if (!responses || typeof responses !== "object") {
         throw badRequest("responses is required and must be an object");
+      }
+
+      const normalizedTabId = typeof tabId === "string" && tabId.trim().length > 0 ? tabId.trim() : undefined;
+      const lockCheck = checkSessionLock(sessionId, normalizedTabId, aiSessionStore);
+      if (!lockCheck.allowed) {
+        res.status(409).json({
+          error: "Session locked by another tab",
+          lockedByTab: lockCheck.currentHolder,
+        });
+        return;
       }
 
       const { submitResponse, SessionNotFoundError, InvalidSessionStateError } = await import("./planning.js");
@@ -6019,6 +6069,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { sessionId } = req.params;
       if (!sessionId || typeof sessionId !== "string") {
         throw badRequest("sessionId is required");
+      }
+
+      const tabId = typeof req.body?.tabId === "string" && req.body.tabId.trim().length > 0
+        ? req.body.tabId.trim()
+        : undefined;
+      const lockCheck = checkSessionLock(sessionId, tabId, aiSessionStore);
+      if (!lockCheck.allowed) {
+        res.status(409).json({
+          error: "Session locked by another tab",
+          lockedByTab: lockCheck.currentHolder,
+        });
+        return;
       }
 
       const scopedStore = await getScopedStore(req);
@@ -6046,10 +6108,20 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.post("/planning/cancel", async (req, res) => {
     try {
-      const { sessionId } = req.body;
+      const { sessionId, tabId } = req.body;
 
       if (!sessionId || typeof sessionId !== "string") {
         throw badRequest("sessionId is required");
+      }
+
+      const normalizedTabId = typeof tabId === "string" && tabId.trim().length > 0 ? tabId.trim() : undefined;
+      const lockCheck = checkSessionLock(sessionId, normalizedTabId, aiSessionStore);
+      if (!lockCheck.allowed) {
+        res.status(409).json({
+          error: "Session locked by another tab",
+          lockedByTab: lockCheck.currentHolder,
+        });
+        return;
       }
 
       const { cancelSession, SessionNotFoundError } = await import("./planning.js");
@@ -8942,11 +9014,9 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
   // ── Mission Routes ─────────────────────────────────────────────────────────
   // Mount mission routes at /api/missions
-  router.use("/missions", createMissionRouter(store, options?.missionAutopilot));
+  router.use("/missions", createMissionRouter(store, options?.missionAutopilot, aiSessionStore));
 
   // ── AI Session Routes (Background Tasks) ─────────────────────────────────
-
-  const aiSessionStore = options?.aiSessionStore;
 
   /**
    * GET /api/ai-sessions
@@ -8976,6 +9046,80 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       throw notFound("Session not found");
     }
     res.json(session);
+  });
+
+  router.post("/ai-sessions/:id/lock", (req, res) => {
+    if (!aiSessionStore) {
+      throw notFound("AI sessions not available");
+    }
+
+    const { id } = req.params;
+    const session = aiSessionStore.get(id);
+    if (!session) {
+      throw notFound("Session not found");
+    }
+
+    const tabId = typeof req.body?.tabId === "string" ? req.body.tabId.trim() : "";
+    if (!tabId) {
+      throw badRequest("tabId is required");
+    }
+
+    const result = aiSessionStore.acquireLock(id, tabId);
+    if (!result.acquired) {
+      res.json({ acquired: false, currentHolder: result.currentHolder });
+      return;
+    }
+
+    res.json({ acquired: true });
+  });
+
+  router.delete("/ai-sessions/:id/lock", (req, res) => {
+    if (!aiSessionStore) {
+      throw notFound("AI sessions not available");
+    }
+
+    const { id } = req.params;
+    const tabId = typeof req.body?.tabId === "string" ? req.body.tabId.trim() : "";
+    if (!tabId) {
+      throw badRequest("tabId is required");
+    }
+
+    aiSessionStore.releaseLock(id, tabId);
+    res.json({ success: true });
+  });
+
+  router.post("/ai-sessions/:id/lock/force", (req, res) => {
+    if (!aiSessionStore) {
+      throw notFound("AI sessions not available");
+    }
+
+    const { id } = req.params;
+    const session = aiSessionStore.get(id);
+    if (!session) {
+      throw notFound("Session not found");
+    }
+
+    const tabId = typeof req.body?.tabId === "string" ? req.body.tabId.trim() : "";
+    if (!tabId) {
+      throw badRequest("tabId is required");
+    }
+
+    aiSessionStore.forceAcquireLock(id, tabId);
+    res.json({ success: true });
+  });
+
+  router.delete("/ai-sessions/:id/lock/beacon", (req, res) => {
+    if (!aiSessionStore) {
+      throw notFound("AI sessions not available");
+    }
+
+    const { id } = req.params;
+    const tabId = typeof req.query.tabId === "string" ? req.query.tabId.trim() : "";
+    if (tabId) {
+      aiSessionStore.releaseLock(id, tabId);
+    }
+
+    res.status(200).end();
   });
 
   /**

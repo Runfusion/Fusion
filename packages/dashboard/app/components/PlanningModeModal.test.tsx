@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, render, renderHook, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { PlanningModeModal } from "./PlanningModeModal";
 import { TaskDetailModal } from "./TaskDetailModal";
+import { useSessionLock } from "../hooks/useSessionLock";
+import { getSessionTabId } from "../utils/getSessionTabId";
 import type { Task, TaskDetail, PlanningQuestion, PlanningSummary, MergeResult } from "@fusion/core";
 
 // Mock the API functions
@@ -17,6 +19,9 @@ const mockCreateTasksFromPlanning = vi.fn();
 const mockFetchAiSession = vi.fn();
 const mockParseConversationHistory = vi.fn();
 const mockFetchModels = vi.fn();
+const mockAcquireSessionLock = vi.fn();
+const mockReleaseSessionLock = vi.fn();
+const mockForceAcquireSessionLock = vi.fn();
 const mockUploadAttachment = vi.fn();
 const mockDeleteAttachment = vi.fn();
 const mockUpdateTask = vi.fn();
@@ -40,6 +45,9 @@ vi.mock("../api", () => ({
   createTasksFromPlanning: (...args: any[]) => mockCreateTasksFromPlanning(...args),
   fetchAiSession: (...args: any[]) => mockFetchAiSession(...args),
   parseConversationHistory: (...args: any[]) => mockParseConversationHistory(...args),
+  acquireSessionLock: (...args: any[]) => mockAcquireSessionLock(...args),
+  releaseSessionLock: (...args: any[]) => mockReleaseSessionLock(...args),
+  forceAcquireSessionLock: (...args: any[]) => mockForceAcquireSessionLock(...args),
   uploadAttachment: (...args: any[]) => mockUploadAttachment(...args),
   deleteAttachment: (...args: any[]) => mockDeleteAttachment(...args),
   updateTask: (...args: any[]) => mockUpdateTask(...args),
@@ -126,12 +134,55 @@ const mockTaskDetail = {
   paused: false,
 } as TaskDetail;
 
+class MockEventSource {
+  static instances: MockEventSource[] = [];
+
+  url: string;
+  closed = false;
+  private listeners = new Map<string, Set<(event: MessageEvent) => void>>();
+
+  constructor(url: string) {
+    this.url = url;
+    MockEventSource.instances.push(this);
+  }
+
+  addEventListener(event: string, listener: (event: MessageEvent) => void): void {
+    const set = this.listeners.get(event) ?? new Set();
+    set.add(listener);
+    this.listeners.set(event, set);
+  }
+
+  removeEventListener(event: string, listener: (event: MessageEvent) => void): void {
+    const set = this.listeners.get(event);
+    if (!set) return;
+    set.delete(listener);
+  }
+
+  close(): void {
+    this.closed = true;
+  }
+
+  emit(event: string, data: unknown): void {
+    const listeners = this.listeners.get(event);
+    if (!listeners) return;
+    const message = { data: JSON.stringify(data) } as MessageEvent;
+    listeners.forEach((listener) => listener(message));
+  }
+
+  static reset(): void {
+    MockEventSource.instances = [];
+  }
+}
+
 describe("PlanningModeModal", () => {
   const mockOnClose = vi.fn();
   const mockOnTaskCreated = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
+    MockEventSource.reset();
+    vi.stubGlobal("EventSource", MockEventSource as any);
+    window.sessionStorage.clear();
     vi.spyOn(window, "confirm").mockReturnValue(true);
     
     // Default mock for streaming
@@ -153,6 +204,9 @@ describe("PlanningModeModal", () => {
       favoriteProviders: [],
       favoriteModels: [],
     });
+    mockAcquireSessionLock.mockResolvedValue({ acquired: true, currentHolder: null });
+    mockReleaseSessionLock.mockResolvedValue(undefined);
+    mockForceAcquireSessionLock.mockResolvedValue(undefined);
 
     // Default: simulate receiving a question after a brief delay
     mockConnectPlanningStream.mockImplementation((_sessionId: string, _projectId: string | undefined, handlers: any) => {
@@ -401,6 +455,80 @@ describe("PlanningModeModal", () => {
       });
     });
 
+    it("shows locked overlay and allows take-control", async () => {
+      window.sessionStorage.setItem("fusion-tab-id", "tab-self");
+      mockAcquireSessionLock.mockResolvedValueOnce({ acquired: false, currentHolder: "tab-other" });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+        />,
+      );
+
+      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+        target: { value: "Build auth system" },
+      });
+      fireEvent.click(screen.getByText("Start Planning"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("session-lock-overlay")).toBeDefined();
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByText("Take Control"));
+      });
+
+      await waitFor(() => {
+        expect(mockForceAcquireSessionLock).toHaveBeenCalledWith("session-123", "tab-self");
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("session-lock-overlay")).toBeNull();
+      });
+    });
+
+    it("allows normal question interaction when lock is acquired", async () => {
+      window.sessionStorage.setItem("fusion-tab-id", "tab-self");
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          tasks={mockTasks}
+        />,
+      );
+
+      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+        target: { value: "Build auth system" },
+      });
+      fireEvent.click(screen.getByText("Start Planning"));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("session-lock-overlay")).toBeNull();
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("What is the scope?")).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByText("Small"));
+      fireEvent.click(screen.getByText("Continue"));
+
+      await waitFor(() => {
+        expect(mockRespondToPlanning).toHaveBeenCalledWith(
+          "session-123",
+          { "q-scope": "small" },
+          undefined,
+          "tab-self",
+        );
+      });
+    });
+
     it("shows error message when planning fails", async () => {
       // Override the default mock to simulate an error
       mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
@@ -472,7 +600,7 @@ describe("PlanningModeModal", () => {
       fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
       await waitFor(() => {
-        expect(mockRetryPlanningSession).toHaveBeenCalledWith("session-123", undefined);
+        expect(mockRetryPlanningSession).toHaveBeenCalledWith("session-123", undefined, expect.any(String));
       });
       await waitFor(() => {
         expect(screen.getByText("What is the scope?")).toBeDefined();
@@ -1597,5 +1725,120 @@ describe("PlanningModeModal", () => {
       expect(mockCancelPlanning).not.toHaveBeenCalled();
       expect(mockOnClose).toHaveBeenCalled();
     });
+  });
+});
+
+describe("getSessionTabId", () => {
+  it("creates and persists a per-tab id in sessionStorage", () => {
+    window.sessionStorage.clear();
+
+    const first = getSessionTabId();
+    const second = getSessionTabId();
+
+    expect(first).toBeTruthy();
+    expect(second).toBe(first);
+    expect(window.sessionStorage.getItem("fusion-tab-id")).toBe(first);
+  });
+});
+
+describe("useSessionLock", () => {
+  beforeEach(() => {
+    MockEventSource.reset();
+    vi.stubGlobal("EventSource", MockEventSource as any);
+    window.sessionStorage.clear();
+    mockAcquireSessionLock.mockResolvedValue({ acquired: true, currentHolder: null });
+    mockReleaseSessionLock.mockResolvedValue(undefined);
+    mockForceAcquireSessionLock.mockResolvedValue(undefined);
+  });
+
+  it("acquires on mount and releases on unmount", async () => {
+    window.sessionStorage.setItem("fusion-tab-id", "tab-self");
+
+    const { unmount } = renderHook(() => useSessionLock("session-1"));
+
+    await waitFor(() => {
+      expect(mockAcquireSessionLock).toHaveBeenCalledWith("session-1", "tab-self");
+    });
+
+    unmount();
+
+    await waitFor(() => {
+      expect(mockReleaseSessionLock).toHaveBeenCalledWith("session-1", "tab-self");
+    });
+  });
+
+  it("exposes locked state and allows taking control", async () => {
+    window.sessionStorage.setItem("fusion-tab-id", "tab-self");
+    mockAcquireSessionLock.mockResolvedValueOnce({ acquired: false, currentHolder: "tab-other" });
+
+    const { result } = renderHook(() => useSessionLock("session-2"));
+
+    await waitFor(() => {
+      expect(result.current.isLockedByOther).toBe(true);
+      expect(result.current.currentHolder).toBe("tab-other");
+    });
+
+    await act(async () => {
+      await result.current.takeControl();
+    });
+
+    expect(mockForceAcquireSessionLock).toHaveBeenCalledWith("session-2", "tab-self");
+    expect(result.current.isLockedByOther).toBe(false);
+    expect(result.current.currentHolder).toBeNull();
+  });
+
+  it("updates lock state from ai_session:updated SSE events and uses sendBeacon on beforeunload", async () => {
+    window.sessionStorage.setItem("fusion-tab-id", "tab-self");
+    const sendBeaconSpy = vi.fn(() => true);
+    vi.stubGlobal("navigator", {
+      ...window.navigator,
+      sendBeacon: sendBeaconSpy,
+    } as Navigator);
+
+    const { result } = renderHook(() => useSessionLock("session-3"));
+
+    await waitFor(() => {
+      expect(mockAcquireSessionLock).toHaveBeenCalledWith("session-3", "tab-self");
+    });
+
+    const source = MockEventSource.instances[0];
+    expect(source).toBeDefined();
+
+    act(() => {
+      source?.emit("ai_session:updated", {
+        id: "session-3",
+        type: "planning",
+        status: "awaiting_input",
+        title: "Session",
+        projectId: null,
+        lockedByTab: "tab-other",
+        updatedAt: new Date().toISOString(),
+      });
+    });
+
+    expect(result.current.isLockedByOther).toBe(true);
+    expect(result.current.currentHolder).toBe("tab-other");
+
+    act(() => {
+      source?.emit("ai_session:updated", {
+        id: "session-3",
+        type: "planning",
+        status: "awaiting_input",
+        title: "Session",
+        projectId: null,
+        lockedByTab: "tab-self",
+        updatedAt: new Date().toISOString(),
+      });
+    });
+
+    expect(result.current.isLockedByOther).toBe(false);
+
+    act(() => {
+      window.dispatchEvent(new Event("beforeunload"));
+    });
+
+    expect(sendBeaconSpy).toHaveBeenCalledWith(
+      "/api/ai-sessions/session-3/lock/beacon?tabId=tab-self",
+    );
   });
 });

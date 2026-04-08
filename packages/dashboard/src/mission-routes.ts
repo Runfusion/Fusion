@@ -49,6 +49,7 @@ import {
   notFound,
   rateLimited,
 } from "./api-error.js";
+import type { AiSessionStore } from "./ai-session-store.js";
 
 // ── Validation Utilities ────────────────────────────────────────────────────
 
@@ -175,6 +176,23 @@ function replayBufferedSSE(
   return true;
 }
 
+function checkSessionLock(
+  sessionId: string,
+  tabId: string | undefined,
+  store: AiSessionStore | undefined,
+): { allowed: true } | { allowed: false; currentHolder: string | null } {
+  if (!tabId || !store) {
+    return { allowed: true };
+  }
+
+  const result = store.acquireLock(sessionId, tabId);
+  if (result.acquired) {
+    return { allowed: true };
+  }
+
+  return { allowed: false, currentHolder: result.currentHolder };
+}
+
 export function createMissionRouter(
   store: TaskStore,
   missionAutopilot?: {
@@ -186,6 +204,7 @@ export function createMissionRouter(
     start(): void;
     stop(): void;
   },
+  aiSessionStore?: AiSessionStore,
 ): Router {
   const router = Router();
   const requestContext = new AsyncLocalStorage<ReturnType<TaskStore["getMissionStore"]>>();
@@ -344,7 +363,7 @@ export function createMissionRouter(
   router.post(
     "/interview/respond",
     catchTypedHandler(async (req, res) => {
-      const { sessionId, responses } = req.body;
+      const { sessionId, responses, tabId } = req.body;
 
       if (!sessionId || typeof sessionId !== "string") {
         throw badRequest("sessionId is required");
@@ -352,6 +371,16 @@ export function createMissionRouter(
 
       if (!responses || typeof responses !== "object") {
         throw badRequest("responses is required and must be an object");
+      }
+
+      const normalizedTabId = typeof tabId === "string" && tabId.trim().length > 0 ? tabId.trim() : undefined;
+      const lockCheck = checkSessionLock(sessionId, normalizedTabId, aiSessionStore);
+      if (!lockCheck.allowed) {
+        res.status(409).json({
+          error: "Session locked by another tab",
+          lockedByTab: lockCheck.currentHolder,
+        });
+        return;
       }
 
       try {
@@ -389,6 +418,18 @@ export function createMissionRouter(
         throw badRequest("sessionId is required");
       }
 
+      const tabId = typeof req.body?.tabId === "string" && req.body.tabId.trim().length > 0
+        ? req.body.tabId.trim()
+        : undefined;
+      const lockCheck = checkSessionLock(sessionId, tabId, aiSessionStore);
+      if (!lockCheck.allowed) {
+        res.status(409).json({
+          error: "Session locked by another tab",
+          lockedByTab: lockCheck.currentHolder,
+        });
+        return;
+      }
+
       try {
         const {
           retryMissionInterviewSession,
@@ -419,10 +460,20 @@ export function createMissionRouter(
   router.post(
     "/interview/cancel",
     catchTypedHandler(async (req, res) => {
-      const { sessionId } = req.body;
+      const { sessionId, tabId } = req.body;
 
       if (!sessionId || typeof sessionId !== "string") {
         throw badRequest("sessionId is required");
+      }
+
+      const normalizedTabId = typeof tabId === "string" && tabId.trim().length > 0 ? tabId.trim() : undefined;
+      const lockCheck = checkSessionLock(sessionId, normalizedTabId, aiSessionStore);
+      if (!lockCheck.allowed) {
+        res.status(409).json({
+          error: "Session locked by another tab",
+          lockedByTab: lockCheck.currentHolder,
+        });
+        return;
       }
 
       try {

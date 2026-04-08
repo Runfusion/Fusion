@@ -447,11 +447,14 @@ function createMockMissionAutopilot() {
 function buildApp(options?: {
   missionAutopilot?: ReturnType<typeof createMockMissionAutopilot>;
   withErrorHandler?: boolean;
+  aiSessionStore?: {
+    acquireLock(sessionId: string, tabId: string): { acquired: boolean; currentHolder: string | null };
+  };
 }) {
   const app = express();
   app.use(express.json());
   const store = createMockStore();
-  app.use("/api/missions", createMissionRouter(store, options?.missionAutopilot));
+  app.use("/api/missions", createMissionRouter(store, options?.missionAutopilot, options?.aiSessionStore as any));
 
   if (options?.withErrorHandler) {
     app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
@@ -1794,6 +1797,131 @@ describe("Mission API", () => {
       );
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("sessionId");
+    });
+
+    it("returns 409 when interview respond is locked by another tab", async () => {
+      const submitSpy = vi.spyOn(missionInterviewModule, "submitMissionInterviewResponse");
+
+      const { app } = buildApp({
+        aiSessionStore: {
+          acquireLock: () => ({ acquired: false, currentHolder: "tab-owner" }),
+        },
+      });
+
+      const res = await request(
+        app,
+        "POST",
+        "/api/missions/interview/respond",
+        JSON.stringify({
+          sessionId: "session-locked",
+          responses: { "q-1": "answer" },
+          tabId: "tab-other",
+        }),
+        { "content-type": "application/json" },
+      );
+
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({
+        error: "Session locked by another tab",
+        lockedByTab: "tab-owner",
+      });
+      expect(submitSpy).not.toHaveBeenCalled();
+    });
+
+    it("returns 409 when interview cancel is locked by another tab", async () => {
+      const cancelSpy = vi.spyOn(missionInterviewModule, "cancelMissionInterviewSession");
+
+      const { app } = buildApp({
+        aiSessionStore: {
+          acquireLock: () => ({ acquired: false, currentHolder: "tab-owner" }),
+        },
+      });
+
+      const res = await request(
+        app,
+        "POST",
+        "/api/missions/interview/cancel",
+        JSON.stringify({
+          sessionId: "session-locked",
+          tabId: "tab-other",
+        }),
+        { "content-type": "application/json" },
+      );
+
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({
+        error: "Session locked by another tab",
+        lockedByTab: "tab-owner",
+      });
+      expect(cancelSpy).not.toHaveBeenCalled();
+    });
+
+    it("returns 409 when interview retry is locked by another tab", async () => {
+      const retrySpy = vi.spyOn(missionInterviewModule, "retryMissionInterviewSession");
+
+      const { app } = buildApp({
+        aiSessionStore: {
+          acquireLock: () => ({ acquired: false, currentHolder: "tab-owner" }),
+        },
+      });
+
+      const res = await request(
+        app,
+        "POST",
+        "/api/missions/interview/session-locked/retry",
+        JSON.stringify({ tabId: "tab-other" }),
+        { "content-type": "application/json" },
+      );
+
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({
+        error: "Session locked by another tab",
+        lockedByTab: "tab-owner",
+      });
+      expect(retrySpy).not.toHaveBeenCalled();
+    });
+
+    it("allows interview respond/cancel/retry when tabId is omitted", async () => {
+      vi.spyOn(missionInterviewModule, "submitMissionInterviewResponse").mockResolvedValueOnce({
+        type: "question",
+        data: {
+          id: "q-next",
+          type: "text",
+          question: "next",
+          description: "next",
+        },
+      } as any);
+      vi.spyOn(missionInterviewModule, "cancelMissionInterviewSession").mockResolvedValueOnce(undefined);
+      vi.spyOn(missionInterviewModule, "retryMissionInterviewSession").mockResolvedValueOnce(undefined);
+
+      const { app } = buildApp({
+        aiSessionStore: {
+          acquireLock: () => ({ acquired: false, currentHolder: "tab-owner" }),
+        },
+      });
+
+      const respondRes = await request(
+        app,
+        "POST",
+        "/api/missions/interview/respond",
+        JSON.stringify({ sessionId: "session-open", responses: { "q-1": "answer" } }),
+        { "content-type": "application/json" },
+      );
+      expect(respondRes.status).toBe(200);
+
+      const cancelRes = await request(
+        app,
+        "POST",
+        "/api/missions/interview/cancel",
+        JSON.stringify({ sessionId: "session-open" }),
+        { "content-type": "application/json" },
+      );
+      expect(cancelRes.status).toBe(200);
+      expect(cancelRes.body).toEqual({ success: true });
+
+      const retryRes = await request(app, "POST", "/api/missions/interview/session-open/retry");
+      expect(retryRes.status).toBe(200);
+      expect(retryRes.body).toEqual({ success: true, sessionId: "session-open" });
     });
 
     it("retries a failed interview session", async () => {

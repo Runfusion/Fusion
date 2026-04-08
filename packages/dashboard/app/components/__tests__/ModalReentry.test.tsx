@@ -51,6 +51,9 @@ const {
   mockConnectMissionInterviewStream,
   mockCancelMissionInterview,
   mockCreateMissionFromInterview,
+  mockAcquireSessionLock,
+  mockReleaseSessionLock,
+  mockForceAcquireSessionLock,
 } = vi.hoisted(() => ({
   mockStartPlanningStreaming: vi.fn(),
   mockConnectPlanningStream: vi.fn(),
@@ -65,6 +68,9 @@ const {
   mockConnectMissionInterviewStream: vi.fn(),
   mockCancelMissionInterview: vi.fn(),
   mockCreateMissionFromInterview: vi.fn(),
+  mockAcquireSessionLock: vi.fn(),
+  mockReleaseSessionLock: vi.fn(),
+  mockForceAcquireSessionLock: vi.fn(),
 }));
 
 vi.mock("../../api", () => ({
@@ -81,6 +87,9 @@ vi.mock("../../api", () => ({
   connectMissionInterviewStream: (...args: any[]) => mockConnectMissionInterviewStream(...args),
   cancelMissionInterview: (...args: any[]) => mockCancelMissionInterview(...args),
   createMissionFromInterview: (...args: any[]) => mockCreateMissionFromInterview(...args),
+  acquireSessionLock: (...args: any[]) => mockAcquireSessionLock(...args),
+  releaseSessionLock: (...args: any[]) => mockReleaseSessionLock(...args),
+  forceAcquireSessionLock: (...args: any[]) => mockForceAcquireSessionLock(...args),
   fetchSettings: vi.fn().mockResolvedValue({ modelPresets: [], autoSelectModelPreset: false, defaultPresetBySize: {} }),
   fetchModels: vi.fn().mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] }),
   fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
@@ -131,6 +140,9 @@ describe("ModalReentry", () => {
       slices: [],
       features: [],
     });
+    mockAcquireSessionLock.mockResolvedValue({ acquired: true, currentHolder: null });
+    mockReleaseSessionLock.mockResolvedValue(undefined);
+    mockForceAcquireSessionLock.mockResolvedValue({ acquired: true, currentHolder: null });
 
     vi.stubGlobal("confirm", vi.fn(() => true));
   });
