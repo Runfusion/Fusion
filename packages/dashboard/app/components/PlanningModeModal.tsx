@@ -3,6 +3,7 @@ import type { Task, PlanningQuestion, PlanningSummary } from "@fusion/core";
 import {
   startPlanningStreaming,
   respondToPlanning,
+  retryPlanningSession,
   createTaskFromPlanning,
   connectPlanningStream,
   fetchAiSession,
@@ -20,7 +21,7 @@ import {
   getPlanningDescription,
   clearPlanningDescription,
 } from "../hooks/modalPersistence";
-import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, ListTree, GripVertical, ArrowUp, ArrowDown, Plus, Trash2, Minimize2 } from "lucide-react";
+import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, ListTree, GripVertical, ArrowUp, ArrowDown, Plus, Trash2, Minimize2, RefreshCw } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ConversationHistory } from "./ConversationHistory";
 
@@ -44,6 +45,7 @@ type ViewState =
   | { type: "initial" }
   | { type: "question"; session: PlanningSession }
   | { type: "summary"; session: PlanningSession; summary: PlanningSummary }
+  | { type: "error"; session: PlanningSession; errorMessage: string }
   | { type: "breakdown"; sessionId: string; subtasks: SubtaskItem[]; dirty: boolean }
   | { type: "loading" }
   | { type: "creating" };
@@ -90,6 +92,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const [streamingOutput, setStreamingOutput] = useState<string>("");
   const [showThinking, setShowThinking] = useState(true);
   const [isReconnecting, setIsReconnecting] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const streamConnectionRef = useRef<{ close: () => void; isConnected: () => boolean } | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
@@ -140,6 +143,68 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     );
   }, []);
 
+  const connectToPlanningStream = useCallback(
+    (sessionId: string) => {
+      streamConnectionRef.current?.close();
+      const connection = connectPlanningStream(sessionId, projectId, {
+        onThinking: (data) => {
+          setStreamingOutput((prev) => prev + data);
+        },
+        onQuestion: (question) => {
+          setIsReconnecting(false);
+          setIsRetrying(false);
+          clearPlanningDescription(projectId);
+          setView({
+            type: "question",
+            session: { sessionId, currentQuestion: question, summary: null },
+          });
+          setStreamingOutput("");
+        },
+        onSummary: (summary) => {
+          setIsReconnecting(false);
+          setIsRetrying(false);
+          clearPlanningDescription(projectId);
+          setView({
+            type: "summary",
+            session: { sessionId, currentQuestion: null, summary },
+            summary,
+          });
+          setEditedSummary(summary);
+          setStreamingOutput("");
+        },
+        onError: (message) => {
+          const errorMessage = message || "Session failed while contacting the AI.";
+          setIsReconnecting(false);
+          setIsRetrying(false);
+          setError(null);
+          setView((prev) => {
+            if (prev.type === "question" || prev.type === "summary" || prev.type === "error") {
+              return { type: "error", session: prev.session, errorMessage };
+            }
+            return {
+              type: "error",
+              session: { sessionId, currentQuestion: null, summary: null },
+              errorMessage,
+            };
+          });
+          setStreamingOutput("");
+          currentSessionIdRef.current = sessionId;
+        },
+        onComplete: () => {
+          setIsReconnecting(false);
+          setIsRetrying(false);
+          currentSessionIdRef.current = null;
+        },
+        onConnectionStateChange: (state) => {
+          setIsReconnecting(state === "reconnecting");
+        },
+      });
+
+      streamConnectionRef.current = connection;
+    },
+    [projectId],
+  );
+
   const handleStartPlanning = useCallback(async (planOverride?: string) => {
     const plan = planOverride ?? initialPlan;
     if (!plan.trim()) return;
@@ -161,48 +226,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       const { sessionId } = await startPlanningStreaming(plan.trim(), projectId, modelOverride);
       currentSessionIdRef.current = sessionId;
 
-      // Connect to SSE stream
-      const connection = connectPlanningStream(sessionId, projectId, {
-        onThinking: (data) => {
-          setStreamingOutput((prev) => prev + data);
-        },
-        onQuestion: (question) => {
-          setIsReconnecting(false);
-          clearPlanningDescription(projectId);
-          setView({
-            type: "question",
-            session: { sessionId, currentQuestion: question, summary: null },
-          });
-          setStreamingOutput("");
-        },
-        onSummary: (summary) => {
-          setIsReconnecting(false);
-          clearPlanningDescription(projectId);
-          setView({
-            type: "summary",
-            session: { sessionId, currentQuestion: null, summary },
-            summary,
-          });
-          setEditedSummary(summary);
-          setStreamingOutput("");
-        },
-        onError: (message) => {
-          setIsReconnecting(false);
-          setError(message);
-          setView({ type: "initial" });
-          setStreamingOutput("");
-          currentSessionIdRef.current = null;
-        },
-        onComplete: () => {
-          setIsReconnecting(false);
-          currentSessionIdRef.current = null;
-        },
-        onConnectionStateChange: (state) => {
-          setIsReconnecting(state === "reconnecting");
-        },
-      });
-
-      streamConnectionRef.current = connection;
+      connectToPlanningStream(sessionId);
       setResponseHistory([]);
     } catch (err: any) {
       setIsReconnecting(false);
@@ -210,7 +234,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setView({ type: "initial" });
       currentSessionIdRef.current = null;
     }
-  }, [initialPlan, planningModelId, planningModelProvider, projectId]);
+  }, [connectToPlanningStream, initialPlan, planningModelId, planningModelProvider, projectId]);
 
   // Focus textarea when opening
   useEffect(() => {
@@ -279,52 +303,28 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         } else if (session.status === "generating") {
           setView({ type: "loading" });
           if (session.thinkingOutput) setStreamingOutput(session.thinkingOutput);
-          // Connect to live SSE stream to pick up new events
-          const connection = connectPlanningStream(resumeSessionId, projectId, {
-            onThinking: (data) => setStreamingOutput((prev) => prev + data),
-            onQuestion: (question) => {
-              setIsReconnecting(false);
-              clearPlanningDescription(projectId);
-              setView({ type: "question", session: { sessionId: resumeSessionId, currentQuestion: question, summary: null } });
-              setStreamingOutput("");
-            },
-            onSummary: (summary) => {
-              setIsReconnecting(false);
-              clearPlanningDescription(projectId);
-              setView({ type: "summary", session: { sessionId: resumeSessionId, currentQuestion: null, summary }, summary });
-              setEditedSummary(summary);
-              setStreamingOutput("");
-            },
-            onError: (message) => {
-              setIsReconnecting(false);
-              setError(message);
-              setView({ type: "initial" });
-            },
-            onComplete: () => {
-              setIsReconnecting(false);
-              currentSessionIdRef.current = null;
-            },
-            onConnectionStateChange: (state) => {
-              setIsReconnecting(state === "reconnecting");
-            },
-          });
-          streamConnectionRef.current = connection;
+          connectToPlanningStream(resumeSessionId);
         } else if (session.status === "error") {
-          setError(session.error || "Session failed");
-          setView({ type: "initial" });
+          setError(null);
+          setView({
+            type: "error",
+            session: { sessionId: resumeSessionId, currentQuestion: null, summary: null },
+            errorMessage: session.error || "Session failed",
+          });
         }
       } catch {
         setError("Failed to resume session");
       }
     })();
     return () => { cancelled = true; };
-  }, [isOpen, resumeSessionId, view.type, projectId]);
+  }, [connectToPlanningStream, isOpen, resumeSessionId, view.type, projectId]);
 
   // Reset hasAutoStarted when modal closes
   useEffect(() => {
     if (!isOpen) {
       hasAutoStartedRef.current = false;
       setIsReconnecting(false);
+      setIsRetrying(false);
     }
   }, [isOpen]);
 
@@ -374,6 +374,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setEditedSummary(null);
     setStreamingOutput("");
     setIsReconnecting(false);
+    setIsRetrying(false);
     setPlanningModelProvider(undefined);
     setPlanningModelId(undefined);
     currentSessionIdRef.current = null;
@@ -436,6 +437,36 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     },
     [projectId, view]
   );
+
+  const handleRetryFromError = useCallback(async () => {
+    if (view.type !== "error") {
+      return;
+    }
+
+    const retryTarget = view.session;
+    setError(null);
+    setIsRetrying(true);
+    setStreamingOutput("");
+    setView({ type: "loading" });
+
+    connectToPlanningStream(retryTarget.sessionId);
+
+    try {
+      currentSessionIdRef.current = retryTarget.sessionId;
+      await retryPlanningSession(retryTarget.sessionId, projectId);
+    } catch (err: any) {
+      streamConnectionRef.current?.close();
+      streamConnectionRef.current = null;
+      setView({
+        type: "error",
+        session: retryTarget,
+        errorMessage: err?.message || "Retry failed. Please try again.",
+      });
+      setIsReconnecting(false);
+    } finally {
+      setIsRetrying(false);
+    }
+  }, [connectToPlanningStream, projectId, view]);
 
   const handleCreateTask = useCallback(async () => {
     if (view.type !== "summary") return;
@@ -519,7 +550,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   };
 
   const showSendToBackgroundButton =
-    view.type === "loading" || view.type === "question" || view.type === "summary";
+    view.type === "loading" || view.type === "question" || view.type === "summary" || view.type === "error";
 
   if (!isOpen) return null;
 
@@ -697,6 +728,42 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                     <pre>{streamingOutput}</pre>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {view.type === "error" && (
+            <div className="planning-summary">
+              <div className="planning-view-scroll planning-summary-scroll">
+                {conversationHistory.length > 0 && (
+                  <>
+                    <ConversationHistory entries={conversationHistory} />
+                    <div className="conversation-separator" />
+                  </>
+                )}
+
+                <div
+                  className="ai-error-panel"
+                  role="alert"
+                  style={{
+                    border: "1px solid var(--color-error, #dc2626)",
+                    borderRadius: "10px",
+                    background: "color-mix(in srgb, var(--color-error, #dc2626) 10%, transparent)",
+                    padding: "14px",
+                    display: "grid",
+                    gap: "10px",
+                  }}
+                >
+                  <div className="ai-error-icon" style={{ fontSize: "20px" }}>⚠️</div>
+                  <div className="ai-error-message">{view.errorMessage}</div>
+                  <div className="ai-error-actions" style={{ display: "flex", gap: "8px" }}>
+                    <button className="btn btn-primary" onClick={() => void handleRetryFromError()} disabled={isRetrying}>
+                      {isRetrying ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
+                      <span style={{ marginLeft: "6px" }}>{isRetrying ? "Retrying..." : "Retry"}</span>
+                    </button>
+                    <button className="btn" onClick={handleCancel} disabled={isRetrying}>Dismiss</button>
+                  </div>
+                </div>
               </div>
             </div>
           )}

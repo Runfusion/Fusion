@@ -3,6 +3,7 @@ import type { PlanningQuestion } from "@fusion/core";
 import {
   startMissionInterview,
   respondToMissionInterview,
+  retryMissionInterviewSession,
   cancelMissionInterview,
   createMissionFromInterview,
   connectMissionInterviewStream,
@@ -36,6 +37,7 @@ import {
   Plus,
   Trash2,
   Minimize2,
+  RefreshCw,
 } from "lucide-react";
 import { ConversationHistory } from "./ConversationHistory";
 
@@ -56,7 +58,8 @@ type ViewState =
   | { type: "initial" }
   | { type: "loading" }
   | { type: "question"; sessionId: string; question: PlanningQuestion }
-  | { type: "summary"; sessionId: string; summary: MissionPlanSummary };
+  | { type: "summary"; sessionId: string; summary: MissionPlanSummary }
+  | { type: "error"; sessionId: string; errorMessage: string };
 
 const EXAMPLE_MISSIONS = [
   "Build a real-time collaborative document editor",
@@ -84,10 +87,60 @@ export function MissionInterviewModal({
   const [streamingOutput, setStreamingOutput] = useState("");
   const [showThinking, setShowThinking] = useState(true);
   const [isReconnecting, setIsReconnecting] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const streamConnectionRef = useRef<{ close: () => void; isConnected: () => boolean } | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
+
+  const connectToMissionInterviewStream = useCallback(
+    (sessionId: string) => {
+      streamConnectionRef.current?.close();
+      const connection = connectMissionInterviewStream(sessionId, projectId, {
+        onThinking: (data) => {
+          setStreamingOutput((prev) => prev + data);
+        },
+        onQuestion: (question) => {
+          setIsReconnecting(false);
+          setIsRetrying(false);
+          clearMissionGoal(projectId);
+          setView({ type: "question", sessionId, question });
+          setStreamingOutput("");
+          setHasProgress(true);
+        },
+        onSummary: (summary) => {
+          setIsReconnecting(false);
+          setIsRetrying(false);
+          clearMissionGoal(projectId);
+          setView({ type: "summary", sessionId, summary });
+          setEditedSummary(summary);
+          setStreamingOutput("");
+          setHasProgress(true);
+        },
+        onError: (message) => {
+          const errorMessage = message || "Session failed while contacting the AI.";
+          setIsReconnecting(false);
+          setIsRetrying(false);
+          setError(null);
+          setView({ type: "error", sessionId, errorMessage });
+          setStreamingOutput("");
+          setHasProgress(true);
+          currentSessionIdRef.current = sessionId;
+        },
+        onComplete: () => {
+          setIsReconnecting(false);
+          setIsRetrying(false);
+          currentSessionIdRef.current = null;
+        },
+        onConnectionStateChange: (state) => {
+          setIsReconnecting(state === "reconnecting");
+        },
+      });
+
+      streamConnectionRef.current = connection;
+    },
+    [projectId],
+  );
 
   const handleStartInterview = useCallback(
     async (goalOverride?: string) => {
@@ -106,42 +159,7 @@ export function MissionInterviewModal({
         currentSessionIdRef.current = sessionId;
         clearMissionGoal(projectId);
 
-        const connection = connectMissionInterviewStream(sessionId, projectId, {
-          onThinking: (data) => {
-            setStreamingOutput((prev) => prev + data);
-          },
-          onQuestion: (question) => {
-            setIsReconnecting(false);
-            clearMissionGoal(projectId);
-            setView({ type: "question", sessionId, question });
-            setStreamingOutput("");
-            setHasProgress(true);
-          },
-          onSummary: (summary) => {
-            setIsReconnecting(false);
-            clearMissionGoal(projectId);
-            setView({ type: "summary", sessionId, summary });
-            setEditedSummary(summary);
-            setStreamingOutput("");
-            setHasProgress(true);
-          },
-          onError: (message) => {
-            setIsReconnecting(false);
-            setError(message);
-            setView({ type: "initial" });
-            setStreamingOutput("");
-            currentSessionIdRef.current = null;
-          },
-          onComplete: () => {
-            setIsReconnecting(false);
-            currentSessionIdRef.current = null;
-          },
-          onConnectionStateChange: (state) => {
-            setIsReconnecting(state === "reconnecting");
-          },
-        });
-
-        streamConnectionRef.current = connection;
+        connectToMissionInterviewStream(sessionId);
         setResponseHistory([]);
       } catch (err: any) {
         setIsReconnecting(false);
@@ -150,7 +168,7 @@ export function MissionInterviewModal({
         currentSessionIdRef.current = null;
       }
     },
-    [missionGoal, projectId]
+    [connectToMissionInterviewStream, missionGoal, projectId]
   );
 
   // Focus textarea when opening
@@ -182,6 +200,7 @@ export function MissionInterviewModal({
     if (!isOpen) {
       hasAutoStartedRef.current = false;
       setIsReconnecting(false);
+      setIsRetrying(false);
     }
   }, [isOpen]);
 
@@ -232,43 +251,16 @@ export function MissionInterviewModal({
           setStreamingOutput(session.thinkingOutput);
         }
         setView({ type: "loading" });
-
-        const connection = connectMissionInterviewStream(session.id, projectId, {
-          onThinking: (data) => {
-            setStreamingOutput((prev) => prev + data);
-          },
-          onQuestion: (question) => {
-            setIsReconnecting(false);
-            clearMissionGoal(projectId);
-            setView({ type: "question", sessionId: session.id, question });
-            setStreamingOutput("");
-          },
-          onSummary: (summary) => {
-            setIsReconnecting(false);
-            clearMissionGoal(projectId);
-            setView({ type: "summary", sessionId: session.id, summary });
-            setEditedSummary(summary);
-            setStreamingOutput("");
-          },
-          onError: (message) => {
-            setIsReconnecting(false);
-            setError(message);
-            setView({ type: "initial" });
-            setStreamingOutput("");
-            currentSessionIdRef.current = null;
-          },
-          onComplete: () => {
-            setIsReconnecting(false);
-            currentSessionIdRef.current = null;
-          },
-          onConnectionStateChange: (state) => {
-            setIsReconnecting(state === "reconnecting");
-          },
-        });
-
-        streamConnectionRef.current = connection;
+        connectToMissionInterviewStream(session.id);
       } else if (session.status === "error") {
-        setError(session.error ?? "The session encountered an error.");
+        currentSessionIdRef.current = session.id;
+        setHasProgress(true);
+        setError(null);
+        setView({
+          type: "error",
+          sessionId: session.id,
+          errorMessage: session.error ?? "The session encountered an error.",
+        });
       }
     }).catch(() => {
       if (!cancelled) setError("Failed to resume session.");
@@ -277,7 +269,7 @@ export function MissionInterviewModal({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, resumeSessionId, view.type, projectId]);
+  }, [connectToMissionInterviewStream, isOpen, resumeSessionId, view.type, projectId]);
 
   // Cleanup stream on unmount
   useEffect(() => {
@@ -324,7 +316,7 @@ export function MissionInterviewModal({
     streamConnectionRef.current?.close();
     streamConnectionRef.current = null;
 
-    if (view.type === "question" || view.type === "summary") {
+    if (view.type === "question" || view.type === "summary" || view.type === "error") {
       try {
         await cancelMissionInterview(view.sessionId, projectId);
       } catch {
@@ -340,6 +332,7 @@ export function MissionInterviewModal({
     setEditedSummary(null);
     setStreamingOutput("");
     setIsReconnecting(false);
+    setIsRetrying(false);
     setHasProgress(false);
     setIsCreating(false);
     currentSessionIdRef.current = null;
@@ -394,6 +387,35 @@ export function MissionInterviewModal({
     [view, projectId]
   );
 
+  const handleRetryFromError = useCallback(async () => {
+    if (view.type !== "error") {
+      return;
+    }
+
+    const retrySessionId = view.sessionId;
+    setError(null);
+    setIsRetrying(true);
+    setStreamingOutput("");
+    setView({ type: "loading" });
+    connectToMissionInterviewStream(retrySessionId);
+
+    try {
+      currentSessionIdRef.current = retrySessionId;
+      await retryMissionInterviewSession(retrySessionId, projectId);
+    } catch (err: any) {
+      streamConnectionRef.current?.close();
+      streamConnectionRef.current = null;
+      setView({
+        type: "error",
+        sessionId: retrySessionId,
+        errorMessage: err?.message || "Retry failed. Please try again.",
+      });
+      setIsReconnecting(false);
+    } finally {
+      setIsRetrying(false);
+    }
+  }, [connectToMissionInterviewStream, projectId, view]);
+
   const handleApprovePlan = useCallback(async () => {
     if (view.type !== "summary") return;
 
@@ -415,6 +437,7 @@ export function MissionInterviewModal({
       setEditedSummary(null);
       setStreamingOutput("");
       setIsReconnecting(false);
+      setIsRetrying(false);
       setHasProgress(false);
       setIsCreating(false);
       currentSessionIdRef.current = null;
@@ -433,7 +456,7 @@ export function MissionInterviewModal({
   };
 
   const showSendToBackgroundButton =
-    view.type === "loading" || view.type === "question" || view.type === "summary";
+    view.type === "loading" || view.type === "question" || view.type === "summary" || view.type === "error";
 
   if (!isOpen) return null;
 
@@ -544,6 +567,42 @@ export function MissionInterviewModal({
                     <pre>{streamingOutput}</pre>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {view.type === "error" && (
+            <div className="planning-summary">
+              <div className="planning-view-scroll planning-summary-scroll">
+                {conversationHistory.length > 0 && (
+                  <>
+                    <ConversationHistory entries={conversationHistory} />
+                    <div className="conversation-separator" />
+                  </>
+                )}
+
+                <div
+                  className="ai-error-panel"
+                  role="alert"
+                  style={{
+                    border: "1px solid var(--color-error, #dc2626)",
+                    borderRadius: "10px",
+                    background: "color-mix(in srgb, var(--color-error, #dc2626) 10%, transparent)",
+                    padding: "14px",
+                    display: "grid",
+                    gap: "10px",
+                  }}
+                >
+                  <div className="ai-error-icon" style={{ fontSize: "20px" }}>⚠️</div>
+                  <div className="ai-error-message">{view.errorMessage}</div>
+                  <div className="ai-error-actions" style={{ display: "flex", gap: "8px" }}>
+                    <button className="btn btn-primary" onClick={() => void handleRetryFromError()} disabled={isRetrying}>
+                      {isRetrying ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
+                      <span style={{ marginLeft: "6px" }}>{isRetrying ? "Retrying..." : "Retry"}</span>
+                    </button>
+                    <button className="btn" onClick={handleCancel} disabled={isRetrying}>Cancel</button>
+                  </div>
+                </div>
               </div>
             </div>
           )}

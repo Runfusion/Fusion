@@ -1400,6 +1400,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       "POST /planning/start",
       "POST /planning/start-streaming",
       "POST /planning/respond",
+      "POST /planning/:sessionId/retry",
       "POST /planning/cancel",
       "POST /planning/create-task",
       "POST /planning/start-breakdown",
@@ -5862,6 +5863,31 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  router.post("/subtasks/:sessionId/retry", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      if (!sessionId || typeof sessionId !== "string") {
+        throw badRequest("sessionId is required");
+      }
+
+      const scopedStore = await getScopedStore(req);
+      const { retrySubtaskSession } = await import("./subtask-breakdown.js");
+      await retrySubtaskSession(sessionId, scopedStore.getRootDir());
+      res.json({ success: true, sessionId });
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err.name === "SessionNotFoundError") {
+        throw notFound(err.message);
+      } else if (err.name === "InvalidSessionStateError") {
+        throw badRequest(err.message);
+      } else {
+        rethrowAsApiError(err, "Failed to retry subtask session");
+      }
+    }
+  });
+
   /**
    * POST /api/planning/start
    * Start a new planning session.
@@ -5984,6 +6010,31 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw badRequest(err.message);
       } else {
         rethrowAsApiError(err, "Failed to process response");
+      }
+    }
+  });
+
+  router.post("/planning/:sessionId/retry", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      if (!sessionId || typeof sessionId !== "string") {
+        throw badRequest("sessionId is required");
+      }
+
+      const scopedStore = await getScopedStore(req);
+      const { retrySession } = await import("./planning.js");
+      await retrySession(sessionId, scopedStore.getRootDir());
+      res.json({ success: true, sessionId });
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err.name === "SessionNotFoundError") {
+        throw notFound(err.message);
+      } else if (err.name === "InvalidSessionStateError") {
+        throw badRequest(err.message);
+      } else {
+        rethrowAsApiError(err, "Failed to retry planning session");
       }
     }
   });

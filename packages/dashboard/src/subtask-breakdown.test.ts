@@ -2,7 +2,16 @@
 
 import { EventEmitter } from "node:events";
 import ts from "typescript";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { mockCreateKbAgent } = vi.hoisted(() => ({
+  mockCreateKbAgent: vi.fn(),
+}));
+
+vi.mock("@fusion/engine", () => ({
+  createKbAgent: mockCreateKbAgent,
+}));
+
 import type { AiSessionRow } from "./ai-session-store.js";
 // @ts-expect-error Vite raw loader import for source-level utility tests
 import subtaskBreakdownSource from "./subtask-breakdown.ts?raw";
@@ -11,9 +20,11 @@ import {
   cancelSubtaskSession,
   cleanupSubtaskSession,
   createSubtaskSession,
+  retrySubtaskSession,
   getSubtaskSession,
   rehydrateFromStore,
   SessionNotFoundError,
+  InvalidSessionStateError,
   setAiSessionStore,
   SubtaskStreamManager,
 } from "./subtask-breakdown.js";
@@ -111,8 +122,58 @@ async function loadInternalSubtaskFunctions(): Promise<InternalSubtaskFns> {
 
 let internalFns: InternalSubtaskFns;
 
+function createMockSubtaskAgent(responseText?: string) {
+  const messages: Array<{ role: string; content: string }> = [];
+  const response =
+    responseText ??
+    JSON.stringify({
+      subtasks: [
+        {
+          id: "subtask-1",
+          title: "Define implementation approach",
+          description: "Plan the implementation details",
+          suggestedSize: "S",
+          dependsOn: [],
+        },
+      ],
+    });
+
+  return {
+    session: {
+      state: { messages },
+      prompt: vi.fn(async (message: string) => {
+        messages.push({ role: "user", content: message });
+        messages.push({ role: "assistant", content: response });
+      }),
+      dispose: vi.fn(),
+    },
+  };
+}
+
 class MockAiSessionStore extends EventEmitter {
   rows = new Map<string, AiSessionRow>();
+
+  upsert(row: AiSessionRow): void {
+    this.rows.set(row.id, row);
+  }
+
+  updateThinking(id: string, thinkingOutput: string): void {
+    const row = this.rows.get(id);
+    if (!row) {
+      return;
+    }
+
+    this.rows.set(id, {
+      ...row,
+      thinkingOutput,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  delete(id: string): void {
+    this.rows.delete(id);
+    this.emit("ai_session:deleted", id);
+  }
 
   get(id: string): AiSessionRow | null {
     return this.rows.get(id) ?? null;
@@ -120,7 +181,7 @@ class MockAiSessionStore extends EventEmitter {
 
   listRecoverable(): AiSessionRow[] {
     return [...this.rows.values()].filter(
-      (row) => row.status === "awaiting_input" || row.status === "generating",
+      (row) => row.status === "awaiting_input" || row.status === "generating" || row.status === "error",
     );
   }
 
@@ -167,6 +228,11 @@ function buildSubtaskRow(
 
 beforeAll(async () => {
   internalFns = await loadInternalSubtaskFunctions();
+});
+
+beforeEach(() => {
+  mockCreateKbAgent.mockReset();
+  mockCreateKbAgent.mockImplementation(async () => createMockSubtaskAgent());
 });
 
 afterEach(() => {
@@ -392,6 +458,38 @@ describe("subtask session lifecycle", () => {
     expect(session).not.toHaveProperty("updatedAt");
     expect(session).not.toHaveProperty("agent");
     expect(session).not.toHaveProperty("thinkingOutput");
+  });
+
+  it("retrySubtaskSession retries errored sessions restored from SQLite", async () => {
+    const store = new MockAiSessionStore();
+    const row = buildSubtaskRow({
+      id: "subtask-retry-1",
+      status: "error",
+      error: "Transient failure",
+      result: null,
+    });
+    store.rows.set(row.id, row);
+    setAiSessionStore(store as any);
+
+    await retrySubtaskSession(row.id, "/tmp/project");
+
+    const session = getSubtaskSession(row.id);
+    expect(session).toBeDefined();
+    expect(session?.status).toBe("complete");
+    expect(session?.subtasks.length).toBeGreaterThan(0);
+    expect(store.get(row.id)?.status).toBe("complete");
+    expect(store.get(row.id)?.error).toBeNull();
+  });
+
+  it("retrySubtaskSession rejects non-error sessions", async () => {
+    const store = new MockAiSessionStore();
+    const row = buildSubtaskRow({ id: "subtask-retry-2", status: "generating" });
+    store.rows.set(row.id, row);
+    setAiSessionStore(store as any);
+
+    await expect(retrySubtaskSession(row.id, "/tmp/project")).rejects.toBeInstanceOf(
+      InvalidSessionStateError,
+    );
   });
 
   it("cancelSubtaskSession throws SessionNotFoundError for unknown session", async () => {

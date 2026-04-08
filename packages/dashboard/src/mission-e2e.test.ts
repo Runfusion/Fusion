@@ -30,6 +30,7 @@ import {
   getMissionInterviewSession,
   submitMissionInterviewResponse,
 } from "./mission-interview.js";
+import * as missionInterviewModule from "./mission-interview.js";
 
 // Mock MissionStore factory
 function createMockMissionStore() {
@@ -421,6 +422,7 @@ function createMockMissionStore() {
 function createMockStore(): TaskStore {
   return {
     getMissionStore: vi.fn().mockReturnValue(createMockMissionStore()),
+    getRootDir: vi.fn().mockReturnValue("/fake/root"),
     pauseTask: vi.fn(),
   } as unknown as TaskStore;
 }
@@ -490,7 +492,7 @@ class MockAiSessionStore {
 
   listRecoverable(): AiSessionRow[] {
     return [...this.rows.values()].filter(
-      (row) => row.status === "awaiting_input" || row.status === "generating",
+      (row) => row.status === "awaiting_input" || row.status === "generating" || row.status === "error",
     );
   }
 
@@ -1792,6 +1794,43 @@ describe("Mission API", () => {
       );
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("sessionId");
+    });
+
+    it("retries a failed interview session", async () => {
+      const retrySpy = vi
+        .spyOn(missionInterviewModule, "retryMissionInterviewSession")
+        .mockResolvedValueOnce(undefined);
+
+      const { app } = buildApp();
+      const res = await request(app, "POST", "/api/missions/interview/session-1/retry");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true, sessionId: "session-1" });
+      expect(retrySpy).toHaveBeenCalledWith("session-1", "/fake/root");
+    });
+
+    it("returns 404 when interview retry session is missing", async () => {
+      vi.spyOn(missionInterviewModule, "retryMissionInterviewSession").mockRejectedValueOnce(
+        new missionInterviewModule.SessionNotFoundError("Interview session missing"),
+      );
+
+      const { app } = buildApp();
+      const res = await request(app, "POST", "/api/missions/interview/session-404/retry");
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain("Interview session missing");
+    });
+
+    it("returns 400 when interview retry session is not in error state", async () => {
+      vi.spyOn(missionInterviewModule, "retryMissionInterviewSession").mockRejectedValueOnce(
+        new missionInterviewModule.InvalidSessionStateError("Session is not in an error state"),
+      );
+
+      const { app } = buildApp();
+      const res = await request(app, "POST", "/api/missions/interview/session-400/retry");
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("not in an error state");
     });
 
     it("replays buffered interview events when Last-Event-ID is provided", async () => {

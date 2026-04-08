@@ -146,6 +146,33 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
   }
 
   /**
+   * Atomically update only status/error for an existing session.
+   * Returns false when the session does not exist.
+   */
+  updateStatus(id: string, status: AiSessionStatus, error?: string): boolean {
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare(
+        `UPDATE ai_sessions
+         SET status = ?, error = ?, updatedAt = ?
+         WHERE id = ?`,
+      )
+      .run(status, error ?? null, now, id) as { changes?: number };
+
+    const changed = Number(result.changes ?? 0) > 0;
+    if (!changed) {
+      return false;
+    }
+
+    const row = this.get(id);
+    if (row) {
+      this.emit("ai_session:updated", toSummary(row, row.updatedAt));
+    }
+
+    return true;
+  }
+
+  /**
    * Lightweight heartbeat for active sessions.
    * Updates only `updatedAt` and intentionally does NOT emit
    * `ai_session:updated` to avoid high-frequency SSE broadcasts.
@@ -160,7 +187,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
   }
 
   /**
-   * List active sessions (generating or awaiting_input).
+   * List active/retryable sessions (generating, awaiting_input, or error).
    * Optionally filtered by projectId.
    */
   listActive(projectId?: string): AiSessionSummary[] {
@@ -168,7 +195,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
       return this.db
         .prepare(
           `SELECT id, type, status, title, projectId, updatedAt FROM ai_sessions
-           WHERE status IN ('generating', 'awaiting_input') AND projectId = ?
+           WHERE status IN ('generating', 'awaiting_input', 'error') AND projectId = ?
            ORDER BY updatedAt DESC`,
         )
         .all(projectId) as unknown as AiSessionSummary[];
@@ -176,7 +203,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
     return this.db
       .prepare(
         `SELECT id, type, status, title, projectId, updatedAt FROM ai_sessions
-         WHERE status IN ('generating', 'awaiting_input')
+         WHERE status IN ('generating', 'awaiting_input', 'error')
          ORDER BY updatedAt DESC`,
       )
       .all() as unknown as AiSessionSummary[];

@@ -40,11 +40,12 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
             next[idx] = updated;
             return next;
           }
-          // New session — only add if active
+          // New session — include in-progress, complete, and retryable error sessions
           if (
             updated.status === "generating" ||
             updated.status === "awaiting_input" ||
-            updated.status === "complete"
+            updated.status === "complete" ||
+            updated.status === "error"
           ) {
             return [updated, ...prev];
           }
@@ -77,7 +78,11 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
 
   // Filter to only active sessions
   const active = sessions.filter(
-    (s) => s.status === "generating" || s.status === "awaiting_input" || s.status === "complete"
+    (s) =>
+      s.status === "generating" ||
+      s.status === "awaiting_input" ||
+      s.status === "complete" ||
+      s.status === "error",
   );
 
   const planningSessions = active.filter((s) => s.type === "planning");

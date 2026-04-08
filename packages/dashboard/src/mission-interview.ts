@@ -169,6 +169,8 @@ interface MissionInterviewSession {
   history: MissionInterviewHistoryEntry[];
   currentQuestion?: PlanningQuestion;
   summary?: MissionPlanSummary;
+  /** Last terminal error for retry UX */
+  error?: string;
   agent?: AgentResult;
   thinkingOutput: string;
   /** Thinking output generated while producing currentQuestion */
@@ -312,6 +314,7 @@ function buildMissionInterviewSessionFromRow(row: AiSessionRow): MissionIntervie
       : undefined,
     thinkingOutput: row.thinkingOutput,
     lastGeneratedThinking: row.thinkingOutput || "",
+    error: row.error ?? undefined,
     createdAt,
     updatedAt,
     agent: undefined,
@@ -654,6 +657,30 @@ function formatResponseForAgent(
   }
 }
 
+function coerceResponseRecord(question: PlanningQuestion, response: unknown): Record<string, unknown> {
+  if (response && typeof response === "object" && !Array.isArray(response)) {
+    return response as Record<string, unknown>;
+  }
+
+  return {
+    [question.id]: response,
+  };
+}
+
+function disposeMissionAgentForRetry(session: MissionInterviewSession): void {
+  if (!session.agent) {
+    return;
+  }
+
+  try {
+    session.agent.session.dispose?.();
+  } catch (error) {
+    console.error(`[mission-interview] Error disposing agent for retry in session ${session.id}:`, error);
+  }
+
+  session.agent = undefined;
+}
+
 // ── AI Agent Integration ───────────────────────────────────────────────────
 
 /**
@@ -670,10 +697,14 @@ async function initializeAgent(session: MissionInterviewSession, rootDir: string
       `I want to plan a mission: "${session.missionTitle}". Interview me to understand what I need, then produce a structured plan.`,
     );
   } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : "Failed to initialize AI agent";
     console.error(`[mission-interview] Agent initialization error for session ${session.id}:`, err);
+    session.error = errorMessage;
+    session.updatedAt = new Date();
+    persistMissionSession(session, "error", errorMessage);
     missionInterviewStreamManager.broadcast(session.id, {
       type: "error",
-      data: err instanceof Error ? err.message : "Failed to initialize AI agent",
+      data: errorMessage,
     });
   }
 }
@@ -843,17 +874,21 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
     }
 
     if (!parsed) {
-      const errorMsg = lastError?.message || "Failed to parse AI response";
+      const errorMsg = `${lastError?.message || "Failed to parse AI response"} You can try responding again or start a new session.`;
       console.error(`[mission-interview] All parse attempts exhausted for session ${session.id}:`, errorMsg);
+      session.error = errorMsg;
+      session.updatedAt = new Date();
+      persistMissionSession(session, "error", errorMsg);
       missionInterviewStreamManager.broadcast(session.id, {
         type: "error",
-        data: `${errorMsg} You can try responding again or start a new session.`,
+        data: errorMsg,
       });
       return;
     }
 
     if (parsed.type === "question") {
       session.currentQuestion = parsed.data;
+      session.error = undefined;
       session.lastGeneratedThinking = session.thinkingOutput;
       session.updatedAt = new Date();
       persistMissionSession(session, "awaiting_input");
@@ -864,6 +899,7 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
     } else if (parsed.type === "complete") {
       session.summary = parsed.data;
       session.currentQuestion = undefined;
+      session.error = undefined;
       session.updatedAt = new Date();
       persistMissionSession(session, "complete");
       missionInterviewStreamManager.broadcast(session.id, {
@@ -873,11 +909,14 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
       missionInterviewStreamManager.broadcast(session.id, { type: "complete" });
     }
   } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : "AI processing failed";
     console.error(`[mission-interview] Agent conversation error for session ${session.id}:`, err);
-    persistMissionSession(session, "error", err instanceof Error ? err.message : "AI processing failed");
+    session.error = errorMessage;
+    session.updatedAt = new Date();
+    persistMissionSession(session, "error", errorMessage);
     missionInterviewStreamManager.broadcast(session.id, {
       type: "error",
-      data: err instanceof Error ? err.message : "AI processing failed",
+      data: errorMessage,
     });
   }
 }
@@ -955,6 +994,7 @@ export async function submitMissionInterviewResponse(
     response: responses,
     thinkingOutput: session.lastGeneratedThinking || "",
   });
+  session.error = undefined;
   persistMissionSession(session, "generating");
 
   if (!session.agent) {
@@ -981,6 +1021,49 @@ export async function submitMissionInterviewResponse(
       description: "The AI is processing your response. Please provide more details.",
     },
   };
+}
+
+export async function retryMissionInterviewSession(sessionId: string, rootDir: string): Promise<void> {
+  const session = getMissionInterviewSession(sessionId);
+  if (!session) {
+    throw new SessionNotFoundError(`Mission interview session ${sessionId} not found or expired`);
+  }
+
+  const persisted = _aiSessionStore?.get(sessionId);
+  if (persisted && persisted.type !== "mission_interview") {
+    throw new SessionNotFoundError(`Mission interview session ${sessionId} not found or expired`);
+  }
+
+  const inErrorState = persisted ? persisted.status === "error" : Boolean(session.error);
+  if (!inErrorState) {
+    throw new InvalidSessionStateError(`Mission interview session ${sessionId} is not in an error state`);
+  }
+
+  disposeMissionAgentForRetry(session);
+
+  session.error = undefined;
+  session.summary = undefined;
+  session.updatedAt = new Date();
+  persistMissionSession(session, "generating");
+
+  if (session.history.length === 0) {
+    await ensureMissionInterviewAgent(session, rootDir, []);
+    await continueAgentConversation(
+      session,
+      `I want to plan a mission: "${session.missionTitle}". Interview me to understand what I need, then produce a structured plan.`,
+    );
+    return;
+  }
+
+  const replayHistory = session.history.slice(0, -1);
+  const lastEntry = session.history[session.history.length - 1];
+
+  await ensureMissionInterviewAgent(session, rootDir, replayHistory);
+  const replayMessage = formatResponseForAgent(
+    lastEntry.question,
+    coerceResponseRecord(lastEntry.question, lastEntry.response),
+  );
+  await continueAgentConversation(session, replayMessage);
 }
 
 export async function cancelMissionInterviewSession(sessionId: string): Promise<void> {

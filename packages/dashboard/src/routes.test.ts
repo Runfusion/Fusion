@@ -659,6 +659,38 @@ describe("POST /subtasks/*", () => {
     expect(typeof res.body.sessionId).toBe("string");
   });
 
+  it("retries a failed subtask session", async () => {
+    const retrySpy = vi.spyOn(subtaskBreakdownModule, "retrySubtaskSession").mockResolvedValue();
+
+    const res = await REQUEST(buildApp(), "POST", "/api/subtasks/session-123/retry");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true, sessionId: "session-123" });
+    expect(retrySpy).toHaveBeenCalledWith("session-123", "/fake/root");
+  });
+
+  it("returns 404 when subtask retry session does not exist", async () => {
+    vi.spyOn(subtaskBreakdownModule, "retrySubtaskSession").mockRejectedValueOnce(
+      new subtaskBreakdownModule.SessionNotFoundError("Subtask session not found"),
+    );
+
+    const res = await REQUEST(buildApp(), "POST", "/api/subtasks/session-404/retry");
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toContain("Subtask session not found");
+  });
+
+  it("returns 400 when subtask retry session is not in error state", async () => {
+    vi.spyOn(subtaskBreakdownModule, "retrySubtaskSession").mockRejectedValueOnce(
+      new subtaskBreakdownModule.InvalidSessionStateError("Session is not in error state"),
+    );
+
+    const res = await REQUEST(buildApp(), "POST", "/api/subtasks/session-400/retry");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("not in error state");
+  });
+
   it("replays buffered subtask events using lastEventId query param", async () => {
     const start = await REQUEST(
       buildApp(),
@@ -6500,6 +6532,40 @@ describe("Git Management endpoints", () => {
 
         expect(res.status).toBe(400);
         expect(res.body.error).toContain("responses is required");
+      });
+    });
+
+    describe("POST /planning/:sessionId/retry", () => {
+      it("retries a failed planning session", async () => {
+        const retrySpy = vi.spyOn(planningModule, "retrySession").mockResolvedValue();
+
+        const res = await REQUEST(buildApp(), "POST", "/api/planning/session-123/retry");
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ success: true, sessionId: "session-123" });
+        expect(retrySpy).toHaveBeenCalledWith("session-123", expect.any(String));
+      });
+
+      it("returns 404 when planning retry session is missing", async () => {
+        vi.spyOn(planningModule, "retrySession").mockRejectedValueOnce(
+          new planningModule.SessionNotFoundError("Planning session missing"),
+        );
+
+        const res = await REQUEST(buildApp(), "POST", "/api/planning/session-404/retry");
+
+        expect(res.status).toBe(404);
+        expect(res.body.error).toContain("Planning session missing");
+      });
+
+      it("returns 400 when planning retry session is not in error state", async () => {
+        vi.spyOn(planningModule, "retrySession").mockRejectedValueOnce(
+          new planningModule.InvalidSessionStateError("Planning session is not in an error state"),
+        );
+
+        const res = await REQUEST(buildApp(), "POST", "/api/planning/session-400/retry");
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain("not in an error state");
       });
     });
 

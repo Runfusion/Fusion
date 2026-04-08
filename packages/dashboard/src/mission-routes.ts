@@ -377,6 +377,41 @@ export function createMissionRouter(
   );
 
   /**
+   * POST /api/missions/interview/:sessionId/retry
+   * Retry a failed interview session by replaying the last user interaction.
+   */
+  router.post(
+    "/interview/:sessionId/retry",
+    catchTypedHandler(async (req, res) => {
+      const { sessionId } = req.params;
+
+      if (!sessionId || typeof sessionId !== "string") {
+        throw badRequest("sessionId is required");
+      }
+
+      try {
+        const {
+          retryMissionInterviewSession,
+          SessionNotFoundError,
+          InvalidSessionStateError,
+        } = await import("./mission-interview.js");
+
+        const rootDir = await getRootDirForRequest(req);
+        await retryMissionInterviewSession(sessionId, rootDir);
+        res.json({ success: true, sessionId });
+      } catch (err: any) {
+        if (err.name === "SessionNotFoundError") {
+          throw notFound(err.message);
+        } else if (err.name === "InvalidSessionStateError") {
+          throw badRequest(err.message);
+        } else {
+          throw internalError(err.message || "Failed to retry interview session");
+        }
+      }
+    })
+  );
+
+  /**
    * POST /api/missions/interview/cancel
    * Cancel and cleanup an interview session.
    * Body: { sessionId: string }

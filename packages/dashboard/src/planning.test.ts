@@ -4,6 +4,7 @@ import {
   createSession,
   createSessionWithAgent,
   submitResponse,
+  retrySession,
   cancelSession,
   getSession,
   getCurrentQuestion,
@@ -179,7 +180,7 @@ class MockAiSessionStore extends EventEmitter {
 
   listRecoverable(): AiSessionRow[] {
     return [...this.rows.values()].filter(
-      (row) => row.status === "awaiting_input" || row.status === "generating",
+      (row) => row.status === "awaiting_input" || row.status === "generating" || row.status === "error",
     );
   }
 
@@ -609,6 +610,103 @@ describe("planning module", () => {
         response: { "q-scope": "medium" },
         thinkingOutput: "Persisted first-turn thinking",
       });
+    });
+  });
+
+  describe("retrySession", () => {
+    it("rehydrates errored sessions and replays the last user response", async () => {
+      const store = new MockAiSessionStore();
+      const row = buildPlanningRow({
+        id: "planning-error-retry-1",
+        status: "error",
+        error: "Transient model failure",
+        conversationHistory: JSON.stringify([
+          {
+            question: {
+              id: "q-1",
+              type: "text",
+              question: "What should we build?",
+              description: "scope",
+            },
+            response: { "q-1": "Authentication" },
+          },
+        ]),
+        currentQuestion: JSON.stringify({
+          id: "q-2",
+          type: "text",
+          question: "Any constraints?",
+          description: "details",
+        }),
+      });
+      store.rows.set(row.id, row);
+      setAiSessionStore(store as any);
+
+      const resumedAgent = createMockAgent([
+        JSON.stringify({
+          type: "question",
+          data: {
+            id: "q-retry",
+            type: "text",
+            question: "Any delivery deadline?",
+            description: "timing",
+          },
+        }),
+      ]);
+      __setCreateKbAgent(async () => resumedAgent);
+
+      await retrySession(row.id, TEST_ROOT_DIR);
+
+      expect(resumedAgent.session.prompt).toHaveBeenCalledTimes(1);
+      expect(resumedAgent.session.prompt.mock.calls[0]?.[0]).toContain("What should we build?");
+      expect(resumedAgent.session.prompt.mock.calls[0]?.[0]).toContain("Authentication");
+
+      const session = getSession(row.id);
+      expect(session?.currentQuestion?.id).toBe("q-retry");
+      expect(session?.error).toBeUndefined();
+      expect(store.get(row.id)?.status).toBe("awaiting_input");
+      expect(store.get(row.id)?.error).toBeNull();
+    });
+
+    it("replays the initial plan when no history exists", async () => {
+      const store = new MockAiSessionStore();
+      const row = buildPlanningRow({
+        id: "planning-error-retry-2",
+        status: "error",
+        error: "First turn failed",
+        inputPayload: JSON.stringify({ ip: "127.0.0.9", initialPlan: "Ship notifications" }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+      });
+      store.rows.set(row.id, row);
+      setAiSessionStore(store as any);
+
+      const resumedAgent = createMockAgent([
+        JSON.stringify({
+          type: "question",
+          data: {
+            id: "q-first",
+            type: "text",
+            question: "Who is the target user?",
+            description: "audience",
+          },
+        }),
+      ]);
+      __setCreateKbAgent(async () => resumedAgent);
+
+      await retrySession(row.id, TEST_ROOT_DIR);
+
+      expect(resumedAgent.session.prompt).toHaveBeenCalledTimes(1);
+      expect(resumedAgent.session.prompt.mock.calls[0]?.[0]).toBe("Ship notifications");
+      expect(store.get(row.id)?.status).toBe("awaiting_input");
+    });
+
+    it("throws when retrying a non-error session", async () => {
+      const store = new MockAiSessionStore();
+      const row = buildPlanningRow({ id: "planning-not-error", status: "awaiting_input" });
+      store.rows.set(row.id, row);
+      setAiSessionStore(store as any);
+
+      await expect(retrySession(row.id, TEST_ROOT_DIR)).rejects.toThrow(InvalidSessionStateError);
     });
   });
 

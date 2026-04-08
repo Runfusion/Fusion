@@ -1253,6 +1253,19 @@ export function respondToPlanning(
   });
 }
 
+/** Retry a failed planning session turn */
+export function retryPlanningSession(
+  sessionId: string,
+  projectId?: string,
+): Promise<{ success: boolean; sessionId: string }> {
+  return api<{ success: boolean; sessionId: string }>(
+    withProjectId(`/planning/${encodeURIComponent(sessionId)}/retry`, projectId),
+    {
+      method: "POST",
+    },
+  );
+}
+
 /** Cancel an active planning session */
 export function cancelPlanning(sessionId: string, projectId?: string): Promise<void> {
   return api<void>(withProjectId("/planning/cancel", projectId), {
@@ -1801,6 +1814,18 @@ export function startSubtaskBreakdown(description: string, projectId?: string): 
     method: "POST",
     body: JSON.stringify({ description }),
   });
+}
+
+export function retrySubtaskSession(
+  sessionId: string,
+  projectId?: string,
+): Promise<{ success: boolean; sessionId: string }> {
+  return api<{ success: boolean; sessionId: string }>(
+    withProjectId(`/subtasks/${encodeURIComponent(sessionId)}/retry`, projectId),
+    {
+      method: "POST",
+    },
+  );
 }
 
 export function getSubtaskStreamUrl(sessionId: string, projectId?: string): string {
@@ -3233,6 +3258,19 @@ export function respondToMissionInterview(
     method: "POST",
     body: JSON.stringify({ sessionId, responses }),
   });
+}
+
+/** Retry a failed mission interview turn */
+export function retryMissionInterviewSession(
+  sessionId: string,
+  projectId?: string,
+): Promise<{ success: boolean; sessionId: string }> {
+  return api<{ success: boolean; sessionId: string }>(
+    withProjectId(`/missions/interview/${encodeURIComponent(sessionId)}/retry`, projectId),
+    {
+      method: "POST",
+    },
+  );
 }
 
 /** Cancel an active mission interview session */

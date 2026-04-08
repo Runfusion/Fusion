@@ -180,7 +180,7 @@ describe("AiSessionStore", () => {
     expect(store.get("S-broken")?.error).toBe("Session interrupted — please restart");
   });
 
-  it("listActive only returns generating/awaiting_input sessions", () => {
+  it("listActive returns generating/awaiting_input/error sessions", () => {
     seedSession({ id: "S-generating", status: "generating" });
     seedSession({ id: "S-awaiting", status: "awaiting_input" });
     seedSession({ id: "S-complete", status: "complete" });
@@ -188,20 +188,21 @@ describe("AiSessionStore", () => {
 
     const active = store.listActive();
 
-    expect(active.map((session) => session.status).sort()).toEqual(["awaiting_input", "generating"]);
-    expect(active.map((session) => session.id).sort()).toEqual(["S-awaiting", "S-generating"]);
+    expect(active.map((session) => session.status).sort()).toEqual(["awaiting_input", "error", "generating"]);
+    expect(active.map((session) => session.id).sort()).toEqual(["S-awaiting", "S-error", "S-generating"]);
   });
 
   it("listActive filters by projectId", () => {
     seedSession({ id: "S-a1", status: "generating", projectId: "project-a" });
     seedSession({ id: "S-a2", status: "awaiting_input", projectId: "project-a" });
+    seedSession({ id: "S-a3", status: "error", projectId: "project-a" });
     seedSession({ id: "S-b1", status: "awaiting_input", projectId: "project-b" });
     seedSession({ id: "S-a-done", status: "complete", projectId: "project-a" });
 
     const projectA = store.listActive("project-a");
 
-    expect(projectA).toHaveLength(2);
-    expect(projectA.map((session) => session.id).sort()).toEqual(["S-a1", "S-a2"]);
+    expect(projectA).toHaveLength(3);
+    expect(projectA.map((session) => session.id).sort()).toEqual(["S-a1", "S-a2", "S-a3"]);
     expect(projectA.every((session) => session.projectId === "project-a")).toBe(true);
   });
 
@@ -227,6 +228,36 @@ describe("AiSessionStore", () => {
 
     expect(store.ping("missing-session")).toBe(false);
     expect(onUpdated).not.toHaveBeenCalled();
+  });
+
+  it("updateStatus atomically transitions status and clears error when omitted", () => {
+    seedSession({ id: "S-retry", status: "error", error: "Transient failure" });
+
+    const onUpdated = vi.fn();
+    store.on("ai_session:updated", onUpdated);
+
+    const updated = store.updateStatus("S-retry", "generating");
+
+    expect(updated).toBe(true);
+    expect(store.get("S-retry")?.status).toBe("generating");
+    expect(store.get("S-retry")?.error).toBeNull();
+    expect(onUpdated).toHaveBeenCalledTimes(1);
+    expect(onUpdated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "S-retry",
+        status: "generating",
+      }),
+    );
+  });
+
+  it("updateStatus sets explicit error and returns false for missing session", () => {
+    seedSession({ id: "S-failed", status: "generating" });
+
+    expect(store.updateStatus("S-failed", "error", "Agent crashed")).toBe(true);
+    expect(store.get("S-failed")?.status).toBe("error");
+    expect(store.get("S-failed")?.error).toBe("Agent crashed");
+
+    expect(store.updateStatus("S-missing", "error", "Nope")).toBe(false);
   });
 
   it("listRecoverable returns awaiting_input and generating sessions", () => {

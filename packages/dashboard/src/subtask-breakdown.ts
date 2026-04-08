@@ -339,15 +339,7 @@ export async function createSubtaskSession(initialDescription: string, _store?: 
   persistSubtaskSession(session, "generating");
 
   const cwd = rootDir ?? process.cwd();
-  generateSubtasks(sessionId, cwd).catch((err) => {
-    const existing = sessions.get(sessionId);
-    if (!existing) return;
-    existing.status = "error";
-    existing.error = err instanceof Error ? (err.message || "Unknown error") : "Failed to generate subtasks";
-    existing.updatedAt = new Date();
-    persistSubtaskSession(existing, "error", existing.error);
-    subtaskStreamManager.broadcast(sessionId, { type: "error", data: existing.error });
-  });
+  void startSubtaskGeneration(sessionId, cwd);
 
   return {
     sessionId,
@@ -356,6 +348,20 @@ export async function createSubtaskSession(initialDescription: string, _store?: 
     status: "generating",
     createdAt: session.createdAt,
   };
+}
+
+async function startSubtaskGeneration(sessionId: string, cwd: string): Promise<void> {
+  try {
+    await generateSubtasks(sessionId, cwd);
+  } catch (err) {
+    const existing = sessions.get(sessionId);
+    if (!existing) return;
+    existing.status = "error";
+    existing.error = err instanceof Error ? (err.message || "Unknown error") : "Failed to generate subtasks";
+    existing.updatedAt = new Date();
+    persistSubtaskSession(existing, "error", existing.error);
+    subtaskStreamManager.broadcast(sessionId, { type: "error", data: existing.error });
+  }
 }
 
 async function generateSubtasks(sessionId: string, cwd: string): Promise<void> {
@@ -466,6 +472,48 @@ function completeSession(sessionId: string, subtasks: SubtaskItem[]): void {
   subtaskStreamManager.broadcast(sessionId, { type: "complete" });
 }
 
+function disposeSubtaskAgentForRetry(session: SubtaskInternalSession): void {
+  try {
+    session.agent?.session?.dispose?.();
+  } catch {
+    // ignore cleanup errors
+  }
+  session.agent = undefined;
+}
+
+export async function retrySubtaskSession(sessionId: string, rootDir: string): Promise<void> {
+  const visibleSession = getSubtaskSession(sessionId);
+  if (!visibleSession) {
+    throw new SessionNotFoundError(`Subtask session ${sessionId} not found or expired`);
+  }
+
+  const persisted = _aiSessionStore?.get(sessionId);
+  if (persisted && persisted.type !== "subtask") {
+    throw new SessionNotFoundError(`Subtask session ${sessionId} not found or expired`);
+  }
+
+  const session = sessions.get(sessionId);
+  if (!session) {
+    throw new SessionNotFoundError(`Subtask session ${sessionId} not found or expired`);
+  }
+
+  const inErrorState = persisted ? persisted.status === "error" : visibleSession.status === "error";
+  if (!inErrorState) {
+    throw new InvalidSessionStateError(`Subtask session ${sessionId} is not in an error state`);
+  }
+
+  disposeSubtaskAgentForRetry(session);
+
+  session.status = "generating";
+  session.error = undefined;
+  session.subtasks = [];
+  session.thinkingOutput = "";
+  session.updatedAt = new Date();
+  persistSubtaskSession(session, "generating");
+
+  await startSubtaskGeneration(sessionId, rootDir);
+}
+
 export function getSubtaskSession(sessionId: string): SubtaskSession | undefined {
   const inMemory = sessions.get(sessionId);
   if (inMemory) {
@@ -522,5 +570,12 @@ export class SessionNotFoundError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "SessionNotFoundError";
+  }
+}
+
+export class InvalidSessionStateError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidSessionStateError";
   }
 }

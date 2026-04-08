@@ -9,6 +9,7 @@ const mockStartPlanning = vi.fn();
 const mockStartPlanningStreaming = vi.fn();
 const mockConnectPlanningStream = vi.fn();
 const mockRespondToPlanning = vi.fn();
+const mockRetryPlanningSession = vi.fn();
 const mockCancelPlanning = vi.fn();
 const mockCreateTaskFromPlanning = vi.fn();
 const mockStartPlanningBreakdown = vi.fn();
@@ -32,6 +33,7 @@ vi.mock("../api", () => ({
   startPlanningStreaming: (...args: any[]) => mockStartPlanningStreaming(...args),
   connectPlanningStream: (...args: any[]) => mockConnectPlanningStream(...args),
   respondToPlanning: (...args: any[]) => mockRespondToPlanning(...args),
+  retryPlanningSession: (...args: any[]) => mockRetryPlanningSession(...args),
   cancelPlanning: (...args: any[]) => mockCancelPlanning(...args),
   createTaskFromPlanning: (...args: any[]) => mockCreateTaskFromPlanning(...args),
   startPlanningBreakdown: (...args: any[]) => mockStartPlanningBreakdown(...args),
@@ -134,6 +136,7 @@ describe("PlanningModeModal", () => {
     
     // Default mock for streaming
     mockStartPlanningStreaming.mockResolvedValue({ sessionId: "session-123" });
+    mockRetryPlanningSession.mockResolvedValue({ success: true, sessionId: "session-123" });
     mockStartPlanningBreakdown.mockResolvedValue({ sessionId: "session-123", subtasks: [] });
     mockFetchAiSession.mockResolvedValue(null);
     mockParseConversationHistory.mockImplementation((raw: string) => {
@@ -428,6 +431,53 @@ describe("PlanningModeModal", () => {
       await waitFor(() => {
         expect(screen.getByText("Rate limit exceeded")).toBeDefined();
       });
+      expect(screen.getByRole("button", { name: "Retry" })).toBeDefined();
+    });
+
+    it("retries from error state and reconnects stream", async () => {
+      let streamAttempt = 0;
+      mockConnectPlanningStream.mockImplementation((_sessionId: string, _projectId: string | undefined, handlers: any) => {
+        streamAttempt += 1;
+        if (streamAttempt === 1) {
+          setTimeout(() => handlers.onError?.("Temporary failure"), 10);
+        } else {
+          setTimeout(() => handlers.onQuestion?.(mockQuestion), 10);
+        }
+
+        return {
+          close: vi.fn(),
+          isConnected: vi.fn().mockReturnValue(true),
+        };
+      });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+        />,
+      );
+
+      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+        target: { value: "Build auth system" },
+      });
+      fireEvent.click(screen.getByText("Start Planning"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Temporary failure")).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+      await waitFor(() => {
+        expect(mockRetryPlanningSession).toHaveBeenCalledWith("session-123", undefined);
+      });
+      await waitFor(() => {
+        expect(screen.getByText("What is the scope?")).toBeDefined();
+      });
+      expect(mockConnectPlanningStream).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -480,6 +530,40 @@ describe("PlanningModeModal", () => {
       expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("L");
       expect(screen.getByText("Deliverable A")).toBeDefined();
       expect(screen.getByText("Deliverable B")).toBeDefined();
+    });
+
+    it("shows retry panel when resuming an errored session", async () => {
+      mockFetchAiSession.mockResolvedValueOnce({
+        id: "session-error-1",
+        type: "planning",
+        status: "error",
+        title: "Errored planning",
+        inputPayload: JSON.stringify({ initialPlan: "Recover planning" }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: null,
+        thinkingOutput: "",
+        error: "Session interrupted",
+        projectId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+          resumeSessionId="session-error-1"
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("Session interrupted")).toBeDefined();
+      });
+      expect(screen.getByRole("button", { name: "Retry" })).toBeDefined();
     });
 
     it("creates a task from a resumed complete session", async () => {

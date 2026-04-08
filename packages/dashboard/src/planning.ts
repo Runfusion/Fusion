@@ -133,6 +133,8 @@ interface Session {
   history: PlanningHistoryEntry[];
   currentQuestion?: PlanningQuestion;
   summary?: PlanningSummary;
+  /** Last terminal error for retry UX */
+  error?: string;
   /** AI agent session for real-time interaction */
   agent?: AgentResult;
   /** Callback for streaming events to SSE clients */
@@ -287,6 +289,7 @@ function buildSessionFromRow(row: AiSessionRow): Session {
       : undefined,
     thinkingOutput: row.thinkingOutput,
     lastGeneratedThinking: row.thinkingOutput || "",
+    error: row.error ?? undefined,
     createdAt,
     updatedAt,
     agent: undefined,
@@ -767,10 +770,14 @@ async function initializeAgent(
     // Send initial message to get first question
     await continueAgentConversation(session, session.initialPlan);
   } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : "Failed to initialize AI agent";
     console.error(`[planning] Agent initialization error for session ${session.id}:`, err);
+    session.error = errorMessage;
+    session.updatedAt = new Date();
+    persistSession(session, "error", undefined, errorMessage);
     planningStreamManager.broadcast(session.id, {
       type: "error",
-      data: err instanceof Error ? err.message : "Failed to initialize AI agent",
+      data: errorMessage,
     });
   }
 }
@@ -949,20 +956,24 @@ async function continueAgentConversation(session: Session, message: string): Pro
 
     if (!parsed) {
       // All attempts exhausted — emit actionable error
-      const errorMsg = lastError?.message || "Failed to parse AI response";
+      const errorMsg = `${lastError?.message || "Failed to parse AI response"} You can try responding again or start a new planning session.`;
       console.error(
         `[planning] All parse attempts exhausted for session ${session.id}:`,
         errorMsg
       );
+      session.error = errorMsg;
+      session.updatedAt = new Date();
+      persistSession(session, "error", undefined, errorMsg);
       planningStreamManager.broadcast(session.id, {
         type: "error",
-        data: `${errorMsg} You can try responding again or start a new planning session.`,
+        data: errorMsg,
       });
       return;
     }
 
     if (parsed.type === "question") {
       session.currentQuestion = parsed.data;
+      session.error = undefined;
       session.lastGeneratedThinking = session.thinkingOutput;
       session.updatedAt = new Date();
       persistSession(session, "awaiting_input");
@@ -973,6 +984,7 @@ async function continueAgentConversation(session: Session, message: string): Pro
     } else if (parsed.type === "complete") {
       session.summary = parsed.data;
       session.currentQuestion = undefined;
+      session.error = undefined;
       session.updatedAt = new Date();
       persistSession(session, "complete");
       planningStreamManager.broadcast(session.id, {
@@ -982,11 +994,14 @@ async function continueAgentConversation(session: Session, message: string): Pro
       planningStreamManager.broadcast(session.id, { type: "complete" });
     }
   } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : "AI processing failed";
     console.error(`[planning] Agent conversation error for session ${session.id}:`, err);
-    persistSession(session, "error", undefined, err instanceof Error ? err.message : "AI processing failed");
+    session.error = errorMessage;
+    session.updatedAt = new Date();
+    persistSession(session, "error", undefined, errorMessage);
     planningStreamManager.broadcast(session.id, {
       type: "error",
-      data: err instanceof Error ? err.message : "AI processing failed",
+      data: errorMessage,
     });
   }
 }
@@ -1202,6 +1217,7 @@ export async function submitResponse(
     response: responses,
     thinkingOutput: session.lastGeneratedThinking || "",
   });
+  session.error = undefined;
   persistSession(session, "generating");
 
   if (!session.agent) {
@@ -1222,6 +1238,46 @@ export async function submitResponse(
 
   // Should not reach here, but handle gracefully
   throw new InvalidSessionStateError("AI agent did not return a question or summary");
+}
+
+export async function retrySession(sessionId: string, rootDir: string): Promise<void> {
+  const session = getSession(sessionId);
+  if (!session) {
+    throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
+  }
+
+  const persisted = _aiSessionStore?.get(sessionId);
+  if (persisted && persisted.type !== "planning") {
+    throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
+  }
+
+  const inErrorState = persisted ? persisted.status === "error" : Boolean(session.error);
+  if (!inErrorState) {
+    throw new InvalidSessionStateError(`Planning session ${sessionId} is not in an error state`);
+  }
+
+  disposeSessionAgentForRetry(session);
+
+  session.error = undefined;
+  session.summary = undefined;
+  session.updatedAt = new Date();
+  persistSession(session, "generating");
+
+  if (session.history.length === 0) {
+    await ensureSessionAgent(session, rootDir, []);
+    await continueAgentConversation(session, session.initialPlan);
+    return;
+  }
+
+  const replayHistory = session.history.slice(0, -1);
+  const lastEntry = session.history[session.history.length - 1];
+
+  await ensureSessionAgent(session, rootDir, replayHistory);
+  const replayMessage = formatResponseForAgent(
+    lastEntry.question,
+    coerceResponseRecord(lastEntry.question, lastEntry.response),
+  );
+  await continueAgentConversation(session, replayMessage);
 }
 
 /**
@@ -1260,6 +1316,30 @@ function formatResponseForAgent(
     default:
       return `Question: ${question.question}\n\nAnswer: ${JSON.stringify(responseValue)}`;
   }
+}
+
+function coerceResponseRecord(question: PlanningQuestion, response: unknown): Record<string, unknown> {
+  if (response && typeof response === "object" && !Array.isArray(response)) {
+    return response as Record<string, unknown>;
+  }
+
+  return {
+    [question.id]: response,
+  };
+}
+
+function disposeSessionAgentForRetry(session: Session): void {
+  if (!session.agent) {
+    return;
+  }
+
+  try {
+    session.agent.session.dispose?.();
+  } catch (error) {
+    console.error(`[planning] Error disposing agent for retry in session ${session.id}:`, error);
+  }
+
+  session.agent = undefined;
 }
 
 function formatInterviewAnswer(question: PlanningQuestion, responseValue: unknown): string {

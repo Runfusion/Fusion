@@ -3,12 +3,14 @@ import { act, render, screen, fireEvent, waitFor } from "@testing-library/react"
 import { SubtaskBreakdownModal } from "./SubtaskBreakdownModal";
 
 const mockStartSubtaskBreakdown = vi.fn();
+const mockRetrySubtaskSession = vi.fn();
 const mockConnectSubtaskStream = vi.fn();
 const mockCreateTasksFromBreakdown = vi.fn();
 const mockCancelSubtaskBreakdown = vi.fn();
 
 vi.mock("../api", () => ({
   startSubtaskBreakdown: (...args: any[]) => mockStartSubtaskBreakdown(...args),
+  retrySubtaskSession: (...args: any[]) => mockRetrySubtaskSession(...args),
   connectSubtaskStream: (...args: any[]) => mockConnectSubtaskStream(...args),
   createTasksFromBreakdown: (...args: any[]) => mockCreateTasksFromBreakdown(...args),
   cancelSubtaskBreakdown: (...args: any[]) => mockCancelSubtaskBreakdown(...args),
@@ -40,6 +42,7 @@ describe("SubtaskBreakdownModal", () => {
     vi.clearAllMocks();
     streamHandlers = undefined;
     mockStartSubtaskBreakdown.mockResolvedValue({ sessionId: "session-123" });
+    mockRetrySubtaskSession.mockResolvedValue({ success: true, sessionId: "session-123" });
     mockConnectSubtaskStream.mockImplementation((_sessionId, _projectId, handlers) => {
       streamHandlers = handlers;
       return { close: vi.fn(), isConnected: () => true };
@@ -481,6 +484,20 @@ describe("SubtaskBreakdownModal", () => {
       await waitFor(() => expect(streamHandlers).toBeDefined());
       streamHandlers.onError("Something went wrong");
       expect(await screen.findByText("Something went wrong")).toBeInTheDocument();
+    });
+
+    it("retries after an error and reconnects stream", async () => {
+      renderModal();
+      await waitFor(() => expect(streamHandlers).toBeDefined());
+      streamHandlers.onError("Something went wrong");
+
+      const retryButton = await screen.findByRole("button", { name: "Retry" });
+      fireEvent.click(retryButton);
+
+      await waitFor(() => {
+        expect(mockRetrySubtaskSession).toHaveBeenCalledWith("session-123", undefined);
+      });
+      expect(mockConnectSubtaskStream).toHaveBeenCalledTimes(2);
     });
 
     it("shows Stream error fallback when receiving empty error", async () => {

@@ -16,6 +16,7 @@ import {
   checkRateLimit,
   cleanupMissionInterviewSession,
   createMissionInterviewSession,
+  retryMissionInterviewSession,
   getMissionInterviewSession,
   getMissionInterviewSummary,
   getRateLimitResetTime,
@@ -116,7 +117,7 @@ class MockAiSessionStore extends EventEmitter {
 
   listRecoverable(): AiSessionRow[] {
     return [...this.rows.values()].filter(
-      (row) => row.status === "awaiting_input" || row.status === "generating",
+      (row) => row.status === "awaiting_input" || row.status === "generating" || row.status === "error",
     );
   }
 
@@ -402,6 +403,81 @@ describe("mission-interview module", () => {
 
       await expect(submitMissionInterviewResponse(row.id, { "q-2": "answer" })).rejects.toThrow(
         "cannot be resumed without project context",
+      );
+    });
+  });
+
+  describe("retryMissionInterviewSession", () => {
+    it("rehydrates errored sessions and retries the last response", async () => {
+      const store = new MockAiSessionStore();
+      const row = buildMissionRow({
+        id: "mission-retry-1",
+        status: "error",
+        error: "Transient outage",
+        conversationHistory: JSON.stringify([
+          {
+            question: {
+              id: "q-1",
+              type: "text",
+              question: "What is your goal?",
+              description: "scope",
+            },
+            response: { "q-1": "Ship a dashboard" },
+          },
+        ]),
+      });
+      store.rows.set(row.id, row);
+      setAiSessionStore(store as any);
+
+      const resumedAgent = createMockAgent([createQuestionJson("q-retry")]);
+      mockCreateKbAgent.mockImplementationOnce(async () => resumedAgent);
+
+      await retryMissionInterviewSession(row.id, "/tmp/project");
+
+      expect(resumedAgent.session.prompt).toHaveBeenCalledTimes(1);
+      expect(resumedAgent.session.prompt.mock.calls[0]?.[0]).toContain("What is your goal?");
+      expect(resumedAgent.session.prompt.mock.calls[0]?.[0]).toContain("Ship a dashboard");
+
+      expect(getMissionInterviewSession(row.id)?.currentQuestion?.id).toBe("q-retry");
+      expect(store.get(row.id)?.status).toBe("awaiting_input");
+      expect(store.get(row.id)?.error).toBeNull();
+    });
+
+    it("replays the initial mission prompt when history is empty", async () => {
+      const store = new MockAiSessionStore();
+      const row = buildMissionRow({
+        id: "mission-retry-2",
+        status: "error",
+        error: "First turn failed",
+        inputPayload: JSON.stringify({
+          ip: "127.0.0.1",
+          missionId: "mission-999",
+          missionTitle: "Launch alpha",
+        }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+      });
+      store.rows.set(row.id, row);
+      setAiSessionStore(store as any);
+
+      const resumedAgent = createMockAgent([createQuestionJson("q-first")]);
+      mockCreateKbAgent.mockImplementationOnce(async () => resumedAgent);
+
+      await retryMissionInterviewSession(row.id, "/tmp/project");
+
+      expect(resumedAgent.session.prompt).toHaveBeenCalledTimes(1);
+      expect(resumedAgent.session.prompt.mock.calls[0]?.[0]).toContain('I want to plan a mission: "Launch alpha"');
+      expect(store.get(row.id)?.status).toBe("awaiting_input");
+    });
+
+    it("throws when retrying a non-error mission session", async () => {
+      const store = new MockAiSessionStore();
+      const row = buildMissionRow({ id: "mission-not-error", status: "awaiting_input" });
+      store.rows.set(row.id, row);
+      setAiSessionStore(store as any);
+
+      await expect(retryMissionInterviewSession(row.id, "/tmp/project")).rejects.toBeInstanceOf(
+        InvalidSessionStateError,
       );
     });
   });

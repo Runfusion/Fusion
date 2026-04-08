@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Task } from "@fusion/core";
 import {
   startSubtaskBreakdown,
+  retrySubtaskSession,
   connectSubtaskStream,
   createTasksFromBreakdown,
   cancelSubtaskBreakdown,
@@ -15,7 +16,7 @@ import {
   getSubtaskDescription,
   clearSubtaskDescription,
 } from "../hooks/modalPersistence";
-import { CheckCircle, Loader2, ListTree, Plus, Trash2, X, GripVertical, ArrowUp, ArrowDown, Minimize2 } from "lucide-react";
+import { CheckCircle, Loader2, ListTree, Plus, Trash2, X, GripVertical, ArrowUp, ArrowDown, Minimize2, RefreshCw } from "lucide-react";
 import { ConversationHistory } from "./ConversationHistory";
 
 interface SubtaskBreakdownModalProps {
@@ -32,6 +33,7 @@ type ViewState =
   | { type: "initial" }
   | { type: "generating"; sessionId: string }
   | { type: "editing"; sessionId: string }
+  | { type: "error"; sessionId: string; errorMessage: string }
   | { type: "creating"; sessionId: string };
 
 function createEmptySubtask(index: number): SubtaskItem {
@@ -71,6 +73,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
   const [thinkingOutput, setThinkingOutput] = useState("");
   const [showThinking, setShowThinking] = useState(true);
   const [isReconnecting, setIsReconnecting] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
   // Local description: synced from prop, can fall back to localStorage
   const [localDescription, setLocalDescription] = useState(initialDescription);
   const [error, setError] = useState<string | null>(null);
@@ -85,7 +88,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
   const titleRefs = useRef<Array<HTMLInputElement | null>>([]);
   const autoStartedRef = useRef(false);
 
-  const sessionId = view.type === "generating" || view.type === "editing" || view.type === "creating"
+  const sessionId = view.type === "generating" || view.type === "editing" || view.type === "creating" || view.type === "error"
     ? view.sessionId
     : null;
 
@@ -95,7 +98,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     return hasDependencyCycle(subtasks);
   }, [subtasks]);
 
-  const showSendToBackgroundButton = view.type === "generating" || view.type === "editing";
+  const showSendToBackgroundButton = view.type === "generating" || view.type === "editing" || view.type === "error";
 
   const resetState = useCallback(() => {
     // Save to localStorage before cleanup (preserve for re-entry)
@@ -110,6 +113,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     setThinkingOutput("");
     setShowThinking(true);
     setIsReconnecting(false);
+    setIsRetrying(false);
     setError(null);
     setDirty(false);
     autoStartedRef.current = false;
@@ -136,6 +140,34 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     onClose();
   }, [dirty, onClose, resetState, sessionId, view.type, projectId]);
 
+  const connectToSubtaskStream = useCallback(
+    (activeSessionId: string) => {
+      streamRef.current?.close();
+      streamRef.current = connectSubtaskStream(activeSessionId, projectId, {
+        onThinking: (data) => setThinkingOutput((prev) => prev + data),
+        onSubtasks: (items) => {
+          setIsReconnecting(false);
+          setIsRetrying(false);
+          clearSubtaskDescription(projectId);
+          setSubtasks(items);
+          setView({ type: "editing", sessionId: activeSessionId });
+          setDirty(false);
+        },
+        onError: (message) => {
+          const errorMessage = message || "Session failed while contacting the AI.";
+          setIsReconnecting(false);
+          setIsRetrying(false);
+          setError(null);
+          setView({ type: "error", sessionId: activeSessionId, errorMessage });
+        },
+        onConnectionStateChange: (state) => {
+          setIsReconnecting(state === "reconnecting");
+        },
+      });
+    },
+    [projectId],
+  );
+
   const beginBreakdown = useCallback(async () => {
     if (!localDescription.trim()) return;
     setError(null);
@@ -146,30 +178,12 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     try {
       const { sessionId } = await startSubtaskBreakdown(localDescription.trim(), projectId);
       setView({ type: "generating", sessionId });
-      streamRef.current?.close();
-      streamRef.current = connectSubtaskStream(sessionId, projectId, {
-        onThinking: (data) => setThinkingOutput((prev) => prev + data),
-        onSubtasks: (items) => {
-          setIsReconnecting(false);
-          clearSubtaskDescription(projectId);
-          setSubtasks(items);
-          setView({ type: "editing", sessionId });
-          setDirty(false);
-        },
-        onError: (message) => {
-          setIsReconnecting(false);
-          setError(message);
-          setView({ type: "initial" });
-        },
-        onConnectionStateChange: (state) => {
-          setIsReconnecting(state === "reconnecting");
-        },
-      });
+      connectToSubtaskStream(sessionId);
     } catch (err: any) {
       setError(err.message || "Failed to start subtask breakdown");
       setView({ type: "initial" });
     }
-  }, [localDescription, projectId]);
+  }, [connectToSubtaskStream, localDescription, projectId]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -204,38 +218,25 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
         if (session.status === "generating" || session.status === "awaiting_input") {
           setThinkingOutput(session.thinkingOutput ?? "");
           setView({ type: "generating", sessionId: resumeSessionId });
-          streamRef.current?.close();
-          streamRef.current = connectSubtaskStream(resumeSessionId, projectId, {
-            onThinking: (data) => setThinkingOutput((prev) => prev + data),
-            onSubtasks: (items) => {
-              setIsReconnecting(false);
-              clearSubtaskDescription(projectId);
-              setSubtasks(items);
-              setView({ type: "editing", sessionId: resumeSessionId });
-              setDirty(false);
-            },
-            onError: (message) => {
-              setIsReconnecting(false);
-              setError(message);
-              setView({ type: "initial" });
-            },
-            onConnectionStateChange: (state) => {
-              setIsReconnecting(state === "reconnecting");
-            },
-          });
+          connectToSubtaskStream(resumeSessionId);
         } else if (session.status === "complete" && session.result) {
           clearSubtaskDescription(projectId);
           const items = JSON.parse(session.result) as SubtaskItem[];
           setSubtasks(items);
           setView({ type: "editing", sessionId: resumeSessionId });
         } else if (session.status === "error") {
-          setError(session.error ?? "Session encountered an error");
+          setError(null);
+          setView({
+            type: "error",
+            sessionId: resumeSessionId,
+            errorMessage: session.error ?? "Session encountered an error",
+          });
         }
       } catch (err: any) {
         setError(err.message || "Failed to resume session");
       }
     })();
-  }, [isOpen, resumeSessionId, view.type, projectId]);
+  }, [connectToSubtaskStream, isOpen, resumeSessionId, view.type, projectId]);
 
   useEffect(() => {
     return () => {
@@ -375,6 +376,34 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     }
   }, [isInvalid, onClose, onTasksCreated, parentTaskId, projectId, resetState, sessionId, subtasks]);
 
+  const handleRetry = useCallback(async () => {
+    if (view.type !== "error") {
+      return;
+    }
+
+    const retrySessionId = view.sessionId;
+    setError(null);
+    setIsRetrying(true);
+    setThinkingOutput("");
+    setView({ type: "generating", sessionId: retrySessionId });
+    connectToSubtaskStream(retrySessionId);
+
+    try {
+      await retrySubtaskSession(retrySessionId, projectId);
+    } catch (err: any) {
+      streamRef.current?.close();
+      streamRef.current = null;
+      setView({
+        type: "error",
+        sessionId: retrySessionId,
+        errorMessage: err?.message || "Retry failed. Please try again.",
+      });
+      setIsReconnecting(false);
+    } finally {
+      setIsRetrying(false);
+    }
+  }, [connectToSubtaskStream, projectId, view]);
+
   if (!isOpen) return null;
 
   return (
@@ -434,6 +463,41 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
                     <pre>{thinkingOutput}</pre>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {view.type === "error" && (
+            <div className="planning-summary">
+              <div className="planning-view-scroll planning-summary-scroll">
+                {conversationHistory.length > 0 && (
+                  <>
+                    <ConversationHistory entries={conversationHistory} defaultShowThinking={true} />
+                    <div className="conversation-separator" />
+                  </>
+                )}
+                <div
+                  className="ai-error-panel"
+                  role="alert"
+                  style={{
+                    border: "1px solid var(--color-error, #dc2626)",
+                    borderRadius: "10px",
+                    background: "color-mix(in srgb, var(--color-error, #dc2626) 10%, transparent)",
+                    padding: "14px",
+                    display: "grid",
+                    gap: "10px",
+                  }}
+                >
+                  <div className="ai-error-icon" style={{ fontSize: "20px" }}>⚠️</div>
+                  <div className="ai-error-message">{view.errorMessage}</div>
+                  <div className="ai-error-actions" style={{ display: "flex", gap: "8px" }}>
+                    <button className="btn btn-primary" onClick={() => void handleRetry()} disabled={isRetrying}>
+                      {isRetrying ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
+                      <span style={{ marginLeft: "6px" }}>{isRetrying ? "Retrying..." : "Retry"}</span>
+                    </button>
+                    <button className="btn" onClick={() => void handleClose()} disabled={isRetrying}>Cancel</button>
+                  </div>
+                </div>
               </div>
             </div>
           )}
