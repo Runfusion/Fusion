@@ -8,7 +8,7 @@
  * where bundled code runs. Node-pty looks for native modules at:
  *   /$bunfs/root/prebuilds/<platform>-<arch>/pty.node
  *
- * This module creates a real directory structure at /tmp/kb-bunfs-<pid>/ that mirrors
+ * This module creates a real directory structure at /tmp/fn-bunfs-<pid>/ that mirrors
  * the expected structure, then attempts to create a symlink from /$bunfs/root to that
  * temp directory (on macOS/Linux) so node-pty can find the native assets.
  */
@@ -64,9 +64,9 @@ function cleanupStaleBunfsLinks(): void {
       if (stats.isSymbolicLink()) {
         const target = readlinkSync(bunfsRoot);
         // If the target is a temp dir that no longer exists, remove the stale link
-        if (target.includes("kb-bunfs-") && !existsSync(target)) {
+        if (target.includes("fn-bunfs-") && !existsSync(target)) {
           rmSync(bunfsRoot);
-          console.log("[kb-native-patch] Cleaned up stale /$bunfs/root symlink");
+          console.log("[fn-native-patch] Cleaned up stale /$bunfs/root symlink");
         }
       }
     }
@@ -79,7 +79,7 @@ function cleanupStaleBunfsLinks(): void {
  * Set up the native module resolution structure.
  *
  * Creates:
- *   /tmp/kb-bunfs-<pid>/kb/prebuilds/<platform>-<arch>/
+ *   /tmp/fn-bunfs-<pid>/fn/prebuilds/<platform>-<arch>/
  *     ├── pty.node
  *     └── spawn-helper (Unix only)
  *
@@ -89,7 +89,7 @@ function cleanupStaleBunfsLinks(): void {
 export function setupNativeResolution(): { success: boolean; nativeDir: string | null } {
   const nativeDir = findStagedNativeDir();
   if (!nativeDir) {
-    console.warn("[kb-native-patch] No native assets found, terminal will be unavailable");
+    console.warn("[fn-native-patch] No native assets found, terminal will be unavailable");
     return { success: false, nativeDir: null };
   }
 
@@ -102,9 +102,9 @@ export function setupNativeResolution(): { success: boolean; nativeDir: string |
   process.env.FUSION_NATIVE_ASSETS_PATH = nativeDir;
 
   // Create the fake bunfs structure
-  const tmpRoot = join(tmpdir(), `kb-bunfs-${process.pid}`);
-  const kbDir = join(tmpRoot, "kb");
-  const prebuildsDir = join(kbDir, "prebuilds");
+  const tmpRoot = join(tmpdir(), `fn-bunfs-${process.pid}`);
+  const fnDir = join(tmpRoot, "fn");
+  const prebuildsDir = join(fnDir, "prebuilds");
   const platformDir = join(prebuildsDir, basename(nativeDir));
 
   try {
@@ -138,23 +138,23 @@ export function setupNativeResolution(): { success: boolean; nativeDir: string |
           }
         }
 
-        // Create new symlink pointing to our temp kb directory
-        // We want /$bunfs/root -> /tmp/kb-bunfs-<pid>/kb
+        // Create new symlink pointing to our temp fn directory
+        // We want /$bunfs/root -> /tmp/fn-bunfs-<pid>/fn
         // So that /$bunfs/root/prebuilds/<platform>/pty.node resolves correctly
-        symlinkSync(kbDir, bunfsRoot);
+        symlinkSync(fnDir, bunfsRoot);
         bunfsSymlinkPath = bunfsRoot;
-        console.log("[kb-native-patch] Created /$bunfs/root symlink for native module resolution");
+        console.log("[fn-native-patch] Created /$bunfs/root symlink for native module resolution");
       } catch (symlinkErr) {
         // Symlink creation failed (likely permission denied) - not fatal
         // The terminal service will try alternative loading methods
-        console.log("[kb-native-patch] Could not create /$bunfs/root symlink (permissions), using fallback");
+        console.log("[fn-native-patch] Could not create /$bunfs/root symlink (permissions), using fallback");
       }
     }
 
-    console.log("[kb-native-patch] Native assets staged at:", tmpRoot);
+    console.log("[fn-native-patch] Native assets staged at:", tmpRoot);
     return { success: true, nativeDir };
   } catch (err) {
-    console.error("[kb-native-patch] Failed to setup native resolution:", err);
+    console.error("[fn-native-patch] Failed to setup native resolution:", err);
     return { success: false, nativeDir: null };
   }
 }

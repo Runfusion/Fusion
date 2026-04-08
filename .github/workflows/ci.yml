@@ -40,4 +40,4 @@ jobs:
         run: pnpm --filter @gsxdsm/fusion build:exe
 
       - name: Verify binary exists
-        run: test -f packages/cli/dist/kb
+        run: test -f packages/cli/dist/fn

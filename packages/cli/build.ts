@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 /**
- * Bun compile build script for the `kb` CLI.
+ * Bun compile build script for the `fn` CLI.
  *
- * Produces a single self-contained executable at packages/cli/dist/kb
+ * Produces a single self-contained executable at packages/cli/dist/fn
  * with the dashboard client assets co-located at packages/cli/dist/client/.
  *
  * Usage:
@@ -55,20 +55,20 @@ function targetToPrebuildName(target: BunTarget): string {
 
 /**
  * Map a Bun target identifier to the output binary name.
- * e.g. "bun-linux-x64" → "kb-linux-x64", "bun-windows-x64" → "kb-windows-x64.exe"
+ * e.g. "bun-linux-x64" → "fn-linux-x64", "bun-windows-x64" → "fn-windows-x64.exe"
  */
 function binaryNameForTarget(target: BunTarget): string {
   // "bun-linux-x64" → "linux-x64"
   const suffix = target.replace(/^bun-/, "");
   const isWindows = target.includes("windows");
-  return `kb-${suffix}${isWindows ? ".exe" : ""}`;
+  return `fn-${suffix}${isWindows ? ".exe" : ""}`;
 }
 
 /**
  * Determine the default binary name for the current platform (no cross-compile).
  */
 function defaultBinaryName(): string {
-  return process.platform === "win32" ? "kb.exe" : "kb";
+  return process.platform === "win32" ? "fn.exe" : "fn";
 }
 
 /**
@@ -272,7 +272,7 @@ const { targets } = parseArgs();
 const clientAssetMode = ensureClientAssets();
 
 if (targets === null) {
-  // Default: build for current platform → dist/kb
+  // Default: build for current platform → dist/fn
   const outBinary = join(outDir, defaultBinaryName());
   const ok = compileBinary(outBinary, "bun", false);
   if (!ok) process.exit(1);

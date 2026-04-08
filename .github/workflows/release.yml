@@ -29,16 +29,16 @@ jobs:
         include:
           - os: ubuntu-latest
             target: bun-linux-x64
-            binary: kb-linux-x64
+            binary: fn-linux-x64
           - os: macos-latest
             target: bun-darwin-arm64
-            binary: kb-darwin-arm64
+            binary: fn-darwin-arm64
           - os: macos-13
             target: bun-darwin-x64
-            binary: kb-darwin-x64
+            binary: fn-darwin-x64
           - os: windows-latest
             target: bun-windows-x64
-            binary: kb-windows-x64.exe
+            binary: fn-windows-x64.exe
 
     steps:
       - name: Checkout
@@ -133,7 +133,7 @@ jobs:
       - name: Collect release files
         run: |
           mkdir release-files
-          find artifacts -type f \( -name "kb-*" -o -name "*.sha256" \) -exec cp {} release-files/ \;
+          find artifacts -type f \( -name "fn-*" -o -name "*.sha256" \) -exec cp {} release-files/ \;
           ls -la release-files/
 
       - name: Create GitHub Release

@@ -24,11 +24,11 @@ if (isBunBinary) {
 
   if (!existsSync(localPkg)) {
     // Write a minimal package.json to a temp dir and redirect PI_PACKAGE_DIR
-    const tmp = mkdtempSync(join(tmpdir(), "kb-pkg-"));
+    const tmp = mkdtempSync(join(tmpdir(), "fn-pkg-"));
     writeFileSync(
       join(tmp, "package.json"),
       JSON.stringify(
-        { name: "kb", version: "0.1.0", type: "module", piConfig: { name: "kb", configDir: ".fusion" } },
+        { name: "fn", version: "0.1.0", type: "module", piConfig: { name: "fn", configDir: ".fusion" } },
         null,
         2,
       ) + "\n",

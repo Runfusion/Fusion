@@ -37,12 +37,12 @@ describe("CLI package.json publishing config", () => {
 
   it("does not include bare 'dist' entry or globs that would match Bun binaries", () => {
     const bunBinaryNames = [
-      "kb",
-      "kb-linux-x64",
-      "kb-linux-arm64",
-      "kb-darwin-x64",
-      "kb-darwin-arm64",
-      "kb-windows-x64.exe",
+      "fn",
+      "fn-linux-x64",
+      "fn-linux-arm64",
+      "fn-darwin-x64",
+      "fn-darwin-arm64",
+      "fn-windows-x64.exe",
     ];
     // No bare "dist" entry that would include everything
     expect(pkg.files).not.toContain("dist");
@@ -51,8 +51,8 @@ describe("CLI package.json publishing config", () => {
       for (const bin of bunBinaryNames) {
         expect(entry).not.toBe(`dist/${bin}`);
       }
-      // No wildcard like "dist/kb*" that would match binaries
-      expect(entry).not.toMatch(/^dist\/kb/);
+      // No wildcard like "dist/fn*" that would match binaries
+      expect(entry).not.toMatch(/^dist\/fn/);
     }
   });
 

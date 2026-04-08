@@ -21,7 +21,7 @@ const SUPPORTED_TARGETS = [
 function expectedBinaryName(target: string): string {
   const suffix = target.replace(/^bun-/, "");
   const isWindows = target.includes("windows");
-  return `kb-${suffix}${isWindows ? ".exe" : ""}`;
+  return `fn-${suffix}${isWindows ? ".exe" : ""}`;
 }
 
 /**
@@ -44,8 +44,8 @@ describe("build-exe-cross: single target", () => {
     });
   }, 180_000);
 
-  it("produces dist/kb-linux-x64", () => {
-    const bin = join(distDir, "kb-linux-x64");
+  it("produces dist/fn-linux-x64", () => {
+    const bin = join(distDir, "fn-linux-x64");
     expect(existsSync(bin)).toBe(true);
     expect(statSync(bin).size).toBeGreaterThan(0);
   });
@@ -64,8 +64,8 @@ describe("build-exe-cross: windows target has .exe extension", () => {
     });
   }, 180_000);
 
-  it("produces dist/kb-windows-x64.exe", () => {
-    const bin = join(distDir, "kb-windows-x64.exe");
+  it("produces dist/fn-windows-x64.exe", () => {
+    const bin = join(distDir, "fn-windows-x64.exe");
     expect(existsSync(bin)).toBe(true);
     expect(statSync(bin).size).toBeGreaterThan(0);
   });
@@ -143,8 +143,8 @@ describe("build-exe-cross: default (no args) backward compatibility", () => {
     });
   }, 180_000);
 
-  it("produces dist/kb (no platform suffix)", () => {
-    const defaultName = process.platform === "win32" ? "kb.exe" : "kb";
+  it("produces dist/fn (no platform suffix)", () => {
+    const defaultName = process.platform === "win32" ? "fn.exe" : "fn";
     const bin = join(distDir, defaultName);
     expect(existsSync(bin)).toBe(true);
     expect(statSync(bin).size).toBeGreaterThan(0);

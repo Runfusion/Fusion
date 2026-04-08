@@ -6,8 +6,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 const cliRoot = join(import.meta.dirname!, "..", "..");
-const outBinary = join(cliRoot, "dist", process.platform === "win32" ? "kb.exe" : "kb");
-const binaryName = process.platform === "win32" ? "kb.exe" : "kb";
+const outBinary = join(cliRoot, "dist", process.platform === "win32" ? "fn.exe" : "fn");
+const binaryName = process.platform === "win32" ? "fn.exe" : "fn";
 const clientDir = join(cliRoot, "dist", "client");
 const runtimeDir = join(cliRoot, "dist", "runtime");
 
@@ -16,7 +16,7 @@ const runtimeDir = join(cliRoot, "dist", "runtime");
  * and runtime/ assets — no package.json. Returns the dir path and a cleanup function.
  */
 function createIsolatedDir(): { dir: string; binary: string; cleanup: () => void } {
-  const dir = mkdtempSync(join(tmpdir(), "kb-iso-"));
+  const dir = mkdtempSync(join(tmpdir(), "fn-iso-"));
   cpSync(outBinary, join(dir, binaryName), { recursive: true });
   cpSync(clientDir, join(dir, "client"), { recursive: true });
   // Copy runtime native assets alongside binary
