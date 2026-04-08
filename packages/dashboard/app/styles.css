@@ -23236,3 +23236,205 @@ html .column.drag-over * {
     height: min(420px, calc(100dvh - 160px));
   }
 }
+
+/* === Mobile Bottom Tab Bar (FN-1108) ===
+   Fixed bottom navigation for mobile viewports (≤768px).
+   Sits above the ExecutorStatusBar footer when visible.
+   Uses safe-area-inset-bottom for notched devices. */
+
+.mobile-nav-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 45;
+  display: none;
+  align-items: stretch;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  min-height: 56px;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.15);
+}
+
+@media (max-width: 768px) {
+  .mobile-nav-bar {
+    display: flex;
+  }
+
+  .mobile-nav-bar--with-footer {
+    bottom: 32px;
+  }
+
+  /* Content padding: mobile nav only (no footer) */
+  .project-content--with-mobile-nav:not(.project-content--with-footer) {
+    padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Content padding: both mobile nav AND footer */
+  .project-content--with-footer.project-content--with-mobile-nav {
+    padding-bottom: calc(32px + 56px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* Individual tab button */
+.mobile-nav-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 44px;
+  padding: 6px 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: color 0.15s ease;
+  position: relative;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-nav-tab:active {
+  color: var(--text-primary);
+}
+
+.mobile-nav-tab--active {
+  color: var(--accent);
+}
+
+.mobile-nav-tab svg {
+  width: 22px;
+  height: 22px;
+}
+
+.mobile-nav-tab-label {
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+/* Badge on tab */
+.mobile-nav-badge {
+  position: absolute;
+  top: 2px;
+  right: 50%;
+  transform: translateX(calc(50% + 10px));
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 10px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+/* === Mobile More Sheet (Bottom Drawer) === */
+
+.mobile-more-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(0, 0, 0, 0.5);
+  animation: mobile-more-backdrop-in 0.2s ease;
+}
+
+.mobile-more-sheet {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 91;
+  background: var(--surface);
+  border-top-left-radius: var(--radius-lg, 12px);
+  border-top-right-radius: var(--radius-lg, 12px);
+  padding: 16px 0;
+  padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
+  max-height: 70vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  animation: mobile-more-sheet-in 0.25s ease;
+}
+
+@keyframes mobile-more-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes mobile-more-sheet-in {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.mobile-more-sheet-handle {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  margin: 0 auto 12px;
+}
+
+.mobile-more-sheet-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 0 16px 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.mobile-more-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 16px;
+  min-height: 44px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 15px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+  position: relative;
+}
+
+.mobile-more-item:active {
+  background: var(--surface-hover, rgba(0, 0, 0, 0.05));
+}
+
+.mobile-more-item svg {
+  width: 20px;
+  height: 20px;
+  color: var(--text-muted);
+}
+
+.mobile-more-item-badge {
+  margin-left: auto;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+}
+
+.mobile-more-separator {
+  height: 1px;
+  background: var(--border);
+  margin: 8px 16px;
+}

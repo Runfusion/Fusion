@@ -66,6 +66,55 @@ The dashboard header adapts across three responsive tiers to remain usable witho
 - **Desktop (>1024px)**: Full header with all controls and the project selector inline. No overflow menu.
 - **Keyboard Accessible**: All controls across tiers expose proper ARIA attributes (aria-expanded, aria-haspopup, aria-label) and support keyboard navigation.
 
+### Mobile Bottom Navigation
+The dashboard now includes a dedicated bottom tab navigation pattern for mobile viewports (`≤768px`) via `MobileNavBar` (`app/components/MobileNavBar.tsx`). This pattern is designed for narrow screens and Capacitor-wrapped app usage where bottom-tab navigation is the primary interaction model.
+
+**Primary tabs:**
+- **Board/List** — switches task views (label reflects the current non-agent task view)
+- **Agents** — switches to the Agents view
+- **Activity** — opens the Activity Log modal
+- **More** — opens a bottom-sheet drawer for secondary navigation actions
+
+**More sheet items include:** Mailbox, Missions, Git Manager, Terminal, Files, Planning, Workflow Steps, Schedules, GitHub Import, Usage, and Settings.
+
+**Behavior details:**
+- The tab bar is mobile-only and hidden on tablet/desktop.
+- The tab bar automatically hides when full-screen modals are open (`modalOpen`).
+- Badge counts on the Activity tab combine unread mailbox count and active planning sessions (capped at `99+`).
+- Touch targets in both tabs and sheet items meet a minimum 44px height.
+- Safe-area support uses `env(safe-area-inset-bottom, 0px)` for devices with home-indicator insets.
+
+**Header simplification with mobile nav:**
+When `Header` receives `mobileNavEnabled={true}` on mobile, top-nav controls are reduced to:
+- project/brand area,
+- mobile search control,
+- engine pause/stop controls.
+
+The inline view toggle and compact overflow menu are intentionally hidden in this mode, since primary navigation is handled by the bottom tab bar.
+
+**Viewport hook export:**
+`Header.tsx` now exports both:
+- `ViewportMode`
+- `useViewportMode()`
+
+so the app layout and mobile nav can share the same breakpoint logic.
+
+**Key CSS classes:**
+- `.mobile-nav-bar`
+- `.mobile-nav-tab`
+- `.mobile-more-sheet`
+- `.mobile-more-item`
+- `.project-content--with-mobile-nav`
+
+The layout combines footer + mobile-nav spacing using compound selectors:
+- `.project-content--with-footer.project-content--with-mobile-nav`
+- `.project-content--with-mobile-nav:not(.project-content--with-footer)`
+
+so content never scrolls behind fixed bottom surfaces.
+
+**Testing notes:**
+For component tests, mock `window.matchMedia` to return mobile matches for `(max-width: 768px)` and desktop/tablet matches as needed. See `MobileNavBar.test.tsx` for the reference mocking pattern.
+
 ### Mobile Task Entry
 Task entry inputs (the quick entry box in the Triage column and the New Task modal's description field) are sized to prevent browser zoom-on-focus on iOS Safari. On mobile viewports (≤768px), these inputs use a minimum 16px font size, which keeps the viewport stable when users focus the fields.
 

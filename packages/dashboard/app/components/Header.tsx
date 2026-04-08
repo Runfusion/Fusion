@@ -60,9 +60,11 @@ export interface HeaderProps {
   onViewAllProjects?: () => void;
   projectId?: string;
   isElectron?: boolean;
+  /** When true, the mobile bottom nav bar handles primary navigation and header nav controls are hidden. */
+  mobileNavEnabled?: boolean;
 }
 
-type ViewportMode = "mobile" | "tablet" | "desktop";
+export type ViewportMode = "mobile" | "tablet" | "desktop";
 
 function getViewportMode(): ViewportMode {
   if (typeof window === "undefined") return "desktop";
@@ -71,7 +73,7 @@ function getViewportMode(): ViewportMode {
   return "desktop";
 }
 
-function useViewportMode(): ViewportMode {
+export function useViewportMode(): ViewportMode {
   const [mode, setMode] = useState<ViewportMode>(getViewportMode);
 
   useEffect(() => {
@@ -135,11 +137,13 @@ export function Header({
   onViewAllProjects,
   projectId,
   isElectron = false,
+  mobileNavEnabled,
 }: HeaderProps) {
   const mode = useViewportMode();
   const isMobile = mode === "mobile";
   const isTablet = mode === "tablet";
   const isCompact = isMobile || isTablet;
+  const hideFullNav = isMobile && mobileNavEnabled;
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
   const [isOverflowMenuOpen, setIsOverflowMenuOpen] = useState(false);
   const [isTerminalSubmenuOpen, setIsTerminalSubmenuOpen] = useState(false);
@@ -381,7 +385,7 @@ export function Header({
         )}
 
         {/* View Toggle - always inline, even on mobile */}
-        {onChangeView && (
+        {!hideFullNav && onChangeView && (
           <div className="view-toggle">
             <button
               className={`view-toggle-btn${view === "board" ? " active" : ""}`}
@@ -592,7 +596,7 @@ export function Header({
         </button>
 
         {/* Compact overflow menu trigger (mobile + tablet) */}
-        {isCompact && (
+        {isCompact && !hideFullNav && (
           <button
             ref={overflowButtonRef}
             className="btn-icon compact-overflow-trigger"
@@ -607,7 +611,7 @@ export function Header({
         )}
 
         {/* Compact overflow menu (mobile + tablet) */}
-        {isCompact && isOverflowMenuOpen && (
+        {isCompact && !hideFullNav && isOverflowMenuOpen && (
           <div
             ref={overflowMenuRef}
             className="mobile-overflow-menu"

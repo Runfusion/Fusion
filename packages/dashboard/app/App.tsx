@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import type { TaskDetail, TaskCreateInput, Task, ThemeMode } from "@fusion/core";
 import { fetchConfig, fetchSettings, fetchAuthStatus, fetchGlobalSettings, updateSettings, updateGlobalSettings, fetchModels, fetchTaskDetail, updateProject, unregisterProject, fetchUnreadCount, fetchAgents } from "./api";
 import type { ModelInfo, ProjectInfo, Agent } from "./api";
-import { Header } from "./components/Header";
+import { Header, useViewportMode } from "./components/Header";
 import { Board } from "./components/Board";
 import { ListView } from "./components/ListView";
 import { ProjectOverview } from "./components/ProjectOverview";
@@ -30,6 +30,7 @@ import { NodesView } from "./components/NodesView";
 import { MailboxModal } from "./components/MailboxModal";
 import { ScriptsModal } from "./components/ScriptsModal";
 import { ExecutorStatusBar } from "./components/ExecutorStatusBar";
+import { MobileNavBar } from "./components/MobileNavBar";
 import { QuickChatFAB } from "./components/QuickChatFAB";
 import { useBackgroundSessions } from "./hooks/useBackgroundSessions";
 import { useTasks } from "./hooks/useTasks";
@@ -79,6 +80,9 @@ function AppInner() {
     return "board";
   });
 
+  const viewportMode = useViewportMode();
+  const isMobile = viewportMode === "mobile";
+
   // Modal states
   const [newTaskModalOpen, setNewTaskModalOpen] = useState(false);
   const [isPlanningOpen, setIsPlanningOpen] = useState(false);
@@ -112,6 +116,28 @@ function AppInner() {
   const [settingsInitialSection, setSettingsInitialSection] = useState<SectionId | undefined>(undefined);
   const [setupWizardOpen, setSetupWizardOpen] = useState(false);
   const [modelOnboardingOpen, setModelOnboardingOpen] = useState(false);
+
+  const anyModalOpen = !!(
+    detailTask ||
+    settingsOpen ||
+    newTaskModalOpen ||
+    isPlanningOpen ||
+    isSubtaskOpen ||
+    terminalOpen ||
+    filesOpen ||
+    activityLogOpen ||
+    mailboxOpen ||
+    gitManagerOpen ||
+    workflowStepsOpen ||
+    missionsOpen ||
+    scriptsOpen ||
+    agentsOpen ||
+    usageOpen ||
+    schedulesOpen ||
+    githubImportOpen ||
+    setupWizardOpen ||
+    modelOnboardingOpen
+  );
 
   // Settings state
   const [maxConcurrent, setMaxConcurrent] = useState(2);
@@ -722,9 +748,10 @@ function AppInner() {
         onSelectProject={handleSelectProject}
         onViewAllProjects={handleViewAllProjects}
         projectId={currentProject?.id}
+        mobileNavEnabled={isMobile}
       />
       <div
-        className={`project-content${viewMode === "project" && currentProject ? " project-content--with-footer" : ""}`}
+        className={`project-content${viewMode === "project" && currentProject ? " project-content--with-footer" : ""}${isMobile ? " project-content--with-mobile-nav" : ""}`}
       >
         {renderMainContent()}
       </div>
@@ -751,6 +778,30 @@ function AppInner() {
           onDismissBackgroundSession={bgDismiss}
         />
       )}
+      <MobileNavBar
+        view={taskView}
+        onChangeView={viewMode === "project" && currentProject ? handleChangeTaskView : () => {}}
+        footerVisible={viewMode === "project" && !!currentProject}
+        modalOpen={anyModalOpen}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenActivityLog={handleOpenActivityLog}
+        onOpenMailbox={handleOpenMailbox}
+        mailboxUnreadCount={mailboxUnreadCount}
+        onOpenGitManager={handleOpenGitManager}
+        onOpenWorkflowSteps={() => setWorkflowStepsOpen(true)}
+        onOpenMissions={viewMode === "project" && currentProject ? () => setMissionsOpen(true) : undefined}
+        onOpenSchedules={handleOpenSchedules}
+        onOpenScripts={handleOpenScripts}
+        onToggleTerminal={handleToggleTerminal}
+        onOpenFiles={handleOpenFiles}
+        onOpenGitHubImport={() => setGitHubImportOpen(true)}
+        onOpenPlanning={handlePlanningOpen}
+        onResumePlanning={handleResumePlanning}
+        activePlanningSessionCount={bgPlanningSessions.length}
+        onOpenUsage={handleOpenUsage}
+        onRunScript={handleRunScript}
+        projectId={currentProject?.id}
+      />
       {viewMode === "project" && currentProject && (
         <QuickChatFAB projectId={currentProject.id} addToast={addToast} />
       )}

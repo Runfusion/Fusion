@@ -552,6 +552,36 @@ describe("Header", () => {
       expect(screen.getByTitle("List view")).toBeDefined();
     });
 
+    it("hides view toggle when mobileNavEnabled is true", () => {
+      render(<Header view="board" onChangeView={vi.fn()} mobileNavEnabled={true} />);
+      expect(screen.queryByTitle("Board view")).toBeNull();
+      expect(screen.queryByTitle("List view")).toBeNull();
+    });
+
+    it("hides overflow trigger when mobileNavEnabled is true", () => {
+      render(<Header onOpenSettings={vi.fn()} mobileNavEnabled={true} />);
+      expect(screen.queryByTitle("More header actions")).toBeNull();
+    });
+
+    it("keeps engine controls visible when mobileNavEnabled is true", () => {
+      render(
+        <Header
+          mobileNavEnabled={true}
+          onToggleEnginePause={vi.fn()}
+          onToggleGlobalPause={vi.fn()}
+        />
+      );
+
+      expect(screen.getByTitle("Pause scheduling")).toBeDefined();
+      expect(screen.getByTitle("Stop AI engine")).toBeDefined();
+    });
+
+    it("keeps overflow trigger visible on tablet when mobileNavEnabled is true", () => {
+      mockMatchMedia("tablet");
+      render(<Header onOpenSettings={vi.fn()} mobileNavEnabled={true} />);
+      expect(screen.getByTitle("More header actions")).toBeDefined();
+    });
+
     it("shows terminal group in overflow menu and pause controls inline on mobile", () => {
       render(
         <Header
