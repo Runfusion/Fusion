@@ -4,19 +4,37 @@ Electron desktop shell for Fusion.
 
 This package provides a native Electron wrapper around the existing Fusion dashboard web UI. The desktop shell connects to a running dashboard server and presents native desktop affordances including a system tray and application menu.
 
-## Prerequisites
+## Running the Desktop Shell
 
-Start the Fusion dashboard server first:
+### Hot-reload development workflow
 
-```bash
-fn dashboard
-```
-
-Then, in another terminal, start the desktop app:
+Run a single command from the workspace root:
 
 ```bash
 pnpm --filter @fusion/desktop dev
 ```
+
+This command now orchestrates the full desktop dev loop:
+
+1. Bundles Electron `main.ts` and `preload.ts` to `packages/desktop/dist`
+2. Starts the dashboard Vite renderer dev server (`@fusion/dashboard dev:serve`)
+3. Waits for renderer readiness
+4. Launches Electron with `--dev` and live renderer reload
+
+By default it uses `http://localhost:5173`. Override with `FUSION_DASHBOARD_URL`.
+
+### Production-style desktop launch (from CLI)
+
+```bash
+fn desktop
+```
+
+`fn desktop` builds desktop artifacts, starts an embedded dashboard server on an ephemeral port, and launches Electron against that server.
+
+Useful flags:
+
+- `fn desktop --dev` — use dev renderer URL (`FUSION_DASHBOARD_URL` or `http://localhost:5173`)
+- `fn desktop --paused` — start with engine paused
 
 ## IPC Channel Reference
 
@@ -206,13 +224,24 @@ Tray icons are generated from `packages/dashboard/app/public/logo.svg`.
 
 ## Scripts
 
-- `pnpm --filter @fusion/desktop dev` — run the Electron main process in development
-- `pnpm --filter @fusion/desktop build` — compile TypeScript sources
+- `pnpm --filter @fusion/desktop dev` — hot-reload workflow (main/preload bundle + dashboard Vite dev server + Electron)
+- `pnpm --filter @fusion/desktop build` — production desktop build (dashboard client build + main/preload bundle + asset copy)
 - `pnpm --filter @fusion/desktop test` — run Vitest suite
 - `pnpm --filter @fusion/desktop typecheck` — run TypeScript checks without emitting files
 - `pnpm --filter @fusion/desktop generate:icons` — regenerate tray icon PNG assets from the dashboard logo SVG
-- `pnpm --filter @fusion/desktop pack` — build distributable package via electron-builder
-- `pnpm --filter @fusion/desktop dist` — build distribution artifacts without publishing
+- `pnpm --filter @fusion/desktop pack` — generate unpacked artifacts via electron-builder (`--dir`)
+- `pnpm --filter @fusion/desktop dist` — generate installable desktop artifacts via electron-builder
+
+## Packaging
+
+Desktop packaging is configured in `electron-builder.yml`.
+
+- Output directory: `packages/desktop/dist-electron`
+- Targets: macOS (`dmg`, `zip`), Windows (`nsis`, `portable`), Linux (`AppImage`, `deb`, `tar.gz`)
+- Deep link protocol: `fusion://`
+- Publish provider: GitHub (`gsxdsm/fusion`)
+
+Run `pnpm --filter @fusion/desktop build` before `pack`/`dist` to ensure `dist/` assets are up to date.
 
 ## Environment
 

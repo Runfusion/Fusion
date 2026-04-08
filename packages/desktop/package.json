@@ -3,41 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "src/main.ts",
+  "main": "dist/main.js",
   "engines": {
     "node": ">=22.5.0"
   },
   "scripts": {
-    "dev": "tsx src/main.ts",
-    "build": "tsc",
+    "dev": "tsx scripts/dev.ts",
+    "build": "tsx scripts/build.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "generate:icons": "tsx scripts/generate-icons.ts",
-    "pack": "electron-builder",
-    "dist": "electron-builder --publish never"
-  },
-  "build": {
-    "appId": "com.fusion.desktop",
-    "productName": "Fusion",
-    "directories": {
-      "output": "dist-electron"
-    },
-    "mac": {
-      "category": "public.app-category.developer-tools",
-      "target": [
-        "dmg"
-      ]
-    },
-    "win": {
-      "target": [
-        "nsis"
-      ]
-    },
-    "linux": {
-      "target": [
-        "AppImage"
-      ]
-    }
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
   },
   "dependencies": {
     "electron-updater": "^6.6.0"
@@ -50,6 +27,7 @@
     "@vitest/coverage-v8": "^3.1.0",
     "electron": "^35.0.0",
     "electron-builder": "^26.0.0",
+    "esbuild": "^0.25.12",
     "jsdom": "^29.0.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

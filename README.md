@@ -212,6 +212,9 @@ fn dashboard                              # Start the web UI (default port 4040)
 fn dashboard --interactive                # Start with interactive port selection
 fn dashboard --paused                     # Start with automation paused
 fn dashboard --dev                        # Start web UI only (no AI engine)
+fn desktop                                # Launch Electron desktop app with embedded dashboard server
+fn desktop --dev                          # Launch desktop app against Vite dev renderer (hot-reload)
+fn desktop --paused                       # Launch desktop app with automation paused
 ```
 
 **Task Operations:**
@@ -746,6 +749,8 @@ pnpm install
 pnpm dev:ui                     # Dashboard only; builds and typechecks first
 pnpm dev dashboard              # Board + AI engine
 pnpm dev task list              # CLI commands
+pnpm --filter @fusion/desktop dev   # Desktop hot-reload workflow (renderer + Electron)
+pnpm build:desktop              # Production desktop build pipeline
 pnpm typecheck                  # Type-check all packages (no build required)
 pnpm test                       # Run all tests
 ```

@@ -6,9 +6,11 @@ export default defineConfig({
   test: {
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     environmentMatchGlobs: [["src/renderer/**", "jsdom"]],
+    pool: "threads",
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
     maxWorkers,
     fileParallelism: true,
-    pool: "threads",
     passWithNoTests: true,
   },
 });

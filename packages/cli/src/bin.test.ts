@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const commandMocks = vi.hoisted(() => ({
   runDashboard: vi.fn(),
+  runDesktop: vi.fn(),
   runTaskCreate: vi.fn(),
   runTaskList: vi.fn(),
   runTaskMove: vi.fn(),
@@ -52,6 +53,7 @@ const commandMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./commands/dashboard.js", () => ({ runDashboard: commandMocks.runDashboard }));
+vi.mock("./commands/desktop.js", () => ({ runDesktop: commandMocks.runDesktop }));
 vi.mock("./commands/task.js", () => ({
   runTaskCreate: commandMocks.runTaskCreate,
   runTaskList: commandMocks.runTaskList,
@@ -129,8 +131,10 @@ async function runBin(args: string[]) {
     await import("./bin.ts?test=3");
   } else if (importCounter === 4) {
     await import("./bin.ts?test=4");
-  } else {
+  } else if (importCounter === 5) {
     await import("./bin.ts?test=5");
+  } else {
+    await import("./bin.ts?test=6");
   }
 }
 
@@ -181,5 +185,14 @@ describe("bin mission command integration", () => {
   it("routes mission activate-slice", async () => {
     await runBin(["mission", "activate-slice", "SL-001"]);
     expect(commandMocks.runMissionActivateSlice).toHaveBeenCalledWith("SL-001", undefined);
+  });
+
+  it("routes desktop flags to runDesktop", async () => {
+    await runBin(["desktop", "--dev", "--paused", "--interactive"]);
+    expect(commandMocks.runDesktop).toHaveBeenCalledWith({
+      paused: true,
+      dev: true,
+      interactive: true,
+    });
   });
 });

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const runTaskCreate = vi.fn();
 const runTaskList = vi.fn();
+const runDesktop = vi.fn();
 const runTaskPlan = vi.fn();
 const runTaskImportFromGitHub = vi.fn();
 const runSettingsShow = vi.fn();
@@ -34,6 +35,10 @@ const runMessageDelete = vi.fn();
 
 vi.mock("../commands/dashboard.js", () => ({
   runDashboard: vi.fn(),
+}));
+
+vi.mock("../commands/desktop.js", () => ({
+  runDesktop,
 }));
 
 vi.mock("../commands/task.js", () => ({
@@ -270,6 +275,16 @@ describe("bin", () => {
   it("rejects unknown node subcommands", async () => {
     await expect(runBin(["node", "wat"])).rejects.toThrow("process.exit:1");
     expect(errorSpy).toHaveBeenCalledWith("Unknown subcommand: node wat");
+  });
+
+  it("routes desktop command flags", async () => {
+    await runBin(["desktop", "--dev", "--paused", "--interactive"]);
+
+    expect(runDesktop).toHaveBeenCalledWith({
+      paused: true,
+      dev: true,
+      interactive: true,
+    });
   });
 
   it("rejects duplicate --project flags", async () => {

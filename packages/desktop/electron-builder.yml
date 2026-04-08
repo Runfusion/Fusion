@@ -1,0 +1,62 @@
+appId: com.gsxdsm.fusion.desktop
+productName: Fusion
+artifactName: "${productName}-${version}-${os}-${arch}.${ext}"
+
+directories:
+  output: dist-electron
+  buildResources: src/icons
+
+files:
+  - dist/**/*
+  - package.json
+
+extraMetadata:
+  main: dist/main.js
+
+extraResources:
+  - from: src/icons
+    to: icons
+    filter:
+      - "tray-*.png"
+
+protocols:
+  - name: Fusion Deep Links
+    schemes:
+      - fusion
+
+fileAssociations:
+  - ext: fusion
+    name: Fusion Task Link
+    description: Fusion desktop deep link
+    role: Viewer
+    mimeType: x-scheme-handler/fusion
+
+publish:
+  provider: github
+  owner: gsxdsm
+  repo: fusion
+
+mac:
+  category: public.app-category.developer-tools
+  minimumSystemVersion: "10.15"
+  target:
+    - target: dmg
+    - target: zip
+
+win:
+  target:
+    - target: nsis
+    - target: portable
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+
+linux:
+  category: Development
+  target:
+    - target: AppImage
+    - target: deb
+    - target: tar.gz
