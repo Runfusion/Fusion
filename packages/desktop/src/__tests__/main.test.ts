@@ -91,12 +91,13 @@ describe("main process", () => {
     }
   });
 
-  it("DASHBOARD_URL defaults to localhost:4040", async () => {
+  it("DASHBOARD_URL defaults to local file URL in production mode", async () => {
     delete process.env.FUSION_DASHBOARD_URL;
 
     const { DASHBOARD_URL } = await importMainModule();
 
-    expect(DASHBOARD_URL).toBe("http://localhost:4040");
+    expect(DASHBOARD_URL.startsWith("file://")).toBe(true);
+    expect(DASHBOARD_URL).toContain("/client/index.html");
   });
 
   it("DASHBOARD_URL uses env override", async () => {
@@ -125,7 +126,7 @@ describe("main process", () => {
 
     expect(options.webPreferences.contextIsolation).toBe(true);
     expect(options.webPreferences.nodeIntegration).toBe(false);
-    expect(options.webPreferences.preload).toContain("preload.ts");
+    expect(options.webPreferences.preload).toContain("preload.js");
   });
 
   it("createMainWindow loads the dashboard URL", async () => {

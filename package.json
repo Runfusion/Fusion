@@ -25,7 +25,8 @@
     "mobile:android": "pnpm mobile:build && pnpm --filter @fusion/mobile cap open android",
     "mobile:dev:ios": "pnpm --filter @fusion/mobile dev:ios",
     "mobile:dev:android": "pnpm --filter @fusion/mobile dev:android",
-    "mobile:sync": "pnpm --filter @fusion/mobile cap sync"
+    "mobile:sync": "pnpm --filter @fusion/mobile cap sync",
+    "build:desktop": "pnpm --filter @fusion/desktop build"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

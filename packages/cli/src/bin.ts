@@ -39,6 +39,7 @@ if (isBunBinary) {
 
 // Dynamic imports so the pi-coding-agent config module sees PI_PACKAGE_DIR
 const { runDashboard } = await import("./commands/dashboard.js");
+const { runDesktop } = await import("./commands/desktop.js");
 const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskLogs, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate, runTaskArchive, runTaskUnarchive, runTaskRefine, runTaskPlan, runTaskDelete, runTaskRetry, runTaskComment, runTaskComments, runTaskSteer, runTaskPrCreate } = await import("./commands/task.js");
 const { runSettingsShow, runSettingsSet } = await import("./commands/settings.js");
 const { runSettingsExport } = await import("./commands/settings-export.js");
@@ -62,6 +63,9 @@ Usage:
   fn dashboard --paused               Start with automation paused
   fn dashboard --dev                  Start web UI only (no AI engine)
   fn dashboard --interactive          Start with interactive port selection
+  fn desktop                          Launch the Fusion desktop app (Electron)
+  fn desktop --dev                    Launch with hot-reload (connects to Vite dev server)
+  fn desktop --paused                 Launch with automation paused
   fn task create [desc] [opts]         Create a new task (goes to triage)
   fn task plan [description] [opts]    Create task via AI-guided planning
   fn task list                        List all tasks
@@ -292,6 +296,14 @@ async function main() {
         const dev = args.includes("--dev");
         const interactive = args.includes("--interactive");
         await runDashboard(port, { paused, dev, interactive });
+        break;
+      }
+
+      case "desktop": {
+        const paused = args.includes("--paused");
+        const dev = args.includes("--dev");
+        const interactive = args.includes("--interactive");
+        await runDesktop({ paused, dev, interactive });
         break;
       }
 

@@ -6,7 +6,9 @@ export default defineConfig({
   test: {
     include: ["src/**/*.test.ts"],
     maxWorkers,
-    fileParallelism: true,
+    // build-exe and build-exe-cross suites both operate on packages/cli/dist/
+    // and can race when run in parallel workers.
+    fileParallelism: false,
     coverage: {
       enabled: false,
       reporter: ["text", "html", "json"],
