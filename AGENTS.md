@@ -465,29 +465,29 @@ fn task create "Fix login bug" --project my-app
 fn task list --project my-app
 
 # Show task details from a project
-fn task show KB-001 --project my-app
+fn task show FN-001 --project my-app
 
 # Move a task to a different column
-fn task move KB-001 done --project my-app
+fn task move FN-001 done --project my-app
 
 # Archive a completed task
-fn task archive KB-001 --project my-app
+fn task archive FN-001 --project my-app
 
 # Delete a task
-fn task delete KB-001 --force --project my-app
+fn task delete FN-001 --force --project my-app
 
 # Attach a file to a task
-fn task attach KB-001 screenshot.png --project my-app
+fn task attach FN-001 screenshot.png --project my-app
 
 # Pause/unpause a task
-fn task pause KB-001 --project my-app
-fn task unpause KB-001 --project my-app
+fn task pause FN-001 --project my-app
+fn task unpause FN-001 --project my-app
 
 # Retry a failed task
-fn task retry KB-001 --project my-app
+fn task retry FN-001 --project my-app
 
 # Create a PR for a task
-fn task pr-create KB-001 --project my-app
+fn task pr-create FN-001 --project my-app
 
 # Import GitHub issues as tasks
 fn task import owner/repo --project my-app
