@@ -81,7 +81,7 @@ type DashboardExpressApp = ReturnType<typeof express> & {
   terminalWsServer?: WebSocketServer | null;
   badgeWsServer?: WebSocketServer | null;
   badgeWsManager?: WebSocketManager | null;
-  __kbWebSocketsAttached?: boolean;
+  __fnWebSocketsAttached?: boolean;
 };
 
 function shouldForceLocalhostForTests(): boolean {
@@ -433,7 +433,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   dashboardApp.terminalWsServer = null;
   dashboardApp.badgeWsServer = null;
   dashboardApp.badgeWsManager = null;
-  dashboardApp.__kbWebSocketsAttached = false;
+  dashboardApp.__fnWebSocketsAttached = false;
 
   const originalListen = dashboardApp.listen.bind(dashboardApp);
   dashboardApp.listen = ((...args: Parameters<typeof dashboardApp.listen>) => {
@@ -444,8 +444,8 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       aiSessionStore.stopScheduledCleanup();
     });
 
-    if (!dashboardApp.__kbWebSocketsAttached) {
-      dashboardApp.__kbWebSocketsAttached = true;
+    if (!dashboardApp.__fnWebSocketsAttached) {
+      dashboardApp.__fnWebSocketsAttached = true;
       setupTerminalWebSocket(dashboardApp, server);
       setupBadgeWebSocket(dashboardApp, server, store, options);
     }
@@ -796,7 +796,7 @@ export function setupBadgeWebSocket(
     dashboardApp.terminalWsServer = null;
     dashboardApp.badgeWsServer = null;
     dashboardApp.badgeWsManager = null;
-    dashboardApp.__kbWebSocketsAttached = false;
+    dashboardApp.__fnWebSocketsAttached = false;
   });
 }
 

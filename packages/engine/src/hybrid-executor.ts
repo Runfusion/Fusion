@@ -71,7 +71,7 @@ export interface HybridExecutorOptions {
  * coordinates task execution across all registered projects, and enforces
  * global concurrency limits from CentralCore.
  *
- * This is the main entry point for multi-project task execution in kb. It sits
+ * This is the main entry point for multi-project task execution in fn. It sits
  * between CentralCore (project registry) and the individual ProjectRuntimes,
  * routing tasks to the appropriate runtime based on project configuration.
  *

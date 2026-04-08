@@ -246,7 +246,7 @@ describe("aiMergeTask — task.branch field", () => {
 
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
-    // Should use kb/fn-050-2, not kb/fn-050
+    // Should use fusion/fn-050-2, not fusion/fn-050
     expect(result.branch).toBe("fusion/fn-050-2");
 
     // Verify the suffixed branch was verified and deleted

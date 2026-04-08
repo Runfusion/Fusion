@@ -1,4 +1,4 @@
-/** @fusion/tui — Terminal UI components for kb */
+/** @fusion/tui — Terminal UI components for fn */
 
 import { render, Text } from "ink";
 import React from "react";

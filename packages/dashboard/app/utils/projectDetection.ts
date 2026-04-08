@@ -133,7 +133,7 @@ function getDefaultScanPath(): string {
 }
 
 /**
- * Sorts detected projects by likelihood of being a kb project.
+ * Sorts detected projects by likelihood of being a fn project.
  * Projects with .fusion/fusion.db are ranked higher.
  */
 export function sortDetectedProjects(projects: DetectedProject[]): DetectedProject[] {

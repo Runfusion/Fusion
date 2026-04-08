@@ -103,7 +103,7 @@ const reviewStepParams = Type.Object({
   ),
 });
 
-const EXECUTOR_SYSTEM_PROMPT = `You are a task execution agent for "kb", an AI-orchestrated task board.
+const EXECUTOR_SYSTEM_PROMPT = `You are a task execution agent for "fn", an AI-orchestrated task board.
 
 You are working in a git worktree isolated from the main branch. Your job is to implement the task described in the PROMPT.md specification you're given.
 
@@ -657,7 +657,7 @@ export class TaskExecutor {
    * than being named after the task ID. This decouples directory names from
    * tasks, enabling worktree reuse across dependency chains. When resuming
    * a task that already has `task.worktree` set, the existing path is used
-   * as-is. Branches remain task-scoped (`kb/{task-id}`).
+   * as-is. Branches remain task-scoped (`fusion/{task-id}`).
    */
   async execute(task: Task): Promise<void> {
     executorLog.log(`execute() called for ${task.id} (already executing=${this.executing.has(task.id)})`);
@@ -2068,9 +2068,9 @@ export class TaskExecutor {
   /**
    * Create a git worktree at `path` on a new branch.
    *
-   * @param branch — Branch name (e.g., `kb/kb-042`)
+   * @param branch — Branch name (e.g., `fusion/fn-042`)
    * @param path — Absolute worktree directory path
-   * @param startPoint — Optional git ref to branch from (e.g., `kb/kb-041`).
+   * @param startPoint — Optional git ref to branch from (e.g., `fusion/fn-041`).
    *   When provided, the worktree starts from that ref instead of HEAD.
    */
   /**
@@ -2357,7 +2357,7 @@ If issues are found that need attention, describe them clearly.`;
    * Create a git worktree with automatic recovery from conflicts.
    * Implements retry logic with exponential backoff for transient failures.
    * 
-   * @param branch - The branch name to create (e.g., "kb/kb-123")
+   * @param branch - The branch name to create (e.g., "fusion/fn-123")
    * @param path - The desired worktree path
    * @param taskId - The task ID for logging
    * @param startPoint - Optional base branch/commit for new branch

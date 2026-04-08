@@ -112,11 +112,11 @@ export class WorktreePool {
    * 4. `git checkout -B <branchName> <startPoint>` — create/reset branch from start point
    *
    * Returns the actual branch name used. This may differ from `branchName`
-   * when conflict recovery generates a suffixed name (e.g., `kb/fn-042-2`).
+   * when conflict recovery generates a suffixed name (e.g., `fusion/fn-042-2`).
    *
    * @param worktreePath — Absolute path to the recycled worktree
-   * @param branchName — Branch name for the new task (e.g., `kb/kb-042`)
-   * @param startPoint — Git ref to branch from (e.g., `kb/kb-041`). Defaults to `main`.
+   * @param branchName — Branch name for the new task (e.g., `fusion/fn-042`)
+   * @param startPoint — Git ref to branch from (e.g., `fusion/fn-041`). Defaults to `main`.
    * @returns The actual branch name checked out in the worktree
    */
   prepareForTask(worktreePath: string, branchName: string, startPoint?: string): string {

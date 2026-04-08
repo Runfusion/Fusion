@@ -594,7 +594,7 @@ and the bash tool returned exit code 0.
 The merge will only be completed if the build passes or no build command is configured.`;
   }
 
-  return `You are a merge agent for "kb", an AI-orchestrated task board.
+  return `You are a merge agent for "fn", an AI-orchestrated task board.
 
 Your job is to finalize a squash merge: resolve any conflicts and write a good commit message.
 All changes from the branch are squashed into a single commit.
