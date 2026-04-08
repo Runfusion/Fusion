@@ -132,6 +132,15 @@ The dashboard stylesheet defines a shared mobile foundation in `app/styles.css` 
   - Text-entry controls (`input`, `select`, `textarea`) use **16px font-size** on mobile to prevent iOS Safari auto-zoom.
 - **Safe-area pattern (notched devices / Capacitor webview):** use `env(safe-area-inset-top|right|bottom|left, 0px)` for root/layout containers (for example `#root`, `.header`, `.modal`, `.board`) so content avoids status bars and home indicators.
 
+### Mobile Board View
+At the mobile breakpoint (`@media (max-width: 768px)`), the board and card surfaces switch to a touch-first layout:
+
+- **Horizontal board navigation:** `.board` uses horizontal scroll with `scroll-snap-type: x mandatory`, smooth scrolling, and hidden scrollbars so users can swipe cleanly between columns.
+- **Column sizing and centering:** each board column is fixed to `280px` (`width` + `min-width`) with `scroll-snap-align: center`, so one column is centered at a time during horizontal navigation.
+- **Compact card layout:** task cards use tighter spacing for badges/progress metadata on narrow columns, and mobile action controls (edit/archive/unarchive) remain visible without hover.
+- **Touch interaction model:** quick taps on cards open task details, while horizontal/vertical movement beyond the touch threshold is treated as scroll/gesture input (so swiping between columns does not accidentally open a card).
+- **Touch target convention:** interactive card controls (edit button, archive/unarchive actions, steps toggle, session-files button) follow a minimum `44px` touch target on mobile.
+
 ### Mobile Dropdown & Touch
 Mobile dropdown behavior follows a consistent viewport-aware anchoring pattern so menus stay usable in narrow viewports and virtual-keyboard scenarios.
 

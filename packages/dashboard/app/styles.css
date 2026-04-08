@@ -5487,16 +5487,34 @@ body {
     -webkit-overflow-scrolling: touch;
     scroll-snap-type: x mandatory;
     scroll-padding-inline: calc(50% - 140px);
+    scroll-behavior: smooth;
+    scrollbar-width: none;
     padding: var(--space-md);
     padding-bottom: max(var(--space-md), env(safe-area-inset-bottom, 0px));
     gap: var(--space-md);
     height: 100%;
   }
 
+  .board::-webkit-scrollbar {
+    display: none;
+  }
+
   .board > .column {
     width: 280px;
+    min-width: 280px;
     flex-shrink: 0;
     scroll-snap-align: center;
+  }
+
+  /* Column header touch target */
+  .column-header {
+    min-height: 44px;
+  }
+
+  /* Column count badge: slightly larger on mobile for tapping */
+  .column-count {
+    min-width: 28px;
+    min-height: 28px;
   }
 
   /* Reduce header padding to reclaim horizontal space */
@@ -5685,6 +5703,102 @@ body {
   .gm-remote-edit-btn svg {
     width: 16px;
     height: 16px;
+  }
+
+  /* Card: always show action buttons on mobile (no hover state) */
+  .card-header-actions {
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .card-archive-btn,
+  .card-unarchive-btn {
+    opacity: 1;
+    min-height: 44px;
+    padding: 4px 10px;
+  }
+
+  /* Card: compact progress bar on narrow cards */
+  .card-progress {
+    gap: var(--space-xs);
+  }
+
+  .card-progress-label {
+    font-size: 10px;
+    min-width: 30px;
+  }
+
+  .card-steps-toggle {
+    min-height: 44px;
+  }
+
+  /* Card: smaller status badges for 280px width */
+  .card-status-badge {
+    font-size: 9px;
+    padding: 1px 6px;
+  }
+
+  .card-mission-badge {
+    max-width: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Card: wrap dependency badges */
+  .card-dep-list {
+    flex-wrap: wrap;
+  }
+
+  /* Card: session files button touch target */
+  .card-session-files {
+    min-height: 44px;
+  }
+
+  /* Inline create: fit within 280px column */
+  .inline-create-card {
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .inline-create-main-row {
+    gap: var(--space-xs);
+  }
+
+  .inline-create-input {
+    font-size: 16px;
+  }
+
+  /* Inline create: 44px touch targets */
+  .inline-create-toggle {
+    min-width: 44px;
+    min-height: 44px;
+    flex-shrink: 0;
+  }
+
+  .inline-create-description-actions .btn {
+    min-height: 44px;
+    padding: var(--space-xs) var(--space-md);
+  }
+
+  /* Inline create: wrap footer controls at 280px */
+  .inline-create-controls {
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+  }
+
+  .inline-create-controls .btn {
+    min-height: 44px;
+    font-size: 12px;
+  }
+
+  /* Inline create: constrain dependency dropdown to card width */
+  .dep-dropdown {
+    left: 0;
+    right: 0;
+    min-width: 0;
+    width: 100%;
+    max-height: 200px;
   }
 }
 
