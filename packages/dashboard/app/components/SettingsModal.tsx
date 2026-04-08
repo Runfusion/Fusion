@@ -500,7 +500,10 @@ export function SettingsModal({
         }
       }
 
-      // Save both scopes in parallel if they have changes
+      // Save both scopes in parallel if they have changes.
+      // Note: themeMode/colorTheme may also be write-through via useTheme callbacks
+      // in the Appearance section; duplicate global writes are intentional/idempotent,
+      // while this save path persists the full settings form in one action.
       await Promise.all([
         Object.keys(globalPatch).length > 0 ? updateGlobalSettings(globalPatch) : Promise.resolve(),
         Object.keys(projectPatch).length > 0 ? updateSettings(projectPatch, projectId) : Promise.resolve(),

@@ -538,7 +538,7 @@ describe("App auto-open Settings on unauthenticated", () => {
   });
 
   it("auto-opens Settings to Authentication tab when all providers are unauthenticated but onboarding IS complete", async () => {
-    (fetchGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+    (fetchGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       modelOnboardingComplete: true,
     });
 
@@ -567,7 +567,7 @@ describe("App auto-open Settings on unauthenticated", () => {
         { id: "github", name: "GitHub", authenticated: false },
       ],
     });
-    (fetchGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+    (fetchGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       defaultProvider: "anthropic",
       defaultModelId: "claude-sonnet-4-5",
     });
@@ -591,7 +591,7 @@ describe("App auto-open Settings on unauthenticated", () => {
       ],
     });
     // No defaultProvider or defaultModelId → setup incomplete
-    (fetchGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+    (fetchGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       modelOnboardingComplete: false,
     });
 

@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useLayoutEffect } from "react";
+import { useState, useEffect, useCallback, useLayoutEffect, useRef } from "react";
 import { COLOR_THEMES, type ThemeMode, type ColorTheme } from "@fusion/core";
+import { fetchGlobalSettings, updateGlobalSettings } from "../api";
 
 const THEME_MODE_STORAGE_KEY = "kb-dashboard-theme-mode";
 const COLOR_THEME_STORAGE_KEY = "kb-dashboard-color-theme";
@@ -17,6 +18,54 @@ interface UseThemeReturn {
   setThemeMode: (mode: ThemeMode) => void;
   setColorTheme: (theme: ColorTheme) => void;
   isSystemDark: boolean;
+}
+
+function isValidThemeMode(value: unknown): value is ThemeMode {
+  return value === "dark" || value === "light" || value === "system";
+}
+
+function readCachedThemeMode(): ThemeMode {
+  if (!isBrowser) return "dark";
+  try {
+    const saved = localStorage.getItem(THEME_MODE_STORAGE_KEY);
+    if (isValidThemeMode(saved)) {
+      return saved;
+    }
+  } catch {
+    // localStorage not available, use default
+  }
+  return "dark";
+}
+
+function readCachedColorTheme(): ColorTheme {
+  if (!isBrowser) return "default";
+  try {
+    const saved = localStorage.getItem(COLOR_THEME_STORAGE_KEY);
+    if (saved && VALID_COLOR_THEMES.includes(saved as ColorTheme)) {
+      return saved as ColorTheme;
+    }
+  } catch {
+    // localStorage not available, use default
+  }
+  return "default";
+}
+
+function writeCachedThemeMode(mode: ThemeMode): void {
+  if (!isBrowser) return;
+  try {
+    localStorage.setItem(THEME_MODE_STORAGE_KEY, mode);
+  } catch {
+    // localStorage not available, skip cache write
+  }
+}
+
+function writeCachedColorTheme(theme: ColorTheme): void {
+  if (!isBrowser) return;
+  try {
+    localStorage.setItem(COLOR_THEME_STORAGE_KEY, theme);
+  } catch {
+    // localStorage not available, skip cache write
+  }
 }
 
 /**
@@ -42,42 +91,79 @@ function applyThemeAttributes(themeMode: ThemeMode, colorTheme: ColorTheme, syst
 }
 
 /**
- * Custom hook for theme management
- * Handles localStorage persistence, system preference detection, and theme application
+ * Custom hook for theme management.
+ *
+ * Source of truth: backend global settings (`~/.pi/fusion/settings.json`).
+ *
+ * Behavior:
+ * - Initializes from localStorage cache to avoid pre-hydration theme flash
+ * - Hydrates from backend global settings on mount and reconciles cache
+ * - Writes through on updates (state + localStorage cache + async backend update)
  */
 export function useTheme(): UseThemeReturn {
-  // Initialize from localStorage or defaults
-  const [themeMode, setThemeModeState] = useState<ThemeMode>(() => {
-    if (!isBrowser) return "dark";
-    try {
-      const saved = localStorage.getItem(THEME_MODE_STORAGE_KEY);
-      if (saved === "dark" || saved === "light" || saved === "system") {
-        return saved;
-      }
-    } catch {
-      // localStorage not available, use default
-    }
-    return "dark";
-  });
-
-  const [colorTheme, setColorThemeState] = useState<ColorTheme>(() => {
-    if (!isBrowser) return "default";
-    try {
-      const saved = localStorage.getItem(COLOR_THEME_STORAGE_KEY);
-      if (saved && VALID_COLOR_THEMES.includes(saved as ColorTheme)) {
-        return saved as ColorTheme;
-      }
-    } catch {
-      // localStorage not available, use default
-    }
-    return "default";
-  });
+  // Initialize from localStorage cache or defaults to avoid flash before hydration.
+  const [themeMode, setThemeModeState] = useState<ThemeMode>(() => readCachedThemeMode());
+  const [colorTheme, setColorThemeState] = useState<ColorTheme>(() => readCachedColorTheme());
+  const [isHydrating, setIsHydrating] = useState(true);
 
   // Track system color scheme preference
   const [isSystemDark, setIsSystemDark] = useState<boolean>(() => {
     if (!isBrowser) return true;
     return window.matchMedia("(prefers-color-scheme: dark)").matches;
   });
+
+  const themeModeRef = useRef(themeMode);
+  const colorThemeRef = useRef(colorTheme);
+
+  useEffect(() => {
+    themeModeRef.current = themeMode;
+  }, [themeMode]);
+
+  useEffect(() => {
+    colorThemeRef.current = colorTheme;
+  }, [colorTheme]);
+
+  // Hydrate canonical theme values from backend global settings.
+  useEffect(() => {
+    if (!isBrowser || !isHydrating) return;
+
+    let cancelled = false;
+
+    void fetchGlobalSettings()
+      .then((globalSettings) => {
+        if (cancelled) return;
+
+        if (isValidThemeMode(globalSettings.themeMode)) {
+          if (themeModeRef.current !== globalSettings.themeMode) {
+            setThemeModeState(globalSettings.themeMode);
+          }
+          if (readCachedThemeMode() !== globalSettings.themeMode) {
+            writeCachedThemeMode(globalSettings.themeMode);
+          }
+        }
+
+        if (globalSettings.colorTheme && VALID_COLOR_THEMES.includes(globalSettings.colorTheme)) {
+          if (colorThemeRef.current !== globalSettings.colorTheme) {
+            setColorThemeState(globalSettings.colorTheme);
+          }
+          if (readCachedColorTheme() !== globalSettings.colorTheme) {
+            writeCachedColorTheme(globalSettings.colorTheme);
+          }
+        }
+      })
+      .catch((error) => {
+        console.warn("[useTheme] Failed to hydrate theme from global settings", error);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsHydrating(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isHydrating]);
 
   // Listen to system color scheme changes
   useEffect(() => {
@@ -97,32 +183,23 @@ export function useTheme(): UseThemeReturn {
     applyThemeAttributes(themeMode, colorTheme, isSystemDark);
   }, [themeMode, colorTheme, isSystemDark]);
 
-  // Persist theme to localStorage
-  useEffect(() => {
-    if (!isBrowser) return;
-    try {
-      localStorage.setItem(THEME_MODE_STORAGE_KEY, themeMode);
-    } catch {
-      // localStorage not available, skip persistence
-    }
-  }, [themeMode]);
-
-  useEffect(() => {
-    if (!isBrowser) return;
-    try {
-      localStorage.setItem(COLOR_THEME_STORAGE_KEY, colorTheme);
-    } catch {
-      // localStorage not available, skip persistence
-    }
-  }, [colorTheme]);
-
-  // Wrapper setters
+  // Wrapper setters with write-through persistence.
   const setThemeMode = useCallback((mode: ThemeMode) => {
     setThemeModeState(mode);
+    writeCachedThemeMode(mode);
+
+    void updateGlobalSettings({ themeMode: mode }).catch((error) => {
+      console.warn("[useTheme] Failed to persist themeMode to global settings", error);
+    });
   }, []);
 
   const setColorTheme = useCallback((theme: ColorTheme) => {
     setColorThemeState(theme);
+    writeCachedColorTheme(theme);
+
+    void updateGlobalSettings({ colorTheme: theme }).catch((error) => {
+      console.warn("[useTheme] Failed to persist colorTheme to global settings", error);
+    });
   }, []);
 
   return {
@@ -135,8 +212,10 @@ export function useTheme(): UseThemeReturn {
 }
 
 /**
- * Utility to apply theme before React hydration
- * Call this in a script tag in index.html to prevent theme flash
+ * Utility to apply theme before React hydration.
+ *
+ * This script intentionally reads from localStorage because it runs synchronously
+ * before React boots; localStorage is treated as a backend-synced cache.
  */
 export function getThemeInitScript(): string {
   return `

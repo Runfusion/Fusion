@@ -1,8 +1,20 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
-import { COLOR_THEMES } from "@fusion/core";
+import { renderHook, act, waitFor } from "@testing-library/react";
+import { COLOR_THEMES, type Settings } from "@fusion/core";
 import { useTheme, getThemeInitScript } from "../useTheme";
+import { fetchGlobalSettings, updateGlobalSettings } from "../../api";
+
+vi.mock("../../api", () => ({
+  fetchGlobalSettings: vi.fn(),
+  updateGlobalSettings: vi.fn(),
+}));
+
+const THEME_MODE_STORAGE_KEY = "kb-dashboard-theme-mode";
+const COLOR_THEME_STORAGE_KEY = "kb-dashboard-color-theme";
+
+const mockFetchGlobalSettings = vi.mocked(fetchGlobalSettings);
+const mockUpdateGlobalSettings = vi.mocked(updateGlobalSettings);
 
 describe("useTheme", () => {
   // Mock localStorage
@@ -11,12 +23,21 @@ describe("useTheme", () => {
   // Mock matchMedia
   let matchMediaListeners: Array<(e: { matches: boolean }) => void> = [];
   let currentSystemDark = true;
+  let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     // Reset mocks
     localStorageMock = {};
     matchMediaListeners = [];
     currentSystemDark = true;
+
+    mockFetchGlobalSettings.mockReset();
+    mockUpdateGlobalSettings.mockReset();
+    // Default: keep hydration pending unless a test opts into explicit backend behavior.
+    mockFetchGlobalSettings.mockImplementation(() => new Promise(() => {}));
+    mockUpdateGlobalSettings.mockResolvedValue({} as Settings);
+
+    consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     // Mock localStorage
     vi.stubGlobal("localStorage", {
@@ -53,6 +74,7 @@ describe("useTheme", () => {
   });
 
   afterEach(() => {
+    consoleWarnSpy.mockRestore();
     vi.unstubAllGlobals();
   });
 
@@ -64,13 +86,127 @@ describe("useTheme", () => {
   });
 
   it("initializes from localStorage", () => {
-    localStorageMock["kb-dashboard-theme-mode"] = "light";
-    localStorageMock["kb-dashboard-color-theme"] = "ocean";
+    localStorageMock[THEME_MODE_STORAGE_KEY] = "light";
+    localStorageMock[COLOR_THEME_STORAGE_KEY] = "ocean";
 
     const { result } = renderHook(() => useTheme());
 
     expect(result.current.themeMode).toBe("light");
     expect(result.current.colorTheme).toBe("ocean");
+  });
+
+  it("hydrates themeMode from backend on mount", async () => {
+    mockFetchGlobalSettings.mockResolvedValue({ themeMode: "light" });
+
+    const { result } = renderHook(() => useTheme());
+
+    expect(result.current.themeMode).toBe("dark");
+
+    await waitFor(() => {
+      expect(result.current.themeMode).toBe("light");
+    });
+    expect(localStorageMock[THEME_MODE_STORAGE_KEY]).toBe("light");
+  });
+
+  it("hydrates colorTheme from backend on mount", async () => {
+    mockFetchGlobalSettings.mockResolvedValue({ colorTheme: "ocean" });
+
+    const { result } = renderHook(() => useTheme());
+
+    expect(result.current.colorTheme).toBe("default");
+
+    await waitFor(() => {
+      expect(result.current.colorTheme).toBe("ocean");
+    });
+    expect(localStorageMock[COLOR_THEME_STORAGE_KEY]).toBe("ocean");
+  });
+
+  it("prefers backend over localStorage on hydration", async () => {
+    localStorageMock[THEME_MODE_STORAGE_KEY] = "light";
+    mockFetchGlobalSettings.mockResolvedValue({ themeMode: "dark" });
+
+    const { result } = renderHook(() => useTheme());
+
+    expect(result.current.themeMode).toBe("light");
+
+    await waitFor(() => {
+      expect(result.current.themeMode).toBe("dark");
+    });
+    expect(localStorageMock[THEME_MODE_STORAGE_KEY]).toBe("dark");
+  });
+
+  it("keeps localStorage value when backend matches", async () => {
+    localStorageMock[THEME_MODE_STORAGE_KEY] = "dark";
+    mockFetchGlobalSettings.mockResolvedValue({ themeMode: "dark" });
+
+    const { result } = renderHook(() => useTheme());
+
+    expect(result.current.themeMode).toBe("dark");
+
+    await waitFor(() => {
+      expect(mockFetchGlobalSettings).toHaveBeenCalledTimes(1);
+    });
+
+    expect(result.current.themeMode).toBe("dark");
+    expect(localStorageMock[THEME_MODE_STORAGE_KEY]).toBe("dark");
+  });
+
+  it("write-through calls updateGlobalSettings on setThemeMode", () => {
+    const { result } = renderHook(() => useTheme());
+
+    act(() => {
+      result.current.setThemeMode("light");
+    });
+
+    expect(result.current.themeMode).toBe("light");
+    expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({ themeMode: "light" });
+  });
+
+  it("write-through calls updateGlobalSettings on setColorTheme", () => {
+    const { result } = renderHook(() => useTheme());
+
+    act(() => {
+      result.current.setColorTheme("forest");
+    });
+
+    expect(result.current.colorTheme).toBe("forest");
+    expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({ colorTheme: "forest" });
+  });
+
+  it("write-through updates localStorage immediately", () => {
+    let resolveUpdate: (value: Settings) => void;
+    const pendingUpdate = new Promise<Settings>((resolve) => {
+      resolveUpdate = resolve;
+    });
+    mockUpdateGlobalSettings.mockReturnValue(pendingUpdate);
+
+    const { result } = renderHook(() => useTheme());
+
+    act(() => {
+      result.current.setThemeMode("system");
+    });
+
+    expect(localStorageMock[THEME_MODE_STORAGE_KEY]).toBe("system");
+    expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({ themeMode: "system" });
+
+    resolveUpdate!({} as Settings);
+  });
+
+  it("backend hydration failure falls back to localStorage", async () => {
+    localStorageMock[THEME_MODE_STORAGE_KEY] = "light";
+    mockFetchGlobalSettings.mockRejectedValue(new Error("network unavailable"));
+
+    const { result } = renderHook(() => useTheme());
+
+    await waitFor(() => {
+      expect(mockFetchGlobalSettings).toHaveBeenCalledTimes(1);
+    });
+
+    expect(result.current.themeMode).toBe("light");
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      "[useTheme] Failed to hydrate theme from global settings",
+      expect.any(Error),
+    );
   });
 
   it("updates theme mode", () => {
@@ -81,7 +217,7 @@ describe("useTheme", () => {
     });
 
     expect(result.current.themeMode).toBe("light");
-    expect(localStorageMock["kb-dashboard-theme-mode"]).toBe("light");
+    expect(localStorageMock[THEME_MODE_STORAGE_KEY]).toBe("light");
   });
 
   it("updates color theme", () => {
@@ -92,7 +228,7 @@ describe("useTheme", () => {
     });
 
     expect(result.current.colorTheme).toBe("forest");
-    expect(localStorageMock["kb-dashboard-color-theme"]).toBe("forest");
+    expect(localStorageMock[COLOR_THEME_STORAGE_KEY]).toBe("forest");
   });
 
   it("sets data-theme attribute on document", () => {
@@ -102,7 +238,7 @@ describe("useTheme", () => {
   });
 
   it("sets data-color-theme attribute on document", () => {
-    localStorageMock["kb-dashboard-color-theme"] = "sunset";
+    localStorageMock[COLOR_THEME_STORAGE_KEY] = "sunset";
 
     renderHook(() => useTheme());
 
@@ -111,7 +247,7 @@ describe("useTheme", () => {
 
   it("handles system theme mode by setting effective theme", () => {
     currentSystemDark = false;
-    localStorageMock["kb-dashboard-theme-mode"] = "system";
+    localStorageMock[THEME_MODE_STORAGE_KEY] = "system";
 
     renderHook(() => useTheme());
 
@@ -151,9 +287,9 @@ describe("useTheme", () => {
   });
 
   it("updates effective theme when system changes in system mode", () => {
-    localStorageMock["kb-dashboard-theme-mode"] = "system";
+    localStorageMock[THEME_MODE_STORAGE_KEY] = "system";
 
-    const { result } = renderHook(() => useTheme());
+    renderHook(() => useTheme());
 
     // Initially dark
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
@@ -169,7 +305,7 @@ describe("useTheme", () => {
   });
 
   it("applies factory theme attributes", () => {
-    localStorageMock["kb-dashboard-color-theme"] = "factory";
+    localStorageMock[COLOR_THEME_STORAGE_KEY] = "factory";
 
     renderHook(() => useTheme());
 
@@ -178,7 +314,7 @@ describe("useTheme", () => {
   });
 
   it("applies nord theme attributes", () => {
-    localStorageMock["kb-dashboard-color-theme"] = "nord";
+    localStorageMock[COLOR_THEME_STORAGE_KEY] = "nord";
 
     renderHook(() => useTheme());
 
@@ -187,7 +323,7 @@ describe("useTheme", () => {
   });
 
   it("applies dracula theme attributes", () => {
-    localStorageMock["kb-dashboard-color-theme"] = "dracula";
+    localStorageMock[COLOR_THEME_STORAGE_KEY] = "dracula";
 
     renderHook(() => useTheme());
 
@@ -196,7 +332,7 @@ describe("useTheme", () => {
   });
 
   it("applies gruvbox theme attributes", () => {
-    localStorageMock["kb-dashboard-color-theme"] = "gruvbox";
+    localStorageMock[COLOR_THEME_STORAGE_KEY] = "gruvbox";
 
     renderHook(() => useTheme());
 
@@ -205,7 +341,7 @@ describe("useTheme", () => {
   });
 
   it("applies tokyo-night theme attributes", () => {
-    localStorageMock["kb-dashboard-color-theme"] = "tokyo-night";
+    localStorageMock[COLOR_THEME_STORAGE_KEY] = "tokyo-night";
 
     renderHook(() => useTheme());
 
@@ -218,7 +354,7 @@ describe("useTheme", () => {
     style.textContent = readFileSync("app/styles.css", "utf8");
     document.head.appendChild(style);
 
-    localStorageMock["kb-dashboard-color-theme"] = "factory";
+    localStorageMock[COLOR_THEME_STORAGE_KEY] = "factory";
 
     renderHook(() => useTheme());
 
@@ -253,7 +389,7 @@ describe("useTheme", () => {
   });
 
   it("ignores invalid theme mode in localStorage", () => {
-    localStorageMock["kb-dashboard-theme-mode"] = "invalid";
+    localStorageMock[THEME_MODE_STORAGE_KEY] = "invalid";
 
     const { result } = renderHook(() => useTheme());
 
@@ -261,7 +397,7 @@ describe("useTheme", () => {
   });
 
   it("ignores invalid color theme in localStorage", () => {
-    localStorageMock["kb-dashboard-color-theme"] = "invalid-theme";
+    localStorageMock[COLOR_THEME_STORAGE_KEY] = "invalid-theme";
 
     const { result } = renderHook(() => useTheme());
 
@@ -301,8 +437,8 @@ describe("getThemeInitScript", () => {
   it("includes the correct localStorage keys", () => {
     const script = getThemeInitScript();
 
-    expect(script).toContain("kb-dashboard-theme-mode");
-    expect(script).toContain("kb-dashboard-color-theme");
+    expect(script).toContain(THEME_MODE_STORAGE_KEY);
+    expect(script).toContain(COLOR_THEME_STORAGE_KEY);
   });
 
   it("includes every supported theme in the validated theme list", () => {
