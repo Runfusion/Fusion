@@ -215,9 +215,10 @@ export function Header({
   }, [onSearchChange]);
 
   return (
-    <header className="header">
-      <div className="header-left">
-        <div className="header-brand">
+    <div className="header-wrapper">
+      <header className="header">
+        <div className="header-left">
+          <div className="header-brand">
           <svg
             className="header-logo"
             width={24}
@@ -284,68 +285,18 @@ export function Header({
       </div>
 
       <div className="header-actions">
-        {/* Desktop Search - only show in board view */}
-        {onSearchChange && (view === "board" || view === "list") && !isMobile && (
-          <div className="header-search">
-            <Search size={14} className="header-search-icon" />
-            <input
-              type="text"
-              placeholder="Search tasks..."
-              value={searchQuery}
-              onChange={(e) => onSearchChange(e.target.value)}
-              className="header-search-input"
-            />
-            {searchQuery && (
-              <button
-                className="header-search-clear"
-                onClick={() => onSearchChange("")}
-                aria-label="Clear search"
-              >
-                <X size={14} />
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* Mobile Search Trigger - show in board and list views when mobile nav is hidden (hideFullNav) or in board view when mobile nav is visible */}
-        {onSearchChange && isMobile && (hideFullNav || view === "board" || view === "list") && (
-          <>
-            {!shouldShowMobileSearch ? (
-              <button
-                className="btn-icon mobile-search-trigger"
-                onClick={handleMobileSearchToggle}
-                title="Open search"
-                aria-label="Open search"
-                aria-expanded={false}
-                data-testid="mobile-header-search-btn"
-              >
-                <Search size={16} />
-              </button>
-            ) : (
-              <div
-                ref={mobileSearchRef}
-                className="header-search mobile-search-expanded"
-              >
-                <Search size={14} className="header-search-icon" />
-                <input
-                  ref={mobileSearchInputRef}
-                  autoFocus
-                  type="text"
-                  placeholder="Search tasks..."
-                  value={searchQuery}
-                  onChange={(e) => onSearchChange(e.target.value)}
-                  className="header-search-input"
-                />
-                <button
-                  className="header-search-clear"
-                  onClick={handleMobileSearchClose}
-                  aria-label="Close search"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            )}
-          </>
+        {/* Mobile Search Trigger - only on mobile, show trigger button in header */}
+        {onSearchChange && isMobile && (hideFullNav || view === "board" || view === "list") && !shouldShowMobileSearch && (
+          <button
+            className="btn-icon mobile-search-trigger"
+            onClick={handleMobileSearchToggle}
+            title="Open search"
+            aria-label="Open search"
+            aria-expanded={false}
+            data-testid="mobile-header-search-btn"
+          >
+            <Search size={16} />
+          </button>
         )}
 
         {/* Usage button on mobile when mobile bottom nav is active */}
@@ -817,5 +768,59 @@ export function Header({
         )}
       </div>
     </header>
-  );
+
+    {/* Desktop Search - floating below header, only in board view */}
+    {onSearchChange && view === "board" && !isMobile && (
+      <div className="header-floating-search">
+        <div className="header-search">
+          <Search size={14} className="header-search-icon" />
+          <input
+            type="text"
+            placeholder="Search tasks..."
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+            className="header-search-input"
+          />
+          {searchQuery && (
+            <button
+              className="header-search-clear"
+              onClick={() => onSearchChange("")}
+              aria-label="Clear search"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      </div>
+    )}
+
+    {/* Mobile Search Expanded - floating below header */}
+    {onSearchChange && isMobile && shouldShowMobileSearch && (
+      <div className="header-floating-search">
+        <div
+          ref={mobileSearchRef}
+          className="header-search mobile-search-expanded"
+        >
+          <Search size={14} className="header-search-icon" />
+          <input
+            ref={mobileSearchInputRef}
+            autoFocus
+            type="text"
+            placeholder="Search tasks..."
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+            className="header-search-input"
+          />
+          <button
+            className="header-search-clear"
+            onClick={handleMobileSearchClose}
+            aria-label="Close search"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      </div>
+    )}
+  </div>
+);
 }

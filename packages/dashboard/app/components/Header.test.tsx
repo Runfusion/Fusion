@@ -712,6 +712,24 @@ describe("Header", () => {
       const input = screen.getByPlaceholderText("Search tasks...");
       expect(input).toBeDefined();
     });
+
+    it("renders search input inside header-floating-search on desktop board view", () => {
+      const { container } = renderHeader({ onSearchChange: vi.fn(), view: "board" });
+      expect(container.querySelector(".header-floating-search .header-search")).not.toBeNull();
+    });
+
+    it("does not render search input inside header-actions", () => {
+      const { container } = renderHeader({ onSearchChange: vi.fn(), view: "board" });
+      expect(container.querySelector(".header-actions .header-search")).toBeNull();
+    });
+
+    it("renders header-wrapper containing both header and floating search", () => {
+      const { container } = renderHeader({ onSearchChange: vi.fn(), view: "board" });
+      const wrapper = container.querySelector(".header-wrapper");
+      expect(wrapper).not.toBeNull();
+      expect(wrapper.querySelector("header.header")).not.toBeNull();
+      expect(wrapper.querySelector(".header-floating-search")).not.toBeNull();
+    });
   });
 
   describe("schedules button", () => {

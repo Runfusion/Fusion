@@ -343,7 +343,7 @@ describe("Header", () => {
     expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
   });
 
-  it("shows search input when view is 'list'", () => {
+  it("hides search input when view is 'list' on desktop", () => {
     const onSearchChange = vi.fn();
     render(
       <Header
@@ -353,7 +353,8 @@ describe("Header", () => {
         onSearchChange={onSearchChange}
       />
     );
-    expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
+    // Desktop search only appears in board view
+    expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
   });
 
   it("hides search input when view is 'agents'", () => {

@@ -92,12 +92,38 @@ describe("mobile-header-controls.css", () => {
     }
   });
 
-  it("has position relative on header-actions for absolute positioning", () => {
-    // Find the .header-actions rule and check for position: relative
-    const headerActionsMatch = cssContent.match(/\.header-actions\s*\{([^}]+)\}/);
-    expect(headerActionsMatch).toBeTruthy();
-    if (headerActionsMatch) {
-      expect(headerActionsMatch[1]).toContain("position: relative");
+  it("has header-wrapper with position relative for positioning context", () => {
+    const headerWrapperMatch = cssContent.match(/\.header-wrapper\s*\{([^}]+)\}/);
+    expect(headerWrapperMatch).toBeTruthy();
+    if (headerWrapperMatch) {
+      expect(headerWrapperMatch[1]).toContain("position: relative");
     }
+  });
+
+  it("has header-floating-search styles for floating search container", () => {
+    const floatingSearchMatch = cssContent.match(/\.header-floating-search\s*\{([^}]+)\}/);
+    expect(floatingSearchMatch).toBeTruthy();
+    if (floatingSearchMatch) {
+      expect(floatingSearchMatch[1]).toContain("background:");
+      expect(floatingSearchMatch[1]).toContain("padding:");
+      expect(floatingSearchMatch[1]).toContain("border:");
+      expect(floatingSearchMatch[1]).toContain("box-shadow:");
+    }
+  });
+
+  it("has header-floating-search .header-search with full width", () => {
+    const fullWidthMatch = cssContent.match(/\.header-floating-search\s+\.header-search\s*\{([^}]+)\}/);
+    expect(fullWidthMatch).toBeTruthy();
+    if (fullWidthMatch) {
+      expect(fullWidthMatch[1]).toContain("width: 100%");
+      expect(fullWidthMatch[1]).toContain("max-width: none");
+    }
+  });
+
+  it("has mobile-search-expanded with full width in floating container", () => {
+    // In the mobile media query, .mobile-search-expanded should have width: 100%
+    expect(mobileCss).toContain(".mobile-search-expanded");
+    // The selector should have width: 100% rule
+    expect(mobileCss).toMatch(/\.mobile-search-expanded\s*\{[^}]*width:\s*100%/);
   });
 });
