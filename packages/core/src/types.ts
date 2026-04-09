@@ -540,6 +540,26 @@ export interface MergeDetails {
   autoResolvedCount?: number;
 }
 
+/** Represents an agent's checkout lease on a task. */
+export interface CheckoutLease {
+  /** The agent ID that holds the lease */
+  agentId: string;
+  /** ISO-8601 timestamp when the lease was acquired */
+  checkedOutAt: string;
+}
+
+/** Thrown when a checkout is attempted on a task already checked out by another agent. */
+export class CheckoutConflictError extends Error {
+  constructor(
+    public readonly taskId: string,
+    public readonly currentHolderId: string,
+    public readonly requestedById: string,
+  ) {
+    super(`Task ${taskId} is already checked out by agent ${currentHolderId}`);
+    this.name = "CheckoutConflictError";
+  }
+}
+
 export interface Task {
   id: string;
   title?: string;
@@ -639,6 +659,10 @@ export interface Task {
   thinkingLevel?: ThinkingLevel;
   /** Explicitly assigned agent ID for task-agent linking. Distinct from Agent.taskId active execution state. */
   assignedAgentId?: string;
+  /** Agent ID currently holding the checkout lease for this task. Undefined when no active lease. */
+  checkedOutBy?: string;
+  /** ISO-8601 timestamp when the checkout lease was acquired. */
+  checkedOutAt?: string;
   /** Path to the persisted agent session file, enabling pause/resume without
    *  losing conversation context. Set when execution starts; cleared on
    *  completion or terminal failure. */
