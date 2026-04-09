@@ -107,6 +107,14 @@ describe("ThemeSelector", () => {
     expect(screen.getByLabelText("Parchment theme")).toBeDefined();
     expect(screen.getByLabelText("Terminal theme")).toBeDefined();
     expect(screen.getByLabelText("Glass theme")).toBeDefined();
+    expect(screen.getByLabelText("Horizon theme")).toBeDefined();
+    expect(screen.getByLabelText("Vitesse theme")).toBeDefined();
+    expect(screen.getByLabelText("Outrun theme")).toBeDefined();
+    expect(screen.getByLabelText("Snazzy theme")).toBeDefined();
+    expect(screen.getByLabelText("Porple theme")).toBeDefined();
+    expect(screen.getByLabelText("Espresso theme")).toBeDefined();
+    expect(screen.getByLabelText("Mars theme")).toBeDefined();
+    expect(screen.getByLabelText("Poimandres theme")).toBeDefined();
   });
 
   it("marks current color theme as active", () => {
@@ -405,6 +413,14 @@ describe("ThemeSelector", () => {
       ["parchment", "Parchment"],
       ["terminal", "Terminal"],
       ["glass", "Glass"],
+      ["horizon", "Horizon"],
+      ["vitesse", "Vitesse"],
+      ["outrun", "Outrun"],
+      ["snazzy", "Snazzy"],
+      ["porple", "Porple"],
+      ["espresso", "Espresso"],
+      ["mars", "Mars"],
+      ["poimandres", "Poimandres"],
     ] as const;
 
     dramaticThemes.forEach(([value, label]) => {

@@ -46,6 +46,14 @@ export const COLOR_THEMES = [
   "parchment",
   "terminal",
   "glass",
+  "horizon",
+  "vitesse",
+  "outrun",
+  "snazzy",
+  "porple",
+  "espresso",
+  "mars",
+  "poimandres",
 ] as const;
 export type ColorTheme = (typeof COLOR_THEMES)[number];
 

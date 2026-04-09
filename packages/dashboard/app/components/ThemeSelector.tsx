@@ -51,6 +51,14 @@ const COLOR_THEMES: { value: ColorTheme; label: string; className: string }[] = 
   { value: "parchment", label: "Parchment", className: "theme-swatch-parchment" },
   { value: "terminal", label: "Terminal", className: "theme-swatch-terminal" },
   { value: "glass", label: "Glass", className: "theme-swatch-glass" },
+  { value: "horizon", label: "Horizon", className: "theme-swatch-horizon" },
+  { value: "vitesse", label: "Vitesse", className: "theme-swatch-vitesse" },
+  { value: "outrun", label: "Outrun", className: "theme-swatch-outrun" },
+  { value: "snazzy", label: "Snazzy", className: "theme-swatch-snazzy" },
+  { value: "porple", label: "Porple", className: "theme-swatch-porple" },
+  { value: "espresso", label: "Espresso", className: "theme-swatch-espresso" },
+  { value: "mars", label: "Mars", className: "theme-swatch-mars" },
+  { value: "poimandres", label: "Poimandres", className: "theme-swatch-poimandres" },
 ];
 
 /**
