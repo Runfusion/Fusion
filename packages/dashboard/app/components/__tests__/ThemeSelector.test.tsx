@@ -115,6 +115,7 @@ describe("ThemeSelector", () => {
     expect(screen.getByLabelText("Espresso theme")).toBeDefined();
     expect(screen.getByLabelText("Mars theme")).toBeDefined();
     expect(screen.getByLabelText("Poimandres theme")).toBeDefined();
+    expect(screen.getByLabelText("Ember theme")).toBeDefined();
   });
 
   it("marks current color theme as active", () => {
@@ -226,6 +227,9 @@ describe("ThemeSelector", () => {
 
     fireEvent.click(screen.getByLabelText("Silver theme"));
     expect(onColorThemeChange).toHaveBeenCalledWith("silver");
+
+    fireEvent.click(screen.getByLabelText("Ember theme"));
+    expect(onColorThemeChange).toHaveBeenCalledWith("ember");
   });
 
   it("displays Nord in preview when selected", () => {
@@ -395,6 +399,19 @@ describe("ThemeSelector", () => {
     );
 
     expect(screen.getByText(/Dark \/ Silver/)).toBeDefined();
+  });
+
+  it("displays Ember in preview when selected", () => {
+    render(
+      <ThemeSelector
+        themeMode="dark"
+        colorTheme="ember"
+        onThemeModeChange={vi.fn()}
+        onColorThemeChange={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText(/Dark \/ Ember/)).toBeDefined();
   });
 
   it("displays dramatic theme names in preview when selected", () => {

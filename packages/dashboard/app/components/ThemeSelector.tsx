@@ -59,6 +59,7 @@ const COLOR_THEMES: { value: ColorTheme; label: string; className: string }[] = 
   { value: "espresso", label: "Espresso", className: "theme-swatch-espresso" },
   { value: "mars", label: "Mars", className: "theme-swatch-mars" },
   { value: "poimandres", label: "Poimandres", className: "theme-swatch-poimandres" },
+  { value: "ember", label: "Ember", className: "theme-swatch-ember" },
 ];
 
 /**
