@@ -561,6 +561,46 @@ fn task list --project api-service
 fn task list --project web-ui
 ```
 
+## Node Dashboard
+
+The fn dashboard includes a Node Dashboard view for managing the node mesh network. It visualizes connected nodes, shows their status and system metrics, and allows operators to connect to remote nodes.
+
+### Dashboard Components
+
+| Component | File | Description |
+|----------|------|-------------|
+| `NodesView` | `app/components/NodesView.tsx` | Main mesh dashboard page with header, stats, and node grid |
+| `NodeCard` | `app/components/NodeCard.tsx` | Individual node card with status, metrics, and actions |
+| `AddNodeModal` | `app/components/AddNodeModal.tsx` | Modal form to add/register new remote nodes |
+| `NodeDetailModal` | `app/components/NodeDetailModal.tsx` | Detail view for editing node configuration |
+| `MeshTopology` | `app/components/MeshTopology.tsx` | SVG-based visual representation of node connections |
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/nodes` | GET | List all registered nodes |
+| `/api/nodes` | POST | Register a new remote node |
+| `/api/nodes/:id` | GET | Get single node detail |
+| `/api/nodes/:id` | PATCH | Update node configuration |
+| `/api/nodes/:id` | DELETE | Unregister a node |
+| `/api/nodes/:id/metrics` | GET | Get node runtime metrics |
+| `/api/nodes/:id/health-check` | POST | Trigger node health check |
+| `/api/mesh/state` | GET | Full mesh topology state with peer connections |
+
+### Frontend Hooks
+
+- **`useNodes`** (`app/hooks/useNodes.ts`) — Data-fetching hook with 10-second polling for live node metrics. Exposes `nodes`, `loading`, `error`, `refresh`, `register`, `update`, `unregister`, `healthCheck`.
+
+### CSS Classes
+
+- `.nodes-view` — Main container
+- `.nodes-view-header` — Header with title and actions
+- `.nodes-view-stats` — Stats row (total, online, offline, remote counts)
+- `.nodes-view-grid` — Grid of node cards
+- `.node-card` — Individual node card
+- `.mesh-topology` — SVG mesh visualization
+
 ## Pi Extension (`packages/cli/src/extension.ts`)
 
 The pi extension provides tools and a `/fn` command for interacting with fn from within a pi session. It ships as part of `@gsxdsm/fusion` — one `pi install` gives you both the CLI and the extension.
@@ -705,6 +745,168 @@ interface WakeContext {
 - `InProcessRuntime.start()` creates the trigger scheduler, starts it, and registers existing agents with heartbeat configs
 - `InProcessRuntime.stop()` stops the trigger scheduler before stopping the HeartbeatMonitor
 - `InProcessRuntime.getTriggerScheduler()` — Returns the scheduler instance for testing access
+
+## Agent Performance Ratings
+
+Agent performance ratings allow users and agents to provide feedback on task execution quality, which influences future agent behavior through system prompt injection.
+
+### Overview
+
+- **Users** can rate agents via the Performance tab in the agent detail modal
+- **Agents** can rate peer agents (via their own system prompts) after task completion
+- **Ratings** are stored in the `agentRatings` table with score (1–5), category, and optional comments
+- **Trend analysis** computes improving/declining/stable patterns to help identify agent health
+- **System prompt injection** adds performance feedback section to agent instructions when ratings exist
+
+### Type Interfaces
+
+```typescript
+interface AgentRating {
+  id: string;
+  agentId: string;
+  raterType: "user" | "agent" | "system";
+  raterId?: string;
+  score: number;           // 1-5
+  category?: string;
+  comment?: string;
+  runId?: string;
+  taskId?: string;
+  createdAt: string;       // ISO-8601
+}
+
+interface AgentRatingSummary {
+  agentId: string;
+  averageScore: number;
+  totalRatings: number;
+  categoryAverages: Record<string, number>;
+  recentRatings: AgentRating[];
+  trend: "improving" | "declining" | "stable" | "insufficient-data";
+}
+
+interface AgentRatingInput {
+  raterType: "user" | "agent" | "system";
+  raterId?: string;
+  score: number;           // 1-5
+  category?: string;
+  comment?: string;
+  runId?: string;
+  taskId?: string;
+}
+```
+
+### Rating Categories
+
+Categories are optional labels for organizing ratings by aspect:
+- Examples: `"code-quality"`, `"communication"`, `"speed"`, `"accuracy"`, `"problem-solving"`
+- Category averages are computed in the rating summary
+- Categories can be any string — no predefined enumeration
+
+### Score Scale
+
+Ratings use a 1–5 integer scale:
+- **1** — Poor performance
+- **2** — Below expectations
+- **3** — Meets expectations
+- **4** — Exceeds expectations
+- **5** — Outstanding performance
+
+The SQLite column enforces `CHECK(score BETWEEN 1 AND 5)` at the database level.
+
+### API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/agents/:id/ratings` | Fetch ratings for an agent |
+| `POST` | `/api/agents/:id/ratings` | Add a rating for an agent |
+| `GET` | `/api/agents/:id/ratings/summary` | Fetch aggregated rating summary |
+| `DELETE` | `/api/agents/:id/ratings/:ratingId` | Delete a specific rating |
+
+**GET /api/agents/:id/ratings**
+- Query params: `limit` (number, default 50), `category` (string, optional)
+- Response 200: `AgentRating[]`
+
+**POST /api/agents/:id/ratings**
+- Body: `{ score, category?, comment?, runId?, taskId?, raterType? }`
+- Response 201: `AgentRating` — The created rating
+- Response 400: `{ error: "score is required" }` or `{ error: "score must be a number between 1 and 5" }`
+
+**GET /api/agents/:id/ratings/summary**
+- Response 200: `AgentRatingSummary`
+
+**DELETE /api/agents/:id/ratings/:ratingId**
+- Response 204: No Content
+
+### AgentStore Methods
+
+```typescript
+addRating(agentId: string, input: AgentRatingInput): Promise<AgentRating>
+// Validates score 1-5, creates rating with generated ID and timestamp
+
+getRatings(agentId: string, options?: { limit?: number; category?: string }): Promise<AgentRating[]>
+// Returns ratings ordered by createdAt DESC
+
+getRatingSummary(agentId: string): Promise<AgentRatingSummary>
+// Computes average, categoryAverages, recentRatings (last 10), and trend
+
+deleteRating(ratingId: string): Promise<void>
+// Removes rating by ID
+```
+
+### Agent Behavior Influence
+
+The executor injects performance feedback into agent system prompts via `resolveAgentInstructions()` in `packages/engine/src/agent-instructions.ts`. When a rating summary exists for an agent:
+
+1. **Performance feedback section** is appended to the agent's instructions
+2. Section includes average score, trend indicator, category breakdown, and recent comments
+3. Trend uses emoji labels: 📈 improving, 📉 declining, ➡️ stable, ❓ insufficient-data
+4. The injected section appears in the agent's system prompt, influencing its behavior
+
+```typescript
+export async function resolveAgentInstructions(
+  agent: Agent | null | undefined,
+  rootDir: string,
+  ratingSummary?: AgentRatingSummary,  // Optional injection
+): Promise<string>
+```
+
+### Trend Computation
+
+The trend is computed by comparing recent ratings against historical ratings:
+- **insufficient-data** — Fewer than 3 total ratings
+- **improving** — Recent average is at least 0.5 higher than historical average
+- **declining** — Recent average is at least 0.5 lower than historical average
+- **stable** — Recent and historical averages are within 0.5 of each other
+
+Recent = last 50% of ratings (or last 10, whichever is smaller). Historical = older ratings.
+
+### Database Schema
+
+```sql
+CREATE TABLE agentRatings (
+  id          TEXT PRIMARY KEY,
+  agentId     TEXT NOT NULL,
+  raterType   TEXT NOT NULL,        -- "user" | "agent" | "system"
+  raterId     TEXT,
+  score       INTEGER NOT NULL CHECK(score BETWEEN 1 AND 5),
+  category    TEXT,
+  comment     TEXT,
+  runId       TEXT,
+  taskId      TEXT,
+  createdAt   TEXT NOT NULL         -- ISO-8601
+)
+
+CREATE INDEX idxAgentRatingsAgentId ON agentRatings(agentId)
+CREATE INDEX idxAgentRatingsCreatedAt ON agentRatings(createdAt)
+```
+
+### Dashboard UI
+
+The Performance tab in the agent detail modal (`AgentDetailView.tsx`) provides:
+
+- **Summary card** showing average score, total ratings, trend indicator, and category breakdown
+- **Rating form** to submit new ratings (score selector, category input, comment textarea)
+- **Recent ratings list** showing last 50 ratings with score, category, comment, and timestamp
+- **Delete action** on each rating (with confirmation)
 
 ## Checkout Leasing
 
