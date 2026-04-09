@@ -1278,19 +1278,19 @@ describe("SettingsModal", () => {
     const navItems = sidebar!.querySelectorAll(".settings-nav-item");
     expect(navItems.length).toBe(11);
 
-    // Labels include scope emoji indicators (🌐 for global, 📁 for project)
+    // Labels include scope icons (Globe for global, Folder for project)
     const labels = Array.from(navItems).map((el) => el.textContent);
     expect(labels).toEqual([
-      "📁General",
-      "📁Models",
-      "🌐Appearance",
-      "📁Scheduling",
-      "📁Worktrees",
-      "📁Commands",
-      "📁Merge",
-      "📁Memory",
-      "📁Backups",
-      "🌐Notifications",
+      "General",
+      "Models",
+      "Appearance",
+      "Scheduling",
+      "Worktrees",
+      "Commands",
+      "Merge",
+      "Memory",
+      "Backups",
+      "Notifications",
       "Authentication",
     ]);
   });
@@ -1311,16 +1311,16 @@ describe("SettingsModal", () => {
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    // Default active section is General (with scope emoji prefix)
+    // Default active section is General
     const activeItems = container.querySelectorAll(".settings-nav-item.active");
     expect(activeItems.length).toBe(1);
-    expect(activeItems[0].textContent).toBe("📁General");
+    expect(activeItems[0].textContent).toBe("General");
 
     // Switch to Scheduling
     fireEvent.click(screen.getByText("Scheduling"));
     const newActive = container.querySelectorAll(".settings-nav-item.active");
     expect(newActive.length).toBe(1);
-    expect(newActive[0].textContent).toBe("📁Scheduling");
+    expect(newActive[0].textContent).toBe("Scheduling");
   });
 
   it("auth provider rows contain .auth-provider-info and action button", async () => {

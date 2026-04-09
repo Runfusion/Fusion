@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { Globe, Folder } from "lucide-react";
 import { THINKING_LEVELS, GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent } from "@fusion/core";
 import { fetchSettings, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemory, saveMemory } from "../api";
@@ -1994,8 +1995,8 @@ export function SettingsModal({
                   onClick={() => setActiveSection(section.id)}
                   title={section.scope === "global" ? "Shared across all projects" : section.scope === "project" ? "Specific to this project" : undefined}
                 >
-                  {section.scope === "global" && <span className="settings-scope-icon" aria-label="Global setting">🌐</span>}
-                  {section.scope === "project" && <span className="settings-scope-icon" aria-label="Project setting">📁</span>}
+                  {section.scope === "global" && <Globe className="settings-scope-icon" aria-label="Global setting" size={16} />}
+                  {section.scope === "project" && <Folder className="settings-scope-icon" aria-label="Project setting" size={16} />}
                   {section.label}
                 </button>
               ))}
