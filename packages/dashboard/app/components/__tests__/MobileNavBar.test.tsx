@@ -50,29 +50,54 @@ describe("MobileNavBar", () => {
     mockViewport("mobile");
   });
 
-  it("renders four tab buttons", () => {
+  it("renders five tab buttons (board + list + agents + activity + more)", () => {
     render(<MobileNavBar {...createDefaultProps()} />);
 
     expect(screen.getByTestId("mobile-nav-tab-board")).toBeDefined();
+    expect(screen.getByTestId("mobile-nav-tab-list")).toBeDefined();
     expect(screen.getByTestId("mobile-nav-tab-agents")).toBeDefined();
     expect(screen.getByTestId("mobile-nav-tab-activity")).toBeDefined();
     expect(screen.getByTestId("mobile-nav-tab-more")).toBeDefined();
   });
 
-  it("active tab is highlighted", () => {
+  it("active tab is highlighted for agents", () => {
     render(<MobileNavBar {...createDefaultProps()} view="agents" />);
 
     expect(screen.getByTestId("mobile-nav-tab-agents").className).toContain("mobile-nav-tab--active");
-    expect(screen.getByTestId("mobile-nav-tab-board").className).not.toContain("mobile-nav-tab--active");
   });
 
-  it("board/list label changes based on current view", () => {
+  it("board sub-button calls onChangeView with 'board'", () => {
     const props = createDefaultProps();
-    const { rerender } = render(<MobileNavBar {...props} view="board" />);
-    expect(screen.getByText("Board")).toBeDefined();
+    render(<MobileNavBar {...props} view="list" />);
 
-    rerender(<MobileNavBar {...props} view="list" />);
-    expect(screen.getByText("List")).toBeDefined();
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-board"));
+    expect(props.onChangeView).toHaveBeenCalledWith("board");
+  });
+
+  it("list sub-button calls onChangeView with 'list'", () => {
+    const props = createDefaultProps();
+    render(<MobileNavBar {...props} view="board" />);
+
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-list"));
+    expect(props.onChangeView).toHaveBeenCalledWith("list");
+  });
+
+  it("board sub-button is active when view is 'board'", () => {
+    render(<MobileNavBar {...createDefaultProps()} view="board" />);
+    expect(screen.getByTestId("mobile-nav-tab-board").className).toContain("mobile-nav-view-toggle-btn--active");
+    expect(screen.getByTestId("mobile-nav-tab-list").className).not.toContain("mobile-nav-view-toggle-btn--active");
+  });
+
+  it("list sub-button is active when view is 'list'", () => {
+    render(<MobileNavBar {...createDefaultProps()} view="list" />);
+    expect(screen.getByTestId("mobile-nav-tab-list").className).toContain("mobile-nav-view-toggle-btn--active");
+    expect(screen.getByTestId("mobile-nav-tab-board").className).not.toContain("mobile-nav-view-toggle-btn--active");
+  });
+
+  it("board sub-button is not active when view is 'agents'", () => {
+    render(<MobileNavBar {...createDefaultProps()} view="agents" />);
+    expect(screen.getByTestId("mobile-nav-tab-board").className).not.toContain("mobile-nav-view-toggle-btn--active");
+    expect(screen.getByTestId("mobile-nav-tab-list").className).not.toContain("mobile-nav-view-toggle-btn--active");
   });
 
   it("shows activity badge with combined planning + mailbox count", () => {

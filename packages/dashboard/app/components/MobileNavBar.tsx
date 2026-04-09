@@ -7,6 +7,7 @@ import {
   GitBranch,
   Grid3X3,
   LayoutGrid,
+  List,
   Lightbulb,
   Mail,
   MoreHorizontal,
@@ -123,8 +124,6 @@ export function MobileNavBar({
     return null;
   }
 
-  const boardTabLabel = view === "list" ? "List" : "Board";
-  const isBoardOrList = view === "board" || view === "list";
   const planningHandler = activePlanningSessionCount > 0 && onResumePlanning ? onResumePlanning : onOpenPlanning;
 
   return (
@@ -134,17 +133,30 @@ export function MobileNavBar({
         role="tablist"
         aria-label="Primary navigation"
       >
-        <button
-          type="button"
-          className={`mobile-nav-tab${isBoardOrList ? " mobile-nav-tab--active" : ""}`}
-          data-testid="mobile-nav-tab-board"
-          role="tab"
-          aria-selected={isBoardOrList}
-          onClick={() => onChangeView("board")}
-        >
-          <LayoutGrid />
-          <span className="mobile-nav-tab-label">{boardTabLabel}</span>
-        </button>
+        <div className="mobile-nav-view-toggle">
+          <button
+            type="button"
+            className={`mobile-nav-view-toggle-btn${view === "board" ? " mobile-nav-view-toggle-btn--active" : ""}`}
+            data-testid="mobile-nav-tab-board"
+            role="tab"
+            aria-selected={view === "board"}
+            onClick={() => onChangeView("board")}
+          >
+            <LayoutGrid />
+            <span>Board</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-nav-view-toggle-btn${view === "list" ? " mobile-nav-view-toggle-btn--active" : ""}`}
+            data-testid="mobile-nav-tab-list"
+            role="tab"
+            aria-selected={view === "list"}
+            onClick={() => onChangeView("list")}
+          >
+            <List />
+            <span>List</span>
+          </button>
+        </div>
 
         <button
           type="button"

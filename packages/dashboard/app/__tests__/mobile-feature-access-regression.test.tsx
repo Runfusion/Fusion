@@ -91,26 +91,23 @@ describe("Mobile Feature Access Regression Guard", () => {
 
   it("list view is accessible via mobile nav bar", () => {
     const props = createDefaultMobileNavProps();
-    const { rerender } = render(<MobileNavBar {...props} view="board" />);
+    render(<MobileNavBar {...props} view="board" />);
 
-    const firstTab = screen.getByTestId("mobile-nav-tab-board");
-    expect(firstTab.textContent).toMatch(/Board|List/);
+    const listTab = screen.getByTestId("mobile-nav-tab-list");
+    expect(listTab.textContent).toContain("List");
 
-    fireEvent.click(firstTab);
-    expect(props.onChangeView).toHaveBeenCalledWith("board");
-
-    rerender(<MobileNavBar {...props} view="list" />);
-    expect(screen.getByTestId("mobile-nav-tab-board").textContent).toContain("List");
+    fireEvent.click(listTab);
+    expect(props.onChangeView).toHaveBeenCalledWith("list");
   });
 
   it("board view is accessible via mobile nav bar", () => {
     const props = createDefaultMobileNavProps();
     render(<MobileNavBar {...props} view="board" />);
 
-    const firstTab = screen.getByTestId("mobile-nav-tab-board");
-    expect(firstTab.textContent).toContain("Board");
+    const boardTab = screen.getByTestId("mobile-nav-tab-board");
+    expect(boardTab.textContent).toContain("Board");
 
-    fireEvent.click(firstTab);
+    fireEvent.click(boardTab);
     expect(props.onChangeView).toHaveBeenCalledWith("board");
   });
 
