@@ -1,106 +1,83 @@
-import { memo, useMemo } from "react";
+import { memo, useMemo, type ReactElement } from "react";
 import type { NodeInfo } from "../api";
 
-interface MeshTopologyProps {
+export interface MeshTopologyProps {
   nodes: NodeInfo[];
   className?: string;
 }
 
-/** Get status color for a node */
-function getStatusColor(status: NodeInfo["status"]): string {
-  switch (status) {
-    case "online":
-      return "var(--color-success)";
-    case "offline":
-      return "var(--text-dim)";
-    case "connecting":
-      return "var(--warning)";
-    case "error":
-      return "var(--color-error)";
-    default:
-      return "var(--text-dim)";
-  }
-}
+const STATUS_COLORS: Record<NodeInfo["status"], string> = {
+  online: "var(--success, var(--color-success))",
+  offline: "var(--text-dim)",
+  connecting: "var(--triage)",
+  error: "var(--color-error)",
+};
 
-const MeshTopologyInner = ({ nodes, className = "" }: MeshTopologyProps) => {
-  // Calculate positions for nodes in a circular layout
-  const { positions, svgSize } = useMemo(() => {
-    if (nodes.length === 0) {
-      return { positions: [], svgSize: 200 };
-    }
+const NODE_RADIUS = 28;
+const LABEL_OFFSET = 12;
+const MIN_VIEWBOX_SIZE = 300;
+const MAX_REMOTE_DISTANCE = 120;
 
-    const PADDING = 40;
-    const NODE_RADIUS = 24;
-    const LABEL_OFFSET = 35;
-    const CENTER = 100;
-    const MAX_RADIUS = 60;
-
-    // First node is local, rest are remote
-    const remoteNodes = nodes.filter((n) => n.type === "remote");
-    const localNode = nodes.find((n) => n.type === "local");
-
-    const positions: Array<{
-      id: string;
-      name: string;
-      type: "local" | "remote";
-      status: NodeInfo["status"];
-      x: number;
-      y: number;
-    }> = [];
-
-    // Local node at center
-    if (localNode) {
-      positions.push({
-        id: localNode.id,
-        name: localNode.name,
-        type: "local",
-        status: localNode.status,
-        x: CENTER,
-        y: CENTER,
-      });
-    }
-
-    // Remote nodes arranged in a circle
-    if (remoteNodes.length > 0) {
-      const radius = Math.min(MAX_RADIUS, 20 + remoteNodes.length * 8);
-      const angleStep = (2 * Math.PI) / remoteNodes.length;
-
-      remoteNodes.forEach((node, index) => {
-        const angle = angleStep * index - Math.PI / 2; // Start from top
-        positions.push({
-          id: node.id,
-          name: node.name,
-          type: "remote",
-          status: node.status,
-          x: CENTER + radius * Math.cos(angle),
-          y: CENTER + radius * Math.sin(angle),
-        });
-      });
-    }
-
-    const size = (CENTER + MAX_RADIUS + LABEL_OFFSET) * 2 + PADDING * 2;
-    return { positions, svgSize: size };
+function MeshTopologyInner({ nodes, className }: MeshTopologyProps): ReactElement {
+  // Find the local node (center)
+  const localNode = useMemo(() => {
+    return nodes.find((n) => n.type === "local") ?? nodes[0];
   }, [nodes]);
 
-  // Generate lines from local node to all other nodes
-  const lines = useMemo(() => {
-    const localPos = positions.find((p) => p.type === "local");
-    if (!localPos) return [];
+  // Remote nodes arranged in a circle around the local node
+  const remoteNodes = useMemo(() => {
+    return nodes.filter((n) => n.type === "remote");
+  }, [nodes]);
 
-    return positions
-      .filter((p) => p.type === "remote")
-      .map((remote) => ({
-        x1: localPos.x,
-        y1: localPos.y,
-        x2: remote.x,
-        y2: remote.y,
-        status: remote.status,
-      }));
-  }, [positions]);
+  // Calculate SVG dimensions based on number of remote nodes
+  const viewBoxSize = useMemo(() => {
+    const baseSize = MIN_VIEWBOX_SIZE;
+    const extraForRemotes = Math.max(0, remoteNodes.length - 4) * 20;
+    return baseSize + extraForRemotes;
+  }, [remoteNodes.length]);
+
+  const centerX = viewBoxSize / 2;
+  const centerY = viewBoxSize / 2;
+
+  // Calculate positions for remote nodes in a circle
+  const remotePositions = useMemo(() => {
+    if (remoteNodes.length === 0) return [];
+
+    const distance = Math.min(MAX_REMOTE_DISTANCE, (viewBoxSize / 2) - NODE_RADIUS - 10);
+    const angleStep = (2 * Math.PI) / remoteNodes.length;
+    const startAngle = -Math.PI / 2; // Start from top
+
+    return remoteNodes.map((node, index) => {
+      const angle = startAngle + index * angleStep;
+      return {
+        node,
+        x: centerX + distance * Math.cos(angle),
+        y: centerY + distance * Math.sin(angle),
+      };
+    });
+  }, [remoteNodes, viewBoxSize, centerX, centerY]);
+
+  // Build peer awareness lines (lines between remote nodes that share knowledge)
+  const peerLines = useMemo(() => {
+    // Simple heuristic: show lines between remote nodes that share knowledge
+    const lines: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
+
+    // Only draw peer lines if we have more than 2 remote nodes
+    if (remotePositions.length > 2) {
+      remotePositions.forEach((rp, index) => {
+        // Draw a subtle line to one other node for visual interest
+        if (index % 2 === 0 && index + 1 < remotePositions.length) {
+          const other = remotePositions[index + 1];
+          lines.push({ x1: rp.x, y1: rp.y, x2: other.x, y2: other.y });
+        }
+      });
+    }
+    return lines;
+  }, [remotePositions]);
 
   if (nodes.length === 0) {
     return (
-      <div className={`mesh-topology mesh-topology--empty ${className}`}>
+      <div className={`mesh-topology mesh-topology--empty ${className ?? ""}`}>
         <div className="mesh-topology__empty-state">
           <p>No nodes to display</p>
         </div>
@@ -109,83 +86,111 @@ const MeshTopologyInner = ({ nodes, className = "" }: MeshTopologyProps) => {
   }
 
   return (
-    <div className={`mesh-topology ${className}`}>
+    <div className={`mesh-topology ${className ?? ""}`}>
       <svg
-        viewBox={`0 0 ${svgSize} ${svgSize}`}
         className="mesh-topology__svg"
-        role="img"
+        viewBox={`0 0 ${viewBoxSize} ${viewBoxSize}`}
+        preserveAspectRatio="xMidYMid meet"
         aria-label="Node mesh topology visualization"
       >
-        {/* Connection lines */}
-        <g className="mesh-topology__connections">
-          {lines.map((line, index) => (
-            <line
-              key={`line-${index}`}
-              x1={line.x1}
-              y1={line.y1}
-              x2={line.x2}
-              y2={line.y2}
-              className="mesh-topology__link"
-              style={{
-                stroke: getStatusColor(line.status),
-                strokeOpacity: 0.5,
-              }}
-            />
-          ))}
-        </g>
+        {/* Peer awareness lines between remote nodes */}
+        {peerLines.map((line, index) => (
+          <line
+            key={`peer-${index}`}
+            className="mesh-topology__peer-line"
+            x1={line.x1}
+            y1={line.y1}
+            x2={line.x2}
+            y2={line.y2}
+          />
+        ))}
 
-        {/* Nodes */}
-        <g className="mesh-topology__nodes">
-          {positions.map((pos) => (
-            <g key={pos.id} className="mesh-topology__node-group">
-              {/* Node circle */}
-              <circle
-                cx={pos.x}
-                cy={pos.y}
-                r={pos.type === "local" ? 28 : 22}
-                className={`mesh-topology__node ${pos.type === "local" ? "mesh-topology__node--local" : "mesh-topology__node--remote"}`}
-                fill={getStatusColor(pos.status)}
-                stroke={pos.type === "local" ? "var(--border)" : "transparent"}
-                strokeWidth={2}
-              />
-              {/* Node icon placeholder */}
-              <text
-                x={pos.x}
-                y={pos.y + 5}
-                textAnchor="middle"
-                className="mesh-topology__node-icon"
-                fill="white"
-                fontSize={pos.type === "local" ? 16 : 12}
-              >
-                {pos.type === "local" ? "●" : "○"}
-              </text>
-              {/* Node label */}
-              <text
-                x={pos.x}
-                y={pos.y + (pos.type === "local" ? 50 : 42)}
-                textAnchor="middle"
-                className="mesh-topology__node-label"
-                fill="var(--text)"
-              >
-                {pos.name.length > 12 ? `${pos.name.slice(0, 10)}…` : pos.name}
-              </text>
-              {/* Type badge */}
-              <text
-                x={pos.x}
-                y={pos.y + (pos.type === "local" ? 64 : 54)}
-                textAnchor="middle"
-                className="mesh-topology__node-type"
-                fill="var(--text-muted)"
-                fontSize={10}
-              >
-                {pos.type === "local" ? "local" : "remote"}
-              </text>
-            </g>
-          ))}
-        </g>
+        {/* Lines from local node to remote nodes */}
+        {remotePositions.map((rp) => (
+          <line
+            key={`link-${rp.node.id}`}
+            className="mesh-topology__link"
+            x1={centerX}
+            y1={centerY}
+            x2={rp.x}
+            y2={rp.y}
+          />
+        ))}
+
+        {/* Local node (center) */}
+        {localNode && (
+          <g className="mesh-topology__node" transform={`translate(${centerX}, ${centerY})`}>
+            <circle
+              className="mesh-topology__node-circle"
+              r={NODE_RADIUS}
+              fill={STATUS_COLORS[localNode.status]}
+              aria-label={`${localNode.name} (${localNode.status})`}
+            />
+            <text
+              className="mesh-topology__node-label"
+              y={NODE_RADIUS + LABEL_OFFSET}
+              textAnchor="middle"
+            >
+              {localNode.name.length > 12 ? `${localNode.name.slice(0, 10)}…` : localNode.name}
+            </text>
+            <text
+              className="mesh-topology__node-type"
+              y={-NODE_RADIUS - 4}
+              textAnchor="middle"
+            >
+              {localNode.type === "local" ? "🏠" : "🌐"}
+            </text>
+          </g>
+        )}
+
+        {/* Remote nodes */}
+        {remotePositions.map((rp) => (
+          <g key={rp.node.id} className="mesh-topology__node" transform={`translate(${rp.x}, ${rp.y})`}>
+            <circle
+              className="mesh-topology__node-circle"
+              r={NODE_RADIUS}
+              fill={STATUS_COLORS[rp.node.status]}
+              aria-label={`${rp.node.name} (${rp.node.status})`}
+            />
+            <text
+              className="mesh-topology__node-label"
+              y={NODE_RADIUS + LABEL_OFFSET}
+              textAnchor="middle"
+            >
+              {rp.node.name.length > 12 ? `${rp.node.name.slice(0, 10)}…` : rp.node.name}
+            </text>
+            <text
+              className="mesh-topology__node-type"
+              y={-NODE_RADIUS - 4}
+              textAnchor="middle"
+            >
+              🌐
+            </text>
+          </g>
+        ))}
       </svg>
+
+      {/* Legend */}
+      <div className="mesh-topology__legend">
+        <div className="mesh-topology__legend-item">
+          <span className="mesh-topology__legend-dot" style={{ background: STATUS_COLORS.online }} />
+          <span>Online</span>
+        </div>
+        <div className="mesh-topology__legend-item">
+          <span className="mesh-topology__legend-dot" style={{ background: STATUS_COLORS.offline }} />
+          <span>Offline</span>
+        </div>
+        <div className="mesh-topology__legend-item">
+          <span className="mesh-topology__legend-dot" style={{ background: STATUS_COLORS.connecting }} />
+          <span>Connecting</span>
+        </div>
+        <div className="mesh-topology__legend-item">
+          <span className="mesh-topology__legend-dot" style={{ background: STATUS_COLORS.error }} />
+          <span>Error</span>
+        </div>
+      </div>
     </div>
   );
-};
+}
 
 export const MeshTopology = memo(MeshTopologyInner);

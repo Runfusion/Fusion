@@ -10421,11 +10421,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
         throw badRequest("name is required and must be a non-empty string");
       }
 
-      if (type !== "local" && type !== "remote") {
-        throw badRequest("type must be 'local' or 'remote'");
-      }
+      // Default to "remote" for backward compatibility with frontend API calls
+      const nodeType = type === "local" || type === "remote" ? type : "remote";
 
-      if (type === "remote" && (!url || typeof url !== "string" || !url.trim())) {
+      if (nodeType === "remote" && (!url || typeof url !== "string" || !url.trim())) {
         throw badRequest("url is required for remote nodes");
       }
 
@@ -10449,7 +10448,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       const node = await central.registerNode({
         name: name.trim(),
-        type,
+        type: nodeType,
         url: typeof url === "string" ? url.trim() : undefined,
         apiKey: typeof apiKey === "string" ? apiKey : undefined,
         maxConcurrent,
@@ -10545,7 +10544,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       await central.unregisterNode(req.params.id);
       await central.close();
 
-      res.json({ success: true });
+      res.status(204).end();
     } catch (err: any) {
       if (err instanceof ApiError) {
         throw err;
@@ -10579,7 +10578,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
   /**
    * GET /api/nodes/:id/metrics
-   * Get node runtime metrics.
+   * Get node runtime metrics (SystemMetrics from node's systemMetrics field).
    */
   router.get("/nodes/:id/metrics", async (req, res) => {
     try {
@@ -10594,16 +10593,34 @@ Output ONLY the prompt text (no markdown, no explanations).`;
         throw notFound("Node not found");
       }
 
-      if (node.type === "local") {
-        res.json({
-          status: "online",
-          activeTasks: 0,
-          maxConcurrent: node.maxConcurrent,
-        });
-        return;
+      // Return the systemMetrics field which contains SystemMetrics or null
+      res.json(node.systemMetrics ?? null);
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
       }
+      rethrowAsApiError(err);
+    }
+  });
 
-      throw new ApiError(501, "Remote node metrics not yet implemented");
+  /**
+   * GET /api/mesh/state
+   * Get full mesh topology state (all nodes with their metrics and known peers).
+   */
+  router.get("/mesh/state", async (_req, res) => {
+    try {
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+
+      const nodes = await central.listNodes();
+      const meshStates = await Promise.all(
+        nodes.map((node) => central.getMeshState(node.id))
+      );
+
+      await central.close();
+
+      res.json(meshStates);
     } catch (err: any) {
       if (err instanceof ApiError) {
         throw err;

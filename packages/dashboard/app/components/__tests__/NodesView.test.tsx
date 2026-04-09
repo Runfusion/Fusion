@@ -89,13 +89,18 @@ describe("NodesView", () => {
 
     render(<NodesView addToast={vi.fn()} />);
 
-    expect(screen.getByText("Alpha")).toBeDefined();
-    expect(screen.getByText("Beta")).toBeDefined();
+    // Check node cards are rendered - use the node card class to find elements
+    const nodeCards = document.querySelectorAll(".node-card");
+    expect(nodeCards).toHaveLength(2);
     expect(screen.getByText("2 registered")).toBeDefined();
     expect(screen.getByTestId("nodes-stat-total").textContent).toContain("2");
     expect(screen.getByTestId("nodes-stat-online").textContent).toContain("1");
     expect(screen.getByTestId("nodes-stat-offline").textContent).toContain("1");
     expect(screen.getByTestId("nodes-stat-remote").textContent).toContain("1");
+
+    // Check mesh topology is rendered
+    const svg = document.querySelector(".mesh-topology__svg");
+    expect(svg).toBeInTheDocument();
   });
 
   it("renders empty state when there are no nodes", () => {
@@ -105,6 +110,10 @@ describe("NodesView", () => {
 
     expect(screen.getByText("No nodes are registered yet.")).toBeDefined();
     expect(screen.getByText("Add First Node")).toBeDefined();
+
+    // Mesh topology should not be rendered when there are no nodes
+    const svg = document.querySelector(".mesh-topology__svg");
+    expect(svg).not.toBeInTheDocument();
   });
 
   it("opens Add Node modal when Add Node button is clicked", () => {
@@ -128,12 +137,15 @@ describe("NodesView", () => {
     });
 
     mockUseNodes.mockReturnValue(makeUseNodesResult({
-      nodes: [makeNode({ id: "node-1", name: "Alpha Node" })],
+      nodes: [makeNode({ id: "node-1", name: "Detail Node" })],
     }));
 
     render(<NodesView addToast={vi.fn()} />);
 
-    fireEvent.click(screen.getByText("Alpha Node"));
-    expect(screen.getByRole("dialog", { name: "Node details for Alpha Node" })).toBeDefined();
+    // Click on the node card (not the topology node)
+    const nodeCard = document.querySelector(".node-card");
+    expect(nodeCard).toBeInTheDocument();
+    fireEvent.click(nodeCard!);
+    expect(screen.getByRole("dialog", { name: "Node details for Detail Node" })).toBeDefined();
   });
 });

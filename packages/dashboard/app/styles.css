@@ -28417,3 +28417,165 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 .reflection-empty p {
   font-size: 0.875rem;
 }
+
+/* ── Mesh Topology ──────────────────────────────────────────────────────────── */
+
+.mesh-topology {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.mesh-topology__svg {
+  width: 100%;
+  max-width: 400px;
+  height: auto;
+  aspect-ratio: 1;
+}
+
+.mesh-topology__node-circle {
+  stroke: var(--border);
+  stroke-width: 2;
+  transition: fill var(--transition-fast);
+}
+
+.mesh-topology__node-label {
+  font-size: 11px;
+  fill: var(--text);
+  font-weight: 500;
+}
+
+.mesh-topology__node-type {
+  font-size: 14px;
+}
+
+.mesh-topology__link {
+  stroke: var(--border);
+  stroke-width: 1.5;
+  stroke-dasharray: 4, 4;
+  opacity: 0.6;
+}
+
+.mesh-topology__peer-line {
+  stroke: var(--accent);
+  stroke-width: 1;
+  opacity: 0.3;
+  stroke-dasharray: 2, 2;
+}
+
+.mesh-topology__legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-md);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.mesh-topology__legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mesh-topology__legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+}
+
+.mesh-topology--empty {
+  min-height: 200px;
+  justify-content: center;
+}
+
+.mesh-topology__empty-state {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* ── Connect Node Modal ──────────────────────────────────────────────────────── */
+
+.connect-node-modal {
+  width: min(480px, calc(100vw - 32px));
+}
+
+.connect-node-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.connect-node-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.connect-node-field > span {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.connect-node-field input {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+}
+
+.connect-node-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.connect-node-url-preview {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: color-mix(in srgb, var(--surface) 50%, var(--bg));
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+
+.connect-node-url-preview-label {
+  color: var(--text-muted);
+}
+
+.connect-node-url-preview code {
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.connect-node-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+}
+
+/* ── Nodes View ─────────────────────────────────────────────────────────────── */
+
+.nodes-view-topology {
+  margin-bottom: var(--space-md);
+}
+
+.nodes-view-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 var(--space-sm);
+}

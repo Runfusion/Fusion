@@ -23,6 +23,8 @@ import type {
   ParticipantType,
   NodeConfig,
   NodeStatus,
+  NodeMeshState,
+  SystemMetrics,
   DiscoveryConfig,
   MissionEvent,
   MissionHealth,
@@ -2699,37 +2701,13 @@ export async function checkNodeHealth(id: string): Promise<NodeHealthCheckResult
 }
 
 /** Fetch runtime metrics for a node */
-export async function fetchNodeMetrics(id: string): Promise<NodeMetrics> {
-  const metrics = await api<Partial<NodeMetrics> & { activeTasks?: number }>(`/nodes/${encodeURIComponent(id)}/metrics`);
-  return {
-    nodeId: metrics.nodeId ?? id,
-    activeTaskCount: metrics.activeTaskCount ?? metrics.activeTasks ?? 0,
-    inFlightAgentCount: metrics.inFlightAgentCount ?? 0,
-    uptimeMs: metrics.uptimeMs ?? 0,
-    lastActivityAt: metrics.lastActivityAt,
-  };
+export async function fetchNodeMetrics(id: string): Promise<SystemMetrics | null> {
+  return api<SystemMetrics | null>(`/nodes/${encodeURIComponent(id)}/metrics`);
 }
 
-/** Mesh topology connection to another node */
-export interface MeshPeerConnection {
-  peerId: string;
-  peerName: string;
-  status: NodeStatus;
-}
-
-/** Full mesh topology state with peer connections */
-export interface MeshState {
-  id: string;
-  name: string;
-  type: "local" | "remote";
-  status: NodeStatus;
-  url: string | null;
-  connections: MeshPeerConnection[];
-}
-
-/** Fetch the full mesh topology state */
-export async function fetchMeshState(): Promise<MeshState[]> {
-  return api<MeshState[]>("/mesh/state");
+/** Fetch full mesh topology state (all nodes with their metrics and known peers) */
+export async function fetchMeshState(): Promise<NodeMeshState[]> {
+  return api<NodeMeshState[]>("/mesh/state");
 }
 
 /** Browse directory entries for the directory picker */

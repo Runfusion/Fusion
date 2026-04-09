@@ -15,6 +15,7 @@ const mockCheckNodeHealth = vi.fn();
 const mockUpdateProject = vi.fn();
 const mockAssignProjectToNode = vi.fn();
 const mockUnassignProjectFromNode = vi.fn();
+const mockGetMeshState = vi.fn();
 
 vi.mock("@fusion/core", async () => {
   const actual = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
@@ -32,6 +33,7 @@ vi.mock("@fusion/core", async () => {
       updateProject: mockUpdateProject,
       assignProjectToNode: mockAssignProjectToNode,
       unassignProjectFromNode: mockUnassignProjectFromNode,
+      getMeshState: mockGetMeshState,
     })),
   };
 });
@@ -120,6 +122,16 @@ describe("Node routes", () => {
       isolationMode: "in-process",
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    mockGetMeshState.mockResolvedValue({
+      nodeId: "node_local",
+      nodeName: "local-node",
+      nodeUrl: undefined,
+      status: "online",
+      metrics: null,
+      lastSeen: "2026-01-01T00:00:00.000Z",
+      connectedAt: "2026-01-01T00:00:00.000Z",
+      knownPeers: [],
     });
   });
 
@@ -270,8 +282,8 @@ describe("Node routes", () => {
 
     const res = await request(app, "DELETE", "/api/nodes/node_1");
 
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ success: true });
+    expect(res.status).toBe(204);
+    expect(res.body).toBeNull();
     expect(mockUnregisterNode).toHaveBeenCalledWith("node_1");
   });
 
@@ -300,26 +312,71 @@ describe("Node routes", () => {
     expect(res.status).toBe(404);
   });
 
-  it("GET /api/nodes/:id/metrics returns stub metrics for local node", async () => {
-    mockGetNode.mockResolvedValue(makeNode({ id: "node_1", type: "local", maxConcurrent: 8 }));
+  it("GET /api/mesh/state returns mesh topology state", async () => {
+    const localMeshState = {
+      nodeId: "node_local",
+      nodeName: "local",
+      nodeUrl: undefined,
+      status: "online" as const,
+      metrics: null,
+      lastSeen: "2026-01-01T00:00:00.000Z",
+      connectedAt: "2026-01-01T00:00:00.000Z",
+      knownPeers: [],
+    };
+    const remoteMeshState = {
+      nodeId: "node_remote",
+      nodeName: "remote",
+      nodeUrl: "http://remote:3001",
+      status: "online" as const,
+      metrics: { cpuUsage: 30, memoryUsed: 2e9, memoryTotal: 8e9, storageUsed: 100e9, storageTotal: 500e9, uptime: 3600000, reportedAt: "2026-01-01T00:00:00.000Z" },
+      lastSeen: "2026-01-01T00:00:00.000Z",
+      connectedAt: "2026-01-01T00:00:00.000Z",
+      knownPeers: [{ id: "peer_1", nodeId: "node_remote", peerNodeId: "node_local", name: "local", url: "http://localhost:3001", status: "online" as const, lastSeen: "2026-01-01T00:00:00.000Z", connectedAt: "2026-01-01T00:00:00.000Z" }],
+    };
+
+    mockListNodes.mockResolvedValue([
+      makeNode({ id: "node_local", name: "local", type: "local" }),
+      makeNode({ id: "node_remote", name: "remote", type: "remote", url: "http://remote:3001" }),
+    ]);
+    mockGetMeshState
+      .mockResolvedValueOnce(localMeshState)
+      .mockResolvedValueOnce(remoteMeshState);
+
+    const res = await request(app, "GET", "/api/mesh/state");
+
+    expect(res.status).toBe(200);
+    expect((res.body as any[])).toHaveLength(2);
+    expect((res.body as any[])[0].nodeId).toBe("node_local");
+    expect((res.body as any[])[1].nodeId).toBe("node_remote");
+  });
+
+  it("GET /api/nodes/:id/metrics returns systemMetrics from node", async () => {
+    const systemMetrics = {
+      cpuUsage: 45.5,
+      memoryUsed: 4294967296,
+      memoryTotal: 8589934592,
+      storageUsed: 107374182400,
+      storageTotal: 536870912000,
+      uptime: 86400000,
+      reportedAt: "2026-01-01T00:00:00.000Z",
+    };
+    mockGetNode.mockResolvedValue(
+      makeNode({ id: "node_1", type: "local", maxConcurrent: 8, systemMetrics })
+    );
 
     const res = await request(app, "GET", "/api/nodes/node_1/metrics");
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({
-      status: "online",
-      activeTasks: 0,
-      maxConcurrent: 8,
-    });
+    expect(res.body).toEqual(systemMetrics);
   });
 
-  it("GET /api/nodes/:id/metrics returns 501 for remote nodes", async () => {
+  it("GET /api/nodes/:id/metrics returns null when no metrics available", async () => {
     mockGetNode.mockResolvedValue(makeNode({ id: "node_2", type: "remote" }));
 
     const res = await request(app, "GET", "/api/nodes/node_2/metrics");
 
-    expect(res.status).toBe(501);
-    expect(res.body).toEqual({ error: "Remote node metrics not yet implemented" });
+    expect(res.status).toBe(200);
+    expect(res.body).toBeNull();
   });
 
   it("PATCH /api/projects/:id assigns project to node when nodeId is provided", async () => {

@@ -4,6 +4,7 @@ import { useNodes } from "../hooks/useNodes";
 import { useProjects } from "../hooks/useProjects";
 import type { NodeInfo, NodeUpdateInput } from "../api";
 import { NodeCard } from "./NodeCard";
+import { MeshTopology } from "./MeshTopology";
 import { AddNodeModal, type AddNodeInput } from "./AddNodeModal";
 import { NodeDetailModal } from "./NodeDetailModal";
 import type { ToastType } from "../hooks/useToast";
@@ -114,6 +115,14 @@ export function NodesView({ addToast }: NodesViewProps) {
       </div>
 
       {error && <div className="nodes-view-error">{error}</div>}
+
+      {/* Mesh Topology Visualization */}
+      {!loading && nodes.length > 0 && (
+        <section className="nodes-view-topology" aria-label="Mesh Topology">
+          <h3 className="nodes-view-section-title">Mesh Topology</h3>
+          <MeshTopology nodes={nodes} />
+        </section>
+      )}
 
       {loading ? (
         <div className="nodes-view-grid">
