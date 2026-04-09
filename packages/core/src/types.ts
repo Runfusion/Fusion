@@ -55,6 +55,10 @@ export const COLOR_THEMES = [
   "mars",
   "poimandres",
   "ember",
+  "rust",
+  "copper",
+  "foundry",
+  "carbon",
 ] as const;
 export type ColorTheme = (typeof COLOR_THEMES)[number];
 

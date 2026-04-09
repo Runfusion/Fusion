@@ -12912,6 +12912,250 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --accent: #4090c0;
 }
 
+/* RUST - Deep oxidized red-brown with warm rust accents */
+[data-color-theme="rust"] {
+  --bg: #0f0b09;
+  --surface: #1a1410;
+  --card: #231b14;
+  --card-hover: #2e241c;
+  --border: #4a3528;
+  --text: #f0e8e0;
+  --text-muted: #a09080;
+  --text-dim: #605040;
+
+  --todo: #e06830;
+  --in-progress: #e88040;
+  --in-progress-rgb: 232, 128, 64;
+  --in-review: #40b8b0;
+  --triage: #e05030;
+  --done: #a08870;
+  --color-success: #40b8b0;
+  --color-error: #e04030;
+
+  --cta-bg: #a04020;
+  --cta-border: #c05828;
+  --cta-text: #fff;
+  --cta-bg-hover: #c05828;
+  --cta-border-hover: #d87038;
+  --cta-glow: 0 0 8px rgba(199, 91, 42, 0.3);
+  --logo-accent: var(--todo);
+  --color-info: #58a8d0;
+  --accent: #c75b2a;
+}
+
+[data-color-theme="rust"][data-theme="light"] {
+  --bg: #f5efe8;
+  --surface: #ebe3d8;
+  --card: #fdfaf6;
+  --card-hover: #f5efe8;
+  --border: #d8d0c0;
+  --text: #1a1510;
+  --text-muted: #685a48;
+  --text-dim: #8a7a66;
+
+  --todo: #a04020;
+  --in-progress: #b85828;
+  --in-progress-rgb: 184, 88, 40;
+  --in-review: #209090;
+  --triage: #c03820;
+  --done: #887868;
+  --color-success: #209090;
+  --color-error: #c03020;
+
+  --cta-bg: #803818;
+  --cta-border: #a04820;
+  --cta-text: #fff;
+  --cta-bg-hover: #a04820;
+  --cta-border-hover: #b85a28;
+  --cta-glow: 0 0 8px rgba(160, 72, 32, 0.3);
+  --logo-accent: var(--todo);
+  --color-info: #2878a0;
+  --accent: #a04520;
+}
+
+/* COPPER - Warm metallic copper tones */
+[data-color-theme="copper"] {
+  --bg: #0e0c0a;
+  --surface: #181410;
+  --card: #211c16;
+  --card-hover: #2c251c;
+  --border: #4d3d2e;
+  --text: #f0e8e0;
+  --text-muted: #a09080;
+  --text-dim: #605040;
+
+  --todo: #e89545;
+  --in-progress: #f0a858;
+  --in-progress-rgb: 240, 168, 88;
+  --in-review: #40c0a8;
+  --triage: #e06838;
+  --done: #a09078;
+  --color-success: #40c0a8;
+  --color-error: #e05830;
+
+  --cta-bg: #b06830;
+  --cta-border: #c87840;
+  --cta-text: #fff;
+  --cta-bg-hover: #c87840;
+  --cta-border-hover: #d88a50;
+  --cta-glow: 0 0 8px rgba(212, 133, 74, 0.3);
+  --logo-accent: var(--todo);
+  --color-info: #60a8d8;
+  --accent: #d4854a;
+}
+
+[data-color-theme="copper"][data-theme="light"] {
+  --bg: #f3ede6;
+  --surface: #e8e0d6;
+  --card: #fdfaf7;
+  --card-hover: #f5efe8;
+  --border: #d8d0c0;
+  --text: #1a1512;
+  --text-muted: #665a50;
+  --text-dim: #8a7a68;
+
+  --todo: #905820;
+  --in-progress: #a87030;
+  --in-progress-rgb: 168, 112, 48;
+  --in-review: #30a090;
+  --triage: #b04820;
+  --done: #887868;
+  --color-success: #30a090;
+  --color-error: #b03020;
+
+  --cta-bg: #785020;
+  --cta-border: #906828;
+  --cta-text: #fff;
+  --cta-bg-hover: #906828;
+  --cta-border-hover: #a87830;
+  --cta-glow: 0 0 8px rgba(144, 84, 32, 0.3);
+  --logo-accent: var(--todo);
+  --color-info: #306090;
+  --accent: #b06830;
+}
+
+/* FOUNDRY - Molten metal with orange-yellow glows */
+[data-color-theme="foundry"] {
+  --bg: #0c0806;
+  --surface: #15100c;
+  --card: #1e1610;
+  --card-hover: #28201a;
+  --border: #40301e;
+  --text: #f0e8e0;
+  --text-muted: #a09080;
+  --text-dim: #605040;
+
+  --todo: #ffab20;
+  --in-progress: #ffc040;
+  --in-progress-rgb: 255, 192, 64;
+  --in-review: #40c0c0;
+  --triage: #ff6020;
+  --done: #a08060;
+  --color-success: #40c0c0;
+  --color-error: #ff4020;
+
+  --cta-bg: #c07808;
+  --cta-border: #e08a10;
+  --cta-text: #1a1008;
+  --cta-bg-hover: #e08a10;
+  --cta-border-hover: #f09a18;
+  --cta-glow: 0 0 12px rgba(240, 154, 24, 0.4);
+  --logo-accent: var(--todo);
+  --color-info: #60b0e0;
+  --accent: #f0960a;
+}
+
+[data-color-theme="foundry"][data-theme="light"] {
+  --bg: #f5f0e6;
+  --surface: #ebe4d6;
+  --card: #fdfaf5;
+  --card-hover: #f5f0e8;
+  --border: #d0c4b0;
+  --text: #1a1510;
+  --text-muted: #685a48;
+  --text-dim: #8a7a66;
+
+  --todo: #c07808;
+  --in-progress: #d08a10;
+  --in-progress-rgb: 208, 138, 16;
+  --in-review: #208080;
+  --triage: #a04818;
+  --done: #787068;
+  --color-success: #208080;
+  --color-error: #a03020;
+
+  --cta-bg: #906008;
+  --cta-border: #b07810;
+  --cta-text: #fff;
+  --cta-bg-hover: #b07810;
+  --cta-border-hover: #c08818;
+  --cta-glow: 0 0 8px rgba(192, 120, 16, 0.3);
+  --logo-accent: var(--todo);
+  --color-info: #3070a0;
+  --accent: #c07808;
+}
+
+/* CARBON - Graphite-like carbon fiber aesthetic */
+[data-color-theme="carbon"] {
+  --bg: #0a0b0d;
+  --surface: #111318;
+  --card: #181b22;
+  --card-hover: #222630;
+  --border: #2a3040;
+  --text: #e8ecf0;
+  --text-muted: #8090a0;
+  --text-dim: #505860;
+
+  --todo: #6a9acf;
+  --in-progress: #7ab0e0;
+  --in-progress-rgb: 122, 176, 224;
+  --in-review: #80c0c0;
+  --triage: #c08080;
+  --done: #687080;
+  --color-success: #80c0c0;
+  --color-error: #c06060;
+
+  --cta-bg: #406080;
+  --cta-border: #5a7898;
+  --cta-text: #fff;
+  --cta-bg-hover: #5a7898;
+  --cta-border-hover: #6a8aac;
+  --cta-glow: 0 0 8px rgba(90, 122, 160, 0.3);
+  --logo-accent: var(--todo);
+  --color-info: #6090c0;
+  --accent: #5a8abf;
+}
+
+[data-color-theme="carbon"][data-theme="light"] {
+  --bg: #eef0f4;
+  --surface: #e2e6ec;
+  --card: #f5f7fa;
+  --card-hover: #eef2f6;
+  --border: #c0c8d0;
+  --text: #1a2028;
+  --text-muted: #586070;
+  --text-dim: #78808a;
+
+  --todo: #3a6090;
+  --in-progress: #4878a0;
+  --in-progress-rgb: 72, 120, 160;
+  --in-review: #4090a0;
+  --triage: #a05050;
+  --done: #687080;
+  --color-success: #4090a0;
+  --color-error: #a03030;
+
+  --cta-bg: #305878;
+  --cta-border: #4070a0;
+  --cta-text: #fff;
+  --cta-bg-hover: #4070a0;
+  --cta-border-hover: #5080b0;
+  --cta-glow: 0 0 8px rgba(64, 112, 160, 0.3);
+  --logo-accent: var(--todo);
+  --color-info: #306090;
+  --accent: #3a6a9f;
+}
+
 /* ============================================================
    THEME SELECTOR COMPONENT STYLES
    ============================================================ */
@@ -13084,6 +13328,26 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 .theme-swatch-ember {
   --bg: #18181b;
   --surface: #27272a;
+}
+
+.theme-swatch-rust {
+  --bg: #0f0b09;
+  --surface: #1a1410;
+}
+
+.theme-swatch-copper {
+  --bg: #0e0c0a;
+  --surface: #181410;
+}
+
+.theme-swatch-foundry {
+  --bg: #0c0806;
+  --surface: #15100c;
+}
+
+.theme-swatch-carbon {
+  --bg: #0a0b0d;
+  --surface: #111318;
 }
 
 .theme-swatch-silver {
@@ -13380,6 +13644,26 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 [data-theme="light"] .theme-swatch-ember {
   --bg: #fafafa;
   --surface: #f4f4f5;
+}
+
+[data-theme="light"] .theme-swatch-rust {
+  --bg: #f5efe8;
+  --surface: #ebe3d8;
+}
+
+[data-theme="light"] .theme-swatch-copper {
+  --bg: #f3ede6;
+  --surface: #e8e0d6;
+}
+
+[data-theme="light"] .theme-swatch-foundry {
+  --bg: #f5f0e6;
+  --surface: #ebe4d6;
+}
+
+[data-theme="light"] .theme-swatch-carbon {
+  --bg: #eef0f4;
+  --surface: #e2e6ec;
 }
 
 [data-theme="light"] .theme-swatch-silver {

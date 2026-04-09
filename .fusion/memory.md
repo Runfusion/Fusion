@@ -35,8 +35,8 @@
 
 ## Color Theme System
 
-- There are **34 unique color themes** in `packages/dashboard/app/styles.css` (ocean, forest, sunset, berry, monochrome, slate, ash, graphite, silver, zen, high-contrast, industrial, solarized, factory, ayu, one-dark, nord, dracula, gruvbox, tokyo-night, catppuccin-mocha, github-dark, everforest, rose-pine, kanagawa, night-owl, palenight, monokai-pro, slime, brutalist, neon-city, parchment, terminal, glass). Each has a dark variant `[data-color-theme="<name>"]` and a light variant `[data-color-theme="<name>"][data-theme="light"]`.
-- When adding CSS custom properties that should be theme-aware (like `--accent`, `--status-*-bg`), add them to all 34 theme blocks plus `:root` and `[data-theme="light"]` base blocks. The test in `status-colors-theme.test.ts` iterates all blocks programmatically to prevent regressions.
+- There are **48 unique color themes** in `packages/dashboard/app/styles.css` (default, ocean, forest, sunset, zen, berry, high-contrast, industrial, monochrome, slate, ash, graphite, silver, solarized, factory, ayu, one-dark, nord, dracula, gruvbox, tokyo-night, catppuccin-mocha, github-dark, everforest, rose-pine, kanagawa, night-owl, palenight, monokai-pro, slime, brutalist, neon-city, parchment, terminal, glass, horizon, vitesse, outrun, snazzy, porple, espresso, mars, poimandres, ember, rust, copper, foundry, carbon). Each has a dark variant `[data-color-theme="<name>"]` and a light variant `[data-color-theme="<name>"][data-theme="light"]`.
+- When adding CSS custom properties that should be theme-aware (like `--accent`, `--status-*-bg`), add them to all 48 theme blocks plus `:root` and `[data-theme="light"]` base blocks. The test in `status-colors-theme.test.ts` iterates all blocks programmatically to prevent regressions.
 
 ## Plugin System (FN-1111 / FN-1400)
 

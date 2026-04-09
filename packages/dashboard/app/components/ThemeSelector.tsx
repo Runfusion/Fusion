@@ -60,6 +60,10 @@ const COLOR_THEMES: { value: ColorTheme; label: string; className: string }[] = 
   { value: "mars", label: "Mars", className: "theme-swatch-mars" },
   { value: "poimandres", label: "Poimandres", className: "theme-swatch-poimandres" },
   { value: "ember", label: "Ember", className: "theme-swatch-ember" },
+  { value: "rust", label: "Rust", className: "theme-swatch-rust" },
+  { value: "copper", label: "Copper", className: "theme-swatch-copper" },
+  { value: "foundry", label: "Foundry", className: "theme-swatch-foundry" },
+  { value: "carbon", label: "Carbon", className: "theme-swatch-carbon" },
 ];
 
 /**

@@ -116,6 +116,10 @@ describe("ThemeSelector", () => {
     expect(screen.getByLabelText("Mars theme")).toBeDefined();
     expect(screen.getByLabelText("Poimandres theme")).toBeDefined();
     expect(screen.getByLabelText("Ember theme")).toBeDefined();
+    expect(screen.getByLabelText("Rust theme")).toBeDefined();
+    expect(screen.getByLabelText("Copper theme")).toBeDefined();
+    expect(screen.getByLabelText("Foundry theme")).toBeDefined();
+    expect(screen.getByLabelText("Carbon theme")).toBeDefined();
   });
 
   it("marks current color theme as active", () => {
@@ -438,6 +442,10 @@ describe("ThemeSelector", () => {
       ["espresso", "Espresso"],
       ["mars", "Mars"],
       ["poimandres", "Poimandres"],
+      ["rust", "Rust"],
+      ["copper", "Copper"],
+      ["foundry", "Foundry"],
+      ["carbon", "Carbon"],
     ] as const;
 
     dramaticThemes.forEach(([value, label]) => {
