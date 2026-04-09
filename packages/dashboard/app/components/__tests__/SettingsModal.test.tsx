@@ -1276,7 +1276,7 @@ describe("SettingsModal", () => {
     const sidebar = container.querySelector(".settings-sidebar");
     expect(sidebar).toBeTruthy();
     const navItems = sidebar!.querySelectorAll(".settings-nav-item");
-    expect(navItems.length).toBe(12);
+    expect(navItems.length).toBe(11);
 
     // Labels include scope emoji indicators (🌐 for global, 📁 for project)
     const labels = Array.from(navItems).map((el) => el.textContent);
@@ -1286,7 +1286,6 @@ describe("SettingsModal", () => {
       "🌐Appearance",
       "📁Scheduling",
       "📁Worktrees",
-      "📁Execution",
       "📁Commands",
       "📁Merge",
       "📁Memory",
@@ -2097,20 +2096,13 @@ describe("SettingsModal", () => {
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("Internal server error", "error"));
   });
 
-  // --- Execution section tests ---
+  // --- Step Execution field tests (in Scheduling section) ---
 
-  it("shows Execution in sidebar", async () => {
+  it("shows runStepsInNewSessions checkbox and maxParallelSteps input in Scheduling section", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    expect(screen.getAllByText("Execution").length).toBeGreaterThanOrEqual(1);
-  });
-
-  it("shows runStepsInNewSessions checkbox and maxParallelSteps input in Execution section", async () => {
-    render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
-
-    fireEvent.click(screen.getByText("Execution"));
+    fireEvent.click(screen.getByText("Scheduling"));
     const checkbox = screen.getByLabelText("Run each step in a new session");
     expect(checkbox).toBeTruthy();
     expect(checkbox.getAttribute("type")).toBe("checkbox");
@@ -2124,7 +2116,7 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Execution"));
+    fireEvent.click(screen.getByText("Scheduling"));
     const input = screen.getByLabelText("Maximum parallel steps") as HTMLInputElement;
     expect(input.disabled).toBe(true);
   });
@@ -2133,7 +2125,7 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Execution"));
+    fireEvent.click(screen.getByText("Scheduling"));
     const checkbox = screen.getByLabelText("Run each step in a new session");
     fireEvent.click(checkbox);
 
@@ -2145,7 +2137,7 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Execution"));
+    fireEvent.click(screen.getByText("Scheduling"));
     const checkbox = screen.getByLabelText("Run each step in a new session");
     fireEvent.click(checkbox);
 
