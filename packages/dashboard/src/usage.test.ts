@@ -851,6 +851,93 @@ describe("usage", () => {
       expect(claude.windows).toHaveLength(0);
     });
 
+    it("parses session window when API uses 'session' key instead of 'five_hour'", async () => {
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+          subscriptionType: "pro",
+        },
+      });
+
+      // API response uses 'session' key instead of 'five_hour'
+      setupClaudeApiResponse({
+        session: {
+          utilization: 35.0,
+          resets_at: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+        },
+        seven_day: {
+          utilization: 20.0,
+          resets_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+        },
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("ok");
+      expect(claude.windows).toHaveLength(2);
+
+      // Verify session window is correctly parsed
+      const sessionWindow = claude.windows.find((w) => w.label.includes("Session"));
+      expect(sessionWindow).toBeDefined();
+      expect(sessionWindow!.percentUsed).toBe(35);
+      expect(sessionWindow!.percentLeft).toBe(65);
+      expect(sessionWindow!.resetText).toContain("resets in");
+      expect(sessionWindow!.resetAt).toBeDefined();
+    });
+
+    it("parses utilization from alternative field names", async () => {
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+          subscriptionType: "pro",
+        },
+      });
+
+      // Test various field name variations
+      setupClaudeApiResponse({
+        five_hour: {
+          percent_used: 42.0,
+          resets_at: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
+        },
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("ok");
+      const sessionWindow = claude.windows.find((w) => w.label.includes("Session"))!;
+      expect(sessionWindow.percentUsed).toBe(42);
+    });
+
+    it("parses reset_at from alternative field names", async () => {
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+          subscriptionType: "pro",
+        },
+      });
+
+      // Test various reset time field name variations
+      setupClaudeApiResponse({
+        five_hour: {
+          utilization: 30.0,
+          reset_at: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+        },
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("ok");
+      const sessionWindow = claude.windows.find((w) => w.label.includes("Session"))!;
+      expect(sessionWindow.resetAt).toBeDefined();
+      expect(sessionWindow.resetText).toContain("resets in");
+    });
+
     it("preserves plan detection from subscriptionType in credentials", async () => {
       setupClaudeMocks({
         credFileContent: {

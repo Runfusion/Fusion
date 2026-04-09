@@ -829,15 +829,31 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
     const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
     const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
-    const parseWindow = (key: string, label: string, windowDurationMs: number): UsageWindow | null => {
-      const w = data[key];
-      if (!w || typeof w !== "object") return null;
+    /**
+     * Get a window data object from the API response, checking multiple possible keys
+     * for backward compatibility (API may use `session` instead of `five_hour`).
+     */
+    const getWindowData = (primaryKey: string, fallbackKeys: string[] = []): any => {
+      if (data[primaryKey] && typeof data[primaryKey] === "object") {
+        return data[primaryKey];
+      }
+      for (const key of fallbackKeys) {
+        if (data[key] && typeof data[key] === "object") {
+          return data[key];
+        }
+      }
+      return null;
+    };
 
-      const pctUsed: number = w.utilization ?? w.percent_used ?? w.percentUsed ?? 0;
+    const parseWindow = (key: string, label: string, windowDurationMs: number, fallbackKeys: string[] = []): UsageWindow | null => {
+      const w = getWindowData(key, fallbackKeys);
+      if (!w) return null;
+
+      const pctUsed: number = w.utilization ?? w.percent_used ?? w.percentUsed ?? w.used_percent ?? w.usage_percent ?? 0;
       let resetText: string | null = null;
       let resetMs: number | undefined;
 
-      let resetAtValue = w.resets_at || w.reset_at || w.resetAt;
+      let resetAtValue = w.resets_at || w.reset_at || w.resetAt || w.resetsAt || w.reset_time || w.resetsAtTime;
       if (resetAtValue) {
         const msLeft = new Date(resetAtValue).getTime() - Date.now();
         resetMs = msLeft > 0 ? msLeft : 0;
@@ -863,7 +879,7 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
       };
     };
 
-    const fiveHour = parseWindow("five_hour", "Session (5h)", FIVE_HOURS_MS);
+    const fiveHour = parseWindow("five_hour", "Session (5h)", FIVE_HOURS_MS, ["session"]);
     const sevenDay = parseWindow("seven_day", "Weekly", SEVEN_DAYS_MS);
     const sonnet = parseWindow("seven_day_sonnet", "Weekly (Sonnet)", SEVEN_DAYS_MS);
     const opus = parseWindow("seven_day_opus", "Weekly (Opus)", SEVEN_DAYS_MS);
