@@ -1132,3 +1132,70 @@ describe("TaskForm defaultOn auto-selection (FN-883)", () => {
     expect(onWorkflowStepsChange).not.toHaveBeenCalled();
   });
 });
+
+describe("TaskForm focus behavior (FN-1459)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("auto-focuses description textarea in create mode on mount", async () => {
+    renderTaskForm({ mode: "create" });
+
+    const textarea = screen.getByRole("textbox", { name: /Description/i });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(textarea);
+    });
+  });
+
+  it("auto-focuses description textarea in create mode even with initial description", async () => {
+    renderTaskForm({ mode: "create", description: "Pre-filled task" });
+
+    const textarea = screen.getByRole("textbox", { name: /Description/i });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(textarea);
+    });
+  });
+
+  it("auto-focuses title input in edit mode on mount", async () => {
+    renderTaskForm({
+      mode: "edit",
+      title: "Existing task",
+      onTitleChange: vi.fn(),
+    });
+
+    const titleInput = screen.getByLabelText(/Title/i) as HTMLInputElement;
+    await waitFor(() => {
+      expect(document.activeElement).toBe(titleInput);
+    });
+  });
+
+  it("selects title input text in edit mode on mount", async () => {
+    renderTaskForm({
+      mode: "edit",
+      title: "Existing task",
+      onTitleChange: vi.fn(),
+    });
+
+    const titleInput = screen.getByLabelText(/Title/i) as HTMLInputElement;
+    // SelectionStart and SelectionEnd are set when the text is selected
+    await waitFor(() => {
+      // When text is selected, selectionStart should be 0 and selectionEnd should equal the text length
+      expect(titleInput.selectionStart).toBe(0);
+      expect(titleInput.selectionEnd).toBe(titleInput.value.length);
+    });
+  });
+
+  it("does not auto-focus description textarea in edit mode", async () => {
+    renderTaskForm({
+      mode: "edit",
+      title: "Existing task",
+      onTitleChange: vi.fn(),
+    });
+
+    const textarea = screen.getByRole("textbox", { name: /Description/i });
+    // In edit mode, description should NOT be focused (title input is focused instead)
+    await waitFor(() => {
+      expect(document.activeElement).not.toBe(textarea);
+    });
+  });
+});

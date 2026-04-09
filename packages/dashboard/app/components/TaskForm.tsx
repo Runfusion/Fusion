@@ -222,19 +222,14 @@ export function TaskForm({
     setDepSearch("");
   }, [showMoreOptions]);
 
-  // Auto-focus description (create) or title (edit) when active
+  // Auto-select title input text in edit mode (focus is handled by autoFocus)
   useEffect(() => {
-    if (!isActive) return;
-    const timeoutId = setTimeout(() => {
-      if (mode === "edit" && titleInputRef.current) {
-        titleInputRef.current.focus();
-        titleInputRef.current.select();
-      } else if (mode === "create" && descTextareaRef.current) {
-        descTextareaRef.current.focus();
-      }
-    }, 0);
-    return () => clearTimeout(timeoutId);
-  }, [isActive, mode]);
+    if (mode !== "edit" || !isActive) return;
+    if (titleInputRef.current) {
+      titleInputRef.current.focus();
+      titleInputRef.current.select();
+    }
+  }, [mode, isActive]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -528,6 +523,7 @@ export function TaskForm({
           <label htmlFor="task-form-title">Title</label>
           <input
             ref={titleInputRef}
+            autoFocus
             id="task-form-title"
             type="text"
             className="modal-edit-input"
@@ -571,6 +567,7 @@ export function TaskForm({
           )}
           <textarea
             ref={descTextareaRef}
+            autoFocus={mode === "create"}
             id="task-form-description"
             value={description}
             onChange={handleDescriptionInput}
