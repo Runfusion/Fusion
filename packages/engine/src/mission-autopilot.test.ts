@@ -46,6 +46,7 @@ function createMockSlice(overrides: Partial<Slice> = {}): Slice {
     milestoneId: "MS-001",
     title: "Test Slice",
     status: "pending",
+    planState: "not_started",
     orderIndex: 0,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),

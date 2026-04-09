@@ -1050,6 +1050,7 @@ describe("POST /tasks/:id/retry", () => {
       error: null,
       worktree: null,
       branch: null,
+      stuckKillCount: 0,
     });
     expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
   });
@@ -1083,6 +1084,7 @@ describe("POST /tasks/:id/retry", () => {
       error: null,
       worktree: null,
       branch: null,
+      stuckKillCount: 0,
     });
     expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
   });
@@ -1104,9 +1106,10 @@ describe("POST /tasks/:id/retry", () => {
       error: null,
       worktree: null,
       branch: null,
+      stuckKillCount: 0,
     });
     expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
-    expect(store.logEntry).toHaveBeenCalledWith("KB-001", "Retry requested from dashboard");
+    expect(store.logEntry).toHaveBeenCalledWith("KB-001", "Retry requested from dashboard (stuck kill budget reset)");
   });
 });
 

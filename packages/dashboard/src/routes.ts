@@ -2095,8 +2095,44 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         error: null,
         worktree: null,
         branch: null,
+        stuckKillCount: 0,
       });
-      await scopedStore.logEntry(req.params.id, "Retry requested from dashboard");
+
+      // Reset steps if the branch has no unique commits (work was lost with worktree)
+      const completedSteps = task.steps.filter(
+        (s: { status: string }) => s.status === "done" || s.status === "in-progress",
+      );
+      if (completedSteps.length > 0) {
+        const branchName = task.branch || `fusion/${task.id.toLowerCase()}`;
+        try {
+          const { execSync } = await import("node:child_process");
+          const rootDir = scopedStore.getRootDir();
+          const mergeBase = execSync(
+            `git merge-base "${branchName}" HEAD 2>/dev/null`,
+            { cwd: rootDir, stdio: "pipe", encoding: "utf-8" },
+          ).trim();
+          const branchHead = execSync(
+            `git rev-parse "${branchName}" 2>/dev/null`,
+            { cwd: rootDir, stdio: "pipe", encoding: "utf-8" },
+          ).trim();
+
+          if (mergeBase === branchHead) {
+            for (let i = 0; i < task.steps.length; i++) {
+              if (task.steps[i].status === "done" || task.steps[i].status === "in-progress") {
+                await scopedStore.updateStep(req.params.id, i, "pending");
+              }
+            }
+            await scopedStore.logEntry(
+              req.params.id,
+              `Reset ${completedSteps.length} step(s) to pending — branch had no commits (uncommitted work lost)`,
+            );
+          }
+        } catch {
+          // Branch may not exist — non-fatal, steps keep their status
+        }
+      }
+
+      await scopedStore.logEntry(req.params.id, "Retry requested from dashboard (stuck kill budget reset)");
       const updated = await scopedStore.moveTask(req.params.id, "todo");
       res.json(updated);
     } catch (err: any) {

@@ -98,6 +98,7 @@ export {
   INTERVIEW_STATES,
   AUTOPILOT_STATES,
   MISSION_EVENT_TYPES,
+  SLICE_PLAN_STATES,
 } from "./mission-types.js";
 export type {
   MissionStatus,
@@ -106,6 +107,7 @@ export type {
   FeatureStatus,
   InterviewState,
   AutopilotState,
+  SlicePlanState,
   MissionEventType,
   AutopilotStatus,
   Mission,

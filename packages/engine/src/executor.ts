@@ -1021,6 +1021,10 @@ export class TaskExecutor {
           // Stuck-requeue: clean up worktree and move to todo
           if (stuckRequeue === true) {
             try {
+              // Reset steps whose work was never committed before destroying the worktree
+              const latestTask = await this.store.getTask(task.id);
+              await this.resetStepsIfWorkLost(latestTask);
+
               if (worktreePath && existsSync(worktreePath)) {
                 try {
                   execSync(`git worktree remove "${worktreePath}" --force`, { cwd: this.rootDir, stdio: "pipe" });
@@ -1597,6 +1601,10 @@ export class TaskExecutor {
       // task in "in-progress" with no active session or worktree.
       if (stuckRequeue === true) {
         try {
+          // Reset steps whose work was never committed before destroying the worktree
+          const latestTask = await this.store.getTask(task.id);
+          await this.resetStepsIfWorkLost(latestTask);
+
           // Clean up the old worktree so the retry gets a fresh one
           if (worktreePath && existsSync(worktreePath)) {
             try {
@@ -2829,6 +2837,57 @@ If issues are found that need attention, describe them clearly.`;
       executorLog.log(`Cleaned up worktree for ${taskId}`);
     } catch (err: any) {
       executorLog.error(`Failed to clean up worktree for ${taskId}:`, err.message);
+    }
+  }
+
+  /**
+   * Check whether the task's branch has any unique commits compared to main.
+   * If the branch has no unique commits and the task has steps marked done,
+   * those steps represent lost uncommitted work — reset them to "pending"
+   * so the next execution doesn't skip them.
+   *
+   * Called during stuck-kill cleanup when the worktree is about to be destroyed.
+   */
+  private async resetStepsIfWorkLost(task: Task): Promise<void> {
+    const completedSteps = task.steps.filter(
+      (s) => s.status === "done" || s.status === "in-progress",
+    );
+    if (completedSteps.length === 0) return;
+
+    const branchName = task.branch || `fusion/${task.id.toLowerCase()}`;
+
+    try {
+      // Check if the branch has any unique commits vs main
+      const mergeBase = execSync(
+        `git merge-base "${branchName}" HEAD 2>/dev/null`,
+        { cwd: this.rootDir, stdio: "pipe", encoding: "utf-8" },
+      ).trim();
+      const branchHead = execSync(
+        `git rev-parse "${branchName}" 2>/dev/null`,
+        { cwd: this.rootDir, stdio: "pipe", encoding: "utf-8" },
+      ).trim();
+
+      if (mergeBase === branchHead) {
+        // Branch has no unique commits — all step work was lost
+        executorLog.warn(
+          `${task.id} branch has no unique commits — resetting ${completedSteps.length} step(s) to pending`,
+        );
+
+        for (let i = 0; i < task.steps.length; i++) {
+          if (task.steps[i].status === "done" || task.steps[i].status === "in-progress") {
+            await this.store.updateStep(task.id, i, "pending");
+          }
+        }
+
+        await this.store.logEntry(
+          task.id,
+          `Reset ${completedSteps.length} step(s) to pending — branch had no commits (uncommitted work lost with worktree)`,
+        );
+      }
+    } catch {
+      // Branch may not exist or git commands may fail — non-fatal.
+      // Steps keep their current status (safe default: agent can
+      // inspect the worktree and decide).
     }
   }
 

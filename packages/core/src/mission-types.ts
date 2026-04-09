@@ -23,6 +23,10 @@ export type MilestoneStatus = (typeof MILESTONE_STATUSES)[number];
 export const SLICE_STATUSES = ["pending", "active", "complete"] as const;
 export type SliceStatus = (typeof SLICE_STATUSES)[number];
 
+/** Status values for a Slice's plan state (per-slice planning workflow) */
+export const SLICE_PLAN_STATES = ["not_started", "planned", "needs_update"] as const;
+export type SlicePlanState = (typeof SLICE_PLAN_STATES)[number];
+
 /** Status values for a Feature within a slice */
 export const FEATURE_STATUSES = ["defined", "triaged", "in-progress", "done", "blocked"] as const;
 export type FeatureStatus = (typeof FEATURE_STATUSES)[number];
@@ -147,6 +151,10 @@ export interface Milestone {
   interviewState: InterviewState;
   /** IDs of milestones that must complete before this one can start */
   dependencies: string[];
+  /** Planning notes from interview/planning output */
+  planningNotes?: string;
+  /** How to verify milestone completion */
+  verification?: string;
   /** ISO-8601 timestamp of creation */
   createdAt: string;
   /** ISO-8601 timestamp of last update */
@@ -172,6 +180,12 @@ export interface Slice {
   orderIndex: number;
   /** ISO-8601 timestamp when the slice was activated (if applicable) */
   activatedAt?: string;
+  /** State of the per-slice planning workflow */
+  planState: SlicePlanState;
+  /** Planning notes from interview/planning output */
+  planningNotes?: string;
+  /** How to verify slice completion */
+  verification?: string;
   /** ISO-8601 timestamp of creation */
   createdAt: string;
   /** ISO-8601 timestamp of last update */
@@ -221,6 +235,10 @@ export interface MilestoneCreateInput {
   description?: string;
   /** IDs of milestones that must complete before this one can start */
   dependencies?: string[];
+  /** Planning notes from interview/planning output */
+  planningNotes?: string;
+  /** How to verify milestone completion */
+  verification?: string;
 }
 
 /** Input for creating a new Slice */
@@ -229,6 +247,10 @@ export interface SliceCreateInput {
   title: string;
   /** Detailed description of work to be done */
   description?: string;
+  /** Planning notes from interview/planning output */
+  planningNotes?: string;
+  /** How to verify slice completion */
+  verification?: string;
 }
 
 /** Input for creating a new Feature */

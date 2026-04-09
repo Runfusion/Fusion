@@ -221,7 +221,13 @@ export class SelfHealingManager {
           status: "failed",
           error: `Task stuck ${newCount} times — exceeded maximum of ${maxKills} stuck kills`,
         });
-        await this.store.moveTask(taskId, "in-review");
+        try {
+          await this.store.moveTask(taskId, "in-review");
+        } catch (moveErr: any) {
+          // moveTask may fail if task was concurrently moved (e.g., dep-abort).
+          // The task is already marked failed — don't allow requeue.
+          log.warn(`${taskId} moveTask("in-review") failed (${moveErr.message}) — task already marked failed, not re-queuing`);
+        }
         await this.store.logEntry(
           taskId,
           `Permanently failed: agent stuck ${newCount} times (max: ${maxKills}) — moved to in-review`,
@@ -241,6 +247,53 @@ export class SelfHealingManager {
       log.error(`checkStuckBudget failed for ${taskId}: ${err.message}`);
       // On error, allow re-queue — safer than permanently failing
       return true;
+    }
+  }
+
+  // ── Lost work detection ────────────────────────────────────────────
+
+  /**
+   * Check whether a task's branch has any unique commits compared to main.
+   * If the branch has no unique commits and the task has steps marked done,
+   * those steps represent lost uncommitted work — reset them to "pending"
+   * so the next execution doesn't skip them.
+   */
+  private async resetStepsIfWorkLost(task: Task): Promise<void> {
+    const completedSteps = task.steps.filter(
+      (s) => s.status === "done" || s.status === "in-progress",
+    );
+    if (completedSteps.length === 0) return;
+
+    const branchName = task.branch || `fusion/${task.id.toLowerCase()}`;
+
+    try {
+      const mergeBase = execSync(
+        `git merge-base "${branchName}" HEAD 2>/dev/null`,
+        { cwd: this.options.rootDir, stdio: "pipe", encoding: "utf-8" },
+      ).trim();
+      const branchHead = execSync(
+        `git rev-parse "${branchName}" 2>/dev/null`,
+        { cwd: this.options.rootDir, stdio: "pipe", encoding: "utf-8" },
+      ).trim();
+
+      if (mergeBase === branchHead) {
+        log.warn(
+          `${task.id} branch has no unique commits — resetting ${completedSteps.length} step(s) to pending`,
+        );
+
+        for (let i = 0; i < task.steps.length; i++) {
+          if (task.steps[i].status === "done" || task.steps[i].status === "in-progress") {
+            await this.store.updateStep(task.id, i, "pending");
+          }
+        }
+
+        await this.store.logEntry(
+          task.id,
+          `Reset ${completedSteps.length} step(s) to pending — branch had no commits (uncommitted work lost with worktree)`,
+        );
+      }
+    } catch {
+      // Branch may not exist or git commands may fail — non-fatal
     }
   }
 
@@ -422,6 +475,9 @@ export class SelfHealingManager {
           const reason = hadWorktree
             ? "worktree exists but no active session"
             : "missing worktree/session";
+
+          // Reset steps whose work was never committed before clearing the worktree
+          await this.resetStepsIfWorkLost(task);
 
           await this.store.updateTask(task.id, {
             status: "stuck-killed",

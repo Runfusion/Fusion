@@ -102,6 +102,21 @@ function createMockMissionStore() {
       )
     ),
 
+    listMissionsWithSummaries: vi.fn(() =>
+      Array.from(missions.values())
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .map((m) => ({
+          ...m,
+          summary: {
+            totalMilestones: 0,
+            completedMilestones: 0,
+            totalFeatures: 0,
+            completedFeatures: 0,
+            progressPercent: 0,
+          },
+        }))
+    ),
+
     getMissionSummary: vi.fn((_missionId: string) => ({
       totalMilestones: 0,
       completedMilestones: 0,

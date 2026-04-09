@@ -33,6 +33,7 @@ import type {
   MissionEvent,
   MissionEventType,
   MissionHealth,
+  SlicePlanState,
 } from "./mission-types.js";
 
 // ── Mission Summary Type ─────────────────────────────────────────────
@@ -163,6 +164,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       status: row.status as SliceStatus,
       orderIndex: row.orderIndex,
       activatedAt: row.activatedAt || undefined,
+      planState: (row.planState as SlicePlanState) || "not_started",
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -1077,6 +1079,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       title: input.title,
       description: input.description,
       status: "pending",
+      planState: "not_started",
       orderIndex,
       createdAt: now,
       updatedAt: now,

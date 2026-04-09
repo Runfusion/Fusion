@@ -265,6 +265,11 @@ class MockEventSource {
 /** Fetch mock that returns mission list, detail, health, autopilot, and events endpoints. */
 function createFetchMock() {
   return vi.fn().mockImplementation((url: string) => {
+    // Handle batched health endpoint before individual health endpoint
+    if (url.includes("/missions/health")) {
+      return Promise.resolve(mockApiResponse(mockMissionHealthById));
+    }
+
     if (url.includes("/events")) {
       return Promise.resolve(mockApiResponse(parseMissionEventsResponse(url)));
     }
@@ -289,6 +294,11 @@ function createFetchMock() {
 /** Fetch mock for navigating into a mission detail */
 function createDetailFetchMock(events = mockMissionEvents) {
   return vi.fn().mockImplementation((url: string) => {
+    // Handle batched health endpoint before individual health endpoint
+    if (url.includes("/missions/health")) {
+      return Promise.resolve(mockApiResponse(mockMissionHealthById));
+    }
+
     if (url.includes("/events")) {
       return Promise.resolve(mockApiResponse(parseMissionEventsResponse(url, events)));
     }
