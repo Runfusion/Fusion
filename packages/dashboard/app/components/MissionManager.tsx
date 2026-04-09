@@ -16,9 +16,7 @@ import {
   Link,
   Unlink,
   Play,
-  Pause,
   Square,
-  RefreshCw,
   Sparkles,
   Zap,
   Activity,
@@ -62,14 +60,10 @@ import {
   unlinkFeatureFromTask,
   triageFeature,
   triageAllSliceFeatures,
-  pauseMission,
   resumeMission,
   stopMission,
   startMission,
-  fetchMissionAutopilotStatus,
   updateMissionAutopilot,
-  startMissionAutopilot,
-  stopMissionAutopilot,
   fetchMissionHealth,
   fetchMissionsHealth,
   fetchMissionEvents,
@@ -130,7 +124,6 @@ interface MissionFormData {
   title: string;
   description: string;
   status: MissionStatus;
-  autoAdvance: boolean;
   autopilotEnabled: boolean;
 }
 
@@ -158,7 +151,6 @@ const EMPTY_MISSION_FORM: MissionFormData = {
   title: "",
   description: "",
   status: "planning",
-  autoAdvance: false,
   autopilotEnabled: false,
 };
 
@@ -382,8 +374,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   // Delete confirmation
   const [deleteConfirmId, setDeleteConfirmId] = useState<{ type: string; id: string } | null>(null);
 
-  // Autopilot state
-  const [autopilotStatus, setAutopilotStatus] = useState<AutopilotStatusType | null>(null);
+  // Autopilot loading state
   const [autopilotLoading, setAutopilotLoading] = useState(false);
 
   const [missionHealthById, setMissionHealthById] = useState<Map<string, MissionHealth>>(new Map());
@@ -679,7 +670,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       title: mission.title,
       description: mission.description || "",
       status: mission.status,
-      autoAdvance: mission.autoAdvance ?? false,
       autopilotEnabled: mission.autopilotEnabled ?? false,
     });
   }, []);
@@ -706,13 +696,18 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         }, projectId);
         addToast("Mission created", "success");
       } else if (editingMissionId) {
-        await updateMission(editingMissionId, {
+        // Build update payload - when autopilot is enabled, also set autoAdvance
+        // for backward compat with the engine (though engine no longer reads it)
+        const updates: Record<string, unknown> = {
           title: missionForm.title.trim(),
           description: missionForm.description.trim() || undefined,
           status: missionForm.status,
-          autoAdvance: missionForm.autoAdvance,
           autopilotEnabled: missionForm.autopilotEnabled,
-        }, projectId);
+        };
+        if (missionForm.autopilotEnabled) {
+          updates.autoAdvance = true;
+        }
+        await updateMission(editingMissionId, updates as Parameters<typeof updateMission>[1], projectId);
         addToast("Mission updated", "success");
         // Refresh detail view if viewing this mission
         if (selectedMission?.id === editingMissionId) {
@@ -1036,18 +1031,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     }
   }, [addToast, loadMissionDetail, selectedMission, projectId]);
 
-  // Pause mission — set status to "blocked"
-  const handlePauseMission = useCallback(async (missionId: string) => {
-    try {
-      await pauseMission(missionId, projectId);
-      addToast("Mission paused", "success");
-      await loadMissionDetail(missionId);
-      loadMissions();
-    } catch (err: any) {
-      addToast(err.message || "Failed to pause mission", "error");
-    }
-  }, [addToast, loadMissionDetail, loadMissions, projectId]);
-
   // Resume a paused mission — set status back to "active"
   const handleResumeMission = useCallback(async (missionId: string) => {
     try {
@@ -1087,56 +1070,16 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
   // ── Autopilot handlers ──
 
-  const loadAutopilotStatus = useCallback(async (missionId: string) => {
-    try {
-      const status = await fetchMissionAutopilotStatus(missionId, projectId);
-      setAutopilotStatus(status);
-    } catch {
-      // Silently ignore — autopilot status is supplementary
-    }
-  }, [projectId]);
-
   const handleToggleAutopilot = useCallback(async (missionId: string, enabled: boolean) => {
     try {
       setAutopilotLoading(true);
-      const status = await updateMissionAutopilot(missionId, { enabled }, projectId);
-      setAutopilotStatus(status);
+      await updateMissionAutopilot(missionId, { enabled }, projectId);
       addToast(enabled ? "Autopilot enabled" : "Autopilot disabled", "success");
       // Reload mission detail to reflect updated fields
       await loadMissionDetail(missionId);
       loadMissions();
     } catch (err: any) {
       addToast(err.message || "Failed to update autopilot", "error");
-    } finally {
-      setAutopilotLoading(false);
-    }
-  }, [addToast, loadMissionDetail, loadMissions, projectId]);
-
-  const handleStartAutopilot = useCallback(async (missionId: string) => {
-    try {
-      setAutopilotLoading(true);
-      const status = await startMissionAutopilot(missionId, projectId);
-      setAutopilotStatus(status);
-      addToast("Autopilot started", "success");
-      await loadMissionDetail(missionId);
-      loadMissions();
-    } catch (err: any) {
-      addToast(err.message || "Failed to start autopilot", "error");
-    } finally {
-      setAutopilotLoading(false);
-    }
-  }, [addToast, loadMissionDetail, loadMissions, projectId]);
-
-  const handleStopAutopilot = useCallback(async (missionId: string) => {
-    try {
-      setAutopilotLoading(true);
-      const status = await stopMissionAutopilot(missionId, projectId);
-      setAutopilotStatus(status);
-      addToast("Autopilot stopped", "success");
-      await loadMissionDetail(missionId);
-      loadMissions();
-    } catch (err: any) {
-      addToast(err.message || "Failed to stop autopilot", "error");
     } finally {
       setAutopilotLoading(false);
     }
@@ -1149,12 +1092,10 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     setEventsFilter("all");
     setExpandedEventMetadata(new Set());
     loadMissionDetail(mission.id);
-    loadAutopilotStatus(mission.id);
-  }, [loadMissionDetail, loadAutopilotStatus]);
+  }, [loadMissionDetail]);
 
   const handleBackToList = useCallback(() => {
     setSelectedMission(null);
-    setAutopilotStatus(null);
     setActiveTab("structure");
     setMissionEvents([]);
     setEventsTotal(0);
@@ -1164,11 +1105,11 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   }, [loadMissions]);
 
   const hasMoreEvents = missionEvents.length < eventsTotal;
-  const autopilotState = (autopilotStatus?.state ?? selectedMission?.autopilotState ?? "inactive") as AutopilotState;
+  const autopilotState = (selectedMission?.autopilotState ?? "inactive") as AutopilotState;
   const autopilotPulseActive = autopilotState === "watching" || autopilotState === "activating";
   const autopilotActivitySummary = getAutopilotActivitySummary(
     autopilotState,
-    autopilotStatus?.lastActivityAt ?? selectedMission?.lastAutopilotActivityAt,
+    selectedMission?.lastAutopilotActivityAt,
   );
 
   const handleLoadMoreEvents = useCallback(() => {
@@ -1313,11 +1254,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                   <p className="mission-detail__description">{selectedMission.description}</p>
                 )}
                 <div className="mission-detail__meta">
-                  {selectedMission.autoAdvance && (
-                    <span className="mission-detail__meta-badge">
-                      <Play size={12} /> Auto-advance
-                    </span>
-                  )}
                   <span className="mission-detail__meta-info">
                     {selectedMission.milestones.length} milestones
                   </span>
@@ -1359,65 +1295,18 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                       {autopilotActivitySummary}
                     </span>
                   )}
-                  {autopilotStatus?.nextScheduledCheck && (
-                    <span className="mission-detail__autopilot-next-check">
-                      Next check: {new Date(autopilotStatus.nextScheduledCheck).toLocaleTimeString()}
-                    </span>
-                  )}
-                  <div className="mission-detail__autopilot-actions">
-                    <button
-                      className="mission-btn mission-btn--primary mission-btn--sm"
-                      onClick={() => handleStartAutopilot(selectedMission.id)}
-                      disabled={autopilotLoading || !selectedMission.autopilotEnabled || Boolean(autopilotStatus?.watched)}
-                      title="Start autopilot watching"
-                      aria-label="Start autopilot watching"
-                      data-testid="mission-autopilot-start"
-                    >
-                      <Play size={12} /> Start
-                    </button>
-                    <button
-                      className="mission-btn mission-btn--danger mission-btn--sm"
-                      onClick={() => handleStopAutopilot(selectedMission.id)}
-                      disabled={autopilotLoading || !autopilotStatus?.watched}
-                      title="Stop autopilot watching"
-                      aria-label="Stop autopilot watching"
-                      data-testid="mission-autopilot-stop"
-                    >
-                      <Square size={12} /> Stop
-                    </button>
-                    <button
-                      className="mission-btn mission-btn--ghost mission-btn--sm"
-                      onClick={() => loadAutopilotStatus(selectedMission.id)}
-                      disabled={autopilotLoading}
-                      title="Refresh autopilot status"
-                      aria-label="Refresh autopilot status"
-                      data-testid="mission-autopilot-refresh"
-                    >
-                      <RefreshCw size={12} /> Refresh
-                    </button>
-                  </div>
                 </div>
 
                 <div className="mission-detail__actions">
                   {selectedMission.status === "active" && (
-                    <>
-                      <button
-                        className="mission-icon-btn"
-                        onClick={() => handlePauseMission(selectedMission.id)}
-                        title="Pause mission"
-                        aria-label="Pause mission"
-                      >
-                        <Pause size={14} />
-                      </button>
-                      <button
-                        className="mission-icon-btn mission-icon-btn--danger"
-                        onClick={() => handleStopMission(selectedMission.id)}
-                        title="Stop mission"
-                        aria-label="Stop mission"
-                      >
-                        <Square size={14} />
-                      </button>
-                    </>
+                    <button
+                      className="mission-icon-btn mission-icon-btn--danger"
+                      onClick={() => handleStopMission(selectedMission.id)}
+                      title="Stop mission"
+                      aria-label="Stop mission"
+                    >
+                      <Square size={14} />
+                    </button>
                   )}
                   {selectedMission.status === "blocked" && (
                     <button
@@ -1426,7 +1315,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                       title="Resume mission"
                       aria-label="Resume mission"
                     >
-                      <RefreshCw size={14} />
+                      <Play size={14} />
                     </button>
                   )}
                   {selectedMission.status === "planning" && (
@@ -1486,14 +1375,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                       <option value="complete">Complete</option>
                       <option value="archived">Archived</option>
                     </select>
-                    <label className="mission-checkbox">
-                      <input
-                        type="checkbox"
-                        checked={missionForm.autoAdvance}
-                        onChange={(e) => setMissionForm({ ...missionForm, autoAdvance: e.target.checked })}
-                      />
-                      Auto-advance slices
-                    </label>
                     <label className="mission-checkbox">
                       <input
                         type="checkbox"
@@ -2187,22 +2068,13 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                   </div>
                   <div className="mission-list__item-actions" onClick={(e) => e.stopPropagation()}>
                     {m.status === "active" && (
-                      <>
-                        <button
-                          className="mission-icon-btn"
-                          onClick={() => handlePauseMission(m.id)}
-                          title="Pause mission"
-                        >
-                          <Pause size={14} />
-                        </button>
-                        <button
-                          className="mission-icon-btn mission-icon-btn--danger"
-                          onClick={() => handleStopMission(m.id)}
-                          title="Stop mission"
-                        >
-                          <Square size={14} />
-                        </button>
-                      </>
+                      <button
+                        className="mission-icon-btn mission-icon-btn--danger"
+                        onClick={() => handleStopMission(m.id)}
+                        title="Stop mission"
+                      >
+                        <Square size={14} />
+                      </button>
                     )}
                     {m.status === "blocked" && (
                       <button
@@ -2210,7 +2082,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                         onClick={() => handleResumeMission(m.id)}
                         title="Resume mission"
                       >
-                        <RefreshCw size={14} />
+                        <Play size={14} />
                       </button>
                     )}
                     {m.status === "planning" && (
@@ -2269,14 +2141,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                       <option value="complete">Complete</option>
                       <option value="archived">Archived</option>
                     </select>
-                    <label className="mission-checkbox">
-                      <input
-                        type="checkbox"
-                        checked={missionForm.autoAdvance}
-                        onChange={(e) => setMissionForm({ ...missionForm, autoAdvance: e.target.checked })}
-                      />
-                      Auto-advance slices
-                    </label>
                     <label className="mission-checkbox">
                       <input
                         type="checkbox"

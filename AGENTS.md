@@ -1787,7 +1787,7 @@ Missions can run in **autopilot mode** for autonomous progression through slices
 
 ### How It Works
 
-1. **User enables autopilot** on a mission via the dashboard UI
+1. **User enables autopilot** on a mission via the dashboard UI (the only control needed)
 2. The `MissionAutopilot` class starts watching the mission
 3. As tasks complete, the scheduler notifies the autopilot
 4. Autopilot checks if the current slice is complete
@@ -1803,12 +1803,15 @@ Missions can run in **autopilot mode** for autonomous progression through slices
 | `activating` | Progressing to the next slice |
 | `completing` | Wrapping up the mission |
 
-### Relationship Between autopilotEnabled and autoAdvance
+### autopilotEnabled
 
-- **`autoAdvance`** — When a slice completes, automatically activate the next pending slice (existing behavior)
-- **`autopilotEnabled`** — Enable the autopilot monitoring system for this mission (new behavior)
-- Both can be true simultaneously. `autopilotEnabled: true` with `autoAdvance: true` provides full automation
-- `autopilotEnabled: true` with `autoAdvance: false` provides monitoring but manual slice activation
+The `autopilotEnabled` flag is the sole control for autopilot behavior. When enabled:
+
+- Autopilot automatically watches the mission and monitors task completion
+- When a slice completes, autopilot auto-advances to the next pending slice
+- The autopilot toggle in the mission edit form is the only control needed
+
+**Note:** The `autoAdvance` field is deprecated and superseded by `autopilotEnabled`. It is kept for backward compatibility with existing mission data but is no longer user-facing.
 
 ### Key Implementation
 
@@ -1822,8 +1825,8 @@ Missions can run in **autopilot mode** for autonomous progression through slices
 
 - `GET /api/missions/:missionId/autopilot` — Returns autopilot status
 - `PATCH /api/missions/:missionId/autopilot` — Enable/disable autopilot (`{ enabled: boolean }`)
-- `POST /api/missions/:missionId/autopilot/start` — Manually start watching
-- `POST /api/missions/:missionId/autopilot/stop` — Manually stop watching
+- `POST /api/missions/:missionId/autopilot/start` — Manually start watching (programmatic access)
+- `POST /api/missions/:missionId/autopilot/stop` — Manually stop watching (programmatic access)
 
 ## Workflow Steps
 

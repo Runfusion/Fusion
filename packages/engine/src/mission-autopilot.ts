@@ -173,7 +173,6 @@ export class MissionAutopilot {
       {
         source: "watchMission",
         missionStatus: mission.status,
-        autoAdvance: mission.autoAdvance ?? false,
       },
     );
     autopilotLog.log(`Watching mission ${missionId} (${mission.title})`);
@@ -359,15 +358,6 @@ export class MissionAutopilot {
   async advanceToNextSlice(missionId: string): Promise<void> {
     const state = this.watchedMissions.get(missionId);
     if (!state) return;
-
-    // Respect the mission's autoAdvance setting — if the user opted for
-    // manual slice activation, autopilot should NOT auto-advance even when
-    // it is watching and enabled.
-    const mission = this.missionStore.getMission(missionId);
-    if (!mission?.autoAdvance) {
-      autopilotLog.log(`Mission ${missionId} has autoAdvance disabled — skipping slice activation`);
-      return;
-    }
 
     try {
       this.setAutopilotState(missionId, "activating");

@@ -116,7 +116,11 @@ export interface Mission {
   status: MissionStatus;
   /** State of the AI specification interview process */
   interviewState: InterviewState;
-  /** When true, automatically activate the next pending slice when current slice completes */
+  /**
+   * @deprecated Superseded by `autopilotEnabled`. Kept for backward compatibility
+   * with existing mission data. Autopilot now always auto-advances slices when
+   * enabled and watching.
+   */
   autoAdvance?: boolean;
   /** When true, enable autopilot monitoring system for this mission */
   autopilotEnabled?: boolean;

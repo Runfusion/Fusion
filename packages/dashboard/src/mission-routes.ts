@@ -1844,8 +1844,13 @@ export function createMissionRouter(
         throw badRequest("No pending slices found");
       }
 
-      // Set autoAdvance: true so activateSlice() will auto-triage features
-      missionStore.updateMission(missionId, { autoAdvance: true, status: "active" });
+      // Enable autopilot (and autoAdvance for backward compat) so the mission
+      // will auto-advance slices when autopilot is watching
+      missionStore.updateMission(missionId, {
+        autopilotEnabled: true,
+        autoAdvance: true, // kept for backward compat with existing mission data
+        status: "active",
+      });
 
       // Activate the first pending slice (triggers auto-triage via activateSlice)
       await missionStore.activateSlice(nextSlice.id);

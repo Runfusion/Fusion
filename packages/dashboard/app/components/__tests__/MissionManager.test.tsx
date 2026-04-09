@@ -23,7 +23,6 @@ const mockMissions = [
     title: "Build Auth System",
     description: "Complete authentication flow",
     status: "planning",
-    autoAdvance: false,
     milestones: [],
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
@@ -33,7 +32,8 @@ const mockMissions = [
     title: "API Redesign",
     description: "Redesign the REST API",
     status: "active",
-    autoAdvance: true,
+    autopilotEnabled: true,
+    autopilotState: "watching",
     milestones: [],
     summary: {
       totalMilestones: 2,
@@ -52,7 +52,6 @@ const mockMissionDetail = {
   title: "Build Auth System",
   description: "Complete authentication flow",
   status: "planning",
-  autoAdvance: false,
   milestones: [
     {
       id: "MS-001",
@@ -1056,7 +1055,6 @@ describe("MissionManager", () => {
         title: "Generated Mission",
         description: "Mission with realistic generated ID",
         status: "planning",
-        autoAdvance: false,
         milestones: [],
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
@@ -1068,7 +1066,6 @@ describe("MissionManager", () => {
       title: "Generated Mission",
       description: "Mission with realistic generated ID",
       status: "planning",
-      autoAdvance: false,
       milestones: [
         {
           id: generatedMilestoneId,
@@ -1412,9 +1409,9 @@ describe("MissionManager", () => {
         title: "Autopilot Mission",
         description: "Mission with autopilot enabled",
         status: "active",
-        autoAdvance: true,
         autopilotEnabled: true,
         autopilotState: "watching",
+        lastAutopilotActivityAt: "2026-01-01T00:00:00.000Z",
         milestones: [],
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
@@ -1424,7 +1421,6 @@ describe("MissionManager", () => {
         title: "Normal Mission",
         description: "Mission without autopilot",
         status: "planning",
-        autoAdvance: false,
         autopilotEnabled: false,
         milestones: [],
         createdAt: "2026-01-01T00:00:00.000Z",
@@ -1437,9 +1433,9 @@ describe("MissionManager", () => {
       title: "Autopilot Mission",
       description: "Mission with autopilot enabled",
       status: "active",
-      autoAdvance: true,
       autopilotEnabled: true,
       autopilotState: "watching",
+      lastAutopilotActivityAt: "2026-01-01T00:00:00.000Z",
       milestones: [
         {
           id: "MS-001",
@@ -1532,7 +1528,7 @@ describe("MissionManager", () => {
       });
     });
 
-    it("shows enhanced autopilot controls with expected button states", async () => {
+    it("shows autopilot toggle and status badge", async () => {
       globalThis.fetch = createAutopilotFetchMock();
       render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
 
@@ -1542,20 +1538,16 @@ describe("MissionManager", () => {
       fireEvent.click(screen.getByText("Autopilot Mission"));
 
       await waitFor(() => {
-        expect(screen.getByTestId("mission-autopilot-start")).toBeDefined();
-        expect(screen.getByTestId("mission-autopilot-stop")).toBeDefined();
-        expect(screen.getByTestId("mission-autopilot-refresh")).toBeDefined();
+        // Should show autopilot toggle and state badge
+        expect(screen.getByLabelText("Autopilot")).toBeDefined();
+        expect(screen.getByTestId("autopilot-state-badge")).toBeDefined();
+        expect(screen.getByText(/Watching since/)).toBeDefined();
       });
 
-      const startButton = screen.getByTestId("mission-autopilot-start") as HTMLButtonElement;
-      const stopButton = screen.getByTestId("mission-autopilot-stop") as HTMLButtonElement;
-      const refreshButton = screen.getByTestId("mission-autopilot-refresh") as HTMLButtonElement;
-
-      expect(startButton.disabled).toBe(true);
-      expect(stopButton.disabled).toBe(false);
-      expect(refreshButton.disabled).toBe(false);
-      expect(screen.getByText(/Watching since/)).toBeDefined();
-      expect(screen.getByText(/Next check:/)).toBeDefined();
+      // Verify no action buttons exist (they were removed)
+      expect(screen.queryByTestId("mission-autopilot-start")).toBeNull();
+      expect(screen.queryByTestId("mission-autopilot-stop")).toBeNull();
+      expect(screen.queryByTestId("mission-autopilot-refresh")).toBeNull();
     });
 
     it("toggles autopilot with a PATCH request", async () => {

@@ -1005,7 +1005,6 @@ describe("MissionAutopilot", () => {
       ap.setScheduler(newScheduler);
 
       // Now advanceToNextSlice should use the new scheduler
-      // (but will be blocked by autoAdvance guard since default mission has autoAdvance: true)
       newScheduler.activateNextPendingSlice.mockResolvedValue(
         createMockSlice({ id: "SL-002", status: "active" }),
       );
@@ -1016,42 +1015,10 @@ describe("MissionAutopilot", () => {
     });
   });
 
-  // ── autoAdvance guard ────────────────────────────────────────────
+  // ── Slice Advancement ────────────────────────────────────────────
 
-  describe("autoAdvance guard", () => {
-    it("should not advance slice when autoAdvance is false", async () => {
-      const mission = createMockMission({ autoAdvance: false });
-      const store = createMockMissionStore([mission]);
-      const ap = new MissionAutopilot(taskStore as any, store as any, { scheduler });
-
-      ap.start();
-      ap.watchMission("M-TEST1");
-
-      await ap.advanceToNextSlice("M-TEST1");
-
-      // Should NOT call scheduler to activate next slice
-      expect(scheduler.activateNextPendingSlice).not.toHaveBeenCalled();
-
-      ap.stop();
-    });
-
-    it("should not advance slice when autoAdvance is undefined", async () => {
-      const mission = createMockMission({ autoAdvance: undefined });
-      const store = createMockMissionStore([mission]);
-      const ap = new MissionAutopilot(taskStore as any, store as any, { scheduler });
-
-      ap.start();
-      ap.watchMission("M-TEST1");
-
-      await ap.advanceToNextSlice("M-TEST1");
-
-      // Should NOT call scheduler to activate next slice
-      expect(scheduler.activateNextPendingSlice).not.toHaveBeenCalled();
-
-      ap.stop();
-    });
-
-    it("should advance slice when autoAdvance is true", async () => {
+  describe("slice advancement", () => {
+    it("should advance slice when autopilot is watching", async () => {
       autopilot.watchMission("M-TEST1");
       const activatedSlice = createMockSlice({ id: "SL-002", status: "active" });
       scheduler.activateNextPendingSlice.mockResolvedValue(activatedSlice);
@@ -1059,6 +1026,13 @@ describe("MissionAutopilot", () => {
       await autopilot.advanceToNextSlice("M-TEST1");
 
       expect(scheduler.activateNextPendingSlice).toHaveBeenCalledWith("M-TEST1");
+    });
+
+    it("should not advance slice when mission is not being watched", async () => {
+      // Don't watch the mission
+      await autopilot.advanceToNextSlice("M-TEST1");
+
+      expect(scheduler.activateNextPendingSlice).not.toHaveBeenCalled();
     });
   });
 });
