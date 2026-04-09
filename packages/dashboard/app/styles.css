@@ -26856,6 +26856,126 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   }
 }
 
+/* ── Mesh Topology ─────────────────────────────────────────────── */
+
+.mesh-topology {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: var(--space-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  min-height: 200px;
+}
+
+.mesh-topology__svg {
+  width: 100%;
+  max-width: 280px;
+  height: auto;
+}
+
+.mesh-topology__connections {
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.mesh-topology__link {
+  stroke-dasharray: 4 4;
+}
+
+.mesh-topology__node-group {
+  cursor: default;
+}
+
+.mesh-topology__node {
+  transition: filter var(--transition-fast);
+}
+
+.mesh-topology__node:hover {
+  filter: brightness(1.1);
+}
+
+.mesh-topology__node--local {
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+}
+
+.mesh-topology__node-icon {
+  font-family: var(--font-sans);
+  font-weight: 700;
+}
+
+.mesh-topology__node-label {
+  font-size: 12px;
+  font-weight: 500;
+  fill: var(--text);
+}
+
+.mesh-topology__node-type {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.mesh-topology--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mesh-topology__empty-state {
+  text-align: center;
+  color: var(--text-muted);
+  padding: var(--space-xl);
+}
+
+/* ── Connect Node Modal ──────────────────────────────────────────── */
+
+.connect-node-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.connect-node-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.connect-node-field label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.connect-node-field input {
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  transition: border-color var(--transition-fast);
+}
+
+.connect-node-field input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.connect-node-field .error-message {
+  font-size: 12px;
+  color: var(--color-error);
+}
+
+.connect-node-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  padding-top: var(--space-sm);
+}
+
 /* ── Quick Chat FAB ──────────────────────────────────────────────── */
 
 .quick-chat-fab {

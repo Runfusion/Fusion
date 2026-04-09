@@ -62,4 +62,12 @@ describe("Docker configuration", () => {
     expect(docs).toContain("run");
     expect(docs).toContain("environment variables");
   });
+
+  it("does not patch the CLI bundle at build time", () => {
+    const dockerfile = readFileSync(dockerfilePath, "utf8");
+    // The tsup bundle should be self-contained without runtime patches
+    expect(dockerfile).not.toContain("sed -i");
+    expect(dockerfile).not.toContain("node_modules/sqlite");
+    expect(dockerfile).not.toContain("createRequire");
+  });
 });

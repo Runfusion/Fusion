@@ -2710,6 +2710,28 @@ export async function fetchNodeMetrics(id: string): Promise<NodeMetrics> {
   };
 }
 
+/** Mesh topology connection to another node */
+export interface MeshPeerConnection {
+  peerId: string;
+  peerName: string;
+  status: NodeStatus;
+}
+
+/** Full mesh topology state with peer connections */
+export interface MeshState {
+  id: string;
+  name: string;
+  type: "local" | "remote";
+  status: NodeStatus;
+  url: string | null;
+  connections: MeshPeerConnection[];
+}
+
+/** Fetch the full mesh topology state */
+export async function fetchMeshState(): Promise<MeshState[]> {
+  return api<MeshState[]>("/mesh/state");
+}
+
 /** Browse directory entries for the directory picker */
 export interface BrowseDirectoryResult {
   currentPath: string;

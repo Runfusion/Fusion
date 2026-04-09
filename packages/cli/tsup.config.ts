@@ -30,6 +30,10 @@ export default defineConfig({
   noExternal: [/^@fusion\//],
   splitting: false,
   clean: true,
+  removeNodeProtocol: false,
+  banner: {
+    js: 'import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);',
+  },
   onSuccess: async () => {
     if (existsSync(dashboardClientDest)) {
       rmSync(dashboardClientDest, { recursive: true, force: true });

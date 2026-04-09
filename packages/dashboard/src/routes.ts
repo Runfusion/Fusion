@@ -10612,6 +10612,48 @@ Output ONLY the prompt text (no markdown, no explanations).`;
     }
   });
 
+  // ── Mesh Topology Routes ────────────────────────────────────────────────
+
+  /**
+   * GET /api/mesh/state
+   * Returns the full mesh topology state with peer connections between nodes.
+   */
+  router.get("/mesh/state", async (_req, res) => {
+    try {
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+
+      const nodes = await central.listNodes();
+      await central.close();
+
+      // Return nodes with connection info for topology visualization
+      const meshState = nodes.map((node) => ({
+        id: node.id,
+        name: node.name,
+        type: node.type,
+        status: node.status,
+        url: node.url ?? null,
+        // For now, we don't have peer-to-peer connection info,
+        // so all connections are shown as connected to local node
+        connections: nodes
+          .filter((n) => n.id !== node.id)
+          .map((n) => ({
+            peerId: n.id,
+            peerName: n.name,
+            status: n.status,
+          })),
+      }));
+
+      res.json(meshState);
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
   // ── Node Discovery Routes (mDNS / DNS-SD) ────────────────────────────────
 
   /**

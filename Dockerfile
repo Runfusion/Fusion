@@ -47,12 +47,6 @@ COPY packages/engine/package.json ./packages/engine/package.json
 RUN pnpm install --frozen-lockfile --prod \
   --filter @gsxdsm/fusion
 
-# tsup rewrites node:sqlite imports to "sqlite" in the CLI bundle.
-# Provide a tiny ESM shim so runtime resolves to Node's built-in sqlite module.
-RUN mkdir -p /project/node_modules/sqlite \
-  && printf '{"name":"sqlite","version":"0.0.0","type":"module","exports":"./index.js"}\n' > /project/node_modules/sqlite/package.json \
-  && printf 'export * from "node:sqlite";\n' > /project/node_modules/sqlite/index.js
-
 COPY --from=builder /app/packages/core/dist ./packages/core/dist
 COPY --from=builder /app/packages/engine/dist ./packages/engine/dist
 COPY --from=builder /app/packages/dashboard/dist ./packages/dashboard/dist
@@ -60,9 +54,6 @@ COPY --from=builder /app/packages/cli/dist ./packages/cli/dist
 
 # @gsxdsm/fusion references @sinclair/typebox at runtime via the bundled CLI.
 COPY --from=builder /app/node_modules/.pnpm/@sinclair+typebox@*/node_modules/@sinclair/typebox /project/node_modules/@sinclair/typebox
-
-# tsup emits dynamic require() helpers; provide require in ESM context.
-RUN sed -i '2i import { createRequire as __createRequire } from "node:module";\nconst require = __createRequire(import.meta.url);' /project/packages/cli/dist/bin.js
 
 RUN chown node:node /project
 

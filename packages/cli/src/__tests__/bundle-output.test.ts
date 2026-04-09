@@ -59,6 +59,32 @@ describe("CLI bundle output", () => {
     expect(tsupConfig).toContain("cpSync(dashboardClientSrc, dashboardClientDest, { recursive: true });");
   });
 
+  it("preserves node: prefix in node:sqlite imports", () => {
+    const content = readFileSync(bundlePath, "utf-8");
+    // Should have node:sqlite, not bare "sqlite"
+    expect(content).toContain('from "node:sqlite"');
+    expect(content).not.toMatch(/from\s+["']sqlite["'][^s]/);
+  });
+
+  it("provides require via createRequire banner", () => {
+    const content = readFileSync(bundlePath, "utf-8");
+    // Banner should inject createRequire for ESM CJS interop
+    expect(content).toContain('createRequire');
+    expect(content).toContain("import.meta.url");
+    // Banner should be near the top of the file (after shebang)
+    const shebangEnd = content.indexOf("\n");
+    const bannerPosition = content.indexOf("createRequire");
+    expect(bannerPosition).toBeLessThan(100);
+    expect(bannerPosition).toBeGreaterThan(shebangEnd);
+  });
+
+  it("preserves node: prefix in other node built-in imports", () => {
+    const content = readFileSync(bundlePath, "utf-8");
+    // Verify removeNodeProtocol: false is effective for other node: imports
+    expect(content).toMatch(/from\s+["']node:fs["']/);
+    expect(content).toMatch(/from\s+["']node:path["']/);
+  });
+
   it("runtime native assets are staged after build:exe", () => {
     const runtimeDir = join(cliRoot, "dist", "runtime");
     if (!existsSync(runtimeDir)) return;
