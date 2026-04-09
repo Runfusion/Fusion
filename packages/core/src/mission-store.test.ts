@@ -281,6 +281,295 @@ describe("MissionStore", () => {
     });
   });
 
+  // ── Batched Summary Tests ──────────────────────────────────────────────
+
+  describe("listMissionsWithSummaries", () => {
+    it("returns empty array when no missions exist", () => {
+      const result = store.listMissionsWithSummaries();
+      expect(result).toEqual([]);
+    });
+
+    it("returns correct summaries for multiple missions", () => {
+      // Mission 1: 2 milestones, 1 complete, 2 features, 1 done
+      const m1 = store.createMission({ title: "Mission 1" });
+      const ms1a = store.addMilestone(m1.id, { title: "MS1a" });
+      const ms1b = store.addMilestone(m1.id, { title: "MS1b" });
+      store.updateMilestone(ms1b.id, { status: "complete" });
+      const sl1 = store.addSlice(ms1a.id, { title: "SL1" });
+      const f1 = store.addFeature(sl1.id, { title: "F1" });
+      store.updateFeature(f1.id, { status: "done" });
+      const f2 = store.addFeature(sl1.id, { title: "F2" });
+      // f2 not done
+
+      // Mission 2: 1 milestone, 0 features
+      const m2 = store.createMission({ title: "Mission 2" });
+      store.addMilestone(m2.id, { title: "MS2" });
+
+      // Mission 3: 0 milestones
+      store.createMission({ title: "Mission 3" });
+
+      const result = store.listMissionsWithSummaries();
+
+      // Should be sorted by createdAt DESC (m3, m2, m1 based on creation order)
+      expect(result.length).toBe(3);
+
+      // Mission 3: 0 milestones, 0 features → 0%
+      const mission3 = result.find((m) => m.title === "Mission 3")!;
+      expect(mission3.summary).toEqual({
+        totalMilestones: 0,
+        completedMilestones: 0,
+        totalFeatures: 0,
+        completedFeatures: 0,
+        progressPercent: 0,
+      });
+
+      // Mission 2: 1 milestone, 0 features → 0%
+      const mission2 = result.find((m) => m.title === "Mission 2")!;
+      expect(mission2.summary).toEqual({
+        totalMilestones: 1,
+        completedMilestones: 0,
+        totalFeatures: 0,
+        completedFeatures: 0,
+        progressPercent: 0,
+      });
+
+      // Mission 1: 2 milestones (1 complete), 2 features (1 done) → 50%
+      const mission1 = result.find((m) => m.title === "Mission 1")!;
+      expect(mission1.summary).toEqual({
+        totalMilestones: 2,
+        completedMilestones: 1,
+        totalFeatures: 2,
+        completedFeatures: 1,
+        progressPercent: 50,
+      });
+    });
+
+    it("progress percent matches getMissionSummary behavior", () => {
+      const mission = store.createMission({ title: "Compare test" });
+      const milestone = store.addMilestone(mission.id, { title: "M1" });
+      const slice = store.addSlice(milestone.id, { title: "S1" });
+      const f1 = store.addFeature(slice.id, { title: "F1" });
+      store.updateFeature(f1.id, { status: "done" });
+      const f2 = store.addFeature(slice.id, { title: "F2" });
+      store.updateFeature(f2.id, { status: "done" });
+      const f3 = store.addFeature(slice.id, { title: "F3" });
+      // f3 not done
+
+      const singleSummary = store.getMissionSummary(mission.id);
+      const batchedResult = store.listMissionsWithSummaries().find((m) => m.id === mission.id)!;
+
+      expect(batchedResult.summary.totalMilestones).toBe(singleSummary.totalMilestones);
+      expect(batchedResult.summary.completedMilestones).toBe(singleSummary.completedMilestones);
+      expect(batchedResult.summary.totalFeatures).toBe(singleSummary.totalFeatures);
+      expect(batchedResult.summary.completedFeatures).toBe(singleSummary.completedFeatures);
+      expect(batchedResult.summary.progressPercent).toBe(singleSummary.progressPercent);
+    });
+  });
+
+  // ── Batched Health Tests ──────────────────────────────────────────────
+
+  describe("listMissionsHealth", () => {
+    it("returns empty map when no missions exist", () => {
+      const result = store.listMissionsHealth();
+      expect(result).toBeInstanceOf(Map);
+      expect(result.size).toBe(0);
+    });
+
+    it("returns correct health for a single empty mission", () => {
+      const mission = store.createMission({ title: "Empty mission" });
+      store.updateMission(mission.id, {
+        autopilotEnabled: true,
+        autopilotState: "watching",
+        lastAutopilotActivityAt: "2026-01-01T10:00:00.000Z",
+      });
+
+      const result = store.listMissionsHealth();
+
+      expect(result.size).toBe(1);
+      expect(result.get(mission.id)).toEqual({
+        missionId: mission.id,
+        status: "planning",
+        tasksCompleted: 0,
+        tasksFailed: 0,
+        tasksInFlight: 0,
+        totalTasks: 0,
+        currentSliceId: undefined,
+        currentMilestoneId: undefined,
+        estimatedCompletionPercent: 0,
+        lastErrorAt: undefined,
+        lastErrorDescription: undefined,
+        autopilotState: "watching",
+        autopilotEnabled: true,
+        lastActivityAt: "2026-01-01T10:00:00.000Z",
+      });
+    });
+
+    it("computes correct health for multiple missions with varying states", async () => {
+      // Mission 1: 1 milestone (active), 1 slice (active), 4 features (1 done, 2 in-flight, 1 failed)
+      const m1 = store.createMission({ title: "Mission 1" });
+      store.updateMission(m1.id, { status: "active" });
+      const ms1 = store.addMilestone(m1.id, { title: "MS1" });
+      store.updateMilestone(ms1.id, { status: "active" });
+      const sl1 = store.addSlice(ms1.id, { title: "SL1" });
+      store.updateSlice(sl1.id, { status: "active" });
+
+      const f1Done = store.addFeature(sl1.id, { title: "F1-done" });
+      store.updateFeature(f1Done.id, { status: "done" });
+
+      const f1Triaged = store.addFeature(sl1.id, { title: "F1-triaged" });
+      store.updateFeature(f1Triaged.id, { status: "triaged" });
+
+      const f1Progress = store.addFeature(sl1.id, { title: "F1-progress" });
+      store.updateFeature(f1Progress.id, { status: "in-progress" });
+
+      createTaskInDb(db, "FN-FAILED-1", "Failed task", "failed");
+      const f1Failed = store.addFeature(sl1.id, { title: "F1-failed" });
+      store.linkFeatureToTask(f1Failed.id, "FN-FAILED-1");
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Mission 2: 2 milestones (1 complete, 1 active), 0 features
+      const m2 = store.createMission({ title: "Mission 2" });
+      store.updateMission(m2.id, { status: "active" });
+      const ms2a = store.addMilestone(m2.id, { title: "MS2a" });
+      store.updateMilestone(ms2a.id, { status: "complete" });
+      const ms2b = store.addMilestone(m2.id, { title: "MS2b" });
+      store.updateMilestone(ms2b.id, { status: "active" });
+      const sl2 = store.addSlice(ms2b.id, { title: "SL2" });
+      store.updateSlice(sl2.id, { status: "active" });
+
+      store.logMissionEvent(m1.id, "error", "Error on mission 1");
+
+      const result = store.listMissionsHealth();
+
+      expect(result.size).toBe(2);
+
+      // Mission 1 health
+      const health1 = result.get(m1.id)!;
+      expect(health1).toEqual({
+        missionId: m1.id,
+        status: "active",
+        tasksCompleted: 1,
+        tasksFailed: 1,
+        tasksInFlight: 3,
+        totalTasks: 4,
+        currentSliceId: sl1.id,
+        currentMilestoneId: ms1.id,
+        estimatedCompletionPercent: 25,
+        lastErrorAt: expect.any(String),
+        lastErrorDescription: "Error on mission 1",
+        autopilotState: "inactive",
+        autopilotEnabled: false,
+        lastActivityAt: undefined,
+      });
+
+      // Mission 2 health: no features, 1/2 milestones complete → 50%
+      const health2 = result.get(m2.id)!;
+      expect(health2).toEqual({
+        missionId: m2.id,
+        status: "active",
+        tasksCompleted: 0,
+        tasksFailed: 0,
+        tasksInFlight: 0,
+        totalTasks: 0,
+        currentSliceId: sl2.id,
+        currentMilestoneId: ms2b.id,
+        estimatedCompletionPercent: 50,
+        lastErrorAt: undefined,
+        lastErrorDescription: undefined,
+        autopilotState: "inactive",
+        autopilotEnabled: false,
+        lastActivityAt: undefined,
+      });
+    });
+
+    it("counts failed tasks across missions correctly", () => {
+      const m1 = store.createMission({ title: "Mission 1" });
+      const ms1 = store.addMilestone(m1.id, { title: "MS1" });
+      const sl1 = store.addSlice(ms1.id, { title: "SL1" });
+
+      const m2 = store.createMission({ title: "Mission 2" });
+      const ms2 = store.addMilestone(m2.id, { title: "MS2" });
+      const sl2 = store.addSlice(ms2.id, { title: "SL2" });
+
+      createTaskInDb(db, "FN-FAIL-A", "Task A", "failed");
+      createTaskInDb(db, "FN-FAIL-B", "Task B", "failed");
+      createTaskInDb(db, "FN-OK-C", "Task C", "done");
+
+      const f1 = store.addFeature(sl1.id, { title: "F1" });
+      store.linkFeatureToTask(f1.id, "FN-FAIL-A");
+
+      const f2 = store.addFeature(sl2.id, { title: "F2" });
+      store.linkFeatureToTask(f2.id, "FN-FAIL-B");
+
+      const f3 = store.addFeature(sl2.id, { title: "F3" });
+      store.linkFeatureToTask(f3.id, "FN-OK-C");
+
+      const result = store.listMissionsHealth();
+
+      expect(result.get(m1.id)!.tasksFailed).toBe(1);
+      expect(result.get(m2.id)!.tasksFailed).toBe(1);
+    });
+
+    it("detects last error per mission independently", () => {
+      const m1 = store.createMission({ title: "Mission 1" });
+      const m2 = store.createMission({ title: "Mission 2" });
+
+      store.logMissionEvent(m1.id, "error", "Old error on M1");
+      store.logMissionEvent(m2.id, "error", "Only error on M2");
+      store.logMissionEvent(m1.id, "error", "Latest error on M1");
+
+      const result = store.listMissionsHealth();
+
+      expect(result.get(m1.id)!.lastErrorDescription).toBe("Latest error on M1");
+      expect(result.get(m2.id)!.lastErrorDescription).toBe("Only error on M2");
+    });
+
+    it("produces results consistent with getMissionHealth", () => {
+      const mission = store.createMission({ title: "Consistency test" });
+      store.updateMission(mission.id, {
+        status: "active",
+        autopilotEnabled: true,
+        autopilotState: "watching",
+        lastAutopilotActivityAt: "2026-01-01T10:00:00.000Z",
+      });
+
+      const milestone = store.addMilestone(mission.id, { title: "M1" });
+      store.updateMilestone(milestone.id, { status: "active" });
+      const slice = store.addSlice(milestone.id, { title: "S1" });
+      store.updateSlice(slice.id, { status: "active" });
+
+      const f1 = store.addFeature(slice.id, { title: "F1" });
+      store.updateFeature(f1.id, { status: "done" });
+
+      const f2 = store.addFeature(slice.id, { title: "F2" });
+      store.updateFeature(f2.id, { status: "triaged" });
+
+      createTaskInDb(db, "FN-FAILED-X", "Failed task", "failed");
+      const f3 = store.addFeature(slice.id, { title: "F3" });
+      store.linkFeatureToTask(f3.id, "FN-FAILED-X");
+
+      store.logMissionEvent(mission.id, "error", "Test error");
+
+      const singleHealth = store.getMissionHealth(mission.id);
+      const batchedHealth = store.listMissionsHealth().get(mission.id)!;
+
+      // Compare all fields except lastErrorAt (may differ by ms due to separate queries)
+      expect(batchedHealth.missionId).toBe(singleHealth!.missionId);
+      expect(batchedHealth.status).toBe(singleHealth!.status);
+      expect(batchedHealth.tasksCompleted).toBe(singleHealth!.tasksCompleted);
+      expect(batchedHealth.tasksFailed).toBe(singleHealth!.tasksFailed);
+      expect(batchedHealth.tasksInFlight).toBe(singleHealth!.tasksInFlight);
+      expect(batchedHealth.totalTasks).toBe(singleHealth!.totalTasks);
+      expect(batchedHealth.currentSliceId).toBe(singleHealth!.currentSliceId);
+      expect(batchedHealth.currentMilestoneId).toBe(singleHealth!.currentMilestoneId);
+      expect(batchedHealth.estimatedCompletionPercent).toBe(singleHealth!.estimatedCompletionPercent);
+      expect(batchedHealth.lastErrorDescription).toBe(singleHealth!.lastErrorDescription);
+      expect(batchedHealth.autopilotState).toBe(singleHealth!.autopilotState);
+      expect(batchedHealth.autopilotEnabled).toBe(singleHealth!.autopilotEnabled);
+    });
+  });
+
   // ── Mission Observability Tests ───────────────────────────────────────
 
   describe("Mission observability", () => {

@@ -251,19 +251,31 @@ export function createMissionRouter(
   /**
    * GET /api/missions
    * List all missions ordered by createdAt desc, with status summary
+   * Uses batched query for optimal performance.
    */
   router.get(
     "/",
     catchTypedHandler(async (_req, res) => {
-      const missions = missionStore.listMissions();
-      // Sort by createdAt desc
-      missions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      // Attach status summary to each mission
-      const missionsWithSummary = missions.map((mission) => ({
-        ...mission,
-        summary: missionStore.getMissionSummary(mission.id),
-      }));
+      const missionsWithSummary = missionStore.listMissionsWithSummaries();
       res.json(missionsWithSummary);
+    })
+  );
+
+  /**
+   * GET /api/missions/health
+   * Get health metrics for all missions in a single batched request.
+   * Returns a map of mission ID → health object.
+   */
+  router.get(
+    "/health",
+    catchTypedHandler(async (_req, res) => {
+      const healthMap = missionStore.listMissionsHealth();
+      // Convert Map to Record for JSON serialization
+      const result: Record<string, ReturnType<typeof healthMap.get>> = {};
+      for (const [missionId, health] of healthMap) {
+        result[missionId] = health;
+      }
+      res.json(result);
     })
   );
 

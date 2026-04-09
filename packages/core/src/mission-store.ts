@@ -336,6 +336,253 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
   }
 
   /**
+   * List all missions with computed summaries in a single batch of queries.
+   *
+   * Instead of N×(1 + M×(1 + S×1)) queries (one per mission, then per-milestone,
+   * per-slice, per-feature), this method fires 4 batch queries total and groups
+   * the data in-memory for summary computation.
+   *
+   * @returns Array of missions with summary, sorted by createdAt DESC
+   */
+  listMissionsWithSummaries(): Array<Mission & { summary: MissionSummary }> {
+    // 1. Fetch all missions
+    const missions = this.listMissions();
+    if (missions.length === 0) return [];
+
+    // 2. Batch query all milestones
+    const milestoneRows = this.db.prepare(
+      "SELECT * FROM milestones ORDER BY orderIndex ASC"
+    ).all() as any[];
+    const allMilestones = milestoneRows.map((row) => this.rowToMilestone(row));
+
+    // 3. Batch query all slices
+    const sliceRows = this.db.prepare(
+      "SELECT * FROM slices ORDER BY orderIndex ASC"
+    ).all() as any[];
+    const allSlices = sliceRows.map((row) => this.rowToSlice(row));
+
+    // 4. Batch query all features
+    const featureRows = this.db.prepare(
+      "SELECT * FROM mission_features ORDER BY createdAt ASC"
+    ).all() as any[];
+    const allFeatures = featureRows.map((row) => this.rowToFeature(row));
+
+    // 5. Group in-memory: slices by milestoneId, features by sliceId
+    const slicesByMilestoneId = new Map<string, Slice[]>();
+    for (const slice of allSlices) {
+      const list = slicesByMilestoneId.get(slice.milestoneId) || [];
+      list.push(slice);
+      slicesByMilestoneId.set(slice.milestoneId, list);
+    }
+
+    const featuresBySliceId = new Map<string, MissionFeature[]>();
+    for (const feature of allFeatures) {
+      const list = featuresBySliceId.get(feature.sliceId) || [];
+      list.push(feature);
+      featuresBySliceId.set(feature.sliceId, list);
+    }
+
+    // 6. Group milestones by missionId
+    const milestonesByMissionId = new Map<string, Milestone[]>();
+    for (const milestone of allMilestones) {
+      const list = milestonesByMissionId.get(milestone.missionId) || [];
+      list.push(milestone);
+      milestonesByMissionId.set(milestone.missionId, list);
+    }
+
+    // 7. Compute summary for each mission using grouped data
+    return missions.map((mission) => {
+      const milestones = milestonesByMissionId.get(mission.id) || [];
+      const totalMilestones = milestones.length;
+      const completedMilestones = milestones.filter((m) => m.status === "complete").length;
+
+      let totalFeatures = 0;
+      let completedFeatures = 0;
+
+      for (const milestone of milestones) {
+        const slices = slicesByMilestoneId.get(milestone.id) || [];
+        for (const slice of slices) {
+          const features = featuresBySliceId.get(slice.id) || [];
+          totalFeatures += features.length;
+          completedFeatures += features.filter((f) => f.status === "done").length;
+        }
+      }
+
+      let progressPercent = 0;
+      if (totalFeatures > 0) {
+        progressPercent = Math.round((completedFeatures / totalFeatures) * 100);
+      } else if (totalMilestones > 0) {
+        progressPercent = Math.round((completedMilestones / totalMilestones) * 100);
+      }
+
+      return {
+        ...mission,
+        summary: {
+          totalMilestones,
+          completedMilestones,
+          totalFeatures,
+          completedFeatures,
+          progressPercent,
+        },
+      };
+    });
+  }
+
+  /**
+   * Compute health for ALL missions in a single batch of queries.
+   *
+   * Instead of N × (1 + M + S + F + failedTasks + lastError) individual queries,
+   * this method fires a fixed number of batch queries and groups in-memory.
+   *
+   * @returns Map of mission ID → MissionHealth
+   */
+  listMissionsHealth(): Map<string, MissionHealth> {
+    const missions = this.listMissions();
+    if (missions.length === 0) return new Map();
+
+    // 1. Batch query all milestones
+    const milestoneRows = this.db.prepare(
+      "SELECT * FROM milestones ORDER BY orderIndex ASC"
+    ).all() as any[];
+    const allMilestones = milestoneRows.map((row) => this.rowToMilestone(row));
+
+    // 2. Batch query all slices
+    const sliceRows = this.db.prepare(
+      "SELECT * FROM slices ORDER BY orderIndex ASC"
+    ).all() as any[];
+    const allSlices = sliceRows.map((row) => this.rowToSlice(row));
+
+    // 3. Batch query all features
+    const featureRows = this.db.prepare(
+      "SELECT * FROM mission_features ORDER BY createdAt ASC"
+    ).all() as any[];
+    const allFeatures = featureRows.map((row) => this.rowToFeature(row));
+
+    // 4. Batch query all failed task IDs
+    const failedTaskRows = this.db.prepare(
+      "SELECT id FROM tasks WHERE status = 'failed'"
+    ).all() as Array<{ id: string }>;
+    const failedTaskIds = new Set(failedTaskRows.map((row) => row.id));
+
+    // 5. Batch query last error event per mission
+    const lastErrorRows = this.db.prepare(`
+      SELECT missionId, timestamp, description
+      FROM mission_events
+      WHERE eventType = 'error'
+      ORDER BY timestamp DESC, id DESC
+    `).all() as Array<{ missionId: string; timestamp: string; description: string }>;
+    // Only keep the first (latest) error per missionId
+    const lastErrorByMission = new Map<string, { timestamp: string; description: string }>();
+    for (const row of lastErrorRows) {
+      if (!lastErrorByMission.has(row.missionId)) {
+        lastErrorByMission.set(row.missionId, { timestamp: row.timestamp, description: row.description });
+      }
+    }
+
+    // 6. Group hierarchy in-memory
+    const milestonesByMissionId = new Map<string, Milestone[]>();
+    for (const milestone of allMilestones) {
+      const list = milestonesByMissionId.get(milestone.missionId) || [];
+      list.push(milestone);
+      milestonesByMissionId.set(milestone.missionId, list);
+    }
+
+    const slicesByMilestoneId = new Map<string, Slice[]>();
+    for (const slice of allSlices) {
+      const list = slicesByMilestoneId.get(slice.milestoneId) || [];
+      list.push(slice);
+      slicesByMilestoneId.set(slice.milestoneId, list);
+    }
+
+    const featuresBySliceId = new Map<string, MissionFeature[]>();
+    for (const feature of allFeatures) {
+      const list = featuresBySliceId.get(feature.sliceId) || [];
+      list.push(feature);
+      featuresBySliceId.set(feature.sliceId, list);
+    }
+
+    // 7. Compute health for each mission
+    const result = new Map<string, MissionHealth>();
+
+    for (const mission of missions) {
+      const milestones = milestonesByMissionId.get(mission.id) || [];
+
+      let totalTasks = 0;
+      let tasksCompleted = 0;
+      let tasksInFlight = 0;
+      let tasksFailed = 0;
+      let currentSliceId: string | undefined;
+      let currentMilestoneId: string | undefined;
+
+      let totalMilestones = milestones.length;
+      let completedMilestones = 0;
+      let totalFeatures = 0;
+      let completedFeatures = 0;
+
+      for (const milestone of milestones) {
+        if (milestone.status === "complete") {
+          completedMilestones++;
+        }
+        if (!currentMilestoneId && milestone.status === "active") {
+          currentMilestoneId = milestone.id;
+        }
+
+        const slices = slicesByMilestoneId.get(milestone.id) || [];
+        for (const slice of slices) {
+          if (!currentSliceId && slice.status === "active") {
+            currentSliceId = slice.id;
+            currentMilestoneId ??= milestone.id;
+          }
+
+          const features = featuresBySliceId.get(slice.id) || [];
+          for (const feature of features) {
+            totalFeatures++;
+            totalTasks += 1;
+            if (feature.status === "done") {
+              tasksCompleted += 1;
+              completedFeatures++;
+            }
+            if (feature.status === "triaged" || feature.status === "in-progress") {
+              tasksInFlight += 1;
+            }
+            if (feature.taskId && failedTaskIds.has(feature.taskId)) {
+              tasksFailed++;
+            }
+          }
+        }
+      }
+
+      let progressPercent = 0;
+      if (totalFeatures > 0) {
+        progressPercent = Math.round((completedFeatures / totalFeatures) * 100);
+      } else if (totalMilestones > 0) {
+        progressPercent = Math.round((completedMilestones / totalMilestones) * 100);
+      }
+
+      const lastError = lastErrorByMission.get(mission.id);
+
+      result.set(mission.id, {
+        missionId: mission.id,
+        status: mission.status,
+        tasksCompleted,
+        tasksFailed,
+        tasksInFlight,
+        totalTasks,
+        currentSliceId,
+        currentMilestoneId,
+        estimatedCompletionPercent: progressPercent,
+        lastErrorAt: lastError?.timestamp,
+        lastErrorDescription: lastError?.description,
+        autopilotState: mission.autopilotState ?? "inactive",
+        autopilotEnabled: mission.autopilotEnabled ?? false,
+        lastActivityAt: mission.lastAutopilotActivityAt,
+      });
+    }
+
+    return result;
+  }
+
+  /**
    * Persist a mission lifecycle event for observability and auditing.
    */
   logMissionEvent(

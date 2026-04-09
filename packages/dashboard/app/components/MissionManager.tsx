@@ -71,6 +71,7 @@ import {
   startMissionAutopilot,
   stopMissionAutopilot,
   fetchMissionHealth,
+  fetchMissionsHealth,
   fetchMissionEvents,
 } from "../api";
 import type { AutopilotStatus as AutopilotStatusType, AutopilotState } from "./mission-types";
@@ -429,21 +430,14 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       return;
     }
 
-    const healthResults = await Promise.allSettled(
-      missionList.map(async (mission) => {
-        const health = await fetchMissionHealth(mission.id, projectId);
-        return [mission.id, health] as const;
-      }),
-    );
+    // Use batched endpoint for optimal performance (1 request instead of N)
+    const healthRecord = await fetchMissionsHealth(projectId);
 
     setMissionHealthById((prev) => {
       const next = new Map(prev);
-      for (const result of healthResults) {
-        if (result.status === "fulfilled") {
-          const [missionId, health] = result.value;
-          if (isMissionHealth(health)) {
-            next.set(missionId, health);
-          }
+      for (const [missionId, health] of Object.entries(healthRecord)) {
+        if (isMissionHealth(health)) {
+          next.set(missionId, health);
         }
       }
       return next;

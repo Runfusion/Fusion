@@ -3074,6 +3074,11 @@ export function fetchMissionHealth(missionId: string, projectId?: string): Promi
   return api<MissionHealth>(withProjectId(`/missions/${encodeURIComponent(missionId)}/health`, projectId));
 }
 
+/** Fetch health metrics for all missions in a single batched request. */
+export function fetchMissionsHealth(projectId?: string): Promise<Record<string, MissionHealth>> {
+  return api<Record<string, MissionHealth>>(withProjectId("/missions/health", projectId));
+}
+
 /** Add milestone to mission */
 export function createMilestone(
   missionId: string,
