@@ -1,5 +1,5 @@
 import type { ProjectInfo } from "../api";
-import type { ColorTheme, Column, MergeResult, Task, TaskCreateInput, TaskDetail, ThemeMode } from "@fusion/core";
+import type { ColorTheme, Column, MergeResult, Task, TaskCreateInput, ThemeMode } from "@fusion/core";
 import type { UseProjectActionsResult } from "../hooks/useProjectActions";
 import type { ModalManager } from "../hooks/useModalManager";
 import type { UseTaskHandlersResult } from "../hooks/useTaskHandlers";
@@ -199,7 +199,7 @@ export function AppModals({
         onOpenTaskDetail={(taskId) => {
           const task = tasks.find((candidate) => candidate.id === taskId);
           if (task) {
-            modalManager.openDetailTask(task as TaskDetail);
+            modalManager.openDetailTask(task);
           }
         }}
       />

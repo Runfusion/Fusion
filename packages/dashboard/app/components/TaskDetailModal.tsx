@@ -170,11 +170,11 @@ function formatBytes(bytes: number): string {
 type TabId = "definition" | "logs" | "changes" | "commits" | "comments" | "model" | "workflow";
 
 interface TaskDetailModalProps {
-  task: TaskDetail;
+  task: Task | TaskDetail;
   projectId?: string;
   tasks?: Task[];
   onClose: () => void;
-  onOpenDetail: (task: TaskDetail) => void; // For clicking dependencies
+  onOpenDetail: (task: Task | TaskDetail) => void; // For clicking dependencies
   onMoveTask: (id: string, column: Column) => Promise<Task>;
   onDeleteTask: (id: string) => Promise<Task>;
   onMergeTask: (id: string) => Promise<MergeResult>;
@@ -211,6 +211,49 @@ export function TaskDetailModal({
 }: TaskDetailModalProps) {
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);
 
+  // ── Async detail loading ──────────────────────────────────────────────────
+  // When opened optimistically with a Task (no prompt), fetch the full
+  // TaskDetail in the background. The modal renders immediately with the
+  // lightweight data and shows a loading indicator in the spec section.
+  const [fullDetail, setFullDetail] = useState<TaskDetail | null>(() =>
+    "prompt" in task ? (task as TaskDetail) : null,
+  );
+  const [detailLoading, setDetailLoading] = useState(() =>
+    !("prompt" in task),
+  );
+
+  useEffect(() => {
+    // If the prop already has a prompt field, it's a full TaskDetail
+    if ("prompt" in task) {
+      setFullDetail(task as TaskDetail);
+      setDetailLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setDetailLoading(true);
+    setFullDetail(null);
+
+    fetchTaskDetail(task.id, projectId)
+      .then((detail) => {
+        if (!cancelled) {
+          setFullDetail(detail);
+          setDetailLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDetailLoading(false);
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, [task.id, projectId]);
+
+  // Derive a working task that always has all available fields.
+  // Falls back to the optimistic Task while loading, uses fullDetail once loaded.
+  const workingTask: TaskDetail = fullDetail ?? { ...task, prompt: "" } as TaskDetail;
+
   // Sync activeTab when the caller changes initialTab (e.g. opening a different tab)
   useEffect(() => {
     setActiveTab(initialTab);
@@ -229,7 +272,7 @@ export function TaskDetailModal({
   const [isSavingSpec, setIsSavingSpec] = useState(false);
   const [isRequestingRevision, setIsRequestingRevision] = useState(false);
   const [isEditingSpec, setIsEditingSpec] = useState(false);
-  const [specEditContent, setSpecEditContent] = useState(task.prompt || "");
+  const [specEditContent, setSpecEditContent] = useState(workingTask.prompt || "");
   const [specFeedback, setSpecFeedback] = useState("");
   const [showRefineModal, setShowRefineModal] = useState(false);
   const [refineFeedback, setRefineFeedback] = useState("");
@@ -350,9 +393,9 @@ export function TaskDetailModal({
   // Reset spec edit state when task changes
   useEffect(() => {
     setIsEditingSpec(false);
-    setSpecEditContent(task.prompt || "");
+    setSpecEditContent(workingTask.prompt || "");
     setSpecFeedback("");
-  }, [task.id, task.prompt]);
+  }, [task.id, workingTask.prompt]);
 
   // Note: TaskForm handles auto-focus internally via isActive prop
 
@@ -789,17 +832,19 @@ export function TaskDetailModal({
   const handleSaveSpec = useCallback(async (newContent: string) => {
     setIsSavingSpec(true);
     try {
-      await updateTask(task.id, { prompt: newContent }, projectId);
+      await updateTask(workingTask.id, { prompt: newContent }, projectId);
       addToast("Spec updated", "success");
-      // Update local task data
-      task.prompt = newContent;
+      // Update local detail data
+      if (fullDetail) {
+        fullDetail.prompt = newContent;
+      }
     } catch (err: any) {
       addToast(err.message, "error");
       throw err;
     } finally {
       setIsSavingSpec(false);
     }
-  }, [task, addToast]);
+  }, [workingTask, fullDetail, addToast]);
 
   const handleRequestSpecRevision = useCallback(async (feedback: string) => {
     setIsRequestingRevision(true);
@@ -822,24 +867,24 @@ export function TaskDetailModal({
   // Spec editing handlers (depend on handleSaveSpec and handleRequestSpecRevision)
   const enterSpecEditMode = useCallback(() => {
     setIsEditingSpec(true);
-    setSpecEditContent(task.prompt || "");
+    setSpecEditContent(workingTask.prompt || "");
     setSpecFeedback("");
-  }, [task.prompt]);
+  }, [workingTask.prompt]);
 
   const exitSpecEditMode = useCallback(() => {
     setIsEditingSpec(false);
-    setSpecEditContent(task.prompt || "");
+    setSpecEditContent(workingTask.prompt || "");
     setSpecFeedback("");
-  }, [task.prompt]);
+  }, [workingTask.prompt]);
 
   const handleSaveSpecFromEdit = useCallback(async () => {
-    if (specEditContent === (task.prompt || "")) {
+    if (specEditContent === (workingTask.prompt || "")) {
       exitSpecEditMode();
       return;
     }
     await handleSaveSpec(specEditContent);
     setIsEditingSpec(false);
-  }, [specEditContent, task.prompt, handleSaveSpec, exitSpecEditMode]);
+  }, [specEditContent, workingTask.prompt, handleSaveSpec, exitSpecEditMode]);
 
   const handleRequestRevisionFromEdit = useCallback(async () => {
     if (!specFeedback.trim()) return;
@@ -1196,7 +1241,7 @@ export function TaskDetailModal({
                   <button
                     className="btn btn-primary btn-sm"
                     onClick={() => void handleSaveSpecFromEdit()}
-                    disabled={specEditContent === (task.prompt || "") || isSavingSpec}
+                    disabled={specEditContent === (workingTask.prompt || "") || isSavingSpec}
                   >
                     {isSavingSpec ? "Saving…" : "Save"}
                   </button>
@@ -1233,10 +1278,12 @@ export function TaskDetailModal({
                   </div>
                 </div>
               </div>
-            ) : task.prompt ? (
+            ) : detailLoading ? (
+              <div className="spec-loading">Loading specification…</div>
+            ) : workingTask.prompt ? (
               <div className="markdown-body">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {task.prompt.replace(/^#\s+[^\n]*\n+/, "")}
+                  {workingTask.prompt.replace(/^#\s+[^\n]*\n+/, "")}
                 </ReactMarkdown>
               </div>
             ) : (
@@ -1455,7 +1502,7 @@ export function TaskDetailModal({
             </button>
           )}
           {/* Approve/Reject Plan buttons for tasks awaiting approval */}
-          {task.column === "triage" && task.status === "awaiting-approval" && task.prompt && (
+          {task.column === "triage" && task.status === "awaiting-approval" && workingTask.prompt && (
             <>
               <button className="btn btn-primary btn-sm" onClick={handleApprovePlan}>
                 Approve Plan

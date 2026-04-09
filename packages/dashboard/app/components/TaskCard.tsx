@@ -77,7 +77,7 @@ interface TaskCardProps {
   task: Task;
   projectId?: string;
   queued?: boolean;
-  onOpenDetail: (task: TaskDetail) => void;
+  onOpenDetail: (task: Task | TaskDetail) => void;
   addToast: (message: string, type?: ToastType) => void;
   globalPaused?: boolean;
   onUpdateTask?: (
@@ -86,7 +86,7 @@ interface TaskCardProps {
   ) => Promise<Task>;
   onArchiveTask?: (id: string) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
-  onOpenDetailWithTab?: (task: TaskDetail, initialTab: "changes") => void;
+  onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes") => void;
   /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
   taskStuckTimeoutMs?: number;
   /** Called when user clicks the mission badge on a task card. */
@@ -336,15 +336,10 @@ function TaskCardComponent({
     }
   }, [task.id, isFileDrag, addToast]);
 
-  const handleClick = useCallback(async () => {
+  const handleClick = useCallback(() => {
     if (isEditing) return; // Don't open detail when editing
-    try {
-      const detail = await fetchTaskDetail(task.id, projectId);
-      onOpenDetail(detail);
-    } catch {
-      addToast("Failed to load task details", "error");
-    }
-  }, [task.id, onOpenDetail, addToast, isEditing]);
+    onOpenDetail(task);
+  }, [task, onOpenDetail, isEditing]);
 
   const handleCardClick = useCallback((e: React.MouseEvent) => {
     if (touchOpenHandledRef.current) {
@@ -591,15 +586,10 @@ function TaskCardComponent({
     });
   }, [addToast, onUnarchiveTask, task.id]);
 
-  const handleOpenFiles = useCallback(async (e: React.MouseEvent) => {
+  const handleOpenFiles = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
-    try {
-      const detail = await fetchTaskDetail(task.id, projectId);
-      onOpenDetailWithTab?.(detail, "changes");
-    } catch {
-      addToast("Failed to load task details", "error");
-    }
-  }, [task.id, projectId, onOpenDetailWithTab, addToast]);
+    onOpenDetailWithTab?.(task, "changes");
+  }, [task, onOpenDetailWithTab]);
 
   const handleToggleSteps = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();

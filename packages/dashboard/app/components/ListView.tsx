@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo, Fragment, useEffect, useRef } from "rea
 import { LayoutGrid, List as ListIcon, ArrowUpDown, ArrowUp, ArrowDown, Search, Link, Columns3, EyeOff, Eye, ChevronRight } from "lucide-react";
 import type { Task, TaskDetail, Column, TaskStep, TaskCreateInput } from "@fusion/core";
 import { COLUMN_LABELS, COLUMNS } from "@fusion/core";
-import { fetchTaskDetail, batchUpdateTaskModels } from "../api";
+import { batchUpdateTaskModels } from "../api";
 import type { ModelInfo } from "../api";
 import { QuickEntryBox } from "./QuickEntryBox";
 import { CustomModelDropdown } from "./CustomModelDropdown";
@@ -97,7 +97,7 @@ function readSelectedTaskIds(projectId?: string): Set<string> {
 interface ListViewProps {
   tasks: Task[];
   onMoveTask: (id: string, column: Column) => Promise<Task>;
-  onOpenDetail: (task: TaskDetail) => void;
+  onOpenDetail: (task: Task | TaskDetail) => void;
   addToast: (message: string, type?: ToastType) => void;
   globalPaused?: boolean;
   onNewTask?: () => void;
@@ -523,15 +523,10 @@ export function ListView({
   }, [selectedTaskIds, tasks, executorModel, validatorModel, projectId, addToast, clearSelection, onTasksUpdated]);
 
   const handleRowClick = useCallback(
-    async (task: Task) => {
-      try {
-        const detail = await fetchTaskDetail(task.id, projectId);
-        onOpenDetail(detail);
-      } catch (err: any) {
-        addToast("Failed to load task details", "error");
-      }
+    (task: Task) => {
+      onOpenDetail(task);
     },
-    [onOpenDetail, addToast, projectId]
+    [onOpenDetail]
   );
 
   const handleDragStart = useCallback(

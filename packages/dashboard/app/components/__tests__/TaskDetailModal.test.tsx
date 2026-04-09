@@ -4464,4 +4464,217 @@ describe("TaskDetailModal", () => {
       });
     });
   });
+
+  describe("optimistic opening with Task", () => {
+    beforeEach(async () => {
+      const { fetchTaskDetail } = await import("../../api");
+      vi.mocked(fetchTaskDetail).mockReset();
+    });
+
+    it("renders immediately when opened with a Task prop (no prompt)", async () => {
+      const { fetchTaskDetail } = await import("../../api");
+      vi.mocked(fetchTaskDetail).mockResolvedValueOnce({
+        id: "FN-200",
+        description: "Optimistic task",
+        column: "todo",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+        prompt: "# Spec",
+      } as TaskDetail);
+
+      const task: Task = {
+        id: "FN-200",
+        description: "Optimistic task",
+        column: "todo",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+      } as Task;
+
+      const { container } = render(
+        <TaskDetailModal
+          task={task}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Modal renders immediately without crashing
+      expect(container.querySelector(".modal-overlay")).toBeTruthy();
+      expect(screen.getByText("FN-200")).toBeDefined();
+    });
+
+    it("calls fetchTaskDetail on mount when prop is Task without prompt", async () => {
+      const { fetchTaskDetail } = await import("../../api");
+      const mockFetch = vi.mocked(fetchTaskDetail);
+      mockFetch.mockResolvedValueOnce({
+        id: "FN-201",
+        description: "Optimistic task",
+        column: "todo",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+        prompt: "# Spec",
+      } as TaskDetail);
+
+      const task: Task = {
+        id: "FN-201",
+        description: "Optimistic task",
+        column: "todo",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+      } as Task;
+
+      render(
+        <TaskDetailModal
+          task={task}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith("FN-201", undefined);
+      });
+    });
+
+    it("does NOT call fetchTaskDetail when prop is already a TaskDetail with prompt", async () => {
+      const { fetchTaskDetail } = await import("../../api");
+      const mockFetch = vi.mocked(fetchTaskDetail);
+
+      const detail: TaskDetail = {
+        id: "FN-202",
+        description: "Full detail task",
+        column: "todo",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+        prompt: "# Full spec",
+      } as TaskDetail;
+
+      render(
+        <TaskDetailModal
+          task={detail}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Give a tick for any async operations
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(mockFetch).not.toHaveBeenCalledWith("FN-202", undefined);
+    });
+
+    it("shows loading state in spec area when detailLoading is true", async () => {
+      const { fetchTaskDetail } = await import("../../api");
+      const mockFetch = vi.mocked(fetchTaskDetail);
+      // Set up a pending promise so loading state persists
+      mockFetch.mockReturnValueOnce(new Promise(() => {}));
+
+      const task: Task = {
+        id: "FN-203",
+        description: "Loading spec test",
+        column: "todo",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+      } as Task;
+
+      render(
+        <TaskDetailModal
+          task={task}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getByText("Loading specification…")).toBeDefined();
+    });
+
+    it("shows spec content after fetchTaskDetail resolves", async () => {
+      const { fetchTaskDetail } = await import("../../api");
+      const mockFetch = vi.mocked(fetchTaskDetail);
+
+      const task: Task = {
+        id: "FN-204",
+        description: "Async spec test",
+        column: "todo",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+      } as Task;
+
+      const fullDetail: TaskDetail = {
+        ...task,
+        prompt: "# Async Spec\n\nThis is the loaded spec content.",
+      } as TaskDetail;
+
+      // Resolve with full detail
+      mockFetch.mockResolvedValueOnce(fullDetail);
+
+      const { container } = render(
+        <TaskDetailModal
+          task={task}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Initially shows loading
+      expect(screen.getByText("Loading specification…")).toBeDefined();
+
+      // After fetch resolves, spec content appears
+      await waitFor(() => {
+        const markdownBody = container.querySelector(".markdown-body");
+        expect(markdownBody).toBeTruthy();
+      }, { timeout: 3000 });
+
+      // Loading indicator should be gone
+      expect(screen.queryByText("Loading specification…")).toBeNull();
+    });
+  });
 });

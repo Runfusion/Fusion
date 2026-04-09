@@ -30,7 +30,8 @@ export interface ModalManager {
   isSubtaskOpen: boolean;
   subtaskInitialDescription: string | null;
   subtaskResumeSessionId: string | undefined;
-  detailTask: TaskDetail | null;
+  // Can be Task (optimistic open) or TaskDetail (full data with prompt)
+  detailTask: (Task | TaskDetail) | null;
   detailTaskInitialTab: DetailTaskTab;
   settingsOpen: boolean;
   settingsInitialSection: SectionId | undefined;
@@ -67,8 +68,8 @@ export interface ModalManager {
   openSubtaskWithSession: (sessionId: string) => void;
   closeSubtask: () => void;
 
-  openDetailTask: (task: TaskDetail, initialTab?: DetailTaskTab) => void;
-  openDetailWithChangesTab: (task: TaskDetail) => void;
+  openDetailTask: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
+  openDetailWithChangesTab: (task: Task | TaskDetail) => void;
   updateDetailTask: (updated: Partial<TaskDetail>) => void;
   closeDetailTask: () => void;
 
@@ -137,7 +138,8 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const [isSubtaskOpen, setIsSubtaskOpen] = useState(false);
   const [subtaskInitialDescription, setSubtaskInitialDescription] = useState<string | null>(null);
   const [subtaskResumeSessionId, setSubtaskResumeSessionId] = useState<string | undefined>(undefined);
-  const [detailTask, setDetailTask] = useState<TaskDetail | null>(null);
+  // Can be Task (optimistic open) or TaskDetail (full data with prompt)
+  const [detailTask, setDetailTask] = useState<(Task | TaskDetail) | null>(null);
   const [detailTaskInitialTab, setDetailTaskInitialTab] = useState<DetailTaskTab>("definition");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SectionId | undefined>(undefined);
@@ -218,11 +220,11 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     setSubtaskResumeSessionId(undefined);
   }, []);
 
-  const openDetailTask = useCallback((task: TaskDetail, initialTab: DetailTaskTab = "definition") => {
+  const openDetailTask = useCallback((task: Task | TaskDetail, initialTab: DetailTaskTab = "definition") => {
     setDetailTask(task);
     setDetailTaskInitialTab(initialTab);
   }, []);
-  const openDetailWithChangesTab = useCallback((task: TaskDetail) => {
+  const openDetailWithChangesTab = useCallback((task: Task | TaskDetail) => {
     setDetailTask(task);
     setDetailTaskInitialTab("changes");
   }, []);

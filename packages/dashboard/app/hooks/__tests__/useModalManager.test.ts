@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import type { TaskDetail } from "@fusion/core";
+import type { Task, TaskDetail } from "@fusion/core";
 import { useModalManager } from "../useModalManager";
 import * as api from "../../api";
 
@@ -29,7 +29,28 @@ function createTaskDetail(id: string): TaskDetail {
     size: "M",
     reviewLevel: 1,
     steeringComments: [],
+    prompt: "# Task spec",
   } as TaskDetail;
+}
+
+function createTask(id: string): Task {
+  return {
+    id,
+    title: `Task ${id}`,
+    description: "desc",
+    column: "todo",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    columnMovedAt: new Date().toISOString(),
+    dependencies: [],
+    steps: [],
+    currentStep: 0,
+    log: [],
+    attachments: [],
+    size: "M",
+    reviewLevel: 1,
+    steeringComments: [],
+  } as Task;
 }
 
 describe("useModalManager", () => {
@@ -178,5 +199,59 @@ describe("useModalManager", () => {
 
     expect(result.current.settingsOpen).toBe(false);
     expect(result.current.settingsInitialSection).toBeUndefined();
+  });
+
+  it("accepts plain Task object for optimistic modal opening", () => {
+    const task = createTask("FN-456");
+    const { result } = renderHook(() =>
+      useModalManager({ projectId: "proj_1", planningSessions: [] }),
+    );
+
+    act(() => {
+      result.current.openDetailTask(task);
+    });
+
+    expect(result.current.detailTask?.id).toBe("FN-456");
+    // Should not have prompt field (plain Task)
+    expect("prompt" in (result.current.detailTask as Record<string, unknown>)).toBe(false);
+    expect(result.current.detailTaskInitialTab).toBe("definition");
+  });
+
+  it("accepts plain Task object in openDetailWithChangesTab", () => {
+    const task = createTask("FN-789");
+    const { result } = renderHook(() =>
+      useModalManager({ projectId: "proj_1", planningSessions: [] }),
+    );
+
+    act(() => {
+      result.current.openDetailWithChangesTab(task);
+    });
+
+    expect(result.current.detailTask?.id).toBe("FN-789");
+    expect(result.current.detailTaskInitialTab).toBe("changes");
+  });
+
+  it("holds Task object in detailTask state correctly", () => {
+    const task = createTask("FN-100");
+    const { result } = renderHook(() =>
+      useModalManager({ projectId: "proj_1", planningSessions: [] }),
+    );
+
+    act(() => {
+      result.current.openDetailTask(task);
+    });
+
+    // State should hold the Task object with all its fields
+    const detailTask = result.current.detailTask;
+    expect(detailTask).not.toBeNull();
+    expect(detailTask!.id).toBe("FN-100");
+    expect(detailTask!.title).toBe("Task FN-100");
+    expect(detailTask!.column).toBe("todo");
+
+    // Can be closed and state resets
+    act(() => {
+      result.current.closeDetailTask();
+    });
+    expect(result.current.detailTask).toBeNull();
   });
 });

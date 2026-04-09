@@ -2532,15 +2532,7 @@ describe("TaskCard detail opening", () => {
     vi.clearAllMocks();
   });
 
-  it("opens modal when clicking the card body", async () => {
-    const { fetchTaskDetail } = await import("../../api");
-    const mockFetch = vi.mocked(fetchTaskDetail);
-    const mockDetail: TaskDetail = {
-      ...makeTask({ id: "FN-099" }),
-      prompt: "",
-      attachments: [],
-    };
-    mockFetch.mockResolvedValueOnce(mockDetail);
+  it("opens modal immediately with Task when clicking the card body", async () => {
     const onOpenDetail = vi.fn();
 
     const task = makeTask();
@@ -2559,21 +2551,12 @@ describe("TaskCard detail opening", () => {
     const cardTitle = screen.getByText("Test task");
     fireEvent.click(cardTitle);
 
-    await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledWith("FN-099", undefined);
-      expect(onOpenDetail).toHaveBeenCalledWith(mockDetail);
-    });
+    // Should call onOpenDetail synchronously with the Task object (no fetch)
+    expect(onOpenDetail).toHaveBeenCalledWith(task);
+    expect(onOpenDetail).toHaveBeenCalledTimes(1);
   });
 
   it("opens modal only once per card click", async () => {
-    const { fetchTaskDetail } = await import("../../api");
-    const mockFetch = vi.mocked(fetchTaskDetail);
-    const mockDetail: TaskDetail = {
-      ...makeTask({ id: "FN-099" }),
-      prompt: "",
-      attachments: [],
-    };
-    mockFetch.mockResolvedValueOnce(mockDetail);
     const onOpenDetail = vi.fn();
     const task = makeTask();
 
@@ -2587,11 +2570,9 @@ describe("TaskCard detail opening", () => {
 
     fireEvent.click(screen.getByText("Test task"));
 
-    await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledWith("FN-099", undefined);
-      expect(onOpenDetail).toHaveBeenCalledWith(mockDetail);
-      expect(onOpenDetail).toHaveBeenCalledTimes(1);
-    });
+    // Should call onOpenDetail synchronously with the Task object (no fetch)
+    expect(onOpenDetail).toHaveBeenCalledWith(task);
+    expect(onOpenDetail).toHaveBeenCalledTimes(1);
   });
 
   it("does NOT open modal during vertical scrolling", async () => {

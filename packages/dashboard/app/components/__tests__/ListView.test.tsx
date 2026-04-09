@@ -204,42 +204,30 @@ describe("ListView", () => {
     expect(screen.getByText("FN-002")).toBeDefined();
   });
 
-  it("calls onOpenDetail when row is clicked", async () => {
+  it("calls onOpenDetail synchronously with Task when row is clicked", async () => {
     const tasks = [createMockTask({ id: "FN-001", title: "Test Task" })];
     const mockOnOpenDetail = vi.fn();
-    const mockDetail: TaskDetail = {
-      ...tasks[0],
-      prompt: "Test prompt",
-    };
-
-    (fetchTaskDetail as ReturnType<typeof vi.fn>).mockResolvedValueOnce(mockDetail);
 
     renderListView({ tasks, onOpenDetail: mockOnOpenDetail });
 
     const row = screen.getByText("FN-001").closest("tr");
     fireEvent.click(row!);
 
-    await waitFor(() => {
-      expect(fetchTaskDetail).toHaveBeenCalledWith("FN-001", TEST_PROJECT_ID);
-    });
-
-    expect(mockOnOpenDetail).toHaveBeenCalledWith(mockDetail);
+    // Should call onOpenDetail synchronously with the Task object (no fetch)
+    expect(mockOnOpenDetail).toHaveBeenCalledWith(tasks[0]);
+    expect(mockOnOpenDetail).toHaveBeenCalledTimes(1);
   });
 
-  it("shows error toast when fetchTaskDetail fails", async () => {
+  it("does not call fetchTaskDetail on row click", () => {
     const tasks = [createMockTask({ id: "FN-001", title: "Test Task" })];
     const mockOnOpenDetail = vi.fn();
-
-    (fetchTaskDetail as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Network error"));
 
     renderListView({ tasks, onOpenDetail: mockOnOpenDetail });
 
     const row = screen.getByText("FN-001").closest("tr");
     fireEvent.click(row!);
 
-    await waitFor(() => {
-      expect(mockAddToast).toHaveBeenCalledWith("Failed to load task details", "error");
-    });
+    expect(fetchTaskDetail).not.toHaveBeenCalled();
   });
 
   it("sorts tasks by ID when ID header is clicked", () => {
@@ -2212,12 +2200,6 @@ describe("ListView - Bulk Selection", () => {
       mockMobileViewport();
       const task = createMockTask({ id: "FN-001", title: "Open me" });
       const mockOnOpenDetail = vi.fn();
-      const detail: TaskDetail = {
-        ...task,
-        prompt: "Prompt content",
-      };
-
-      (fetchTaskDetail as ReturnType<typeof vi.fn>).mockResolvedValueOnce(detail);
 
       const { container } = renderListView({
         tasks: [task],
@@ -2226,10 +2208,9 @@ describe("ListView - Bulk Selection", () => {
 
       fireEvent.click(container.querySelector('.list-card[data-id="FN-001"]') as HTMLElement);
 
-      await waitFor(() => {
-        expect(fetchTaskDetail).toHaveBeenCalledWith("FN-001", TEST_PROJECT_ID);
-      });
-      expect(mockOnOpenDetail).toHaveBeenCalledWith(detail);
+      // Should call onOpenDetail synchronously with the Task object (no fetch)
+      expect(mockOnOpenDetail).toHaveBeenCalledWith(task);
+      expect(mockOnOpenDetail).toHaveBeenCalledTimes(1);
     });
 
     it("collapses and expands mobile section headers", () => {
