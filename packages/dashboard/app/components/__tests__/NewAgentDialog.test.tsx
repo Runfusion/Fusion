@@ -842,5 +842,69 @@ describe("NewAgentDialog", () => {
       const titleInput = screen.getByLabelText(/Title/) as HTMLInputElement;
       expect(titleInput.value).toBe("Oversees project strategy, sets priorities, and coordinates between departments to ensure alignment with business goals.");
     });
+
+    it("name label shows required indicator when no preset is selected", () => {
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      // On initial render (step 0, no preset), the * required indicator should be visible
+      const nameLabel = screen.getByText("Name", { selector: "label" });
+      const requiredSpan = nameLabel.querySelector(".agent-dialog-required");
+      expect(requiredSpan).toBeTruthy();
+      expect(requiredSpan?.textContent).toBe("*");
+    });
+
+    it("name label does not show required indicator when preset is selected", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
+
+      // Select a preset
+      await user.click(screen.getByTestId("preset-engineer"));
+
+      // Preset advances to step 1, go back to step 0
+      await user.click(screen.getByText("Back"));
+
+      // The * required indicator should NOT be visible when a preset is selected
+      const nameLabel = screen.getByText("Name", { selector: "label" });
+      const requiredSpan = nameLabel.querySelector(".agent-dialog-required");
+      expect(requiredSpan).toBeNull();
+    });
+
+    it("Next button is enabled when preset is selected even if name is empty", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
+
+      // Select a preset (this fills the name and advances to step 1)
+      await user.click(screen.getByTestId("preset-ceo"));
+
+      // Go back to step 0
+      await user.click(screen.getByText("Back"));
+
+      // Clear the name field
+      const nameInput = screen.getByLabelText(/Name/) as HTMLInputElement;
+      await user.clear(nameInput);
+      expect(nameInput.value).toBe("");
+
+      // Next button should still be enabled because a preset was selected
+      expect(screen.getByText("Next")).not.toBeDisabled();
+    });
+
+    it("Next button is disabled when no preset is selected and name is empty", () => {
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      // On initial render (step 0, no preset, empty name), Next should be disabled
+      expect(screen.getByText("Next")).toBeDisabled();
+    });
   });
 });

@@ -274,7 +274,7 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
                 </div>
               </div>
               <div className="agent-dialog-field">
-                <label htmlFor="agent-name">Name <span className="agent-dialog-required">*</span></label>
+                <label htmlFor="agent-name">Name {!selectedPresetId && <span className="agent-dialog-required">*</span>}</label>
                 <input
                   id="agent-name"
                   type="text"
@@ -282,7 +282,6 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
                   placeholder="e.g. Frontend Reviewer"
                   value={name}
                   onChange={e => setName(e.target.value)}
-                  autoFocus
                 />
               </div>
               <div className="agent-dialog-field">
@@ -504,7 +503,7 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
             <button
               className="btn btn--primary"
               onClick={() => setStep(s => s + 1)}
-              disabled={step === 0 && !name.trim()}
+              disabled={step === 0 && !name.trim() && !selectedPresetId}
             >
               Next
             </button>
