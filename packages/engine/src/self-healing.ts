@@ -53,6 +53,7 @@ export interface SelfHealingOptions {
 }
 
 const APPROVED_TRIAGE_RECOVERY_GRACE_MS = 60_000;
+const ORPHANED_EXECUTION_RECOVERY_GRACE_MS = 60_000;
 
 export class SelfHealingManager {
   // ── Auto-unpause state ──────────────────────────────────────────────
@@ -264,6 +265,7 @@ export class SelfHealingManager {
       this.checkpointWal();
       await this.enforceWorktreeCap();
       await this.recoverCompletedTasks();
+      await this.recoverOrphanedExecutions();
       await this.recoverApprovedTriageTasks();
 
       const elapsedMs = Date.now() - startMs;
@@ -318,6 +320,59 @@ export class SelfHealingManager {
       return recovered;
     } catch (err: any) {
       log.error(`Completed task recovery failed: ${err.message}`);
+      return 0;
+    }
+  }
+
+  /**
+   * Recover executor tasks stranded in `in-progress` before a real session was
+   * established, typically when the scheduler reserved a worktree path but the
+   * executor never materialized it or crashed before tracking the run.
+   */
+  async recoverOrphanedExecutions(): Promise<number> {
+    try {
+      const tasks = await this.store.listTasks();
+      const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
+      const now = Date.now();
+
+      const orphaned = tasks.filter((t) =>
+        t.column === "in-progress" &&
+        !t.paused &&
+        !executingIds.has(t.id) &&
+        !isTaskWorkComplete(t) &&
+        (!t.worktree || !existsSync(t.worktree)) &&
+        now - new Date(t.updatedAt).getTime() >= ORPHANED_EXECUTION_RECOVERY_GRACE_MS,
+      );
+
+      if (orphaned.length === 0) return 0;
+
+      log.warn(`Found ${orphaned.length} orphaned executor task(s) stuck in in-progress`);
+
+      let recovered = 0;
+      for (const task of orphaned) {
+        try {
+          await this.store.updateTask(task.id, {
+            status: "stuck-killed",
+            worktree: null,
+            branch: null,
+          });
+          await this.store.logEntry(
+            task.id,
+            "Auto-recovered orphaned executor task — missing worktree/session, moved back to todo",
+          );
+          await this.store.moveTask(task.id, "todo");
+          recovered++;
+        } catch (err: any) {
+          log.error(`Failed to recover orphaned executor task ${task.id}: ${err.message}`);
+        }
+      }
+
+      if (recovered > 0) {
+        log.log(`Recovered ${recovered} orphaned executor task(s) → todo`);
+      }
+      return recovered;
+    } catch (err: any) {
+      log.error(`Orphaned executor recovery failed: ${err.message}`);
       return 0;
     }
   }
@@ -548,4 +603,9 @@ function hasLatestSpecReviewApproval(task: Task): boolean {
     }
   }
   return false;
+}
+
+function isTaskWorkComplete(task: Task): boolean {
+  if (task.steps.length === 0) return false;
+  return task.steps.every((step) => step.status === "done" || step.status === "skipped");
 }

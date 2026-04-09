@@ -20,7 +20,7 @@ import type {
   ProjectRuntimeEvents,
 } from "../project-runtime.js";
 import { runtimeLog } from "../logger.js";
-import type { StuckTaskDetector } from "../stuck-task-detector.js";
+import { StuckTaskDetector } from "../stuck-task-detector.js";
 import type { UsageLimitPauser } from "../usage-limit-detector.js";
 import { SelfHealingManager } from "../self-healing.js";
 import { MissionAutopilot } from "../mission-autopilot.js";
@@ -163,6 +163,18 @@ export class InProcessRuntime
       });
 
       // 5. Initialize TaskExecutor
+      this.stuckTaskDetector = new StuckTaskDetector(this.taskStore, {
+        beforeRequeue: (taskId) => this.selfHealingManager?.checkStuckBudget(taskId) ?? Promise.resolve(true),
+        onLoopDetected: (event) => this.executor?.handleLoopDetected(event) ?? Promise.resolve(false),
+        onStuck: (event) => {
+          this.executor?.markStuckAborted(event.taskId, event.shouldRequeue);
+          runtimeLog.warn(
+            `Task ${event.taskId} stuck (${event.reason}) — ` +
+            `${event.shouldRequeue ? "will retry" : "budget exhausted"}`,
+          );
+        },
+      });
+
       const executorOptions: TaskExecutorOptions = {
         semaphore: this.globalSemaphore,
         pool: this.worktreePool,
@@ -315,6 +327,7 @@ export class InProcessRuntime
         getExecutingTaskIds: () => this.executor.getExecutingTaskIds(),
       });
       this.selfHealingManager.start();
+      this.stuckTaskDetector.start();
 
       // 8. Set up event forwarding from TaskStore
       this.setupEventForwarding();
@@ -376,13 +389,19 @@ export class InProcessRuntime
         runtimeLog.log("TriggerScheduler stopped");
       }
 
-      // 3. Stop heartbeat monitor
+      // 3. Stop stuck task detector
+      if (this.stuckTaskDetector) {
+        this.stuckTaskDetector.stop();
+        runtimeLog.log("StuckTaskDetector stopped");
+      }
+
+      // 4. Stop heartbeat monitor
       if (this.heartbeatMonitor) {
         this.heartbeatMonitor.stop();
         runtimeLog.log("HeartbeatMonitor stopped");
       }
 
-      // 4. Stop scheduler (prevents new task scheduling)
+      // 5. Stop scheduler (prevents new task scheduling)
       if (this.scheduler) {
         this.scheduler.stop();
         runtimeLog.log("Scheduler stopped");

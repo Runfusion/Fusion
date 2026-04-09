@@ -8,10 +8,12 @@ const {
   mockSelfHealingStart,
   mockSelfHealingStop,
   mockSelfHealingCtor,
+  mockExecutorCtor,
 } = vi.hoisted(() => ({
   mockSelfHealingStart: vi.fn(),
   mockSelfHealingStop: vi.fn(),
   mockSelfHealingCtor: vi.fn(),
+  mockExecutorCtor: vi.fn(),
 }));
 
 // Mock the TaskStore class
@@ -79,9 +81,14 @@ vi.mock("../self-healing.js", async () => {
 // Mock the executor
 vi.mock("../executor.js", async () => {
   return {
-    TaskExecutor: vi.fn().mockImplementation(() => {
+    TaskExecutor: vi.fn().mockImplementation((_store, _rootDir, options) => {
+      mockExecutorCtor(options);
       const self = {} as Record<string, unknown>;
       self.resumeOrphaned = vi.fn().mockResolvedValue(undefined);
+      self.recoverCompletedTask = vi.fn().mockResolvedValue(true);
+      self.getExecutingTaskIds = vi.fn().mockReturnValue(new Set());
+      self.handleLoopDetected = vi.fn().mockResolvedValue(false);
+      self.markStuckAborted = vi.fn();
       self.activeWorktrees = new Map();
       return self;
     }),
@@ -144,6 +151,17 @@ describe("InProcessRuntime", () => {
         }),
       );
       expect(mockSelfHealingStart).toHaveBeenCalled();
+    });
+
+    it("creates a stuck task detector and passes it to the executor", async () => {
+      await runtime.start();
+
+      expect(mockExecutorCtor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          stuckTaskDetector: expect.any(Object),
+        }),
+      );
+      expect((runtime as any).stuckTaskDetector).toBeDefined();
     });
 
     it("should transition to 'stopped' after stop", async () => {

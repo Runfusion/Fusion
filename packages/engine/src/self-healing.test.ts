@@ -596,6 +596,129 @@ describe("SelfHealingManager", () => {
     });
   });
 
+  describe("recoverOrphanedExecutions", () => {
+    it("requeues in-progress tasks whose reserved worktree is missing", async () => {
+      const getExecuting = vi.fn().mockReturnValue(new Set<string>());
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        getExecutingTaskIds: getExecuting,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-200",
+          column: "in-progress",
+          paused: false,
+          worktree: undefined,
+          steps: [{ status: "in-progress" }],
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ]);
+
+      vi.setSystemTime(new Date("2026-01-01T00:05:00.000Z"));
+
+      const result = await managerWithRecovery.recoverOrphanedExecutions();
+
+      expect(result).toBe(1);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-200", {
+        status: "stuck-killed",
+        worktree: null,
+        branch: null,
+      });
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-200",
+        "Auto-recovered orphaned executor task — missing worktree/session, moved back to todo",
+      );
+      expect(store.moveTask).toHaveBeenCalledWith("FN-200", "todo");
+
+      managerWithRecovery.stop();
+    });
+
+    it("skips orphan recovery for actively executing tasks", async () => {
+      const getExecuting = vi.fn().mockReturnValue(new Set(["FN-201"]));
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        getExecutingTaskIds: getExecuting,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-201",
+          column: "in-progress",
+          paused: false,
+          worktree: "/tmp/test-project/.worktrees/missing-tree",
+          steps: [{ status: "in-progress" }],
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ]);
+
+      vi.setSystemTime(new Date("2026-01-01T00:05:00.000Z"));
+
+      const result = await managerWithRecovery.recoverOrphanedExecutions();
+
+      expect(result).toBe(0);
+      expect(store.moveTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("skips tasks that are already complete", async () => {
+      const getExecuting = vi.fn().mockReturnValue(new Set<string>());
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        getExecutingTaskIds: getExecuting,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-202",
+          column: "in-progress",
+          paused: false,
+          worktree: "/tmp/test-project/.worktrees/missing-tree",
+          steps: [{ status: "done" }],
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ]);
+
+      vi.setSystemTime(new Date("2026-01-01T00:05:00.000Z"));
+
+      const result = await managerWithRecovery.recoverOrphanedExecutions();
+
+      expect(result).toBe(0);
+      expect(store.moveTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("skips tasks still within the grace window", async () => {
+      const getExecuting = vi.fn().mockReturnValue(new Set<string>());
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        getExecutingTaskIds: getExecuting,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-203",
+          column: "in-progress",
+          paused: false,
+          worktree: "/tmp/test-project/.worktrees/missing-tree",
+          steps: [{ status: "in-progress" }],
+          updatedAt: "2026-01-01T00:04:30.000Z",
+        },
+      ]);
+
+      vi.setSystemTime(new Date("2026-01-01T00:05:00.000Z"));
+
+      const result = await managerWithRecovery.recoverOrphanedExecutions();
+
+      expect(result).toBe(0);
+      expect(store.moveTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+  });
+
   describe("recoverApprovedTriageTasks", () => {
     it("recovers approved specifying triage tasks that are not actively processing", async () => {
       const recoverFn = vi.fn().mockResolvedValue(true);
