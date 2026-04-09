@@ -458,7 +458,31 @@ describe("AgentDetailView", () => {
     );
 
     await waitFor(() => {
+      expect(screen.getByText("Start")).toBeInTheDocument();
       expect(screen.getByText("Delete")).toBeInTheDocument();
+    });
+  });
+
+  it("shows Start button for terminated agent", async () => {
+    mockFetchAgent.mockResolvedValue(createMockAgent({ state: "terminated" }));
+    mockUpdateAgentState.mockResolvedValue(createMockAgent({ state: "active" }));
+
+    render(
+      <AgentDetailView
+        agentId="agent-001"
+        onClose={vi.fn()}
+        addToast={vi.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Start")).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByText("Start"));
+
+    await waitFor(() => {
+      expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-001", "active", undefined);
     });
   });
 

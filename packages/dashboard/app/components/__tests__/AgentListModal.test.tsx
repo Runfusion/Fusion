@@ -581,6 +581,15 @@ describe("AgentListModal", () => {
         const deleteButtons = screen.getAllByTitle("Delete");
         expect(deleteButtons.length).toBeGreaterThanOrEqual(2);
       });
+
+      // Verify Start button appears for terminated agent (agent-004)
+      const agentCards = document.querySelectorAll(".agent-card");
+      let terminatedCard: Element | null = null;
+      agentCards.forEach(card => {
+        if (card.textContent?.includes("agent-004")) terminatedCard = card;
+      });
+      const terminatedStartBtn = terminatedCard?.querySelector('[title="Start"]');
+      expect(terminatedStartBtn).toBeTruthy();
     });
 
     it("confirms before deleting agent", async () => {
