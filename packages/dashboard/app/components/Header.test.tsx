@@ -883,7 +883,7 @@ describe("Header", () => {
   });
 
   describe("action ordering", () => {
-    it("Settings is the last inline user-facing action on desktop (before pause/stop)", () => {
+    it("Settings is the last inline action on desktop (after stop button)", () => {
       const { container } = renderHeader({
         onOpenUsage: noop,
         onOpenActivityLog: noop,
@@ -906,23 +906,13 @@ describe("Header", () => {
       // Settings must exist
       expect(settingsIdx).toBeGreaterThanOrEqual(0);
 
-      // Settings must come before pause/stop (engine controls come after Settings)
-      if (pauseIdx >= 0) {
-        expect(settingsIdx).toBeLessThan(pauseIdx);
-      }
-      if (stopIdx >= 0) {
-        expect(settingsIdx).toBeLessThan(stopIdx);
-      }
+      // Settings must come after pause and stop (engine controls come before Settings)
+      expect(settingsIdx).toBeGreaterThan(pauseIdx);
+      expect(settingsIdx).toBeGreaterThan(stopIdx);
 
-      // Settings must be the last button before pause/stop — no other user-facing btn-icon after it
+      // Settings must be the very last button — no buttons after it
       const buttonsAfterSettings = inlineButtons.slice(settingsIdx + 1);
-      const userFacingAfterSettings = buttonsAfterSettings.filter(
-        (btn) => btn.title !== "Pause scheduling" &&
-                 btn.title !== "Resume scheduling" &&
-                 btn.title !== "Stop AI engine" &&
-                 btn.title !== "Start AI engine"
-      );
-      expect(userFacingAfterSettings).toHaveLength(0);
+      expect(buttonsAfterSettings).toHaveLength(0);
     });
 
     it("Settings is the last item in the mobile overflow menu", () => {

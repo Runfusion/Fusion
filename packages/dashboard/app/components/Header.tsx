@@ -542,13 +542,6 @@ export function Header({
           />
         )}
 
-        {/* Settings - always inline on desktop only (overflow on mobile/tablet) */}
-        {!isCompact && (
-          <button className="btn-icon" onClick={onOpenSettings} title="Settings">
-            <Settings size={16} />
-          </button>
-        )}
-
         {/* Pause button (soft pause) - always inline */}
         <button
           className={`btn-icon${enginePaused ? " btn-icon--paused" : ""}`}
@@ -567,6 +560,13 @@ export function Header({
         >
           {globalPaused ? <Play size={16} /> : <Square size={16} />}
         </button>
+
+        {/* Settings - always inline on desktop, placed after engine controls */}
+        {!isCompact && (
+          <button className="btn-icon" onClick={onOpenSettings} title="Settings">
+            <Settings size={16} />
+          </button>
+        )}
 
         {/* Compact overflow menu trigger (mobile + tablet) */}
         {isCompact && !hideFullNav && (
