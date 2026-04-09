@@ -374,9 +374,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   // Delete confirmation
   const [deleteConfirmId, setDeleteConfirmId] = useState<{ type: string; id: string } | null>(null);
 
-  // Autopilot loading state
-  const [autopilotLoading, setAutopilotLoading] = useState(false);
-
   const [missionHealthById, setMissionHealthById] = useState<Map<string, MissionHealth>>(new Map());
 
   const [activeTab, setActiveTab] = useState<"structure" | "activity">("structure");
@@ -1072,7 +1069,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
   const handleToggleAutopilot = useCallback(async (missionId: string, enabled: boolean) => {
     try {
-      setAutopilotLoading(true);
       await updateMissionAutopilot(missionId, { enabled }, projectId);
       addToast(enabled ? "Autopilot enabled" : "Autopilot disabled", "success");
       // Reload mission detail to reflect updated fields
@@ -1080,8 +1076,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       loadMissions();
     } catch (err: any) {
       addToast(err.message || "Failed to update autopilot", "error");
-    } finally {
-      setAutopilotLoading(false);
     }
   }, [addToast, loadMissionDetail, loadMissions, projectId]);
 
@@ -1267,7 +1261,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                         type="checkbox"
                         checked={selectedMission.autopilotEnabled ?? false}
                         onChange={(e) => handleToggleAutopilot(selectedMission.id, e.target.checked)}
-                        disabled={autopilotLoading}
                         aria-label="Autopilot"
                       />
                       <span className="mission-toggle__track" aria-hidden="true">
