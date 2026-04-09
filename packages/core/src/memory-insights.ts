@@ -78,6 +78,9 @@ export const MEMORY_WORKING_PATH = ".fusion/memory.md";
 /** Path to insights memory relative to project root. */
 export const MEMORY_INSIGHTS_PATH = ".fusion/memory-insights.md";
 
+/** Path to memory audit report relative to project root. */
+export const MEMORY_AUDIT_PATH = ".fusion/memory-audit.md";
+
 /** Default cron schedule for insight extraction: daily at 2 AM. */
 export const DEFAULT_INSIGHT_SCHEDULE = "0 2 * * *";
 
@@ -120,6 +123,67 @@ export interface InsightExtractionResult {
   summary: string;
   /** ISO-8601 timestamp of when extraction occurred. */
   extractedAt: string;
+}
+
+// ── Run Processing Types ───────────────────────────────────────────────
+
+/** Individual audit check result. */
+export interface MemoryAuditCheck {
+  /** Unique identifier for this check. */
+  id: string;
+  /** Human-readable check name. */
+  name: string;
+  /** Whether the check passed. */
+  passed: boolean;
+  /** Details about the check result. */
+  details: string;
+}
+
+/** Result of a memory audit run. */
+export interface MemoryAuditReport {
+  /** ISO-8601 timestamp of the audit. */
+  generatedAt: string;
+  /** Working memory file status. */
+  workingMemory: {
+    exists: boolean;
+    size: number;
+    sectionCount: number;
+    lastModified?: string;
+  };
+  /** Insights memory file status. */
+  insightsMemory: {
+    exists: boolean;
+    size: number;
+    insightCount: number;
+    categories: Record<MemoryInsightCategory, number>;
+    lastUpdated?: string;
+  };
+  /** Extraction metadata. */
+  extraction: {
+    runAt: string;
+    success: boolean;
+    insightCount: number;
+    duplicateCount: number;
+    skippedCount: number;
+    summary: string;
+    error?: string;
+  };
+  /** Individual audit checks. */
+  checks: MemoryAuditCheck[];
+  /** Overall health status. */
+  health: "healthy" | "warning" | "issues";
+}
+
+/** Input for processing an insight extraction run. */
+export interface ProcessRunInput {
+  /** Raw AI response text from the insight extraction step. */
+  rawResponse: string;
+  /** Whether the AI step itself succeeded. */
+  stepSuccess: boolean;
+  /** Timestamp of the run. */
+  runAt: string;
+  /** Optional error message if the step failed. */
+  error?: string;
 }
 
 // ── File I/O ─────────────────────────────────────────────────────────
@@ -169,6 +233,39 @@ export async function readInsightsMemory(rootDir: string): Promise<string | null
  */
 export async function writeInsightsMemory(rootDir: string, content: string): Promise<void> {
   const filePath = join(rootDir, MEMORY_INSIGHTS_PATH);
+  const dir = join(rootDir, ".fusion");
+  if (!existsSync(dir)) {
+    await mkdir(dir, { recursive: true });
+  }
+  await writeFile(filePath, content, "utf-8");
+}
+
+/**
+ * Read the memory audit file (`memory-audit.md`).
+ *
+ * Returns `null` if the file does not exist.
+ *
+ * @param rootDir - Absolute path to the project root directory.
+ * @returns The audit file content, or null if not found.
+ */
+export async function readMemoryAudit(rootDir: string): Promise<string | null> {
+  const filePath = join(rootDir, MEMORY_AUDIT_PATH);
+  if (!existsSync(filePath)) {
+    return null;
+  }
+  return readFile(filePath, "utf-8");
+}
+
+/**
+ * Write the memory audit file (`memory-audit.md`).
+ *
+ * Creates the `.fusion` directory if it does not exist.
+ *
+ * @param rootDir - Absolute path to the project root directory.
+ * @param content - The markdown content to write.
+ */
+export async function writeMemoryAudit(rootDir: string, content: string): Promise<void> {
+  const filePath = join(rootDir, MEMORY_AUDIT_PATH);
   const dir = join(rootDir, ".fusion");
   if (!existsSync(dir)) {
     await mkdir(dir, { recursive: true });
@@ -620,4 +717,607 @@ export async function syncInsightExtractionAutomation(
     // Create new schedule
     return await automationStore.createSchedule(input);
   }
+}
+
+// ── Run Processing ─────────────────────────────────────────────────────
+
+/**
+ * Process an insight extraction run and persist results.
+ *
+ * This function takes the raw AI response from an insight extraction step,
+ * parses it, merges new insights into the insights memory file, and generates
+ * an audit report.
+ *
+ * **Safety guarantees:**
+ * - Malformed AI output does not destroy existing insights content
+ * - Failures are surfaced as controlled errors and keep prior files intact
+ * - All operations are atomic where possible
+ *
+ * @param rootDir - Absolute path to the project root directory.
+ * @param input - The run processing input containing raw response and metadata.
+ * @returns The processed insight extraction result, or throws on failure.
+ * @throws Error if processing fails after all recovery attempts.
+ */
+export async function processInsightExtractionRun(
+  rootDir: string,
+  input: ProcessRunInput,
+): Promise<InsightExtractionResult & { newInsightCount: number; duplicateCount: number }> {
+  const { rawResponse, stepSuccess, runAt, error: stepError } = input;
+
+  // Read existing insights before any modification
+  const existingInsights = await readInsightsMemory(rootDir);
+
+  let parsedResult: InsightExtractionResult;
+  let parseError: string | undefined;
+
+  // Try to parse the AI response
+  if (stepSuccess && rawResponse.trim()) {
+    try {
+      parsedResult = parseInsightExtractionResponse(rawResponse);
+    } catch (err) {
+      parseError = err instanceof Error ? err.message : String(err);
+      // Create a fallback result that indicates the parse failure
+      parsedResult = {
+        insights: [],
+        summary: `Parse error: ${parseError}`,
+        extractedAt: runAt,
+      };
+    }
+  } else {
+    parsedResult = {
+      insights: [],
+      summary: stepError || "Step did not produce output",
+      extractedAt: runAt,
+    };
+  }
+
+  // Calculate duplicate count before merging
+  const duplicateCount = countDuplicateInsights(existingInsights ?? "", parsedResult.insights);
+  const newInsights = parsedResult.insights;
+
+  // Merge new insights into insights memory
+  let newInsightsContent: string;
+  if (existingInsights !== null) {
+    newInsightsContent = mergeInsights(existingInsights, newInsights);
+  } else {
+    newInsightsContent = mergeInsights("", newInsights);
+  }
+
+  // Write the updated insights file
+  // Note: We write unconditionally to capture even empty merges
+  // The merge function returns existing unchanged when there are no new insights
+  await writeInsightsMemory(rootDir, newInsightsContent);
+
+  // Count actual new insights added (by comparing before/after)
+  const beforeCount = countInsightsInMarkdown(existingInsights ?? "");
+  const afterCount = countInsightsInMarkdown(newInsightsContent);
+  const newInsightCount = Math.max(0, afterCount - beforeCount);
+
+  return {
+    ...parsedResult,
+    newInsightCount,
+    duplicateCount,
+  };
+}
+
+/**
+ * Count insights that would be duplicates against existing content.
+ *
+ * @param existingContent - The existing insights markdown content.
+ * @param newInsights - Array of new insights to check.
+ * @returns The number of insights that already exist (case-insensitive match).
+ */
+function countDuplicateInsights(
+  existingContent: string,
+  newInsights: MemoryInsight[],
+): number {
+  if (!existingContent || newInsights.length === 0) {
+    return 0;
+  }
+
+  let duplicateCount = 0;
+  for (const insight of newInsights) {
+    if (existingContent.toLowerCase().includes(insight.content.toLowerCase())) {
+      duplicateCount++;
+    }
+  }
+  return duplicateCount;
+}
+
+/**
+ * Count the number of insights (bullet points) in a markdown string.
+ *
+ * @param markdown - The markdown content to count insights in.
+ * @returns The number of insight bullet points found.
+ */
+function countInsightsInMarkdown(markdown: string): number {
+  if (!markdown) return 0;
+  // Count lines that start with "- " and are inside section headers
+  // Simple heuristic: count all "- " lines that are indented or follow section headers
+  const lines = markdown.split("\n");
+  let inSection = false;
+  let count = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("## ")) {
+      inSection = true;
+    } else if (trimmed.startsWith("# ") || trimmed.startsWith("<!--")) {
+      // Title or comment, not a section
+    } else if (inSection && trimmed.startsWith("- ")) {
+      count++;
+    }
+  }
+
+  return count;
+}
+
+// ── Audit Generation ─────────────────────────────────────────────────────
+
+/**
+ * Generate a memory audit report.
+ *
+ * The audit checks include:
+ * - Working memory file presence and structure
+ * - Insights memory file presence and content
+ * - Required section headers in working memory
+ * - Memory size and change metadata
+ * - Duplicate/empty insight handling
+ * - Extraction timestamp and summary
+ *
+ * @param rootDir - Absolute path to the project root directory.
+ * @param lastExtraction - Optional information about the last extraction run.
+ * @returns The generated audit report.
+ */
+export async function generateMemoryAudit(
+  rootDir: string,
+  lastExtraction?: {
+    runAt: string;
+    success: boolean;
+    insightCount: number;
+    duplicateCount: number;
+    skippedCount: number;
+    summary: string;
+    error?: string;
+  },
+): Promise<MemoryAuditReport> {
+  const checks: MemoryAuditCheck[] = [];
+  const now = new Date().toISOString();
+
+  // ── Check 1: Working memory file presence ──────────────────────────
+  const workingMemoryPath = join(rootDir, MEMORY_WORKING_PATH);
+  const workingMemoryExists = existsSync(workingMemoryPath);
+  let workingMemorySize = 0;
+  let workingMemorySectionCount = 0;
+  let workingMemoryContent = "";
+
+  if (workingMemoryExists) {
+    try {
+      workingMemoryContent = await readFile(workingMemoryPath, "utf-8");
+      workingMemorySize = workingMemoryContent.length;
+      workingMemorySectionCount = countMarkdownSections(workingMemoryContent);
+
+      checks.push({
+        id: "working-memory-exists",
+        name: "Working memory file exists",
+        passed: true,
+        details: `File exists with ${workingMemorySize} characters and ${workingMemorySectionCount} sections`,
+      });
+    } catch (err) {
+      checks.push({
+        id: "working-memory-exists",
+        name: "Working memory file exists",
+        passed: false,
+        details: `File exists but could not be read: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  } else {
+    checks.push({
+      id: "working-memory-exists",
+      name: "Working memory file exists",
+      passed: false,
+      details: "File .fusion/memory.md does not exist",
+    });
+  }
+
+  // ── Check 2: Working memory has meaningful content ──────────────────
+  if (workingMemoryExists) {
+    const hasContent = workingMemorySize > 0;
+    const hasSections = workingMemorySectionCount >= 2;
+
+    checks.push({
+      id: "working-memory-content",
+      name: "Working memory has meaningful content",
+      passed: hasContent && hasSections,
+      details: hasContent
+        ? `Has ${workingMemorySize} characters with ${workingMemorySectionCount} sections`
+        : "Working memory is empty",
+    });
+  }
+
+  // ── Check 3: Working memory has required sections ──────────────────
+  if (workingMemoryContent) {
+    const requiredSections = ["Architecture", "Conventions", "Pitfalls"];
+    const foundSections = requiredSections.filter((section) =>
+      workingMemoryContent.includes(`## ${section}`),
+    );
+
+    checks.push({
+      id: "working-memory-sections",
+      name: "Working memory has required sections",
+      passed: foundSections.length >= 2, // At least 2 of 3 recommended
+      details: foundSections.length >= 2
+        ? `Found sections: ${foundSections.join(", ")}`
+        : `Missing sections: ${requiredSections.filter((s) => !foundSections.includes(s)).join(", ")}`,
+    });
+  }
+
+  // ── Check 4: Insights memory file presence ──────────────────────────
+  const insightsMemoryPath = join(rootDir, MEMORY_INSIGHTS_PATH);
+  const insightsMemoryExists = existsSync(insightsMemoryPath);
+  let insightsMemorySize = 0;
+  let insightsMemoryContent = "";
+  const categoryCounts: Record<MemoryInsightCategory, number> = {
+    pattern: 0,
+    principle: 0,
+    convention: 0,
+    pitfall: 0,
+    context: 0,
+  };
+  let lastUpdated: string | undefined;
+
+  if (insightsMemoryExists) {
+    try {
+      insightsMemoryContent = await readFile(insightsMemoryPath, "utf-8");
+      insightsMemorySize = insightsMemoryContent.length;
+
+      // Count insights by category
+      for (const [category, header] of Object.entries({
+        pattern: "## Patterns",
+        principle: "## Principles",
+        convention: "## Conventions",
+        pitfall: "## Pitfalls",
+        context: "## Context",
+      })) {
+        categoryCounts[category as MemoryInsightCategory] = countInsightsInSection(
+          insightsMemoryContent,
+          header,
+        );
+      }
+
+      // Find last updated timestamp
+      const lastUpdatedMatch = insightsMemoryContent.match(/## Last Updated:\s*(.+)$/m);
+      if (lastUpdatedMatch) {
+        lastUpdated = lastUpdatedMatch[1].trim();
+      }
+
+      checks.push({
+        id: "insights-memory-exists",
+        name: "Insights memory file exists",
+        passed: true,
+        details: `File exists with ${insightsMemorySize} characters`,
+      });
+    } catch (err) {
+      checks.push({
+        id: "insights-memory-exists",
+        name: "Insights memory file exists",
+        passed: false,
+        details: `File exists but could not be read: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  } else {
+    checks.push({
+      id: "insights-memory-exists",
+      name: "Insights memory file exists",
+      passed: false,
+      details: "File .fusion/memory-insights.md does not exist yet",
+    });
+  }
+
+  // ── Check 5: Insights memory has content ───────────────────────────
+  if (insightsMemoryExists) {
+    const totalInsights = Object.values(categoryCounts).reduce((a, b) => a + b, 0);
+    checks.push({
+      id: "insights-memory-content",
+      name: "Insights memory has content",
+      passed: totalInsights > 0,
+      details: totalInsights > 0
+        ? `Contains ${totalInsights} insights across categories: patterns=${categoryCounts.pattern}, principles=${categoryCounts.principle}, conventions=${categoryCounts.convention}, pitfalls=${categoryCounts.pitfall}, context=${categoryCounts.context}`
+        : "No insights extracted yet",
+    });
+  }
+
+  // ── Check 6: Recent extraction activity ───────────────────────────
+  if (lastExtraction) {
+    const extractionAge = Date.now() - new Date(lastExtraction.runAt).getTime();
+    const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
+
+    checks.push({
+      id: "recent-extraction",
+      name: "Recent extraction activity",
+      passed: lastExtraction.success && extractionAge < oneWeekMs,
+      details: lastExtraction.success
+        ? `Last successful extraction ${formatTimeAgo(lastExtraction.runAt)} (${lastExtraction.insightCount} insights, ${lastExtraction.duplicateCount} duplicates skipped)`
+        : `Last extraction failed: ${lastExtraction.error || "Unknown error"}`,
+    });
+
+    // Check 7: Extraction summary quality
+    checks.push({
+      id: "extraction-summary",
+      name: "Extraction produces meaningful summaries",
+      passed: lastExtraction.success && lastExtraction.summary.length > 10,
+      details: lastExtraction.success
+        ? `Summary: "${lastExtraction.summary.slice(0, 100)}${lastExtraction.summary.length > 100 ? "..." : ""}"`
+        : "No meaningful summary available",
+    });
+  } else {
+    checks.push({
+      id: "recent-extraction",
+      name: "Recent extraction activity",
+      passed: false,
+      details: "No extraction runs recorded",
+    });
+  }
+
+  // ── Calculate overall health ──────────────────────────────────────
+  const failedChecks = checks.filter((c) => !c.passed);
+  let health: "healthy" | "warning" | "issues" = "healthy";
+
+  if (failedChecks.length >= 3) {
+    health = "issues";
+  } else if (failedChecks.length >= 1) {
+    // Critical checks that affect health
+    const criticalFailed = failedChecks.filter((c) =>
+      ["working-memory-exists", "insights-memory-exists", "recent-extraction"].includes(c.id),
+    );
+    health = criticalFailed.length > 0 ? "issues" : "warning";
+  }
+
+  return {
+    generatedAt: now,
+    workingMemory: {
+      exists: workingMemoryExists,
+      size: workingMemorySize,
+      sectionCount: workingMemorySectionCount,
+    },
+    insightsMemory: {
+      exists: insightsMemoryExists,
+      size: insightsMemorySize,
+      insightCount: Object.values(categoryCounts).reduce((a, b) => a + b, 0),
+      categories: categoryCounts,
+      lastUpdated,
+    },
+    extraction: lastExtraction
+      ? {
+          runAt: lastExtraction.runAt,
+          success: lastExtraction.success,
+          insightCount: lastExtraction.insightCount,
+          duplicateCount: lastExtraction.duplicateCount,
+          skippedCount: lastExtraction.skippedCount,
+          summary: lastExtraction.summary,
+          error: lastExtraction.error,
+        }
+      : {
+          runAt: "",
+          success: false,
+          insightCount: 0,
+          duplicateCount: 0,
+          skippedCount: 0,
+          summary: "No extraction runs recorded",
+        },
+    checks,
+    health,
+  };
+}
+
+/**
+ * Count markdown sections (## headers) in content.
+ *
+ * @param content - The markdown content to analyze.
+ * @returns The number of level-2 section headers.
+ */
+function countMarkdownSections(content: string): number {
+  const matches = content.match(/^##\s+.+$/gm);
+  return matches ? matches.length : 0;
+}
+
+/**
+ * Count insight bullet points in a specific section.
+ *
+ * @param content - The markdown content.
+ * @param sectionHeader - The section header to look for (e.g., "## Patterns").
+ * @returns The number of insights (bullet points) in that section.
+ */
+function countInsightsInSection(content: string, sectionHeader: string): number {
+  const headerIndex = content.indexOf(sectionHeader);
+  if (headerIndex === -1) return 0;
+
+  // Find the next section header or end of file
+  const afterHeader = headerIndex + sectionHeader.length;
+  const nextSection = content.indexOf("\n## ", afterHeader);
+  const sectionContent =
+    nextSection === -1
+      ? content.slice(afterHeader)
+      : content.slice(afterHeader, nextSection);
+
+  // Count lines starting with "- "
+  const lines = sectionContent.split("\n");
+  return lines.filter((line) => line.trim().startsWith("- ")).length;
+}
+
+/**
+ * Format a timestamp as a human-readable "time ago" string.
+ *
+ * @param isoTimestamp - ISO-8601 timestamp.
+ * @returns Human-readable time ago string.
+ */
+function formatTimeAgo(isoTimestamp: string): string {
+  const date = new Date(isoTimestamp);
+  const now = Date.now();
+  const diffMs = now - date.getTime();
+
+  const minutes = Math.floor(diffMs / (1000 * 60));
+  const hours = Math.floor(diffMs / (1000 * 60 * 60));
+  const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+/**
+ * Render a memory audit report as markdown.
+ *
+ * @param report - The audit report to render.
+ * @returns Markdown-formatted audit report.
+ */
+export function renderMemoryAuditMarkdown(report: MemoryAuditReport): string {
+  const lines: string[] = [];
+
+  lines.push(`# Memory Audit Report`);
+  lines.push(``);
+  lines.push(`**Generated:** ${report.generatedAt}`);
+  lines.push(`**Health:** ${getHealthEmoji(report.health)} ${report.health}`);
+  lines.push(``);
+
+  // Working Memory Section
+  lines.push(`## Working Memory`);
+  lines.push(`- **Exists:** ${report.workingMemory.exists ? "✓" : "✗"}`);
+  lines.push(`- **Size:** ${report.workingMemory.size.toLocaleString()} characters`);
+  lines.push(`- **Sections:** ${report.workingMemory.sectionCount}`);
+  lines.push(``);
+
+  // Insights Memory Section
+  lines.push(`## Insights Memory`);
+  lines.push(`- **Exists:** ${report.insightsMemory.exists ? "✓" : "✗"}`);
+  lines.push(`- **Size:** ${report.insightsMemory.size.toLocaleString()} characters`);
+  lines.push(`- **Total Insights:** ${report.insightsMemory.insightCount}`);
+  lines.push(`- **By Category:**`);
+  for (const [category, count] of Object.entries(report.insightsMemory.categories)) {
+    lines.push(`  - ${category}: ${count}`);
+  }
+  if (report.insightsMemory.lastUpdated) {
+    lines.push(`- **Last Updated:** ${report.insightsMemory.lastUpdated}`);
+  }
+  lines.push(``);
+
+  // Extraction Section
+  lines.push(`## Last Extraction`);
+  if (report.extraction.runAt) {
+    lines.push(`- **Run At:** ${report.extraction.runAt}`);
+    lines.push(`- **Success:** ${report.extraction.success ? "✓" : "✗"}`);
+    lines.push(`- **Insights Extracted:** ${report.extraction.insightCount}`);
+    lines.push(`- **Duplicates Skipped:** ${report.extraction.duplicateCount}`);
+    lines.push(`- **Skipped:** ${report.extraction.skippedCount}`);
+    lines.push(`- **Summary:** ${report.extraction.summary}`);
+    if (report.extraction.error) {
+      lines.push(`- **Error:** ${report.extraction.error}`);
+    }
+  } else {
+    lines.push(`- No extraction runs recorded`);
+  }
+  lines.push(``);
+
+  // Checks Section
+  lines.push(`## Audit Checks`);
+  for (const check of report.checks) {
+    const icon = check.passed ? "✓" : "✗";
+    lines.push(`### ${icon} ${check.name}`);
+    lines.push(`**${check.details}**`);
+    lines.push(``);
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Get the emoji for a health status.
+ *
+ * @param health - The health status.
+ * @returns The corresponding emoji.
+ */
+function getHealthEmoji(health: "healthy" | "warning" | "issues"): string {
+  switch (health) {
+    case "healthy":
+      return "✅";
+    case "warning":
+      return "⚠️";
+    case "issues":
+      return "❌";
+  }
+}
+
+/**
+ * Process an insight extraction run and generate an audit report.
+ *
+ * This is a convenience function that combines:
+ * 1. Processing the insight extraction run (parsing, merging, writing)
+ * 2. Generating an audit report
+ * 3. Writing the audit report to disk
+ *
+ * All operations are performed as best-effort side effects. Failures are
+ * logged but do not cause the function to throw. The audit report always
+ * reflects the current state of the memory files.
+ *
+ * @param rootDir - Absolute path to the project root directory.
+ * @param input - The run processing input containing raw response and metadata.
+ * @returns The audit report generated after processing (never throws).
+ */
+export async function processAndAuditInsightExtraction(
+  rootDir: string,
+  input: ProcessRunInput,
+): Promise<MemoryAuditReport> {
+  // Track extraction info for the audit
+  let extractionInfo: {
+    runAt: string;
+    success: boolean;
+    insightCount: number;
+    duplicateCount: number;
+    skippedCount: number;
+    summary: string;
+    error?: string;
+  };
+
+  try {
+    // Process the run
+    const result = await processInsightExtractionRun(rootDir, input);
+
+    extractionInfo = {
+      runAt: input.runAt,
+      success: input.stepSuccess,
+      insightCount: result.newInsightCount,
+      duplicateCount: result.duplicateCount,
+      skippedCount: result.insights.length - result.newInsightCount,
+      summary: result.summary,
+      error: input.error,
+    };
+  } catch (err) {
+    // On processing failure, generate audit with error info
+    extractionInfo = {
+      runAt: input.runAt,
+      success: false,
+      insightCount: 0,
+      duplicateCount: 0,
+      skippedCount: 0,
+      summary: `Processing failed: ${err instanceof Error ? err.message : String(err)}`,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  // Generate the audit report
+  const auditReport = await generateMemoryAudit(rootDir, extractionInfo);
+
+  // Write the audit report (best-effort)
+  try {
+    const auditMarkdown = renderMemoryAuditMarkdown(auditReport);
+    await writeMemoryAudit(rootDir, auditMarkdown);
+  } catch (err) {
+    // Best-effort: log but don't throw
+    console.error(
+      `[memory-audit] Failed to write audit report: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  return auditReport;
 }

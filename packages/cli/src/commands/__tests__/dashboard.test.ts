@@ -40,6 +40,16 @@ function makeMockStore() {
 
 // ── Mock @fusion/core ──────────────────────────────────────────────────
 
+const mockSyncInsightExtraction = vi.fn().mockResolvedValue(undefined);
+const mockProcessAndAudit = vi.fn().mockResolvedValue({
+  generatedAt: new Date().toISOString(),
+  health: "healthy",
+  checks: [],
+  workingMemory: { exists: true, size: 100, sectionCount: 2 },
+  insightsMemory: { exists: true, size: 50, insightCount: 3, categories: {}, lastUpdated: "2026-04-09" },
+  extraction: { runAt: new Date().toISOString(), success: true, insightCount: 3, duplicateCount: 0, skippedCount: 0, summary: "Test" },
+});
+
 vi.mock("@fusion/core", () => ({
   TaskStore: vi.fn().mockImplementation(() => makeMockStore()),
   AutomationStore: vi.fn().mockImplementation(() => ({
@@ -55,6 +65,9 @@ vi.mock("@fusion/core", () => ({
     getAgent: vi.fn().mockResolvedValue(null),
     deleteAgent: vi.fn(),
   })),
+  syncInsightExtractionAutomation: mockSyncInsightExtraction,
+  INSIGHT_EXTRACTION_SCHEDULE_NAME: "Memory Insight Extraction",
+  processAndAuditInsightExtraction: mockProcessAndAudit,
 }));
 
 // ── Mock @fusion/dashboard ─────────────────────────────────────────────
@@ -379,5 +392,99 @@ describe("runDashboard — MissionAutopilot wiring", () => {
 
     const autopilotInstance = (MissionAutopilot as ReturnType<typeof vi.fn>).mock.results[0].value;
     expect(autopilotInstance.start).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("runDashboard — Memory Insight Automation wiring", () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockDiscoverAndLoadExtensions.mockResolvedValue({
+      runtime: { pendingProviderRegistrations: [] },
+      errors: [],
+    });
+    const { TaskStore } = await import("@fusion/core");
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
+  });
+
+  it("syncs insight extraction automation on startup", async () => {
+    await runDashboard(0, {});
+
+    expect(mockSyncInsightExtraction).toHaveBeenCalledTimes(1);
+    expect(mockSyncInsightExtraction).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        maxConcurrent: 1,
+        maxWorktrees: 2,
+        autoMerge: false,
+        pollIntervalMs: 60_000,
+      }),
+    );
+  });
+
+  it("passes onScheduleRunProcessed callback to CronRunner", async () => {
+    const { CronRunner } = await import("@fusion/engine");
+
+    await runDashboard(0, {});
+
+    expect(CronRunner).toHaveBeenCalledTimes(1);
+    const cronOptions = (CronRunner as ReturnType<typeof vi.fn>).mock.calls[0][2];
+    expect(cronOptions).toHaveProperty("onScheduleRunProcessed");
+    expect(typeof cronOptions.onScheduleRunProcessed).toBe("function");
+  });
+
+  it("calls syncInsightExtractionAutomation when insight extraction settings change", async () => {
+    await runDashboard(0, {});
+
+    // Get the store mock to emit settings change
+    const { TaskStore } = await import("@fusion/core");
+    const mockStore = (TaskStore as unknown as ReturnType<typeof vi.fn>).mock.results[0].value;
+
+    // Simulate settings update
+    mockSyncInsightExtraction.mockClear();
+    mockStore.emit("settings:updated", {
+      settings: {
+        insightExtractionEnabled: true,
+        insightExtractionSchedule: "0 3 * * *",
+      },
+      previous: {
+        insightExtractionEnabled: false,
+        insightExtractionSchedule: "0 2 * * *",
+      },
+    });
+
+    expect(mockSyncInsightExtraction).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not call syncInsightExtractionAutomation for unrelated settings changes", async () => {
+    await runDashboard(0, {});
+
+    // Get the store mock to emit settings change
+    const { TaskStore } = await import("@fusion/core");
+    const mockStore = (TaskStore as unknown as ReturnType<typeof vi.fn>).mock.results[0].value;
+
+    // Simulate unrelated settings update
+    mockSyncInsightExtraction.mockClear();
+    mockStore.emit("settings:updated", {
+      settings: {
+        maxConcurrent: 5,
+      },
+      previous: {
+        maxConcurrent: 1,
+      },
+    });
+
+    expect(mockSyncInsightExtraction).not.toHaveBeenCalled();
+  });
+
+  it("handles syncInsightExtractionAutomation errors gracefully", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockSyncInsightExtraction.mockRejectedValueOnce(new Error("Sync failed"));
+
+    await runDashboard(0, {});
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[memory-audit] Failed to sync insight extraction"),
+    );
+    consoleSpy.mockRestore();
   });
 });

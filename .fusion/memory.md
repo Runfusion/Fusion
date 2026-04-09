@@ -191,3 +191,25 @@ Key implementation details from the plugin core foundation task:
 - Functions: `validatePluginManifest()`
 - Classes: `PluginStore`, `PluginLoader`
 - Interfaces: `PluginStoreEvents`, `PluginRegistrationInput`, `PluginUpdateInput`, `PluginLoaderOptions`
+
+## Background Memory Summarization (FN-1399)
+
+The background memory summarization feature uses a three-layer architecture:
+
+1. **CronRunner post-run hook**: `onScheduleRunProcessed` callback receives `(schedule, result)` after execution and recording. This keeps post-processing isolated from core execution.
+
+2. **Schedule-specific filtering**: The callback in dashboard/serve checks `schedule.name === INSIGHT_EXTRACTION_SCHEDULE_NAME` to filter for the memory insight schedule only.
+
+3. **Core processing**: `processAndAuditInsightExtraction()` parses AI output, merges insights, writes audit report, and handles errors gracefully.
+
+**Key files**:
+- `packages/core/src/memory-insights.ts` — Core helpers for processing, merging, and audit generation
+- `packages/engine/src/cron-runner.ts` — Post-run callback option (`onScheduleRunProcessed`)
+- `packages/cli/src/commands/dashboard.ts` — Startup sync + settings change handler
+- `packages/cli/src/commands/serve.ts` — Same wiring for headless node mode
+
+**Startup ordering**: `syncInsightExtractionAutomation()` must run BEFORE `cronRunner.start()` to avoid stale config races. The cron runner's immediate tick could execute outdated schedules before sync runs.
+
+**Test patterns**:
+- For CLI test suites with hoisted mocks (`vi.hoisted()`), helper functions like `triggerSignal` must be defined inside each `describe` block since they're not accessible from sibling blocks.
+- When testing settings-change handlers in CLI commands, emit events on the mock store instance stored in `taskStores[0]` to trigger the handler.

@@ -276,6 +276,120 @@ describe("CronRunner", () => {
       expect(result.success).toBe(true);
       expect(result.output).toContain("err");
     });
+
+    it("calls recordRun before callback on success", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "echo success" });
+      const automationStore = createMockAutomationStore([schedule]);
+
+      const callOrder: string[] = [];
+      const onProcessed = vi.fn().mockImplementation(() => {
+        callOrder.push("callback");
+      });
+
+      runner = new CronRunner(store, automationStore, { onScheduleRunProcessed: onProcessed });
+      await runner.executeSchedule(schedule);
+
+      expect(callOrder).toContain("callback");
+      // recordRun should have been called first
+      expect(automationStore.recordRun).toHaveBeenCalledBefore(onProcessed);
+    });
+
+    it("invokes callback on successful execution", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "echo success" });
+      const automationStore = createMockAutomationStore([schedule]);
+
+      const onProcessed = vi.fn();
+      runner = new CronRunner(store, automationStore, { onScheduleRunProcessed: onProcessed });
+
+      await runner.executeSchedule(schedule);
+
+      expect(onProcessed).toHaveBeenCalledTimes(1);
+      expect(onProcessed).toHaveBeenCalledWith(
+        schedule,
+        expect.objectContaining({ success: true }),
+      );
+    });
+
+    it("invokes callback on failed execution", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "exit 1" });
+      const automationStore = createMockAutomationStore([schedule]);
+
+      const onProcessed = vi.fn();
+      runner = new CronRunner(store, automationStore, { onScheduleRunProcessed: onProcessed });
+
+      await runner.executeSchedule(schedule);
+
+      expect(onProcessed).toHaveBeenCalledTimes(1);
+      expect(onProcessed).toHaveBeenCalledWith(
+        schedule,
+        expect.objectContaining({ success: false }),
+      );
+    });
+
+    it("does not invoke callback when not provided", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "echo test" });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      // Should not throw
+      await runner.executeSchedule(schedule);
+    });
+
+    it("callback errors do not throw or alter returned result", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "echo success" });
+      const automationStore = createMockAutomationStore([schedule]);
+
+      const onProcessed = vi.fn().mockRejectedValue(new Error("callback failed"));
+      runner = new CronRunner(store, automationStore, { onScheduleRunProcessed: onProcessed });
+
+      // Should not throw
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("success");
+    });
+
+    it("callback errors do not prevent recordRun", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "echo test" });
+      const automationStore = createMockAutomationStore([schedule]);
+
+      const onProcessed = vi.fn().mockRejectedValue(new Error("callback failed"));
+      runner = new CronRunner(store, automationStore, { onScheduleRunProcessed: onProcessed });
+
+      await runner.executeSchedule(schedule);
+
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(1);
+    });
+
+    it("passes schedule and result to callback", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        id: "custom-id",
+        name: "Custom Schedule",
+        command: "echo custom",
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+
+      let receivedSchedule: ScheduledTask | undefined;
+      let receivedResult: AutomationRunResult | undefined;
+      const onProcessed = vi.fn().mockImplementation((s: ScheduledTask, r: AutomationRunResult) => {
+        receivedSchedule = s;
+        receivedResult = r;
+      });
+
+      runner = new CronRunner(store, automationStore, { onScheduleRunProcessed: onProcessed });
+      await runner.executeSchedule(schedule);
+
+      expect(receivedSchedule).toEqual(schedule);
+      expect(receivedResult).toBeDefined();
+      expect(receivedResult!.success).toBe(true);
+    });
   });
 
   describe("concurrent schedule prevention in tick", () => {

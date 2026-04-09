@@ -263,6 +263,16 @@ vi.mock("@fusion/core", () => ({
   AgentStore: mocks.agentStoreCtor,
   CentralCore: mocks.centralCoreCtor,
   getTaskMergeBlocker: vi.fn().mockReturnValue(null),
+  syncInsightExtractionAutomation: vi.fn().mockResolvedValue(undefined),
+  INSIGHT_EXTRACTION_SCHEDULE_NAME: "Memory Insight Extraction",
+  processAndAuditInsightExtraction: vi.fn().mockResolvedValue({
+    generatedAt: new Date().toISOString(),
+    health: "healthy",
+    checks: [],
+    workingMemory: { exists: true, size: 100, sectionCount: 2 },
+    insightsMemory: { exists: true, size: 50, insightCount: 3, categories: {}, lastUpdated: "2026-04-09" },
+    extraction: { runAt: new Date().toISOString(), success: true, insightCount: 3, duplicateCount: 0, skippedCount: 0, summary: "Test" },
+  }),
 }));
 
 vi.mock("@fusion/dashboard", () => ({
@@ -465,6 +475,146 @@ describe("runServe", () => {
       port: 3020,
       host: "127.0.0.1",
     });
+    await triggerSignal("SIGINT");
+  });
+});
+
+describe("runServe — Memory Insight Automation wiring", () => {
+  const originalCwd = process.cwd;
+  const originalOn = process.on;
+  const originalExit = process.exit;
+
+  let signalHandlers: Record<"SIGINT" | "SIGTERM", Array<() => void>>;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+  let processOnSpy: ReturnType<typeof vi.spyOn>;
+
+  async function triggerSignal(signal: "SIGINT" | "SIGTERM") {
+    const handlers = signalHandlers[signal];
+    expect(handlers.length).toBeGreaterThan(0);
+    handlers[handlers.length - 1]();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.reset();
+
+    signalHandlers = { SIGINT: [], SIGTERM: [] };
+
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    cwdSpy = vi.spyOn(process, "cwd").mockReturnValue("/repo");
+    processOnSpy = vi.spyOn(process, "on").mockImplementation(((event: string, listener: () => void) => {
+      if (event === "SIGINT" || event === "SIGTERM") {
+        signalHandlers[event].push(listener);
+      }
+      return process;
+    }) as typeof process.on);
+    process.exit = vi.fn() as never;
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+    cwdSpy.mockRestore();
+    processOnSpy.mockRestore();
+    process.cwd = originalCwd;
+    process.on = originalOn;
+    process.exit = originalExit;
+  });
+
+  it("syncs insight extraction automation on startup", async () => {
+    const { syncInsightExtractionAutomation } = await import("@fusion/core");
+
+    await runServe(4040, {});
+
+    expect(syncInsightExtractionAutomation).toHaveBeenCalledTimes(1);
+    expect(syncInsightExtractionAutomation).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        maxConcurrent: 2,
+        recycleWorktrees: false,
+        autoMerge: false,
+        pollIntervalMs: 60_000,
+      }),
+    );
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("passes onScheduleRunProcessed callback to CronRunner", async () => {
+    await runServe(4040, {});
+
+    expect(mocks.cronRunnerCtor).toHaveBeenCalledTimes(1);
+    const cronOptions = mocks.cronRunnerCtor.mock.calls[0][2];
+    expect(cronOptions).toHaveProperty("onScheduleRunProcessed");
+    expect(typeof cronOptions.onScheduleRunProcessed).toBe("function");
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("calls syncInsightExtractionAutomation when insight extraction settings change", async () => {
+    const { syncInsightExtractionAutomation } = await import("@fusion/core");
+
+    await runServe(4040, {});
+
+    // Simulate settings update
+    syncInsightExtractionAutomation.mockClear();
+    mocks.taskStores[0].emit("settings:updated", {
+      settings: {
+        insightExtractionEnabled: true,
+        insightExtractionSchedule: "0 3 * * *",
+      },
+      previous: {
+        insightExtractionEnabled: false,
+        insightExtractionSchedule: "0 2 * * *",
+      },
+    });
+
+    expect(syncInsightExtractionAutomation).toHaveBeenCalledTimes(1);
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("does not call syncInsightExtractionAutomation for unrelated settings changes", async () => {
+    const { syncInsightExtractionAutomation } = await import("@fusion/core");
+
+    await runServe(4040, {});
+
+    // Simulate unrelated settings update
+    syncInsightExtractionAutomation.mockClear();
+    mocks.taskStores[0].emit("settings:updated", {
+      settings: {
+        maxConcurrent: 5,
+      },
+      previous: {
+        maxConcurrent: 2,
+      },
+    });
+
+    expect(syncInsightExtractionAutomation).not.toHaveBeenCalled();
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("handles syncInsightExtractionAutomation errors gracefully", async () => {
+    const { syncInsightExtractionAutomation } = await import("@fusion/core");
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    syncInsightExtractionAutomation.mockRejectedValueOnce(new Error("Sync failed"));
+
+    await runServe(4040, {});
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[memory-audit] Failed to sync insight extraction"),
+    );
+
+    consoleSpy.mockRestore();
     await triggerSignal("SIGINT");
   });
 });

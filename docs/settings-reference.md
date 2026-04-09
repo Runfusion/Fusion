@@ -223,3 +223,69 @@ These exist in `ProjectSettings` but are not part of `PROJECT_SETTINGS_KEYS`.
 ```
 
 See also: [Workflow Steps](./workflow-steps.md) for how `scripts` and workflow model overrides are used.
+
+---
+
+## Background Memory Summarization & Audit
+
+Fusion can automatically extract insights from project memory and generate audit reports on a schedule. This feature is disabled by default and can be enabled via settings.
+
+### How It Works
+
+1. **Scheduled Extraction**: When `insightExtractionEnabled` is `true`, a background automation runs on the configured `insightExtractionSchedule` (default: daily at 2 AM).
+
+2. **AI-Powered Analysis**: The automation uses an AI agent to read `.fusion/memory.md` and `.fusion/memory-insights.md`, extract new insights, and return structured JSON.
+
+3. **Insight Merging**: New insights are automatically merged into `.fusion/memory-insights.md` under the appropriate category (Patterns, Principles, Conventions, Pitfalls, Context). Duplicates are skipped.
+
+4. **Audit Report**: After each extraction run, a `.fusion/memory-audit.md` file is generated with:
+   - Working memory status (presence, size, sections)
+   - Insights memory status (insight counts by category)
+   - Last extraction results (success/failure, insight count, duplicates skipped)
+   - Health status (healthy/warning/issues)
+   - Individual audit checks
+
+### Output Files
+
+| File | Description |
+|------|-------------|
+| `.fusion/memory.md` | Working memory (read-only during extraction, never overwritten) |
+| `.fusion/memory-insights.md` | Long-term insights distilled from working memory |
+| `.fusion/memory-audit.md` | Human-readable audit report after each extraction |
+
+### Settings Interaction
+
+| Setting | Effect |
+|---------|--------|
+| `insightExtractionEnabled` | Enables/disables the automation |
+| `insightExtractionSchedule` | Cron expression for when extraction runs (default: `"0 2 * * *"` = daily at 2 AM) |
+| `insightExtractionMinIntervalMs` | Minimum time between extractions (default: 24 hours) |
+
+### Safety Guarantees
+
+- **No working memory mutation**: Background extraction reads `.fusion/memory.md` but never writes to it.
+- **Graceful failures**: Malformed AI output does not destroy existing insights. Prior files are preserved.
+- **Isolated processing**: Post-run callback errors are logged but do not flip successful runs to failed.
+- **Startup sync**: Automation schedule is synchronized before the cron runner starts, preventing stale config races.
+
+### Configuration Example
+
+```json
+{
+  "settings": {
+    "insightExtractionEnabled": true,
+    "insightExtractionSchedule": "0 2 * * *",
+    "insightExtractionMinIntervalMs": 86400000
+  }
+}
+```
+
+### Cron Expression Format
+
+Standard cron format: `minute hour day-of-month month day-of-week`
+
+| Expression | Meaning |
+|-----------|---------|
+| `0 2 * * *` | Daily at 2:00 AM (default) |
+| `0 */6 * * *` | Every 6 hours |
+| `0 9 * * 1` | Weekly on Monday at 9:00 AM |

@@ -536,3 +536,401 @@ describe("memory-insights", () => {
     });
   });
 });
+
+// ── Audit File Operations ──────────────────────────────────────────────
+
+import {
+  MEMORY_AUDIT_PATH,
+  readMemoryAudit,
+  writeMemoryAudit,
+} from "./memory-insights.js";
+
+describe("memory-insights audit file operations", () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "kb-memory-audit-test-"));
+    await mkdir(join(tempDir, ".fusion"), { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  describe("readMemoryAudit", () => {
+    it("should return null when audit file does not exist", async () => {
+      const result = await readMemoryAudit(tempDir);
+      expect(result).toBeNull();
+    });
+
+    it("should return content when audit file exists", async () => {
+      const content = "# Memory Audit Report\n\nGenerated...";
+      writeFileSync(join(tempDir, MEMORY_AUDIT_PATH), content);
+
+      const result = await readMemoryAudit(tempDir);
+      expect(result).toBe(content);
+    });
+  });
+
+  describe("writeMemoryAudit", () => {
+    it("should create the audit file", async () => {
+      const content = "# Memory Audit Report\n\nGenerated...";
+      await writeMemoryAudit(tempDir, content);
+
+      const filePath = join(tempDir, MEMORY_AUDIT_PATH);
+      expect(existsSync(filePath)).toBe(true);
+      expect(readFileSync(filePath, "utf-8")).toBe(content);
+    });
+
+    it("should overwrite existing content", async () => {
+      writeFileSync(join(tempDir, MEMORY_AUDIT_PATH), "old content");
+      await writeMemoryAudit(tempDir, "new content");
+
+      expect(readFileSync(join(tempDir, MEMORY_AUDIT_PATH), "utf-8")).toBe("new content");
+    });
+
+    it("should create .fusion directory if it does not exist", async () => {
+      const newDir = join(tempDir, "new-project");
+      await mkdir(newDir, { recursive: true });
+      await writeMemoryAudit(newDir, "test content");
+      expect(existsSync(join(newDir, MEMORY_AUDIT_PATH))).toBe(true);
+    });
+  });
+});
+
+// ── Run Processing ─────────────────────────────────────────────────────
+
+import {
+  processInsightExtractionRun,
+  processAndAuditInsightExtraction,
+} from "./memory-insights.js";
+
+describe("memory-insights run processing", () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "kb-memory-run-test-"));
+    await mkdir(join(tempDir, ".fusion"), { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  describe("processInsightExtractionRun", () => {
+    it("should parse and merge successful extraction", async () => {
+      // No existing insights
+      const rawResponse = JSON.stringify({
+        summary: "Found 2 new insights",
+        insights: [
+          { category: "pattern", content: "Use TypeScript for type safety" },
+          { category: "pitfall", content: "Avoid any type assertions" },
+        ],
+      });
+
+      const result = await processInsightExtractionRun(tempDir, {
+        rawResponse,
+        stepSuccess: true,
+        runAt: new Date().toISOString(),
+      });
+
+      expect(result.insights).toHaveLength(2);
+      expect(result.summary).toBe("Found 2 new insights");
+      expect(result.newInsightCount).toBe(2);
+      expect(result.duplicateCount).toBe(0);
+
+      // Verify insights file was written
+      const insightsPath = join(tempDir, MEMORY_INSIGHTS_PATH);
+      expect(existsSync(insightsPath)).toBe(true);
+      const content = readFileSync(insightsPath, "utf-8");
+      expect(content).toContain("Use TypeScript for type safety");
+      expect(content).toContain("Avoid any type assertions");
+    });
+
+    it("should handle existing insights without duplicating", async () => {
+      // Create existing insights
+      const existingInsights = `# Memory Insights
+
+## Patterns
+- Already existing pattern
+
+## Last Updated: 2026-01-01
+`;
+      writeFileSync(join(tempDir, MEMORY_INSIGHTS_PATH), existingInsights);
+
+      const rawResponse = JSON.stringify({
+        summary: "Found 1 new insight",
+        insights: [
+          { category: "pattern", content: "Already existing pattern" }, // duplicate
+          { category: "principle", content: "New principle" }, // new
+        ],
+      });
+
+      const result = await processInsightExtractionRun(tempDir, {
+        rawResponse,
+        stepSuccess: true,
+        runAt: new Date().toISOString(),
+      });
+
+      expect(result.insights).toHaveLength(2);
+      expect(result.duplicateCount).toBe(1);
+      expect(result.newInsightCount).toBe(1);
+
+      // Verify only new insight was added
+      const content = readFileSync(join(tempDir, MEMORY_INSIGHTS_PATH), "utf-8");
+      expect(content).toContain("Already existing pattern");
+      expect(content).toContain("New principle");
+      // Should only have "Already existing pattern" once
+      expect(content.match(/Already existing pattern/g)?.length).toBe(1);
+    });
+
+    it("should handle malformed JSON gracefully", async () => {
+      const result = await processInsightExtractionRun(tempDir, {
+        rawResponse: "not valid json at all",
+        stepSuccess: true,
+        runAt: new Date().toISOString(),
+      });
+
+      expect(result.insights).toHaveLength(0);
+      expect(result.summary).toContain("Parse error");
+    });
+
+    it("should handle failed step", async () => {
+      const result = await processInsightExtractionRun(tempDir, {
+        rawResponse: "",
+        stepSuccess: false,
+        runAt: new Date().toISOString(),
+        error: "AI timeout",
+      });
+
+      expect(result.insights).toHaveLength(0);
+      expect(result.summary).toContain("AI timeout");
+    });
+
+    it("should preserve existing insights on failure", async () => {
+      // Create existing insights
+      const existingInsights = `# Memory Insights
+
+## Patterns
+- Important existing pattern
+
+## Last Updated: 2026-01-01
+`;
+      writeFileSync(join(tempDir, MEMORY_INSIGHTS_PATH), existingInsights);
+
+      // Process with malformed JSON
+      await processInsightExtractionRun(tempDir, {
+        rawResponse: "invalid",
+        stepSuccess: true,
+        runAt: new Date().toISOString(),
+      });
+
+      // Existing insights should be preserved
+      const content = readFileSync(join(tempDir, MEMORY_INSIGHTS_PATH), "utf-8");
+      expect(content).toContain("Important existing pattern");
+    });
+  });
+
+  describe("processAndAuditInsightExtraction", () => {
+    it("should process run and generate audit report", async () => {
+      // Create working memory
+      writeFileSync(
+        join(tempDir, MEMORY_WORKING_PATH),
+        "## Architecture\n\nSome architecture notes\n## Conventions\n\nSome conventions",
+      );
+
+      const rawResponse = JSON.stringify({
+        summary: "Extracted insights",
+        insights: [{ category: "pattern", content: "Test pattern" }],
+      });
+
+      const report = await processAndAuditInsightExtraction(tempDir, {
+        rawResponse,
+        stepSuccess: true,
+        runAt: new Date().toISOString(),
+      });
+
+      expect(report).toBeDefined();
+      expect(report.health).toBeDefined();
+      expect(report.checks).toBeDefined();
+      expect(report.checks.length).toBeGreaterThan(0);
+
+      // Verify audit file was written
+      const auditPath = join(tempDir, MEMORY_AUDIT_PATH);
+      expect(existsSync(auditPath)).toBe(true);
+      const auditContent = readFileSync(auditPath, "utf-8");
+      expect(auditContent).toContain("Memory Audit Report");
+    });
+
+    it("should generate audit with failed extraction", async () => {
+      writeFileSync(
+        join(tempDir, MEMORY_WORKING_PATH),
+        "## Architecture\n\nNotes",
+      );
+
+      const report = await processAndAuditInsightExtraction(tempDir, {
+        rawResponse: "",
+        stepSuccess: false,
+        runAt: new Date().toISOString(),
+        error: "Step timed out",
+      });
+
+      expect(report.extraction.success).toBe(false);
+      expect(report.extraction.error).toBe("Step timed out");
+      expect(report.checks).toBeDefined();
+    });
+  });
+});
+
+// ── Audit Generation ──────────────────────────────────────────────────
+
+import {
+  generateMemoryAudit,
+  renderMemoryAuditMarkdown,
+} from "./memory-insights.js";
+
+describe("memory-insights audit generation", () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "kb-memory-audit-gen-test-"));
+    await mkdir(join(tempDir, ".fusion"), { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  describe("generateMemoryAudit", () => {
+    it("should detect missing working memory", async () => {
+      const report = await generateMemoryAudit(tempDir);
+
+      const check = report.checks.find((c) => c.id === "working-memory-exists");
+      expect(check).toBeDefined();
+      expect(check!.passed).toBe(false);
+    });
+
+    it("should detect present working memory", async () => {
+      writeFileSync(
+        join(tempDir, MEMORY_WORKING_PATH),
+        "## Architecture\n\nSome architecture\n## Conventions\n\nSome conventions",
+      );
+
+      const report = await generateMemoryAudit(tempDir);
+
+      const check = report.checks.find((c) => c.id === "working-memory-exists");
+      expect(check!.passed).toBe(true);
+      expect(report.workingMemory.exists).toBe(true);
+      expect(report.workingMemory.size).toBeGreaterThan(0);
+    });
+
+    it("should count insights in insights memory", async () => {
+      writeFileSync(
+        join(tempDir, MEMORY_INSIGHTS_PATH),
+        `# Memory Insights
+
+## Patterns
+- Pattern 1
+- Pattern 2
+
+## Principles
+- Principle 1
+
+## Last Updated: 2026-04-09
+`,
+      );
+
+      const report = await generateMemoryAudit(tempDir);
+
+      expect(report.insightsMemory.exists).toBe(true);
+      expect(report.insightsMemory.categories.pattern).toBe(2);
+      expect(report.insightsMemory.categories.principle).toBe(1);
+      expect(report.insightsMemory.insightCount).toBe(3);
+    });
+
+    it("should include extraction info when provided", async () => {
+      writeFileSync(join(tempDir, MEMORY_WORKING_PATH), "## Architecture\n\nNotes");
+
+      const report = await generateMemoryAudit(tempDir, {
+        runAt: new Date().toISOString(),
+        success: true,
+        insightCount: 5,
+        duplicateCount: 2,
+        skippedCount: 0,
+        summary: "Found 5 new patterns",
+      });
+
+      expect(report.extraction.runAt).toBeTruthy();
+      expect(report.extraction.success).toBe(true);
+      expect(report.extraction.insightCount).toBe(5);
+      expect(report.extraction.duplicateCount).toBe(2);
+    });
+
+    it("should calculate health status", async () => {
+      // No files = issues
+      const noFilesReport = await generateMemoryAudit(tempDir);
+      expect(["healthy", "warning", "issues"]).toContain(noFilesReport.health);
+
+      // All good
+      writeFileSync(
+        join(tempDir, MEMORY_WORKING_PATH),
+        "## Architecture\n\n## Conventions\n\n## Pitfalls\n\nNotes",
+      );
+      writeFileSync(
+        join(tempDir, MEMORY_INSIGHTS_PATH),
+        `# Memory Insights
+
+## Patterns
+- Pattern 1
+
+## Last Updated: 2026-04-09
+`,
+      );
+
+      const goodReport = await generateMemoryAudit(tempDir, {
+        runAt: new Date().toISOString(),
+        success: true,
+        insightCount: 1,
+        duplicateCount: 0,
+        skippedCount: 0,
+        summary: "Found patterns",
+      });
+
+      expect(goodReport.health).toBe("healthy");
+    });
+  });
+
+  describe("renderMemoryAuditMarkdown", () => {
+    it("should render a complete audit report", async () => {
+      writeFileSync(join(tempDir, MEMORY_WORKING_PATH), "## Architecture\n\nNotes");
+      writeFileSync(join(tempDir, MEMORY_INSIGHTS_PATH), "# Memory Insights\n\n## Patterns\n- Pattern 1\n\n## Last Updated: 2026-04-09");
+
+      const report = await generateMemoryAudit(tempDir, {
+        runAt: new Date().toISOString(),
+        success: true,
+        insightCount: 1,
+        duplicateCount: 0,
+        skippedCount: 0,
+        summary: "Test summary",
+      });
+
+      const markdown = renderMemoryAuditMarkdown(report);
+
+      expect(markdown).toContain("# Memory Audit Report");
+      expect(markdown).toContain("## Working Memory");
+      expect(markdown).toContain("## Insights Memory");
+      expect(markdown).toContain("## Last Extraction");
+      expect(markdown).toContain("## Audit Checks");
+      expect(markdown).toContain("Health:");
+    });
+
+    it("should handle empty report", async () => {
+      const report = await generateMemoryAudit(tempDir);
+      const markdown = renderMemoryAuditMarkdown(report);
+
+      expect(markdown).toContain("Memory Audit Report");
+      expect(markdown).toContain("Working Memory");
+      expect(markdown).toContain("Insights Memory");
+    });
+  });
+});

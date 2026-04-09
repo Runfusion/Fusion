@@ -239,6 +239,7 @@ export {
 export {
   MEMORY_WORKING_PATH,
   MEMORY_INSIGHTS_PATH,
+  MEMORY_AUDIT_PATH,
   DEFAULT_INSIGHT_SCHEDULE,
   DEFAULT_MIN_INTERVAL_MS,
   MIN_INSIGHT_GROWTH_CHARS,
@@ -246,6 +247,8 @@ export {
   readWorkingMemory,
   readInsightsMemory,
   writeInsightsMemory,
+  readMemoryAudit,
+  writeMemoryAudit,
   buildInsightExtractionPrompt,
   parseInsightExtractionResponse,
   mergeInsights,
@@ -253,11 +256,18 @@ export {
   getDefaultInsightsTemplate,
   createInsightExtractionAutomation,
   syncInsightExtractionAutomation,
+  processInsightExtractionRun,
+  processAndAuditInsightExtraction,
+  generateMemoryAudit,
+  renderMemoryAuditMarkdown,
 } from "./memory-insights.js";
 export type {
   MemoryInsightCategory,
   MemoryInsight,
   InsightExtractionResult,
+  MemoryAuditCheck,
+  MemoryAuditReport,
+  ProcessRunInput,
 } from "./memory-insights.js";
 
 export {

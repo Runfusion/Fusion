@@ -34,6 +34,26 @@ export interface CronRunnerOptions {
   pollIntervalMs?: number;
   /** Optional AI prompt executor. When not provided, ai-prompt steps return a configuration error. */
   aiPromptExecutor?: AiPromptExecutor;
+  /**
+   * Optional post-run callback invoked after schedule execution and run recording.
+   *
+   * Called as a best-effort side effect — callback errors are logged but do not
+   * alter the returned `AutomationRunResult` or flip successful runs to failed.
+   * This keeps post-processing isolated from the core execution contract.
+   *
+   * The callback receives:
+   * - `schedule`: The schedule that was executed
+   * - `result`: The `AutomationRunResult` from execution (success/failure)
+   *
+   * Use this for schedule-specific processing such as:
+   * - Persisting memory insight extraction results
+   * - Updating external systems based on automation output
+   * - Triggering downstream side effects
+   */
+  onScheduleRunProcessed?: (
+    schedule: ScheduledTask,
+    result: AutomationRunResult,
+  ) => void | Promise<void>;
 }
 
 /**
@@ -50,6 +70,7 @@ export class CronRunner {
   private pollInterval: ReturnType<typeof setInterval> | null = null;
   private pollIntervalMs: number;
   private aiPromptExecutor?: AiPromptExecutor;
+  private onScheduleRunProcessed?: CronRunnerOptions["onScheduleRunProcessed"];
   /** Schedule IDs currently being executed — prevents concurrent runs of the same schedule. */
   private inFlight = new Set<string>();
 
@@ -63,6 +84,7 @@ export class CronRunner {
       options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
     );
     this.aiPromptExecutor = options.aiPromptExecutor;
+    this.onScheduleRunProcessed = options.onScheduleRunProcessed;
   }
 
   /** Start the polling loop. */
@@ -161,6 +183,18 @@ export class CronRunner {
       await this.automationStore.recordRun(schedule.id, result);
     } catch (recordErr) {
       log.error(`Failed to record run for ${schedule.id}: ${(recordErr as Error).message}`);
+    }
+
+    // Invoke post-run callback (best-effort side effect)
+    // Errors here do not alter the returned result or flip success/failure
+    if (this.onScheduleRunProcessed) {
+      try {
+        await this.onScheduleRunProcessed(schedule, result);
+      } catch (callbackErr) {
+        log.error(
+          `Post-run callback failed for ${schedule.name} (${schedule.id}): ${(callbackErr as Error).message}`,
+        );
+      }
     }
 
     return result;

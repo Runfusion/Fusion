@@ -97,6 +97,15 @@ When enabled, agents can read/write durable project memory:
 
 Use it for reusable patterns, constraints, and pitfalls that should persist across tasks.
 
+### Background Memory Summarization
+
+Fusion can automatically extract insights from working memory and distill them into long-term memory. Enable via `insightExtractionEnabled` setting:
+
+- `.fusion/memory-insights.md` — Long-term distilled insights
+- `.fusion/memory-audit.md` — Audit report after each extraction run
+
+See [Settings Reference](./settings-reference.md#background-memory-summarization--audit) for configuration details.
+
 ## SQLite Test Runner Pitfall
 
 When running engine tests with Vitest and `node:sqlite`, ensure the engine Vitest config uses thread pool mode:

@@ -1,8 +1,8 @@
 import { execSync } from "node:child_process";
 import type { AddressInfo } from "node:net";
 import { createInterface } from "node:readline";
-import { TaskStore, AutomationStore, CentralCore, AgentStore, getTaskMergeBlocker } from "@fusion/core";
-import type { Settings, TaskDetail, PrInfo } from "@fusion/core";
+import { TaskStore, AutomationStore, CentralCore, AgentStore, getTaskMergeBlocker, syncInsightExtractionAutomation, INSIGHT_EXTRACTION_SCHEDULE_NAME, processAndAuditInsightExtraction } from "@fusion/core";
+import type { Settings, TaskDetail, PrInfo, ScheduledTask, AutomationRunResult } from "@fusion/core";
 import { createServer, GitHubClient } from "@fusion/dashboard";
 import { TriageProcessor, TaskExecutor, Scheduler, AgentSemaphore, WorktreePool, aiMergeTask, UsageLimitPauser, PRIORITY_MERGE, scanIdleWorktrees, cleanupOrphanedWorktrees, NtfyNotifier, PrMonitor, PrCommentHandler, CronRunner, StuckTaskDetector, SelfHealingManager, MissionAutopilot, createAiPromptExecutor, HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "@fusion/engine";
 import { AuthStorage, DefaultPackageManager, ModelRegistry, SettingsManager, discoverAndLoadExtensions, getAgentDir, createExtensionRuntime } from "@mariozechner/pi-coding-agent";
@@ -864,8 +864,65 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     missionAutopilot.setScheduler(scheduler);
 
     // ── CronRunner: scheduled task execution ──────────────────────────
+
+    // Post-run callback for memory insight extraction processing
+    const onMemoryInsightRunProcessed = async (
+      schedule: ScheduledTask,
+      result: AutomationRunResult,
+    ): Promise<void> => {
+      // Only process the memory insight extraction schedule
+      if (schedule.name !== INSIGHT_EXTRACTION_SCHEDULE_NAME) {
+        return;
+      }
+
+      // Extract the AI step output from the result
+      const stepResults = result.stepResults ?? [];
+      const aiStep = stepResults.find((sr) => sr.stepName === "Extract Memory Insights");
+
+      if (!aiStep) {
+        console.log(`[memory-audit] No insight extraction step found in ${schedule.name} result`);
+        return;
+      }
+
+      console.log(`[memory-audit] Processing memory insight extraction run...`);
+
+      try {
+        const auditReport = await processAndAuditInsightExtraction(cwd, {
+          rawResponse: aiStep.output ?? "",
+          stepSuccess: aiStep.success,
+          runAt: result.startedAt,
+          error: aiStep.error,
+        });
+
+        console.log(
+          `[memory-audit] ✓ Audit complete — Health: ${auditReport.health}, ` +
+          `Insights: ${auditReport.insightsMemory.insightCount}`,
+        );
+      } catch (err) {
+        console.error(
+          `[memory-audit] ✗ Failed to process insight extraction: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    };
+
     const aiPromptExecutor = await createAiPromptExecutor(cwd);
-    const cronRunner = new CronRunner(store, automationStore, { aiPromptExecutor });
+    const cronRunner = new CronRunner(store, automationStore, {
+      aiPromptExecutor,
+      onScheduleRunProcessed: onMemoryInsightRunProcessed,
+    });
+
+    // ── Sync insight extraction automation on startup ─────────────────
+    // Run sync BEFORE starting the cron runner to avoid stale config races.
+    // This ensures the insight extraction schedule is created/updated/deleted
+    // before the first tick can execute it.
+    try {
+      await syncInsightExtractionAutomation(automationStore, settings);
+    } catch (err) {
+      console.error(
+        `[memory-audit] Failed to sync insight extraction automation: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
     cronRunner.start();
 
     triage.start();
@@ -961,6 +1018,29 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           await stuckTaskDetector.checkNow();
         } catch (err) {
           console.error("[stuck-detector] Error during immediate stuck-task check:", err);
+        }
+      }
+    });
+
+    // ── Insight extraction automation sync on settings change ─────────
+    // When insight extraction settings change (enable/disable/schedule/min interval),
+    // resync the automation schedule without requiring a restart.
+    registerHandler(store, "settings:updated", async ({ settings: s, previous: prev }) => {
+      const insightKeys = [
+        "insightExtractionEnabled",
+        "insightExtractionSchedule",
+        "insightExtractionMinIntervalMs",
+      ] as const;
+
+      const relevantKeyChanged = insightKeys.some((key) => s[key] !== prev[key]);
+      if (relevantKeyChanged) {
+        try {
+          await syncInsightExtractionAutomation(automationStore, s);
+          console.log("[memory-audit] Insight extraction automation synced with settings");
+        } catch (err) {
+          console.error(
+            `[memory-audit] Failed to sync insight extraction automation: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
       }
     });
