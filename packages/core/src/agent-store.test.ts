@@ -12,12 +12,13 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { AgentStore } from "./agent-store.js";
+import { TaskStore } from "./store.js";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { mkdtempSync, existsSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
-import type { AgentCapability, AgentState } from "./types.js";
+import { CheckoutConflictError, type AgentCapability, type AgentState } from "./types.js";
 
 function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), "kb-agent-store-test-"));
@@ -1382,6 +1383,111 @@ describe("AgentStore", () => {
       await expect(
         store.assignTask("agent-missing", "KB-001")
       ).rejects.toThrow("Agent agent-missing not found");
+    });
+  });
+
+  describe("checkout leasing", () => {
+    let taskStore: TaskStore;
+    let holderId: string;
+    let otherAgentId: string;
+    let taskId: string;
+
+    beforeEach(async () => {
+      taskStore = new TaskStore(rootDir);
+      await taskStore.init();
+
+      store = new AgentStore({ rootDir, taskStore });
+      await store.init();
+
+      const holder = await store.createAgent({ name: "Checkout Holder", role: "executor" });
+      const other = await store.createAgent({ name: "Checkout Other", role: "executor" });
+      const task = await taskStore.createTask({ description: "Task for checkout leasing tests" });
+
+      holderId = holder.id;
+      otherAgentId = other.id;
+      taskId = task.id;
+    });
+
+    it("checkoutTask acquires a lease and stamps checkedOutAt", async () => {
+      const updated = await store.checkoutTask(holderId, taskId);
+
+      expect(updated.checkedOutBy).toBe(holderId);
+      expect(updated.checkedOutAt).toBeDefined();
+
+      const persisted = await taskStore.getTask(taskId);
+      expect(persisted?.checkedOutBy).toBe(holderId);
+      expect(persisted?.checkedOutAt).toBeDefined();
+    });
+
+    it("checkoutTask is idempotent when the same agent re-checks out", async () => {
+      const first = await store.checkoutTask(holderId, taskId);
+      const second = await store.checkoutTask(holderId, taskId);
+
+      expect(second.checkedOutBy).toBe(holderId);
+      expect(second.checkedOutAt).toBe(first.checkedOutAt);
+    });
+
+    it("checkoutTask throws CheckoutConflictError when already held by another agent", async () => {
+      await store.checkoutTask(holderId, taskId);
+
+      try {
+        await store.checkoutTask(otherAgentId, taskId);
+        throw new Error("Expected checkout conflict");
+      } catch (error) {
+        expect(error).toBeInstanceOf(CheckoutConflictError);
+        const conflict = error as CheckoutConflictError;
+        expect(conflict.taskId).toBe(taskId);
+        expect(conflict.currentHolderId).toBe(holderId);
+        expect(conflict.requestedById).toBe(otherAgentId);
+      }
+    });
+
+    it("checkoutTask throws when agent is missing", async () => {
+      await expect(store.checkoutTask("agent-missing", taskId)).rejects.toThrow("Agent agent-missing not found");
+    });
+
+    it("checkoutTask throws when task is missing", async () => {
+      await expect(store.checkoutTask(holderId, "FN-404")).rejects.toThrow("Task FN-404 not found");
+    });
+
+    it("releaseTask clears checkedOutBy and checkedOutAt for the holder", async () => {
+      await store.checkoutTask(holderId, taskId);
+
+      const released = await store.releaseTask(holderId, taskId);
+      expect(released.checkedOutBy).toBeUndefined();
+      expect(released.checkedOutAt).toBeUndefined();
+
+      const persisted = await taskStore.getTask(taskId);
+      expect(persisted?.checkedOutBy).toBeUndefined();
+      expect(persisted?.checkedOutAt).toBeUndefined();
+    });
+
+    it("releaseTask throws for a non-holder agent", async () => {
+      await store.checkoutTask(holderId, taskId);
+
+      await expect(store.releaseTask(otherAgentId, taskId)).rejects.toThrow("Cannot release: not the checkout holder");
+    });
+
+    it("releaseTask is idempotent when task is already released", async () => {
+      const released = await store.releaseTask(holderId, taskId);
+
+      expect(released.checkedOutBy).toBeUndefined();
+      expect(released.checkedOutAt).toBeUndefined();
+    });
+
+    it("forceReleaseTask clears checkout regardless of holder", async () => {
+      await store.checkoutTask(holderId, taskId);
+
+      const released = await store.forceReleaseTask(taskId);
+      expect(released.checkedOutBy).toBeUndefined();
+      expect(released.checkedOutAt).toBeUndefined();
+    });
+
+    it("getCheckedOutBy returns holder ID when checked out and undefined otherwise", async () => {
+      expect(await store.getCheckedOutBy(taskId)).toBeUndefined();
+
+      await store.checkoutTask(holderId, taskId);
+      expect(await store.getCheckedOutBy(taskId)).toBe(holderId);
     });
   });
 

@@ -40,8 +40,10 @@ import type {
   AgentRating,
   AgentRatingSummary,
   AgentRatingInput,
+  Task,
 } from "./types.js";
-import { AGENT_VALID_TRANSITIONS, agentToConfigSnapshot, diffConfigSnapshots } from "./types.js";
+import { AGENT_VALID_TRANSITIONS, agentToConfigSnapshot, diffConfigSnapshots, CheckoutConflictError } from "./types.js";
+import type { TaskStore } from "./store.js";
 import { computeAccessState } from "./agent-permissions.js";
 import { Database } from "./db.js";
 
@@ -76,8 +78,10 @@ type TypedEventEmitter<Events extends Record<string, unknown[]>> = {
 
 /** Options for AgentStore constructor */
 export interface AgentStoreOptions {
-  /** Root directory for fn data (default: .fusion) */
+  /** Root directory for kb data (default: .fusion) */
   rootDir?: string;
+  /** Optional TaskStore for checkout/release operations */
+  taskStore?: TaskStore;
 }
 
 /** Agent data as stored on disk */
@@ -119,11 +123,13 @@ export class AgentStore extends EventEmitter {
   private agentsDir: string;
   private locks: Map<string, AgentLock> = new Map();
   private _db: Database | null = null;
+  private taskStore?: TaskStore;
 
   constructor(options: AgentStoreOptions = {}) {
     super();
     this.rootDir = options.rootDir ?? ".fusion";
     this.agentsDir = join(this.rootDir, "agents");
+    this.taskStore = options.taskStore;
   }
 
   private get db(): Database {
@@ -811,6 +817,93 @@ export class AgentStore extends EventEmitter {
 
       return updated;
     });
+  }
+
+  /**
+   * Acquire a checkout lease for a task.
+   * Throws CheckoutConflictError when another agent already holds the lease.
+   */
+  async checkoutTask(agentId: string, taskId: string): Promise<Task> {
+    if (!this.taskStore) {
+      throw new Error("TaskStore not configured for checkout operations");
+    }
+
+    const agent = await this.getAgent(agentId);
+    if (!agent) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+
+    const task = await this.taskStore.getTask(taskId);
+    if (!task) {
+      throw new Error(`Task ${taskId} not found`);
+    }
+
+    if (task.checkedOutBy && task.checkedOutBy !== agentId) {
+      throw new CheckoutConflictError(taskId, task.checkedOutBy, agentId);
+    }
+
+    if (task.checkedOutBy === agentId) {
+      return task;
+    }
+
+    const updated = await this.taskStore.updateTask(taskId, { checkedOutBy: agentId });
+    await this.taskStore.logEntry(taskId, `Checked out by agent ${agentId}`);
+    return updated;
+  }
+
+  /**
+   * Release a checkout lease for a task.
+   */
+  async releaseTask(agentId: string, taskId: string): Promise<Task> {
+    if (!this.taskStore) {
+      throw new Error("TaskStore not configured for checkout operations");
+    }
+
+    const task = await this.taskStore.getTask(taskId);
+    if (!task) {
+      throw new Error(`Task ${taskId} not found`);
+    }
+
+    if (task.checkedOutBy && task.checkedOutBy !== agentId) {
+      throw new Error("Cannot release: not the checkout holder");
+    }
+
+    if (!task.checkedOutBy) {
+      return task;
+    }
+
+    const updated = await this.taskStore.updateTask(taskId, { checkedOutBy: null });
+    await this.taskStore.logEntry(taskId, `Released by agent ${agentId}`);
+    return updated;
+  }
+
+  /**
+   * Force release a task checkout lease regardless of holder.
+   */
+  async forceReleaseTask(taskId: string): Promise<Task> {
+    if (!this.taskStore) {
+      throw new Error("TaskStore not configured for checkout operations");
+    }
+
+    const updated = await this.taskStore.updateTask(taskId, { checkedOutBy: null });
+    await this.taskStore.logEntry(taskId, "Checkout force-released");
+    return updated;
+  }
+
+  /**
+   * Get the current checkout lease holder for a task.
+   */
+  async getCheckedOutBy(taskId: string): Promise<string | undefined> {
+    if (!this.taskStore) {
+      throw new Error("TaskStore not configured for checkout operations");
+    }
+
+    const task = await this.taskStore.getTask(taskId);
+    if (!task) {
+      throw new Error(`Task ${taskId} not found`);
+    }
+
+    return task.checkedOutBy;
   }
 
   /**

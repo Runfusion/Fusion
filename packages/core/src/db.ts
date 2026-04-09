@@ -59,7 +59,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 19;
+const SCHEMA_VERSION = 20;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -740,6 +740,13 @@ export class Database {
         this.addColumnIfMissing("ai_sessions", "lockedByTab", "TEXT");
         this.addColumnIfMissing("ai_sessions", "lockedAt", "TEXT");
         this.db.exec("CREATE INDEX IF NOT EXISTS idxAiSessionsLock ON ai_sessions(lockedByTab)");
+      });
+    }
+
+    if (version < 20) {
+      this.applyMigration(20, () => {
+        this.addColumnIfMissing("tasks", "checkedOutBy", "TEXT");
+        this.addColumnIfMissing("tasks", "checkedOutAt", "TEXT");
       });
     }
   }

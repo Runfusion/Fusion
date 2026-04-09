@@ -2891,6 +2891,120 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  // Acquire checkout lease for a task
+  router.post("/tasks/:id/checkout", async (req, res) => {
+    try {
+      const { agentId } = req.body ?? {};
+      if (typeof agentId !== "string" || agentId.trim().length === 0) {
+        throw badRequest("agentId is required");
+      }
+
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({
+        rootDir: scopedStore.getFusionDir(),
+        taskStore: scopedStore,
+      });
+      await agentStore.init();
+
+      const task = await agentStore.checkoutTask(agentId, req.params.id);
+      res.json(task);
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err?.name === "CheckoutConflictError") {
+        res.status(409).json({
+          error: "Task is already checked out",
+          currentHolder: err.currentHolderId,
+          taskId: err.taskId,
+        });
+        return;
+      }
+      if (err?.message?.includes("not found")) {
+        throw notFound(err.message);
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  // Release checkout lease for a task
+  router.post("/tasks/:id/release", async (req, res) => {
+    try {
+      const { agentId } = req.body ?? {};
+      if (typeof agentId !== "string" || agentId.trim().length === 0) {
+        throw badRequest("agentId is required");
+      }
+
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({
+        rootDir: scopedStore.getFusionDir(),
+        taskStore: scopedStore,
+      });
+      await agentStore.init();
+
+      const task = await agentStore.releaseTask(agentId, req.params.id);
+      res.json(task);
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err?.message?.includes("not the checkout holder")) {
+        throw new ApiError(403, "Not the checkout holder");
+      }
+      if (err?.message?.includes("not found")) {
+        throw notFound(err.message);
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  // Force release checkout lease for a task
+  router.post("/tasks/:id/force-release", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({
+        rootDir: scopedStore.getFusionDir(),
+        taskStore: scopedStore,
+      });
+      await agentStore.init();
+
+      const task = await agentStore.forceReleaseTask(req.params.id);
+      res.json(task);
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err?.message?.includes("not found")) {
+        throw notFound(err.message);
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  // Get checkout lease state for a task
+  router.get("/tasks/:id/checkout", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const task = await scopedStore.getTask(req.params.id);
+      if (!task) {
+        throw notFound("Task not found");
+      }
+
+      res.json({
+        checkedOutBy: task.checkedOutBy ?? null,
+        checkedOutAt: task.checkedOutAt ?? null,
+      });
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
   // Delete task
   router.delete("/tasks/:id", async (req, res) => {
     try {

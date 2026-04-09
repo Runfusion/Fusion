@@ -703,6 +703,25 @@ export class HeartbeatMonitor {
           return (await this.store.getRunDetail(agentId, run.id))!;
         }
 
+        // Checkout enforcement: agent must hold the lease to work on this task.
+        // The heartbeat only validates existing checkout state — it does NOT attempt
+        // to acquire a checkout itself. The calling system (scheduler, API trigger)
+        // is responsible for checking out the task before the heartbeat starts.
+        if (taskDetail.checkedOutBy && taskDetail.checkedOutBy !== agentId) {
+          heartbeatLog.warn(
+            `Agent ${agentId} does not hold checkout for ${taskId} (held by ${taskDetail.checkedOutBy}) — graceful exit`
+          );
+          await this.completeRun(agentId, run.id, {
+            status: "completed",
+            resultJson: {
+              reason: "checkout_conflict",
+              taskId,
+              checkedOutBy: taskDetail.checkedOutBy,
+            },
+          });
+          return (await this.store.getRunDetail(agentId, run.id))!;
+        }
+
         // Track usage via callbacks
         const STDOUT_EXCERPT_LIMIT = 4000;
         let outputLength = 0;

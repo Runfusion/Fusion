@@ -706,6 +706,43 @@ interface WakeContext {
 - `InProcessRuntime.stop()` stops the trigger scheduler before stopping the HeartbeatMonitor
 - `InProcessRuntime.getTriggerScheduler()` — Returns the scheduler instance for testing access
 
+## Checkout Leasing
+
+Task ownership now supports explicit checkout leases modeled after Paperclip's checkout/release flow.
+
+### Pattern
+
+- Acquire ownership with `POST /api/tasks/:id/checkout` using `{ agentId }`
+- Release ownership with `POST /api/tasks/:id/release` using `{ agentId }`
+- Admin override with `POST /api/tasks/:id/force-release`
+- Read current lease state with `GET /api/tasks/:id/checkout`
+
+`AgentStore` exposes matching methods:
+- `checkoutTask(agentId, taskId)`
+- `releaseTask(agentId, taskId)`
+- `forceReleaseTask(taskId)`
+- `getCheckedOutBy(taskId)`
+
+### Conflict Semantics
+
+- Checkout conflicts return **409 Conflict** when another agent already holds the lease
+- Response shape: `{ error: "Task is already checked out", currentHolder, taskId }`
+- Clients **must not retry 409 automatically** — this is ownership contention, not a transient failure
+
+### Heartbeat Enforcement
+
+`HeartbeatMonitor.executeHeartbeat()` validates checkout before work begins:
+- If `task.checkedOutBy` is set to another agent, the run exits gracefully with `reason: "checkout_conflict"`
+- Heartbeat execution is **read-only with respect to lease ownership** — it does not auto-checkout
+- Scheduler/API callers are responsible for obtaining checkout before starting work
+
+### API Reference
+
+- `POST /api/tasks/:id/checkout` — Acquire lease (`{ agentId }`)
+- `POST /api/tasks/:id/release` — Release lease (`{ agentId }`)
+- `POST /api/tasks/:id/force-release` — Force release lease
+- `GET /api/tasks/:id/checkout` — Read lease state (`{ checkedOutBy, checkedOutAt }`)
+
 ## Dashboard Task Creation
 
 The dashboard provides two UI surfaces for creating tasks:

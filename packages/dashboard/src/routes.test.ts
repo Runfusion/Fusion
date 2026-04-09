@@ -2202,6 +2202,230 @@ describe("PATCH /tasks/:id/assign and GET /agents/:id/tasks", () => {
   }, 30_000);
 });
 
+describe("Task checkout routes", () => {
+  let tempDir: string;
+  let fusionDir: string;
+  let store: TaskStore;
+  let agentAId: string;
+  let agentBId: string;
+  let taskState: TaskDetail;
+
+  beforeEach(async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "kb-routes-task-checkout-"));
+    fusionDir = join(tempDir, ".fusion");
+    mkdirSync(fusionDir, { recursive: true });
+
+    const { AgentStore } = await import("@fusion/core");
+    const agentStore = new AgentStore({ rootDir: fusionDir });
+    await agentStore.init();
+
+    const agentA = await agentStore.createAgent({
+      name: "Checkout Agent A",
+      role: "executor",
+    });
+    const agentB = await agentStore.createAgent({
+      name: "Checkout Agent B",
+      role: "executor",
+    });
+
+    agentAId = agentA.id;
+    agentBId = agentB.id;
+
+    taskState = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-300",
+      checkedOutBy: undefined,
+      checkedOutAt: undefined,
+    };
+
+    store = createMockStore({
+      getFusionDir: vi.fn().mockReturnValue(fusionDir),
+      getTask: vi.fn().mockImplementation(async (id: string) => {
+        if (id !== taskState.id) {
+          return null;
+        }
+        return { ...taskState };
+      }),
+      updateTask: vi.fn().mockImplementation(async (id: string, updates: { checkedOutBy?: string | null; checkedOutAt?: string | null }) => {
+        if (id !== taskState.id) {
+          throw new Error(`Task ${id} not found`);
+        }
+
+        if (updates.checkedOutBy === null) {
+          taskState.checkedOutBy = undefined;
+          taskState.checkedOutAt = undefined;
+        } else if (updates.checkedOutBy !== undefined) {
+          taskState.checkedOutBy = updates.checkedOutBy;
+          taskState.checkedOutAt = updates.checkedOutAt ?? new Date().toISOString();
+        }
+
+        return { ...taskState };
+      }),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+    } as any);
+  }, 30_000);
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("POST /tasks/:id/checkout — returns 200 on success", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/tasks/${taskState.id}/checkout`,
+      JSON.stringify({ agentId: agentAId }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.checkedOutBy).toBe(agentAId);
+    expect(res.body.checkedOutAt).toBeTruthy();
+  }, 20_000);
+
+  it("POST /tasks/:id/checkout — returns 409 on conflict", async () => {
+    await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/tasks/${taskState.id}/checkout`,
+      JSON.stringify({ agentId: agentAId }),
+      { "Content-Type": "application/json" },
+    );
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/tasks/${taskState.id}/checkout`,
+      JSON.stringify({ agentId: agentBId }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("Task is already checked out");
+    expect(res.body.currentHolder).toBe(agentAId);
+    expect(res.body.taskId).toBe(taskState.id);
+  }, 20_000);
+
+  it("POST /tasks/:id/checkout — returns 400 when agentId is missing", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/tasks/${taskState.id}/checkout`,
+      JSON.stringify({}),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("agentId is required");
+  }, 20_000);
+
+  it("POST /tasks/:id/release — returns 200 on success", async () => {
+    await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/tasks/${taskState.id}/checkout`,
+      JSON.stringify({ agentId: agentAId }),
+      { "Content-Type": "application/json" },
+    );
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/tasks/${taskState.id}/release`,
+      JSON.stringify({ agentId: agentAId }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.checkedOutBy).toBeUndefined();
+
+    const statusRes = await GET(buildApp(), `/api/tasks/${taskState.id}/checkout`);
+    expect(statusRes.status).toBe(200);
+    expect(statusRes.body.checkedOutBy).toBeNull();
+    expect(statusRes.body.checkedOutAt).toBeNull();
+  }, 20_000);
+
+  it("POST /tasks/:id/release — returns 403 for wrong holder", async () => {
+    await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/tasks/${taskState.id}/checkout`,
+      JSON.stringify({ agentId: agentAId }),
+      { "Content-Type": "application/json" },
+    );
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/tasks/${taskState.id}/release`,
+      JSON.stringify({ agentId: agentBId }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Not the checkout holder");
+  }, 20_000);
+
+  it("POST /tasks/:id/release — returns 400 when agentId is missing", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/tasks/${taskState.id}/release`,
+      JSON.stringify({}),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("agentId is required");
+  }, 20_000);
+
+  it("GET /tasks/:id/checkout — returns checkout status", async () => {
+    await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/tasks/${taskState.id}/checkout`,
+      JSON.stringify({ agentId: agentAId }),
+      { "Content-Type": "application/json" },
+    );
+
+    const res = await GET(buildApp(), `/api/tasks/${taskState.id}/checkout`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.checkedOutBy).toBe(agentAId);
+    expect(res.body.checkedOutAt).toBeTruthy();
+  }, 20_000);
+
+  it("POST /tasks/:id/force-release — clears active checkout", async () => {
+    await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/tasks/${taskState.id}/checkout`,
+      JSON.stringify({ agentId: agentAId }),
+      { "Content-Type": "application/json" },
+    );
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/tasks/${taskState.id}/force-release`,
+    );
+
+    expect(res.status).toBe(200);
+
+    const statusRes = await GET(buildApp(), `/api/tasks/${taskState.id}/checkout`);
+    expect(statusRes.status).toBe(200);
+    expect(statusRes.body.checkedOutBy).toBeNull();
+    expect(statusRes.body.checkedOutAt).toBeNull();
+  }, 20_000);
+});
+
 describe("Attachment routes", () => {
   const FAKE_ATTACHMENT: TaskAttachment = {
     filename: "1234-screenshot.png",
