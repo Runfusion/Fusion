@@ -74,6 +74,15 @@
 - Regex tests using `[\s\S]*` (greedy match across lines) to check CSS rules inside `@media` blocks are unreliable — they can match across block boundaries. Use non-greedy `[^}]*` scoped to a single rule block instead.
 - Touch target sizing in `styles.css` mobile media queries uses 36px (reduced from the original 44px). The `.touch-target` opt-in utility class remains at 44px. Comments mentioning "44px" in the mobile sections have been updated to reflect the actual values.
 
+## UX Audit Findings (FN-1379)
+
+- **Header overload**: The Header component (`Header.tsx`) has 15+ icon buttons with no labels, making discovery difficult. Consider grouping secondary actions into overflow menus.
+- **Modal inconsistency**: Different modals handle close behavior differently (X button vs. Esc vs. click-outside). Standardize via a shared ModalHeader component.
+- **Loading states**: Some components use skeletons, some use spinners, some have no loading indicator. Use skeleton screens for content-heavy areas, spinners for quick operations.
+- **Toast system**: The ToastContainer is minimal — consider adding type-specific icons, action buttons, and stacking management.
+- **Accessibility gaps**: Many icon buttons lack `aria-label`. All interactive elements need proper labeling for screen reader users.
+- **Empty states**: Views like Board, List, Agents, and Missions lack helpful empty state guidance with actionable CTAs.
+
 ## TUI Package Testing
 
 - The `@fusion/tui` package uses `ink`'s `render` function for testing, not `@testing-library/react`. Use `setTimeout(resolve, ms)` to wait for async operations in tests.
