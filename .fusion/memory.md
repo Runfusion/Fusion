@@ -126,3 +126,34 @@ The plugin system is built on three layers:
 - Ink's render function captures errors but doesn't throw them — use `expect(() => instance.unmount()).not.toThrow()` pattern for error-handling tests.
 
 - When adding database schema migrations, increment `SCHEMA_VERSION` and add migration blocks with `applyMigration(N, () => { ... })`. Also update hardcoded schema version assertions in `db.test.ts` and other test files (e.g., `task-documents.test.ts`) to expect the new version. Missing updates cause test failures like `expected 22 to be 21`.
+
+## Agent Skills
+
+### create-fusion-plugin Skill (FN-1134)
+
+The `create-fusion-plugin` skill teaches agents how to create Fusion plugins. Located at `.pi/agent/skills/create-fusion-plugin/`.
+
+**Purpose:** Enables agents to build, extend, and debug Fusion plugins with custom tools, routes, hooks, and settings.
+
+**Routing:**
+- "Create plugin", "build plugin", "new plugin" → `workflows/create-plugin.md`
+- "Add tool", "add route", "add hook", "add settings" → `workflows/add-capability.md`
+- "Plugin not working", "debug plugin", "plugin error" → `workflows/debug-plugin.md`
+
+**Files:**
+- `references/plugin-api.md` — Complete API reference (types, interfaces, helpers)
+- `references/plugin-patterns.md` — Common patterns and idioms
+- `workflows/create-plugin.md` — Scaffold and build new plugins
+- `workflows/add-capability.md` — Extend existing plugins
+- `workflows/debug-plugin.md` — Diagnose and fix plugin issues
+- `templates/minimal-plugin.ts` — Bare minimum working plugin
+- `templates/plugin-with-tools.ts` — Plugin with AI-agent-callable tools
+- `templates/plugin-with-routes.ts` — Plugin with HTTP API routes
+
+**Key references for plugin authors:**
+- Import from `@fusion/plugin-sdk` (not `@fusion/core`)
+- Use `definePlugin()` for type-safe plugin definitions
+- Hooks: 5-second timeout, error isolation, all optional
+- Tools: JSON Schema parameters, return `PluginToolResult`
+- Routes: GET/POST/PUT/DELETE, mounted at `/api/plugins/{pluginId}/{path}`
+- vitest.config.ts: use `pool: "threads"` (NOT `vmThreads`)
