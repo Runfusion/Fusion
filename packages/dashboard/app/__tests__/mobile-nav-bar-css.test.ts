@@ -50,9 +50,9 @@ describe("mobile-nav-bar.css", () => {
     expect(cssContent).toMatch(/@media\s*\(max-width:\s*768px\)\s*\{[\s\S]*?\.mobile-nav-bar\s*\{[\s\S]*?display:\s*flex[;\s]/);
   });
 
-  it("tab touch targets are at least 44px", () => {
+  it("tab touch targets are at least 36px", () => {
     const block = extractRuleBlock(cssContent, ".mobile-nav-tab");
-    expect(block).toContain("min-height: 44px");
+    expect(block).toContain("min-height: 36px");
   });
 
   it("footer-aware positioning places nav above footer", () => {
@@ -73,9 +73,9 @@ describe("mobile-nav-bar.css", () => {
     expect(block).toContain("z-index: 45");
   });
 
-  it("sheet items maintain 44px touch targets", () => {
+  it("sheet items maintain 36px touch targets", () => {
     const block = extractRuleBlock(cssContent, ".mobile-more-item");
-    expect(block).toContain("min-height: 44px");
+    expect(block).toContain("min-height: 36px");
   });
 
   it("defines content padding rule for mobile nav", () => {

@@ -56,9 +56,9 @@ function findMobileBlockContaining(needle: string): string {
 }
 
 describe("mission + planning modal mobile CSS", () => {
-  it("MissionManager: mission icon button touch targets are 44px", () => {
+  it("MissionManager: mission icon button touch targets are 36px", () => {
     const missionBlock = findMobileBlockContaining(".mission-manager-overlay");
-    expect(missionBlock).toMatch(/\.mission-list__item-actions \.mission-icon-btn,[\s\S]*?\.mission-feature__actions \.mission-icon-btn\s*\{[\s\S]*?min-width:\s*44px;[\s\S]*?min-height:\s*44px;/s);
+    expect(missionBlock).toMatch(/\.mission-list__item-actions \.mission-icon-btn,[\s\S]*?\.mission-feature__actions \.mission-icon-btn\s*\{[\s\S]*?min-width:\s*36px;[\s\S]*?min-height:\s*36px;/s);
   });
 
   it("MissionManager: body prevents horizontal overflow", () => {
@@ -76,24 +76,24 @@ describe("mission + planning modal mobile CSS", () => {
     expect(missionBlock).toMatch(/\.mission-detail\s*\{[^}]*env\(safe-area-inset-bottom/s);
   });
 
-  it("SubtaskBreakdown: drag handle is touch-friendly (44px)", () => {
+  it("SubtaskBreakdown: drag handle is touch-friendly (36px)", () => {
     const planningBlock = findMobileBlockContaining(".planning-modal");
-    expect(planningBlock).toMatch(/\.subtask-drag-handle\s*\{[^}]*min-width:\s*44px;[^}]*min-height:\s*44px;/s);
+    expect(planningBlock).toMatch(/\.subtask-drag-handle\s*\{[^}]*min-width:\s*36px;[^}]*min-height:\s*36px;/s);
   });
 
-  it("SubtaskBreakdown: subtask action icon buttons are 44px", () => {
+  it("SubtaskBreakdown: subtask action icon buttons are 36px", () => {
     const planningBlock = findMobileBlockContaining(".planning-modal");
-    expect(planningBlock).toMatch(/\.subtask-item-actions \.btn-icon\s*\{[^}]*min-width:\s*44px;[^}]*min-height:\s*44px;/s);
+    expect(planningBlock).toMatch(/\.subtask-item-actions \.btn-icon\s*\{[^}]*min-width:\s*36px;[^}]*min-height:\s*36px;/s);
   });
 
   it("SubtaskBreakdown: dependency chips are touch-friendly", () => {
     const planningBlock = findMobileBlockContaining(".planning-modal");
-    expect(planningBlock).toMatch(/\.planning-dep-chip\s*\{[^}]*min-height:\s*44px;/s);
+    expect(planningBlock).toMatch(/\.planning-dep-chip\s*\{[^}]*min-height:\s*36px;/s);
   });
 
   it("PlanningMode: confirm buttons meet touch targets", () => {
     const planningBlock = findMobileBlockContaining(".planning-modal");
-    expect(planningBlock).toMatch(/\.planning-confirm-btn\s*\{[^}]*min-height:\s*44px;/s);
+    expect(planningBlock).toMatch(/\.planning-confirm-btn\s*\{[^}]*min-height:\s*36px;/s);
   });
 
   it("ModelSelection: combobox dropdown has mobile sizing", () => {
@@ -120,6 +120,6 @@ describe("mission + planning modal mobile CSS", () => {
 
   it("ModelSelection: combobox options meet touch targets", () => {
     const modelBlock = findMobileBlockContaining(".model-combobox-option");
-    expect(modelBlock).toMatch(/\.model-combobox-option\s*\{[^}]*min-height:\s*44px;/s);
+    expect(modelBlock).toMatch(/\.model-combobox-option\s*\{[^}]*min-height:\s*36px;/s);
   });
 });

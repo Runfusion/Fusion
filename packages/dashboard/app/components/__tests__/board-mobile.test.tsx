@@ -132,11 +132,11 @@ describe("Board and Column mobile CSS", () => {
     expectRuleToContain(mobileSection, ".board > .column", "min-width: 280px;");
   });
 
-  it("contains .column-header min-height: 44px in the mobile media block", () => {
+  it("contains .column-header min-height: 36px in the mobile media block", () => {
     const css = fs.readFileSync(stylesPath, "utf-8");
     const mobileSection = getMainMobileSection(css);
 
-    expectRuleToContain(mobileSection, ".column-header", "min-height: 44px;");
+    expectRuleToContain(mobileSection, ".column-header", "min-height: 36px;");
   });
 
   it("hides board scrollbars in the mobile media block", () => {
@@ -184,12 +184,12 @@ describe("TaskCard mobile", () => {
     expectRuleToContain(mobileSection, ".card-session-files", "min-height: 32px;");
   });
 
-  it("keeps .card-edit-btn width and height at 44px in the mobile media block", () => {
+  it("keeps .card-edit-btn width and height at 36px in the mobile media block", () => {
     const css = fs.readFileSync(stylesPath, "utf-8");
     const mobileSection = getMainMobileSection(css);
 
-    expectRuleToContain(mobileSection, ".card-edit-btn", "width: 44px;");
-    expectRuleToContain(mobileSection, ".card-edit-btn", "height: 44px;");
+    expectRuleToContain(mobileSection, ".card-edit-btn", "width: 36px;");
+    expectRuleToContain(mobileSection, ".card-edit-btn", "height: 36px;");
   });
 
   it("opens task detail on quick tap", async () => {
@@ -363,18 +363,18 @@ describe("InlineCreateCard mobile", () => {
     expectRuleToContain(mobileSection, ".inline-create-input", "font-size: 16px;");
   });
 
-  it("contains .inline-create-toggle min-height: 44px in the mobile media block", () => {
+  it("contains .inline-create-toggle min-height: 36px in the mobile media block", () => {
     const css = fs.readFileSync(stylesPath, "utf-8");
     const mobileSection = getMainMobileSection(css);
 
-    expectRuleToContain(mobileSection, ".inline-create-toggle", "min-height: 44px;");
+    expectRuleToContain(mobileSection, ".inline-create-toggle", "min-height: 36px;");
   });
 
-  it("contains .inline-create-controls .btn min-height: 44px in the mobile media block", () => {
+  it("contains .inline-create-controls .btn min-height: 36px in the mobile media block", () => {
     const css = fs.readFileSync(stylesPath, "utf-8");
     const mobileSection = getMainMobileSection(css);
 
-    expectRuleToContain(mobileSection, ".inline-create-controls .btn", "min-height: 44px;");
+    expectRuleToContain(mobileSection, ".inline-create-controls .btn", "min-height: 36px;");
   });
 
   it("renders Plan and Subtask buttons when expanded", () => {

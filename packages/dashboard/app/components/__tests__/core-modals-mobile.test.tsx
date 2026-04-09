@@ -88,11 +88,11 @@ describe("core modals mobile css coverage", () => {
     expect(mobileBlock).toContain("flex-direction: row;");
   });
 
-  it("GitManagerModal: nav items keep 44px touch target on mobile", () => {
+  it("GitManagerModal: nav items keep 36px touch target on mobile", () => {
     const css = fs.readFileSync(stylesPath, "utf-8");
     const mobileBlock = getMainMobileBlock(css);
 
     expect(mobileBlock).toContain(".gm-nav-item {");
-    expect(mobileBlock).toContain("min-height: 44px;");
+    expect(mobileBlock).toContain("min-height: 36px;");
   });
 });

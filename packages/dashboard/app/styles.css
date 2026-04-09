@@ -4057,7 +4057,7 @@ body {
   /* Larger touch targets for file entries on mobile */
   .changed-files-sidebar.mobile .changed-files-entry {
     padding: 10px var(--space-md);
-    min-height: 44px;
+    min-height: 36px;
   }
 
   /* Clearer active state on mobile */
@@ -5742,12 +5742,12 @@ body {
 
   /* Global touch target enforcement on mobile */
   .btn:not(.btn-icon):not(.btn-badge):not(.btn-sm):not(.btn--sm) {
-    min-height: 44px;
+    min-height: 36px;
   }
 
   .btn-icon {
-    min-width: 44px;
-    min-height: 44px;
+    min-width: 36px;
+    min-height: 36px;
   }
 
   input[type="text"],
@@ -5758,11 +5758,11 @@ body {
   input[type="url"],
   select,
   textarea {
-    min-height: 44px;
+    min-height: 36px;
   }
 
   .detail-tab {
-    min-height: 44px;
+    min-height: 36px;
   }
 
   /* Dropdown items and overflow menu actions */
@@ -5770,7 +5770,7 @@ body {
   .mobile-overflow-item,
   .mobile-overflow-split-toggle,
   .list-column-dropdown-item {
-    min-height: 44px;
+    min-height: 36px;
   }
 
   /* Small tappable controls that are explicitly sized below 44px at desktop */
@@ -5785,8 +5785,8 @@ body {
   .workflow-results-edit-toggle,
   .agent-tree__toggle,
   .quick-chat-panel-input button {
-    min-width: 44px;
-    min-height: 44px;
+    min-width: 36px;
+    min-height: 36px;
   }
 
   /* Board: flex layout with single horizontal scroll + snap */
@@ -5818,7 +5818,7 @@ body {
 
   /* Column header touch target */
   .column-header {
-    min-height: 44px;
+    min-height: 36px;
   }
 
   /* Column count badge: slightly larger on mobile for tapping */
@@ -5988,7 +5988,7 @@ body {
 
   .settings-content .btn,
   .auth-provider-row .btn {
-    min-height: 44px;
+    min-height: 36px;
   }
 
   .auth-provider-row {
@@ -6006,8 +6006,8 @@ body {
   /* Card edit button: always visible on mobile (no hover) */
   .card-edit-btn {
     opacity: 1;
-    width: 44px;
-    height: 44px;
+    width: 36px;
+    height: 36px;
     margin-right: -8px;
     margin-top: -8px;
     margin-bottom: -8px;
@@ -6022,8 +6022,8 @@ body {
   /* Git Manager remote edit buttons: always visible on mobile (no hover) */
   .gm-remote-edit-btn {
     opacity: 1;
-    width: 44px;
-    height: 44px;
+    width: 36px;
+    height: 36px;
     margin-right: -8px;
     margin-top: -8px;
     margin-bottom: -8px;
@@ -6102,8 +6102,8 @@ body {
 
   /* Inline create: 44px touch targets */
   .inline-create-toggle {
-    min-width: 44px;
-    min-height: 44px;
+    min-width: 36px;
+    min-height: 36px;
     flex-shrink: 0;
   }
 
@@ -6114,7 +6114,7 @@ body {
   }
 
   .inline-create-controls .btn {
-    min-height: 44px;
+    min-height: 36px;
     font-size: 12px;
   }
 
@@ -6139,7 +6139,7 @@ body {
   }
 
   .model-combobox-option {
-    min-height: 44px;
+    min-height: 36px;
   }
 
   /* Task detail modal: prevent header clipping + full-screen refine flow */
@@ -6268,7 +6268,7 @@ body {
     border-bottom: 2px solid transparent;
     text-align: center;
     justify-content: center;
-    min-height: 44px;
+    min-height: 36px;
   }
 
   .gm-nav-item.active {
@@ -7098,7 +7098,7 @@ body {
 
   .issue-item {
     flex-wrap: wrap;
-    min-height: 44px;
+    min-height: 36px;
   }
 
   .imported-badge {
@@ -7926,7 +7926,7 @@ body {
     gap: var(--space-sm);
     padding: var(--space-md) var(--space-md) var(--space-sm);
     cursor: pointer;
-    min-height: 44px;
+    min-height: 36px;
     user-select: none;
     -webkit-tap-highlight-color: transparent;
   }
@@ -7949,7 +7949,7 @@ body {
     margin: var(--space-xs) 0;
     cursor: pointer;
     transition: background var(--transition-fast), border-color var(--transition-fast);
-    min-height: 44px;
+    min-height: 36px;
     position: relative;
     -webkit-tap-highlight-color: transparent;
   }
@@ -8008,8 +8008,8 @@ body {
     position: absolute;
     top: var(--space-xs);
     left: var(--space-xs);
-    min-width: 44px;
-    min-height: 44px;
+    min-width: 36px;
+    min-height: 36px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -9357,7 +9357,7 @@ body {
   }
 
   .model-combobox-option {
-    min-height: 44px;
+    min-height: 36px;
   }
 }
 
@@ -13506,7 +13506,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   }
 
   .changes-diff-file-item {
-    min-height: 44px;
+    min-height: 36px;
   }
 
   .changes-diff-content {
@@ -13775,8 +13775,8 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   }
 
   .file-browser-modal-header .modal-close {
-    min-width: 44px;
-    min-height: 44px;
+    min-width: 36px;
+    min-height: 36px;
     padding: 10px;
     display: inline-flex;
     align-items: center;
@@ -14708,8 +14708,8 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 
   /* Subtask breakdown: touch-friendly drag handles with padding */
   .subtask-drag-handle {
-    min-width: 44px;
-    min-height: 44px;
+    min-width: 36px;
+    min-height: 36px;
     padding: 10px;
     display: flex;
     align-items: center;
@@ -14718,8 +14718,8 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 
   /* Subtask action buttons meet 44px touch target */
   .subtask-item-actions .btn-icon {
-    min-width: 44px;
-    min-height: 44px;
+    min-width: 36px;
+    min-height: 36px;
   }
 
   /* Subtask items: prevent overflow */
@@ -14730,7 +14730,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 
   /* Dependency chips: touch-friendly */
   .planning-dep-chip {
-    min-height: 44px;
+    min-height: 36px;
   }
 
   /* Size select: prevent iOS zoom */
@@ -14749,7 +14749,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 
   /* Confirm buttons meet 44px touch target */
   .planning-confirm-btn {
-    min-height: 44px;
+    min-height: 36px;
     padding: var(--space-sm) var(--space-md);
   }
 
@@ -17649,7 +17649,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 
   /* Entries: allow content to wrap freely */
   .activity-log-entry {
-    min-height: 44px;
+    min-height: 36px;
     gap: var(--space-sm);
     padding: var(--space-sm);
   }
@@ -20190,7 +20190,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   }
 
   .background-tasks-indicator__pill {
-    min-height: 44px;
+    min-height: 36px;
   }
 }
 
@@ -22033,8 +22033,8 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   .mission-milestone__actions .mission-icon-btn,
   .mission-slice__actions .mission-icon-btn,
   .mission-feature__actions .mission-icon-btn {
-    min-width: 44px;
-    min-height: 44px;
+    min-width: 36px;
+    min-height: 36px;
   }
 
   /* Prevent horizontal overflow in body */
@@ -23862,7 +23862,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
     padding: 12px 14px;
     font-size: 13px;
     white-space: nowrap;
-    min-height: 44px;
+    min-height: 36px;
   }
 
   .agent-detail-content {
@@ -23958,7 +23958,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   .config-section .select,
   .config-section textarea {
     font-size: 16px;
-    min-height: 44px;
+    min-height: 36px;
   }
 
   .config-actions {
@@ -24010,7 +24010,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 
   .agent-board-actions .btn,
   .agent-card-actions .btn {
-    min-height: 44px;
+    min-height: 36px;
   }
 
   .agent-controls {
@@ -24027,12 +24027,12 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 
   .agent-controls-actions .btn {
     width: 100%;
-    min-height: 44px;
+    min-height: 36px;
   }
 
   .agent-state-filter {
     width: 100%;
-    min-height: 44px;
+    min-height: 36px;
   }
 
   .agent-state-filter-select {
@@ -24055,8 +24055,8 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   .agent-tree__indent--4 { padding-left: 64px; }
 
   .agent-tree__toggle {
-    min-width: 44px;
-    min-height: 44px;
+    min-width: 36px;
+    min-height: 36px;
   }
 }
 
@@ -26013,7 +26013,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   align-items: center;
   justify-content: center;
   gap: 2px;
-  min-height: 44px;
+  min-height: 36px;
   padding: 6px 0;
   background: none;
   border: none;
@@ -26105,7 +26105,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   gap: 12px;
   width: 100%;
   padding: 12px 16px;
-  min-height: 44px;
+  min-height: 36px;
   background: none;
   border: none;
   color: var(--text-primary);
@@ -26176,7 +26176,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 
 @media (max-width: 768px) {
   .file-browser-context-menu__item {
-    min-height: 44px;
+    min-height: 36px;
   }
 }
 
@@ -26205,7 +26205,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 /* === Quick Entry Mobile Touch + Overflow Fixes (FN-1140) === */
 @media (max-width: 768px) {
   .quick-entry-actions .btn {
-    min-height: 44px;
+    min-height: 36px;
   }
 
   .quick-entry-box .dep-dropdown {
@@ -26216,8 +26216,8 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 
 @media (max-width: 640px) {
   .quick-entry-toggle {
-    min-height: 44px;
-    min-width: 44px;
+    min-height: 36px;
+    min-width: 36px;
     padding: var(--space-xs);
   }
 }
@@ -26447,7 +26447,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   .agent-dialog-field .select,
   .agent-dialog-field textarea {
     font-size: 16px; /* prevent iOS zoom */
-    min-height: 44px;
+    min-height: 36px;
   }
 
   /* Summary rows adapt — used by AgentGenerationModal and NewAgentDialog */
@@ -26830,7 +26830,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   .conversation-thinking-toggle {
     width: 100%;
     justify-content: center;
-    min-height: 44px;
+    min-height: 36px;
   }
 }
 
