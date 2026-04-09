@@ -27281,7 +27281,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 
 /* === Mobile Bottom Tab Bar (FN-1108) ===
    Fixed bottom navigation for mobile viewports (≤768px).
-   Sits above the ExecutorStatusBar footer when visible.
+   Sits at the very bottom; ExecutorStatusBar appears above when visible.
    Uses safe-area-inset-bottom for notched devices. */
 
 .mobile-nav-bar {

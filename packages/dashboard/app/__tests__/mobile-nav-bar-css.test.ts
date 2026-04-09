@@ -55,9 +55,19 @@ describe("mobile-nav-bar.css", () => {
     expect(block).toContain("min-height: 36px");
   });
 
-  it("footer-aware positioning places nav above footer", () => {
+  it("footer-aware positioning keeps nav at bottom: 0 when footer is visible", () => {
     expect(cssContent).toContain(".mobile-nav-bar--with-footer");
-    expect(cssContent).toContain("bottom: 32px");
+    // Nav bar stays at bottom: 0 (no longer shifts up)
+    // ExecutorStatusBar is positioned above via its own bottom offset
+    expect(mobileMediaBlock).toContain(".mobile-nav-bar--with-footer");
+    expect(mobileMediaBlock).toContain("bottom: 0");
+  });
+
+  it("executor status bar has bottom offset above nav bar on mobile", () => {
+    // ExecutorStatusBar mobile override positions it above the mobile nav bar
+    expect(mobileMediaBlock).toMatch(
+      /\.executor-status-bar\s*\{[^}]*bottom:\s*calc\(56px/,
+    );
   });
 
   it("defines bottom sheet animation", () => {

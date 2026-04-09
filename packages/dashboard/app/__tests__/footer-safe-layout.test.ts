@@ -124,6 +124,13 @@ describe("footer-safe project workspace layout", () => {
       );
     });
 
+    it("on mobile, positions above the mobile nav bar", () => {
+      const mobileCss = extractMobileMediaBlocks(css);
+      expect(mobileCss).toMatch(
+        /\.executor-status-bar\s*\{[^}]*bottom:\s*calc\(56px/,
+      );
+    });
+
     it("has explicit height: 36px on desktop", () => {
       expect(css).toMatch(
         /\.executor-status-bar\s*\{[^}]*height:\s*36px/,
