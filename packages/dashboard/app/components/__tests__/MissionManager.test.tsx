@@ -322,6 +322,13 @@ function createFetchMockWithHealth(
       return Promise.resolve(mockApiResponse(parseMissionEventsResponse(url)));
     }
 
+    // Handle batched health endpoint before individual health endpoint
+    // /api/missions/health returns all mission health data
+    // /api/missions/:id/health returns individual mission health
+    if (url.includes("/missions/health")) {
+      return Promise.resolve(mockApiResponse(healthByMissionId));
+    }
+
     if (url.includes("/health")) {
       const missionId = extractMissionId(url) ?? "";
       return Promise.resolve(mockApiResponse(healthByMissionId[missionId] ?? getMockMissionHealth(missionId)));
