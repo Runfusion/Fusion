@@ -34,7 +34,6 @@ export interface MobileNavBarProps {
   mailboxUnreadCount?: number;
   onOpenGitManager?: () => void;
   onOpenWorkflowSteps?: () => void;
-  onOpenMissions?: () => void;
   onOpenSchedules?: () => void;
   onOpenScripts?: () => void;
   onToggleTerminal?: () => void;
@@ -78,7 +77,6 @@ export function MobileNavBar({
   mailboxUnreadCount = 0,
   onOpenGitManager,
   onOpenWorkflowSteps,
-  onOpenMissions,
   onOpenSchedules,
   onToggleTerminal,
   onOpenFiles,
@@ -165,6 +163,18 @@ export function MobileNavBar({
 
         <button
           type="button"
+          className={`mobile-nav-tab${view === "missions" ? " mobile-nav-tab--active" : ""}`}
+          data-testid="mobile-nav-tab-missions"
+          role="tab"
+          aria-selected={view === "missions"}
+          onClick={() => onChangeView("missions")}
+        >
+          <Target />
+          <span className="mobile-nav-tab-label">Missions</span>
+        </button>
+
+        <button
+          type="button"
           className="mobile-nav-tab"
           data-testid="mobile-nav-tab-more"
           role="tab"
@@ -207,16 +217,6 @@ export function MobileNavBar({
             >
               <Activity />
               <span>Activity Log</span>
-            </button>
-
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-missions"
-              onClick={() => handleMoreAction(onOpenMissions)}
-            >
-              <Target />
-              <span>Missions</span>
             </button>
 
             <button

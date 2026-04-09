@@ -30,7 +30,6 @@ const createDefaultProps = () => ({
   mailboxUnreadCount: 0,
   onOpenGitManager: vi.fn(),
   onOpenWorkflowSteps: vi.fn(),
-  onOpenMissions: vi.fn(),
   onOpenSchedules: vi.fn(),
   onOpenScripts: vi.fn(),
   onToggleTerminal: vi.fn(),
@@ -50,12 +49,13 @@ describe("MobileNavBar", () => {
     mockViewport("mobile");
   });
 
-  it("renders four tab buttons (board + list + agents + more)", () => {
+  it("renders five tab buttons (board + list + agents + missions + more)", () => {
     render(<MobileNavBar {...createDefaultProps()} />);
 
     expect(screen.getByTestId("mobile-nav-tab-board")).toBeDefined();
     expect(screen.getByTestId("mobile-nav-tab-list")).toBeDefined();
     expect(screen.getByTestId("mobile-nav-tab-agents")).toBeDefined();
+    expect(screen.getByTestId("mobile-nav-tab-missions")).toBeDefined();
     expect(screen.getByTestId("mobile-nav-tab-more")).toBeDefined();
   });
 
@@ -99,6 +99,24 @@ describe("MobileNavBar", () => {
     expect(screen.getByTestId("mobile-nav-tab-list").className).not.toContain("mobile-nav-tab--active");
   });
 
+  it("missions tab calls onChangeView with 'missions'", () => {
+    const props = createDefaultProps();
+    render(<MobileNavBar {...props} view="board" />);
+
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-missions"));
+    expect(props.onChangeView).toHaveBeenCalledWith("missions");
+  });
+
+  it("missions tab is active when view is 'missions'", () => {
+    render(<MobileNavBar {...createDefaultProps()} view="missions" />);
+    expect(screen.getByTestId("mobile-nav-tab-missions").className).toContain("mobile-nav-tab--active");
+  });
+
+  it("missions tab is not active when view is 'board'", () => {
+    render(<MobileNavBar {...createDefaultProps()} view="board" />);
+    expect(screen.getByTestId("mobile-nav-tab-missions").className).not.toContain("mobile-nav-tab--active");
+  });
+
   it("opens and toggles the more sheet", () => {
     const props = createDefaultProps();
     const { container } = render(<MobileNavBar {...props} />);
@@ -116,7 +134,6 @@ describe("MobileNavBar", () => {
 
     expect(screen.getByTestId("mobile-more-item-mailbox")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-activity")).toBeDefined();
-    expect(screen.getByTestId("mobile-more-item-missions")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-git")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-terminal")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-files")).toBeDefined();

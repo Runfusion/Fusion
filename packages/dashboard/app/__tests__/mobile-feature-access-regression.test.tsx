@@ -49,7 +49,6 @@ const createDefaultMobileNavProps = () => ({
   mailboxUnreadCount: 0,
   onOpenGitManager: vi.fn(),
   onOpenWorkflowSteps: vi.fn(),
-  onOpenMissions: vi.fn(),
   onOpenSchedules: vi.fn(),
   onOpenScripts: vi.fn(),
   onToggleTerminal: vi.fn(),
@@ -154,7 +153,6 @@ describe("Mobile Feature Access Regression Guard", () => {
     fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
 
     expect(screen.getByTestId("mobile-more-item-mailbox")).toBeDefined();
-    expect(screen.getByTestId("mobile-more-item-missions")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-git")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-terminal")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-files")).toBeDefined();

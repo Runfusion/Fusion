@@ -445,7 +445,6 @@ function AppInner() {
         mailboxUnreadCount={modalManager.mailboxUnreadCount}
         onOpenGitManager={modalManager.openGitManager}
         onOpenWorkflowSteps={modalManager.openWorkflowSteps}
-        onOpenMissions={viewMode === "project" && currentProject ? handleOpenMissionsView : undefined}
         onOpenSchedules={modalManager.openSchedules}
         onOpenScripts={modalManager.openScripts}
         onToggleTerminal={modalManager.toggleTerminal}
