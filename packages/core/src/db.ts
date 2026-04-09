@@ -59,7 +59,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 21;
+const SCHEMA_VERSION = 22;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -810,6 +810,44 @@ export class Database {
               VALUES('delete', old.rowid, old.id, COALESCE(old.title, ''), old.description, COALESCE(old.comments, '[]'));
           END
         `);
+      });
+    }
+
+    // Chat sessions and messages tables for agent chat system
+    if (version < 22) {
+      this.applyMigration(22, () => {
+        // Chat sessions table
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS chat_sessions (
+            id TEXT PRIMARY KEY,
+            agentId TEXT NOT NULL,
+            title TEXT,
+            status TEXT NOT NULL DEFAULT 'active',
+            projectId TEXT,
+            modelProvider TEXT,
+            modelId TEXT,
+            createdAt TEXT NOT NULL,
+            updatedAt TEXT NOT NULL
+          )
+        `);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxChatSessionsAgentId ON chat_sessions(agentId)`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxChatSessionsProjectId ON chat_sessions(projectId)`);
+
+        // Chat messages table
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS chat_messages (
+            id TEXT PRIMARY KEY,
+            sessionId TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            thinkingOutput TEXT,
+            metadata TEXT,
+            createdAt TEXT NOT NULL,
+            FOREIGN KEY (sessionId) REFERENCES chat_sessions(id) ON DELETE CASCADE
+          )
+        `);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxChatMessagesSessionId ON chat_messages(sessionId)`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxChatMessagesCreatedAt ON chat_messages(createdAt)`);
       });
     }
   }

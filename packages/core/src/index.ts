@@ -277,3 +277,19 @@ export type {
   ExportOptions,
   ExportResult,
 } from "./agent-companies-exporter.js";
+
+// ── Chat System ───────────────────────────────────────────
+
+export type {
+  ChatSessionStatus,
+  ChatMessageRole,
+  ChatSession,
+  ChatSessionSummary,
+  ChatMessage,
+  ChatMessageCreateInput,
+  ChatSessionCreateInput,
+  ChatSessionUpdateInput,
+  ChatMessagesFilter,
+} from "./chat-types.js";
+export { ChatStore } from "./chat-store.js";
+export type { ChatStoreEvents } from "./chat-store.js";
