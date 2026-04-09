@@ -38,7 +38,7 @@
 - There are **34 unique color themes** in `packages/dashboard/app/styles.css` (ocean, forest, sunset, berry, monochrome, slate, ash, graphite, silver, zen, high-contrast, industrial, solarized, factory, ayu, one-dark, nord, dracula, gruvbox, tokyo-night, catppuccin-mocha, github-dark, everforest, rose-pine, kanagawa, night-owl, palenight, monokai-pro, slime, brutalist, neon-city, parchment, terminal, glass). Each has a dark variant `[data-color-theme="<name>"]` and a light variant `[data-color-theme="<name>"][data-theme="light"]`.
 - When adding CSS custom properties that should be theme-aware (like `--accent`, `--status-*-bg`), add them to all 34 theme blocks plus `:root` and `[data-theme="light"]` base blocks. The test in `status-colors-theme.test.ts` iterates all blocks programmatically to prevent regressions.
 
-## Plugin System (FN-1111)
+## Plugin System (FN-1111 / FN-1400)
 
 The plugin system is built on three layers:
 1. **PluginStore** (`packages/core/src/plugin-store.ts`) — SQLite-backed CRUD operations for plugin installations, stored in the `plugins` table (schema v24)
@@ -158,3 +158,36 @@ The `create-fusion-plugin` skill teaches agents how to create Fusion plugins. Lo
 - Tools: JSON Schema parameters, return `PluginToolResult`
 - Routes: GET/POST/PUT/DELETE, mounted at `/api/plugins/{pluginId}/{path}`
 - vitest.config.ts: use `pool: "threads"` (NOT `vmThreads`)
+
+## FN-1400 Plugin Core Foundation
+
+Key implementation details from the plugin core foundation task:
+
+**Database Schema (v24)**:
+- `plugins` table stores plugin metadata, path, enabled flag, state, settings (JSON), settingsSchema (JSON), error message
+- Migration adds table via `applyMigration(24, ...)` in `db.ts`
+- Schema version assertions in `db.test.ts` and `__tests__/task-documents.test.ts` must be updated to expect v24
+
+**PluginStore patterns**:
+- Lazy initialization pattern: `_db` starts null, initialized on first access via `get db()`
+- EventEmitter for state change notifications: `plugin:registered`, `plugin:unregistered`, `plugin:enabled`, `plugin:disabled`, `plugin:updated`, `plugin:stateChanged`
+- Settings validation against `settingsSchema` before persisting
+- Deterministic state transitions enforced in `updatePluginState()`
+
+**PluginLoader patterns**:
+- Uses topological sort (`resolveLoadOrder()`) for deterministic load order based on dependencies
+- Circular dependency detection throws Error during sort
+- Error isolation: plugin failures set `state: "error"` in store but don't crash loader
+- Hook invocation via `safeCallHook()` with try/catch per plugin
+- `getPluginTools()` and `getPluginRoutes()` aggregate from successfully loaded plugins only
+
+**TaskStore integration**:
+- `getPluginStore()` lazy getter following the same pattern as `getMissionStore()`
+- Import PluginStore at top of store.ts: `import { PluginStore } from "./plugin-store.js";`
+- Private field: `private pluginStore: PluginStore | null = null;`
+
+**Public exports** (from `@fusion/core`):
+- Types: `PluginManifest`, `PluginSettingSchema`, `PluginOnLoad`, `PluginOnUnload`, `PluginOnTaskCreated`, `PluginOnTaskMoved`, `PluginOnTaskCompleted`, `PluginOnError`, `PluginToolDefinition`, `PluginToolResult`, `PluginRouteDefinition`, `PluginContext`, `PluginLogger`, `FusionPlugin`, `PluginState`, `PluginInstallation`
+- Functions: `validatePluginManifest()`
+- Classes: `PluginStore`, `PluginLoader`
+- Interfaces: `PluginStoreEvents`, `PluginRegistrationInput`, `PluginUpdateInput`, `PluginLoaderOptions`

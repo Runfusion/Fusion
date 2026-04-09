@@ -10,6 +10,7 @@ import { GlobalSettingsStore } from "./global-settings.js";
 import { Database, toJson, toJsonNullable, fromJson } from "./db.js";
 import { detectLegacyData, migrateFromLegacy } from "./db-migrate.js";
 import { MissionStore } from "./mission-store.js";
+import { PluginStore } from "./plugin-store.js";
 import { BackwardCompat, ProjectRequiredError } from "./migration.js";
 import { CentralCore } from "./central-core.js";
 import { getTaskMergeBlocker } from "./task-merge.js";
@@ -95,6 +96,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
   /** Cached MissionStore instance */
   private missionStore: MissionStore | null = null;
+  /** Cached PluginStore instance */
+  private pluginStore: PluginStore | null = null;
 
   constructor(private rootDir: string, globalSettingsDir?: string) {
     super();
@@ -3888,6 +3891,17 @@ ${notificationsSection}`;
       this.missionStore = new MissionStore(this.kbDir, this.db, this);
     }
     return this.missionStore;
+  }
+
+  /**
+   * Get the PluginStore instance for plugin registry operations.
+   * Lazily initializes the PluginStore on first access.
+   */
+  getPluginStore(): PluginStore {
+    if (!this.pluginStore) {
+      this.pluginStore = new PluginStore(this.rootDir);
+    }
+    return this.pluginStore;
   }
 
   // ── Backward Compatibility (Multi-Project Support) ────────────────────────
