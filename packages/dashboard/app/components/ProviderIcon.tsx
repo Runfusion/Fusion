@@ -124,7 +124,7 @@ function ZaiIcon({ size, color, label = "Z.ai" }: { size: number; color: string;
       aria-label={label}
     >
       <path
-        d="M3 5h18v3.5L10.5 21H7L16.5 8H3V5z"
+        d="M3 5H21V8.5L7 17.5H21V21H3V17.5L17 8.5H3Z"
         fill={color}
       />
     </svg>
