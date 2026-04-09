@@ -6153,7 +6153,7 @@ Task with acceptance criteria
     it("searches tasks by comment text", async () => {
       const task = await store.createTask({ description: "A task" });
       // Add a comment containing a unique word
-      await store.addComment(task.id, { text: "Need to prioritize the xylophone implementation", author: "tester" });
+      await store.addComment(task.id, "Need to prioritize the xylophone implementation", "tester");
 
       const results = await store.searchTasks("xylophone");
 
@@ -6239,7 +6239,7 @@ Task with acceptance criteria
       expect(beforeResults).toHaveLength(0);
 
       // Add comment with unique word
-      await store.addComment(task.id, { text: `Important note about the ${uniqueWord} feature`, author: "tester" });
+      await store.addComment(task.id, `Important note about the ${uniqueWord} feature`, "tester");
 
       // Should now be found immediately (trigger fires synchronously)
       const afterResults = await store.searchTasks(uniqueWord);

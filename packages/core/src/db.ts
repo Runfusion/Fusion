@@ -59,7 +59,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 22;
+const SCHEMA_VERSION = 23;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
