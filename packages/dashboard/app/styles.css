@@ -100,8 +100,8 @@
   --surface: #161b22;
   --card: #21262d;
   --card-hover: #282e36;
-  --bg-secondary: #1a1a2e;
-  --bg-tertiary: #252536;
+  --bg-secondary: color-mix(in srgb, var(--surface) 70%, var(--card));
+  --bg-tertiary: color-mix(in srgb, var(--surface) 40%, var(--card));
   --border: #30363d;
   --text: #e6edf3;
   --text-muted: #8b949e;
