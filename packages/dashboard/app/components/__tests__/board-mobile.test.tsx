@@ -194,13 +194,6 @@ describe("TaskCard mobile", () => {
 
   it("opens task detail on quick tap", async () => {
     const task = createTask({ id: "FN-200", column: "todo" });
-    const detail = {
-      ...task,
-      prompt: "",
-      attachments: [],
-    } as TaskDetail;
-
-    vi.mocked(fetchTaskDetail).mockResolvedValueOnce(detail);
 
     const onOpenDetail = vi.fn();
     const { container } = render(
@@ -217,10 +210,8 @@ describe("TaskCard mobile", () => {
       changedTouches: [{ clientX: 100, clientY: 100 }],
     });
 
-    await waitFor(() => {
-      expect(fetchTaskDetail).toHaveBeenCalledWith(task.id, undefined);
-    });
-    expect(onOpenDetail).toHaveBeenCalledWith(detail);
+    // TaskCard calls onOpenDetail directly with the task - no fetchTaskDetail needed for card taps
+    expect(onOpenDetail).toHaveBeenCalledWith(task);
   });
 
   it("does not open task detail when touch gesture indicates scroll", async () => {

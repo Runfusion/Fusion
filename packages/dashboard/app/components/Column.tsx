@@ -20,7 +20,7 @@ interface ColumnProps {
   projectId?: string;
   maxConcurrent: number;
   onMoveTask: (id: string, column: ColumnType) => Promise<Task>;
-  onOpenDetail: (task: TaskDetail) => void;
+  onOpenDetail: (task: Task | TaskDetail) => void;
   addToast: (message: string, type?: ToastType) => void;
   onQuickCreate?: (input: TaskCreateInput) => Promise<Task | void>;
   onNewTask?: () => void;
@@ -46,7 +46,7 @@ interface ColumnProps {
    * Called when the user clicks the "Subtask" button in the inline create card.
    */
   onSubtaskBreakdown?: (description: string) => void;
-  onOpenDetailWithTab?: (task: TaskDetail, initialTab: "changes") => void;
+  onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes") => void;
   favoriteProviders?: string[];
   favoriteModels?: string[];
   onToggleFavorite?: (provider: string) => void;

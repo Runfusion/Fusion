@@ -75,6 +75,7 @@ export function useDeepLink(options: UseDeepLinkOptions): UseDeepLinkResult {
       .catch(() => {
         addToast(`Task ${taskId} not found`, "error");
       });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     projectId,
     projects,
@@ -83,6 +84,7 @@ export function useDeepLink(options: UseDeepLinkOptions): UseDeepLinkResult {
     setCurrentProject,
     addToast,
     openTaskDetail,
+    // deepLinkFetchedRef intentionally excluded - it's a mutable ref, not state
   ]);
 
   const handleDetailClose = useCallback(() => {

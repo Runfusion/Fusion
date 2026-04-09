@@ -18,6 +18,7 @@ export default defineConfig({
     setupFiles: ["./vitest.setup.ts"],
     maxWorkers,
     fileParallelism: true,
+    isolate: true,
     coverage: {
       enabled: false,
       reporter: ["text", "html", "json"],

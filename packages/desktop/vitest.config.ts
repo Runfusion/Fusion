@@ -15,6 +15,7 @@ export default defineConfig({
           name: "desktop",
           include: ["src/__tests__/**/*.test.ts"],
           pool: "threads",
+          isolate: true,
         },
       },
       {
@@ -22,6 +23,7 @@ export default defineConfig({
           name: "desktop-renderer",
           include: ["src/renderer/**/*.test.ts", "src/renderer/**/*.test.tsx"],
           environment: "jsdom",
+          isolate: true,
         },
       },
     ],

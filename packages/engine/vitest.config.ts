@@ -8,6 +8,8 @@ export default defineConfig({
     maxWorkers,
     fileParallelism: true,
     pool: "threads",
+    // Enable isolate to allow parallel execution of tests with conflicting mocks
+    isolate: true,
     coverage: {
       enabled: false,
       reporter: ["text", "html", "json"],

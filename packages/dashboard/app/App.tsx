@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
-import type { TaskDetail } from "@fusion/core";
+import type { Task, TaskDetail } from "@fusion/core";
 import { Header, useViewportMode } from "./components/Header";
 import { Board } from "./components/Board";
 import { ListView } from "./components/ListView";
@@ -195,7 +195,7 @@ function AppInner() {
     addToast,
   });
 
-  const handleOpenDetailWithTab = useCallback((task: TaskDetail, initialTab: "changes") => {
+  const handleOpenDetailWithTab = useCallback((task: Task | TaskDetail, initialTab: "changes") => {
     if (initialTab === "changes") {
       modalManager.openDetailWithChangesTab(task);
       return;
