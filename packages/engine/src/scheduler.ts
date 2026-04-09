@@ -795,7 +795,10 @@ export class Scheduler {
       }
 
       const mission = missionStore.getMission(milestone.missionId);
-      if (!mission || mission.status !== "active" || !mission.autoAdvance) {
+      // Use autopilotEnabled as canonical, fall back to autoAdvance for backward compat
+      const shouldAutoAdvance =
+        mission?.autopilotEnabled === true || mission?.autoAdvance === true;
+      if (!mission || mission.status !== "active" || !shouldAutoAdvance) {
         return;
       }
 

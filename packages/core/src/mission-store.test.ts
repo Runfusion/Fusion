@@ -1829,6 +1829,93 @@ describe("MissionStore", () => {
         "Slice SL-NONEXISTENT not found",
       );
     });
+
+    // ── autopilotEnabled as primary control ──────────────────────────────────
+
+    it("triages features when autopilotEnabled is true (autoAdvance false)", async () => {
+      const { ts, ms } = await createStoreWithTaskStore();
+
+      const mission = ms.createMission({ title: "Mission" });
+      // autopilotEnabled is primary control; autoAdvance=false/unset should still work
+      ms.updateMission(mission.id, { autopilotEnabled: true, autoAdvance: false });
+      const milestone = ms.addMilestone(mission.id, { title: "Milestone" });
+      const slice = ms.addSlice(milestone.id, { title: "Slice" });
+      const f1 = ms.addFeature(slice.id, { title: "Feature 1" });
+      const f2 = ms.addFeature(slice.id, { title: "Feature 2" });
+
+      const activated = await ms.activateSlice(slice.id);
+
+      expect(activated.status).toBe("active");
+
+      // Both features should be triaged because autopilotEnabled=true
+      const updatedF1 = ms.getFeature(f1.id)!;
+      const updatedF2 = ms.getFeature(f2.id)!;
+      expect(updatedF1.status).toBe("triaged");
+      expect(updatedF1.taskId).toBeTruthy();
+      expect(updatedF2.status).toBe("triaged");
+      expect(updatedF2.taskId).toBeTruthy();
+
+      // Tasks should exist and be linked
+      const task1 = await ts.getTask(updatedF1.taskId!);
+      const task2 = await ts.getTask(updatedF2.taskId!);
+      expect(task1).toBeDefined();
+      expect(task1!.sliceId).toBe(slice.id);
+      expect(task2).toBeDefined();
+      expect(task2!.sliceId).toBe(slice.id);
+    });
+
+    it("triages features when autopilotEnabled is true (autoAdvance unset)", async () => {
+      const { ts, ms } = await createStoreWithTaskStore();
+
+      const mission = ms.createMission({ title: "Mission" });
+      // autopilotEnabled=true, autoAdvance undefined (neither true nor false)
+      ms.updateMission(mission.id, { autopilotEnabled: true });
+      const milestone = ms.addMilestone(mission.id, { title: "Milestone" });
+      const slice = ms.addSlice(milestone.id, { title: "Slice" });
+      const f1 = ms.addFeature(slice.id, { title: "Feature 1" });
+
+      await ms.activateSlice(slice.id);
+
+      // Feature should be triaged because autopilotEnabled=true
+      const updatedF1 = ms.getFeature(f1.id)!;
+      expect(updatedF1.status).toBe("triaged");
+      expect(updatedF1.taskId).toBeTruthy();
+    });
+
+    it("does not triage features when autopilotEnabled is false and autoAdvance is false", async () => {
+      const { ms } = await createStoreWithTaskStore();
+
+      const mission = ms.createMission({ title: "Mission" });
+      ms.updateMission(mission.id, { autopilotEnabled: false, autoAdvance: false });
+      const milestone = ms.addMilestone(mission.id, { title: "Milestone" });
+      const slice = ms.addSlice(milestone.id, { title: "Slice" });
+      const f1 = ms.addFeature(slice.id, { title: "Feature 1" });
+
+      await ms.activateSlice(slice.id);
+
+      // Feature should NOT be triaged
+      const updatedF1 = ms.getFeature(f1.id)!;
+      expect(updatedF1.status).toBe("defined");
+      expect(updatedF1.taskId).toBeUndefined();
+    });
+
+    it("triages features when autopilotEnabled is false but autoAdvance is true (legacy compat)", async () => {
+      const { ms } = await createStoreWithTaskStore();
+
+      const mission = ms.createMission({ title: "Mission" });
+      // Legacy case: autoAdvance=true, autopilotEnabled=false/unset
+      ms.updateMission(mission.id, { autoAdvance: true });
+      const milestone = ms.addMilestone(mission.id, { title: "Milestone" });
+      const slice = ms.addSlice(milestone.id, { title: "Slice" });
+      const f1 = ms.addFeature(slice.id, { title: "Feature 1" });
+
+      await ms.activateSlice(slice.id);
+
+      // Feature should be triaged because autoAdvance=true (legacy compat)
+      const updatedF1 = ms.getFeature(f1.id)!;
+      expect(updatedF1.status).toBe("triaged");
+      expect(updatedF1.taskId).toBeTruthy();
+    });
   });
 });
 

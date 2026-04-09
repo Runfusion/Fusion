@@ -2880,6 +2880,106 @@ describe("Mission API", () => {
           lastActivityAt: undefined,
         });
       });
+
+      it("enables autopilot on already-active mission and triggers recovery", async () => {
+        const missionAutopilot = createMockMissionAutopilot();
+        const { app, missionStore } = buildApp({ missionAutopilot });
+
+        // Create an active mission with no active slices
+        const mission = missionStore.createMission({ title: "Active Mission" });
+        missionStore.updateMission(mission.id, { status: "active" });
+        const milestone = missionStore.addMilestone(mission.id, { title: "MS1" });
+        const slice = missionStore.addSlice(milestone.id, { title: "Slice1" });
+        // Slice is pending (no active slice)
+
+        missionAutopilot.getAutopilotStatus.mockReturnValue({
+          enabled: true,
+          state: "watching",
+          watched: true,
+          lastActivityAt: undefined,
+        });
+
+        const res = await request(
+          app,
+          "PATCH",
+          `/api/missions/${mission.id}/autopilot`,
+          JSON.stringify({ enabled: true }),
+          { "content-type": "application/json" },
+        );
+
+        expect(res.status).toBe(200);
+        expect(missionAutopilot.watchMission).toHaveBeenCalledWith(mission.id);
+        // Should call recoverStaleMission for active missions without active slices
+        expect(missionAutopilot.recoverStaleMission).toHaveBeenCalledWith(mission.id);
+        expect(missionAutopilot.checkAndStartMission).not.toHaveBeenCalled(); // Not planning
+      });
+
+      it("enables autopilot on active mission with completed active slice and triggers recovery", async () => {
+        const missionAutopilot = createMockMissionAutopilot();
+        const { app, missionStore } = buildApp({ missionAutopilot });
+
+        // Create an active mission with a completed active slice
+        const mission = missionStore.createMission({ title: "Active Mission 2" });
+        missionStore.updateMission(mission.id, { status: "active" });
+        const milestone = missionStore.addMilestone(mission.id, { title: "MS1" });
+        const slice = missionStore.addSlice(milestone.id, { title: "Slice1" });
+        // Mark all features as done (slice complete)
+        const feature = missionStore.addFeature(slice.id, { title: "Feature1" });
+        missionStore.updateFeature(feature.id, { status: "done" });
+
+        missionAutopilot.getAutopilotStatus.mockReturnValue({
+          enabled: true,
+          state: "watching",
+          watched: true,
+          lastActivityAt: undefined,
+        });
+
+        const res = await request(
+          app,
+          "PATCH",
+          `/api/missions/${mission.id}/autopilot`,
+          JSON.stringify({ enabled: true }),
+          { "content-type": "application/json" },
+        );
+
+        expect(res.status).toBe(200);
+        expect(missionAutopilot.watchMission).toHaveBeenCalledWith(mission.id);
+        // Should call recoverStaleMission for active missions with completed active slices
+        expect(missionAutopilot.recoverStaleMission).toHaveBeenCalledWith(mission.id);
+        expect(missionAutopilot.checkAndStartMission).not.toHaveBeenCalled(); // Not planning
+      });
+
+      it("enables autopilot on active mission with in-progress slice (no recovery needed)", async () => {
+        const missionAutopilot = createMockMissionAutopilot();
+        const { app, missionStore } = buildApp({ missionAutopilot });
+
+        // Create an active mission with an active slice (not completed)
+        const mission = missionStore.createMission({ title: "Active Mission 3" });
+        missionStore.updateMission(mission.id, { status: "active" });
+        const milestone = missionStore.addMilestone(mission.id, { title: "MS1" });
+        const slice = missionStore.addSlice(milestone.id, { title: "Slice1" });
+        missionStore.updateSlice(slice.id, { status: "active" });
+
+        missionAutopilot.getAutopilotStatus.mockReturnValue({
+          enabled: true,
+          state: "watching",
+          watched: true,
+          lastActivityAt: undefined,
+        });
+
+        const res = await request(
+          app,
+          "PATCH",
+          `/api/missions/${mission.id}/autopilot`,
+          JSON.stringify({ enabled: true }),
+          { "content-type": "application/json" },
+        );
+
+        expect(res.status).toBe(200);
+        expect(missionAutopilot.watchMission).toHaveBeenCalledWith(mission.id);
+        // Should NOT call recoverStaleMission - slice is already in-progress
+        expect(missionAutopilot.recoverStaleMission).not.toHaveBeenCalled();
+      });
     });
 
     describe("POST /api/missions/:missionId/autopilot/start", () => {

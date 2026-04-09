@@ -576,6 +576,22 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       void loadMissionHealth(missions);
     };
 
+    const handleMissionUpdated = (rawEvent: Event) => {
+      refreshHealth();
+      // Reload the selected mission detail to reflect updated mission state (autopilot, status, etc.)
+      if (selectedMission) {
+        void loadMissionDetail(selectedMission.id);
+      }
+    };
+
+    const handleSliceUpdated = (rawEvent: Event) => {
+      refreshHealth();
+      // Reload the selected mission detail to reflect updated slice status
+      if (selectedMission) {
+        void loadMissionDetail(selectedMission.id);
+      }
+    };
+
     const handleFeatureUpdated = () => {
       refreshHealth();
       // Reload the selected mission detail to reflect updated feature status
@@ -628,14 +644,14 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       }
     };
 
-    eventSource.addEventListener("mission:updated", refreshHealth);
-    eventSource.addEventListener("slice:updated", refreshHealth);
+    eventSource.addEventListener("mission:updated", handleMissionUpdated);
+    eventSource.addEventListener("slice:updated", handleSliceUpdated);
     eventSource.addEventListener("feature:updated", handleFeatureUpdated);
     eventSource.addEventListener("mission:event", handleMissionEvent);
 
     return () => {
-      eventSource.removeEventListener("mission:updated", refreshHealth);
-      eventSource.removeEventListener("slice:updated", refreshHealth);
+      eventSource.removeEventListener("mission:updated", handleMissionUpdated);
+      eventSource.removeEventListener("slice:updated", handleSliceUpdated);
       eventSource.removeEventListener("feature:updated", handleFeatureUpdated);
       eventSource.removeEventListener("mission:event", handleMissionEvent);
       eventSource.close();

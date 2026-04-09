@@ -1234,6 +1234,120 @@ describe("Scheduler", () => {
       expect(mockMissionStore.activateSlice).not.toHaveBeenCalled();
     });
 
+    // ── autopilotEnabled as primary control for onSliceComplete fallback ─────────
+
+    it("onSliceComplete auto-advances when autopilotEnabled is true (autoAdvance false)", async () => {
+      const missionHierarchy = {
+        id: "M-001",
+        status: "active",
+        milestones: [
+          {
+            id: "MS-001",
+            dependencies: [],
+            slices: [
+              { id: "SL-001", status: "complete" },
+              { id: "SL-002", status: "pending" },
+            ],
+          },
+        ],
+      };
+      const mockMissionStore = createMockMissionStore({
+        getMilestone: vi.fn().mockReturnValue({ id: "MS-001", missionId: "M-001" }),
+        getMission: vi.fn().mockReturnValue({ id: "M-001", status: "active", autopilotEnabled: true, autoAdvance: false }),
+        getMissionWithHierarchy: vi.fn().mockReturnValue(missionHierarchy),
+        activateSlice: vi.fn().mockReturnValue({ id: "SL-002", status: "active" }),
+      });
+
+      const store = createMockStore();
+      const scheduler = new Scheduler(store, { missionStore: mockMissionStore as any });
+
+      const slice = { id: "SL-001", milestoneId: "MS-001", status: "complete" } as any;
+      await scheduler.onSliceComplete(slice);
+
+      expect(mockMissionStore.getMission).toHaveBeenCalledWith("M-001");
+      expect(mockMissionStore.activateSlice).toHaveBeenCalledWith("SL-002");
+    });
+
+    it("onSliceComplete auto-advances when autopilotEnabled is true (autoAdvance unset)", async () => {
+      const missionHierarchy = {
+        id: "M-001",
+        status: "active",
+        milestones: [
+          {
+            id: "MS-001",
+            dependencies: [],
+            slices: [
+              { id: "SL-001", status: "complete" },
+              { id: "SL-002", status: "pending" },
+            ],
+          },
+        ],
+      };
+      const mockMissionStore = createMockMissionStore({
+        getMilestone: vi.fn().mockReturnValue({ id: "MS-001", missionId: "M-001" }),
+        getMission: vi.fn().mockReturnValue({ id: "M-001", status: "active", autopilotEnabled: true }),
+        getMissionWithHierarchy: vi.fn().mockReturnValue(missionHierarchy),
+        activateSlice: vi.fn().mockReturnValue({ id: "SL-002", status: "active" }),
+      });
+
+      const store = createMockStore();
+      const scheduler = new Scheduler(store, { missionStore: mockMissionStore as any });
+
+      const slice = { id: "SL-001", milestoneId: "MS-001", status: "complete" } as any;
+      await scheduler.onSliceComplete(slice);
+
+      expect(mockMissionStore.getMission).toHaveBeenCalledWith("M-001");
+      expect(mockMissionStore.activateSlice).toHaveBeenCalledWith("SL-002");
+    });
+
+    it("onSliceComplete does not auto-advance when both autopilotEnabled and autoAdvance are false", async () => {
+      const mockMissionStore = createMockMissionStore({
+        getMilestone: vi.fn().mockReturnValue({ id: "MS-001", missionId: "M-001" }),
+        getMission: vi.fn().mockReturnValue({ id: "M-001", status: "active", autopilotEnabled: false, autoAdvance: false }),
+      });
+
+      const store = createMockStore();
+      const scheduler = new Scheduler(store, { missionStore: mockMissionStore as any });
+
+      const slice = { id: "SL-001", milestoneId: "MS-001", status: "complete" } as any;
+      await scheduler.onSliceComplete(slice);
+
+      expect(mockMissionStore.getMission).toHaveBeenCalledWith("M-001");
+      expect(mockMissionStore.activateSlice).not.toHaveBeenCalled();
+    });
+
+    it("onSliceComplete auto-advances when autopilotEnabled is false but autoAdvance is true (legacy compat)", async () => {
+      const missionHierarchy = {
+        id: "M-001",
+        status: "active",
+        milestones: [
+          {
+            id: "MS-001",
+            dependencies: [],
+            slices: [
+              { id: "SL-001", status: "complete" },
+              { id: "SL-002", status: "pending" },
+            ],
+          },
+        ],
+      };
+      const mockMissionStore = createMockMissionStore({
+        getMilestone: vi.fn().mockReturnValue({ id: "MS-001", missionId: "M-001" }),
+        getMission: vi.fn().mockReturnValue({ id: "M-001", status: "active", autoAdvance: true }),
+        getMissionWithHierarchy: vi.fn().mockReturnValue(missionHierarchy),
+        activateSlice: vi.fn().mockReturnValue({ id: "SL-002", status: "active" }),
+      });
+
+      const store = createMockStore();
+      const scheduler = new Scheduler(store, { missionStore: mockMissionStore as any });
+
+      const slice = { id: "SL-001", milestoneId: "MS-001", status: "complete" } as any;
+      await scheduler.onSliceComplete(slice);
+
+      expect(mockMissionStore.getMission).toHaveBeenCalledWith("M-001");
+      expect(mockMissionStore.activateSlice).toHaveBeenCalledWith("SL-002");
+    });
+
     it("skips mission progression when task sliceId mismatches linked feature sliceId", async () => {
       const mockMissionStore = createMockMissionStore({
         getFeatureByTaskId: vi.fn().mockReturnValue({ id: "F-001", sliceId: "SL-OTHER" }),

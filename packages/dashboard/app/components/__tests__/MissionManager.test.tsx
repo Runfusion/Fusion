@@ -825,6 +825,97 @@ describe("MissionManager", () => {
     });
   });
 
+  it("reloads selected mission detail when mission:updated SSE event arrives", async () => {
+    const fetchMock = createDetailFetchMock(mockMissionEvents);
+    globalThis.fetch = fetchMock;
+    globalThis.EventSource = MockEventSource as unknown as typeof globalThis.EventSource;
+
+    render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Build Auth System")).toBeDefined();
+    });
+
+    // Click on the mission to open detail view
+    fireEvent.click(screen.getByText("Build Auth System"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mission-back-btn")).toBeDefined();
+    });
+
+    // Record initial fetch calls for mission detail
+    const initialFetchCount = fetchMock.mock.calls.filter(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/missions/M-001")
+    ).length;
+    expect(initialFetchCount).toBeGreaterThan(0);
+
+    // Emit a mission:updated SSE event for the selected mission
+    await act(async () => {
+      for (const source of MockEventSource.instances) {
+        source.emit("mission:updated", {
+          id: "M-001",
+          title: "Build Auth System",
+          status: "active",
+          autopilotEnabled: true,
+          autopilotState: "watching",
+          lastAutopilotActivityAt: new Date().toISOString(),
+        });
+      }
+    });
+
+    // Verify mission detail was reloaded (fetch was called again for the mission)
+    await waitFor(() => {
+      const updatedFetchCount = fetchMock.mock.calls.filter(
+        (call) => typeof call[0] === "string" && call[0].includes("/api/missions/M-001")
+      ).length;
+      expect(updatedFetchCount).toBeGreaterThan(initialFetchCount);
+    });
+  });
+
+  it("reloads selected mission detail when slice:updated SSE event arrives", async () => {
+    const fetchMock = createDetailFetchMock(mockMissionEvents);
+    globalThis.fetch = fetchMock;
+    globalThis.EventSource = MockEventSource as unknown as typeof globalThis.EventSource;
+
+    render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Build Auth System")).toBeDefined();
+    });
+
+    // Click on the mission to open detail view
+    fireEvent.click(screen.getByText("Build Auth System"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mission-back-btn")).toBeDefined();
+    });
+
+    // Record initial fetch calls for mission detail
+    const initialFetchCount = fetchMock.mock.calls.filter(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/missions/M-001")
+    ).length;
+    expect(initialFetchCount).toBeGreaterThan(0);
+
+    // Emit a slice:updated SSE event for a slice in the selected mission
+    await act(async () => {
+      for (const source of MockEventSource.instances) {
+        source.emit("slice:updated", {
+          id: "SL-001",
+          milestoneId: "MS-001",
+          status: "active",
+        });
+      }
+    });
+
+    // Verify mission detail was reloaded (fetch was called again for the mission)
+    await waitFor(() => {
+      const updatedFetchCount = fetchMock.mock.calls.filter(
+        (call) => typeof call[0] === "string" && call[0].includes("/api/missions/M-001")
+      ).length;
+      expect(updatedFetchCount).toBeGreaterThan(initialFetchCount);
+    });
+  });
+
   it("shows empty state when no missions exist", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(mockApiResponse([]));
     render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);

@@ -76,13 +76,22 @@ Typical flow:
 
 ## `autopilotEnabled` vs `autoAdvance`
 
-- **`autopilotEnabled`**: enables background monitoring/orchestration behavior
-- **`autoAdvance`**: allows automatic slice activation when current slice completes
+- **`autopilotEnabled`**: primary control for autopilot behavior — enables background monitoring, orchestration, and automatic slice activation when a slice completes. Also triggers auto-triage (converting features to tasks) when a slice is activated.
+- **`autoAdvance`**: legacy fallback for backward compatibility with existing mission data. Kept for compatibility — new missions should use `autopilotEnabled`.
 
-Combination behavior:
+**Auto-triage behavior:**
 
-- `autopilotEnabled=true`, `autoAdvance=true` → full autonomous progression
-- `autopilotEnabled=true`, `autoAdvance=false` → monitored mission with manual slice activation
+- `autopilotEnabled=true` → features in activated slices are automatically triaged (converted to tasks)
+- `autopilotEnabled=false`, `autoAdvance=true` → features are triaged (legacy compat)
+- `autopilotEnabled=false`, `autoAdvance=false` → manual slice activation only
+
+**Slice progression (on slice completion):**
+
+- `autopilotEnabled=true` → next pending slice is automatically activated
+- `autopilotEnabled=false`, `autoAdvance=true` → next pending slice is activated (legacy compat)
+- `autopilotEnabled=false`, `autoAdvance=false` → manual activation required
+
+**Dashboard UI:** The Mission Manager shows `autopilotEnabled` as the primary control. When enabling autopilot on an already-active mission, the system automatically checks whether recovery is needed (no active slice or completed active slice) and progresses accordingly.
 
 ## Autopilot API Endpoints
 

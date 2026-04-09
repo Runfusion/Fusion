@@ -1252,7 +1252,9 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     const milestone = this.getMilestone(slice.milestoneId);
     const mission = milestone ? this.getMission(milestone.missionId) : undefined;
 
-    const shouldAutoTriage = mission?.autoAdvance === true;
+    // Use autopilotEnabled as canonical, fall back to autoAdvance for backward compat
+    const shouldAutoTriage =
+      mission?.autopilotEnabled === true || mission?.autoAdvance === true;
 
     const now = new Date().toISOString();
     const updated = this.updateSlice(id, {
@@ -1260,7 +1262,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       activatedAt: now,
     });
 
-    // Auto-triage features if autoAdvance is enabled
+    // Auto-triage features if autopilot is enabled (or legacy autoAdvance)
     if (shouldAutoTriage) {
       try {
         await this.triageSlice(id);

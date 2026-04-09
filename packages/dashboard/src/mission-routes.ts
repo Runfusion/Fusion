@@ -1928,10 +1928,31 @@ export function createMissionRouter(
 
       if (missionAutopilot) {
         if (enabled) {
-          // Enable: start watching and potentially start the mission
+          // Enable: start watching and potentially start/recover the mission
           missionAutopilot.watchMission(missionId);
           if (mission.status === "planning") {
             await missionAutopilot.checkAndStartMission(missionId);
+          } else if (mission.status === "active") {
+            // For already-active missions, check if recovery is needed:
+            // - No active slice exists
+            // - Active slice is already complete
+            const hierarchy = missionStore.getMissionWithHierarchy(missionId);
+            if (hierarchy) {
+              const activeSlices = hierarchy.milestones
+                .flatMap((milestone) => milestone.slices)
+                .filter((slice) => slice.status === "active");
+
+              const hasCompletedActiveSlice = activeSlices.some(
+                (slice) =>
+                  slice.features.length > 0 &&
+                  slice.features.every((feature) => feature.status === "done"),
+              );
+
+              if (hasCompletedActiveSlice || activeSlices.length === 0) {
+                // Need recovery: advance to next pending slice
+                await missionAutopilot.recoverStaleMission(missionId);
+              }
+            }
           }
         } else {
           // Disable: stop watching
