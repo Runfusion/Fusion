@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { HeartbeatMonitor, HeartbeatTriggerScheduler, type AgentSession, type HeartbeatExecutionOptions, HEARTBEAT_SYSTEM_PROMPT } from "./agent-heartbeat.js";
+import { HeartbeatMonitor, HeartbeatTriggerScheduler, isBlockedStateDuplicate, type AgentSession, type HeartbeatExecutionOptions, HEARTBEAT_SYSTEM_PROMPT } from "./agent-heartbeat.js";
 import { AgentLogger } from "./agent-logger.js";
 import type { AgentStore, AgentHeartbeatRun, TaskStore, TaskDetail, Agent, MessageStore, Message, AgentBudgetStatus } from "@fusion/core";
 
@@ -127,6 +127,32 @@ describe("HeartbeatMonitor", () => {
       });
 
       expect(customMonitor).toBeDefined();
+    });
+  });
+
+  describe("isBlockedStateDuplicate", () => {
+    it("returns true when blockedBy and contextHash match", () => {
+      expect(
+        isBlockedStateDuplicate(
+          { taskId: "FN-1", blockedBy: "FN-0", recordedAt: "2026-01-01T00:00:00.000Z", contextHash: "abc" },
+          { taskId: "FN-1", blockedBy: "FN-0", recordedAt: "2026-01-02T00:00:00.000Z", contextHash: "abc" },
+        ),
+      ).toBe(true);
+    });
+
+    it("returns false when blockedBy differs or contextHash differs", () => {
+      expect(
+        isBlockedStateDuplicate(
+          { taskId: "FN-1", blockedBy: "FN-0", recordedAt: "2026-01-01T00:00:00.000Z", contextHash: "abc" },
+          { taskId: "FN-1", blockedBy: "FN-2", recordedAt: "2026-01-02T00:00:00.000Z", contextHash: "abc" },
+        ),
+      ).toBe(false);
+      expect(
+        isBlockedStateDuplicate(
+          { taskId: "FN-1", blockedBy: "FN-0", recordedAt: "2026-01-01T00:00:00.000Z", contextHash: "abc" },
+          { taskId: "FN-1", blockedBy: "FN-0", recordedAt: "2026-01-02T00:00:00.000Z", contextHash: "xyz" },
+        ),
+      ).toBe(false);
     });
   });
 
@@ -988,6 +1014,7 @@ describe("HeartbeatMonitor", () => {
           column: "triage",
         }),
         logEntry: vi.fn().mockResolvedValue({}),
+        addComment: vi.fn().mockResolvedValue({}),
         appendAgentLog: vi.fn().mockResolvedValue(undefined),
         ...overrides,
       } as unknown as TaskStore;
@@ -1041,6 +1068,9 @@ describe("HeartbeatMonitor", () => {
         endHeartbeatRun: vi.fn().mockResolvedValue(undefined),
         getBudgetStatus: vi.fn().mockResolvedValue(createBudgetStatus()),
         getCachedAgent: vi.fn().mockReturnValue(null),
+        getLastBlockedState: vi.fn().mockResolvedValue(null),
+        setLastBlockedState: vi.fn().mockResolvedValue(undefined),
+        clearLastBlockedState: vi.fn().mockResolvedValue(undefined),
       } as unknown as AgentStore;
     }
 
@@ -1122,6 +1152,171 @@ describe("HeartbeatMonitor", () => {
         expect(result).toBeDefined();
         expect(result.status).toBe("completed");
         expect(result.resultJson).toEqual({ reason: "task_not_found", taskId: "FN-MISSING" });
+      });
+    });
+
+    describe("blocked-task dedup", () => {
+      const buildContextHash = (blockedBy: string, taskDetail: Partial<TaskDetail>): string => {
+        const commentCount = (taskDetail.comments?.length ?? 0) + (taskDetail.steeringComments?.length ?? 0);
+        const lastCommentId = taskDetail.comments?.at(-1)?.id;
+        const lastSteeringCommentId = taskDetail.steeringComments?.at(-1)?.id;
+
+        return Buffer.from(
+          JSON.stringify({ commentCount, lastCommentId, lastSteeringCommentId, blockedBy }),
+        )
+          .toString("base64")
+          .slice(0, 16);
+      };
+
+      it("skips duplicate blocked comments when blocked snapshot is unchanged", async () => {
+        const store = createStoreWithAgentForExec({ taskId: "FN-BLOCKED" });
+        const taskDetail = {
+          id: "FN-BLOCKED",
+          title: "Blocked Task",
+          description: "Blocked task description",
+          prompt: "",
+          status: "queued",
+          blockedBy: "FN-DEP-1",
+          comments: [{ id: "comment-1", text: "Still blocked", author: "user", createdAt: "2026-01-01T00:00:00.000Z" }],
+          steeringComments: [],
+          steps: [],
+          column: "todo",
+          dependencies: [],
+          log: [],
+          attachments: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        } as unknown as TaskDetail;
+
+        (store.getLastBlockedState as ReturnType<typeof vi.fn>).mockResolvedValue({
+          taskId: "FN-BLOCKED",
+          blockedBy: "FN-DEP-1",
+          recordedAt: "2026-01-01T00:00:00.000Z",
+          contextHash: buildContextHash("FN-DEP-1", taskDetail),
+        });
+
+        mockTaskStore = createMockTaskStore({
+          getTask: vi.fn().mockResolvedValue(taskDetail),
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+        const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+        expect(result.resultJson).toEqual({ reason: "blocked_duplicate", taskId: "FN-BLOCKED", blockedBy: "FN-DEP-1" });
+        expect(mockTaskStore.addComment).not.toHaveBeenCalled();
+        expect(store.setLastBlockedState).not.toHaveBeenCalled();
+        expect(mockedCreateKbAgent).not.toHaveBeenCalled();
+      });
+
+      it("re-logs blocked state when new comments change context hash", async () => {
+        const store = createStoreWithAgentForExec({ taskId: "FN-BLOCKED" });
+        (store.getLastBlockedState as ReturnType<typeof vi.fn>).mockResolvedValue({
+          taskId: "FN-BLOCKED",
+          blockedBy: "FN-DEP-1",
+          recordedAt: "2026-01-01T00:00:00.000Z",
+          contextHash: "stale-context-hash",
+        });
+
+        const taskDetail = {
+          id: "FN-BLOCKED",
+          title: "Blocked Task",
+          description: "Blocked task description",
+          prompt: "",
+          status: "queued",
+          blockedBy: "FN-DEP-1",
+          comments: [{ id: "comment-2", text: "New context", author: "user", createdAt: "2026-01-02T00:00:00.000Z" }],
+          steeringComments: [],
+          steps: [],
+          column: "todo",
+          dependencies: [],
+          log: [],
+          attachments: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        } as unknown as TaskDetail;
+
+        mockTaskStore = createMockTaskStore({ getTask: vi.fn().mockResolvedValue(taskDetail) });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+        const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+        expect(result.resultJson).toEqual({ reason: "blocked", taskId: "FN-BLOCKED", blockedBy: "FN-DEP-1" });
+        expect(mockTaskStore.addComment).toHaveBeenCalledOnce();
+        expect(store.setLastBlockedState).toHaveBeenCalledWith(
+          "agent-001",
+          expect.objectContaining({ taskId: "FN-BLOCKED", blockedBy: "FN-DEP-1" }),
+        );
+        expect(mockedCreateKbAgent).not.toHaveBeenCalled();
+      });
+
+      it("treats changed blockedBy as a new blocked state", async () => {
+        const store = createStoreWithAgentForExec({ taskId: "FN-BLOCKED" });
+        (store.getLastBlockedState as ReturnType<typeof vi.fn>).mockResolvedValue({
+          taskId: "FN-BLOCKED",
+          blockedBy: "FN-DEP-OLD",
+          recordedAt: "2026-01-01T00:00:00.000Z",
+          contextHash: "samehash",
+        });
+
+        const taskDetail = {
+          id: "FN-BLOCKED",
+          title: "Blocked Task",
+          description: "Blocked task description",
+          prompt: "",
+          status: "queued",
+          blockedBy: "FN-DEP-NEW",
+          comments: [],
+          steeringComments: [],
+          steps: [],
+          column: "todo",
+          dependencies: [],
+          log: [],
+          attachments: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        } as unknown as TaskDetail;
+
+        mockTaskStore = createMockTaskStore({ getTask: vi.fn().mockResolvedValue(taskDetail) });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+        await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+        expect(mockTaskStore.addComment).toHaveBeenCalledOnce();
+        expect(store.setLastBlockedState).toHaveBeenCalledWith(
+          "agent-001",
+          expect.objectContaining({ blockedBy: "FN-DEP-NEW" }),
+        );
+      });
+
+      it("clears blocked state when task is no longer blocked", async () => {
+        const store = createStoreWithAgentForExec({ taskId: "FN-READY" });
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({ session: mockSession as any });
+
+        mockTaskStore = createMockTaskStore({
+          getTask: vi.fn().mockResolvedValue({
+            id: "FN-READY",
+            title: "Ready Task",
+            description: "Ready to run",
+            prompt: "",
+            status: undefined,
+            blockedBy: undefined,
+            comments: [],
+            steeringComments: [],
+            steps: [],
+            column: "todo",
+            dependencies: [],
+            log: [],
+            attachments: [],
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          } as unknown as TaskDetail),
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+        await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+        expect(store.clearLastBlockedState).toHaveBeenCalledWith("agent-001");
       });
     });
 
@@ -1349,6 +1544,59 @@ describe("HeartbeatMonitor", () => {
         expect(promptArg).toContain("PROMPT.md");
       });
 
+      it("includes triggering comment context in execution prompt when comment IDs are provided", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({
+          session: mockSession as any,
+        });
+
+        mockTaskStore.getTask = vi.fn().mockResolvedValue({
+          id: "FN-001",
+          title: "Test Task",
+          description: "Test task description",
+          prompt: "# Prompt",
+          comments: [{ id: "c-1", author: "user", text: "Please cover edge cases", createdAt: "2026-01-01T00:00:00.000Z" }],
+          steeringComments: [{ id: "s-1", author: "agent", text: "Investigating blocker", createdAt: "2026-01-01T00:01:00.000Z" }],
+          steps: [],
+          column: "todo",
+          dependencies: [],
+          log: [],
+          attachments: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        } as unknown as TaskDetail);
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        await monitor.executeHeartbeat({
+          agentId: "agent-001",
+          source: "on_demand",
+          triggeringCommentIds: ["c-1", "s-1"],
+          triggeringCommentType: "steering",
+        });
+
+        const promptArg = mockSession.prompt.mock.calls[0]![0] as string;
+        expect(promptArg).toContain("You were woken because of new comments on this task");
+        expect(promptArg).toContain("Please cover edge cases");
+        expect(promptArg).toContain("Investigating blocker");
+      });
+
+      it("keeps standard prompt when no triggering comments are provided", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({
+          session: mockSession as any,
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+        await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+        const promptArg = mockSession.prompt.mock.calls[0]![0] as string;
+        expect(promptArg).not.toContain("You were woken because of new comments on this task");
+        expect(promptArg).not.toContain("New comments since last run:");
+      });
+
       it("completes run with status completed on successful execution", async () => {
         const store = createStoreWithAgentForExec();
         const mockSession = createMockAgentSession();
@@ -1454,6 +1702,8 @@ describe("HeartbeatMonitor", () => {
           agentId: "agent-001",
           source: "assignment",
           triggerDetail: "task-assigned",
+          triggeringCommentIds: ["comment-1"],
+          triggeringCommentType: "task",
           contextSnapshot: {
             wakeReason: "assignment",
             triggerDetail: "task-assigned",
@@ -1465,6 +1715,8 @@ describe("HeartbeatMonitor", () => {
           wakeReason: "assignment",
           triggerDetail: "task-assigned",
           taskId: "FN-001",
+          triggeringCommentIds: ["comment-1"],
+          triggeringCommentType: "task",
         });
       });
 
@@ -2732,6 +2984,40 @@ describe("HeartbeatTriggerScheduler", () => {
           budgetStatus,
         }),
       );
+    });
+
+    it("includes new steering comment IDs for assignment wakes when taskStore is available", async () => {
+      scheduler.stop();
+
+      (eventStore as any).getRecentRuns = vi.fn().mockResolvedValue([
+        { startedAt: "2026-01-01T00:00:00.000Z" },
+      ]);
+
+      const assignmentTaskStore = {
+        getTask: vi.fn().mockResolvedValue({
+          id: "FN-006",
+          steeringComments: [
+            { id: "steer-old", text: "older", author: "user", createdAt: "2025-12-31T23:00:00.000Z" },
+            { id: "steer-new", text: "new guidance", author: "user", createdAt: "2026-01-01T01:00:00.000Z" },
+          ],
+        }),
+      } as unknown as TaskStore;
+
+      scheduler = new HeartbeatTriggerScheduler(eventStore, callback, assignmentTaskStore);
+      scheduler.start();
+
+      const agent = { id: "agent-test", name: "Test" } as import("@fusion/core").Agent;
+      eventStore.emit("agent:assigned", agent, "FN-006");
+
+      await vi.waitFor(() => {
+        expect(callback).toHaveBeenCalledOnce();
+      }, { timeout: 1000 });
+
+      expect(callback).toHaveBeenCalledWith("agent-test", "assignment", expect.objectContaining({
+        taskId: "FN-006",
+        triggeringCommentIds: ["steer-new"],
+        triggeringCommentType: "steering",
+      }));
     });
 
     it("cleans up listener on unwatch", async () => {

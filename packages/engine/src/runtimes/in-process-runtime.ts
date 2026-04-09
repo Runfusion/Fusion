@@ -266,9 +266,19 @@ export class InProcessRuntime
               source,
               triggerDetail: context.triggerDetail,
               taskId: typeof context.taskId === "string" ? context.taskId : undefined,
+              triggeringCommentIds: Array.isArray(context.triggeringCommentIds)
+                ? context.triggeringCommentIds.filter((id): id is string => typeof id === "string" && id.length > 0)
+                : undefined,
+              triggeringCommentType:
+                context.triggeringCommentType === "steering"
+                || context.triggeringCommentType === "task"
+                || context.triggeringCommentType === "pr"
+                  ? context.triggeringCommentType
+                  : undefined,
               contextSnapshot: { ...context },
             });
           },
+          this.taskStore,
         );
         this.triggerScheduler.start();
 

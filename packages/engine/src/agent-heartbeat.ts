@@ -17,7 +17,7 @@
  * - onTerminated: Called when an unresponsive agent is terminated
  */
 
-import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, AgentHeartbeatConfig, AgentBudgetStatus, Message, MessageStore, TaskStore, TaskDetail, AgentRole, Agent, InboxTask } from "@fusion/core";
+import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, AgentHeartbeatConfig, AgentBudgetStatus, Message, MessageStore, TaskStore, TaskDetail, AgentRole, Agent, InboxTask, BlockedStateSnapshot } from "@fusion/core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import { createTaskCreateTool, createTaskLogTool, taskCreateParams } from "./agent-tools.js";
@@ -89,6 +89,10 @@ export interface HeartbeatExecutionOptions {
   triggerDetail?: string;
   /** Optional task ID override (uses agent.taskId if not set) */
   taskId?: string;
+  /** IDs of comments that triggered this wake (if any) */
+  triggeringCommentIds?: string[];
+  /** Type of comment that triggered this wake */
+  triggeringCommentType?: "steering" | "task" | "pr";
   /** Optional structured context persisted on the run record */
   contextSnapshot?: Record<string, unknown>;
 }
@@ -108,6 +112,11 @@ interface TrackedAgent {
   missedHeartbeatReported: boolean;
   /** Session ID before this execution started */
   sessionIdBefore?: string;
+}
+
+/** Compare blocked-state snapshots to decide whether blocked messaging is duplicate noise. */
+export function isBlockedStateDuplicate(current: BlockedStateSnapshot, previous: BlockedStateSnapshot): boolean {
+  return current.blockedBy === previous.blockedBy && current.contextHash === previous.contextHash;
 }
 
 /**
@@ -573,7 +582,15 @@ export class HeartbeatMonitor {
    * @throws Error if taskStore or rootDir are not configured
    */
   async executeHeartbeat(options: HeartbeatExecutionOptions): Promise<AgentHeartbeatRun> {
-    const { agentId, source, triggerDetail, taskId: explicitTaskId, contextSnapshot } = options;
+    const {
+      agentId,
+      source,
+      triggerDetail,
+      taskId: explicitTaskId,
+      contextSnapshot,
+      triggeringCommentIds,
+      triggeringCommentType,
+    } = options;
 
     // Validate execution dependencies
     if (!this.taskStore || !this.rootDir) {
@@ -594,9 +611,25 @@ export class HeartbeatMonitor {
       }
 
       const resolvedTaskId = explicitTaskId ?? preloadedAgent?.taskId;
+      const contextTriggeringCommentIds = Array.isArray(contextSnapshot?.triggeringCommentIds)
+        ? contextSnapshot.triggeringCommentIds.filter((id): id is string => typeof id === "string" && id.length > 0)
+        : undefined;
+      const contextTriggeringCommentType =
+        contextSnapshot?.triggeringCommentType === "steering"
+        || contextSnapshot?.triggeringCommentType === "task"
+        || contextSnapshot?.triggeringCommentType === "pr"
+          ? contextSnapshot.triggeringCommentType
+          : undefined;
+      const effectiveTriggeringCommentIds = triggeringCommentIds ?? contextTriggeringCommentIds;
+      const effectiveTriggeringCommentType = triggeringCommentType ?? contextTriggeringCommentType;
+
       const runContextSnapshot = {
         ...(contextSnapshot ?? {}),
         ...(resolvedTaskId ? { taskId: resolvedTaskId } : {}),
+        ...(effectiveTriggeringCommentIds?.length
+          ? { triggeringCommentIds: effectiveTriggeringCommentIds }
+          : {}),
+        ...(effectiveTriggeringCommentType ? { triggeringCommentType: effectiveTriggeringCommentType } : {}),
       };
 
       // Start run
@@ -752,6 +785,50 @@ export class HeartbeatMonitor {
           return (await this.store.getRunDetail(agentId, run.id))!;
         }
 
+        const blockedBy = typeof taskDetail.blockedBy === "string" ? taskDetail.blockedBy.trim() : "";
+        const isBlockedTask = taskDetail.status === "queued" && blockedBy.length > 0;
+
+        if (isBlockedTask) {
+          const commentCount = (taskDetail.comments?.length ?? 0) + (taskDetail.steeringComments?.length ?? 0);
+          const lastCommentId = taskDetail.comments?.at(-1)?.id;
+          const lastSteeringCommentId = taskDetail.steeringComments?.at(-1)?.id;
+          const contextHash = Buffer.from(
+            JSON.stringify({ commentCount, lastCommentId, lastSteeringCommentId, blockedBy }),
+          )
+            .toString("base64")
+            .slice(0, 16);
+
+          const currentBlockedState: BlockedStateSnapshot = {
+            taskId,
+            blockedBy,
+            recordedAt: new Date().toISOString(),
+            contextHash,
+          };
+
+          const previousBlockedState = await this.store.getLastBlockedState(agentId);
+          if (previousBlockedState && isBlockedStateDuplicate(currentBlockedState, previousBlockedState)) {
+            heartbeatLog.log(`Task ${taskId} is still blocked by ${blockedBy} (duplicate state) — skipping comment`);
+            await this.completeRun(agentId, run.id, {
+              status: "completed",
+              resultJson: { reason: "blocked_duplicate", taskId, blockedBy },
+            });
+            return (await this.store.getRunDetail(agentId, run.id))!;
+          }
+
+          const blockedMessage = `Task is blocked by ${blockedBy}; waiting for dependency/context changes before retrying.`;
+          await taskStore.addComment(taskId, blockedMessage, "agent");
+          await this.store.setLastBlockedState(agentId, currentBlockedState);
+
+          heartbeatLog.log(`Task ${taskId} is blocked by ${blockedBy} — recorded blocked state`);
+          await this.completeRun(agentId, run.id, {
+            status: "completed",
+            resultJson: { reason: "blocked", taskId, blockedBy },
+          });
+          return (await this.store.getRunDetail(agentId, run.id))!;
+        }
+
+        await this.store.clearLastBlockedState(agentId);
+
         // Track usage via callbacks
         const STDOUT_EXCERPT_LIMIT = 4000;
         let outputLength = 0;
@@ -831,6 +908,36 @@ export class HeartbeatMonitor {
         try {
           // Build execution prompt
           const taskTitle = taskDetail.title ?? taskDetail.description.slice(0, 100);
+
+          const triggeringCommentLines: string[] = [];
+          if (effectiveTriggeringCommentIds && effectiveTriggeringCommentIds.length > 0) {
+            const commentLookup = new Map<string, { author: string; text: string }>();
+            for (const comment of taskDetail.comments ?? []) {
+              commentLookup.set(comment.id, { author: comment.author, text: comment.text });
+            }
+            for (const steeringComment of taskDetail.steeringComments ?? []) {
+              commentLookup.set(steeringComment.id, { author: steeringComment.author, text: steeringComment.text });
+            }
+
+            const formatCommentText = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+            for (const commentId of effectiveTriggeringCommentIds) {
+              const comment = commentLookup.get(commentId);
+              if (comment) {
+                triggeringCommentLines.push(`- [${comment.author}]: "${formatCommentText(comment.text)}"`);
+              }
+            }
+
+            if (triggeringCommentLines.length > 0) {
+              triggeringCommentLines.unshift(
+                "",
+                "You were woken because of new comments on this task. Review them and take appropriate action.",
+                `Triggering comment type: ${effectiveTriggeringCommentType ?? "task"}`,
+                "New comments since last run:",
+              );
+            }
+          }
+
           const executionPrompt = [
             `Heartbeat execution for agent "${agent.name}" (ID: ${agent.id})`,
             `Source: ${source}${triggerDetail ? ` (${triggerDetail})` : ""}`,
@@ -840,6 +947,7 @@ export class HeartbeatMonitor {
             taskDetail.description,
             "",
             taskDetail.prompt ? `PROMPT.md:\n${taskDetail.prompt}` : "No PROMPT.md available.",
+            ...triggeringCommentLines,
             "",
             "Review the task status and take appropriate action. Call heartbeat_done when finished.",
           ].join("\n");
@@ -1087,6 +1195,10 @@ export interface WakeContext {
   wakeReason: string;
   /** Detail about the specific trigger */
   triggerDetail: string;
+  /** IDs of comments that triggered this wake (if any) */
+  triggeringCommentIds?: string[];
+  /** Type of comment that triggered this wake */
+  triggeringCommentType?: "steering" | "task" | "pr";
   /** Budget governance status for the agent at trigger time */
   budgetStatus?: AgentBudgetStatus;
   /** Additional context (intervalMs, etc.) */
@@ -1130,13 +1242,15 @@ interface AgentTimer {
 export class HeartbeatTriggerScheduler {
   private store: AgentStore;
   private callback: TriggerCallback;
+  private taskStore?: TaskStore;
   private timers: Map<string, AgentTimer> = new Map();
   private running = false;
   private assignedListener: ((agent: import("@fusion/core").Agent, taskId: string) => void) | null = null;
 
-  constructor(store: AgentStore, callback: TriggerCallback) {
+  constructor(store: AgentStore, callback: TriggerCallback, taskStore?: TaskStore) {
     this.store = store;
     this.callback = callback;
+    this.taskStore = taskStore;
   }
 
   /**
@@ -1261,11 +1375,39 @@ export class HeartbeatTriggerScheduler {
           // If getBudgetStatus fails, proceed without budget check
         }
 
+        let triggeringCommentIds: string[] | undefined;
+        if (this.taskStore && typeof this.taskStore.getTask === "function") {
+          try {
+            const [task, recentRuns] = await Promise.all([
+              this.taskStore.getTask(taskId),
+              this.store.getRecentRuns(agent.id, 1),
+            ]);
+
+            const lastRunAt = recentRuns[0]?.startedAt;
+            const newSteeringComments = (task.steeringComments ?? []).filter((comment) =>
+              !lastRunAt || comment.createdAt > lastRunAt,
+            );
+            if (newSteeringComments.length > 0) {
+              triggeringCommentIds = newSteeringComments.map((comment) => comment.id);
+            }
+          } catch (error) {
+            heartbeatLog.warn(
+              `Failed to resolve triggering steering comments for assignment wake (${agent.id}/${taskId}): ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
+
         heartbeatLog.log(`Assignment trigger for ${agent.id} (task: ${taskId})`);
         await this.callback(agent.id, "assignment", {
           taskId,
           wakeReason: "assignment",
           triggerDetail: "task-assigned",
+          ...(triggeringCommentIds?.length
+            ? {
+              triggeringCommentIds,
+              triggeringCommentType: "steering" as const,
+            }
+            : {}),
           ...(budgetStatus && { budgetStatus }),
         });
       } catch (err) {

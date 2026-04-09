@@ -28,6 +28,7 @@ import type {
   AgentApiKeyCreateResult,
   AgentHeartbeatEvent,
   AgentHeartbeatRun,
+  BlockedStateSnapshot,
   AgentDetail,
   AgentBudgetConfig,
   AgentBudgetStatus,
@@ -1094,6 +1095,7 @@ export class AgentStore extends EventEmitter {
       const agentPath = join(this.agentsDir, `${agentId}.json`);
       const heartbeatPath = join(this.agentsDir, `${agentId}-heartbeats.jsonl`);
       const revisionsPath = this.getConfigRevisionsPath(agentId);
+      const blockedStatePath = this.getLastBlockedStatePath(agentId);
 
       // Verify agent exists
       const agent = await this.getAgent(agentId);
@@ -1105,6 +1107,7 @@ export class AgentStore extends EventEmitter {
       await unlink(agentPath).catch(() => {});
       await unlink(heartbeatPath).catch(() => {});
       await unlink(revisionsPath).catch(() => {});
+      await unlink(blockedStatePath).catch(() => {});
 
       // Clean up sessions and runs directories
       const { rm } = await import("node:fs/promises");
@@ -1552,6 +1555,41 @@ export class AgentStore extends EventEmitter {
       .slice(0, limit);
   }
 
+  /**
+   * Get the most recently persisted blocked-task dedup state for an agent.
+   */
+  async getLastBlockedState(agentId: string): Promise<BlockedStateSnapshot | null> {
+    const blockedStatePath = this.getLastBlockedStatePath(agentId);
+    try {
+      const content = await readFile(blockedStatePath, "utf-8");
+      return JSON.parse(content) as BlockedStateSnapshot;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Persist the latest blocked-task dedup state for an agent.
+   */
+  async setLastBlockedState(agentId: string, state: BlockedStateSnapshot): Promise<void> {
+    await this.withLock(agentId, async () => {
+      const blockedStatePath = this.getLastBlockedStatePath(agentId);
+      await writeFile(blockedStatePath, JSON.stringify(state, null, 2));
+    });
+  }
+
+  /**
+   * Clear any persisted blocked-task dedup state for an agent.
+   */
+  async clearLastBlockedState(agentId: string): Promise<void> {
+    await this.withLock(agentId, async () => {
+      await unlink(this.getLastBlockedStatePath(agentId)).catch(() => {});
+    });
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Private helpers
   // ─────────────────────────────────────────────────────────────────────────
@@ -1781,6 +1819,10 @@ export class AgentStore extends EventEmitter {
 
   private getApiKeysPath(agentId: string): string {
     return join(this.agentsDir, `${agentId}-keys.jsonl`);
+  }
+
+  private getLastBlockedStatePath(agentId: string): string {
+    return join(this.agentsDir, `${agentId}-last-blocked.json`);
   }
 
   private async readApiKeys(agentId: string): Promise<AgentApiKey[]> {

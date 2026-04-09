@@ -1719,6 +1719,18 @@ export interface AgentHeartbeatEvent {
 /** What triggered a heartbeat run */
 export type HeartbeatInvocationSource = "on_demand" | "timer" | "assignment" | "automation";
 
+/** Snapshot of the last blocked state for a task, used for dedup comparison. */
+export interface BlockedStateSnapshot {
+  /** The task ID that was blocked */
+  taskId: string;
+  /** What the task was blocked by (dependency IDs, overlapping task ID) */
+  blockedBy: string;
+  /** ISO-8601 timestamp when this blocked state was recorded */
+  recordedAt: string;
+  /** Hash of relevant context at the time (comment count, last comment ID) */
+  contextHash: string;
+}
+
 /** A continuous heartbeat session/run for an agent */
 export interface AgentHeartbeatRun {
   /** Unique identifier for this run */
@@ -1747,7 +1759,10 @@ export interface AgentHeartbeatRun {
   usageJson?: { inputTokens: number; outputTokens: number; cachedTokens: number };
   /** Structured result from the run */
   resultJson?: Record<string, unknown>;
-  /** Snapshot of context at run start (taskId, projectId, etc.) */
+  /** Snapshot of context at run start (taskId, projectId, etc.).
+   *  May include optional comment-wake fields:
+   *  - `triggeringCommentIds?: string[]`
+   *  - `triggeringCommentType?: "steering" | "task" | "pr"` */
   contextSnapshot?: Record<string, unknown>;
   /** Excerpt of stdout output */
   stdoutExcerpt?: string;

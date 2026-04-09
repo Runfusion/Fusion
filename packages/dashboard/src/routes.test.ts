@@ -3149,6 +3149,158 @@ describe("Pause/Unpause endpoints", () => {
       expect(store.addTaskComment).toHaveBeenCalledWith("KB-001", "Hello", "user");
     });
 
+    it("POST /tasks/:id/comments — triggers immediate heartbeat wake for assigned agent", async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), "kb-routes-comment-heartbeat-"));
+      const fusionDir = join(tempDir, ".fusion");
+      mkdirSync(fusionDir, { recursive: true });
+
+      try {
+        const { AgentStore } = await import("@fusion/core");
+        const agentStore = new AgentStore({ rootDir: fusionDir });
+        await agentStore.init();
+        const agent = await agentStore.createAgent({ name: "Wake Agent", role: "executor" });
+        await agentStore.updateAgent(agent.id, {
+          runtimeConfig: { messageResponseMode: "immediate" },
+        });
+
+        const heartbeatMonitor = {
+          executeHeartbeat: vi.fn().mockResolvedValue({ id: "run-1" }),
+        };
+
+        const updatedTask = {
+          ...FAKE_TASK_DETAIL,
+          id: "KB-001",
+          assignedAgentId: agent.id,
+          comments: [{ id: "comment-1", text: "Hello", author: "user", createdAt: "2026-01-01T00:00:00.000Z" }],
+        };
+
+        const store = createMockStore({
+          addTaskComment: vi.fn().mockResolvedValue(updatedTask),
+          getFusionDir: vi.fn().mockReturnValue(fusionDir),
+        });
+
+        const app = express();
+        app.use(express.json());
+        app.use("/api", createApiRoutes(store, { heartbeatMonitor } as any));
+
+        const res = await REQUEST(app, "POST", "/api/tasks/KB-001/comments", JSON.stringify({ text: "Hello" }), {
+          "Content-Type": "application/json",
+        });
+
+        expect(res.status).toBe(200);
+        await vi.waitFor(() => {
+          expect(heartbeatMonitor.executeHeartbeat).toHaveBeenCalledWith(expect.objectContaining({
+            agentId: agent.id,
+            source: "on_demand",
+            taskId: "KB-001",
+            triggeringCommentIds: ["comment-1"],
+            triggeringCommentType: "task",
+          }));
+        }, { timeout: 1000 });
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it("POST /tasks/:id/comments — skips heartbeat wake when task has no assigned agent", async () => {
+      const heartbeatMonitor = {
+        executeHeartbeat: vi.fn().mockResolvedValue({ id: "run-1" }),
+      };
+      const updatedTask = {
+        ...FAKE_TASK_DETAIL,
+        id: "KB-001",
+        assignedAgentId: undefined,
+        comments: [{ id: "comment-1", text: "Hello", author: "user", createdAt: "2026-01-01T00:00:00.000Z" }],
+      };
+
+      const store = createMockStore({
+        addTaskComment: vi.fn().mockResolvedValue(updatedTask),
+      });
+
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createApiRoutes(store, { heartbeatMonitor } as any));
+
+      const res = await REQUEST(app, "POST", "/api/tasks/KB-001/comments", JSON.stringify({ text: "Hello" }), {
+        "Content-Type": "application/json",
+      });
+
+      expect(res.status).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(heartbeatMonitor.executeHeartbeat).not.toHaveBeenCalled();
+    });
+
+    it("POST /tasks/:id/comments — succeeds without heartbeat monitor when task is assigned", async () => {
+      const updatedTask = {
+        ...FAKE_TASK_DETAIL,
+        id: "KB-001",
+        assignedAgentId: "agent-123",
+        comments: [{ id: "comment-1", text: "Hello", author: "user", createdAt: "2026-01-01T00:00:00.000Z" }],
+      };
+
+      const store = createMockStore({
+        addTaskComment: vi.fn().mockResolvedValue(updatedTask),
+      });
+
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createApiRoutes(store));
+
+      const res = await REQUEST(app, "POST", "/api/tasks/KB-001/comments", JSON.stringify({ text: "Hello" }), {
+        "Content-Type": "application/json",
+      });
+
+      expect(res.status).toBe(200);
+      expect(store.addTaskComment).toHaveBeenCalledWith("KB-001", "Hello", "user");
+    });
+
+    it("POST /tasks/:id/comments — skips heartbeat wake when an active run already exists", async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), "kb-routes-comment-active-run-"));
+      const fusionDir = join(tempDir, ".fusion");
+      mkdirSync(fusionDir, { recursive: true });
+
+      try {
+        const { AgentStore } = await import("@fusion/core");
+        const agentStore = new AgentStore({ rootDir: fusionDir });
+        await agentStore.init();
+        const agent = await agentStore.createAgent({ name: "Active Run Agent", role: "executor" });
+        await agentStore.updateAgent(agent.id, {
+          runtimeConfig: { messageResponseMode: "immediate" },
+        });
+        await agentStore.startHeartbeatRun(agent.id);
+
+        const heartbeatMonitor = {
+          executeHeartbeat: vi.fn().mockResolvedValue({ id: "run-1" }),
+        };
+
+        const updatedTask = {
+          ...FAKE_TASK_DETAIL,
+          id: "KB-001",
+          assignedAgentId: agent.id,
+          comments: [{ id: "comment-1", text: "Hello", author: "user", createdAt: "2026-01-01T00:00:00.000Z" }],
+        };
+
+        const store = createMockStore({
+          addTaskComment: vi.fn().mockResolvedValue(updatedTask),
+          getFusionDir: vi.fn().mockReturnValue(fusionDir),
+        });
+
+        const app = express();
+        app.use(express.json());
+        app.use("/api", createApiRoutes(store, { heartbeatMonitor } as any));
+
+        const res = await REQUEST(app, "POST", "/api/tasks/KB-001/comments", JSON.stringify({ text: "Hello" }), {
+          "Content-Type": "application/json",
+        });
+
+        expect(res.status).toBe(200);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(heartbeatMonitor.executeHeartbeat).not.toHaveBeenCalled();
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
     it("PATCH /tasks/:id/comments/:commentId — updates a task comment", async () => {
       const updatedTask = { ...FAKE_TASK_DETAIL, comments: [{ id: "c1", text: "Updated", author: "user", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:01:00.000Z" }] };
       const store = createMockStore({ updateTaskComment: vi.fn().mockResolvedValue(updatedTask) });
@@ -3206,6 +3358,107 @@ describe("Pause/Unpause endpoints", () => {
         "Please handle the edge case",
         "user"
       );
+    });
+
+    it("triggers immediate heartbeat wake for assigned agent", async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), "kb-routes-steer-heartbeat-"));
+      const fusionDir = join(tempDir, ".fusion");
+      mkdirSync(fusionDir, { recursive: true });
+
+      try {
+        const { AgentStore } = await import("@fusion/core");
+        const agentStore = new AgentStore({ rootDir: fusionDir });
+        await agentStore.init();
+        const agent = await agentStore.createAgent({ name: "Steer Wake Agent", role: "executor" });
+        await agentStore.updateAgent(agent.id, {
+          runtimeConfig: { messageResponseMode: "immediate" },
+        });
+
+        const heartbeatMonitor = {
+          executeHeartbeat: vi.fn().mockResolvedValue({ id: "run-1" }),
+        };
+
+        const steeredTask = {
+          ...FAKE_TASK_DETAIL,
+          id: "KB-001",
+          assignedAgentId: agent.id,
+          steeringComments: [{ id: "steer-1", text: "Please handle edge case", author: "user", createdAt: "2026-01-01T00:00:00.000Z" }],
+        };
+        (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue(steeredTask);
+        (store.getFusionDir as any) = vi.fn().mockReturnValue(fusionDir);
+
+        const app = express();
+        app.use(express.json());
+        app.use("/api", createApiRoutes(store, { heartbeatMonitor } as any));
+
+        const res = await REQUEST(
+          app,
+          "POST",
+          "/api/tasks/KB-001/steer",
+          JSON.stringify({ text: "Please handle edge case" }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(200);
+        await vi.waitFor(() => {
+          expect(heartbeatMonitor.executeHeartbeat).toHaveBeenCalledWith(expect.objectContaining({
+            agentId: agent.id,
+            source: "on_demand",
+            taskId: "KB-001",
+            triggeringCommentIds: ["steer-1"],
+            triggeringCommentType: "steering",
+          }));
+        }, { timeout: 1000 });
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it("skips heartbeat wake when assigned agent is not in immediate response mode", async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), "kb-routes-steer-non-immediate-"));
+      const fusionDir = join(tempDir, ".fusion");
+      mkdirSync(fusionDir, { recursive: true });
+
+      try {
+        const { AgentStore } = await import("@fusion/core");
+        const agentStore = new AgentStore({ rootDir: fusionDir });
+        await agentStore.init();
+        const agent = await agentStore.createAgent({ name: "Non-immediate Agent", role: "executor" });
+        await agentStore.updateAgent(agent.id, {
+          runtimeConfig: { messageResponseMode: "on-heartbeat" },
+        });
+
+        const heartbeatMonitor = {
+          executeHeartbeat: vi.fn().mockResolvedValue({ id: "run-1" }),
+        };
+
+        const steeredTask = {
+          ...FAKE_TASK_DETAIL,
+          id: "KB-001",
+          assignedAgentId: agent.id,
+          steeringComments: [{ id: "steer-1", text: "Please handle edge case", author: "user", createdAt: "2026-01-01T00:00:00.000Z" }],
+        };
+        (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue(steeredTask);
+        (store.getFusionDir as any) = vi.fn().mockReturnValue(fusionDir);
+
+        const app = express();
+        app.use(express.json());
+        app.use("/api", createApiRoutes(store, { heartbeatMonitor } as any));
+
+        const res = await REQUEST(
+          app,
+          "POST",
+          "/api/tasks/KB-001/steer",
+          JSON.stringify({ text: "Please handle edge case" }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(200);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(heartbeatMonitor.executeHeartbeat).not.toHaveBeenCalled();
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
     });
 
     it("returns 400 when text is missing", async () => {
@@ -9322,6 +9575,70 @@ describe("POST /api/agents/:id/runs", () => {
       triggerDetail: "manual",
       taskId: "FN-001",
     });
+  });
+
+  it("accepts triggering comment wake fields and persists them in contextSnapshot", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/agents/${agentId}/runs`,
+      JSON.stringify({
+        source: "on_demand",
+        triggerDetail: "task-comment",
+        taskId: "FN-001",
+        triggeringCommentIds: ["c1", "c2"],
+        triggeringCommentType: "task",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(res.body.contextSnapshot).toMatchObject({
+      wakeReason: "on_demand",
+      triggerDetail: "task-comment",
+      taskId: "FN-001",
+      triggeringCommentIds: ["c1", "c2"],
+      triggeringCommentType: "task",
+    });
+  });
+
+  it("returns 400 when triggeringCommentIds is not an array", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/agents/${agentId}/runs`,
+      JSON.stringify({ triggeringCommentIds: "not-an-array" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("triggeringCommentIds must be an array of strings");
+  });
+
+  it("returns 400 when triggeringCommentIds contains non-string values", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/agents/${agentId}/runs`,
+      JSON.stringify({ triggeringCommentIds: ["c1", 42] }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("triggeringCommentIds must be an array of strings");
+  });
+
+  it("returns 400 when triggeringCommentType is invalid", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/agents/${agentId}/runs`,
+      JSON.stringify({ triggeringCommentType: "invalid" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("triggeringCommentType must be one of: steering, task, pr");
   });
 
   it("includes wake context without taskId when not provided", async () => {

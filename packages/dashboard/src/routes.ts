@@ -1443,6 +1443,58 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   const hasHeartbeatExecutor = Boolean(heartbeatMonitor);
   const aiSessionStore = options?.aiSessionStore;
 
+  const triggerCommentWakeForAssignedAgent = async (
+    scopedStore: TaskStore,
+    task: Task,
+    wake: {
+      triggeringCommentType: "steering" | "task" | "pr";
+      triggeringCommentIds?: string[];
+      triggerDetail: string;
+    },
+  ): Promise<void> => {
+    if (!hasHeartbeatExecutor || !heartbeatMonitor || !task.assignedAgentId) {
+      return;
+    }
+
+    const { AgentStore } = await import("@fusion/core");
+    const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+    await agentStore.init();
+
+    const assignedAgent = await agentStore.getAgent(task.assignedAgentId);
+    if (!assignedAgent) {
+      return;
+    }
+
+    const responseMode = (assignedAgent.runtimeConfig as { messageResponseMode?: string } | undefined)?.messageResponseMode;
+    if (responseMode !== "immediate") {
+      return;
+    }
+
+    const activeRun = await agentStore.getActiveHeartbeatRun(assignedAgent.id);
+    if (activeRun) {
+      return;
+    }
+
+    const triggeringCommentIds = wake.triggeringCommentIds?.filter((id) => typeof id === "string" && id.length > 0);
+    const contextSnapshot: Record<string, unknown> = {
+      wakeReason: "on_demand",
+      triggerDetail: wake.triggerDetail,
+      taskId: task.id,
+      ...(triggeringCommentIds?.length ? { triggeringCommentIds } : {}),
+      triggeringCommentType: wake.triggeringCommentType,
+    };
+
+    await heartbeatMonitor.executeHeartbeat({
+      agentId: assignedAgent.id,
+      source: "on_demand",
+      triggerDetail: wake.triggerDetail,
+      taskId: task.id,
+      triggeringCommentIds,
+      triggeringCommentType: wake.triggeringCommentType,
+      contextSnapshot,
+    });
+  };
+
   // Scheduler config (includes persisted settings)
   router.get("/config", async (req, res) => {
     try {
@@ -2644,6 +2696,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw badRequest("author must be a string");
       }
       const task = await scopedStore.addTaskComment(req.params.id, text, author?.trim() || "user");
+
+      const newCommentId = task.comments?.at(-1)?.id;
+      void triggerCommentWakeForAssignedAgent(scopedStore, task, {
+        triggeringCommentType: "task",
+        triggeringCommentIds: newCommentId ? [newCommentId] : undefined,
+        triggerDetail: "task-comment",
+      }).catch((error) => {
+        console.warn(
+          `[routes] failed to trigger task-comment heartbeat for ${task.id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+
       res.json(task);
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -2705,6 +2769,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw badRequest("text must be between 1 and 2000 characters");
       }
       const task = await scopedStore.addSteeringComment(req.params.id, text, "user");
+
+      const newSteeringCommentId = task.steeringComments?.at(-1)?.id;
+      void triggerCommentWakeForAssignedAgent(scopedStore, task, {
+        triggeringCommentType: "steering",
+        triggeringCommentIds: newSteeringCommentId ? [newSteeringCommentId] : undefined,
+        triggerDetail: "steering-comment",
+      }).catch((error) => {
+        console.warn(
+          `[routes] failed to trigger steering-comment heartbeat for ${task.id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+
       res.json(task);
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -8828,7 +8904,13 @@ Output ONLY the prompt text (no markdown, no explanations).`;
   /**
    * POST /api/agents/:id/runs
    * Manually start a heartbeat run for an agent.
-   * Body: { source?: HeartbeatInvocationSource, triggerDetail?: string, taskId?: string }
+   * Body: {
+   *   source?: HeartbeatInvocationSource,
+   *   triggerDetail?: string,
+   *   taskId?: string,
+   *   triggeringCommentIds?: string[],
+   *   triggeringCommentType?: "steering" | "task" | "pr",
+   * }
    *
    * When HeartbeatMonitor is available, delegates to executeHeartbeat() with
    * a structured wake context snapshot. This ensures a single authoritative run
@@ -8838,9 +8920,31 @@ Output ONLY the prompt text (no markdown, no explanations).`;
    */
   router.post("/agents/:id/runs", async (req, res) => {
     try {
-      const { source, triggerDetail, taskId } = req.body || {};
+      const { source, triggerDetail, taskId, triggeringCommentIds, triggeringCommentType } = req.body || {};
       const invocationSource = source ?? "on_demand";
       const trigger = triggerDetail ?? "Triggered from dashboard";
+
+      if (triggeringCommentIds !== undefined) {
+        if (!Array.isArray(triggeringCommentIds) || triggeringCommentIds.some((id) => typeof id !== "string")) {
+          throw badRequest("triggeringCommentIds must be an array of strings");
+        }
+      }
+      if (
+        triggeringCommentType !== undefined
+        && triggeringCommentType !== "steering"
+        && triggeringCommentType !== "task"
+        && triggeringCommentType !== "pr"
+      ) {
+        throw badRequest("triggeringCommentType must be one of: steering, task, pr");
+      }
+
+      const normalizedTriggeringCommentIds = Array.isArray(triggeringCommentIds)
+        ? triggeringCommentIds.map((id) => id.trim()).filter((id) => id.length > 0)
+        : undefined;
+      const normalizedTriggeringCommentType =
+        triggeringCommentType === "steering" || triggeringCommentType === "task" || triggeringCommentType === "pr"
+          ? triggeringCommentType
+          : undefined;
 
       // Build structured wake context
       const contextSnapshot: Record<string, unknown> = {
@@ -8849,6 +8953,12 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       };
       if (taskId) {
         contextSnapshot.taskId = taskId;
+      }
+      if (normalizedTriggeringCommentIds?.length) {
+        contextSnapshot.triggeringCommentIds = normalizedTriggeringCommentIds;
+      }
+      if (normalizedTriggeringCommentType) {
+        contextSnapshot.triggeringCommentType = normalizedTriggeringCommentType;
       }
 
       if (hasHeartbeatExecutor && heartbeatMonitor) {
@@ -8869,6 +8979,8 @@ Output ONLY the prompt text (no markdown, no explanations).`;
           source: invocationSource,
           triggerDetail: trigger,
           taskId,
+          triggeringCommentIds: normalizedTriggeringCommentIds,
+          triggeringCommentType: normalizedTriggeringCommentType,
           contextSnapshot,
         });
 

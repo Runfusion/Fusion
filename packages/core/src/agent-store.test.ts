@@ -1753,6 +1753,50 @@ describe("AgentStore", () => {
     });
   });
 
+  // ── blocked state persistence ─────────────────────────────────────
+
+  describe("blocked state persistence", () => {
+    it("roundtrips last blocked state via set/get", async () => {
+      const agent = await store.createAgent({ name: "BlockedState", role: "executor" });
+
+      const snapshot = {
+        taskId: "FN-123",
+        blockedBy: "FN-122",
+        recordedAt: new Date().toISOString(),
+        contextHash: "abc123hash",
+      };
+
+      await store.setLastBlockedState(agent.id, snapshot);
+      const loaded = await store.getLastBlockedState(agent.id);
+
+      expect(loaded).toEqual(snapshot);
+    });
+
+    it("returns null when no blocked-state file exists", async () => {
+      const agent = await store.createAgent({ name: "NoBlockedState", role: "executor" });
+
+      const loaded = await store.getLastBlockedState(agent.id);
+      expect(loaded).toBeNull();
+    });
+
+    it("clearLastBlockedState removes persisted snapshot", async () => {
+      const agent = await store.createAgent({ name: "ClearBlockedState", role: "executor" });
+
+      await store.setLastBlockedState(agent.id, {
+        taskId: "FN-999",
+        blockedBy: "FN-998",
+        recordedAt: new Date().toISOString(),
+        contextHash: "will-clear",
+      });
+
+      await store.clearLastBlockedState(agent.id);
+      const loaded = await store.getLastBlockedState(agent.id);
+
+      expect(loaded).toBeNull();
+      expect(existsSync(join(rootDir, "agents", `${agent.id}-last-blocked.json`))).toBe(false);
+    });
+  });
+
   // ── getAgentDetail ────────────────────────────────────────────────
 
   describe("getAgentDetail", () => {
