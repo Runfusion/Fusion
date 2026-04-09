@@ -549,7 +549,7 @@ body {
   display: flex;
   align-items: center;
   gap: 2px;
-  height: 28px;
+  height: 32px;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -562,7 +562,7 @@ body {
   align-items: center;
   justify-content: center;
   width: 28px;
-  height: 24px;
+  height: 28px;
   background: none;
   border: none;
   border-radius: var(--radius-sm);
