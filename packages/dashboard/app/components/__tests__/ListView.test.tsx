@@ -2249,5 +2249,41 @@ describe("ListView - Bulk Selection", () => {
       expect(screen.getByText("2 selected")).toBeInTheDocument();
       expect(screen.getByText("Bulk Edit Models:")).toBeInTheDocument();
     });
+
+    it("applies agent-active class to mobile cards when task is in-progress and not paused/failed", () => {
+      mockMobileViewport();
+
+      const { container } = renderListView({
+        tasks: [
+          createMockTask({
+            id: "FN-001",
+            status: "executing",
+            column: "in-progress",
+          }),
+        ],
+        globalPaused: false,
+      });
+
+      const card = container.querySelector('.list-card[data-id="FN-001"]');
+      expect(card?.className).toContain("agent-active");
+    });
+
+    it("does not apply agent-active class to mobile cards when globalPaused is true", () => {
+      mockMobileViewport();
+
+      const { container } = renderListView({
+        tasks: [
+          createMockTask({
+            id: "FN-001",
+            status: "executing",
+            column: "in-progress",
+          }),
+        ],
+        globalPaused: true,
+      });
+
+      const card = container.querySelector('.list-card[data-id="FN-001"]');
+      expect(card?.className).not.toContain("agent-active");
+    });
   });
 });

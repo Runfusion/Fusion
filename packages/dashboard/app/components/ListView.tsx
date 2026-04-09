@@ -832,7 +832,7 @@ export function ListView({
                           return (
                             <div
                               key={task.id}
-                              className={`list-card${isSelectionMode ? " list-card--selectable" : ""}`}
+                              className={`list-card${isAgentActive ? " agent-active" : ""}${isSelectionMode ? " list-card--selectable" : ""}`}
                               onClick={() => handleRowClick(task)}
                               data-id={task.id}
                             >
@@ -858,7 +858,7 @@ export function ListView({
                                 {isStuckState ? (
                                   <span className="list-status-badge stuck">Stuck</span>
                                 ) : hasStatus ? (
-                                  <span className={`list-status-badge${isFailed ? " failed" : ""}${isAgentActive ? " pulsing" : ""}`}>
+                                  <span className={`list-status-badge list-status-badge--${task.column}${isFailed ? " failed" : ""}${isAgentActive ? " pulsing" : ""}`}>
                                     {task.status}
                                   </span>
                                 ) : null}
@@ -1044,7 +1044,7 @@ export function ListView({
                                       </span>
                                     ) : task.status ? (
                                       <span
-                                        className={`list-status-badge${isFailed ? " failed" : ""}${
+                                        className={`list-status-badge list-status-badge--${task.column}${isFailed ? " failed" : ""}${
                                           isAgentActive ? " pulsing" : ""
                                         }`}
                                       >

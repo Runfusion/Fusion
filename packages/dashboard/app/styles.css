@@ -7693,18 +7693,11 @@ body {
 }
 
 .list-row.agent-active {
-  border-left: 3px solid var(--in-progress);
-  animation: list-agent-glow 2.5s ease-in-out infinite;
-}
-
-@keyframes list-agent-glow {
-  0%,
-  100% {
-    background: rgba(var(--in-progress-rgb), 0.05);
-  }
-  50% {
-    background: rgba(var(--in-progress-rgb), 0.12);
-  }
+  border-color: var(--in-progress);
+  box-shadow:
+    0 0 8px rgba(var(--in-progress-rgb), 0.4),
+    0 0 20px rgba(var(--in-progress-rgb), 0.15);
+  animation: agent-glow 2.5s ease-in-out infinite;
 }
 
 /* Table cells */
@@ -7767,6 +7760,31 @@ body {
 
 .list-status-badge.pulsing {
   animation: pulse 1.5s ease-in-out infinite;
+}
+
+.list-status-badge--triage {
+  background: var(--status-triage-bg);
+  color: var(--triage);
+}
+.list-status-badge--todo {
+  background: var(--status-todo-bg);
+  color: var(--todo);
+}
+.list-status-badge--in-progress {
+  background: var(--status-in-progress-bg);
+  color: var(--in-progress);
+}
+.list-status-badge--in-review {
+  background: var(--status-in-review-bg);
+  color: var(--in-review);
+}
+.list-status-badge--done {
+  background: var(--status-done-bg);
+  color: var(--done);
+}
+.list-status-badge--archived {
+  background: var(--status-archived-bg);
+  color: var(--text-muted, #8b949e);
 }
 
 .list-column-badge {
@@ -8061,6 +8079,14 @@ body {
   .list-card:active {
     background: var(--surface);
     transform: scale(0.99);
+  }
+
+  .list-card.agent-active {
+    border-color: var(--in-progress);
+    box-shadow:
+      0 0 8px rgba(var(--in-progress-rgb), 0.4),
+      0 0 20px rgba(var(--in-progress-rgb), 0.15);
+    animation: agent-glow 2.5s ease-in-out infinite;
   }
 
   .list-card-row {
