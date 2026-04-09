@@ -6106,6 +6106,7 @@ body {
 
   .detail-body {
     padding: 14px;
+    overflow-x: hidden;
   }
 
   .detail-title {
