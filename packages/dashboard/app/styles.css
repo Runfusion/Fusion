@@ -8413,7 +8413,6 @@ body {
   width: 1px !important;
   height: 1px !important;
   opacity: 0 !important;
-  pointer-events: none !important;
   z-index: -1 !important;
 }
 
