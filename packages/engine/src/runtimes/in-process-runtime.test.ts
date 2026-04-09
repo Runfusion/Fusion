@@ -61,6 +61,7 @@ vi.mock("../scheduler.js", async () => {
       const self = {} as Record<string, unknown>;
       self.start = vi.fn();
       self.stop = vi.fn();
+      self.reconcileAllMissionFeatures = vi.fn().mockResolvedValue(0);
       return self;
     }),
   };

@@ -73,6 +73,8 @@ export interface MissionEvent {
   description: string;
   metadata: Record<string, unknown> | null;
   timestamp: string;
+  /** Monotonically increasing sequence number for ordering events with identical timestamps */
+  seq: number;
 }
 
 /** Computed mission health snapshot used by observability APIs. */

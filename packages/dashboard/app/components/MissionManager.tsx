@@ -588,6 +588,14 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       void loadMissionHealth(missions);
     };
 
+    const handleFeatureUpdated = () => {
+      refreshHealth();
+      // Reload the selected mission detail to reflect updated feature status
+      if (selectedMission) {
+        void loadMissionDetail(selectedMission.id);
+      }
+    };
+
     const handleMissionEvent = (rawEvent: Event) => {
       refreshHealth();
 
@@ -634,13 +642,13 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
     eventSource.addEventListener("mission:updated", refreshHealth);
     eventSource.addEventListener("slice:updated", refreshHealth);
-    eventSource.addEventListener("feature:updated", refreshHealth);
+    eventSource.addEventListener("feature:updated", handleFeatureUpdated);
     eventSource.addEventListener("mission:event", handleMissionEvent);
 
     return () => {
       eventSource.removeEventListener("mission:updated", refreshHealth);
       eventSource.removeEventListener("slice:updated", refreshHealth);
-      eventSource.removeEventListener("feature:updated", refreshHealth);
+      eventSource.removeEventListener("feature:updated", handleFeatureUpdated);
       eventSource.removeEventListener("mission:event", handleMissionEvent);
       eventSource.close();
     };
@@ -649,6 +657,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     eventsFilter,
     isActive,
     isActivityScrolledNearBottom,
+    loadMissionDetail,
     loadMissionHealth,
     missions,
     projectId,

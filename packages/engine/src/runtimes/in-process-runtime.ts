@@ -345,6 +345,11 @@ export class InProcessRuntime
         void activeMissionAutopilot.recoverMissions(activeMissionStore);
       }
 
+      // 11. Reconcile feature status for all active missions (not just autopilot)
+      if (activeMissionStore) {
+        void this.scheduler.reconcileAllMissionFeatures();
+      }
+
       this.setStatus("active");
       runtimeLog.log(`InProcessRuntime started for project ${this.config.projectId}`);
     } catch (error) {

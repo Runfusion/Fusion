@@ -869,4 +869,80 @@ export class Scheduler {
       return null;
     }
   }
+
+  /**
+   * Reconcile feature status for all active missions on startup.
+   *
+   * This ensures that feature statuses are in sync with their linked task
+   * columns for all missions, not just autopilot-enabled ones. The
+   * reconciliation logic mirrors MissionAutopilot.reconcileMissionConsistency()
+   * but runs unconditionally on startup.
+   *
+   * @returns The total number of fixes applied across all missions
+   */
+  async reconcileAllMissionFeatures(): Promise<number> {
+    if (!this.options.missionStore) {
+      return 0;
+    }
+
+    const missionStore = this.options.missionStore;
+    let totalFixed = 0;
+
+    try {
+      const missions = missionStore.listMissions();
+      const activeMissions = missions.filter((m) => m.status === "active");
+
+      for (const mission of activeMissions) {
+        const hierarchy = missionStore.getMissionWithHierarchy(mission.id);
+        if (!hierarchy) continue;
+
+        const activeSlices = hierarchy.milestones
+          .flatMap((milestone) => milestone.slices)
+          .filter((slice) => slice.status === "active");
+
+        for (const slice of activeSlices) {
+          for (const feature of slice.features) {
+            if (!feature.taskId) continue;
+
+            const task = await this.store.getTask(feature.taskId);
+            if (!task) continue;
+
+            // Task done but feature not done -> update feature to done
+            if (task.column === "done" && feature.status !== "done") {
+              missionStore.updateFeatureStatus(feature.id, "done");
+              totalFixed++;
+              continue;
+            }
+
+            // Task in-progress and feature triaged/defined -> update to in-progress
+            if (
+              task.column === "in-progress"
+              && (feature.status === "triaged" || feature.status === "defined")
+            ) {
+              missionStore.updateFeatureStatus(feature.id, "in-progress");
+              totalFixed++;
+              continue;
+            }
+
+            // Task in triage/todo and feature in-progress -> update to triaged
+            if (
+              (task.column === "triage" || task.column === "todo")
+              && feature.status === "in-progress"
+            ) {
+              missionStore.updateFeatureStatus(feature.id, "triaged");
+              totalFixed++;
+            }
+          }
+        }
+      }
+
+      if (totalFixed > 0) {
+        schedulerLog.log(`Mission feature reconciliation: fixed ${totalFixed} inconsistencies`);
+      }
+    } catch (err) {
+      schedulerLog.error("Error during mission feature reconciliation:", err);
+    }
+
+    return totalFixed;
+  }
 }

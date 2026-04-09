@@ -762,6 +762,53 @@ describe("MissionManager", () => {
     });
   });
 
+  it("reloads selected mission detail when feature:updated SSE event arrives", async () => {
+    const fetchMock = createDetailFetchMock(mockMissionEvents);
+    globalThis.fetch = fetchMock;
+    globalThis.EventSource = MockEventSource as unknown as typeof globalThis.EventSource;
+
+    render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Build Auth System")).toBeDefined();
+    });
+
+    // Click on the mission to open detail view
+    fireEvent.click(screen.getByText("Build Auth System"));
+
+    await waitFor(() => {
+      // Back button should appear in detail view
+      expect(screen.getByTestId("mission-back-btn")).toBeDefined();
+    });
+
+    // Record initial fetch calls for mission detail
+    const initialFetchCount = fetchMock.mock.calls.filter(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/missions/M-001")
+    ).length;
+    expect(initialFetchCount).toBeGreaterThan(0);
+
+    // Emit a feature:updated SSE event
+    await act(async () => {
+      for (const source of MockEventSource.instances) {
+        source.emit("feature:updated", {
+          featureId: "F-001",
+          missionId: "M-001",
+          sliceId: "SL-001",
+          previousStatus: "triaged",
+          newStatus: "in-progress",
+        });
+      }
+    });
+
+    // Verify mission detail was reloaded (fetch was called again for the mission)
+    await waitFor(() => {
+      const updatedFetchCount = fetchMock.mock.calls.filter(
+        (call) => typeof call[0] === "string" && call[0].includes("/api/missions/M-001")
+      ).length;
+      expect(updatedFetchCount).toBeGreaterThan(initialFetchCount);
+    });
+  });
+
   it("shows empty state when no missions exist", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(mockApiResponse([]));
     render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);

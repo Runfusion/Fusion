@@ -367,6 +367,7 @@ CREATE TABLE IF NOT EXISTS mission_events (
   description TEXT NOT NULL,
   metadata TEXT,
   timestamp TEXT NOT NULL,
+  seq INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (missionId) REFERENCES missions(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idxMissionEventsMissionId ON mission_events(missionId);
@@ -848,6 +849,17 @@ export class Database {
         `);
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxChatMessagesSessionId ON chat_messages(sessionId)`);
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxChatMessagesCreatedAt ON chat_messages(createdAt)`);
+      });
+    }
+
+    if (version < 23) {
+      this.applyMigration(23, () => {
+        this.addColumnIfMissing("milestones", "planningNotes", "TEXT");
+        this.addColumnIfMissing("milestones", "verification", "TEXT");
+        this.addColumnIfMissing("slices", "planningNotes", "TEXT");
+        this.addColumnIfMissing("slices", "verification", "TEXT");
+        this.addColumnIfMissing("slices", "planState", "TEXT NOT NULL DEFAULT 'not_started'");
+        this.addColumnIfMissing("mission_events", "seq", "INTEGER NOT NULL DEFAULT 0");
       });
     }
   }

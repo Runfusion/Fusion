@@ -103,7 +103,14 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
   ) {
     super();
     this.setMaxListeners(100);
+    // Initialize sequence counter from existing events to ensure uniqueness across restarts
+    const lastEvent = this.db.prepare(`
+      SELECT seq FROM mission_events ORDER BY seq DESC LIMIT 1
+    `).get() as { seq?: number } | undefined;
+    this._eventSeq = lastEvent?.seq ?? 0;
   }
+
+  private _eventSeq = 0;
 
   // ── Row-to-Object Converters ───────────────────────────────────────
 
@@ -189,6 +196,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       description: row.description,
       metadata: fromJson<Record<string, unknown>>(row.metadata) ?? null,
       timestamp: row.timestamp,
+      seq: row.seq ?? 0,
     };
   }
 
@@ -469,7 +477,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       SELECT missionId, timestamp, description
       FROM mission_events
       WHERE eventType = 'error'
-      ORDER BY timestamp DESC, id DESC
+      ORDER BY seq DESC, id DESC
     `).all() as Array<{ missionId: string; timestamp: string; description: string }>;
     // Only keep the first (latest) error per missionId
     const lastErrorByMission = new Map<string, { timestamp: string; description: string }>();
@@ -603,11 +611,12 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       description,
       metadata: metadata ?? null,
       timestamp: new Date().toISOString(),
+      seq: ++this._eventSeq,
     };
 
     this.db.prepare(`
-      INSERT INTO mission_events (id, missionId, eventType, description, metadata, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO mission_events (id, missionId, eventType, description, metadata, timestamp, seq)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
       event.id,
       event.missionId,
@@ -615,6 +624,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       event.description,
       toJsonNullable(event.metadata),
       event.timestamp,
+      event.seq,
     );
 
     this.db.bumpLastModified();
@@ -726,7 +736,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       SELECT timestamp, description
       FROM mission_events
       WHERE missionId = ? AND eventType = 'error'
-      ORDER BY timestamp DESC, id DESC
+      ORDER BY seq DESC, id DESC
       LIMIT 1
     `).get(missionId) as { timestamp: string; description: string } | undefined;
 
