@@ -26147,6 +26147,70 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   margin: 8px 16px;
 }
 
+.mobile-more-split-row {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+}
+
+.mobile-more-split-primary {
+  flex: 1;
+  min-width: 0;
+}
+
+.mobile-more-split-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.mobile-more-split-toggle:hover {
+  background: var(--card);
+}
+
+.mobile-more-chevron {
+  color: var(--text-muted);
+  transition: transform var(--transition-fast);
+}
+
+.mobile-more-chevron--open {
+  transform: rotate(90deg);
+}
+
+.mobile-more-submenu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: var(--space-md);
+}
+
+.mobile-more-subitem {
+  padding-left: 28px;
+}
+
+.mobile-more-submenu-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 8px 12px 8px 28px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.mobile-more-subitem--manage {
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+  padding-top: 8px;
+}
+
 /* FN-1137: Quick scripts dropdown mobile viewport handling */
 @media (max-width: 768px) {
   .quick-scripts-dropdown__menu {

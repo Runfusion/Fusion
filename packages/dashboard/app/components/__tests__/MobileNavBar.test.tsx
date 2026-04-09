@@ -2,6 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MobileNavBar } from "../MobileNavBar";
 
+vi.mock("../../api", () => ({
+  fetchScripts: vi.fn(),
+}));
+
+import { fetchScripts } from "../../api";
+
 function mockViewport(mode: "mobile" | "desktop") {
   Object.defineProperty(window, "matchMedia", {
     writable: true,
@@ -223,5 +229,112 @@ describe("MobileNavBar", () => {
     mockViewport("desktop");
     const { container } = render(<MobileNavBar {...createDefaultProps()} />);
     expect(container.querySelector(".mobile-nav-bar")).toBeNull();
+  });
+
+  describe("scripts submenu", () => {
+    beforeEach(() => {
+      vi.mocked(fetchScripts).mockReset();
+    });
+
+    it("terminal item has a split toggle that opens scripts submenu", async () => {
+      vi.mocked(fetchScripts).mockResolvedValue({});
+      render(<MobileNavBar {...createDefaultProps()} />);
+
+      fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+      const toggle = screen.getByTestId("mobile-more-terminal-split-toggle");
+      expect(toggle).toBeDefined();
+
+      fireEvent.click(toggle);
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-more-scripts-manage")).toBeDefined();
+      });
+    });
+
+    it("scripts are fetched when submenu opens", async () => {
+      vi.mocked(fetchScripts).mockResolvedValue({
+        build: "pnpm build",
+        test: "pnpm test",
+      });
+      render(<MobileNavBar {...createDefaultProps()} />);
+
+      fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+      fireEvent.click(screen.getByTestId("mobile-more-terminal-split-toggle"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-more-script-item-build")).toBeDefined();
+        expect(screen.getByTestId("mobile-more-script-item-test")).toBeDefined();
+      });
+    });
+
+    it("clicking a script item calls onRunScript and closes sheet", async () => {
+      vi.mocked(fetchScripts).mockResolvedValue({
+        build: "pnpm build",
+      });
+      const props = createDefaultProps();
+      const { container } = render(<MobileNavBar {...props} />);
+
+      fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+      fireEvent.click(screen.getByTestId("mobile-more-terminal-split-toggle"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-more-script-item-build")).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByTestId("mobile-more-script-item-build"));
+      expect(props.onRunScript).toHaveBeenCalledWith("build", "pnpm build");
+      expect(container.querySelector(".mobile-more-sheet")).toBeNull();
+    });
+
+    it("manage scripts button calls onOpenScripts and closes sheet", async () => {
+      vi.mocked(fetchScripts).mockResolvedValue({
+        build: "pnpm build",
+      });
+      const props = createDefaultProps();
+      const { container } = render(<MobileNavBar {...props} />);
+
+      fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+      fireEvent.click(screen.getByTestId("mobile-more-terminal-split-toggle"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-more-scripts-manage")).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByTestId("mobile-more-scripts-manage"));
+      expect(props.onOpenScripts).toHaveBeenCalledOnce();
+      expect(container.querySelector(".mobile-more-sheet")).toBeNull();
+    });
+
+    it("empty scripts state shows 'No scripts' item", async () => {
+      vi.mocked(fetchScripts).mockResolvedValue({});
+      render(<MobileNavBar {...createDefaultProps()} />);
+
+      fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+      fireEvent.click(screen.getByTestId("mobile-more-terminal-split-toggle"));
+
+      await waitFor(() => {
+        const manageBtn = screen.getByTestId("mobile-more-scripts-manage");
+        expect(manageBtn).toBeDefined();
+        expect(manageBtn.textContent).toContain("No scripts — add one…");
+      });
+    });
+
+    it("loading state shows spinner while fetching", async () => {
+      let resolveFetch!: (value: Record<string, string>) => void;
+      vi.mocked(fetchScripts).mockImplementation(
+        () => new Promise((resolve) => { resolveFetch = resolve; }),
+      );
+      render(<MobileNavBar {...createDefaultProps()} />);
+
+      fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+      fireEvent.click(screen.getByTestId("mobile-more-terminal-split-toggle"));
+
+      expect(screen.getByTestId("mobile-more-scripts-loading")).toBeDefined();
+
+      // Resolve to clean up
+      resolveFetch({});
+      await waitFor(() => {
+        expect(screen.queryByTestId("mobile-more-scripts-loading")).toBeNull();
+      });
+    });
   });
 });

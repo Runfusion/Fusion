@@ -1,21 +1,26 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   Bot,
+  ChevronRight,
   Clock,
+  FileCode,
   Folder,
   GitBranch,
   Grid3X3,
   LayoutGrid,
   List,
   Lightbulb,
+  Loader2,
   Mail,
   MoreHorizontal,
+  Play,
   Settings,
   Target,
   Terminal,
   Workflow,
 } from "lucide-react";
+import { fetchScripts } from "../api";
 import { useViewportMode } from "./Header";
 
 export interface MobileNavBarProps {
@@ -78,6 +83,7 @@ export function MobileNavBar({
   onOpenGitManager,
   onOpenWorkflowSteps,
   onOpenSchedules,
+  onOpenScripts,
   onToggleTerminal,
   onOpenFiles,
   onOpenGitHubImport,
@@ -85,10 +91,43 @@ export function MobileNavBar({
   onResumePlanning,
   activePlanningSessionCount = 0,
   onOpenUsage,
+  onRunScript,
+  projectId,
   onViewAllProjects,
 }: MobileNavBarProps) {
   const mode = useViewportMode();
   const [isMoreOpen, setIsMoreOpen] = useState(false);
+  const [isScriptsSubmenuOpen, setIsScriptsSubmenuOpen] = useState(false);
+  const [scripts, setScripts] = useState<Record<string, string>>({});
+  const [scriptsLoading, setScriptsLoading] = useState(false);
+
+  const scriptEntries = useMemo(
+    () => Object.entries(scripts).sort(([a], [b]) => a.localeCompare(b)),
+    [scripts],
+  );
+
+  // Fetch scripts when the submenu opens
+  useEffect(() => {
+    if (!isScriptsSubmenuOpen) return;
+
+    let cancelled = false;
+    setScriptsLoading(true);
+
+    fetchScripts(projectId)
+      .then((data) => {
+        if (!cancelled) setScripts(data);
+      })
+      .catch(() => {
+        if (!cancelled) setScripts({});
+      })
+      .finally(() => {
+        if (!cancelled) setScriptsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isScriptsSubmenuOpen, projectId]);
 
   const closeMore = useCallback(() => setIsMoreOpen(false), []);
 
@@ -229,15 +268,91 @@ export function MobileNavBar({
               <span>Git Manager</span>
             </button>
 
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-terminal"
-              onClick={() => handleMoreAction(onToggleTerminal)}
-            >
-              <Terminal />
-              <span>Terminal</span>
-            </button>
+            <div className="mobile-more-split-row">
+              <button
+                type="button"
+                className="mobile-more-item mobile-more-split-primary"
+                data-testid="mobile-more-item-terminal"
+                onClick={() => handleMoreAction(onToggleTerminal)}
+              >
+                <Terminal />
+                <span>Terminal</span>
+              </button>
+              <button
+                type="button"
+                className="mobile-more-split-toggle"
+                data-testid="mobile-more-terminal-split-toggle"
+                onClick={() => setIsScriptsSubmenuOpen((prev) => !prev)}
+                aria-expanded={isScriptsSubmenuOpen}
+                aria-haspopup="menu"
+                aria-label="Show scripts"
+              >
+                <ChevronRight
+                  size={14}
+                  className={`mobile-more-chevron${isScriptsSubmenuOpen ? " mobile-more-chevron--open" : ""}`}
+                />
+              </button>
+            </div>
+            {isScriptsSubmenuOpen && (
+              <div className="mobile-more-submenu" role="menu" aria-label="Scripts submenu">
+                {scriptsLoading ? (
+                  <div className="mobile-more-submenu-loading" data-testid="mobile-more-scripts-loading">
+                    <Loader2 size={14} className="animate-spin" />
+                    <span>Loading scripts…</span>
+                  </div>
+                ) : scriptEntries.length > 0 ? (
+                  <>
+                    {scriptEntries.map(([name, command]) => (
+                      <button
+                        key={name}
+                        type="button"
+                        className="mobile-more-item mobile-more-subitem"
+                        data-testid={`mobile-more-script-item-${name}`}
+                        onClick={() => {
+                          if (onRunScript) onRunScript(name, command);
+                          closeMore();
+                          setIsScriptsSubmenuOpen(false);
+                        }}
+                      >
+                        <Play size={14} />
+                        <span>{name}</span>
+                      </button>
+                    ))}
+                    {onOpenScripts && (
+                      <button
+                        type="button"
+                        className="mobile-more-item mobile-more-subitem mobile-more-subitem--manage"
+                        data-testid="mobile-more-scripts-manage"
+                        onClick={() => {
+                          closeMore();
+                          setIsScriptsSubmenuOpen(false);
+                          onOpenScripts();
+                        }}
+                      >
+                        <FileCode size={14} />
+                        <span>Manage Scripts…</span>
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  onOpenScripts && (
+                    <button
+                      type="button"
+                      className="mobile-more-item mobile-more-subitem"
+                      data-testid="mobile-more-scripts-manage"
+                      onClick={() => {
+                        closeMore();
+                        setIsScriptsSubmenuOpen(false);
+                        onOpenScripts();
+                      }}
+                    >
+                      <FileCode size={14} />
+                      <span>No scripts — add one…</span>
+                    </button>
+                  )
+                )}
+              </div>
+            )}
 
             <button
               type="button"
