@@ -2,6 +2,7 @@
 
 ## Architecture
 
+- `TaskExecutor` terminates active agent sessions (single and step) when tasks are moved away from `in-progress` via the `task:moved` event handler. This prevents zombie sessions when users manually send tasks back to todo/triage from the board UI.
 - Agent preset templates in `NewAgentDialog.tsx` are a UI-only concept (`AgentPreset` interface), separate from the engine's `AgentPromptTemplate` type. Presets populate agent creation fields (name, icon, role, soul, instructionsText) but don't map to engine types.
 - `soul` and `instructionsText` are already supported in `AgentCreateInput` and `AgentUpdateInput` — no API changes needed when adding these to presets.
 - `CronRunner` uses dependency injection for AI prompt execution: an `AiPromptExecutor` function is injected via options. This keeps it decoupled from `createKbAgent` and testable without real agent sessions.

@@ -253,6 +253,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
                   onOpenDetailWithTab={onOpenDetailWithTab}
                   taskStuckTimeoutMs={taskStuckTimeoutMs}
                   onOpenMission={onOpenMission}
+                  onMoveTask={onMoveTask}
                 />
               ))}
               {shouldPaginate && hiddenTaskCount > 0 && (

@@ -327,13 +327,33 @@ export class TaskExecutor {
   ) {
     executorLog.log(`TaskExecutor constructed (rootDir=${rootDir}, hasSemaphore=${!!options.semaphore}, hasStuckDetector=${!!options.stuckTaskDetector})`);
 
-    store.on("task:moved", ({ task, to }) => {
-      executorLog.log(`[event:task:moved] ${task.id} → ${to}`);
+    store.on("task:moved", ({ task, from, to }) => {
+      executorLog.log(`[event:task:moved] ${task.id}: ${from} → ${to}`);
       if (to === "in-progress") {
         executorLog.log(`[event:task:moved] Initiating execute() for ${task.id}`);
         this.execute(task).catch((err) =>
           executorLog.error(`Failed to start ${task.id}:`, err),
         );
+      } else if (from === "in-progress") {
+        // Task moved away from in-progress — terminate any active sessions
+        if (this.activeSessions.has(task.id)) {
+          executorLog.log(`${task.id} moved from in-progress to ${to} — terminating agent session`);
+          this.pausedAborted.add(task.id);
+          this.options.stuckTaskDetector?.untrackTask(task.id);
+          const { session } = this.activeSessions.get(task.id)!;
+          session.dispose();
+          this.activeSessions.delete(task.id);
+        }
+        if (this.activeStepExecutors.has(task.id)) {
+          executorLog.log(`${task.id} moved from in-progress to ${to} — terminating step sessions`);
+          this.pausedAborted.add(task.id);
+          this.options.stuckTaskDetector?.untrackTask(task.id);
+          const stepExecutor = this.activeStepExecutors.get(task.id)!;
+          stepExecutor.terminateAllSessions().catch((err) =>
+            executorLog.error(`Failed to terminate step sessions for ${task.id}:`, err),
+          );
+          this.activeStepExecutors.delete(task.id);
+        }
       }
     });
 

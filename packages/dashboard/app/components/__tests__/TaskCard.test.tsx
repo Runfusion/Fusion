@@ -3488,3 +3488,143 @@ describe("TaskCard agent badge", () => {
     expect(screen.queryByTestId("bot-icon")).not.toBeInTheDocument();
   });
 });
+
+describe("TaskCard send-back functionality", () => {
+  const createTask = (overrides: Partial<Task> = {}): Task => ({
+    id: "FN-001",
+    description: "Test task",
+    column: "todo",
+    dependencies: [],
+    steps: [],
+    currentStep: 0,
+    log: [],
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    columnMovedAt: "2026-01-01T00:00:00Z",
+    ...overrides,
+  } as Task);
+
+  it("renders send-back button when task is in-progress and onMoveTask is provided", () => {
+    const onMoveTask = vi.fn().mockResolvedValue({});
+    const task = createTask({ column: "in-progress" });
+    render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} onMoveTask={onMoveTask} />);
+
+    expect(screen.getByRole("button", { name: /send back/i })).toBeInTheDocument();
+  });
+
+  it("does not render send-back button when task is in todo", () => {
+    const onMoveTask = vi.fn().mockResolvedValue({});
+    const task = createTask({ column: "todo" });
+    render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} onMoveTask={onMoveTask} />);
+
+    expect(screen.queryByRole("button", { name: /send back/i })).not.toBeInTheDocument();
+  });
+
+  it("does not render send-back button when task is in in-review", () => {
+    const onMoveTask = vi.fn().mockResolvedValue({});
+    const task = createTask({ column: "in-review" });
+    render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} onMoveTask={onMoveTask} />);
+
+    expect(screen.queryByRole("button", { name: /send back/i })).not.toBeInTheDocument();
+  });
+
+  it("does not render send-back button when onMoveTask is not provided", () => {
+    const task = createTask({ column: "in-progress" });
+    render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: /send back/i })).not.toBeInTheDocument();
+  });
+
+  it("toggles dropdown menu when send-back button is clicked", () => {
+    const onMoveTask = vi.fn().mockResolvedValue({});
+    const task = createTask({ column: "in-progress" });
+    render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} onMoveTask={onMoveTask} />);
+
+    // Initially, dropdown is not visible
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+    // Click the send-back button
+    const btn = screen.getByRole("button", { name: /send back/i });
+    fireEvent.click(btn);
+
+    // Dropdown should now be visible
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+  });
+
+  it("dropdown shows Todo and Triage options but not In Review", () => {
+    const onMoveTask = vi.fn().mockResolvedValue({});
+    const task = createTask({ column: "in-progress" });
+    render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} onMoveTask={onMoveTask} />);
+
+    // Open the dropdown
+    fireEvent.click(screen.getByRole("button", { name: /send back/i }));
+
+    // Check menu is visible
+    const menu = screen.getByRole("menu");
+    expect(menu).toBeInTheDocument();
+
+    // Should show Todo and Triage
+    expect(screen.getByRole("menuitem", { name: /todo/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /triage/i })).toBeInTheDocument();
+
+    // Should NOT show In Review
+    expect(screen.queryByRole("menuitem", { name: /in review/i })).not.toBeInTheDocument();
+  });
+
+  it("clicking a dropdown option calls onMoveTask with correct column and closes menu", async () => {
+    const onMoveTask = vi.fn().mockResolvedValue({});
+    const addToast = vi.fn();
+    const task = createTask({ column: "in-progress" });
+    render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={addToast} onMoveTask={onMoveTask} />);
+
+    // Open the dropdown
+    fireEvent.click(screen.getByRole("button", { name: /send back/i }));
+
+    // Click "Todo" option
+    fireEvent.click(screen.getByRole("menuitem", { name: /todo/i }));
+
+    // Should have called onMoveTask
+    await waitFor(() => {
+      expect(onMoveTask).toHaveBeenCalledWith("FN-001", "todo");
+    });
+
+    // Dropdown should be closed
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+    // Toast should have been shown
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith("Moved FN-001 to Todo", "success");
+    });
+  });
+
+  it("shows error toast when onMoveTask fails", async () => {
+    const onMoveTask = vi.fn().mockRejectedValue(new Error("Network error"));
+    const addToast = vi.fn();
+    const task = createTask({ column: "in-progress" });
+    render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={addToast} onMoveTask={onMoveTask} />);
+
+    // Open the dropdown and click "Triage"
+    fireEvent.click(screen.getByRole("button", { name: /send back/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /triage/i }));
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith(expect.stringContaining("Failed to move FN-001"), "error");
+    });
+  });
+
+  it("clicking outside dropdown closes it", () => {
+    const onMoveTask = vi.fn().mockResolvedValue({});
+    const task = createTask({ column: "in-progress" });
+    render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} onMoveTask={onMoveTask} />);
+
+    // Open the dropdown
+    fireEvent.click(screen.getByRole("button", { name: /send back/i }));
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+
+    // Click outside (on the card itself, not inside the send-back dropdown)
+    fireEvent.click(document.querySelector(".card")!);
+
+    // Dropdown should be closed
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+});

@@ -4968,6 +4968,80 @@ body {
   outline-offset: 1px;
 }
 
+/* Send Back button and dropdown */
+.card-send-back {
+  position: relative;
+}
+
+.card-send-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 8px;
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.card:hover .card-send-back-btn {
+  opacity: 1;
+}
+
+.card-send-back-btn:hover {
+  background: var(--card-hover);
+  color: var(--text);
+  border-color: var(--border-hover);
+}
+
+.card-send-back-btn:focus {
+  opacity: 1;
+  outline: 1px solid var(--todo);
+  outline-offset: 1px;
+}
+
+.card-send-back-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 50;
+  min-width: 100px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.card-send-back-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.card-send-back-menu-item:hover {
+  background: var(--surface-hover, rgba(0, 0, 0, 0.04));
+}
+
+.card-send-back-menu-item:focus {
+  outline: none;
+  background: var(--surface-hover, rgba(0, 0, 0, 0.04));
+}
+
 /* Loading state during save */
 .card-edit-loading {
   display: flex;

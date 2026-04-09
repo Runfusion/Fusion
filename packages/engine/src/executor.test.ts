@@ -8233,6 +8233,197 @@ describe("TaskExecutor agent execution flow (FN-978)", () => {
     expect(mockedCreateHaiAgent).not.toHaveBeenCalled();
   });
 
+  describe("when task is moved away from in-progress", () => {
+    it("terminates active session and removes from activeSessions map", async () => {
+      const store = createMockStore();
+      const executor = new TaskExecutor(store, "/tmp/test");
+
+      const disposeSpy = vi.fn();
+      const mockSession = {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: disposeSpy,
+        steer: vi.fn(),
+      };
+
+      // Simulate an active session
+      (executor as any).activeSessions.set("FN-001", {
+        session: mockSession,
+        seenSteeringIds: new Set(),
+      });
+
+      const task = {
+        id: "FN-001",
+        title: "Test Task",
+        description: "Test",
+        column: "todo" as const,
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      // Trigger task:moved away from in-progress
+      store._trigger("task:moved", { task, from: "in-progress", to: "todo" });
+
+      // Allow async handlers to complete
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Verify session was disposed and removed from map
+      expect(disposeSpy).toHaveBeenCalled();
+      expect((executor as any).activeSessions.has("FN-001")).toBe(false);
+      // Verify task was added to pausedAborted set
+      expect((executor as any).pausedAborted.has("FN-001")).toBe(true);
+    });
+
+    it("terminates active step executor when task is moved away", async () => {
+      const store = createMockStore();
+      const executor = new TaskExecutor(store, "/tmp/test");
+
+      const mockTerminateAllSessions = vi.fn().mockResolvedValue(undefined);
+      const mockStepExecutor = {
+        executeAll: vi.fn().mockResolvedValue([]),
+        terminateAllSessions: mockTerminateAllSessions,
+        cleanup: vi.fn().mockResolvedValue(undefined),
+      };
+
+      // Simulate an active step executor
+      (executor as any).activeStepExecutors.set("FN-002", mockStepExecutor as any);
+
+      const task = {
+        id: "FN-002",
+        title: "Test Task",
+        description: "Test",
+        column: "todo" as const,
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      // Trigger task:moved away from in-progress
+      store._trigger("task:moved", { task, from: "in-progress", to: "triage" });
+
+      // Allow async handlers to complete
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Verify terminateAllSessions was called
+      expect(mockTerminateAllSessions).toHaveBeenCalled();
+      // Verify removed from map
+      expect((executor as any).activeStepExecutors.has("FN-002")).toBe(false);
+    });
+
+    it("handles graceful no-op when no active session exists", async () => {
+      const store = createMockStore();
+      const executor = new TaskExecutor(store, "/tmp/test");
+
+      // No active session set
+
+      const task = {
+        id: "FN-003",
+        title: "Test Task",
+        description: "Test",
+        column: "todo" as const,
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      // Should not throw
+      expect(() => {
+        store._trigger("task:moved", { task, from: "in-progress", to: "triage" });
+      }).not.toThrow();
+    });
+
+    it("untracks task from stuck detector when moved away", async () => {
+      const store = createMockStore();
+      const untrackSpy = vi.fn();
+      const stuckDetector = {
+        trackTask: vi.fn(),
+        recordActivity: vi.fn(),
+        recordProgress: vi.fn(),
+        untrackTask: untrackSpy,
+      };
+
+      const executor = new TaskExecutor(store, "/tmp/test", {
+        stuckTaskDetector: stuckDetector as any,
+      });
+
+      const disposeSpy = vi.fn();
+      const mockSession = {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: disposeSpy,
+        steer: vi.fn(),
+      };
+
+      (executor as any).activeSessions.set("FN-004", {
+        session: mockSession,
+        seenSteeringIds: new Set(),
+      });
+
+      const task = {
+        id: "FN-004",
+        title: "Test Task",
+        description: "Test",
+        column: "todo" as const,
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      store._trigger("task:moved", { task, from: "in-progress", to: "todo" });
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(untrackSpy).toHaveBeenCalledWith("FN-004");
+    });
+
+    it("adds task to pausedAborted set to prevent re-execution", async () => {
+      const store = createMockStore();
+      const executor = new TaskExecutor(store, "/tmp/test");
+
+      const disposeSpy = vi.fn();
+      const mockSession = {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: disposeSpy,
+        steer: vi.fn(),
+      };
+
+      (executor as any).activeSessions.set("FN-005", {
+        session: mockSession,
+        seenSteeringIds: new Set(),
+      });
+
+      const task = {
+        id: "FN-005",
+        title: "Test Task",
+        description: "Test",
+        column: "triage" as const,
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      store._trigger("task:moved", { task, from: "in-progress", to: "triage" });
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect((executor as any).pausedAborted.has("FN-005")).toBe(true);
+    });
+  });
+
   it("tracks task with stuck detector after session creation", async () => {
     const store = createMockStore();
     const stuckDetector = {

@@ -1,6 +1,7 @@
 import { memo, useCallback, useState, useRef, useEffect, useMemo } from "react";
 import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot } from "lucide-react";
 import type { Task, TaskDetail, Column, PrInfo, IssueInfo } from "@fusion/core";
+import { COLUMN_LABELS, VALID_TRANSITIONS } from "@fusion/core";
 import { fetchTaskDetail, uploadAttachment, fetchMission, fetchAgent } from "../api";
 import { GitHubBadge } from "./GitHubBadge";
 import { pickPreferredBadge } from "./TaskCardBadge";
@@ -91,6 +92,8 @@ interface TaskCardProps {
   taskStuckTimeoutMs?: number;
   /** Called when user clicks the mission badge on a task card. */
   onOpenMission?: (missionId: string) => void;
+  /** Called when user moves a task to a different column from the card. */
+  onMoveTask?: (id: string, column: Column) => Promise<Task>;
 }
 
 function areTaskBadgeInfosEqual(
@@ -136,6 +139,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.onUnarchiveTask === next.onUnarchiveTask &&
     previous.onOpenDetailWithTab === next.onOpenDetailWithTab &&
     previous.onOpenMission === next.onOpenMission &&
+    previous.onMoveTask === next.onMoveTask &&
     previousTask.id === nextTask.id &&
     previousTask.title === nextTask.title &&
     previousTask.description === nextTask.description &&
@@ -182,6 +186,7 @@ function TaskCardComponent({
   onOpenDetailWithTab,
   taskStuckTimeoutMs,
   onOpenMission,
+  onMoveTask,
 }: TaskCardProps) {
   const [dragging, setDragging] = useState(false);
   const [fileDragOver, setFileDragOver] = useState(false);
@@ -194,10 +199,12 @@ function TaskCardComponent({
   );
   const [missionTitle, setMissionTitle] = useState<string | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
+  const [showSendBackMenu, setShowSendBackMenu] = useState(false);
 
   const descTextareaRef = useRef<HTMLTextAreaElement>(null);
   const touchOpenHandledRef = useRef(false);
   const cardRef = useRef<HTMLDivElement>(null);
+  const sendBackRef = useRef<HTMLDivElement>(null);
   const [isInViewport, setIsInViewport] = useState(false);
   const { badgeUpdates, subscribeToBadge, unsubscribeFromBadge } = useBadgeWebSocket();
 
@@ -214,6 +221,18 @@ function TaskCardComponent({
   useEffect(() => {
     setEditDescription(task.description || "");
   }, [task.id, task.description]);
+
+  // Close send-back menu on outside click
+  useEffect(() => {
+    if (!showSendBackMenu) return;
+    const handleClick = (e: MouseEvent) => {
+      if (sendBackRef.current && !sendBackRef.current.contains(e.target as Node)) {
+        setShowSendBackMenu(false);
+      }
+    };
+    document.addEventListener("click", handleClick);
+    return () => document.removeEventListener("click", handleClick);
+  }, [showSendBackMenu]);
 
   // Fetch mission title when missionId is set
   useEffect(() => {
@@ -603,6 +622,23 @@ function TaskCardComponent({
     }
   }, [task.missionId, onOpenMission]);
 
+  const handleSendBackClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setShowSendBackMenu((current) => !current);
+  }, []);
+
+  const handleSendBackOptionClick = useCallback((e: React.MouseEvent, column: Column) => {
+    e.stopPropagation();
+    setShowSendBackMenu(false);
+    if (!onMoveTask) return;
+
+    void onMoveTask(task.id, column).then(() => {
+      addToast(`Moved ${task.id} to ${COLUMN_LABELS[column]}`, "success");
+    }).catch((err: any) => {
+      addToast(`Failed to move ${task.id}: ${err.message}`, "error");
+    });
+  }, [addToast, onMoveTask, task.id]);
+
   const cardClass = `card${dragging ? " dragging" : ""}${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${isStuck ? " stuck" : ""}${isAwaitingApproval ? " awaiting-approval" : ""}${fileDragOver ? " file-drop-target" : ""}${isEditing ? " card-editing" : ""}${isSaving ? " card-saving" : ""}`;
 
   if (isEditing) {
@@ -728,6 +764,37 @@ function TaskCardComponent({
             >
               Unarchive
             </button>
+          )}
+          {task.column === "in-progress" && onMoveTask && (
+            <div className="card-send-back" ref={sendBackRef}>
+              <button
+                className="card-send-back-btn"
+                onClick={handleSendBackClick}
+                title="Send back"
+                aria-label="Send back"
+                aria-haspopup="menu"
+                aria-expanded={showSendBackMenu}
+              >
+                Send back
+                <ChevronDown size={10} />
+              </button>
+              {showSendBackMenu && (
+                <div className="card-send-back-menu" role="menu">
+                  {VALID_TRANSITIONS["in-progress"]
+                    .filter((col) => col !== "in-review")
+                    .map((col) => (
+                      <button
+                        key={col}
+                        className="card-send-back-menu-item"
+                        role="menuitem"
+                        onClick={(e) => handleSendBackOptionClick(e, col)}
+                      >
+                        {COLUMN_LABELS[col]}
+                      </button>
+                    ))}
+                </div>
+              )}
+            </div>
           )}
           {task.size && (
             <span className={`card-size-badge size-${task.size.toLowerCase()}`}>
