@@ -404,6 +404,51 @@ export function _parseClaudeResetLine(line: string): string | null {
 }
 
 /**
+ * Parse a reset timestamp value from the API into milliseconds until reset.
+ * Handles multiple formats: ISO strings, Unix timestamps (seconds or milliseconds),
+ * and numeric strings. Returns null if the value is unparseable or in the past.
+ */
+export function _parseResetTimestamp(value: unknown): { msLeft: number; resetAt: string } | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  let timestampMs: number;
+
+  // Handle numeric values (Unix timestamps in seconds or milliseconds)
+  if (typeof value === "number") {
+    // Detect format: if >= 1e12, assume milliseconds; otherwise seconds
+    timestampMs = value >= 1e12 ? value : value * 1000;
+  } else if (typeof value === "string") {
+    // Try parsing as number first (for numeric strings)
+    const numericValue = Number(value);
+    if (!isNaN(numericValue)) {
+      // Detect format: if >= 1e12, assume milliseconds; otherwise seconds
+      timestampMs = numericValue >= 1e12 ? numericValue : numericValue * 1000;
+    } else {
+      // Try parsing as ISO string
+      const parsed = new Date(value);
+      if (isNaN(parsed.getTime())) {
+        return null; // Invalid date string
+      }
+      timestampMs = parsed.getTime();
+    }
+  } else {
+    return null;
+  }
+
+  const msLeft = timestampMs - Date.now();
+  if (msLeft <= 0) {
+    return null; // Already past
+  }
+
+  return {
+    msLeft,
+    resetAt: new Date(timestampMs).toISOString(),
+  };
+}
+
+/**
  * Parse a reset-time text into an approximate ISO date string.
  */
 export function _parseClaudeResetText(text: string): string | null {
@@ -661,6 +706,16 @@ async function fetchClaudeUsageViaCli(): Promise<ProviderUsage> {
           }
         }
 
+        // Fallback for session window: when CLI output doesn't include reset info
+        // but we have usage percentage data, use the full window duration as a
+        // best-effort estimate. This enables pace calculation and reset text
+        // for the session (5h) window even when the CLI output is incomplete.
+        if (!window.resetText && section.windowMs === 5 * 60 * 60 * 1000) {
+          window.resetMs = section.windowMs;
+          window.resetText = "resets in 5h";
+          window.resetAt = new Date(Date.now() + section.windowMs).toISOString();
+        }
+
         usage.windows.push(window);
       }
     }
@@ -852,20 +907,23 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
       const pctUsed: number = w.utilization ?? w.percent_used ?? w.percentUsed ?? w.used_percent ?? w.usage_percent ?? 0;
       let resetText: string | null = null;
       let resetMs: number | undefined;
+      let resetAt: string | undefined;
 
-      let resetAtValue = w.resets_at || w.reset_at || w.resetAt || w.resetsAt || w.reset_time || w.resetsAtTime;
-      if (resetAtValue) {
-        const msLeft = new Date(resetAtValue).getTime() - Date.now();
-        resetMs = msLeft > 0 ? msLeft : 0;
-        resetText = msLeft > 0 ? `resets in ${formatDuration(msLeft)}` : "resetting now";
+      const resetAtValue = w.resets_at ?? w.reset_at ?? w.resetAt ?? w.resetsAt ?? w.reset_time ?? w.resetsAtTime;
+      const parsedReset = _parseResetTimestamp(resetAtValue);
+
+      if (parsedReset) {
+        resetMs = parsedReset.msLeft;
+        resetAt = parsedReset.resetAt;
+        resetText = `resets in ${formatDuration(parsedReset.msLeft)}`;
       } else if (windowDurationMs === FIVE_HOURS_MS) {
-        // Fallback for session window: when the API doesn't provide reset time,
+        // Fallback for session window: when the API doesn't provide a valid reset time,
         // use the full window duration as a best-effort estimate. This enables
         // pace calculation and reset text for the session (5h) window even when
-        // the API omits resets_at / reset_at / resetAt fields.
+        // the API omits resets_at / reset_at / resetAt fields, or provides invalid values.
         resetMs = windowDurationMs;
         resetText = "resets in 5h";
-        resetAtValue = new Date(Date.now() + windowDurationMs).toISOString();
+        resetAt = new Date(Date.now() + windowDurationMs).toISOString();
       }
 
       return {
@@ -875,7 +933,7 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
         resetText,
         windowDurationMs,
         resetMs,
-        resetAt: resetAtValue || undefined,
+        resetAt,
       };
     };
 

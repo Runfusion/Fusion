@@ -10,6 +10,7 @@ import {
   _parseClaudePercentLine,
   _parseClaudeResetLine,
   _parseClaudeResetText,
+  _parseResetTimestamp,
   withTimeout,
   CLAUDE_FETCH_TIMEOUT_MS,
   _clearRefreshedToken,
@@ -3326,6 +3327,334 @@ describe("usage", () => {
       expect(claude.status).toBe("error");
       expect(claude.error).toContain("HTTP 500");
       expect(claude.error).toContain("internal server error");
+    });
+  });
+
+  describe("_parseResetTimestamp helper", () => {
+    it("parses ISO string format", () => {
+      const futureDate = new Date(Date.now() + 2 * 60 * 60 * 1000); // 2 hours from now
+      const result = _parseResetTimestamp(futureDate.toISOString());
+      expect(result).not.toBeNull();
+      expect(result!.msLeft).toBeGreaterThan(0);
+      expect(result!.msLeft).toBeLessThanOrEqual(2 * 60 * 60 * 1000);
+    });
+
+    it("parses Unix timestamp in seconds (10 digits)", () => {
+      const futureSeconds = Math.floor((Date.now() + 3 * 60 * 60 * 1000) / 1000); // 3 hours from now
+      const result = _parseResetTimestamp(futureSeconds);
+      expect(result).not.toBeNull();
+      expect(result!.msLeft).toBeGreaterThan(0);
+      expect(result!.msLeft).toBeLessThanOrEqual(3 * 60 * 60 * 1000);
+    });
+
+    it("parses Unix timestamp in milliseconds (13 digits)", () => {
+      const futureMs = Date.now() + 4 * 60 * 60 * 1000; // 4 hours from now
+      const result = _parseResetTimestamp(futureMs);
+      expect(result).not.toBeNull();
+      expect(result!.msLeft).toBeGreaterThan(0);
+      expect(result!.msLeft).toBeLessThanOrEqual(4 * 60 * 60 * 1000);
+    });
+
+    it("parses numeric string in seconds", () => {
+      const futureSeconds = Math.floor((Date.now() + 5 * 60 * 60 * 1000) / 1000); // 5 hours from now
+      const result = _parseResetTimestamp(String(futureSeconds));
+      expect(result).not.toBeNull();
+      expect(result!.msLeft).toBeGreaterThan(0);
+      expect(result!.msLeft).toBeLessThanOrEqual(5 * 60 * 60 * 1000);
+    });
+
+    it("parses numeric string in milliseconds", () => {
+      const futureMs = Date.now() + 6 * 60 * 60 * 1000; // 6 hours from now
+      const result = _parseResetTimestamp(String(futureMs));
+      expect(result).not.toBeNull();
+      expect(result!.msLeft).toBeGreaterThan(0);
+      expect(result!.msLeft).toBeLessThanOrEqual(6 * 60 * 60 * 1000);
+    });
+
+    it("returns null for null value", () => {
+      expect(_parseResetTimestamp(null)).toBeNull();
+    });
+
+    it("returns null for undefined value", () => {
+      expect(_parseResetTimestamp(undefined)).toBeNull();
+    });
+
+    it("returns null for empty string", () => {
+      expect(_parseResetTimestamp("")).toBeNull();
+    });
+
+    it("returns null for invalid date string", () => {
+      expect(_parseResetTimestamp("invalid-date")).toBeNull();
+      expect(_parseResetTimestamp("not a timestamp")).toBeNull();
+    });
+
+    it("returns null for past timestamp", () => {
+      const pastMs = Date.now() - 60 * 60 * 1000; // 1 hour ago
+      expect(_parseResetTimestamp(pastMs)).toBeNull();
+      expect(_parseResetTimestamp(pastMs / 1000)).toBeNull(); // seconds format
+    });
+
+    it("returns null for zero timestamp", () => {
+      expect(_parseResetTimestamp(0)).toBeNull();
+    });
+  });
+
+  describe("Claude session reset fallback scenarios", () => {
+    function setupClaudeMocks(options: {
+      credFileContent?: any;
+      keychainContent?: any;
+    }) {
+      const { credFileContent = null, keychainContent = null } = options;
+
+      mockReadFileSync.mockImplementation((filePath: string) => {
+        if (filePath.includes("claude") && credFileContent !== null) {
+          return JSON.stringify(credFileContent);
+        }
+        throw new Error("File not found");
+      });
+
+      mockExecFileSync.mockImplementation((cmd: string, _args: string[]) => {
+        if (cmd === "security") {
+          if (keychainContent !== null) {
+            return JSON.stringify(keychainContent);
+          }
+          throw new Error("Keychain item not found");
+        }
+        throw new Error(`Unexpected command: ${cmd}`);
+      });
+    }
+
+    function setupClaudeApiResponse(mockResponse: any, statusCode = 200) {
+      const mockReq = {
+        on: vi.fn(),
+        write: vi.fn(),
+        end: vi.fn(),
+      };
+
+      mockRequest.mockImplementation((_options: any, callback: any) => {
+        const mockRes = {
+          statusCode,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") {
+              handler(Buffer.from(JSON.stringify(mockResponse)));
+            }
+            if (event === "end") {
+              handler();
+            }
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+    }
+
+    it("applies 5h fallback when resets_at is an invalid string", async () => {
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+          subscriptionType: "pro",
+        },
+      });
+
+      // API returns invalid reset timestamp
+      setupClaudeApiResponse({
+        five_hour: {
+          utilization: 30.0,
+          resets_at: "invalid-date-string",
+        },
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("ok");
+      const sessionWindow = claude.windows.find((w) => w.label.includes("Session"))!;
+      expect(sessionWindow).toBeDefined();
+      // Should use 5h fallback
+      expect(sessionWindow.resetMs).toBe(5 * 60 * 60 * 1000);
+      expect(sessionWindow.resetText).toBe("resets in 5h");
+      expect(sessionWindow.resetAt).toBeDefined();
+    });
+
+    it("applies 5h fallback when resets_at is a past timestamp", async () => {
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+          subscriptionType: "pro",
+        },
+      });
+
+      // API returns a past reset timestamp (1 hour ago)
+      const pastReset = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      setupClaudeApiResponse({
+        five_hour: {
+          utilization: 30.0,
+          resets_at: pastReset,
+        },
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("ok");
+      const sessionWindow = claude.windows.find((w) => w.label.includes("Session"))!;
+      expect(sessionWindow).toBeDefined();
+      // Should use 5h fallback since the reset time is in the past
+      expect(sessionWindow.resetMs).toBe(5 * 60 * 60 * 1000);
+      expect(sessionWindow.resetText).toBe("resets in 5h");
+      expect(sessionWindow.resetAt).toBeDefined();
+    });
+
+    it("applies 5h fallback when resets_at is empty string", async () => {
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+          subscriptionType: "pro",
+        },
+      });
+
+      // API returns empty string for reset timestamp
+      setupClaudeApiResponse({
+        five_hour: {
+          utilization: 30.0,
+          resets_at: "",
+        },
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("ok");
+      const sessionWindow = claude.windows.find((w) => w.label.includes("Session"))!;
+      expect(sessionWindow).toBeDefined();
+      // Should use 5h fallback
+      expect(sessionWindow.resetMs).toBe(5 * 60 * 60 * 1000);
+      expect(sessionWindow.resetText).toBe("resets in 5h");
+    });
+
+    it("applies 5h fallback when resets_at is null", async () => {
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+          subscriptionType: "pro",
+        },
+      });
+
+      // API returns null for reset timestamp
+      setupClaudeApiResponse({
+        five_hour: {
+          utilization: 30.0,
+          resets_at: null,
+        },
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("ok");
+      const sessionWindow = claude.windows.find((w) => w.label.includes("Session"))!;
+      expect(sessionWindow).toBeDefined();
+      // Should use 5h fallback
+      expect(sessionWindow.resetMs).toBe(5 * 60 * 60 * 1000);
+      expect(sessionWindow.resetText).toBe("resets in 5h");
+    });
+
+    it("parses resets_at as Unix seconds correctly", async () => {
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+          subscriptionType: "pro",
+        },
+      });
+
+      // API returns Unix timestamp in seconds (10 digits)
+      const futureSeconds = Math.floor((Date.now() + 2 * 60 * 60 * 1000) / 1000);
+      setupClaudeApiResponse({
+        five_hour: {
+          utilization: 30.0,
+          resets_at: futureSeconds, // Unix seconds
+        },
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("ok");
+      const sessionWindow = claude.windows.find((w) => w.label.includes("Session"))!;
+      expect(sessionWindow.resetText).toContain("resets in");
+      expect(sessionWindow.resetMs).toBeGreaterThan(0);
+      expect(sessionWindow.resetAt).toBeDefined();
+    });
+
+    it("parses resets_at as Unix milliseconds correctly", async () => {
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+          subscriptionType: "pro",
+        },
+      });
+
+      // API returns Unix timestamp in milliseconds (13 digits)
+      const futureMs = Date.now() + 3 * 60 * 60 * 1000;
+      setupClaudeApiResponse({
+        five_hour: {
+          utilization: 30.0,
+          resets_at: futureMs, // Unix milliseconds
+        },
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("ok");
+      const sessionWindow = claude.windows.find((w) => w.label.includes("Session"))!;
+      expect(sessionWindow.resetText).toContain("resets in");
+      expect(sessionWindow.resetMs).toBeGreaterThan(0);
+      expect(sessionWindow.resetAt).toBeDefined();
+    });
+
+    it("does NOT apply 5h fallback to weekly windows with missing reset", async () => {
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+          subscriptionType: "pro",
+        },
+      });
+
+      // Weekly window with missing reset - should NOT apply 5h fallback
+      setupClaudeApiResponse({
+        five_hour: {
+          utilization: 30.0,
+        },
+        seven_day: {
+          utilization: 15.0,
+          // No resets_at for weekly
+        },
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("ok");
+
+      // Session should have fallback
+      const sessionWindow = claude.windows.find((w) => w.label.includes("Session"))!;
+      expect(sessionWindow.resetText).toBe("resets in 5h");
+      expect(sessionWindow.resetMs).toBe(5 * 60 * 60 * 1000);
+
+      // Weekly should NOT have fallback (only session window gets fallback)
+      const weeklyWindow = claude.windows.find((w) => w.label === "Weekly")!;
+      expect(weeklyWindow.resetText).toBeNull();
+      expect(weeklyWindow.resetMs).toBeUndefined();
+      expect(weeklyWindow.resetAt).toBeUndefined();
     });
   });
 });
