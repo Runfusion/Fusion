@@ -4690,7 +4690,7 @@ describe("task_add_dep tool", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-DEP", "triage");
 
     // Worktree and status should be cleared
-    expect(store.updateTask).toHaveBeenCalledWith("FN-DEP", { worktree: undefined, status: undefined });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-DEP", { worktree: null, status: null });
 
     // Task should NOT be marked as failed
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-DEP", { status: "failed" });
@@ -5074,7 +5074,7 @@ describe("TaskExecutor bounded recovery retries", () => {
     );
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-review");
     // Executor now handles the requeue in its finally block
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "stuck-killed" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "stuck-killed", worktree: null, branch: null });
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
   });
 
@@ -5108,7 +5108,7 @@ describe("TaskExecutor bounded recovery retries", () => {
 
     // Should NOT requeue or mark as failed (budget handler already did that)
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "stuck-killed" });
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "stuck-killed", worktree: null, branch: null });
     expect(store.updateTask).not.toHaveBeenCalledWith(
       "FN-001",
       expect.objectContaining({ status: "failed" }),
@@ -5147,7 +5147,7 @@ describe("TaskExecutor bounded recovery retries", () => {
     // Should NOT call moveTask because task is already in todo
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
     // Should still clean up and mark as stuck-killed
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "stuck-killed" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "stuck-killed", worktree: null, branch: null });
   });
 
   it("clears recovery metadata after successful run completes", async () => {

@@ -984,8 +984,8 @@ export class TaskExecutor {
               await this.store.updateTask(task.id, {
                 recoveryRetryCount: decision.nextState.recoveryRetryCount,
                 nextRecoveryAt: decision.nextState.nextRecoveryAt,
-                worktree: undefined,
-                branch: undefined,
+                worktree: null,
+                branch: null,
               });
               await this.store.moveTask(task.id, "todo");
               stuckRequeue = null; // Prevent outer finally from re-processing
@@ -1026,7 +1026,7 @@ export class TaskExecutor {
                   execSync(`git worktree remove "${worktreePath}" --force`, { cwd: this.rootDir, stdio: "pipe" });
                 } catch {}
               }
-              await this.store.updateTask(task.id, { status: "stuck-killed", worktree: undefined, branch: undefined });
+              await this.store.updateTask(task.id, { status: "stuck-killed", worktree: null, branch: null });
               if (task.column !== "todo") {
                 await this.store.moveTask(task.id, "todo");
                 executorLog.log(`${task.id} moved to todo for retry after stuck kill`);
@@ -1471,7 +1471,7 @@ export class TaskExecutor {
             executorLog.warn(`Failed to remove old worktree ${worktreePath}: ${cleanupErr.message}`);
           }
         }
-        await this.store.updateTask(task.id, { worktree: undefined, branch: undefined });
+        await this.store.updateTask(task.id, { worktree: null, branch: null });
         await this.store.logEntry(task.id, "Execution paused — agent terminated, moved to todo");
         await this.store.moveTask(task.id, "todo");
       } else if (this.stuckAborted.has(task.id)) {
@@ -1555,8 +1555,8 @@ export class TaskExecutor {
             await this.store.updateTask(task.id, {
               recoveryRetryCount: decision.nextState.recoveryRetryCount,
               nextRecoveryAt: decision.nextState.nextRecoveryAt,
-              worktree: undefined,
-              branch: undefined,
+              worktree: null,
+              branch: null,
             });
             await this.store.moveTask(task.id, "todo");
             return;
@@ -1606,7 +1606,7 @@ export class TaskExecutor {
               executorLog.warn(`Failed to remove old worktree ${worktreePath}: ${cleanupErr.message}`);
             }
           }
-          await this.store.updateTask(task.id, { status: "stuck-killed", worktree: undefined, branch: undefined });
+          await this.store.updateTask(task.id, { status: "stuck-killed", worktree: null, branch: null });
           // Only move to todo if not already there. The task.column check uses the
           // captured task object from execute() start — if the task was already in "todo"
           // when execute() started (e.g., resumed orphan), we skip the redundant move.
@@ -2030,7 +2030,7 @@ export class TaskExecutor {
     this.activeWorktrees.delete(taskId);
 
     // Update task: clear worktree and status, move to triage
-    await this.store.updateTask(taskId, { worktree: undefined, status: undefined });
+    await this.store.updateTask(taskId, { worktree: null, status: null });
     await this.store.moveTask(taskId, "triage");
     await this.store.logEntry(taskId, "Execution stopped — work discarded, moved to triage for re-specification");
   }
