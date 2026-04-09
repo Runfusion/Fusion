@@ -1330,10 +1330,11 @@ describe("App footer-safe project layout", () => {
       expect(fetchSettings).toHaveBeenCalled();
     });
 
-    // Wrapper should have project-content but NOT project-content--with-footer
-    const wrapper = document.querySelector(".project-content");
-    expect(wrapper).toBeTruthy();
-    expect(wrapper?.classList.contains("project-content--with-footer")).toBe(false);
+    await waitFor(() => {
+      const wrapper = document.querySelector(".project-content");
+      expect(wrapper).toBeTruthy();
+      expect(wrapper?.classList.contains("project-content--with-footer")).toBe(false);
+    });
   });
 
   it("adds and removes footer class when switching between project and overview", async () => {

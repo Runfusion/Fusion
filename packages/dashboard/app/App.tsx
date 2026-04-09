@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import type { TaskDetail } from "@fusion/core";
 import { Header, useViewportMode } from "./components/Header";
 import { Board } from "./components/Board";
@@ -8,10 +8,12 @@ import { AgentsView } from "./components/AgentsView";
 import { MissionManager } from "./components/MissionManager";
 import { NodesView } from "./components/NodesView";
 import { AppModals } from "./components/AppModals";
+import { DashboardLoader, type DashboardLoaderStage } from "./components/DashboardLoader";
 import { ExecutorStatusBar } from "./components/ExecutorStatusBar";
 import { SessionNotificationBanner } from "./components/SessionNotificationBanner";
 import { MobileNavBar } from "./components/MobileNavBar";
 import { QuickChatFAB } from "./components/QuickChatFAB";
+import { ToastContainer } from "./components/ToastContainer";
 import { useBackgroundSessions } from "./hooks/useBackgroundSessions";
 import { useTasks } from "./hooks/useTasks";
 import { useProjects } from "./hooks/useProjects";
@@ -42,6 +44,32 @@ function AppInner() {
   const { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, updateTask, duplicateTask, archiveTask, unarchiveTask, archiveAllDone } = useTasks(
     currentProject ? { projectId: currentProject.id } : undefined
   );
+
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
+
+  const loadingStage = useMemo<DashboardLoaderStage>(() => {
+    if (projectsLoading) return "projects";
+    if (currentProjectLoading) return "project";
+    return "tasks";
+  }, [projectsLoading, currentProjectLoading]);
+
+  useEffect(() => {
+    if (initialLoadComplete) {
+      return;
+    }
+
+    if (projectsLoading || currentProjectLoading) {
+      return;
+    }
+
+    const settleTimer = window.setTimeout(() => {
+      setInitialLoadComplete(true);
+    }, 200);
+
+    return () => {
+      window.clearTimeout(settleTimer);
+    };
+  }, [initialLoadComplete, projectsLoading, currentProjectLoading]);
 
   // Theme management
   const { themeMode, colorTheme, setThemeMode, setColorTheme } = useTheme();
@@ -319,6 +347,15 @@ function AppInner() {
       />
     );
   };
+
+  if (!initialLoadComplete) {
+    return (
+      <>
+        <DashboardLoader stage={loadingStage} />
+        <ToastContainer toasts={toasts} onRemove={removeToast} />
+      </>
+    );
+  }
 
   return (
     <>
