@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { PrMonitor } from "./pr-monitor.js";
 import { Scheduler, pathsOverlap } from "./scheduler.js";
 import { AgentSemaphore } from "./concurrency.js";
-import type { TaskStore, Task } from "@fusion/core";
+import type { TaskStore, Task, TaskDetail } from "@fusion/core";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 
@@ -35,6 +35,7 @@ function createMockTask(overrides: Partial<Task> = {}): Task {
     log: [],
     createdAt: "2024-01-01T00:00:00Z",
     updatedAt: "2024-01-01T00:00:00Z",
+    prompt: "",
     ...overrides,
   } as Task;
 }
@@ -2005,14 +2006,14 @@ describe("Scheduler", () => {
 
     it("handles multiple features across multiple missions and slices", async () => {
       const store = createMockStore({
-        getTask: vi.fn((id: string) => {
+        getTask: vi.fn(async (id: string) => {
           const columns: Record<string, string> = {
             "FN-001": "in-progress",
             "FN-002": "done",
             "FN-003": "triage",
           };
-          return createMockTask({ id, column: columns[id] || "todo" });
-        }),
+          return createMockTask({ id, column: columns[id] as "todo" });
+        }) as unknown as (id: string) => Promise<TaskDetail>,
       });
       const mockMissionStore = createMockMissionStore({
         listMissions: vi.fn().mockReturnValue([
