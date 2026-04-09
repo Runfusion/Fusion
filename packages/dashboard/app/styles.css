@@ -5822,10 +5822,7 @@ body {
     scroll-snap-align: center;
   }
 
-  /* Column header touch target */
-  .column-header {
-    min-height: 36px;
-  }
+  /* Column header: natural height from padding and font is sufficient */
 
   /* Column count badge: slightly wider on mobile for tapping */
   .column-count {
@@ -6011,8 +6008,8 @@ body {
   /* Card edit button: always visible on mobile (no hover) */
   .card-edit-btn {
     opacity: 1;
-    width: 36px;
-    height: 36px;
+    width: 32px;
+    height: 32px;
     margin-right: -8px;
     margin-top: -8px;
     margin-bottom: -8px;
@@ -6049,7 +6046,6 @@ body {
   .card-archive-btn,
   .card-unarchive-btn {
     opacity: 1;
-    min-height: 28px;
     padding: 4px 10px;
   }
 
@@ -6064,7 +6060,6 @@ body {
   }
 
   .card-steps-toggle {
-    min-height: 32px;
     padding: 4px 0;
   }
 
@@ -6086,10 +6081,6 @@ body {
     flex-wrap: wrap;
   }
 
-  /* Card: session files button touch target */
-  .card-session-files {
-    min-height: 32px;
-  }
 
   /* Inline create: fit within 280px column */
   .inline-create-card {
