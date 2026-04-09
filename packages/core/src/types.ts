@@ -404,10 +404,22 @@ export interface TaskStep {
   status: StepStatus;
 }
 
+/** Correlation metadata linking a task mutation to the agent run that caused it. */
+export interface RunMutationContext {
+  /** The heartbeat run ID that initiated this mutation. */
+  runId: string;
+  /** The agent ID that performed the mutation. */
+  agentId: string;
+  /** Optional invocation source of the run (e.g., "on_demand", "timer", "assignment"). */
+  source?: string;
+}
+
 export interface TaskLogEntry {
   timestamp: string;
   action: string;
   outcome?: string;
+  /** Correlation metadata linking this entry to the agent run that produced it. */
+  runContext?: RunMutationContext;
 }
 
 export type ActivityEventType = "task:created" | "task:moved" | "task:updated" | "task:deleted" | "task:merged" | "task:failed" | "settings:updated";

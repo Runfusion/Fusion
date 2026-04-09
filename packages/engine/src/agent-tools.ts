@@ -7,7 +7,7 @@
  * The parameter schemas are canonical here — executor.ts imports and reuses them.
  */
 
-import type { TaskDocument, TaskDocumentCreateInput, TaskStore } from "@fusion/core";
+import type { TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext } from "@fusion/core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import type { AgentReflectionService } from "./agent-reflection.js";
@@ -99,6 +99,32 @@ export function createTaskLogTool(store: TaskStore, taskId: string): ToolDefinit
     parameters: taskLogParams,
     execute: async (_id: string, params: Static<typeof taskLogParams>) => {
       await store.logEntry(taskId, params.message, params.outcome);
+      return {
+        content: [{ type: "text" as const, text: `Logged: ${params.message}` }],
+        details: {},
+      };
+    },
+  };
+}
+
+/**
+ * Create a `task_log` tool with run context for mutation correlation.
+ *
+ * @param store - TaskStore for task persistence
+ * @param taskId - The task ID to log entries against
+ * @param runContext - Optional run context for mutation correlation
+ * @returns ToolDefinition for the `task_log` tool
+ */
+export function createTaskLogToolWithContext(store: TaskStore, taskId: string, runContext?: RunMutationContext): ToolDefinition {
+  return {
+    name: "task_log",
+    label: "Log Entry",
+    description:
+      "Log an important action, decision, or issue for this task. " +
+      "Use for significant events — not every small step.",
+    parameters: taskLogParams,
+    execute: async (_id: string, params: Static<typeof taskLogParams>) => {
+      await store.logEntry(taskId, params.message, params.outcome, runContext);
       return {
         content: [{ type: "text" as const, text: `Logged: ${params.message}` }],
         details: {},

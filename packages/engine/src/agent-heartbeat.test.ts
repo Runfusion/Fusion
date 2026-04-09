@@ -3031,4 +3031,121 @@ describe("HeartbeatTriggerScheduler", () => {
       expect(callback).not.toHaveBeenCalled();
     });
   });
+
+  describe("Run context propagation", () => {
+    it("createHeartbeatTools passes runContext to taskStore.logEntry", async () => {
+      // Create a minimal mock TaskStore
+      const mockTaskStore = {
+        createTask: vi.fn().mockResolvedValue({ id: "FN-NEW", description: "New task" }),
+        logEntry: vi.fn().mockResolvedValue({}),
+        getTask: vi.fn().mockResolvedValue({
+          id: "FN-001",
+          description: "Test task",
+          column: "todo",
+          log: [],
+        }),
+      } as unknown as import("@fusion/core").TaskStore;
+
+      const monitor = new HeartbeatMonitor({
+        store,
+        taskStore: mockTaskStore,
+        rootDir: "/tmp",
+      });
+
+      const runContext = { runId: "run-123", agentId: "agent-456", source: "timer" };
+
+      // Create tools with run context
+      const tools = monitor.createHeartbeatTools("agent-456", mockTaskStore, "FN-001", runContext);
+
+      // Find the task_log tool and execute it
+      const taskLogTool = tools.find(t => t.name === "task_log");
+      expect(taskLogTool).toBeDefined();
+
+      const result = await taskLogTool!.execute("call-1", { message: "Test log entry", outcome: undefined }, undefined as any, undefined as any, undefined as any);
+
+      // Verify logEntry was called with runContext
+      expect(mockTaskStore.logEntry).toHaveBeenCalledWith(
+        "FN-001",
+        "Test log entry",
+        undefined,
+        runContext,
+      );
+    });
+
+    it("createHeartbeatTools tracks task creations with runContext", async () => {
+      // Create a minimal mock TaskStore
+      const mockTaskStore = {
+        createTask: vi.fn().mockResolvedValue({ id: "FN-NEW", description: "New task created" }),
+        logEntry: vi.fn().mockResolvedValue({}),
+        getTask: vi.fn().mockResolvedValue({
+          id: "FN-001",
+          description: "Test task",
+          column: "todo",
+          log: [],
+        }),
+      } as unknown as import("@fusion/core").TaskStore;
+
+      const monitor = new HeartbeatMonitor({
+        store,
+        taskStore: mockTaskStore,
+        rootDir: "/tmp",
+      });
+
+      const runContext = { runId: "run-789", agentId: "agent-abc", source: "on_demand" };
+
+      // Create tools with run context
+      const tools = monitor.createHeartbeatTools("agent-abc", mockTaskStore, "FN-001", runContext);
+
+      // Find the task_create tool and execute it
+      const taskCreateTool = tools.find(t => t.name === "task_create");
+      expect(taskCreateTool).toBeDefined();
+
+      const result = await taskCreateTool!.execute("call-1", { description: "New task created" }, undefined as any, undefined as any, undefined as any);
+
+      // Verify logEntry was called with runContext for the created task
+      expect(mockTaskStore.logEntry).toHaveBeenCalledWith(
+        "FN-NEW",
+        "Created by agent agent-abc during heartbeat run",
+        undefined,
+        runContext,
+      );
+    });
+
+    it("createHeartbeatTools works without runContext (backward compat)", async () => {
+      // Create a minimal mock TaskStore
+      const mockTaskStore = {
+        createTask: vi.fn().mockResolvedValue({ id: "FN-NEW", description: "New task" }),
+        logEntry: vi.fn().mockResolvedValue({}),
+        getTask: vi.fn().mockResolvedValue({
+          id: "FN-001",
+          description: "Test task",
+          column: "todo",
+          log: [],
+        }),
+      } as unknown as import("@fusion/core").TaskStore;
+
+      const monitor = new HeartbeatMonitor({
+        store,
+        taskStore: mockTaskStore,
+        rootDir: "/tmp",
+      });
+
+      // Create tools without run context
+      const tools = monitor.createHeartbeatTools("agent-456", mockTaskStore, "FN-001");
+
+      // Find the task_log tool and execute it
+      const taskLogTool = tools.find(t => t.name === "task_log");
+      expect(taskLogTool).toBeDefined();
+
+      const result = await taskLogTool!.execute("call-1", { message: "Test log entry", outcome: undefined }, undefined as any, undefined as any, undefined as any);
+
+      // Verify logEntry was called without runContext
+      expect(mockTaskStore.logEntry).toHaveBeenCalledWith(
+        "FN-001",
+        "Test log entry",
+        undefined,
+        undefined,
+      );
+    });
+  });
 });

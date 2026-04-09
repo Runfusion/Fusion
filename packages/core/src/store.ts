@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync, watch, type FSWatcher } from "node:fs";
-import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, InboxTask } from "./types.js";
+import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, InboxTask, TaskLogEntry, RunMutationContext } from "./types.js";
 import { VALID_TRANSITIONS, DEFAULT_SETTINGS, GLOBAL_SETTINGS_KEYS, WORKFLOW_STEP_TEMPLATES, validateDocumentKey } from "./types.js";
 import { GlobalSettingsStore } from "./global-settings.js";
 import { Database, toJson, toJsonNullable, fromJson } from "./db.js";
@@ -1394,6 +1394,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async updateTask(
     id: string,
     updates: { title?: string; description?: string; prompt?: string; worktree?: string | null; status?: string | null; dependencies?: string[]; blockedBy?: string | null; assignedAgentId?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; paused?: boolean; baseBranch?: string | null; branch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; mergeRetries?: number; stuckKillCount?: number | null; recoveryRetryCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningModelId?: string | null; thinkingLevel?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; mergeDetails?: import("./types.js").MergeDetails | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null },
+    runContext?: RunMutationContext,
   ): Promise<Task> {
     return this.withTaskLock(id, async () => {
       // Validate that task doesn't depend on itself
@@ -1427,10 +1428,14 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           task.column = "triage";
           task.status = undefined;
           task.columnMovedAt = new Date().toISOString();
-          task.log.push({
+          const depLogEntry: TaskLogEntry = {
             timestamp: new Date().toISOString(),
             action: "Moved to triage for re-specification — new dependency added",
-          });
+          };
+          if (runContext) {
+            depLogEntry.runContext = runContext;
+          }
+          task.log.push(depLogEntry);
           movedToTriage = true;
         }
       }
@@ -1613,7 +1618,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    * Pause or unpause a task. Paused tasks are excluded from all automated
    * agent and scheduler interaction. Logs the action and emits `task:updated`.
    */
-  async pauseTask(id: string, paused: boolean): Promise<Task> {
+  async pauseTask(id: string, paused: boolean, runContext?: RunMutationContext): Promise<Task> {
     return this.withTaskLock(id, async () => {
       const dir = this.taskDir(id);
       const task = await this.readTaskJson(dir);
@@ -1631,10 +1636,14 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
       const now = new Date().toISOString();
       task.updatedAt = now;
-      task.log.push({
+      const logEntry: TaskLogEntry = {
         timestamp: now,
         action: paused ? "Task paused" : "Task unpaused",
-      });
+      };
+      if (runContext) {
+        logEntry.runContext = runContext;
+      }
+      task.log.push(logEntry);
 
       await this.atomicWriteTaskJson(dir, task);
       if (this.isWatching) this.taskCache.set(id, { ...task });
@@ -1704,7 +1713,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   /**
    * Add a log entry to a task.
    */
-  async logEntry(id: string, action: string, outcome?: string): Promise<Task> {
+  async logEntry(id: string, action: string, outcome?: string, runContext?: RunMutationContext): Promise<Task> {
     return this.withTaskLock(id, async () => {
       const dir = this.taskDir(id);
       const task = await this.readTaskJson(dir);
@@ -1714,11 +1723,15 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         task.log = [];
       }
 
-      task.log.push({
+      const entry: TaskLogEntry = {
         timestamp: new Date().toISOString(),
         action,
         outcome,
-      });
+      };
+      if (runContext) {
+        entry.runContext = runContext;
+      }
+      task.log.push(entry);
       task.updatedAt = new Date().toISOString();
 
       await this.atomicWriteTaskJson(dir, task);
@@ -1727,6 +1740,25 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       this.emit("task:updated", task);
       return task;
     });
+  }
+
+  /**
+   * Get all task log entries correlated with a specific run ID.
+   * Scans all tasks' logs for entries whose runContext.runId matches.
+   */
+  async getMutationsForRun(runId: string): Promise<TaskLogEntry[]> {
+    const allTasks = await this.listTasks();
+    const mutations: TaskLogEntry[] = [];
+    for (const task of allTasks) {
+      if (!task.log) continue;
+      for (const entry of task.log) {
+        if (entry.runContext?.runId === runId) {
+          mutations.push(entry);
+        }
+      }
+    }
+    // Sort by timestamp ascending
+    return mutations.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   }
 
   /**
@@ -2570,9 +2602,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    * `steeringComments` (for executor real-time injection).
    * Unlike regular comments, steering comments never trigger auto-refinement.
    */
-  async addSteeringComment(id: string, text: string, author: "user" | "agent" = "user"): Promise<Task> {
+  async addSteeringComment(id: string, text: string, author: "user" | "agent" = "user", runContext?: RunMutationContext): Promise<Task> {
     // Write to unified comments (skip refinement — steering is for agent injection, not follow-up tasks)
-    const task = await this.addComment(id, text, author, { skipRefinement: true });
+    const task = await this.addComment(id, text, author, { skipRefinement: true }, runContext);
 
     // Also write to steeringComments so the executor's real-time injection listener can detect new entries
     const updated = await this.withTaskLock(id, async () => {
@@ -2669,6 +2701,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     text: string,
     author: string = "user",
     options?: { skipRefinement?: boolean },
+    runContext?: RunMutationContext,
   ): Promise<Task> {
     // Phase 1: Add comment under lock
     const task = await this.withTaskLock(id, async () => {
@@ -2696,10 +2729,14 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
       task.comments.push(comment);
       task.updatedAt = new Date().toISOString();
-      task.log.push({
+      const logEntry: TaskLogEntry = {
         timestamp: task.updatedAt,
         action: `Comment added by ${author}`,
-      });
+      };
+      if (runContext) {
+        logEntry.runContext = runContext;
+      }
+      task.log.push(logEntry);
 
       await this.atomicWriteTaskJson(dir, task);
       if (this.isWatching) this.taskCache.set(id, { ...task });
@@ -2739,6 +2776,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         await this.logEntry(
           id,
           `User comment invalidated spec approval — task needs re-specification`,
+          undefined,
+          runContext,
         );
       } catch {
         // Best-effort: don't fail the comment if the status update fails

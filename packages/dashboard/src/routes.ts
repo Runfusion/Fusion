@@ -162,6 +162,22 @@ function slugifyPresetName(name: string): string {
   return slug || "preset";
 }
 
+/**
+ * Extract RunMutationContext from the X-Run-Context header.
+ * Used to correlate dashboard mutations with agent runs for audit trails.
+ */
+function extractRunContext(req: { headers: { [key: string]: string | string[] | undefined } }): import("@fusion/core").RunMutationContext | undefined {
+  const header = req.headers['x-run-context'];
+  if (typeof header !== 'string') return undefined;
+  try {
+    const parsed = JSON.parse(header);
+    if (parsed && typeof parsed.runId === 'string' && typeof parsed.agentId === 'string') {
+      return parsed as import("@fusion/core").RunMutationContext;
+    }
+  } catch { /* invalid JSON, ignore */ }
+  return undefined;
+}
+
 function validateModelPresets(value: unknown): ModelPreset[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) {
@@ -9180,6 +9196,39 @@ Output ONLY the prompt text (no markdown, no explanations).`;
         run.endedAt,
       );
       res.json(logs);
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err.message?.includes("not found")) {
+        throw notFound(err.message);
+      } else {
+        rethrowAsApiError(err);
+      }
+    }
+  });
+
+  /**
+   * GET /api/agents/:id/runs/:runId/mutations
+   * Get the mutation trail for a specific agent run.
+   * Returns all TaskLogEntry objects correlated with the given runId via runContext.
+   */
+  router.get("/agents/:id/runs/:runId/mutations", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      // Verify the run exists
+      const run = await agentStore.getRunDetail(req.params.id, req.params.runId);
+      if (!run) {
+        throw notFound("Run not found");
+      }
+
+      // Query mutation trail
+      const mutations = await scopedStore.getMutationsForRun(req.params.runId);
+      res.json({ runId: req.params.runId, mutations });
     } catch (err: any) {
       if (err instanceof ApiError) {
         throw err;

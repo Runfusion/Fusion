@@ -17,10 +17,10 @@
  * - onTerminated: Called when an unresponsive agent is terminated
  */
 
-import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, AgentHeartbeatConfig, AgentBudgetStatus, Message, MessageStore, TaskStore, TaskDetail, AgentRole, Agent, InboxTask, BlockedStateSnapshot } from "@fusion/core";
+import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, AgentHeartbeatConfig, AgentBudgetStatus, Message, MessageStore, TaskStore, TaskDetail, AgentRole, Agent, InboxTask, BlockedStateSnapshot, RunMutationContext } from "@fusion/core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
-import { createTaskCreateTool, createTaskLogTool, taskCreateParams } from "./agent-tools.js";
+import { createTaskCreateTool, createTaskLogTool, createTaskLogToolWithContext, taskCreateParams } from "./agent-tools.js";
 import { AgentLogger } from "./agent-logger.js";
 import { heartbeatLog } from "./logger.js";
 
@@ -639,6 +639,13 @@ export class HeartbeatMonitor {
         contextSnapshot: Object.keys(runContextSnapshot).length > 0 ? runContextSnapshot : undefined,
       });
 
+      // Build run context for mutation correlation
+      const runContext: RunMutationContext = {
+        runId: run.id,
+        agentId,
+        source,
+      };
+
       let agentLogger: AgentLogger | null = null;
       const flushAgentLogger = async (): Promise<void> => {
         if (!agentLogger) {
@@ -701,17 +708,17 @@ export class HeartbeatMonitor {
 
             // Persist assignment to AgentStore so subsequent runs retain linkage.
             if (agent.taskId !== taskId) {
-              await this.store.assignTask(agentId, taskId);
+              await this.store.assignTask(agentId, taskId, runContext);
             }
 
             // FN-1253 compatibility: if checkout API is available on TaskStore,
             // try to claim the lease. On conflict, skip this task gracefully.
             const checkoutTask = (taskStore as TaskStore & {
-              checkoutTask?: (taskId: string, agentId: string) => Promise<unknown>;
+              checkoutTask?: (taskId: string, agentId: string, runContext?: RunMutationContext) => Promise<unknown>;
             }).checkoutTask;
             if (typeof checkoutTask === "function") {
               try {
-                await checkoutTask.call(taskStore, taskId, agentId);
+                await checkoutTask.call(taskStore, taskId, agentId, runContext);
               } catch {
                 heartbeatLog.log(`Task ${taskId} already checked out — skipping`);
                 taskId = undefined;
@@ -816,7 +823,7 @@ export class HeartbeatMonitor {
           }
 
           const blockedMessage = `Task is blocked by ${blockedBy}; waiting for dependency/context changes before retrying.`;
-          await taskStore.addComment(taskId, blockedMessage, "agent");
+          await taskStore.addComment(taskId, blockedMessage, "agent", undefined, runContext);
           await this.store.setLastBlockedState(agentId, currentBlockedState);
 
           heartbeatLog.log(`Task ${taskId} is blocked by ${blockedBy} — recorded blocked state`);
@@ -867,8 +874,8 @@ export class HeartbeatMonitor {
         // Lazy-load createKbAgent and promptWithFallback
         const { createKbAgent, promptWithFallback } = await import("./pi.js");
 
-        // Build tools with task creation tracking
-        const heartbeatTools = this.createHeartbeatTools(agentId, taskStore, taskId);
+        // Build tools with task creation tracking and run context for mutation correlation
+        const heartbeatTools = this.createHeartbeatTools(agentId, taskStore, taskId, runContext);
         heartbeatTools.push(heartbeatDoneTool);
 
         agentLogger = new AgentLogger({
@@ -1027,9 +1034,10 @@ export class HeartbeatMonitor {
    * @param agentId - The agent ID (used for tracking and logging)
    * @param taskStore - TaskStore for task creation and logging
    * @param taskId - The assigned task ID (for task_log context)
+   * @param runContext - Optional run context for mutation correlation
    * @returns Array of ToolDefinitions for the heartbeat session
    */
-  createHeartbeatTools(agentId: string, taskStore: TaskStore, taskId: string): ToolDefinition[] {
+  createHeartbeatTools(agentId: string, taskStore: TaskStore, taskId: string, runContext?: RunMutationContext): ToolDefinition[] {
     const tools: ToolDefinition[] = [];
 
     // Wrap createTaskCreateTool with tracking and agent-link logging
@@ -1045,9 +1053,9 @@ export class HeartbeatMonitor {
         const taskIdMatch = responseText.match(/Created (FN-\d+|KB-\d+|\w+-\d+):/);
         const createdTaskId = taskIdMatch?.[1] ?? "unknown";
 
-        // Log agent link on the created task
+        // Log agent link on the created task with run context for correlation
         try {
-          await taskStore.logEntry(createdTaskId, `Created by agent ${agentId} during heartbeat run`);
+          await taskStore.logEntry(createdTaskId, `Created by agent ${agentId} during heartbeat run`, undefined, runContext);
         } catch {
           // Non-critical — task was created, just the log failed
         }
@@ -1066,8 +1074,8 @@ export class HeartbeatMonitor {
     };
     tools.push(trackedCreateTool);
 
-    // task_log tool (standard, no tracking needed)
-    tools.push(createTaskLogTool(taskStore, taskId));
+    // task_log tool (with run context for mutation correlation)
+    tools.push(createTaskLogToolWithContext(taskStore, taskId, runContext));
 
     return tools;
   }

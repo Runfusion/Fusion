@@ -481,4 +481,58 @@ describe("Agent runs routes (with HeartbeatMonitor)", () => {
       expect((response.body as any).run).toBeDefined();
     });
   });
+
+  describe("GET /api/agents/:id/runs/:runId/mutations", () => {
+    beforeEach(() => {
+      // Reset scoped store mock
+      mockScopedStore = createMockScopedStore();
+      (createScopedStore as any).mockReturnValue(mockScopedStore);
+    });
+
+    it("returns mutation trail for a valid run", async () => {
+      const mockRun = createMockRun();
+      mockGetRunDetail.mockResolvedValue(mockRun);
+
+      // Mock getMutationsForRun on the scoped store
+      const mockMutations = [
+        { timestamp: "2026-01-01T00:01:00.000Z", action: "Action 1", runContext: { runId: "run-123", agentId: "agent-001" } },
+        { timestamp: "2026-01-01T00:02:00.000Z", action: "Action 2", runContext: { runId: "run-123", agentId: "agent-001" } },
+      ];
+      mockScopedStore.getMutationsForRun = vi.fn().mockResolvedValue(mockMutations);
+
+      const response = await request(app, "GET", "/api/agents/agent-001/runs/run-123/mutations");
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({
+        runId: "run-123",
+        mutations: mockMutations,
+      });
+      expect(mockScopedStore.getMutationsForRun).toHaveBeenCalledWith("run-123");
+    });
+
+    it("returns 404 for unknown run", async () => {
+      mockGetRunDetail.mockResolvedValue(null);
+
+      const response = await request(app, "GET", "/api/agents/agent-001/runs/run-unknown/mutations");
+
+      expect(response.status).toBe(404);
+      expect(response.body).toHaveProperty("error");
+    });
+
+    it("returns empty mutations array for run with no correlated entries", async () => {
+      const mockRun = createMockRun();
+      mockGetRunDetail.mockResolvedValue(mockRun);
+
+      // Mock getMutationsForRun returning empty array
+      mockScopedStore.getMutationsForRun = vi.fn().mockResolvedValue([]);
+
+      const response = await request(app, "GET", "/api/agents/agent-001/runs/run-empty/mutations");
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({
+        runId: "run-empty",
+        mutations: [],
+      });
+    });
+  });
 });

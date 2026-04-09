@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
-import type { TaskStore, Task, TaskDetail, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability } from "@fusion/core";
+import type { TaskStore, Task, TaskDetail, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability, RunMutationContext } from "@fusion/core";
 import type { AgentStore } from "@fusion/core";
 import { buildExecutionMemoryInstructions, resolveAgentPrompt } from "@fusion/core";
 import { findWorktreeUser } from "./merger.js";
@@ -293,6 +293,8 @@ export class TaskExecutor {
   /** Token cap detector for proactive context compaction. */
   private tokenCapDetector = new TokenCapDetector();
   private _modelRegistry?: InstanceType<typeof ModelRegistry>;
+  /** Current run context for mutation correlation. Set at execute() start, cleared in finally. */
+  private currentRunContext: RunMutationContext | undefined;
 
   private get modelRegistry(): InstanceType<typeof ModelRegistry> {
     if (!this._modelRegistry) {
@@ -396,7 +398,7 @@ export class TaskExecutor {
             executorLog.log(`Unpaused ${task.id} in-progress with no session — resuming execution`);
             try {
               await this.clearResumeFailureState(task);
-              await this.store.logEntry(task.id, "Resuming execution after unpause");
+              await this.store.logEntry(task.id, "Resuming execution after unpause", undefined, this.currentRunContext);
             } catch { /* non-critical */ }
             this.execute(task).catch((err) =>
               executorLog.error(`Failed to resume unpaused ${task.id}:`, err),
@@ -429,13 +431,13 @@ export class TaskExecutor {
                 if (model) {
                   await activeEntry.session.setModel(model);
                   executorLog.log(`${task.id}: executor model hot-swapped to ${newProvider}/${newModelId}`);
-                  await this.store.logEntry(task.id, `Model changed to ${newProvider}/${newModelId}`);
+                  await this.store.logEntry(task.id, `Model changed to ${newProvider}/${newModelId}`, undefined, this.currentRunContext);
                 } else {
                   executorLog.log(`${task.id}: model ${newProvider}/${newModelId} not found in registry for hot-swap`);
                 }
               } catch (err: any) {
                 executorLog.error(`${task.id}: failed to hot-swap model: ${err.message}`);
-                await this.store.logEntry(task.id, `Model change failed: ${err.message}`);
+                await this.store.logEntry(task.id, `Model change failed: ${err.message}`, undefined, this.currentRunContext);
               }
             }
           }
@@ -689,6 +691,13 @@ export class TaskExecutor {
     // Fetch settings early — needed for worktree naming and later configuration
     const settings = await this.store.getSettings();
 
+    // Construct run context for mutation correlation
+    // Use a synthetic correlation ID: task ID + timestamp + random suffix
+    this.currentRunContext = {
+      runId: `exec-${task.id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      agentId: task.assignedAgentId ?? "executor",
+    };
+
     // Hoist worktreePath so it's accessible in the catch block for dep-abort cleanup
     // Determine worktree name based on settings
     let worktreePath: string;
@@ -755,9 +764,9 @@ export class TaskExecutor {
               await this.store.updateTask(task.id, { worktree: worktreePath, branch: actualBranch });
               if (actualBranch !== branchName) {
                 executorLog.log(`Branch conflict resolved: using ${actualBranch} instead of ${branchName}`);
-                await this.store.logEntry(task.id, `Acquired worktree from pool: ${worktreePath} (branch conflict: using ${actualBranch})`);
+                await this.store.logEntry(task.id, `Acquired worktree from pool: ${worktreePath} (branch conflict: using ${actualBranch})`, undefined, this.currentRunContext);
               } else {
-                await this.store.logEntry(task.id, `Acquired worktree from pool: ${worktreePath}`);
+                await this.store.logEntry(task.id, `Acquired worktree from pool: ${worktreePath}`, undefined, this.currentRunContext);
               }
             } catch (poolErr: any) {
               // Pool preparation failed — release the worktree back and fall through
@@ -767,6 +776,8 @@ export class TaskExecutor {
               await this.store.logEntry(
                 task.id,
                 `Pool worktree preparation failed (${poolErr.message}), creating fresh worktree`,
+                undefined,
+                this.currentRunContext,
               );
             }
           }
@@ -779,11 +790,11 @@ export class TaskExecutor {
           await this.store.updateTask(task.id, { worktree: created.path, branch: created.branch });
           if (created.branch !== branchName) {
             executorLog.log(`Branch conflict resolved: using ${created.branch} instead of ${branchName}`);
-            await this.store.logEntry(task.id, `Worktree created at ${worktreePath} (branch conflict: using ${created.branch})`);
+            await this.store.logEntry(task.id, `Worktree created at ${worktreePath} (branch conflict: using ${created.branch})`, undefined, this.currentRunContext);
           } else if (baseBranch) {
-            await this.store.logEntry(task.id, `Worktree created at ${worktreePath} (based on ${baseBranch})`);
+            await this.store.logEntry(task.id, `Worktree created at ${worktreePath} (based on ${baseBranch})`, undefined, this.currentRunContext);
           } else {
-            await this.store.logEntry(task.id, `Worktree created at ${worktreePath}`);
+            await this.store.logEntry(task.id, `Worktree created at ${worktreePath}`, undefined, this.currentRunContext);
           }
 
           // Run worktree init command for fresh worktrees (skip for pooled — caches are warm)
@@ -794,10 +805,10 @@ export class TaskExecutor {
                 stdio: "pipe",
                 timeout: 120_000,
               });
-              await this.store.logEntry(task.id, "Worktree init command completed", settings.worktreeInitCommand);
+              await this.store.logEntry(task.id, "Worktree init command completed", settings.worktreeInitCommand, this.currentRunContext);
             } catch (err: any) {
               const message = err.stderr?.toString() || err.message || "Unknown error";
-              await this.store.logEntry(task.id, `Worktree init command failed: ${message}`);
+              await this.store.logEntry(task.id, `Worktree init command failed: ${message}`, undefined, this.currentRunContext);
             }
           }
 
@@ -811,13 +822,13 @@ export class TaskExecutor {
                   stdio: "pipe",
                   timeout: 120_000,
                 });
-                await this.store.logEntry(task.id, `Setup script '${settings.setupScript}' completed`, scriptCommand);
+                await this.store.logEntry(task.id, `Setup script '${settings.setupScript}' completed`, scriptCommand, this.currentRunContext);
               } catch (err: any) {
                 const message = err.stderr?.toString() || err.message || "Unknown error";
-                await this.store.logEntry(task.id, `Setup script '${settings.setupScript}' failed: ${message}`);
+                await this.store.logEntry(task.id, `Setup script '${settings.setupScript}' failed: ${message}`, undefined, this.currentRunContext);
               }
             } else {
-              await this.store.logEntry(task.id, `Setup script '${settings.setupScript}' not found in scripts map — skipping`);
+              await this.store.logEntry(task.id, `Setup script '${settings.setupScript}' not found in scripts map — skipping`, undefined, this.currentRunContext);
             }
           }
         }
@@ -915,7 +926,7 @@ export class TaskExecutor {
           }
           if (this.pausedAborted.has(task.id)) {
             this.pausedAborted.delete(task.id);
-            await this.store.logEntry(task.id, "Execution paused — step sessions terminated, moved to todo");
+            await this.store.logEntry(task.id, "Execution paused — step sessions terminated, moved to todo", undefined, this.currentRunContext);
             await this.store.moveTask(task.id, "todo");
             return;
           }
@@ -960,7 +971,7 @@ export class TaskExecutor {
           onRetry: (attempt, delayMs, error) => {
             const delaySec = Math.round(delayMs / 1000);
             executorLog.warn(`⏳ ${task.id} rate limited — retry ${attempt} in ${delaySec}s: ${error.message}`);
-            this.store.logEntry(task.id, `Rate limited — retry ${attempt} in ${delaySec}s`).catch(() => {});
+            this.store.logEntry(task.id, `Rate limited — retry ${attempt} in ${delaySec}s`, undefined, this.currentRunContext).catch(() => {});
           },
         });
 
@@ -976,7 +987,7 @@ export class TaskExecutor {
             await this.handleDepAbortCleanup(task.id, worktreePath);
           } else if (this.pausedAborted.has(task.id)) {
             this.pausedAborted.delete(task.id);
-            await this.store.logEntry(task.id, "Execution paused during step-session");
+            await this.store.logEntry(task.id, "Execution paused during step-session", undefined, this.currentRunContext);
             await this.store.moveTask(task.id, "todo");
           } else if (this.stuckAborted.has(task.id)) {
             stuckRequeue = this.stuckAborted.get(task.id) ?? true;
@@ -994,7 +1005,7 @@ export class TaskExecutor {
               const delay = formatDelay(decision.delayMs);
               if (!isSilentTransientError(err.message)) {
                 executorLog.warn(`⚡ ${task.id} transient error — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}: ${err.message}`);
-                await this.store.logEntry(task.id, `Transient error (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${err.message}`);
+                await this.store.logEntry(task.id, `Transient error (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${err.message}`, undefined, this.currentRunContext);
               }
               if (worktreePath && existsSync(worktreePath)) {
                 try {
@@ -1024,7 +1035,7 @@ export class TaskExecutor {
             this.options.onError?.(task, err);
           } else {
             executorLog.error(`✗ ${task.id} step-session execution failed:`, err.message);
-            await this.store.logEntry(task.id, `Step-session execution failed: ${err.message}`);
+            await this.store.logEntry(task.id, `Step-session execution failed: ${err.message}`, undefined, this.currentRunContext);
             await this.store.updateTask(task.id, { status: "failed", error: err.message });
             await this.store.moveTask(task.id, "in-review");
             executorLog.log(`✗ ${task.id} step-session execution failed → in-review`);
@@ -1162,10 +1173,10 @@ export class TaskExecutor {
 
         if (isResuming) {
           executorLog.log(`${task.id}: resumed session from ${task.sessionFile}`);
-          await this.store.logEntry(task.id, `Resumed agent session after unpause (model: ${describeModel(session)})`);
+          await this.store.logEntry(task.id, `Resumed agent session after unpause (model: ${describeModel(session)})`, undefined, this.currentRunContext);
         } else {
           executorLog.log(`${task.id}: using model ${describeModel(session)}`);
-          await this.store.logEntry(task.id, `Executor using model: ${describeModel(session)}`);
+          await this.store.logEntry(task.id, `Executor using model: ${describeModel(session)}`, undefined, this.currentRunContext);
           // Persist session file path so pause/resume can reopen it
           if (sessionFile) {
             await this.store.updateTask(task.id, { sessionFile });
@@ -1230,6 +1241,8 @@ export class TaskExecutor {
                   await this.store.logEntry(
                     task.id,
                     `Context compacted at ${compactResult.tokensBefore} tokens (token cap: ${settings.tokenCap})`,
+                    undefined,
+                    this.currentRunContext,
                   );
                 }
                 return compactResult;
@@ -1250,7 +1263,7 @@ export class TaskExecutor {
           if (loopState?.pending) {
             loopState.pending = false;
             executorLog.log(`${task.id} consuming loop recovery — resuming with fresh context`);
-            await this.store.logEntry(task.id, "Resuming execution after context compaction — taking a different approach");
+            await this.store.logEntry(task.id, "Resuming execution after context compaction — taking a different approach", undefined, this.currentRunContext);
 
             // Reset activity tracking so the detector doesn't immediately re-trigger
             stuckDetector?.recordProgress(task.id);
@@ -1312,7 +1325,7 @@ export class TaskExecutor {
                 implicitCheck.steps.every((s) => s.status === "done" || s.status === "skipped")) {
               taskDone = true;
               executorLog.log(`${task.id} all steps done — treating as implicit task_done`);
-              await this.store.logEntry(task.id, "All steps complete — implicit task_done (agent did not call tool explicitly)");
+              await this.store.logEntry(task.id, "All steps complete — implicit task_done (agent did not call tool explicitly)", undefined, this.currentRunContext);
             }
           }
 
@@ -1342,7 +1355,7 @@ export class TaskExecutor {
           } else {
             // Agent finished without calling task_done — retry once with a fresh session
             executorLog.log(`⚠ ${task.id} finished without task_done — retrying with new session`);
-            await this.store.logEntry(task.id, "Agent finished without calling task_done — retrying with new session");
+            await this.store.logEntry(task.id, "Agent finished without calling task_done — retrying with new session", undefined, this.currentRunContext);
 
             // Dispose old session and create a fresh one
             this.activeSessions.delete(task.id);
@@ -1404,7 +1417,7 @@ export class TaskExecutor {
                   implicitCheck.steps.every((s) => s.status === "done" || s.status === "skipped")) {
                 taskDone = true;
                 executorLog.log(`${task.id} all steps done — treating as implicit task_done`);
-                await this.store.logEntry(task.id, "All steps complete — implicit task_done (agent did not call tool explicitly)");
+                await this.store.logEntry(task.id, "All steps complete — implicit task_done (agent did not call tool explicitly)", undefined, this.currentRunContext);
               }
             }
 
@@ -1431,7 +1444,7 @@ export class TaskExecutor {
             } else {
               const errorMessage = "Agent finished without calling task_done (after retry)";
               await this.store.updateTask(task.id, { status: "failed", error: errorMessage });
-              await this.store.logEntry(task.id, `${errorMessage} — moved to in-review for inspection`);
+              await this.store.logEntry(task.id, `${errorMessage} — moved to in-review for inspection`, undefined, this.currentRunContext);
               await this.store.moveTask(task.id, "in-review");
               executorLog.log(`✗ ${task.id} failed after retry — no task_done → in-review`);
               this.options.onError?.(task, new Error(errorMessage));
@@ -1458,7 +1471,7 @@ export class TaskExecutor {
         onRetry: (attempt, delayMs, error) => {
           const delaySec = Math.round(delayMs / 1000);
           executorLog.warn(`⏳ ${task.id} rate limited — retry ${attempt} in ${delaySec}s: ${error.message}`);
-          this.store.logEntry(task.id, `Rate limited — retry ${attempt} in ${delaySec}s`).catch(() => {});
+          this.store.logEntry(task.id, `Rate limited — retry ${attempt} in ${delaySec}s`, undefined, this.currentRunContext).catch(() => {});
         },
       });
 
@@ -1480,7 +1493,7 @@ export class TaskExecutor {
         const toColumn = transitionMatch?.[2] ?? "unknown";
         const logMessage = `Task already moved from '${fromColumn}' — skipping transition to '${toColumn}'`;
         executorLog.log(`${task.id} ${logMessage}`);
-        await this.store.logEntry(task.id, logMessage, err.message);
+        await this.store.logEntry(task.id, logMessage, err.message, this.currentRunContext);
         // Task finished successfully (just already moved), so call onComplete
         this.options.onComplete?.(task);
       } else if (this.pausedAborted.has(task.id)) {
@@ -1495,8 +1508,8 @@ export class TaskExecutor {
             executorLog.warn(`Failed to remove old worktree ${worktreePath}: ${cleanupErr.message}`);
           }
         }
-        await this.store.updateTask(task.id, { worktree: null, branch: null });
-        await this.store.logEntry(task.id, "Execution paused — agent terminated, moved to todo");
+        await this.store.updateTask(task.id, { worktree: undefined, branch: undefined });
+        await this.store.logEntry(task.id, "Execution paused — agent terminated, moved to todo", undefined, this.currentRunContext);
         await this.store.moveTask(task.id, "todo");
       } else if (this.stuckAborted.has(task.id)) {
         // Task was killed by stuck task detector — defer requeue to finally block
@@ -1515,7 +1528,7 @@ export class TaskExecutor {
           const activeEntry = this.activeSessions.get(task.id);
           if (activeEntry) {
             executorLog.log(`${task.id} context limit error — attempting compact-and-resume`);
-            await this.store.logEntry(task.id, `Context limit error — attempting compact-and-resume: ${err.message}`);
+            await this.store.logEntry(task.id, `Context limit error — attempting compact-and-resume: ${err.message}`, undefined, this.currentRunContext);
 
             const compactResult = await compactSessionContext(activeEntry.session);
             if (compactResult) {
@@ -1565,7 +1578,7 @@ export class TaskExecutor {
             // Silent transient errors (e.g., "request was aborted") are noisy — skip logging
             if (!isSilentTransientError(err.message)) {
               executorLog.warn(`⚡ ${task.id} transient error — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}: ${err.message}`);
-              await this.store.logEntry(task.id, `Transient error (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${err.message}`);
+              await this.store.logEntry(task.id, `Transient error (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${err.message}`, undefined, this.currentRunContext);
             }
             // Clean up the old worktree so the retry gets a fresh one
             if (worktreePath && existsSync(worktreePath)) {
@@ -1588,7 +1601,7 @@ export class TaskExecutor {
 
           // Recovery budget exhausted — escalate to real failure
           executorLog.error(`✗ ${task.id} transient error retries exhausted (${MAX_RECOVERY_RETRIES} attempts): ${err.message}`);
-          await this.store.logEntry(task.id, `Transient error retries exhausted after ${MAX_RECOVERY_RETRIES} attempts: ${err.message}`);
+          await this.store.logEntry(task.id, `Transient error retries exhausted after ${MAX_RECOVERY_RETRIES} attempts: ${err.message}`, undefined, this.currentRunContext);
           await this.store.updateTask(task.id, {
             status: "failed",
             error: err.message,
@@ -1601,7 +1614,7 @@ export class TaskExecutor {
           return;
         }
         executorLog.error(`✗ ${task.id} execution failed:`, err.message);
-        await this.store.logEntry(task.id, `Execution failed: ${err.message}`);
+        await this.store.logEntry(task.id, `Execution failed: ${err.message}`, undefined, this.currentRunContext);
         await this.store.updateTask(task.id, { status: "failed", error: err.message });
         await this.store.moveTask(task.id, "in-review");
         executorLog.log(`✗ ${task.id} execution failed → in-review`);
@@ -1609,6 +1622,8 @@ export class TaskExecutor {
       }
     } finally {
       this.executing.delete(task.id);
+      // Clear run context at end of execute() lifecycle
+      this.currentRunContext = undefined;
 
       // Reset loop recovery state at end of execute() lifecycle.
       // State is in-memory and per-run — should not persist across attempts.

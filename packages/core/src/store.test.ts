@@ -6118,142 +6118,322 @@ Task with acceptance criteria
     });
   });
 
-  describe("searchTasks", () => {
-    it("searches tasks by ID", async () => {
-      const task1 = await store.createTask({ description: "First task" });
-      const task2 = await store.createTask({ description: "Second task" });
 
-      const results = await store.searchTasks("FN-001");
 
-      expect(results).toHaveLength(1);
-      expect(results[0].id).toBe("FN-001");
-      expect(results.some((t) => t.id === "FN-002")).toBe(false);
-    });
+describe("searchTasks", () => {
+  it("searches tasks by ID", async () => {
+    const task1 = await store.createTask({ description: "First task" });
+    const task2 = await store.createTask({ description: "Second task" });
 
-    it("searches tasks by title", async () => {
-      await store.createTask({ title: "Fix login bug", description: "Login issue" });
-      await store.createTask({ title: "Add dashboard feature", description: "New UI" });
+    const results = await store.searchTasks("FN-001");
 
-      const results = await store.searchTasks("dashboard");
+    expect(results).toHaveLength(1);
+    expect(results[0].id).toBe("FN-001");
+    expect(results.some((t) => t.id === "FN-002")).toBe(false);
+  });
 
-      expect(results).toHaveLength(1);
-      expect(results[0].title).toBe("Add dashboard feature");
-    });
+  it("searches tasks by title", async () => {
+    await store.createTask({ title: "Fix login bug", description: "Login issue" });
+    await store.createTask({ title: "Add dashboard feature", description: "New UI" });
 
-    it("searches tasks by description", async () => {
-      await store.createTask({ description: "Fix the login button on the homepage" });
-      await store.createTask({ description: "Update the settings page layout" });
+    const results = await store.searchTasks("dashboard");
 
-      const results = await store.searchTasks("homepage");
+    expect(results).toHaveLength(1);
+    expect(results[0].title).toBe("Add dashboard feature");
+  });
 
-      expect(results).toHaveLength(1);
-      expect(results[0].description).toContain("homepage");
-    });
+  it("searches tasks by description", async () => {
+    await store.createTask({ description: "Fix the login button on the homepage" });
+    await store.createTask({ description: "Update the settings page layout" });
 
-    it("searches tasks by comment text", async () => {
-      const task = await store.createTask({ description: "A task" });
-      // Add a comment containing a unique word
-      await store.addComment(task.id, "Need to prioritize the xylophone implementation", "tester");
+    const results = await store.searchTasks("homepage");
 
-      const results = await store.searchTasks("xylophone");
+    expect(results).toHaveLength(1);
+    expect(results[0].description).toContain("homepage");
+  });
 
-      expect(results).toHaveLength(1);
-      expect(results[0].id).toBe(task.id);
-    });
+  it("searches tasks by comment text", async () => {
+    const task = await store.createTask({ description: "A task" });
+    // Add a comment containing a unique word
+    await store.addComment(task.id, "Need to prioritize the xylophone implementation", "tester");
 
-    it("is case insensitive", async () => {
-      await store.createTask({ title: "UPPERCASE SEARCH TEST", description: "Testing case insensitivity" });
+    const results = await store.searchTasks("xylophone");
 
-      const results = await store.searchTasks("uppercase");
+    expect(results).toHaveLength(1);
+    expect(results[0].id).toBe(task.id);
+  });
 
-      expect(results).toHaveLength(1);
-      expect(results[0].title).toBe("UPPERCASE SEARCH TEST");
-    });
+  it("is case insensitive", async () => {
+    await store.createTask({ title: "UPPERCASE SEARCH TEST", description: "Testing case insensitivity" });
 
-    it("falls back to listTasks for empty query", async () => {
-      await store.createTask({ description: "Task 1" });
-      await store.createTask({ description: "Task 2" });
+    const results = await store.searchTasks("uppercase");
 
-      const results = await store.searchTasks("");
-      const allTasks = await store.listTasks();
+    expect(results).toHaveLength(1);
+    expect(results[0].title).toBe("UPPERCASE SEARCH TEST");
+  });
 
-      expect(results).toHaveLength(allTasks.length);
-    });
+  it("falls back to listTasks for empty query", async () => {
+    await store.createTask({ description: "Task 1" });
+    await store.createTask({ description: "Task 2" });
 
-    it("falls back to listTasks for whitespace-only query", async () => {
-      await store.createTask({ description: "Task 1" });
+    const results = await store.searchTasks("");
+    const allTasks = await store.listTasks();
 
-      const results = await store.searchTasks("   ");
+    expect(results).toHaveLength(allTasks.length);
+  });
 
-      expect(results).toHaveLength(1);
-    });
+  it("falls back to listTasks for whitespace-only query", async () => {
+    await store.createTask({ description: "Task 1" });
 
-    it("uses OR semantics for multi-word queries", async () => {
-      await store.createTask({ title: "Fix login", description: "Button issues" });
-      await store.createTask({ title: "Add dashboard", description: "New features" });
+    const results = await store.searchTasks("   ");
 
-      const results = await store.searchTasks("login dashboard");
+    expect(results).toHaveLength(1);
+  });
 
-      expect(results).toHaveLength(2);
-    });
+  it("uses OR semantics for multi-word queries", async () => {
+    await store.createTask({ title: "Fix login", description: "Button issues" });
+    await store.createTask({ title: "Add dashboard", description: "New features" });
 
-    it("returns empty array for non-existent query", async () => {
-      await store.createTask({ description: "Regular task description" });
+    const results = await store.searchTasks("login dashboard");
 
-      const results = await store.searchTasks("xyznonexistent12345");
+    expect(results).toHaveLength(2);
+  });
 
-      expect(results).toHaveLength(0);
-    });
+  it("returns empty array for non-existent query", async () => {
+    await store.createTask({ description: "Regular task description" });
 
-    it("respects limit option", async () => {
-      await store.createTask({ description: "Task 1" });
-      await store.createTask({ description: "Task 2" });
-      await store.createTask({ description: "Task 3" });
-      await store.createTask({ description: "Task 4" });
-      await store.createTask({ description: "Task 5" });
+    const results = await store.searchTasks("xyznonexistent12345");
 
-      const results = await store.searchTasks("", { limit: 2 });
+    expect(results).toHaveLength(0);
+  });
 
-      expect(results).toHaveLength(2);
-    });
+  it("respects limit option", async () => {
+    await store.createTask({ description: "Task 1" });
+    await store.createTask({ description: "Task 2" });
+    await store.createTask({ description: "Task 3" });
+    await store.createTask({ description: "Task 4" });
+    await store.createTask({ description: "Task 5" });
 
-    it("respects offset option", async () => {
-      await store.createTask({ description: "Task 1" });
-      await store.createTask({ description: "Task 2" });
-      await store.createTask({ description: "Task 3" });
+    const results = await store.searchTasks("", { limit: 2 });
 
-      const allResults = await store.searchTasks("");
-      const offsetResults = await store.searchTasks("", { offset: 1 });
+    expect(results).toHaveLength(2);
+  });
 
-      expect(allResults.length).toBe(3);
-      expect(offsetResults.length).toBe(2);
-      expect(offsetResults[0].id).toBe(allResults[1].id);
-    });
+  it("respects offset option", async () => {
+    await store.createTask({ description: "Task 1" });
+    await store.createTask({ description: "Task 2" });
+    await store.createTask({ description: "Task 3" });
 
-    it("immediately indexes new comments", async () => {
-      const task = await store.createTask({ description: "A task without comments" });
-      const uniqueWord = `unique_search_term_${Date.now()}`;
+    const allResults = await store.searchTasks("");
+    const offsetResults = await store.searchTasks("", { offset: 1 });
 
-      // Initially should not be found
-      const beforeResults = await store.searchTasks(uniqueWord);
-      expect(beforeResults).toHaveLength(0);
+    expect(allResults.length).toBe(3);
+    expect(offsetResults.length).toBe(2);
+    expect(offsetResults[0].id).toBe(allResults[1].id);
+  });
 
-      // Add comment with unique word
-      await store.addComment(task.id, `Important note about the ${uniqueWord} feature`, "tester");
+  it("immediately indexes new comments", async () => {
+    const task = await store.createTask({ description: "A task without comments" });
+    const uniqueWord = `unique_search_term_${Date.now()}`;
 
-      // Should now be found immediately (trigger fires synchronously)
-      const afterResults = await store.searchTasks(uniqueWord);
-      expect(afterResults).toHaveLength(1);
-      expect(afterResults[0].id).toBe(task.id);
-    });
+    // Initially should not be found
+    const beforeResults = await store.searchTasks(uniqueWord);
+    expect(beforeResults).toHaveLength(0);
 
-    it("sanitizes FTS5 special characters from query", async () => {
-      await store.createTask({ title: "Test with special chars", description: "Query parsing test" });
+    // Add comment with unique word
+    await store.addComment(task.id, `Important note about the ${uniqueWord} feature`, "tester");
 
-      // This should not throw and should work correctly
-      const results = await store.searchTasks("test + special (chars)");
+    // Should now be found immediately (trigger fires synchronously)
+    const afterResults = await store.searchTasks(uniqueWord);
+    expect(afterResults).toHaveLength(1);
+    expect(afterResults[0].id).toBe(task.id);
+  });
 
-      expect(results.length).toBeGreaterThanOrEqual(0); // Should not throw
-    });
+  it("sanitizes FTS5 special characters from query", async () => {
+    await store.createTask({ title: "Test with special chars", description: "Query parsing test" });
+
+    // This should not throw and should work correctly
+    const results = await store.searchTasks("test + special (chars)");
+
+    expect(results.length).toBeGreaterThanOrEqual(0); // Should not throw
+  });
+});
+
+describe("RunMutationContext", () => {
+  it("logEntry() with runContext includes runContext field", async () => {
+    const localRoot = makeTmpDir();
+    const localGlobal = makeTmpDir();
+    try {
+      const localStore = new TaskStore(localRoot, localGlobal);
+      await localStore.init();
+
+      const task = await localStore.createTask({ description: "Test task" });
+      const runContext = { runId: "run-123", agentId: "agent-456" };
+
+      await localStore.logEntry(task.id, "Test action", "Test outcome", runContext);
+
+      const updatedTask = await localStore.getTask(task.id);
+      expect(updatedTask.log).toHaveLength(1);
+      expect(updatedTask.log[0].runContext).toEqual(runContext);
+      expect(updatedTask.log[0].action).toBe("Test action");
+      expect(updatedTask.log[0].outcome).toBe("Test outcome");
+
+      localStore.stopWatching();
+    } finally {
+      await rm(localRoot, { recursive: true, force: true });
+      await rm(localGlobal, { recursive: true, force: true });
+    }
+  });
+
+  it("logEntry() without runContext has no runContext field (backward compat)", async () => {
+    const localRoot = makeTmpDir();
+    const localGlobal = makeTmpDir();
+    try {
+      const localStore = new TaskStore(localRoot, localGlobal);
+      await localStore.init();
+
+      const task = await localStore.createTask({ description: "Test task" });
+      await localStore.logEntry(task.id, "Test action", "Test outcome");
+
+      const updatedTask = await localStore.getTask(task.id);
+      expect(updatedTask.log).toHaveLength(1);
+      expect(updatedTask.log[0].runContext).toBeUndefined();
+      expect(updatedTask.log[0].action).toBe("Test action");
+
+      localStore.stopWatching();
+    } finally {
+      await rm(localRoot, { recursive: true, force: true });
+      await rm(localGlobal, { recursive: true, force: true });
+    }
+  });
+
+  it("addComment() with runContext includes runContext in log entry", async () => {
+    const localRoot = makeTmpDir();
+    const localGlobal = makeTmpDir();
+    try {
+      const localStore = new TaskStore(localRoot, localGlobal);
+      await localStore.init();
+
+      const task = await localStore.createTask({ description: "Test task" });
+      const runContext = { runId: "run-789", agentId: "agent-101" };
+
+      await localStore.addComment(task.id, "Test comment", "user", undefined, runContext);
+
+      const updatedTask = await localStore.getTask(task.id);
+      expect(updatedTask.comments).toHaveLength(1);
+      expect(updatedTask.comments![0].text).toBe("Test comment");
+      expect(updatedTask.log).toHaveLength(1);
+      expect(updatedTask.log[0].runContext).toEqual(runContext);
+
+      localStore.stopWatching();
+    } finally {
+      await rm(localRoot, { recursive: true, force: true });
+      await rm(localGlobal, { recursive: true, force: true });
+    }
+  });
+
+  it("addSteeringComment() forwards runContext to addComment", async () => {
+    const localRoot = makeTmpDir();
+    const localGlobal = makeTmpDir();
+    try {
+      const localStore = new TaskStore(localRoot, localGlobal);
+      await localStore.init();
+
+      const task = await localStore.createTask({ description: "Test task" });
+      const runContext = { runId: "run-abc", agentId: "agent-def", source: "timer" };
+
+      await localStore.addSteeringComment(task.id, "Steering comment", "agent", runContext);
+
+      const updatedTask = await localStore.getTask(task.id);
+      expect(updatedTask.steeringComments).toHaveLength(1);
+      expect(updatedTask.steeringComments![0].text).toBe("Steering comment");
+      expect(updatedTask.log).toHaveLength(1);
+      expect(updatedTask.log[0].runContext).toEqual(runContext);
+
+      localStore.stopWatching();
+    } finally {
+      await rm(localRoot, { recursive: true, force: true });
+      await rm(localGlobal, { recursive: true, force: true });
+    }
+  });
+
+  it("getMutationsForRun(runId) returns only entries matching the runId, sorted by timestamp", async () => {
+    const localRoot = makeTmpDir();
+    const localGlobal = makeTmpDir();
+    try {
+      const localStore = new TaskStore(localRoot, localGlobal);
+      await localStore.init();
+
+      const task1 = await localStore.createTask({ description: "Task 1" });
+      const task2 = await localStore.createTask({ description: "Task 2" });
+
+      // Add entries with different runIds
+      await localStore.logEntry(task1.id, "Action 1", undefined, { runId: "run-target", agentId: "agent-1" });
+      await new Promise(r => setTimeout(r, 10)); // Ensure different timestamps
+      await localStore.logEntry(task2.id, "Action 2", undefined, { runId: "run-target", agentId: "agent-1" });
+      await new Promise(r => setTimeout(r, 10));
+      await localStore.logEntry(task1.id, "Action 3", undefined, { runId: "run-other", agentId: "agent-2" });
+
+      const mutations = await localStore.getMutationsForRun("run-target");
+
+      expect(mutations).toHaveLength(2);
+      expect(mutations.map(m => m.action)).toEqual(["Action 1", "Action 2"]);
+      // Verify sorted by timestamp
+      expect(new Date(mutations[0].timestamp).getTime()).toBeLessThan(new Date(mutations[1].timestamp).getTime());
+
+      localStore.stopWatching();
+    } finally {
+      await rm(localRoot, { recursive: true, force: true });
+      await rm(localGlobal, { recursive: true, force: true });
+    }
+  });
+
+  it("getMutationsForRun(unknownRunId) returns empty array", async () => {
+    const localRoot = makeTmpDir();
+    const localGlobal = makeTmpDir();
+    try {
+      const localStore = new TaskStore(localRoot, localGlobal);
+      await localStore.init();
+
+      const task = await localStore.createTask({ description: "Test task" });
+      await localStore.logEntry(task.id, "Some action", undefined, { runId: "run-existing", agentId: "agent-1" });
+
+      const mutations = await localStore.getMutationsForRun("run-does-not-exist");
+
+      expect(mutations).toEqual([]);
+
+      localStore.stopWatching();
+    } finally {
+      await rm(localRoot, { recursive: true, force: true });
+      await rm(localGlobal, { recursive: true, force: true });
+    }
+  });
+
+  it("getMutationsForRun() collects entries across multiple tasks", async () => {
+    const localRoot = makeTmpDir();
+    const localGlobal = makeTmpDir();
+    try {
+      const localStore = new TaskStore(localRoot, localGlobal);
+      await localStore.init();
+
+      const task1 = await localStore.createTask({ description: "Task 1" });
+      const task2 = await localStore.createTask({ description: "Task 2" });
+      const task3 = await localStore.createTask({ description: "Task 3" });
+
+      await localStore.logEntry(task1.id, "Entry 1", undefined, { runId: "run-shared", agentId: "agent-x" });
+      await localStore.logEntry(task2.id, "Entry 2", undefined, { runId: "run-shared", agentId: "agent-x" });
+      await localStore.logEntry(task3.id, "Entry 3", undefined, { runId: "run-other", agentId: "agent-y" });
+
+      const mutations = await localStore.getMutationsForRun("run-shared");
+
+      expect(mutations).toHaveLength(2);
+      expect(mutations.map(m => m.action).sort()).toEqual(["Entry 1", "Entry 2"]);
+
+      localStore.stopWatching();
+    } finally {
+      await rm(localRoot, { recursive: true, force: true });
+      await rm(localGlobal, { recursive: true, force: true });
+    }
+  });
   });
 });
