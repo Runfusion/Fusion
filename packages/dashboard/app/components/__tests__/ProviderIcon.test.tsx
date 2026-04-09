@@ -182,4 +182,58 @@ describe("ProviderIcon", () => {
     expect(paths.length).toBeGreaterThan(0);
     expect(paths[0]).toHaveAttribute("fill", "#fff");
   });
+
+  it("renders MiniMax brand icon for minimax provider", () => {
+    render(<ProviderIcon provider="minimax" />);
+    expect(screen.getByTestId("minimax-icon")).toBeInTheDocument();
+    expect(screen.getByLabelText("MiniMax")).toBeInTheDocument();
+  });
+
+  it("applies provider-specific color for minimax", () => {
+    render(<ProviderIcon provider="minimax" />);
+    const icon = screen.getByTestId("minimax-icon").parentElement;
+    expect(icon).toHaveStyle({ color: "#612BFF" });
+  });
+
+  it("passes correct color to SVG fill for minimax", () => {
+    render(<ProviderIcon provider="minimax" />);
+    const svg = screen.getByTestId("minimax-icon");
+    const paths = svg.querySelectorAll("path");
+    expect(paths.length).toBeGreaterThan(0);
+    expect(paths[0]).toHaveAttribute("fill", "#612BFF");
+  });
+
+  it("normalizes Minimax (capitalized) to minimax", () => {
+    render(<ProviderIcon provider="Minimax" />);
+    expect(screen.getByTestId("minimax-icon")).toBeInTheDocument();
+    const wrapper = screen.getByTestId("minimax-icon").parentElement;
+    expect(wrapper).toHaveAttribute("data-provider", "minimax");
+  });
+
+  it("renders Z.ai brand icon for zai provider", () => {
+    render(<ProviderIcon provider="zai" />);
+    expect(screen.getByTestId("zai-icon")).toBeInTheDocument();
+    expect(screen.getByLabelText("Z.ai")).toBeInTheDocument();
+  });
+
+  it("applies provider-specific color for zai", () => {
+    render(<ProviderIcon provider="zai" />);
+    const icon = screen.getByTestId("zai-icon").parentElement;
+    expect(icon).toHaveStyle({ color: "#1A6DFF" });
+  });
+
+  it("passes correct color to SVG fill for zai", () => {
+    render(<ProviderIcon provider="zai" />);
+    const svg = screen.getByTestId("zai-icon");
+    const paths = svg.querySelectorAll("path");
+    expect(paths.length).toBeGreaterThan(0);
+    expect(paths[0]).toHaveAttribute("fill", "#1A6DFF");
+  });
+
+  it("normalizes Zai (capitalized) to zai", () => {
+    render(<ProviderIcon provider="Zai" />);
+    expect(screen.getByTestId("zai-icon")).toBeInTheDocument();
+    const wrapper = screen.getByTestId("zai-icon").parentElement;
+    expect(wrapper).toHaveAttribute("data-provider", "zai");
+  });
 });

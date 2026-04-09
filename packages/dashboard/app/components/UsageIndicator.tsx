@@ -229,6 +229,12 @@ function getProviderIconKey(providerName: string): string {
   if (normalized.includes('ollama')) {
     return 'ollama';
   }
+  if (normalized.includes('minimax')) {
+    return 'minimax';
+  }
+  if (normalized.includes('zai') || normalized.includes('zhipu')) {
+    return 'zai';
+  }
   
   // Return the original name as fallback (ProviderIcon will show a default icon)
   return providerName;

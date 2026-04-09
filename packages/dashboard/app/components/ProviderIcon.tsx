@@ -91,6 +91,46 @@ function OllamaIcon({ size, color, label = "Ollama" }: { size: number; color: st
   );
 }
 
+// MiniMax logo — stylized geometric "M" mark
+function MiniMaxIcon({ size, color, label = "MiniMax" }: { size: number; color: string; label?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      data-testid="minimax-icon"
+      aria-label={label}
+    >
+      <path
+        d="M3 3h6.5L12 7.5 14.5 3H21v18h-5.5v-8.75L12 18l-3.5-5.75V21H3V3z"
+        fill={color}
+      />
+    </svg>
+  );
+}
+
+// Z.ai / Zhipu AI logo — stylized abstract mark
+function ZaiIcon({ size, color, label = "Z.ai" }: { size: number; color: string; label?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      data-testid="zai-icon"
+      aria-label={label}
+    >
+      <path
+        d="M4 4h16l-7 9h7L9 21l3-7H5l6-8H4V4z"
+        fill={color}
+      />
+    </svg>
+  );
+}
+
 const providerConfig: Record<
   string,
   { component: typeof AnthropicIcon; color: string; label?: string }
@@ -101,6 +141,8 @@ const providerConfig: Record<
   google: { component: GeminiIcon, color: "#4285f4" }, // blue
   gemini: { component: GeminiIcon, color: "#4285f4" }, // blue (same as google)
   ollama: { component: OllamaIcon, color: "#fff" }, // white
+  minimax: { component: MiniMaxIcon, color: "#612BFF" }, // purple
+  zai: { component: ZaiIcon, color: "#1A6DFF" }, // blue
 };
 
 export function ProviderIcon({ provider, size = "sm" }: ProviderIconProps) {
