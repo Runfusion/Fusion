@@ -1964,8 +1964,11 @@ import type {
   AgentStats,
   HeartbeatInvocationSource,
   OrgTreeNode,
+  AgentReflection,
+  AgentPerformanceSummary,
+  ReflectionTrigger,
 } from "@fusion/core";
-export type { Agent, AgentDetail, AgentCapability, AgentState, AgentHeartbeatEvent, AgentHeartbeatRun, AgentCreateInput, AgentUpdateInput, AgentTaskSession, AgentStats, HeartbeatInvocationSource, OrgTreeNode };
+export type { Agent, AgentDetail, AgentCapability, AgentState, AgentHeartbeatEvent, AgentHeartbeatRun, AgentCreateInput, AgentUpdateInput, AgentTaskSession, AgentStats, HeartbeatInvocationSource, OrgTreeNode, AgentReflection, AgentPerformanceSummary, ReflectionTrigger };
 
 function withProjectId(path: string, projectId?: string): string {
   if (!projectId) return path;
@@ -3671,4 +3674,34 @@ export function fetchConversation(
 /** Fetch an agent's mailbox (admin read-only view). */
 export function fetchAgentMailbox(agentId: string, projectId?: string): Promise<AgentMailboxResponse> {
   return api<AgentMailboxResponse>(withProjectId(`/agents/${encodeURIComponent(agentId)}/mailbox`, projectId));
+}
+
+/** Fetch reflection history for an agent. */
+export function fetchAgentReflections(agentId: string, limit?: number, projectId?: string): Promise<AgentReflection[]> {
+  const params = new URLSearchParams();
+  if (limit !== undefined) params.set("limit", String(limit));
+  if (projectId) params.set("projectId", projectId);
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return api<AgentReflection[]>(`/agents/${encodeURIComponent(agentId)}/reflections${query}`);
+}
+
+/** Fetch the most recent reflection for an agent. */
+export function fetchAgentReflection(agentId: string, projectId?: string): Promise<AgentReflection> {
+  return api<AgentReflection>(withProjectId(`/agents/${encodeURIComponent(agentId)}/reflections/latest`, projectId));
+}
+
+/** Trigger a manual reflection for an agent. */
+export function triggerAgentReflection(agentId: string, projectId?: string): Promise<AgentReflection> {
+  return api<AgentReflection>(withProjectId(`/agents/${encodeURIComponent(agentId)}/reflections`, projectId), {
+    method: "POST",
+  });
+}
+
+/** Fetch aggregated performance summary for an agent. */
+export function fetchAgentPerformance(agentId: string, windowMs?: number, projectId?: string): Promise<AgentPerformanceSummary> {
+  const params = new URLSearchParams();
+  if (windowMs !== undefined) params.set("windowMs", String(windowMs));
+  if (projectId) params.set("projectId", projectId);
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return api<AgentPerformanceSummary>(`/agents/${encodeURIComponent(agentId)}/performance${query}`);
 }

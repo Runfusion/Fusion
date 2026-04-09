@@ -3,13 +3,14 @@ import {
   Bot, Heart, Activity, Pause, Play, Square, Trash2, RefreshCw, 
   Settings, FileText, ActivitySquare, X, Copy, 
   ExternalLink, CheckCircle, XCircle, Loader2, GitBranch, ListChecks,
-  ChevronDown, ChevronRight
+  ChevronDown, ChevronRight, BarChart3
 } from "lucide-react";
 import type { AgentDetail, AgentState, AgentHeartbeatRun } from "../api";
 import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogs, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentTasks, fetchChainOfCommand } from "../api";
 import type { Agent } from "../api";
 import type { AgentLogEntry, Task } from "@fusion/core";
 import { AgentLogViewer } from "./AgentLogViewer";
+import { AgentReflectionsTab } from "./AgentReflectionsTab";
 
 /**
  * Simple className utility - joins class names conditionally
@@ -50,7 +51,7 @@ interface AgentDetailViewProps {
   onChildClick?: (childId: string) => void;
 }
 
-type TabId = "dashboard" | "logs" | "config" | "runs" | "tasks" | "employees" | "soul" | "memory";
+type TabId = "dashboard" | "logs" | "config" | "runs" | "tasks" | "employees" | "soul" | "memory" | "reflections";
 
 const TABS: { id: TabId; label: string; icon: typeof Activity }[] = [
   { id: "dashboard", label: "Dashboard", icon: ActivitySquare },
@@ -60,6 +61,7 @@ const TABS: { id: TabId; label: string; icon: typeof Activity }[] = [
   { id: "employees", label: "Employees", icon: GitBranch },
   { id: "soul", label: "Soul", icon: Heart },
   { id: "memory", label: "Memory", icon: FileText },
+  { id: "reflections", label: "Reflections", icon: BarChart3 },
   { id: "config", label: "Settings", icon: Settings },
 ];
 
@@ -438,6 +440,14 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
               projectId={projectId}
               addToast={addToast}
               onSaved={loadAgent}
+            />
+          )}
+
+          {activeTab === "reflections" && (
+            <AgentReflectionsTab
+              agentId={agent.id}
+              projectId={projectId}
+              addToast={addToast}
             />
           )}
 

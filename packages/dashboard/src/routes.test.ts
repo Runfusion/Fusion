@@ -9835,3 +9835,138 @@ describe("GET /api/agents/:id/runs/:runId/logs", () => {
     expect([404, 500]).toContain(res.status);
   });
 });
+
+describe("Agent Reflection routes", () => {
+  let tempDir: string;
+  let fusionDir: string;
+  let agentId: string;
+
+  beforeEach(async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "kb-routes-reflection-"));
+    fusionDir = join(tempDir, ".fusion");
+    mkdirSync(fusionDir, { recursive: true });
+
+    // Create a real agent in the temp directory
+    const { AgentStore } = await import("@fusion/core");
+    const agentStore = new AgentStore({ rootDir: fusionDir });
+    await agentStore.init();
+    const agent = await agentStore.createAgent({
+      name: "Test Agent",
+      role: "executor",
+    });
+    agentId = agent.id;
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  function buildApp() {
+    const store = createMockStore({
+      getFusionDir: vi.fn().mockReturnValue(fusionDir),
+    } as any);
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  describe("GET /api/agents/:id/reflections", () => {
+    it("returns 200 for valid agent (uses real stores)", async () => {
+      const res = await GET(buildApp(), `/api/agents/${agentId}/reflections`);
+
+      // The route uses real stores, so it should return an empty array (no reflections created yet)
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+    });
+
+    it("returns 404 for non-existent agent", async () => {
+      const res = await GET(buildApp(), "/api/agents/nonexistent-agent/reflections");
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain("not found");
+    });
+
+    it("accepts limit query param", async () => {
+      const res = await GET(buildApp(), `/api/agents/${agentId}/reflections?limit=10`);
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+    });
+  });
+
+  describe("GET /api/agents/:id/reflections/latest", () => {
+    it("returns 404 when no reflections exist", async () => {
+      const res = await GET(buildApp(), `/api/agents/${agentId}/reflections/latest`);
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain("No reflections found");
+    });
+
+    it("returns 404 for non-existent agent", async () => {
+      const res = await GET(buildApp(), "/api/agents/nonexistent-agent/reflections/latest");
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain("not found");
+    });
+  });
+
+  describe("POST /api/agents/:id/reflections", () => {
+    it("returns 500 or 503 when reflection service is not available", async () => {
+      const res = await REQUEST(buildApp(), "POST", `/api/agents/${agentId}/reflections`);
+
+      // The reflection service requires the engine to be initialized
+      // Without proper setup, it may return 500 or 503
+      expect([500, 503]).toContain(res.status);
+    });
+
+    it("returns 404 or 500 for non-existent agent", async () => {
+      const res = await REQUEST(buildApp(), "POST", "/api/agents/nonexistent-agent/reflections");
+
+      // The route either returns 404 (agent not found) or 500 (reflection service error)
+      expect([404, 500]).toContain(res.status);
+    });
+  });
+
+  describe("GET /api/agents/:id/performance", () => {
+    it("returns 200 with performance summary for valid agent", async () => {
+      const res = await GET(buildApp(), `/api/agents/${agentId}/performance`);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty("agentId");
+      expect(res.body).toHaveProperty("totalTasksCompleted");
+      expect(res.body).toHaveProperty("successRate");
+    });
+
+    it("accepts windowMs query param", async () => {
+      const res = await GET(buildApp(), `/api/agents/${agentId}/performance?windowMs=604800000`);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty("agentId");
+    });
+
+    it("returns 404 for non-existent agent", async () => {
+      const res = await GET(buildApp(), "/api/agents/nonexistent-agent/performance");
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain("not found");
+    });
+  });
+
+  describe("GET /api/agents/:id/reflection-context", () => {
+    it("returns 500 or 503 when reflection service is not available", async () => {
+      const res = await GET(buildApp(), `/api/agents/${agentId}/reflection-context`);
+
+      // The reflection service requires the engine to be initialized
+      // Without proper setup, it may return 500 or 503
+      expect([500, 503]).toContain(res.status);
+    });
+
+    it("returns 404 or 500 for non-existent agent", async () => {
+      const res = await GET(buildApp(), "/api/agents/nonexistent-agent/reflection-context");
+
+      // The route either returns 404 (agent not found) or 500 (reflection service error)
+      expect([404, 500]).toContain(res.status);
+    });
+  });
+});
