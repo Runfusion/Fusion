@@ -145,6 +145,17 @@ From `packages/core/src/index.ts` exports:
 - Project memory helpers: `project-memory.ts`, `memory-insights.ts`
 - Migration and compatibility helpers: `db-migrate.ts`, `migration.ts`
 
+### Memory System
+
+Fusion includes a pluggable memory backend system for storing durable project learnings:
+
+- **Two-stage memory**: Working memory (`memory.md`) + distilled insights (`memory-insights.md`)
+- **Plugin architecture**: `MemoryBackend` interface enables alternative storage backends
+- **Settings integration**: `memoryEnabled` toggle controls agent prompt injection
+- **Insight extraction**: Scheduled AI-powered distillation of patterns, principles, pitfalls
+
+See [Memory Plugin Contract](./memory-plugin-contract.md) for the full specification.
+
 ---
 
 ## 5) Engine Package (`@fusion/engine`)

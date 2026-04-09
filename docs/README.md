@@ -20,6 +20,7 @@ For a full walkthrough (installation, onboarding, first task, and lifecycle), st
 |---|---|
 | [Getting Started](./getting-started.md) | Installation, first-run onboarding, first task, and daily workflow basics. |
 | [Architecture](./architecture.md) | System architecture, package layout, storage model, and engine execution flow. |
+| [Memory Plugin Contract](./memory-plugin-contract.md) | Pluggable memory backend architecture, interface contract, and migration strategy. |
 | [CLI Reference](./cli-reference.md) | Complete `fn` command reference with subcommands, flags, and examples. |
 | [Dashboard Guide](./dashboard-guide.md) | Detailed guide to board/list views, terminal, git manager, files, planning, and UI tools. |
 | [Task Management](./task-management.md) | Task creation modes, lifecycle, prompt specs, comments, archiving, and GitHub integration. |
