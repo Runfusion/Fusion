@@ -857,52 +857,44 @@ describe("InlineCreateCard button visibility when collapsed", () => {
     });
   });
 
-  describe("Description-adjacent actions layout (FN-781)", () => {
-    it("renders Plan and Subtask in description-actions area when expanded", () => {
+  describe("Consolidated controls layout (FN-781, FN-1292)", () => {
+    it("renders Plan, Subtask, Deps, Agent, and Models together in footer controls when expanded", () => {
       renderCard();
       expandCard();
 
-      // The description-actions container should exist
-      expect(screen.getByTestId("inline-create-description-actions")).toBeTruthy();
+      // All buttons should be in the footer controls row
+      const controlsRow = document.querySelector(".inline-create-controls");
+      expect(controlsRow).toBeTruthy();
 
-      // Plan and Subtask buttons should be inside it
-      const actionsContainer = screen.getByTestId("inline-create-description-actions");
-      expect(actionsContainer.contains(screen.getByTestId("plan-button"))).toBe(true);
-      expect(actionsContainer.contains(screen.getByTestId("subtask-button"))).toBe(true);
+      // Plan, Subtask, Deps, Agent, Browser Verify, Preset, Models all in one row
+      expect(controlsRow!.contains(screen.getByTestId("plan-button"))).toBe(true);
+      expect(controlsRow!.contains(screen.getByTestId("subtask-button"))).toBe(true);
+      expect(controlsRow!.contains(screen.getByTestId("inline-create-agent-button"))).toBe(true);
+      const depsButton = screen.getByText(/Deps/);
+      expect(controlsRow!.contains(depsButton)).toBe(true);
+      const modelsButton = screen.getByRole("button", { name: /Models/i });
+      expect(controlsRow!.contains(modelsButton)).toBe(true);
     });
 
-    it("does not render description-actions when not expanded", () => {
+    it("does not render footer controls when not expanded", () => {
       renderCard();
 
-      // Description actions should not exist when collapsed
-      expect(screen.queryByTestId("inline-create-description-actions")).toBeNull();
+      // Footer controls should not exist when collapsed
+      expect(document.querySelector(".inline-create-controls")).toBeNull();
     });
 
-    it("Save button remains in footer area, not description-actions", () => {
+    it("Save button remains in footer actions area, separate from controls row", () => {
       renderCard();
       expandCard();
 
-      const actionsContainer = screen.getByTestId("inline-create-description-actions");
+      const controlsRow = document.querySelector(".inline-create-controls");
       const saveButton = screen.getByTestId("save-button");
 
-      // Save button should NOT be in the description-actions area
-      expect(actionsContainer.contains(saveButton)).toBe(false);
+      // Save button should NOT be in the controls row (it's in inline-create-actions)
+      expect(controlsRow!.contains(saveButton)).toBe(false);
     });
 
-    it("Deps, Preset, Models buttons remain in footer area, not description-actions", () => {
-      renderCard();
-      expandCard();
-
-      const actionsContainer = screen.getByTestId("inline-create-description-actions");
-      const depsButton = screen.getByText(/Deps/);
-      const modelsButton = screen.getByRole("button", { name: /Models/i });
-
-      // Deps and Models should NOT be in the description-actions area
-      expect(actionsContainer.contains(depsButton)).toBe(false);
-      expect(actionsContainer.contains(modelsButton)).toBe(false);
-    });
-
-    it("Plan and Subtask disabled state still works in description-actions", () => {
+    it("Plan and Subtask disabled state still works in consolidated controls", () => {
       renderCard();
       expandCard();
       const textarea = screen.getByPlaceholderText("What needs to be done?");

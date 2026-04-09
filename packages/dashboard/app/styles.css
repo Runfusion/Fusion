@@ -5083,14 +5083,6 @@ body {
   flex-wrap: wrap;
 }
 
-/* AI-assisted description actions — sits between textarea and expanded controls */
-.inline-create-description-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
 .inline-create-controls {
   display: flex;
   align-items: center;
@@ -6091,11 +6083,6 @@ body {
     min-width: 44px;
     min-height: 44px;
     flex-shrink: 0;
-  }
-
-  .inline-create-description-actions .btn {
-    min-height: 44px;
-    padding: var(--space-xs) var(--space-md);
   }
 
   /* Inline create: wrap footer controls at 280px */

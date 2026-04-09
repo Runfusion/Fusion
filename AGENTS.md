@@ -749,20 +749,35 @@ The dashboard provides two UI surfaces for creating tasks:
 
 ### QuickEntryBox (List View) and InlineCreateCard (Board View)
 
-Both components provide the same task creation experience with the following options:
+Both components provide the same task creation experience. The chevron toggle is the single disclosure mechanism: collapsed = textarea only, expanded = all options visible in the controls panel.
 
+**QuickEntryBox controls (all in expanded panel):**
 - **Description input** — Type the task description. Press Enter to create immediately, or use the action buttons for AI-assisted creation.
 - **Plan button** (Lightbulb icon) — Opens the AI Planning Mode modal with the current description pre-filled. This allows refining the task through an interactive Q&A before creation.
 - **Subtask button** (ListTree icon) — Opens the subtask breakdown dialog with the current description pre-filled. The dialog generates 2–5 AI-suggested subtasks, lets the user edit titles, descriptions, sizes, and dependencies, and then creates all subtasks in one action.
-- **Deps button** (Link icon) — Directly visible in the expanded controls panel. Opens the dependency picker to add task dependencies before creation.
-- **Models button** (Brain icon) — Directly visible in the expanded controls panel. Opens a nested menu with Plan, Executor, and Validator roles; each role opens a submenu with a model dropdown for per-task overrides.
-- **Save button** (Save icon) — Directly visible in the expanded controls panel. Manually creates/saves the task (alternative to pressing Enter).
+- **Refine button** (Sparkles icon) — Opens a dropdown with Clarify, Add details, Expand, and Simplify options to refine the description with AI.
+- **Deps button** (Link icon) — Opens the dependency picker to add task dependencies before creation.
+- **Attach button** (Paperclip icon) — Attaches image files to the task.
+- **Models button** (Brain icon) — Opens a nested menu with Plan, Executor, and Validator roles; each role opens a submenu with a model dropdown for per-task overrides.
+- **Agent button** (Bot icon) — Opens the agent picker to assign the task to a specific agent.
+- **Save button** (Save icon) — Manually creates/saves the task (alternative to pressing Enter).
+
+**InlineCreateCard controls (all in expanded footer):**
+- **Description input** — Type the task description. Press Enter to create immediately.
+- **Plan button** (Lightbulb icon) — Opens the AI Planning Mode modal with the current description pre-filled.
+- **Subtask button** (ListTree icon) — Opens the subtask breakdown dialog with the current description pre-filled.
+- **Deps button** (Link icon) — Opens the dependency picker to add task dependencies before creation.
+- **Agent button** (Bot icon) — Opens the agent picker to assign the task to a specific agent.
+- **Browser Verify button** — Toggles the browser verification workflow step.
+- **Preset button** (Zap icon) — Opens a dropdown to select a model preset or use custom models.
+- **Models button** (Brain icon) — Opens the ModelSelectionModal for per-task model overrides.
+- **Save button** — In the footer actions area (right-aligned). Manually creates/saves the task.
 
 **Behavior:**
 - Both Plan and Subtask buttons are disabled when no description is entered.
 - Clicking either button clears the input after triggering the action.
 - Regular task creation (Enter key) works as before without AI assistance.
-- Escape dismisses overlays in order: model submenu → model menu → dependency picker → input clear/collapse.
+- Escape dismisses overlays in order: model submenu → model menu → agent picker → deps popover → refine menu → input clear/collapse.
 
 ### Subtask Breakdown Dialog
 

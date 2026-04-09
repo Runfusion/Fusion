@@ -612,33 +612,6 @@ export function InlineCreateCard({
           {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         </button>
       </div>
-      {/* AI-assisted refinement actions — always visible when expanded */}
-      {isExpanded && !submitting && (
-        <div className="inline-create-description-actions" data-testid="inline-create-description-actions">
-          <button
-            type="button"
-            className="btn btn-sm"
-            onClick={handlePlanClick}
-            disabled={!description.trim()}
-            data-testid="plan-button"
-            title="Open planning mode with current description"
-          >
-            <Lightbulb size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
-            Plan
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm"
-            onClick={handleSubtaskClick}
-            disabled={!description.trim()}
-            data-testid="subtask-button"
-            title="Break down into AI-generated subtasks"
-          >
-            <ListTree size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
-            Subtask
-          </button>
-        </div>
-      )}
       {pendingImages.length > 0 && (
         <div className="inline-create-previews">
           {pendingImages.map((img, i) => (
@@ -660,6 +633,30 @@ export function InlineCreateCard({
       {isExpanded && (
         <div id="inline-create-controls" className="inline-create-footer">
           <div className="inline-create-controls">
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={handlePlanClick}
+              onMouseDown={(e) => e.preventDefault()}
+              disabled={!description.trim()}
+              data-testid="plan-button"
+              title="Open planning mode with current description"
+            >
+              <Lightbulb size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
+              Plan
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={handleSubtaskClick}
+              onMouseDown={(e) => e.preventDefault()}
+              disabled={!description.trim()}
+              data-testid="subtask-button"
+              title="Break down into AI-generated subtasks"
+            >
+              <ListTree size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
+              Subtask
+            </button>
             <div className="dep-trigger-wrap">
               <button
                 type="button"
