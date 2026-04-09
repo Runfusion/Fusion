@@ -8,7 +8,6 @@ export type DetailTaskTab =
   | "definition"
   | "logs"
   | "changes"
-  | "commits"
   | "comments"
   | "model"
   | "workflow";

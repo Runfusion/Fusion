@@ -14,7 +14,6 @@ import { PrSection } from "./PrSection";
 import { TaskComments } from "./TaskComments";
 import { MergeDetails } from "./MergeDetails";
 import { TaskChangesTab } from "./TaskChangesTab";
-import { CommitDiffTab } from "./CommitDiffTab";
 import { TaskForm, type PendingImage } from "./TaskForm";
 import { WorkflowResultsTab } from "./WorkflowResultsTab";
 
@@ -167,7 +166,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-type TabId = "definition" | "logs" | "changes" | "commits" | "comments" | "model" | "workflow";
+type TabId = "definition" | "logs" | "changes" | "comments" | "model" | "workflow";
 
 interface TaskDetailModalProps {
   task: Task | TaskDetail;
@@ -1022,14 +1021,6 @@ export function TaskDetailModal({
                 Changes
               </button>
             )}
-            {task.column === "done" && task.mergeDetails?.commitSha && (
-              <button
-                className={`detail-tab${activeTab === "commits" ? " detail-tab-active" : ""}`}
-                onClick={() => setActiveTab("commits")}
-              >
-                Commits
-              </button>
-            )}
             <button
               className={`detail-tab${activeTab === "comments" ? " detail-tab-active" : ""}`}
               onClick={() => setActiveTab("comments")}
@@ -1116,8 +1107,6 @@ export function TaskDetailModal({
             </div>
           ) : activeTab === "changes" ? (
             <TaskChangesTab taskId={task.id} worktree={task.worktree} projectId={projectId} column={task.column} mergeDetails={task.mergeDetails} />
-          ) : activeTab === "commits" ? (
-            <CommitDiffTab commitSha={task.mergeDetails?.commitSha ?? ""} mergeDetails={task.mergeDetails} />
           ) : activeTab === "comments" ? (
             <TaskComments task={task} addToast={addToast} projectId={projectId} onTaskUpdated={onTaskUpdated} />
           ) : (

@@ -2378,7 +2378,7 @@ describe("TaskDetailModal", () => {
       expect(tabs[5].textContent).toBe("Workflow");
     });
 
-    it("shows Commits tab for done task with mergeDetails.commitSha", () => {
+    it("does NOT show Commits tab for done task with mergeDetails.commitSha (changes merged into Changes tab)", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({
@@ -2394,19 +2394,20 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Done task with commit SHA: Definition, Logs, Changes, Commits, Comments, Model, Workflow
+      // Done task with commit SHA: Definition, Logs, Changes, Comments, Model, Workflow (6 tabs, no Commits)
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(7);
+      expect(tabs.length).toBe(6);
       expect(tabs[0].textContent).toBe("Definition");
       expect(tabs[1].textContent).toBe("Logs");
       expect(tabs[2].textContent).toBe("Changes");
-      expect(tabs[3].textContent).toBe("Commits");
-      expect(tabs[4].textContent).toBe("Comments");
-      expect(tabs[5].textContent).toBe("Model");
-      expect(tabs[6].textContent).toBe("Workflow");
+      expect(tabs[3].textContent).toBe("Comments");
+      expect(tabs[4].textContent).toBe("Model");
+      expect(tabs[5].textContent).toBe("Workflow");
+      // Commits tab should NOT be present
+      expect(screen.queryByText("Commits")).toBeNull();
     });
 
-    it("shows all conditional tabs for done task with workflow steps and commit SHA", () => {
+    it("shows 6 tabs for done task with workflow steps and commit SHA (Commits merged into Changes)", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({
@@ -2423,17 +2424,17 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Done task with both workflow steps and commit SHA:
-      // Definition, Logs, Changes, Commits, Comments, Model, Workflow
+      // Done task with workflow steps and commit SHA: 6 tabs (no Commits)
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(7);
+      expect(tabs.length).toBe(6);
       expect(tabs[0].textContent).toBe("Definition");
       expect(tabs[1].textContent).toBe("Logs");
       expect(tabs[2].textContent).toBe("Changes");
-      expect(tabs[3].textContent).toBe("Commits");
-      expect(tabs[4].textContent).toBe("Comments");
-      expect(tabs[5].textContent).toBe("Model");
-      expect(tabs[6].textContent).toBe("Workflow");
+      expect(tabs[3].textContent).toBe("Comments");
+      expect(tabs[4].textContent).toBe("Model");
+      expect(tabs[5].textContent).toBe("Workflow");
+      // Commits tab should NOT be present
+      expect(screen.queryByText("Commits")).toBeNull();
     });
 
     it("does NOT show Changes tab for triage/todo tasks", () => {
@@ -3893,8 +3894,8 @@ describe("TaskDetailModal", () => {
   });
 
   describe("Commits tab visibility", () => {
-    it("shows Commits tab for done tasks with mergeDetails.commitSha", () => {
-      render(
+    it("does NOT show a separate Commits tab for done tasks with mergeDetails.commitSha (changes are shown in Changes tab)", () => {
+      const { container } = render(
         <TaskDetailModal
           task={makeTask({
             column: "done",
@@ -3909,26 +3910,14 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.getByText("Commits")).toBeTruthy();
-    });
-
-    it("does NOT show Commits tab for non-done tasks", () => {
-      render(
-        <TaskDetailModal
-          task={makeTask({
-            column: "in-progress",
-            mergeDetails: { commitSha: "abc1234567890" },
-          })}
-          onClose={noop}
-          onMoveTask={noopMove}
-          onDeleteTask={noopDelete}
-          onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-          addToast={noop}
-        />,
-      );
-
+      // Commits tab should not exist
       expect(screen.queryByText("Commits")).toBeNull();
+
+      // Changes tab should exist and be available
+      const tabs = container.querySelectorAll(".detail-tab");
+      expect(tabs.length).toBe(6); // Definition, Logs, Changes, Comments, Model, Workflow
+      const tabTexts = Array.from(tabs).map((t) => t.textContent);
+      expect(tabTexts).toContain("Changes");
     });
 
     it("does NOT show Commits tab for done tasks without commitSha", () => {
