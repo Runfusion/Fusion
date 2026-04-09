@@ -59,7 +59,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 20;
+const SCHEMA_VERSION = 21;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -747,6 +747,69 @@ export class Database {
       this.applyMigration(20, () => {
         this.addColumnIfMissing("tasks", "checkedOutBy", "TEXT");
         this.addColumnIfMissing("tasks", "checkedOutAt", "TEXT");
+      });
+    }
+
+    // FTS5 full-text search index for tasks.
+    // All task writes go through upsertTask() (called by atomicWriteTaskJson()),
+    // which does INSERT OR REPLACE INTO tasks. The SQLite triggers below fire on
+    // INSERT/UPDATE/DELETE and keep the FTS index in sync automatically.
+    // The comments column is a JSON array - FTS5 tokenizes the raw JSON which picks
+    // up comment text, IDs, timestamps, and author names. This is acceptable for v1.
+    if (version < 21) {
+      this.applyMigration(21, () => {
+        // Create FTS5 virtual table for full-text search
+        // Note: Column names must match the tasks table for external content mode to work
+        this.db.exec(`
+          CREATE VIRTUAL TABLE IF NOT EXISTS tasks_fts USING fts5(
+            id,
+            title,
+            description,
+            comments,
+            content='tasks',
+            content_rowid='rowid'
+          )
+        `);
+
+        // Populate FTS index from existing tasks
+        // Handle both older schemas (without title) and newer schemas (with title)
+        if (this.hasColumn("tasks", "title")) {
+          this.db.exec(`
+            INSERT INTO tasks_fts(rowid, id, title, description, comments)
+              SELECT rowid, id, COALESCE(title, ''), description, COALESCE(comments, '[]') FROM tasks
+          `);
+        } else {
+          this.db.exec(`
+            INSERT INTO tasks_fts(rowid, id, title, description, comments)
+              SELECT rowid, id, '', description, COALESCE(comments, '[]') FROM tasks
+          `);
+        }
+
+        // AFTER INSERT trigger - index new tasks
+        this.db.exec(`
+          CREATE TRIGGER IF NOT EXISTS tasks_fts_ai AFTER INSERT ON tasks BEGIN
+            INSERT INTO tasks_fts(rowid, id, title, description, comments)
+            VALUES (new.rowid, new.id, COALESCE(new.title, ''), new.description, COALESCE(new.comments, '[]'));
+          END
+        `);
+
+        // AFTER UPDATE trigger - reindex updated tasks (delete old + insert new)
+        this.db.exec(`
+          CREATE TRIGGER IF NOT EXISTS tasks_fts_au AFTER UPDATE ON tasks BEGIN
+            INSERT INTO tasks_fts(tasks_fts, rowid, id, title, description, comments)
+              VALUES('delete', old.rowid, old.id, COALESCE(old.title, ''), old.description, COALESCE(old.comments, '[]'));
+            INSERT INTO tasks_fts(rowid, id, title, description, comments)
+              VALUES (new.rowid, new.id, COALESCE(new.title, ''), new.description, COALESCE(new.comments, '[]'));
+          END
+        `);
+
+        // AFTER DELETE trigger - remove deleted tasks from index
+        this.db.exec(`
+          CREATE TRIGGER IF NOT EXISTS tasks_fts_ad AFTER DELETE ON tasks BEGIN
+            INSERT INTO tasks_fts(tasks_fts, rowid, id, title, description, comments)
+              VALUES('delete', old.rowid, old.id, COALESCE(old.title, ''), old.description, COALESCE(old.comments, '[]'));
+          END
+        `);
       });
     }
   }

@@ -59,6 +59,11 @@ const mockUseTasks = vi.fn(() => ({
   archiveAllDone: vi.fn(),
 }));
 
+// Accept both old and new hook signatures
+vi.mock("../../hooks/useTasks", () => ({
+  useTasks: (options?: { projectId?: string; searchQuery?: string }) => mockUseTasks(options),
+}));
+
 vi.mock("../../hooks/useTasks", () => ({
   useTasks: () => mockUseTasks(),
 }));

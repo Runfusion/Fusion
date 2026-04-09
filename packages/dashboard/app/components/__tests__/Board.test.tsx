@@ -107,14 +107,17 @@ describe("Board", () => {
       ...overrides,
     });
 
-    it("filters tasks by ID when search query is provided", () => {
+    it("renders server-filtered tasks by ID when search query is provided", () => {
       const tasks: Task[] = [
         createTask({ id: "FN-001", description: "First task", column: "todo" }),
         createTask({ id: "FN-002", description: "Second task", column: "todo" }),
         createTask({ id: "FN-003", description: "Third task", column: "in-progress" }),
       ];
 
-      renderBoard({ tasks, searchQuery: "FN-002" });
+      // Pre-filtered tasks - only FN-002 matches the search
+      const filteredTasks = [tasks[1]];
+
+      renderBoard({ tasks: filteredTasks, searchQuery: "FN-002" });
 
       const todoColumn = screen.getByTestId("column-todo");
       const todoTasks = JSON.parse(todoColumn.getAttribute("data-tasks") || "[]");
@@ -126,14 +129,17 @@ describe("Board", () => {
       expect(inProgressTasks).toHaveLength(0);
     });
 
-    it("filters tasks by title when search query is provided", () => {
+    it("renders server-filtered tasks by title when search query is provided", () => {
       const tasks: Task[] = [
         createTask({ id: "FN-001", title: "Fix login bug", description: "First task", column: "todo" }),
         createTask({ id: "FN-002", title: "Add dashboard feature", description: "Second task", column: "todo" }),
         createTask({ id: "FN-003", title: "Update documentation", description: "Third task", column: "todo" }),
       ];
 
-      renderBoard({ tasks, searchQuery: "dashboard" });
+      // Pre-filtered tasks - only dashboard matches
+      const filteredTasks = [tasks[1]];
+
+      renderBoard({ tasks: filteredTasks, searchQuery: "dashboard" });
 
       const todoColumn = screen.getByTestId("column-todo");
       const todoTasks = JSON.parse(todoColumn.getAttribute("data-tasks") || "[]");
@@ -141,14 +147,17 @@ describe("Board", () => {
       expect(todoTasks[0].id).toBe("FN-002");
     });
 
-    it("filters tasks by description when search query is provided", () => {
+    it("renders server-filtered tasks by description when search query is provided", () => {
       const tasks: Task[] = [
         createTask({ id: "FN-001", description: "Implement user authentication", column: "todo" }),
         createTask({ id: "FN-002", description: "Fix database connection issue", column: "todo" }),
         createTask({ id: "FN-003", description: "Add caching layer", column: "todo" }),
       ];
 
-      renderBoard({ tasks, searchQuery: "database" });
+      // Pre-filtered tasks - only database matches
+      const filteredTasks = [tasks[1]];
+
+      renderBoard({ tasks: filteredTasks, searchQuery: "database" });
 
       const todoColumn = screen.getByTestId("column-todo");
       const todoTasks = JSON.parse(todoColumn.getAttribute("data-tasks") || "[]");
@@ -156,13 +165,16 @@ describe("Board", () => {
       expect(todoTasks[0].id).toBe("FN-002");
     });
 
-    it("search is case-insensitive", () => {
+    it("search is case-insensitive (server handles this)", () => {
       const tasks: Task[] = [
         createTask({ id: "FN-001", title: "Fix Login Bug", description: "First task", column: "todo" }),
         createTask({ id: "FN-002", title: "Add Dashboard Feature", description: "Second task", column: "todo" }),
       ];
 
-      renderBoard({ tasks, searchQuery: "login" });
+      // Pre-filtered tasks - only FN-001 matches
+      const filteredTasks = [tasks[0]];
+
+      renderBoard({ tasks: filteredTasks, searchQuery: "login" });
 
       const todoColumn = screen.getByTestId("column-todo");
       const todoTasks = JSON.parse(todoColumn.getAttribute("data-tasks") || "[]");
@@ -170,12 +182,15 @@ describe("Board", () => {
       expect(todoTasks[0].id).toBe("FN-001");
     });
 
-    it("search is case-insensitive for lowercase query matching uppercase content", () => {
+    it("search is case-insensitive for lowercase query matching uppercase content (server handles this)", () => {
       const tasks: Task[] = [
         createTask({ id: "FN-UPPER", title: "UPPERCASE TITLE", description: "DESC", column: "todo" }),
       ];
 
-      renderBoard({ tasks, searchQuery: "upper" });
+      // Pre-filtered tasks - FN-UPPER matches
+      const filteredTasks = [tasks[0]];
+
+      renderBoard({ tasks: filteredTasks, searchQuery: "upper" });
 
       const todoColumn = screen.getByTestId("column-todo");
       const todoTasks = JSON.parse(todoColumn.getAttribute("data-tasks") || "[]");
@@ -201,13 +216,16 @@ describe("Board", () => {
       expect(inProgressTasks).toHaveLength(1);
     });
 
-    it("shows no tasks when search query matches nothing", () => {
+    it("shows no tasks when search query matches nothing (server returns empty)", () => {
       const tasks: Task[] = [
         createTask({ id: "FN-001", description: "First task", column: "todo" }),
         createTask({ id: "FN-002", description: "Second task", column: "todo" }),
       ];
 
-      renderBoard({ tasks, searchQuery: "nonexistent" });
+      // Pre-filtered tasks - empty array because server found no matches
+      const filteredTasks: Task[] = [];
+
+      renderBoard({ tasks: filteredTasks, searchQuery: "nonexistent" });
 
       const todoColumn = screen.getByTestId("column-todo");
       const todoTasks = JSON.parse(todoColumn.getAttribute("data-tasks") || "[]");
@@ -299,24 +317,27 @@ describe("Board", () => {
       expect(todoTasks[2].id).toBe("FN-003");
     });
 
-    it("matches tasks across multiple fields simultaneously", () => {
+    it("renders server-filtered tasks matching across multiple fields simultaneously", () => {
       const tasks: Task[] = [
         createTask({ id: "SEARCH-123", title: "Searchable title", description: "Normal description", column: "todo" }),
         createTask({ id: "FN-999", title: "Other task", description: "This has searchable content", column: "todo" }),
         createTask({ id: "FN-888", title: "Unrelated", description: "No match here", column: "todo" }),
       ];
 
-      renderBoard({ tasks, searchQuery: "search" });
+      // Pre-filtered tasks - only the two matching tasks
+      const filteredTasks = [tasks[0], tasks[1]];
+
+      renderBoard({ tasks: filteredTasks, searchQuery: "search" });
 
       const todoColumn = screen.getByTestId("column-todo");
       const todoTasks = JSON.parse(todoColumn.getAttribute("data-tasks") || "[]");
 
-      // Should match both tasks with "search" in ID, title, or description
+      // Should have both matching tasks
       expect(todoTasks).toHaveLength(2);
       expect(todoTasks.map((t: Task) => t.id).sort()).toEqual(["FN-999", "SEARCH-123"]);
     });
 
-    it("trims whitespace from search query", () => {
+    it("shows all tasks for whitespace-only search query (server treats as empty)", () => {
       const tasks: Task[] = [
         createTask({ id: "FN-001", description: "First task", column: "todo" }),
       ];

@@ -1907,6 +1907,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const scopedStore = await getScopedStore(req);
       const limit = typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : undefined;
       const offset = typeof req.query.offset === "string" ? Number.parseInt(req.query.offset, 10) : undefined;
+      const q = typeof req.query.q === "string" ? req.query.q.trim() : undefined;
 
       if (limit !== undefined && (!Number.isFinite(limit) || limit < 0)) {
         throw badRequest("limit must be a non-negative integer");
@@ -1916,7 +1917,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw badRequest("offset must be a non-negative integer");
       }
 
-      const tasks = await scopedStore.listTasks({ limit, offset });
+      let tasks;
+      if (q && q.length > 0) {
+        tasks = await scopedStore.searchTasks(q, { limit, offset });
+      } else {
+        tasks = await scopedStore.listTasks({ limit, offset });
+      }
       res.json(tasks);
     } catch (err: any) {
       if (err instanceof ApiError) {

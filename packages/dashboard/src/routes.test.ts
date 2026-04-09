@@ -60,6 +60,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
   return {
     getTask: vi.fn(),
     listTasks: vi.fn().mockResolvedValue([]),
+    searchTasks: vi.fn().mockResolvedValue([]),
     createTask: vi.fn(),
     moveTask: vi.fn(),
     updateTask: vi.fn(),
@@ -169,6 +170,45 @@ describe("GET /tasks", () => {
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(1);
     expect(store.listTasks).toHaveBeenCalledWith({ limit: 10, offset: 5 });
+  });
+
+  it("returns tasks for search query", async () => {
+    (store.searchTasks as ReturnType<typeof vi.fn>).mockResolvedValueOnce([FAKE_TASK_DETAIL]);
+
+    const res = await GET(buildApp(), "/api/tasks?q=FN-001");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(store.searchTasks).toHaveBeenCalledWith("FN-001", { limit: undefined, offset: undefined });
+  });
+
+  it("returns tasks for search query with limit", async () => {
+    (store.searchTasks as ReturnType<typeof vi.fn>).mockResolvedValueOnce([FAKE_TASK_DETAIL]);
+
+    const res = await GET(buildApp(), "/api/tasks?q=something&limit=5");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(store.searchTasks).toHaveBeenCalledWith("something", { limit: 5, offset: undefined });
+  });
+
+  it("returns empty array for non-existent search query", async () => {
+    (store.searchTasks as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
+
+    const res = await GET(buildApp(), "/api/tasks?q=nonexistent");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it("falls back to listTasks for empty search query", async () => {
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValueOnce([FAKE_TASK_DETAIL]);
+
+    const res = await GET(buildApp(), "/api/tasks?q=");
+
+    expect(res.status).toBe(200);
+    expect(store.listTasks).toHaveBeenCalled();
+    expect(store.searchTasks).not.toHaveBeenCalled();
   });
 
   it("returns 400 for invalid pagination params", async () => {

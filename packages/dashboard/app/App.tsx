@@ -41,9 +41,12 @@ function AppInner() {
   const { nodes } = useNodes();
   const { currentProject, setCurrentProject, clearCurrentProject, loading: currentProjectLoading } = useCurrentProject(projects);
   
-  // Tasks hook with project context
+  // Search query state - must be defined before useTasks
+  const [searchQuery, setSearchQuery] = useState("");
+  
+  // Tasks hook with project context and search query
   const { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, updateTask, duplicateTask, archiveTask, unarchiveTask, archiveAllDone } = useTasks(
-    currentProject ? { projectId: currentProject.id } : undefined
+    currentProject ? { projectId: currentProject.id, searchQuery: searchQuery || undefined } : { searchQuery: searchQuery || undefined }
   );
 
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
@@ -106,7 +109,6 @@ function AppInner() {
     toggleGlobalPause,
     toggleEnginePause,
   } = useAppSettings(currentProject?.id);
-  const [searchQuery, setSearchQuery] = useState("");
   const {
     availableModels,
     favoriteProviders,

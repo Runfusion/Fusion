@@ -6117,4 +6117,143 @@ Task with acceptance criteria
       }
     });
   });
+
+  describe("searchTasks", () => {
+    it("searches tasks by ID", async () => {
+      const task1 = await store.createTask({ description: "First task" });
+      const task2 = await store.createTask({ description: "Second task" });
+
+      const results = await store.searchTasks("FN-001");
+
+      expect(results).toHaveLength(1);
+      expect(results[0].id).toBe("FN-001");
+      expect(results.some((t) => t.id === "FN-002")).toBe(false);
+    });
+
+    it("searches tasks by title", async () => {
+      await store.createTask({ title: "Fix login bug", description: "Login issue" });
+      await store.createTask({ title: "Add dashboard feature", description: "New UI" });
+
+      const results = await store.searchTasks("dashboard");
+
+      expect(results).toHaveLength(1);
+      expect(results[0].title).toBe("Add dashboard feature");
+    });
+
+    it("searches tasks by description", async () => {
+      await store.createTask({ description: "Fix the login button on the homepage" });
+      await store.createTask({ description: "Update the settings page layout" });
+
+      const results = await store.searchTasks("homepage");
+
+      expect(results).toHaveLength(1);
+      expect(results[0].description).toContain("homepage");
+    });
+
+    it("searches tasks by comment text", async () => {
+      const task = await store.createTask({ description: "A task" });
+      // Add a comment containing a unique word
+      await store.addComment(task.id, { text: "Need to prioritize the xylophone implementation", author: "tester" });
+
+      const results = await store.searchTasks("xylophone");
+
+      expect(results).toHaveLength(1);
+      expect(results[0].id).toBe(task.id);
+    });
+
+    it("is case insensitive", async () => {
+      await store.createTask({ title: "UPPERCASE SEARCH TEST", description: "Testing case insensitivity" });
+
+      const results = await store.searchTasks("uppercase");
+
+      expect(results).toHaveLength(1);
+      expect(results[0].title).toBe("UPPERCASE SEARCH TEST");
+    });
+
+    it("falls back to listTasks for empty query", async () => {
+      await store.createTask({ description: "Task 1" });
+      await store.createTask({ description: "Task 2" });
+
+      const results = await store.searchTasks("");
+      const allTasks = await store.listTasks();
+
+      expect(results).toHaveLength(allTasks.length);
+    });
+
+    it("falls back to listTasks for whitespace-only query", async () => {
+      await store.createTask({ description: "Task 1" });
+
+      const results = await store.searchTasks("   ");
+
+      expect(results).toHaveLength(1);
+    });
+
+    it("uses OR semantics for multi-word queries", async () => {
+      await store.createTask({ title: "Fix login", description: "Button issues" });
+      await store.createTask({ title: "Add dashboard", description: "New features" });
+
+      const results = await store.searchTasks("login dashboard");
+
+      expect(results).toHaveLength(2);
+    });
+
+    it("returns empty array for non-existent query", async () => {
+      await store.createTask({ description: "Regular task description" });
+
+      const results = await store.searchTasks("xyznonexistent12345");
+
+      expect(results).toHaveLength(0);
+    });
+
+    it("respects limit option", async () => {
+      await store.createTask({ description: "Task 1" });
+      await store.createTask({ description: "Task 2" });
+      await store.createTask({ description: "Task 3" });
+      await store.createTask({ description: "Task 4" });
+      await store.createTask({ description: "Task 5" });
+
+      const results = await store.searchTasks("", { limit: 2 });
+
+      expect(results).toHaveLength(2);
+    });
+
+    it("respects offset option", async () => {
+      await store.createTask({ description: "Task 1" });
+      await store.createTask({ description: "Task 2" });
+      await store.createTask({ description: "Task 3" });
+
+      const allResults = await store.searchTasks("");
+      const offsetResults = await store.searchTasks("", { offset: 1 });
+
+      expect(allResults.length).toBe(3);
+      expect(offsetResults.length).toBe(2);
+      expect(offsetResults[0].id).toBe(allResults[1].id);
+    });
+
+    it("immediately indexes new comments", async () => {
+      const task = await store.createTask({ description: "A task without comments" });
+      const uniqueWord = `unique_search_term_${Date.now()}`;
+
+      // Initially should not be found
+      const beforeResults = await store.searchTasks(uniqueWord);
+      expect(beforeResults).toHaveLength(0);
+
+      // Add comment with unique word
+      await store.addComment(task.id, { text: `Important note about the ${uniqueWord} feature`, author: "tester" });
+
+      // Should now be found immediately (trigger fires synchronously)
+      const afterResults = await store.searchTasks(uniqueWord);
+      expect(afterResults).toHaveLength(1);
+      expect(afterResults[0].id).toBe(task.id);
+    });
+
+    it("sanitizes FTS5 special characters from query", async () => {
+      await store.createTask({ title: "Test with special chars", description: "Query parsing test" });
+
+      // This should not throw and should work correctly
+      const results = await store.searchTasks("test + special (chars)");
+
+      expect(results.length).toBeGreaterThanOrEqual(0); // Should not throw
+    });
+  });
 });

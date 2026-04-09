@@ -106,7 +106,7 @@ describe("Database", () => {
     });
 
     it("seeds schema version", () => {
-      expect(db.getSchemaVersion()).toBe(20);
+      expect(db.getSchemaVersion()).toBe(21);
     });
 
     it("seeds lastModified", () => {
@@ -129,7 +129,7 @@ describe("Database", () => {
 
     it("is idempotent - calling init() twice does not fail", () => {
       expect(() => db.init()).not.toThrow();
-      expect(db.getSchemaVersion()).toBe(20);
+      expect(db.getSchemaVersion()).toBe(21);
     });
 
     it("does not overwrite existing config on re-init", () => {
@@ -736,7 +736,7 @@ describe("schema migrations", () => {
     db.init();
 
     // Verify version bumped to 5 (includes v1→v2, v2→v3, v3→v4, and v4→v5 migrations)
-    expect(db.getSchemaVersion()).toBe(20);
+    expect(db.getSchemaVersion()).toBe(21);
 
     // Verify new columns exist and existing data is intact
     const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
@@ -761,11 +761,11 @@ describe("schema migrations", () => {
     const db = new Database(kbDir);
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(20);
+    expect(db.getSchemaVersion()).toBe(21);
 
     // Re-init should not fail
     db.init();
-    expect(db.getSchemaVersion()).toBe(20);
+    expect(db.getSchemaVersion()).toBe(21);
 
     db.close();
   });
@@ -781,7 +781,7 @@ describe("schema migrations", () => {
 
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(20);
+    expect(db.getSchemaVersion()).toBe(21);
 
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = 'agentRatings'").all() as Array<{ name: string }>;
     expect(tables).toEqual([{ name: "agentRatings" }]);
@@ -805,7 +805,7 @@ describe("schema migrations", () => {
 
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(20);
+    expect(db.getSchemaVersion()).toBe(21);
 
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = 'mission_events'").all() as Array<{ name: string }>;
     expect(tables).toEqual([{ name: "mission_events" }]);
@@ -909,7 +909,7 @@ describe("schema migrations", () => {
     db.init();
 
     // Verify version bumped to 5
-    expect(db.getSchemaVersion()).toBe(20);
+    expect(db.getSchemaVersion()).toBe(21);
 
     // Verify new columns exist and existing data is intact
     const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
@@ -1093,6 +1093,162 @@ describe("schema migrations", () => {
   });
 });
 
+describe("FTS5 full-text search", () => {
+  let tmpDir: string;
+  let kbDir: string;
+  let db: Database;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    kbDir = join(tmpDir, ".fusion");
+    db = new Database(kbDir);
+    db.init();
+  });
+
+  afterEach(async () => {
+    try {
+      db.close();
+    } catch {
+      // already closed
+    }
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("creates tasks_fts virtual table after init", () => {
+    const row = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='tasks_fts'"
+    ).get() as { name: string } | undefined;
+    expect(row?.name).toBe("tasks_fts");
+  });
+
+  it("creates FTS5 triggers after init", () => {
+    const triggers = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='trigger'"
+    ).all() as { name: string }[];
+    const triggerNames = triggers.map((t) => t.name);
+
+    expect(triggerNames).toContain("tasks_fts_ai");
+    expect(triggerNames).toContain("tasks_fts_au");
+    expect(triggerNames).toContain("tasks_fts_ad");
+  });
+
+  it("populates FTS index from existing tasks on migration", () => {
+    // Insert a task directly into the database (bypassing triggers for this test)
+    db.prepare(
+      "INSERT INTO tasks (id, title, description, \"column\", createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(
+      "FN-FTS-001",
+      "Full-text search test",
+      "Testing the FTS index",
+      "todo",
+      "2025-01-01T00:00:00.000Z",
+      "2025-01-01T00:00:00.000Z"
+    );
+
+    // Verify the task appears in the FTS index by joining with tasks table
+    const ftsRow = db.prepare(`
+      SELECT t.* FROM tasks t
+      JOIN tasks_fts fts ON t.rowid = fts.rowid
+      WHERE t.id = 'FN-FTS-001'
+    `).get() as any;
+
+    expect(ftsRow).toBeDefined();
+    expect(ftsRow.id).toBe("FN-FTS-001");
+    expect(ftsRow.title).toBe("Full-text search test");
+    expect(ftsRow.description).toBe("Testing the FTS index");
+  });
+
+  it("INSERT trigger indexes new tasks", () => {
+    // Use upsertTask equivalent via direct insert
+    db.prepare(`
+      INSERT INTO tasks (id, title, description, "column", createdAt, updatedAt)
+      VALUES ('FN-FTS-002', 'New task title', 'New task description', 'triage', '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z')
+    `).run();
+
+    // Verify the task appears in the FTS index via trigger by joining with tasks
+    const ftsRow = db.prepare(`
+      SELECT t.* FROM tasks t
+      JOIN tasks_fts fts ON t.rowid = fts.rowid
+      WHERE t.id = 'FN-FTS-002'
+    `).get() as any;
+
+    expect(ftsRow).toBeDefined();
+    expect(ftsRow.id).toBe("FN-FTS-002");
+    expect(ftsRow.title).toBe("New task title");
+  });
+
+  it("UPDATE trigger reindexes updated tasks", () => {
+    // Insert a task
+    db.prepare(`
+      INSERT INTO tasks (id, title, description, "column", createdAt, updatedAt)
+      VALUES ('FN-FTS-003', 'Original title', 'Original description', 'todo', '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z')
+    `).run();
+
+    // Update the task
+    db.prepare(`
+      UPDATE tasks SET title = 'Updated title', updatedAt = '2025-01-02T00:00:00.000Z' WHERE id = 'FN-FTS-003'
+    `).run();
+
+    // Verify FTS index has the updated content
+    const ftsRow = db.prepare(`
+      SELECT t.* FROM tasks t
+      JOIN tasks_fts fts ON t.rowid = fts.rowid
+      WHERE t.id = 'FN-FTS-003'
+    `).get() as any;
+
+    expect(ftsRow).toBeDefined();
+    expect(ftsRow.title).toBe("Updated title");
+    expect(ftsRow.description).toBe("Original description"); // description should still be there
+  });
+
+  it("DELETE trigger removes tasks from index", () => {
+    // Insert a task
+    db.prepare(`
+      INSERT INTO tasks (id, title, description, "column", createdAt, updatedAt)
+      VALUES ('FN-FTS-004', 'Task to delete', 'Will be removed', 'todo', '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z')
+    `).run();
+
+    // Verify it's in the FTS index
+    const beforeDelete = db.prepare(`
+      SELECT t.* FROM tasks t
+      JOIN tasks_fts fts ON t.rowid = fts.rowid
+      WHERE t.id = 'FN-FTS-004'
+    `).get();
+    expect(beforeDelete).toBeDefined();
+
+    // Delete the task
+    db.prepare("DELETE FROM tasks WHERE id = 'FN-FTS-004'").run();
+
+    // Verify it's no longer in the FTS index
+    const afterDelete = db.prepare(`
+      SELECT t.* FROM tasks t
+      JOIN tasks_fts fts ON t.rowid = fts.rowid
+      WHERE t.id = 'FN-FTS-004'
+    `).get();
+    expect(afterDelete).toBeUndefined();
+  });
+
+  it("FTS index includes comments in JSON format", () => {
+    // Insert a task with comments
+    db.prepare(`
+      INSERT INTO tasks (id, title, description, "column", createdAt, updatedAt, comments)
+      VALUES ('FN-FTS-005', 'Task with comments', 'Has a comment', 'todo', '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z', '[{"id":"c1","text":"xylophone_plan_keyword","author":"tester","createdAt":"2025-01-01T00:00:00.000Z"}]')
+    `).run();
+
+    // Verify the task appears in FTS with comments tokenized using MATCH
+    const ftsRows = db.prepare(`
+      SELECT t.* FROM tasks t
+      JOIN tasks_fts fts ON t.rowid = fts.rowid
+      WHERE tasks_fts MATCH 'xylophone'
+    `).all() as any[];
+
+    expect(ftsRows.length).toBeGreaterThan(0);
+    const ftsRow = ftsRows.find((r) => r.id === "FN-FTS-005");
+    expect(ftsRow).toBeDefined();
+    expect(ftsRow.comments).toContain("xylophone");
+  });
+});
+
 describe("createDatabase factory", () => {
   let tmpDir: string;
 
@@ -1119,7 +1275,7 @@ describe("createDatabase factory", () => {
     const db = createDatabase(kbDir);
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(20);
+    expect(db.getSchemaVersion()).toBe(21);
     expect(db.getLastModified()).toBeGreaterThan(0);
 
     db.close();

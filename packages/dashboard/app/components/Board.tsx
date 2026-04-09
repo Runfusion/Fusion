@@ -81,18 +81,8 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetai
     setArchivedCollapsed((current) => !current);
   }, []);
 
-  // Filter tasks based on search query (matches id, title, or description)
-  const filteredTasks = useMemo(() => {
-    if (!searchQuery.trim()) return tasks;
-    const query = searchQuery.toLowerCase();
-    return tasks.filter(
-      (t) =>
-        t.id.toLowerCase().includes(query) ||
-        (t.title && t.title.toLowerCase().includes(query)) ||
-        t.description.toLowerCase().includes(query)
-    );
-  }, [tasks, searchQuery]);
-
+  // Tasks are already server-filtered when searchQuery is active (via useTasks hook).
+  // Client-side filtering is removed - tasks prop is used directly.
   // Keep per-column array identities stable for unchanged columns so React.memo(Column)
   // can skip sibling rerenders during unrelated task updates.
   const tasksByColumn = useMemo(() => {
@@ -100,7 +90,7 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetai
       COLUMNS.map((column) => [column, [] as Task[]]),
     ) as Record<ColumnType, Task[]>;
 
-    for (const task of filteredTasks) {
+    for (const task of tasks) {
       nextGrouped[task.column].push(task);
     }
 
@@ -116,14 +106,14 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetai
 
     tasksByColumnCacheRef.current = stableGrouped;
     return stableGrouped;
-  }, [filteredTasks]);
+  }, [tasks]);
 
   // Collect task IDs with GitHub badge info for batch fetching
   const taskIdsWithBadges = useMemo(() => {
-    return filteredTasks
+    return tasks
       .filter((t) => t.prInfo || t.issueInfo)
       .map((t) => t.id);
-  }, [filteredTasks]);
+  }, [tasks]);
 
   // Batch fetch badge statuses on mount and when visible tasks change
   useEffect(() => {
@@ -171,7 +161,7 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetai
             onUpdateTask={onUpdateTask}
             onArchiveTask={onArchiveTask}
             onUnarchiveTask={onUnarchiveTask}
-            allTasks={filteredTasks}
+            allTasks={tasks}
             availableModels={availableModels}
             onOpenDetailWithTab={onOpenDetailWithTab}
             favoriteProviders={favoriteProviders}

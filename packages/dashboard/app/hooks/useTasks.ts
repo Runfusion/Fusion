@@ -34,10 +34,16 @@ export interface UseTasksOptions {
    * Note: SSE updates are not filtered by project in current implementation.
    */
   projectId?: string;
+  /**
+   * When provided, fetches tasks matching this search query.
+   * Server-side full-text search across title, ID, description, and comments.
+   */
+  searchQuery?: string;
 }
 
 export function useTasks(options?: UseTasksOptions) {
   const projectId = options?.projectId;
+  const searchQuery = options?.searchQuery;
   const [tasks, setTasks] = useState<Task[]>([]);
   const [connectionNonce, setConnectionNonce] = useState(0);
   const tasksRef = useRef(tasks);
@@ -47,11 +53,12 @@ export function useTasks(options?: UseTasksOptions) {
 
   const VISIBILITY_REFRESH_DEBOUNCE_MS = 1000;
 
-  const refreshTasks = useCallback(async (options?: { clearOnError?: boolean }) => {
+  const refreshTasks = useCallback(async (options?: { clearOnError?: boolean; searchQueryOverride?: string }) => {
     const requestVersion = ++fetchVersionRef.current;
+    const query = options?.searchQueryOverride ?? searchQuery;
 
     try {
-      const fetchedTasks = await api.fetchTasks(undefined, undefined, projectId);
+      const fetchedTasks = await api.fetchTasks(undefined, undefined, projectId, query);
       if (fetchVersionRef.current !== requestVersion) {
         return;
       }
@@ -66,7 +73,16 @@ export function useTasks(options?: UseTasksOptions) {
       }
       setTasks((current) => current);
     }
-  }, [projectId]);
+  }, [projectId, searchQuery]);
+
+  // Debounced search effect - separate from refreshTasks to avoid dependency cycle
+  useEffect(() => {
+    if (searchQuery === undefined) return;
+    const timer = setTimeout(() => {
+      void refreshTasks({ searchQueryOverride: searchQuery });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]); // intentionally NOT including refreshTasks in deps
 
   // Fetch initial tasks and recover when the tab becomes visible again.
   useEffect(() => {
@@ -124,6 +140,11 @@ export function useTasks(options?: UseTasksOptions) {
     const handleCreated = (e: MessageEvent) => {
       resetHeartbeat();
       const task = normalizeTask(JSON.parse(e.data) as Task);
+      // When search is active, re-fetch to get server-filtered results
+      if (searchQuery) {
+        void refreshTasks({ searchQueryOverride: searchQuery });
+        return;
+      }
       // In project mode, only add if this task belongs to our project
       // Since we can't determine project from event, we add and let subsequent
       // fetches correct the state, or filter by checking if task exists in our set
@@ -136,6 +157,11 @@ export function useTasks(options?: UseTasksOptions) {
 
     const handleMoved = (e: MessageEvent) => {
       resetHeartbeat();
+      // When search is active, re-fetch to get server-filtered results
+      if (searchQuery) {
+        void refreshTasks({ searchQueryOverride: searchQuery });
+        return;
+      }
       const { task, to }: { task: Task; from: Column; to: Column } = JSON.parse(e.data);
       const normalizedTask = normalizeTask(task);
       setTasks((prev) =>
@@ -147,6 +173,11 @@ export function useTasks(options?: UseTasksOptions) {
 
     const handleUpdated = (e: MessageEvent) => {
       resetHeartbeat();
+      // When search is active, re-fetch to get server-filtered results
+      if (searchQuery) {
+        void refreshTasks({ searchQueryOverride: searchQuery });
+        return;
+      }
       const incoming = normalizeTask(JSON.parse(e.data) as Task);
       setTasks((prev) =>
         prev.map((t) => {
@@ -177,12 +208,22 @@ export function useTasks(options?: UseTasksOptions) {
 
     const handleDeleted = (e: MessageEvent) => {
       resetHeartbeat();
+      // When search is active, re-fetch to get server-filtered results
+      if (searchQuery) {
+        void refreshTasks({ searchQueryOverride: searchQuery });
+        return;
+      }
       const task = normalizeTask(JSON.parse(e.data) as Task);
       setTasks((prev) => prev.filter((t) => t.id !== task.id));
     };
 
     const handleMerged = (e: MessageEvent) => {
       resetHeartbeat();
+      // When search is active, re-fetch to get server-filtered results
+      if (searchQuery) {
+        void refreshTasks({ searchQueryOverride: searchQuery });
+        return;
+      }
       const { task }: { task: Task } = JSON.parse(e.data);
       const normalizedTask = normalizeTask(task);
       setTasks((prev) =>
@@ -237,7 +278,7 @@ export function useTasks(options?: UseTasksOptions) {
       closedByCleanup = true;
       cleanup();
     };
-  }, [connectionNonce, projectId, refreshTasks]);
+  }, [connectionNonce, projectId, searchQuery, refreshTasks]);
 
   const createTask = useCallback(async (input: TaskCreateInput): Promise<Task> => {
     const task = normalizeTask(await api.createTask(input, projectId));

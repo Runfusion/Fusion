@@ -1175,6 +1175,60 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return sorted.slice(offset, offset + Math.max(0, limit));
   }
 
+  /**
+   * Search tasks by full-text query across title, ID, description, and comments.
+   * Uses SQLite FTS5 for fast tokenized matching with relevance ranking.
+   * Falls back to listTasks() for empty/whitespace-only queries.
+   *
+   * @param query - The search query string
+   * @param options - Optional limit and offset for pagination
+   */
+  async searchTasks(query: string, options?: { limit?: number; offset?: number }): Promise<Task[]> {
+    // Fall back to listTasks for empty/whitespace-only queries
+    const trimmedQuery = query?.trim();
+    if (!trimmedQuery) {
+      return this.listTasks(options);
+    }
+
+    // Sanitize query for FTS5 safety: strip dangerous operators but preserve alphanumeric
+    const sanitizedTokens = trimmedQuery
+      .split(/\s+/)
+      .filter((token) => token.length > 0)
+      .map((token) => token.replace(/["{}:*^+()]/g, ""))
+      .filter((token) => token.length > 0);
+
+    if (sanitizedTokens.length === 0) {
+      return this.listTasks(options);
+    }
+
+    // For FTS5 MATCH, quote tokens that contain special characters like hyphens
+    // to prevent them from being interpreted as operators
+    const ftsQuery = sanitizedTokens
+      .map((token) => {
+        // If token contains FTS5 special chars, wrap in double quotes
+        if (/[":(){}*^+-]/.test(token)) {
+          return `"${token.replace(/"/g, '\\"')}"`;
+        }
+        return token;
+      })
+      .join(" OR ");
+
+    // Execute FTS query with ranking
+    const limit = options?.limit ?? -1;
+    const offset = options?.offset ?? 0;
+    const offsetClause = offset > 0 ? ` OFFSET ${offset}` : "";
+
+    const rows = this.db.prepare(`
+      SELECT t.* FROM tasks t
+      JOIN tasks_fts fts ON t.rowid = fts.rowid
+      WHERE tasks_fts MATCH ?
+      ORDER BY rank
+      LIMIT ${limit >= 0 ? limit : -1}${offsetClause}
+    `).all(ftsQuery) as any[];
+
+    return rows.map((row) => this.rowToTask(row));
+  }
+
   async selectNextTaskForAgent(agentId: string): Promise<InboxTask | null> {
     const tasks = await this.listTasks();
     if (tasks.length === 0) {
