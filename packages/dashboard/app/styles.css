@@ -18471,7 +18471,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 .activity-log-confirm-clear {
   background: var(--ws-error);
   border: 1px solid var(--ws-error);
-  color: white;
+  color: var(--cta-text);
 }
 
 .activity-log-confirm-clear:hover {
@@ -18482,6 +18482,12 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 /* ── Activity Log — Mobile (≤ 768px) ─────────────────────────────── */
 
 @media (max-width: 768px) {
+  /* Full-screen modal on mobile, matching .modal/.modal-lg pattern */
+  .activity-log-modal {
+    max-height: 100vh;
+    max-height: 100dvh;
+  }
+
   /* Header: stack title above actions */
   .activity-log-header {
     flex-wrap: wrap;
