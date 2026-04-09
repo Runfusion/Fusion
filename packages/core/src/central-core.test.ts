@@ -1425,6 +1425,253 @@ describe("CentralCore", () => {
     });
   });
 
+  describe("node version sync", () => {
+    beforeEach(async () => {
+      await central.init();
+    });
+
+    describe("updateNodeVersionInfo", () => {
+      it("should store version info on a node", async () => {
+        const node = await central.registerNode({ name: "version-node", type: "local" });
+
+        const versionInfo = {
+          appVersion: "0.1.0",
+          pluginVersions: { "plugin-a": "1.0.0", "plugin-b": "2.0.0" },
+          lastSyncedAt: "2026-04-01T12:00:00.000Z",
+        };
+
+        const updated = await central.updateNodeVersionInfo(node.id, versionInfo);
+
+        expect(updated.versionInfo).toBeDefined();
+        expect(updated.versionInfo?.appVersion).toBe("0.1.0");
+        expect(updated.versionInfo?.pluginVersions).toEqual({ "plugin-a": "1.0.0", "plugin-b": "2.0.0" });
+        expect(updated.pluginVersions).toEqual({ "plugin-a": "1.0.0", "plugin-b": "2.0.0" });
+      });
+
+      it("should auto-fill appVersion if not provided", async () => {
+        const node = await central.registerNode({ name: "auto-version-node", type: "local" });
+
+        const versionInfo = {
+          pluginVersions: { "plugin-a": "1.0.0" },
+          lastSyncedAt: "2026-04-01T12:00:00.000Z",
+        };
+
+        const updated = await central.updateNodeVersionInfo(node.id, versionInfo);
+
+        expect(updated.versionInfo?.appVersion).toBe("0.1.0");
+      });
+
+      it("should emit node:version:updated and node:updated events", async () => {
+        const node = await central.registerNode({ name: "event-node", type: "local" });
+
+        let versionEmitted = false;
+        let nodeEmitted = false;
+        central.on("node:version:updated", () => {
+          versionEmitted = true;
+        });
+        central.on("node:updated", () => {
+          nodeEmitted = true;
+        });
+
+        await central.updateNodeVersionInfo(node.id, {
+          appVersion: "0.1.0",
+          pluginVersions: {},
+          lastSyncedAt: "2026-04-01T12:00:00.000Z",
+        });
+
+        expect(versionEmitted).toBe(true);
+        expect(nodeEmitted).toBe(true);
+      });
+
+      it("should throw if node not found", async () => {
+        await expect(
+          central.updateNodeVersionInfo("node_missing", {
+            appVersion: "0.1.0",
+            pluginVersions: {},
+            lastSyncedAt: "2026-04-01T12:00:00.000Z",
+          }),
+        ).rejects.toThrow("Node not found");
+      });
+    });
+
+    describe("getNodeVersionInfo", () => {
+      it("should return stored version info", async () => {
+        const node = await central.registerNode({ name: "get-version-node", type: "local" });
+
+        await central.updateNodeVersionInfo(node.id, {
+          appVersion: "0.2.0",
+          pluginVersions: { "plugin-c": "1.5.0" },
+          lastSyncedAt: "2026-04-01T12:00:00.000Z",
+        });
+
+        const versionInfo = await central.getNodeVersionInfo(node.id);
+
+        expect(versionInfo).toBeDefined();
+        expect(versionInfo?.appVersion).toBe("0.2.0");
+        expect(versionInfo?.pluginVersions).toEqual({ "plugin-c": "1.5.0" });
+      });
+
+      it("should return undefined if not set", async () => {
+        const node = await central.registerNode({ name: "no-version-node", type: "local" });
+
+        const versionInfo = await central.getNodeVersionInfo(node.id);
+
+        expect(versionInfo).toBeUndefined();
+      });
+    });
+
+    describe("syncPlugins", () => {
+      it("should return no-action for matching versions", async () => {
+        const node1 = await central.registerNode({ name: "sync-node-1", type: "local" });
+        const node2 = await central.registerNode({ name: "sync-node-2", type: "local" });
+
+        await central.updateNodeVersionInfo(node1.id, {
+          appVersion: "0.1.0",
+          pluginVersions: { "plugin-a": "1.0.0" },
+          lastSyncedAt: "2026-04-01T12:00:00.000Z",
+        });
+
+        await central.updateNodeVersionInfo(node2.id, {
+          appVersion: "0.1.0",
+          pluginVersions: { "plugin-a": "1.0.0" },
+          lastSyncedAt: "2026-04-01T12:00:00.000Z",
+        });
+
+        const result = await central.syncPlugins(node1.id, node2.id);
+
+        expect(result.isCompatible).toBe(true);
+        expect(result.plugins).toHaveLength(1);
+        expect(result.plugins[0].action).toBe("no-action");
+      });
+
+      it("should return install action for missing plugins", async () => {
+        const node1 = await central.registerNode({ name: "install-node-1", type: "local" });
+        const node2 = await central.registerNode({ name: "install-node-2", type: "local" });
+
+        await central.updateNodeVersionInfo(node1.id, {
+          appVersion: "0.1.0",
+          pluginVersions: { "plugin-a": "1.0.0", "plugin-b": "2.0.0" },
+          lastSyncedAt: "2026-04-01T12:00:00.000Z",
+        });
+
+        await central.updateNodeVersionInfo(node2.id, {
+          appVersion: "0.1.0",
+          pluginVersions: { "plugin-a": "1.0.0" },
+          lastSyncedAt: "2026-04-01T12:00:00.000Z",
+        });
+
+        const result = await central.syncPlugins(node1.id, node2.id);
+
+        expect(result.isCompatible).toBe(false);
+        const pluginB = result.plugins.find((p) => p.pluginId === "plugin-b");
+        expect(pluginB?.action).toBe("install");
+        expect(pluginB?.targetVersion).toBe("2.0.0");
+      });
+
+      it("should return update action for version differences", async () => {
+        const node1 = await central.registerNode({ name: "update-node-1", type: "local" });
+        const node2 = await central.registerNode({ name: "update-node-2", type: "local" });
+
+        await central.updateNodeVersionInfo(node1.id, {
+          appVersion: "0.1.0",
+          pluginVersions: { "plugin-a": "2.0.0" },
+          lastSyncedAt: "2026-04-01T12:00:00.000Z",
+        });
+
+        await central.updateNodeVersionInfo(node2.id, {
+          appVersion: "0.1.0",
+          pluginVersions: { "plugin-a": "1.0.0" },
+          lastSyncedAt: "2026-04-01T12:00:00.000Z",
+        });
+
+        const result = await central.syncPlugins(node1.id, node2.id);
+
+        expect(result.isCompatible).toBe(false);
+        const pluginA = result.plugins.find((p) => p.pluginId === "plugin-a");
+        expect(pluginA?.action).toBe("update");
+      });
+
+      it("should handle nodes with no version info", async () => {
+        const node1 = await central.registerNode({ name: "empty-node-1", type: "local" });
+        const node2 = await central.registerNode({ name: "empty-node-2", type: "local" });
+
+        const result = await central.syncPlugins(node1.id, node2.id);
+
+        expect(result.isCompatible).toBe(true);
+        expect(result.plugins).toHaveLength(0);
+      });
+
+      it("should emit node:plugins:synced event", async () => {
+        const node1 = await central.registerNode({ name: "event-sync-1", type: "local" });
+        const node2 = await central.registerNode({ name: "event-sync-2", type: "local" });
+
+        let emittedResult: unknown;
+        central.on("node:plugins:synced", (result) => {
+          emittedResult = result;
+        });
+
+        await central.syncPlugins(node1.id, node2.id);
+
+        expect(emittedResult).toBeDefined();
+      });
+
+      it("should throw if either node not found", async () => {
+        const node = await central.registerNode({ name: "partial-node", type: "local" });
+
+        await expect(central.syncPlugins(node.id, "node_missing")).rejects.toThrow(
+          "Remote node not found",
+        );
+
+        await expect(central.syncPlugins("node_missing", node.id)).rejects.toThrow(
+          "Local node not found",
+        );
+      });
+    });
+
+    describe("checkVersionCompatibility", () => {
+      it("should return compatible for identical versions", () => {
+        const result = central.checkVersionCompatibility("1.2.3", "1.2.3");
+
+        expect(result.status).toBe("compatible");
+        expect(result.message).toContain("match");
+      });
+
+      it("should return compatible for patch-only differences", () => {
+        const result = central.checkVersionCompatibility("1.2.3", "1.2.4");
+
+        expect(result.status).toBe("compatible");
+        expect(result.message).toContain("Patch");
+      });
+
+      it("should return minor-difference for minor version mismatch", () => {
+        const result = central.checkVersionCompatibility("1.2.3", "1.3.0");
+
+        expect(result.status).toBe("minor-difference");
+        expect(result.message).toContain("Minor");
+      });
+
+      it("should return major-difference for major version mismatch", () => {
+        const result = central.checkVersionCompatibility("1.2.3", "2.0.0");
+
+        expect(result.status).toBe("major-difference");
+        expect(result.message).toContain("Major");
+      });
+
+      it("should return incompatible for invalid version strings", () => {
+        const result = central.checkVersionCompatibility("invalid", "1.0.0");
+
+        expect(result.status).toBe("incompatible");
+        expect(result.message).toContain("Invalid");
+      });
+
+      it("should handle prerelease versions", () => {
+        const result = central.checkVersionCompatibility("1.2.3-beta.1", "1.2.3-beta.2");
+
+        expect(result.status).toBe("compatible");
+      });
+    });
+  });
+
   describe("project health", () => {
     beforeEach(async () => {
       await central.init();

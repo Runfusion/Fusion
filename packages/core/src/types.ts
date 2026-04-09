@@ -1627,12 +1627,92 @@ export interface NodeConfig {
   systemMetrics?: SystemMetrics;
   /** Optional list of known peer node IDs. */
   knownPeers?: string[];
+  /** Version tracking info (app version, plugin versions, last sync) */
+  versionInfo?: NodeVersionInfo;
+  /** Snapshot of plugin ID → version mapping */
+  pluginVersions?: Record<string, string>;
   /** Maximum concurrent tasks/runtimes this node can host */
   maxConcurrent: number;
   /** ISO-8601 timestamp of creation */
   createdAt: string;
   /** ISO-8601 timestamp of last update */
   updatedAt: string;
+}
+
+/** Version information tracked per node for plugin synchronization */
+export interface NodeVersionInfo {
+  /** Core Fusion application version (semver string, e.g., "0.1.0") */
+  appVersion: string;
+  /** Map of plugin-id → semver version string for all installed plugins */
+  pluginVersions: Record<string, string>;
+  /** ISO-8601 timestamp of the last sync operation */
+  lastSyncedAt: string;
+}
+
+/** Input for updating node version info. appVersion is optional and will be auto-filled if not provided. */
+export type NodeVersionInfoInput = Omit<NodeVersionInfo, "appVersion"> & {
+  /** Core Fusion application version. If not provided, will be auto-filled with the current app version. */
+  appVersion?: string;
+};
+
+/** A single plugin's version information for sync comparison */
+export interface PluginVersionEntry {
+  /** Plugin ID (matches PluginManifest.id) */
+  pluginId: string;
+  /** Version on the source/local node (undefined if not installed) */
+  localVersion?: string;
+  /** Version on the target/remote node (undefined if not installed) */
+  remoteVersion?: string;
+}
+
+/** Suggested action for a plugin during node synchronization */
+export type PluginSyncAction = "install" | "update" | "remove" | "no-action";
+
+/** A single plugin sync recommendation */
+export interface PluginSyncEntry {
+  /** Plugin ID */
+  pluginId: string;
+  /** Suggested action */
+  action: PluginSyncAction;
+  /** Version to install/update to (undefined for "remove" and "no-action") */
+  targetVersion?: string;
+  /** Current version on the local node (undefined if not installed) */
+  localVersion?: string;
+  /** Current version on the remote node (undefined if not installed) */
+  remoteVersion?: string;
+  /** Reason for the suggested action */
+  reason: string;
+}
+
+/** Result of comparing plugin versions between two nodes */
+export interface PluginSyncResult {
+  /** The local node ID */
+  localNodeId: string;
+  /** The remote node ID being compared against */
+  remoteNodeId: string;
+  /** List of plugin sync recommendations */
+  plugins: PluginSyncEntry[];
+  /** ISO-8601 timestamp of when this comparison was made */
+  comparedAt: string;
+  /** Whether the two nodes are considered compatible (no install/update/remove needed) */
+  isCompatible: boolean;
+  /** Summary message */
+  summary: string;
+}
+
+/** Compatibility status between two version strings */
+export type VersionCompatibilityStatus = "compatible" | "minor-difference" | "major-difference" | "incompatible";
+
+/** Result of checking version compatibility between two versions */
+export interface VersionCompatibilityResult {
+  /** The local version */
+  localVersion: string;
+  /** The remote version */
+  remoteVersion: string;
+  /** Overall compatibility status */
+  status: VersionCompatibilityStatus;
+  /** Human-readable explanation */
+  message: string;
 }
 
 /** A project registered in the central database */

@@ -50,7 +50,12 @@ import type {
   PeerNode,
   DiscoveryConfig,
   DiscoveredNode,
+  NodeVersionInfo,
+  NodeVersionInfoInput,
+  PluginSyncResult,
+  VersionCompatibilityResult,
 } from "./types.js";
+import { getAppVersion, parseSemver } from "./app-version.js";
 import { CentralDatabase, toJson, toJsonNullable, fromJson } from "./central-db.js";
 import { resolveGlobalDir } from "./global-settings.js";
 import { NodeConnection } from "./node-connection.js";
@@ -101,6 +106,10 @@ export interface CentralCoreEvents {
   "discovery:node:lost": [name: string];
   /** Emitted when global concurrency state changes */
   "concurrency:changed": [state: GlobalConcurrencyState];
+  /** Emitted when a node's version info is updated */
+  "node:version:updated": [payload: { nodeId: string; versionInfo: NodeVersionInfo }];
+  /** Emitted when plugin sync comparison completes */
+  "node:plugins:synced": [result: PluginSyncResult];
 }
 
 // ── CentralCore Class ─────────────────────────────────────────────────────
@@ -670,6 +679,8 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
           capabilities: string | null;
           systemMetrics: string | null;
           knownPeers: string | null;
+          versionInfo: string | null;
+          pluginVersions: string | null;
           maxConcurrent: number;
           createdAt: string;
           updatedAt: string;
@@ -697,6 +708,8 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
           capabilities: string | null;
           systemMetrics: string | null;
           knownPeers: string | null;
+          versionInfo: string | null;
+          pluginVersions: string | null;
           maxConcurrent: number;
           createdAt: string;
           updatedAt: string;
@@ -723,6 +736,8 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       capabilities: string | null;
       systemMetrics: string | null;
       knownPeers: string | null;
+      versionInfo: string | null;
+      pluginVersions: string | null;
       maxConcurrent: number;
       createdAt: string;
       updatedAt: string;
@@ -775,6 +790,8 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
         capabilities = ?,
         systemMetrics = ?,
         knownPeers = ?,
+        versionInfo = ?,
+        pluginVersions = ?,
         maxConcurrent = ?,
         updatedAt = ?
        WHERE id = ?`
@@ -787,6 +804,8 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       toJsonNullable(updated.capabilities),
       toJsonNullable(updated.systemMetrics),
       toJsonNullable(updated.knownPeers),
+      toJsonNullable(updated.versionInfo),
+      toJsonNullable(updated.pluginVersions),
       updated.maxConcurrent,
       updated.updatedAt,
       id
@@ -1963,6 +1982,8 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     capabilities: string | null;
     systemMetrics: string | null;
     knownPeers: string | null;
+    versionInfo: string | null;
+    pluginVersions: string | null;
     maxConcurrent: number;
     createdAt: string;
     updatedAt: string;
@@ -1977,6 +1998,8 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       capabilities: fromJson<AgentCapability[]>(row.capabilities),
       systemMetrics: fromJson<SystemMetrics>(row.systemMetrics),
       knownPeers: fromJson<string[]>(row.knownPeers),
+      versionInfo: fromJson<NodeVersionInfo>(row.versionInfo),
+      pluginVersions: fromJson<Record<string, string>>(row.pluginVersions),
       maxConcurrent: row.maxConcurrent,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
@@ -2019,6 +2042,8 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
           capabilities: string | null;
           systemMetrics: string | null;
           knownPeers: string | null;
+          versionInfo: string | null;
+          pluginVersions: string | null;
           maxConcurrent: number;
           createdAt: string;
           updatedAt: string;
@@ -2228,5 +2253,285 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     }
 
     return candidate;
+  }
+
+  // ── Node Version Sync API ──────────────────────────────────────────────
+
+  /**
+   * Update version information for a node.
+   * Auto-fills appVersion with current app version if not provided.
+   *
+   * @param id - Node ID
+   * @param versionInfo - Version info to store
+   * @returns Updated node config
+   * @throws Error if node not found
+   */
+  async updateNodeVersionInfo(id: string, versionInfo: NodeVersionInfoInput): Promise<NodeConfig> {
+    this.ensureInitialized();
+
+    const node = await this.getNode(id);
+    if (!node) {
+      throw new Error(`Node not found: ${id}`);
+    }
+
+    const now = new Date().toISOString();
+    const fullVersionInfo: NodeVersionInfo = {
+      appVersion: versionInfo.appVersion ?? getAppVersion(),
+      pluginVersions: versionInfo.pluginVersions,
+      lastSyncedAt: versionInfo.lastSyncedAt ?? now,
+    };
+
+    this.db!.prepare(
+      `UPDATE nodes SET
+        versionInfo = ?,
+        pluginVersions = ?,
+        updatedAt = ?
+       WHERE id = ?`
+    ).run(
+      toJsonNullable(fullVersionInfo),
+      toJsonNullable(fullVersionInfo.pluginVersions),
+      now,
+      id
+    );
+
+    this.db!.bumpLastModified();
+
+    const updated = await this.getNode(id);
+    if (!updated) {
+      throw new Error(`Node not found after update: ${id}`);
+    }
+
+    this.emit("node:version:updated", { nodeId: id, versionInfo: fullVersionInfo });
+    this.emit("node:updated", updated);
+
+    return updated;
+  }
+
+  /**
+   * Get version information for a node.
+   *
+   * @param id - Node ID
+   * @returns Version info or undefined if not set
+   */
+  async getNodeVersionInfo(id: string): Promise<NodeVersionInfo | undefined> {
+    this.ensureInitialized();
+
+    const node = await this.getNode(id);
+    return node?.versionInfo;
+  }
+
+  /**
+   * Compare plugin versions between two nodes and generate sync recommendations.
+   *
+   * @param localNodeId - Local node ID
+   * @param remoteNodeId - Remote node ID to compare against
+   * @returns Sync result with recommendations for each plugin
+   * @throws Error if either node not found
+   */
+  async syncPlugins(localNodeId: string, remoteNodeId: string): Promise<PluginSyncResult> {
+    this.ensureInitialized();
+
+    const localNode = await this.getNode(localNodeId);
+    const remoteNode = await this.getNode(remoteNodeId);
+
+    if (!localNode) {
+      throw new Error(`Local node not found: ${localNodeId}`);
+    }
+    if (!remoteNode) {
+      throw new Error(`Remote node not found: ${remoteNodeId}`);
+    }
+
+    const localPlugins = localNode.versionInfo?.pluginVersions ?? {};
+    const remotePlugins = remoteNode.versionInfo?.pluginVersions ?? {};
+
+    const allPluginIds = new Set([...Object.keys(localPlugins), ...Object.keys(remotePlugins)]);
+    const plugins: PluginSyncResult["plugins"] = [];
+
+    for (const pluginId of allPluginIds) {
+      const localVersion = localPlugins[pluginId];
+      const remoteVersion = remotePlugins[pluginId];
+      const localParsed = localVersion ? parseSemver(localVersion) : null;
+      const remoteParsed = remoteVersion ? parseSemver(remoteVersion) : null;
+
+      if (localVersion && !remoteVersion) {
+        // Plugin on local but not remote
+        plugins.push({
+          pluginId,
+          action: "install",
+          targetVersion: localVersion,
+          localVersion,
+          remoteVersion: undefined,
+          reason: "Plugin installed on local node but missing on remote",
+        });
+      } else if (!localVersion && remoteVersion) {
+        // Plugin on remote but not local
+        plugins.push({
+          pluginId,
+          action: "remove",
+          localVersion: undefined,
+          remoteVersion,
+          reason: "Plugin installed on remote node but missing on local",
+        });
+      } else if (localParsed && remoteParsed) {
+        // Both have the plugin - compare versions
+        if (localParsed.major !== remoteParsed.major) {
+          if (localParsed.major > remoteParsed.major) {
+            plugins.push({
+              pluginId,
+              action: "update",
+              targetVersion: localVersion,
+              localVersion,
+              remoteVersion,
+              reason: `Local has newer major version (${localVersion} > ${remoteVersion})`,
+            });
+          } else {
+            plugins.push({
+              pluginId,
+              action: "update",
+              targetVersion: remoteVersion,
+              localVersion,
+              remoteVersion,
+              reason: `Remote has newer major version (${remoteVersion} > ${localVersion})`,
+            });
+          }
+        } else if (localParsed.minor !== remoteParsed.minor) {
+          if (localParsed.minor > remoteParsed.minor) {
+            plugins.push({
+              pluginId,
+              action: "update",
+              targetVersion: localVersion,
+              localVersion,
+              remoteVersion,
+              reason: `Local has newer minor version (${localVersion} > ${remoteVersion})`,
+            });
+          } else {
+            plugins.push({
+              pluginId,
+              action: "update",
+              targetVersion: remoteVersion,
+              localVersion,
+              remoteVersion,
+              reason: `Remote has newer minor version (${remoteVersion} > ${localVersion})`,
+            });
+          }
+        } else if (localParsed.patch !== remoteParsed.patch) {
+          // Patch-only difference - still a "no-action" per spec
+          plugins.push({
+            pluginId,
+            action: "no-action",
+            localVersion,
+            remoteVersion,
+            reason: "Versions match (patch difference only)",
+          });
+        } else {
+          // Exact match
+          plugins.push({
+            pluginId,
+            action: "no-action",
+            localVersion,
+            remoteVersion,
+            reason: "Versions match",
+          });
+        }
+      } else {
+        // Invalid semver - can't compare
+        plugins.push({
+          pluginId,
+          action: "no-action",
+          localVersion,
+          remoteVersion,
+          reason: "Cannot compare - invalid version format",
+        });
+      }
+    }
+
+    const comparedAt = new Date().toISOString();
+    const actionsNeeded = plugins.filter((p) => p.action !== "no-action");
+    const isCompatible = actionsNeeded.length === 0;
+
+    const inSync = plugins.filter((p) => p.action === "no-action").length;
+    const needUpdate = plugins.filter((p) => p.action === "update").length;
+    const needInstall = plugins.filter((p) => p.action === "install").length;
+    const needRemove = plugins.filter((p) => p.action === "remove").length;
+
+    const summaryParts: string[] = [];
+    if (inSync > 0) summaryParts.push(`${inSync} plugin${inSync !== 1 ? "s" : ""} in sync`);
+    if (needUpdate > 0) summaryParts.push(`${needUpdate} need${needUpdate === 1 ? "s" : ""} update`);
+    if (needInstall > 0) summaryParts.push(`${needInstall} need${needInstall === 1 ? "s" : ""} install`);
+    if (needRemove > 0) summaryParts.push(`${needRemove} need${needRemove === 1 ? "s" : ""} removal`);
+
+    const result: PluginSyncResult = {
+      localNodeId,
+      remoteNodeId,
+      plugins,
+      comparedAt,
+      isCompatible,
+      summary: summaryParts.join(", ") || "No plugins to compare",
+    };
+
+    this.emit("node:plugins:synced", result);
+    return result;
+  }
+
+  /**
+   * Check version compatibility between two version strings.
+   *
+   * @param local - Local version string
+   * @param remote - Remote version string
+   * @returns Compatibility result
+   */
+  checkVersionCompatibility(
+    local: string,
+    remote: string,
+  ): VersionCompatibilityResult {
+    const localParsed = parseSemver(local);
+    const remoteParsed = parseSemver(remote);
+
+    if (!localParsed || !remoteParsed) {
+      return {
+        localVersion: local,
+        remoteVersion: remote,
+        status: "incompatible",
+        message: "Invalid version format",
+      };
+    }
+
+    if (
+      localParsed.major === remoteParsed.major &&
+      localParsed.minor === remoteParsed.minor &&
+      localParsed.patch === remoteParsed.patch
+    ) {
+      return {
+        localVersion: local,
+        remoteVersion: remote,
+        status: "compatible",
+        message: "Versions match",
+      };
+    }
+
+    if (localParsed.major !== remoteParsed.major) {
+      return {
+        localVersion: local,
+        remoteVersion: remote,
+        status: "major-difference",
+        message: `Major version mismatch: local ${local} vs remote ${remote}`,
+      };
+    }
+
+    if (localParsed.minor !== remoteParsed.minor) {
+      return {
+        localVersion: local,
+        remoteVersion: remote,
+        status: "minor-difference",
+        message: `Minor version difference: local ${local} vs remote ${remote}`,
+      };
+    }
+
+    return {
+      localVersion: local,
+      remoteVersion: remote,
+      status: "compatible",
+      message: `Patch version difference only: local ${local} vs remote ${remote}`,
+    };
   }
 }

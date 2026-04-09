@@ -39,7 +39,7 @@ describe("CentralDatabase", () => {
 
     it("should initialize schema version", () => {
       db.init();
-      expect(db.getSchemaVersion()).toBe(3);
+      expect(db.getSchemaVersion()).toBe(4);
     });
 
     it("should seed lastModified on init", () => {
@@ -116,6 +116,17 @@ describe("CentralDatabase", () => {
       const columnNames = columns.map((column) => column.name);
       expect(columnNames).toContain("systemMetrics");
       expect(columnNames).toContain("knownPeers");
+    });
+
+    it("should include versionInfo and pluginVersions columns on nodes table", () => {
+      db.init();
+
+      const columns = db.prepare("PRAGMA table_info(nodes)").all() as Array<{
+        name: string;
+      }>;
+      const columnNames = columns.map((column) => column.name);
+      expect(columnNames).toContain("versionInfo");
+      expect(columnNames).toContain("pluginVersions");
     });
 
     it("should create peerNodes table with expected columns", () => {
@@ -202,7 +213,7 @@ describe("CentralDatabase", () => {
 
       db.init();
 
-      expect(db.getSchemaVersion()).toBe(3);
+      expect(db.getSchemaVersion()).toBe(4);
 
       const nodeColumns = db.prepare("PRAGMA table_info(nodes)").all() as Array<{ name: string }>;
       const nodeColumnNames = nodeColumns.map((column) => column.name);
@@ -218,6 +229,70 @@ describe("CentralDatabase", () => {
         .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='peerNodes'")
         .all() as Array<{ name: string }>;
       expect(peerIndexes.map((index) => index.name)).toContain("idxPeerNodesNodeId");
+    });
+
+    it("should migrate from v3 to v4 with version tracking columns", () => {
+      const now = new Date().toISOString();
+
+      // Create v3 schema manually
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS projects (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          path TEXT NOT NULL UNIQUE,
+          status TEXT NOT NULL DEFAULT 'active',
+          isolationMode TEXT NOT NULL DEFAULT 'in-process',
+          createdAt TEXT NOT NULL,
+          updatedAt TEXT NOT NULL,
+          lastActivityAt TEXT,
+          nodeId TEXT,
+          settings TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS nodes (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          type TEXT NOT NULL CHECK (type IN ('local', 'remote')),
+          url TEXT,
+          apiKey TEXT,
+          status TEXT NOT NULL DEFAULT 'offline',
+          capabilities TEXT,
+          systemMetrics TEXT,
+          knownPeers TEXT,
+          maxConcurrent INTEGER NOT NULL DEFAULT 2,
+          createdAt TEXT NOT NULL,
+          updatedAt TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS __meta (
+          key TEXT PRIMARY KEY,
+          value TEXT
+        );
+      `);
+
+      db.prepare("INSERT INTO __meta (key, value) VALUES ('schemaVersion', '3')").run();
+      db.prepare("INSERT INTO __meta (key, value) VALUES ('lastModified', ?)").run(String(Date.now()));
+      db.prepare(
+        "INSERT INTO nodes (id, name, type, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)",
+      ).run("node_v3", "v3-node", "local", now, now);
+
+      db.init();
+
+      expect(db.getSchemaVersion()).toBe(4);
+
+      const nodeColumns = db.prepare("PRAGMA table_info(nodes)").all() as Array<{ name: string }>;
+      const nodeColumnNames = nodeColumns.map((column) => column.name);
+      expect(nodeColumnNames).toContain("versionInfo");
+      expect(nodeColumnNames).toContain("pluginVersions");
+
+      // Verify nullable columns - can insert node without them
+      const row = db.prepare("SELECT versionInfo, pluginVersions FROM nodes WHERE id = ?").get("node_v3") as {
+        versionInfo: string | null;
+        pluginVersions: string | null;
+      } | undefined;
+      expect(row).toBeDefined();
+      expect(row?.versionInfo).toBeNull();
+      expect(row?.pluginVersions).toBeNull();
     });
   });
 

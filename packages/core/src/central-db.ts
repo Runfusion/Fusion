@@ -23,7 +23,7 @@ export { toJson, toJsonNullable, fromJson };
 
 // ── Schema Definition ───────────────────────────────────────────────────
 
-const CENTRAL_SCHEMA_VERSION = 3;
+const CENTRAL_SCHEMA_VERSION = 4;
 
 const CENTRAL_SCHEMA_SQL = `
 -- Projects table (project registry)
@@ -98,6 +98,8 @@ CREATE TABLE IF NOT EXISTS nodes (
   capabilities TEXT,
   systemMetrics TEXT,
   knownPeers TEXT,
+  versionInfo TEXT,
+  pluginVersions TEXT,
   maxConcurrent INTEGER NOT NULL DEFAULT 2,
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL
@@ -167,6 +169,11 @@ const CENTRAL_SCHEMA_V3_CREATE_PEERS_SQL = CENTRAL_SCHEMA_V3_MIGRATION_SQL
   .filter((line) => !line.trim().startsWith("ALTER TABLE nodes ADD COLUMN"))
   .join("\n");
 
+const CENTRAL_SCHEMA_V4_MIGRATION_SQL = `
+ALTER TABLE nodes ADD COLUMN versionInfo TEXT;
+ALTER TABLE nodes ADD COLUMN pluginVersions TEXT;
+`;
+
 // ── Central Database Class ────────────────────────────────────────────────
 
 export class CentralDatabase {
@@ -219,6 +226,16 @@ export class CentralDatabase {
         this.db.exec("ALTER TABLE nodes ADD COLUMN knownPeers TEXT");
       }
       this.db.exec(CENTRAL_SCHEMA_V3_CREATE_PEERS_SQL);
+      migrated = true;
+    }
+
+    if (currentVersion < 4) {
+      if (!this.hasColumn("nodes", "versionInfo")) {
+        this.db.exec("ALTER TABLE nodes ADD COLUMN versionInfo TEXT");
+      }
+      if (!this.hasColumn("nodes", "pluginVersions")) {
+        this.db.exec("ALTER TABLE nodes ADD COLUMN pluginVersions TEXT");
+      }
       migrated = true;
     }
 

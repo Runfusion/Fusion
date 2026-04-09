@@ -172,6 +172,7 @@ export { CentralDatabase, createCentralDatabase } from "./central-db.js";
 export { NodeConnection } from "./node-connection.js";
 export { NodeDiscovery } from "./node-discovery.js";
 export { collectSystemMetrics } from "./system-metrics.js";
+export { getAppVersion, parseSemver } from "./app-version.js";
 export type {
   ConnectionErrorType,
   ConnectionOptions,
@@ -188,6 +189,8 @@ export type {
   NodeConfig,
   NodeMeshState,
   NodeStatus,
+  NodeVersionInfo,
+  NodeVersionInfoInput,
   NodeDiscoveryEvent,
   DiscoveryConfig,
   DiscoveredNode,
@@ -195,6 +198,9 @@ export type {
   PeerNode,
   PeerSyncRequest,
   PeerSyncResponse,
+  PluginSyncResult,
+  PluginSyncEntry,
+  PluginSyncAction,
   ProjectHealth,
   /** @deprecated Use RegisteredProject instead */
   ProjectInfo,
@@ -203,6 +209,8 @@ export type {
   RegisteredProject,
   SetupCompletionResult,
   SetupState,
+  VersionCompatibilityResult,
+  VersionCompatibilityStatus,
 } from "./types.js";
 
 // ── Migration and First-Run Experience ────────────────────────────────
