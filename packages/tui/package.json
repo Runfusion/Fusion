@@ -19,6 +19,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@fusion/core": "workspace:*",
     "ink": "^6.8.0",
     "react": "^19.0.0"
   },
