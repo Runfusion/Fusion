@@ -772,6 +772,12 @@ describe("NewAgentDialog", () => {
       // Title should be the preset's description
       expect(createCall.title).toBe("Reviews code changes for correctness, security, performance, and adherence to project coding standards.");
       expect(createCall.role).toBe("reviewer");
+      // Soul should be populated from preset
+      expect(createCall.soul).toBeTruthy();
+      expect(typeof createCall.soul).toBe("string");
+      // instructionsText should be populated from preset
+      expect(createCall.instructionsText).toBeTruthy();
+      expect(typeof createCall.instructionsText).toBe("string");
     });
 
     it("preset card titles show the professional title", () => {
@@ -905,6 +911,150 @@ describe("NewAgentDialog", () => {
 
       // On initial render (step 0, no preset, empty name), Next should be disabled
       expect(screen.getByText("Next")).toBeDisabled();
+    });
+
+    it("selecting a preset sets soul and instructionsText in the create agent call", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
+
+      // Click the QA Engineer preset
+      await user.click(screen.getByTestId("preset-qa-engineer"));
+
+      // Navigate to summary and create
+      await user.click(screen.getByText("Next"));
+      await user.click(screen.getByText("Create"));
+
+      await waitFor(() => {
+        expect(mockCreateAgent).toHaveBeenCalledOnce();
+      });
+
+      const createCall = mockCreateAgent.mock.calls[0][0];
+      expect(createCall.name).toBe("QA Engineer");
+      // Soul should be the QA Engineer preset soul
+      expect(createCall.soul).toContain("thorough and methodical QA engineer");
+      // instructionsText should contain QA-specific instructions
+      expect(createCall.instructionsText).toContain("full test suite");
+      expect(createCall.instructionsText).toContain("regression tests");
+    });
+
+    it("selecting a preset then overriding instructions manually uses the manual value", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
+
+      // Select a preset (advances to step 1)
+      await user.click(screen.getByTestId("preset-engineer"));
+
+      // Go back to step 0 to override instructions
+      await user.click(screen.getByText("Back"));
+
+      // Override the instructionsText manually
+      const instructionsTextarea = screen.getByLabelText(/Inline Instructions/) as HTMLTextAreaElement;
+      await user.clear(instructionsTextarea);
+      await user.type(instructionsTextarea, "My custom instructions");
+
+      // Navigate through and create
+      await user.click(screen.getByText("Next"));
+      await user.click(screen.getByText("Next"));
+      await user.click(screen.getByText("Create"));
+
+      await waitFor(() => {
+        expect(mockCreateAgent).toHaveBeenCalledOnce();
+      });
+
+      const createCall = mockCreateAgent.mock.calls[0][0];
+      // The manually entered instructions should be used, not the preset's
+      expect(createCall.instructionsText).toBe("My custom instructions");
+      // Soul should still be from the preset
+      expect(createCall.soul).toContain("reliable and versatile engineer");
+    });
+
+    it("clicking a preset populates soul and instructionsText fields", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
+
+      // Click the CTO preset
+      await user.click(screen.getByTestId("preset-cto"));
+
+      // Go back to step 0 to verify fields
+      await user.click(screen.getByText("Back"));
+
+      // Verify soul was populated
+      const soulTextarea = screen.getByLabelText(/Soul/) as HTMLTextAreaElement;
+      expect(soulTextarea.value).toContain("pragmatic technologist");
+
+      // Verify instructionsText was populated
+      const instructionsTextarea = screen.getByLabelText(/Inline Instructions/) as HTMLTextAreaElement;
+      expect(instructionsTextarea.value).toContain("Evaluate technology choices");
+    });
+
+    it("selecting a different preset updates soul and instructionsText", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
+
+      // Select CEO preset
+      await user.click(screen.getByTestId("preset-ceo"));
+      await user.click(screen.getByText("Back"));
+
+      // Verify CEO soul is set
+      let soulTextarea = screen.getByLabelText(/Soul/) as HTMLTextAreaElement;
+      expect(soulTextarea.value).toContain("strategic leader");
+
+      // Select a different preset (DevOps Engineer)
+      await user.click(screen.getByTestId("preset-devops-engineer"));
+      await user.click(screen.getByText("Back"));
+
+      // Verify soul updated to DevOps
+      soulTextarea = screen.getByLabelText(/Soul/) as HTMLTextAreaElement;
+      expect(soulTextarea.value).toContain("infrastructure-minded engineer");
+
+      // Verify instructions updated
+      const instructionsTextarea = screen.getByLabelText(/Inline Instructions/) as HTMLTextAreaElement;
+      expect(instructionsTextarea.value).toContain("rollback plan");
+    });
+
+    it("dialog reset clears soul and instructionsText from preset", async () => {
+      const user = userEvent.setup();
+      const { unmount } = render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
+
+      // Select a preset
+      await user.click(screen.getByTestId("preset-cto"));
+
+      // Close the dialog
+      await user.click(screen.getByLabelText("Close"));
+      expect(mockOnClose).toHaveBeenCalled();
+
+      // Re-open — state should be reset
+      unmount();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      // Soul and instructionsText should be empty
+      const soulTextarea = screen.getByLabelText(/Soul/) as HTMLTextAreaElement;
+      expect(soulTextarea.value).toBe("");
+
+      const instructionsTextarea = screen.getByLabelText(/Inline Instructions/) as HTMLTextAreaElement;
+      expect(instructionsTextarea.value).toBe("");
     });
   });
 });

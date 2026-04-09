@@ -2,6 +2,8 @@
 
 ## Architecture
 
+- Agent preset templates in `NewAgentDialog.tsx` are a UI-only concept (`AgentPreset` interface), separate from the engine's `AgentPromptTemplate` type. Presets populate agent creation fields (name, icon, role, soul, instructionsText) but don't map to engine types.
+- `soul` and `instructionsText` are already supported in `AgentCreateInput` and `AgentUpdateInput` — no API changes needed when adding these to presets.
 - `CronRunner` uses dependency injection for AI prompt execution: an `AiPromptExecutor` function is injected via options. This keeps it decoupled from `createKbAgent` and testable without real agent sessions.
 - `createAiPromptExecutor(cwd)` is an async factory function that creates a new agent session per call, uses `onText` for text accumulation, and disposes sessions in a `finally` block.
 - The factory uses lazy `import("./pi.js")` to avoid pulling the pi SDK into the module graph when AI execution isn't needed.
@@ -68,3 +70,6 @@
 
 - Several test files assert specific CSS values in `styles.css` mobile media query blocks (e.g., `board-mobile.test.tsx`, `core-modals-mobile.test.tsx`, `mission-planning-modals-mobile.test.ts`, `mobile-nav-bar-css.test.ts`). When changing mobile CSS values (like `min-height`), update both the CSS and the corresponding test assertions + regex patterns.
 - Mobile-specific selectors like `.mobile-nav-tab` and `.mobile-more-item` may exist as base styles (not inside media queries) but are still mobile-only components. The `.touch-target` utility class at the top of `styles.css` is intentionally 44px and should not be changed when reducing mobile button sizes.
+- When checking if a CSS value is inside a `@media` block, don't just search backwards for the nearest `@media` — track brace depth to confirm the line is actually between the block's opening `{` and closing `}`. Many component styles are defined globally (not in media queries) even though they visually only appear on mobile.
+- Regex tests using `[\s\S]*` (greedy match across lines) to check CSS rules inside `@media` blocks are unreliable — they can match across block boundaries. Use non-greedy `[^}]*` scoped to a single rule block instead.
+- Touch target sizing in `styles.css` mobile media queries uses 36px (reduced from the original 44px). The `.touch-target` opt-in utility class remains at 44px. Comments mentioning "44px" in the mobile sections have been updated to reflect the actual values.
