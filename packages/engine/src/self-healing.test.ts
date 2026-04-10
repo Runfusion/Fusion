@@ -54,6 +54,7 @@ function createMockStore(overrides: Record<string, unknown> = {}): TaskStore & E
     updateTask: vi.fn().mockResolvedValue({} as Task),
     logEntry: vi.fn().mockResolvedValue(undefined),
     moveTask: vi.fn().mockResolvedValue(undefined),
+    mergeTask: vi.fn().mockResolvedValue(undefined),
     walCheckpoint: vi.fn().mockReturnValue({ busy: 0, log: 5, checkpointed: 5 }),
     listTasks: vi.fn().mockResolvedValue([]),
     getRootDir: vi.fn().mockReturnValue("/tmp/test-project"),
@@ -688,6 +689,66 @@ describe("SelfHealingManager", () => {
   });
 
   describe("recoverMergedReviewTasks", () => {
+    it("merges eligible in-review tasks that still have an unmerged worktree", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-352",
+          column: "in-review",
+          paused: false,
+          status: null,
+          error: null,
+          worktree: "/tmp/test-project/.worktrees/fn-352",
+          steps: [{ name: "Ship it", status: "done" }],
+          workflowStepResults: [{ id: "ws-1", status: "passed", phase: "pre-merge" }],
+          mergeDetails: undefined,
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverMergeableReviewTasks();
+
+      expect(result).toBe(1);
+      expect(store.mergeTask).toHaveBeenCalledWith("FN-352");
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-352",
+        expect.stringContaining("eligible in-review task was merged"),
+      );
+
+      managerWithRecovery.stop();
+    });
+
+    it("ignores in-review tasks that are not yet mergeable", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-353",
+          column: "in-review",
+          paused: false,
+          status: null,
+          error: null,
+          worktree: "/tmp/test-project/.worktrees/fn-353",
+          steps: [{ name: "Ship it", status: "in-progress" }],
+          workflowStepResults: [],
+          mergeDetails: undefined,
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverMergeableReviewTasks();
+
+      expect(result).toBe(0);
+      expect(store.mergeTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
     it("moves merged in-review tasks to done and clears transient merge state", async () => {
       const managerWithRecovery = new SelfHealingManager(store, {
         rootDir: "/tmp/test-project",

@@ -16,7 +16,7 @@
 import { execSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { TaskStore, Settings, Task } from "@fusion/core";
+import { getTaskMergeBlocker, type TaskStore, type Settings, type Task } from "@fusion/core";
 import { createLogger } from "./logger.js";
 import { scanIdleWorktrees, scanOrphanedBranches } from "./worktree-pool.js";
 
@@ -325,6 +325,7 @@ export class SelfHealingManager {
       this.checkpointWal();
       await this.enforceWorktreeCap();
       await this.recoverCompletedTasks();
+      await this.recoverMergeableReviewTasks();
       await this.recoverMergedReviewTasks();
       await this.recoverMisclassifiedFailures();
       await this.recoverOrphanedExecutions();
@@ -382,6 +383,55 @@ export class SelfHealingManager {
       return recovered;
     } catch (err: any) {
       log.error(`Completed task recovery failed: ${err.message}`);
+      return 0;
+    }
+  }
+
+  /**
+   * Recover `in-review` tasks that are fully mergeable but never had
+   * `mergeTask()` invoked.
+   *
+   * This catches races where a task reached review, retained its worktree,
+   * and then got stranded without a merger loop to finish the branch.
+   *
+   * @returns Number of tasks merged or finalized to done
+   */
+  async recoverMergeableReviewTasks(): Promise<number> {
+    try {
+      const tasks = await this.store.listTasks();
+
+      const mergeable = tasks.filter((t) =>
+        t.column === "in-review" &&
+        Boolean(t.worktree) &&
+        t.mergeDetails?.mergeConfirmed !== true &&
+        getTaskMergeBlocker(t) === undefined,
+      );
+
+      if (mergeable.length === 0) return 0;
+
+      log.warn(`Found ${mergeable.length} mergeable review task(s) stuck in in-review`);
+
+      let recovered = 0;
+      for (const task of mergeable) {
+        try {
+          await this.store.mergeTask(task.id);
+          await this.store.logEntry(
+            task.id,
+            "Auto-recovered: eligible in-review task was merged and moved to done",
+          );
+          log.log(`Recovered mergeable review task ${task.id}: merged to done`);
+          recovered++;
+        } catch (err: any) {
+          log.error(`Failed to recover mergeable review task ${task.id}: ${err.message}`);
+        }
+      }
+
+      if (recovered > 0) {
+        log.log(`Recovered ${recovered} mergeable review task(s) → done`);
+      }
+      return recovered;
+    } catch (err: any) {
+      log.error(`Mergeable review recovery failed: ${err.message}`);
       return 0;
     }
   }

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { existsSync } from "node:fs";
 import type { TaskStore, Task, TaskDetail, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability, RunMutationContext } from "@fusion/core";
 import type { AgentStore } from "@fusion/core";
-import { buildExecutionMemoryInstructions, resolveAgentPrompt } from "@fusion/core";
+import { buildExecutionMemoryInstructions, getTaskMergeBlocker, resolveAgentPrompt } from "@fusion/core";
 import { findWorktreeUser } from "./merger.js";
 import { generateWorktreeName, slugify } from "./worktree-names.js";
 import { Type, type Static } from "@mariozechner/pi-ai";
@@ -290,6 +290,28 @@ export class TaskExecutor {
   private loopRecoveryState = new Map<string, { attempts: number; pending: boolean }>();
   /** Spawned child agent IDs per parent task ID. Used for lifecycle tracking. */
   private spawnedAgents = new Map<string, Set<string>>();
+
+  private async finalizeAlreadyReviewedTask(taskId: string): Promise<"merged" | "blocked" | "missing"> {
+    const latestTask = await this.store.getTask(taskId);
+    if (!latestTask || latestTask.column !== "in-review") {
+      return "missing";
+    }
+
+    const blocker = getTaskMergeBlocker(latestTask);
+    if (blocker) {
+      await this.store.logEntry(taskId, "Task already in-review; merge deferred", blocker, this.currentRunContext);
+      return "blocked";
+    }
+
+    await this.store.logEntry(
+      taskId,
+      "Task already in-review after completion — finalizing merge",
+      undefined,
+      this.currentRunContext,
+    );
+    await this.store.mergeTask(taskId);
+    return "merged";
+  }
   /** Child agent sessions keyed by agent ID. Used for termination. */
   private childSessions = new Map<string, AgentSession>();
   /** Total count of currently spawned agents (across all parents). */
@@ -1585,6 +1607,14 @@ export class TaskExecutor {
         const logMessage = `Task already moved from '${fromColumn}' — skipping transition to '${toColumn}'`;
         executorLog.log(`${task.id} ${logMessage}`);
         await this.store.logEntry(task.id, logMessage, err.message, this.currentRunContext);
+        if (fromColumn === "in-review" && toColumn === "in-review") {
+          try {
+            const finalizeResult = await this.finalizeAlreadyReviewedTask(task.id);
+            executorLog.log(`${task.id} duplicate in-review finalization result: ${finalizeResult}`);
+          } catch (finalizeErr: any) {
+            executorLog.warn(`${task.id} failed to finalize duplicate in-review transition: ${finalizeErr.message}`);
+          }
+        }
         // Task finished successfully (just already moved), so call onComplete
         this.options.onComplete?.(task);
       } else if (this.pausedAborted.has(task.id)) {

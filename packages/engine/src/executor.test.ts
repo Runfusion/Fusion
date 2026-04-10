@@ -148,6 +148,7 @@ function createMockStore() {
     }),
     updateTask: vi.fn().mockResolvedValue({}),
     moveTask: vi.fn().mockResolvedValue({}),
+    mergeTask: vi.fn().mockResolvedValue({}),
     logEntry: vi.fn().mockResolvedValue(undefined),
     parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
     updateSettings: vi.fn().mockResolvedValue({}),
@@ -5694,6 +5695,39 @@ describe("Invalid transition error handling", () => {
     // onComplete should be called even when invalid transition occurs
     expect(onComplete).toHaveBeenCalled();
     expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-002" }));
+  });
+
+  it("finalizes an already-reviewed task when it is ready to merge", async () => {
+    const store = createMockStore();
+    store.getTask.mockResolvedValue({
+      id: "FN-003",
+      title: "Test",
+      description: "Test",
+      column: "in-review",
+      paused: false,
+      status: null,
+      error: null,
+      worktree: "/tmp/test/.worktrees/fn-003",
+      dependencies: [],
+      steps: [{ name: "Done", status: "done" }],
+      workflowStepResults: [{ id: "ws-1", status: "passed", phase: "pre-merge" }],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const result = await (executor as any).finalizeAlreadyReviewedTask("FN-003");
+
+    expect(result).toBe("merged");
+    expect(store.mergeTask).toHaveBeenCalledWith("FN-003");
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-003",
+      "Task already in-review after completion — finalizing merge",
+      undefined,
+      undefined,
+    );
   });
 });
 
