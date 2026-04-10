@@ -4,6 +4,8 @@ import {
   AutomationStore,
   CentralCore,
   AgentStore,
+  PluginStore,
+  PluginLoader,
   getTaskMergeBlocker,
   syncInsightExtractionAutomation,
   INSIGHT_EXTRACTION_SCHEDULE_NAME,
@@ -78,6 +80,27 @@ export async function runServe(
 
   const agentStore = new AgentStore({ rootDir: store.getFusionDir() });
   await agentStore.init();
+
+  // ── PluginStore: plugin installation management ─────────────────────
+  //
+  // SQLite-backed plugin persistence for the Settings → Plugins experience.
+  // Enables the PluginManager UI to list, install, enable, disable, and
+  // configure plugins via the /api/plugins REST endpoints.
+  //
+  const pluginStore = new PluginStore(store.getFusionDir());
+  await pluginStore.init();
+
+  // ── PluginLoader: plugin lifecycle management ───────────────────────
+  //
+  // Manages dynamic plugin loading, hot-reload, hook invocation, and
+  // dependency resolution. The PluginLoader instance also serves as the
+  // PluginRunner for the REST routes (provides getPluginRoutes and
+  // reloadPlugin methods).
+  //
+  const pluginLoader = new PluginLoader({
+    pluginStore,
+    taskStore: store,
+  });
 
   // ── HeartbeatMonitor: runtime monitoring and execution for agents ───
   //
@@ -493,6 +516,9 @@ export async function runServe(
     automationStore,
     missionAutopilot,
     heartbeatMonitor,
+    pluginStore,
+    pluginLoader,
+    pluginRunner: pluginLoader,
     headless: true,
   });
 

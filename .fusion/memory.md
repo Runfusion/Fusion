@@ -198,6 +198,12 @@ Key implementation details from the plugin core foundation task:
 - Classes: `PluginStore`, `PluginLoader`
 - Interfaces: `PluginStoreEvents`, `PluginRegistrationInput`, `PluginUpdateInput`, `PluginLoaderOptions`
 
+**Dashboard/Serve plugin wiring (FN-1468)**:
+- PluginStore initialized with `store.getFusionDir()` as rootDir
+- PluginLoader initialized with `{ pluginStore, taskStore: store }`
+- Both passed to `createServer()` via `pluginStore`, `pluginLoader`, and `pluginRunner` (pluginLoader instance)
+- Enables `/api/plugins` REST endpoints in both dashboard and headless node modes
+
 ### Plugin Hot-Load/Unload (FN-1133)
 
 - Plugins can be loaded and unloaded at runtime without restarting the engine or dashboard.

@@ -100,6 +100,45 @@ vi.mock("@fusion/core", () => ({
     getBudgetStatus: vi.fn().mockResolvedValue({ isOverBudget: false, isOverThreshold: false, usagePercent: 0 }),
     getRecentRuns: vi.fn().mockResolvedValue([]),
   })),
+  PluginStore: vi.fn().mockImplementation(() => {
+    const emitter = new EventEmitter();
+    return {
+      init: vi.fn().mockResolvedValue(undefined),
+      listPlugins: vi.fn().mockResolvedValue([]),
+      getPlugin: vi.fn(),
+      registerPlugin: vi.fn(),
+      enablePlugin: vi.fn(),
+      disablePlugin: vi.fn(),
+      updatePluginSettings: vi.fn(),
+      unregisterPlugin: vi.fn(),
+      updatePluginState: vi.fn(),
+      on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+        emitter.on(event, handler);
+      }),
+      off: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+        emitter.off(event, handler);
+      }),
+      emit: emitter.emit.bind(emitter),
+    };
+  }),
+  PluginLoader: vi.fn().mockImplementation(() => {
+    const emitter = new EventEmitter();
+    return {
+      loadPlugin: vi.fn().mockResolvedValue(undefined),
+      stopPlugin: vi.fn().mockResolvedValue(undefined),
+      reloadPlugin: vi.fn().mockResolvedValue(undefined),
+      getPluginRoutes: vi.fn().mockReturnValue([]),
+      getPlugin: vi.fn(),
+      getLoadedPlugins: vi.fn().mockReturnValue([]),
+      on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+        emitter.on(event, handler);
+      }),
+      off: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+        emitter.off(event, handler);
+      }),
+      emit: emitter.emit.bind(emitter),
+    };
+  }),
   getTaskMergeBlocker: vi.fn((task: any) => {
     if (task.column !== "in-review") return `task is in '${task.column}', must be in 'in-review'`;
     if (task.paused) return "task is paused";
@@ -249,6 +288,14 @@ vi.mock("@fusion/engine", async (importOriginal) => {
       start: vi.fn(),
       stop: vi.fn(),
       setScheduler: vi.fn(),
+    })),
+    PluginLoader: vi.fn().mockImplementation(() => ({
+      loadPlugin: vi.fn().mockResolvedValue(undefined),
+      stopPlugin: vi.fn().mockResolvedValue(undefined),
+      reloadPlugin: vi.fn().mockResolvedValue(undefined),
+      getPluginRoutes: vi.fn().mockReturnValue([]),
+      getPlugin: vi.fn(),
+      getLoadedPlugins: vi.fn().mockReturnValue([]),
     })),
     scanIdleWorktrees: vi.fn().mockResolvedValue([]),
     cleanupOrphanedWorktrees: vi.fn().mockResolvedValue(0),
@@ -1778,7 +1825,7 @@ describe("runDashboard — lifecycle listener cleanup", () => {
     dispose();
 
     const offCalls = mockStore.off.mock.calls.slice(offCallsBefore);
-    expect(offCalls.filter(([event]) => event === "settings:updated")).toHaveLength(5);
+    expect(offCalls.filter(([event]) => event === "settings:updated")).toHaveLength(6);
     expect(offCalls.filter(([event]) => event === "task:moved")).toHaveLength(1);
   });
 

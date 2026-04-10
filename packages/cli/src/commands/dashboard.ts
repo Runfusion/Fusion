@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 import type { AddressInfo } from "node:net";
 import { createInterface } from "node:readline";
-import { TaskStore, AutomationStore, CentralCore, AgentStore, getTaskMergeBlocker, syncInsightExtractionAutomation, INSIGHT_EXTRACTION_SCHEDULE_NAME, processAndAuditInsightExtraction } from "@fusion/core";
+import { TaskStore, AutomationStore, CentralCore, AgentStore, PluginStore, PluginLoader, getTaskMergeBlocker, syncInsightExtractionAutomation, INSIGHT_EXTRACTION_SCHEDULE_NAME, processAndAuditInsightExtraction } from "@fusion/core";
 import type { Settings, TaskDetail, PrInfo, ScheduledTask, AutomationRunResult } from "@fusion/core";
 import { createServer, GitHubClient } from "@fusion/dashboard";
 import { TriageProcessor, TaskExecutor, Scheduler, AgentSemaphore, WorktreePool, aiMergeTask, UsageLimitPauser, PRIORITY_MERGE, scanIdleWorktrees, cleanupOrphanedWorktrees, NtfyNotifier, PrMonitor, PrCommentHandler, CronRunner, StuckTaskDetector, SelfHealingManager, MissionAutopilot, createAiPromptExecutor, HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "@fusion/engine";
@@ -308,6 +308,27 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   //
   const agentStore = new AgentStore({ rootDir: store.getFusionDir() });
   await agentStore.init();
+
+  // ── PluginStore: plugin installation management ─────────────────────
+  //
+  // SQLite-backed plugin persistence for the Settings → Plugins experience.
+  // Enables the PluginManager UI to list, install, enable, disable, and
+  // configure plugins via the /api/plugins REST endpoints.
+  //
+  const pluginStore = new PluginStore(store.getFusionDir());
+  await pluginStore.init();
+
+  // ── PluginLoader: plugin lifecycle management ───────────────────────
+  //
+  // Manages dynamic plugin loading, hot-reload, hook invocation, and
+  // dependency resolution. The PluginLoader instance also serves as the
+  // PluginRunner for the REST routes (provides getPluginRoutes and
+  // reloadPlugin methods).
+  //
+  const pluginLoader = new PluginLoader({
+    pluginStore,
+    taskStore: store,
+  });
 
   // ── HeartbeatMonitor: runtime monitoring and execution for agents ───
   //
@@ -755,7 +776,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
 
   const dashboardAuthStorage = wrapAuthStorageWithApiKeyProviders(authStorage, modelRegistry);
 
-  // Start the web server with AI merge, auth, and model registry wired in
+  // Start the web server with AI merge, auth, model registry, and plugin wiring
   const app = createServer(store, {
     onMerge,
     authStorage: dashboardAuthStorage,
@@ -763,6 +784,9 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     automationStore,
     missionAutopilot,
     heartbeatMonitor,
+    pluginStore,
+    pluginLoader,
+    pluginRunner: pluginLoader,
   });
 
   function dispose(): void {

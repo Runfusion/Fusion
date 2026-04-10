@@ -65,6 +65,25 @@ vi.mock("@fusion/core", () => ({
     getAgent: vi.fn().mockResolvedValue(null),
     deleteAgent: vi.fn(),
   })),
+  PluginStore: vi.fn().mockImplementation(() => ({
+    init: vi.fn().mockResolvedValue(undefined),
+    listPlugins: vi.fn().mockResolvedValue([]),
+    getPlugin: vi.fn(),
+    registerPlugin: vi.fn(),
+    enablePlugin: vi.fn(),
+    disablePlugin: vi.fn(),
+    updatePluginSettings: vi.fn(),
+    unregisterPlugin: vi.fn(),
+    updatePluginState: vi.fn(),
+  })),
+  PluginLoader: vi.fn().mockImplementation(() => ({
+    loadPlugin: vi.fn().mockResolvedValue(undefined),
+    stopPlugin: vi.fn().mockResolvedValue(undefined),
+    reloadPlugin: vi.fn().mockResolvedValue(undefined),
+    getPluginRoutes: vi.fn().mockReturnValue([]),
+    getPlugin: vi.fn(),
+    getLoadedPlugins: vi.fn().mockReturnValue([]),
+  })),
   syncInsightExtractionAutomation: mockSyncInsightExtraction,
   INSIGHT_EXTRACTION_SCHEDULE_NAME: "Memory Insight Extraction",
   processAndAuditInsightExtraction: mockProcessAndAudit,
@@ -392,6 +411,63 @@ describe("runDashboard — MissionAutopilot wiring", () => {
 
     const autopilotInstance = (MissionAutopilot as ReturnType<typeof vi.fn>).mock.results[0].value;
     expect(autopilotInstance.start).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("runDashboard — Plugin wiring", () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockDiscoverAndLoadExtensions.mockResolvedValue({
+      runtime: { pendingProviderRegistrations: [] },
+      errors: [],
+    });
+    const { TaskStore } = await import("@fusion/core");
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
+  });
+
+  it("creates PluginStore and PluginLoader instances", async () => {
+    const { PluginStore, PluginLoader } = await import("@fusion/core");
+
+    await runDashboard(0, {});
+
+    expect(PluginStore).toHaveBeenCalledTimes(1);
+    expect(PluginLoader).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes pluginStore, pluginLoader, and pluginRunner to createServer", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+    const { PluginStore, PluginLoader } = await import("@fusion/core");
+
+    await runDashboard(0, {});
+
+    expect(createServer).toHaveBeenCalledTimes(1);
+    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    
+    expect(serverOpts.pluginStore).toBeDefined();
+    expect(serverOpts.pluginLoader).toBeDefined();
+    expect(serverOpts.pluginRunner).toBeDefined();
+    
+    // pluginRunner should be the same instance as pluginLoader
+    expect(serverOpts.pluginRunner).toBe(serverOpts.pluginLoader);
+  });
+
+  it("initializes PluginStore with the task store's fusion directory", async () => {
+    const { PluginStore } = await import("@fusion/core");
+
+    await runDashboard(0, {});
+
+    expect(PluginStore).toHaveBeenCalledWith("/tmp/test/.fusion");
+  });
+
+  it("initializes PluginLoader with pluginStore and taskStore", async () => {
+    const { PluginLoader } = await import("@fusion/core");
+
+    await runDashboard(0, {});
+
+    expect(PluginLoader).toHaveBeenCalledTimes(1);
+    const loaderOptions = (PluginLoader as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(loaderOptions).toHaveProperty("pluginStore");
+    expect(loaderOptions).toHaveProperty("taskStore");
   });
 });
 

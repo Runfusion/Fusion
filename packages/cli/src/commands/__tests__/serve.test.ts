@@ -26,6 +26,8 @@ const mocks = vi.hoisted(() => {
   const cronRunnerInstances: any[] = [];
   const missionAutopilotInstances: any[] = [];
   const notifierInstances: any[] = [];
+  const pluginStoreInstances: any[] = [];
+  const pluginLoaderInstances: any[] = [];
   const listenCalls: ListenCall[] = [];
 
   function createTaskStoreMock() {
@@ -201,6 +203,35 @@ const mocks = vi.hoisted(() => {
     return notifier;
   });
 
+  const pluginStoreCtor = vi.fn().mockImplementation(() => {
+    const pluginStore = {
+      init: vi.fn().mockResolvedValue(undefined),
+      listPlugins: vi.fn().mockResolvedValue([]),
+      getPlugin: vi.fn(),
+      registerPlugin: vi.fn(),
+      enablePlugin: vi.fn(),
+      disablePlugin: vi.fn(),
+      updatePluginSettings: vi.fn(),
+      unregisterPlugin: vi.fn(),
+      updatePluginState: vi.fn(),
+    };
+    pluginStoreInstances.push(pluginStore);
+    return pluginStore;
+  });
+
+  const pluginLoaderCtor = vi.fn().mockImplementation(() => {
+    const pluginLoader = {
+      loadPlugin: vi.fn().mockResolvedValue(undefined),
+      stopPlugin: vi.fn().mockResolvedValue(undefined),
+      reloadPlugin: vi.fn().mockResolvedValue(undefined),
+      getPluginRoutes: vi.fn().mockReturnValue([]),
+      getPlugin: vi.fn(),
+      getLoadedPlugins: vi.fn().mockReturnValue([]),
+    };
+    pluginLoaderInstances.push(pluginLoader);
+    return pluginLoader;
+  });
+
   const authStorage = {
     getApiKey: vi.fn().mockResolvedValue(undefined),
   };
@@ -237,6 +268,8 @@ const mocks = vi.hoisted(() => {
     cronRunnerCtor,
     missionAutopilotCtor,
     notifierCtor,
+    pluginStoreCtor,
+    pluginLoaderCtor,
     authStorage,
     modelRegistry,
     reset() {
@@ -252,6 +285,8 @@ const mocks = vi.hoisted(() => {
       cronRunnerInstances.length = 0;
       missionAutopilotInstances.length = 0;
       notifierInstances.length = 0;
+      pluginStoreInstances.length = 0;
+      pluginLoaderInstances.length = 0;
       listenCalls.length = 0;
     },
   };
@@ -262,6 +297,8 @@ vi.mock("@fusion/core", () => ({
   AutomationStore: mocks.automationStoreCtor,
   AgentStore: mocks.agentStoreCtor,
   CentralCore: mocks.centralCoreCtor,
+  PluginStore: mocks.pluginStoreCtor,
+  PluginLoader: mocks.pluginLoaderCtor,
   getTaskMergeBlocker: vi.fn().mockReturnValue(null),
   syncInsightExtractionAutomation: vi.fn().mockResolvedValue(undefined),
   INSIGHT_EXTRACTION_SCHEDULE_NAME: "Memory Insight Extraction",
@@ -475,6 +512,113 @@ describe("runServe", () => {
       port: 3020,
       host: "127.0.0.1",
     });
+    await triggerSignal("SIGINT");
+  });
+});
+
+describe("runServe — Plugin wiring", () => {
+  const originalCwd = process.cwd;
+  const originalOn = process.on;
+  const originalExit = process.exit;
+
+  let signalHandlers: Record<"SIGINT" | "SIGTERM", Array<() => void>>;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+  let processOnSpy: ReturnType<typeof vi.spyOn>;
+
+  async function triggerSignal(signal: "SIGINT" | "SIGTERM") {
+    const handlers = signalHandlers[signal];
+    expect(handlers.length).toBeGreaterThan(0);
+    handlers[handlers.length - 1]();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.reset();
+
+    signalHandlers = { SIGINT: [], SIGTERM: [] };
+
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    cwdSpy = vi.spyOn(process, "cwd").mockReturnValue("/repo");
+    processOnSpy = vi.spyOn(process, "on").mockImplementation(((event: string, listener: () => void) => {
+      if (event === "SIGINT" || event === "SIGTERM") {
+        signalHandlers[event].push(listener);
+      }
+      return process;
+    }) as typeof process.on);
+    process.exit = vi.fn() as never;
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    cwdSpy.mockRestore();
+    processOnSpy.mockRestore();
+    process.cwd = originalCwd;
+    process.on = originalOn;
+    process.exit = originalExit;
+  });
+
+  it("creates PluginStore and PluginLoader instances", async () => {
+    const { PluginStore, PluginLoader } = await import("@fusion/core");
+
+    await runServe(4040, {});
+
+    expect(PluginStore).toHaveBeenCalledTimes(1);
+    expect(PluginLoader).toHaveBeenCalledTimes(1);
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("passes pluginStore, pluginLoader, and pluginRunner to createServer", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+
+    await runServe(4040, {});
+
+    expect(createServer).toHaveBeenCalledTimes(1);
+    const serverOpts = createServer.mock.calls[0][1];
+    expect(serverOpts).toHaveProperty("pluginStore");
+    expect(serverOpts).toHaveProperty("pluginLoader");
+    expect(serverOpts).toHaveProperty("pluginRunner");
+    expect(serverOpts.pluginRunner).toBe(serverOpts.pluginLoader);
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("initializes PluginStore with the task store's fusion directory", async () => {
+    const { PluginStore } = await import("@fusion/core");
+
+    await runServe(4040, {});
+
+    expect(PluginStore).toHaveBeenCalledWith("/repo/.fusion");
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("initializes PluginLoader with pluginStore and taskStore", async () => {
+    const { PluginLoader } = await import("@fusion/core");
+
+    await runServe(4040, {});
+
+    expect(PluginLoader).toHaveBeenCalledTimes(1);
+    const loaderOptions = PluginLoader.mock.calls[0][0];
+    expect(loaderOptions).toHaveProperty("pluginStore");
+    expect(loaderOptions).toHaveProperty("taskStore");
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("includes plugin wiring in headless server", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+
+    await runServe(4040, {});
+
+    expect(createServer).toHaveBeenCalledTimes(1);
+    const serverOpts = createServer.mock.calls[0][1];
+    expect(serverOpts.headless).toBe(true);
+    expect(serverOpts.pluginStore).toBeDefined();
+    expect(serverOpts.pluginLoader).toBeDefined();
+
     await triggerSignal("SIGINT");
   });
 });
