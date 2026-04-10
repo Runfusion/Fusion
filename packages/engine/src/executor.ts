@@ -234,7 +234,8 @@ If a project build command is listed in the prompt, it is a hard completion gate
 Tests and typecheck are also hard quality gates:
 - Keep fixing failures until the configured/full test suite passes
 - If the repository exposes a typecheck command, run it and keep fixing failures until it passes
-- Do not stop at "out of scope" if additional fixes are required to restore green tests, build, or typecheck`;
+- Do not stop at "out of scope" if additional fixes are required to restore green tests, build, or typecheck
+- **CRITICAL: Resolve ALL test failures before completing the task, even if they appear unrelated or pre-existing.** Unrelated failures left unfixed accumulate technical debt and block future integrations. Investigate and fix or suppress them — do not defer them to a separate task.`;
 
 /** Resolve the executor system prompt from settings, falling back to the hardcoded constant. */
 function getExecutorSystemPrompt(settings: Settings): string {
@@ -3352,7 +3353,8 @@ If a build command is configured, run that exact command in this worktree before
 Treat a non-zero exit code as a blocking failure. Do not claim success without a real passing run.
 Run the configured/full test suite and fix failures even when that requires edits outside the original File Scope.
 If the repo has a typecheck command, run it before \`task_done()\` and fix any failures it reports.
-Use \`task_create\` for truly separate follow-up work, not for fixes required to get tests, build, or typecheck back to green.`;
+Use \`task_create\` for truly separate follow-up work, not for fixes required to get tests, build, or typecheck back to green.
+**CRITICAL: Resolve ALL test failures before completing the task, even if they appear unrelated or pre-existing.** Unrelated failures left unfixed accumulate technical debt and block future integrations. Investigate and fix or suppress them — do not defer them to a separate task.`;
 }
 
 /**

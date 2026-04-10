@@ -141,7 +141,8 @@ If a project build command is listed in the prompt, it is a hard completion gate
 Tests and typecheck are also hard quality gates:
 - Keep fixing failures until the configured/full test suite passes
 - If the repository exposes a typecheck command, run it and keep fixing failures until it passes
-- Do not stop at "out of scope" if additional fixes are required to restore green tests, build, or typecheck`;
+- Do not stop at "out of scope" if additional fixes are required to restore green tests, build, or typecheck
+- **CRITICAL: Resolve ALL test failures before completing the task, even if they appear unrelated or pre-existing.** Unrelated failures left unfixed accumulate technical debt and block future integrations. Investigate and fix or suppress them — do not defer them to a separate task.`;
 
 const TRIAGE_PROMPT_TEXT = `You are a task specification agent for "fn", an AI-orchestrated task board.
 
@@ -494,7 +495,8 @@ Call \`task_done()\` to signal completion.
 \`\`\`
 
 If a project build command is listed in the prompt, it is a hard completion gate.
-Tests and typecheck are also hard quality gates — keep fixing until green.`;
+Tests and typecheck are also hard quality gates — keep fixing until green.
+**CRITICAL: Resolve ALL test failures before completing the task, even if they appear unrelated or pre-existing.** Unrelated failures left unfixed accumulate technical debt and block future integrations. Investigate and fix or suppress them — do not defer them to a separate task.`;
 
 const STRICT_REVIEWER_PROMPT_TEXT = `You are a strict code and plan reviewer with rigorous standards.
 

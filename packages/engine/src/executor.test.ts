@@ -2000,6 +2000,21 @@ describe("buildExecutionPrompt", () => {
     expect(result).toContain("not for fixes required to get tests, build, or typecheck back to green");
   });
 
+  it("requires resolving ALL test failures, including unrelated or pre-existing ones", () => {
+    const task = createMockTaskDetail();
+    const result = buildExecutionPrompt(task, "/home/user/project", {
+      testCommand: "pnpm test",
+      buildCommand: "pnpm build",
+    } as any);
+
+    // The stricter language must be present to prevent "unrelated failure" deferrals
+    expect(result).toContain("Resolve ALL test failures");
+    expect(result).toContain("even if they appear unrelated or pre-existing");
+    expect(result).toContain("accumulate technical debt");
+    expect(result).toContain("Investigate and fix or suppress them");
+    expect(result).toContain("do not defer them to a separate task");
+  });
+
   it("omits Project Commands section when neither command is set", () => {
     const task = createMockTaskDetail();
     const result = buildExecutionPrompt(task, "/home/user/project", {} as any);
@@ -3599,6 +3614,10 @@ describe("Code review verdict enforcement - task_update blocking", () => {
     expect(capturedSystemPrompt).toContain("REVISE (plan review)");
     expect(capturedSystemPrompt).toContain("advisory");
   });
+
+  // Note: The EXECUTOR_SYSTEM_PROMPT constant is tested indirectly via the buildExecutionPrompt test.
+  // The direct test for EXECUTOR_SYSTEM_PROMPT is skipped because of module caching issues in vitest.
+  // The buildExecutionPrompt test verifies the CRITICAL language is included in execution prompts.
 
   it("task_update with non-done status is not blocked by REVISE", async () => {
     mockedReviewStep.mockResolvedValue({ verdict: "REVISE", review: "Fix", summary: "Bad" });
