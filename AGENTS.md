@@ -711,6 +711,125 @@ Values are stored in `agent.runtimeConfig.budgetConfig` and persisted via `PATCH
 - `HeartbeatMonitor.getAgentHeartbeatConfig(agentId)` — Returns the resolved config for an agent
 - `AgentStore.getCachedAgent(agentId)` — Synchronous agent read for hot paths
 
+## Budget Governance
+
+Per-agent token budget tracking, threshold warnings, and enforcement by the engine's heartbeat execution path.
+
+### Overview
+
+Budget governance allows teams to set token consumption limits on agents to control costs and prevent runaway AI spending. The system tracks cumulative token usage (input + output), warns when approaching limits, and can automatically pause agents when budgets are exhausted.
+
+### AgentBudgetConfig
+
+Configuration for an agent's token budget. Stored in `agent.runtimeConfig.budgetConfig`.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `tokenBudget` | `number` | — | Total token cap (input + output). When undefined, no budget limit is enforced. |
+| `usageThreshold` | `number` | `0.8` | Warning threshold as a fraction (0–1). Triggers `isOverThreshold` when `usagePercent >= thresholdPercent * 100`. |
+| `budgetPeriod` | `string` | `"lifetime"` | Budget accumulation period: `"daily"`, `"weekly"`, `"monthly"`, or `"lifetime"`. |
+| `resetDay` | `number` | — | Day for period reset. For weekly: 0=Sunday to 6=Saturday. For monthly: 1–31. Optional. |
+
+### AgentBudgetStatus
+
+Computed budget status for an agent at a point in time.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `agentId` | `string` | The agent this status belongs to |
+| `currentUsage` | `number` | Total tokens consumed (input + output) |
+| `budgetLimit` | `number \| null` | Token cap from config, or null when no budget is configured |
+| `usagePercent` | `number \| null` | Usage as a percentage of budget (0–100), or null when no budget |
+| `thresholdPercent` | `number \| null` | The configured threshold percentage, or null when no budget |
+| `isOverBudget` | `boolean` | Whether `currentUsage >= budgetLimit` |
+| `isOverThreshold` | `boolean` | Whether `usagePercent >= thresholdPercent * 100` |
+| `lastResetAt` | `string \| null` | ISO-8601 timestamp of the last budget reset, or null |
+| `nextResetAt` | `string \| null` | ISO-8601 timestamp of the next scheduled reset, or null for lifetime/no budget |
+
+### Engine Behavior
+
+The heartbeat system enforces budgets at multiple points:
+
+**HeartbeatMonitor.executeHeartbeat()**
+- Checks agent budget status before creating any agent session
+- If `isOverBudget: true` → skips heartbeat, returns `{ reason: "budget_exhausted" }`
+- If `isOverThreshold: true` and source is `"timer"` → skips heartbeat, returns `{ reason: "budget_threshold" }`
+- Assignment and on-demand triggers bypass the threshold gate (still respect budget exhaustion)
+- After `completeRun()`: updates agent token counters and transitions agent state on exhaustion
+
+**HeartbeatTriggerScheduler.onTimerTick()**
+- Before triggering timer heartbeat, checks budget status
+- Timer ticks are skipped when `isOverThreshold: true` or `isOverBudget: true`
+- Assignment and on-demand triggers still fire even above threshold (only timer triggers are gated)
+- Budget checks run before the `maxConcurrentRuns` check
+
+**WakeContext.budgetStatus**
+- Heartbeat execution propagates `budgetStatus` in the run's `contextSnapshot`
+- Enables downstream systems to access current budget state
+
+### AgentStore API
+
+```typescript
+// Get computed budget status for an agent
+getBudgetStatus(agentId: string): Promise<AgentBudgetStatus>
+// Throws if agent not found
+
+// Reset token counters and update budgetResetAt timestamp
+resetBudgetUsage(agentId: string): Promise<void>
+// Sets totalInputTokens = 0, totalOutputTokens = 0, runtimeConfig.budgetResetAt = now()
+// Throws if agent not found
+// Emits "agent:updated" event after reset
+```
+
+### Budget Reset
+
+Calling `resetBudgetUsage()`:
+1. Zeros `totalInputTokens` and `totalOutputTokens` on the agent
+2. Sets `runtimeConfig.budgetResetAt` to the current ISO-8601 timestamp
+3. Writes the updated agent to storage
+4. Emits `agent:updated` event
+
+For period-based budgets, `nextResetAt` is computed as follows:
+- **daily**: Next midnight UTC
+- **weekly**: Next occurrence of `resetDay` (0=Sunday) at midnight UTC
+- **monthly**: Next occurrence of `resetDay` in the month at midnight UTC
+- **lifetime**: `null` (no automatic reset)
+
+After a reset, `isOverBudget` and `isOverThreshold` become `false`, allowing heartbeats to resume.
+
+### Dashboard Configuration
+
+The agent detail ConfigTab includes a "Budget Settings" section where users can configure:
+
+- **Token Budget** — Total token cap (input + output). Leave empty for no limit.
+- **Usage Threshold (%)** — Warning threshold percentage. Triggers warning when usage reaches this level.
+- **Budget Period** — How often the budget counter resets: lifetime, daily, weekly, or monthly.
+- **Reset Day** — Day for reset (weekly: 0=Sunday to 6=Saturday, monthly: 1-31). Optional.
+
+Values are stored in `agent.runtimeConfig.budgetConfig` and persisted via `PATCH /api/agents/:id`.
+
+The ConfigTab also displays:
+- Current usage as a progress bar (green → yellow → red based on threshold)
+- Budget status indicators (under budget, over threshold, over budget)
+- Last reset timestamp and next scheduled reset
+
+### API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/agents/:id/budget` | Get budget status for an agent |
+| `POST` | `/api/agents/:id/budget/reset` | Reset budget usage counters |
+
+**GET /api/agents/:id/budget**
+- Response 200: `AgentBudgetStatus` — Current budget computation
+- Response 404: `{ error: "Agent not found" }`
+
+**POST /api/agents/:id/budget/reset**
+- Response 200: `{ success: true }`
+- Response 404: `{ error: "Agent not found" }`
+
+Note: Budget configuration is stored via the existing `PATCH /api/agents/:id` endpoint with `runtimeConfig.budgetConfig` in the request body.
+
 ## Heartbeat Trigger Scheduling
 
 The `HeartbeatTriggerScheduler` class (exported from `@fusion/engine`) manages three trigger mechanisms that wake agents via heartbeat runs:
@@ -742,8 +861,9 @@ interface WakeContext {
 2. Timer triggers: Agents with `heartbeatIntervalMs` configured get periodic `setInterval`-based wakeups
 3. Assignment triggers: The scheduler subscribes to `agent:assigned` events from `AgentStore`
 4. On-demand triggers: The `POST /api/agents/:id/runs` route creates runs with wake context
-5. All triggers respect `maxConcurrentRuns` — skipped if the agent already has an active run
-6. On runtime stop, all timers are cleared and event listeners are removed
+5. All triggers respect budget gating — timer triggers are skipped when `isOverThreshold` or `isOverBudget`; assignment and on-demand triggers bypass the threshold gate but still block when `isOverBudget`
+6. All triggers respect `maxConcurrentRuns` — skipped if the agent already has an active run (budget checks run before this check)
+7. On runtime stop, all timers are cleared and event listeners are removed
 
 ### AgentStore Events
 
