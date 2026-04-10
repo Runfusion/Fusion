@@ -62,6 +62,7 @@ import {
   unlinkFeatureFromTask,
   triageFeature,
   triageAllSliceFeatures,
+  previewEnrichedDescription,
   resumeMission,
   stopMission,
   startMission,
@@ -404,6 +405,13 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     id: string;
     title: string;
   } | null>(null);
+
+  // Triage preview state
+  const [triagePreview, setTriagePreview] = useState<{
+    featureId: string;
+    enrichedDescription: string;
+  } | null>(null);
+  const [triagePreviewLoading, setTriagePreviewLoading] = useState<string | null>(null);
 
   // Auto-open interview modal when resuming a session
   useEffect(() => {
@@ -1071,6 +1079,32 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     }
   }, [addToast, loadMissionDetail, selectedMission, projectId]);
 
+  // Triage with preview — fetches enriched description first
+  const handleTriageFeatureWithPreview = useCallback(async (featureId: string) => {
+    setTriagePreviewLoading(featureId);
+    try {
+      const result = await previewEnrichedDescription(featureId, projectId);
+      setTriagePreview({ featureId, enrichedDescription: result.description });
+    } catch {
+      // Fallback to direct triage if preview endpoint not available
+      await handleTriageFeature(featureId);
+    } finally {
+      setTriagePreviewLoading(null);
+    }
+  }, [handleTriageFeature, projectId]);
+
+  // Confirm triage from preview
+  const handleConfirmTriageFromPreview = useCallback(async () => {
+    if (!triagePreview) return;
+    setTriagePreview(null);
+    await handleTriageFeature(triagePreview.featureId);
+  }, [handleTriageFeature, triagePreview]);
+
+  // Cancel triage preview
+  const handleCancelTriagePreview = useCallback(() => {
+    setTriagePreview(null);
+  }, []);
+
   // Triage all defined features in a slice
   const handleTriageAllSliceFeatures = useCallback(async (sliceId: string) => {
     try {
@@ -1726,11 +1760,15 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                             {feature.status === "defined" && !feature.taskId && (
                                               <button
                                                 className="mission-icon-btn"
-                                                onClick={() => handleTriageFeature(feature.id)}
+                                                onClick={() => handleTriageFeatureWithPreview(feature.id)}
                                                 title="Triage — create task"
-                                                disabled={saving}
+                                                disabled={saving || triagePreviewLoading === feature.id}
                                               >
-                                                {saving ? <Loader2 size={14} className="spinner" /> : <Zap size={14} />}
+                                                {triagePreviewLoading === feature.id ? (
+                                                  <Loader2 size={14} className="spinner" />
+                                                ) : (
+                                                  <Zap size={14} />
+                                                )}
                                               </button>
                                             )}
                                             {feature.taskId ? (
@@ -1774,6 +1812,35 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                           <p className="mission-feature__criteria">
                                             <strong>Acceptance:</strong> {feature.acceptanceCriteria}
                                           </p>
+                                        )}
+
+                                        {/* Triage preview panel */}
+                                        {triagePreview?.featureId === feature.id && (
+                                          <div className="mission-triage-preview">
+                                            <div className="mission-triage-preview__header">
+                                              Enriched Description Preview
+                                            </div>
+                                            <div className="mission-triage-preview__content">
+                                              {triagePreview.enrichedDescription}
+                                            </div>
+                                            <div className="mission-triage-preview__actions">
+                                              <button
+                                                className="btn btn-primary"
+                                                onClick={handleConfirmTriageFromPreview}
+                                                disabled={saving}
+                                              >
+                                                {saving ? <Loader2 size={14} className="spinner" /> : null}
+                                                Create Task
+                                              </button>
+                                              <button
+                                                className="btn"
+                                                onClick={handleCancelTriagePreview}
+                                                disabled={saving}
+                                              >
+                                                Cancel
+                                              </button>
+                                            </div>
+                                          </div>
                                         )}
 
                                         {/* Edit feature form */}
