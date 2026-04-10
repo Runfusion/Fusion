@@ -59,7 +59,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 26;
+const SCHEMA_VERSION = 27;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -393,6 +393,27 @@ CREATE TABLE IF NOT EXISTS plugins (
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL
 );
+
+-- Routines table for recurring task automation
+CREATE TABLE IF NOT EXISTS routines (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  triggerType TEXT NOT NULL,
+  triggerConfig TEXT NOT NULL,
+  catchUpPolicy TEXT NOT NULL DEFAULT 'run_one',
+  executionPolicy TEXT NOT NULL DEFAULT 'queue',
+  enabled INTEGER DEFAULT 1,
+  lastRunAt TEXT,
+  lastRunResult TEXT,
+  nextRunAt TEXT,
+  runCount INTEGER DEFAULT 0,
+  runHistory TEXT DEFAULT '[]',
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idxRoutinesNextRunAt ON routines(nextRunAt);
+CREATE INDEX IF NOT EXISTS idxRoutinesEnabled ON routines(enabled);
 `;
 
 // ── Database Class ───────────────────────────────────────────────────
@@ -941,6 +962,32 @@ export class Database {
       this.applyMigration(26, () => {
         this.addColumnIfMissing("tasks", "assigneeUserId", "TEXT");
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxTasksAssigneeUserId ON tasks(assigneeUserId)`);
+      });
+    }
+
+    if (version < 27) {
+      this.applyMigration(27, () => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS routines (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            triggerType TEXT NOT NULL,
+            triggerConfig TEXT NOT NULL,
+            catchUpPolicy TEXT NOT NULL DEFAULT 'run_one',
+            executionPolicy TEXT NOT NULL DEFAULT 'queue',
+            enabled INTEGER DEFAULT 1,
+            lastRunAt TEXT,
+            lastRunResult TEXT,
+            nextRunAt TEXT,
+            runCount INTEGER DEFAULT 0,
+            runHistory TEXT DEFAULT '[]',
+            createdAt TEXT NOT NULL,
+            updatedAt TEXT NOT NULL
+          )
+        `);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxRoutinesNextRunAt ON routines(nextRunAt)`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxRoutinesEnabled ON routines(enabled)`);
       });
     }
   }

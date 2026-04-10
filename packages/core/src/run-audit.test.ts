@@ -465,7 +465,7 @@ describe("Run Audit", () => {
     });
 
     it("schema version is bumped to 25", () => {
-      expect(db.getSchemaVersion()).toBe(26);
+      expect(db.getSchemaVersion()).toBe(27);
     });
   });
 });

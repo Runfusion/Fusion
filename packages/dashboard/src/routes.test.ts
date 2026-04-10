@@ -10006,6 +10006,300 @@ describe("GET /api/agents/:id/runs/:runId/logs", () => {
   });
 });
 
+describe("Agent Budget routes", () => {
+  let tempDir: string;
+  let fusionDir: string;
+  let agentId: string;
+
+  beforeEach(async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "kb-routes-budget-"));
+    fusionDir = join(tempDir, ".fusion");
+    mkdirSync(fusionDir, { recursive: true });
+
+    const { AgentStore } = await import("@fusion/core");
+    const agentStore = new AgentStore({ rootDir: fusionDir });
+    await agentStore.init();
+    const agent = await agentStore.createAgent({
+      name: "Budget Test Agent",
+      role: "executor",
+    });
+    agentId = agent.id;
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  function buildApp() {
+    const store = createMockStore({
+      getFusionDir: vi.fn().mockReturnValue(fusionDir),
+    } as any);
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  describe("GET /api/agents/:id/budget", () => {
+    it("returns budget status with no-limit when budget not configured", async () => {
+      const res = await GET(buildApp(), `/api/agents/${agentId}/budget`);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        agentId,
+        currentUsage: 0,
+        budgetLimit: null,
+        usagePercent: null,
+        thresholdPercent: null,
+        isOverBudget: false,
+        isOverThreshold: false,
+        lastResetAt: null,
+        nextResetAt: null,
+      });
+    });
+
+    it("returns budget status with values when budget is configured", async () => {
+      // Configure budget via PATCH
+      const patchRes = await REQUEST(
+        buildApp(),
+        "PATCH",
+        `/api/agents/${agentId}`,
+        JSON.stringify({
+          runtimeConfig: {
+            budgetConfig: {
+              tokenBudget: 100000,
+              usageThreshold: 0.8,
+              budgetPeriod: "lifetime",
+            },
+          },
+        }),
+        { "Content-Type": "application/json" },
+      );
+      expect(patchRes.status).toBe(200);
+
+      const res = await GET(buildApp(), `/api/agents/${agentId}/budget`);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        agentId,
+        currentUsage: 0,
+        budgetLimit: 100000,
+        usagePercent: 0,
+        thresholdPercent: 80, // stored as percentage (0.8 * 100)
+        isOverBudget: false,
+        isOverThreshold: false,
+        lastResetAt: null,
+        nextResetAt: null,
+      });
+    });
+
+    it("returns 404 for nonexistent agent", async () => {
+      const res = await GET(buildApp(), "/api/agents/nonexistent/budget");
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain("Agent not found");
+    });
+
+    it("reflects over-threshold status correctly", async () => {
+      // Configure budget and set tokens to 85% usage
+      await REQUEST(
+        buildApp(),
+        "PATCH",
+        `/api/agents/${agentId}`,
+        JSON.stringify({
+          runtimeConfig: {
+            budgetConfig: {
+              tokenBudget: 100000,
+              usageThreshold: 0.8,
+              budgetPeriod: "lifetime",
+            },
+          },
+          totalInputTokens: 42500,
+          totalOutputTokens: 42500,
+        }),
+        { "Content-Type": "application/json" },
+      );
+
+      const res = await GET(buildApp(), `/api/agents/${agentId}/budget`);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        agentId,
+        currentUsage: 85000,
+        budgetLimit: 100000,
+        usagePercent: 85,
+        thresholdPercent: 80, // stored as percentage (0.8 * 100)
+        isOverBudget: false,
+        isOverThreshold: true, // 85% >= 80%
+      });
+    });
+
+    it("reflects over-budget status correctly", async () => {
+      // Configure budget and set tokens to 110% usage
+      await REQUEST(
+        buildApp(),
+        "PATCH",
+        `/api/agents/${agentId}`,
+        JSON.stringify({
+          runtimeConfig: {
+            budgetConfig: {
+              tokenBudget: 100000,
+              usageThreshold: 0.8,
+              budgetPeriod: "lifetime",
+            },
+          },
+          totalInputTokens: 55000,
+          totalOutputTokens: 55000,
+        }),
+        { "Content-Type": "application/json" },
+      );
+
+      const res = await GET(buildApp(), `/api/agents/${agentId}/budget`);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        agentId,
+        currentUsage: 110000,
+        budgetLimit: 100000,
+        usagePercent: 100, // Clamped to 100
+        thresholdPercent: 80, // stored as percentage (0.8 * 100)
+        isOverBudget: true, // 110000 >= 100000
+        isOverThreshold: true,
+      });
+    });
+
+    it("computes nextResetAt for daily budget period", async () => {
+      await REQUEST(
+        buildApp(),
+        "PATCH",
+        `/api/agents/${agentId}`,
+        JSON.stringify({
+          runtimeConfig: {
+            budgetConfig: {
+              tokenBudget: 100000,
+              usageThreshold: 0.8,
+              budgetPeriod: "daily",
+            },
+          },
+        }),
+        { "Content-Type": "application/json" },
+      );
+
+      const res = await GET(buildApp(), `/api/agents/${agentId}/budget`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.nextResetAt).toBeTruthy();
+      expect(new Date(res.body.nextResetAt).getTime()).toBeGreaterThan(Date.now());
+    });
+  });
+
+  describe("POST /api/agents/:id/budget/reset", () => {
+    it("resets token counters and sets budgetResetAt", async () => {
+      // First set some tokens
+      await REQUEST(
+        buildApp(),
+        "PATCH",
+        `/api/agents/${agentId}`,
+        JSON.stringify({
+          runtimeConfig: {
+            budgetConfig: {
+              tokenBudget: 100000,
+              usageThreshold: 0.8,
+            },
+          },
+          totalInputTokens: 50000,
+          totalOutputTokens: 30000,
+        }),
+        { "Content-Type": "application/json" },
+      );
+
+      // Verify pre-reset state
+      const preRes = await GET(buildApp(), `/api/agents/${agentId}/budget`);
+      expect(preRes.body.currentUsage).toBe(80000);
+
+      // Reset budget
+      const resetRes = await REQUEST(
+        buildApp(),
+        "POST",
+        `/api/agents/${agentId}/budget/reset`,
+        undefined,
+        {},
+      );
+
+      expect(resetRes.status).toBe(200);
+      expect(resetRes.body).toEqual({ success: true });
+
+      // Verify post-reset state
+      const postRes = await GET(buildApp(), `/api/agents/${agentId}/budget`);
+      expect(postRes.body.currentUsage).toBe(0);
+      expect(postRes.body.lastResetAt).toBeTruthy();
+      expect(new Date(postRes.body.lastResetAt).getTime()).toBeGreaterThanOrEqual(
+        Date.now() - 5000, // Allow 5 second tolerance
+      );
+    });
+
+    it("returns 404 for nonexistent agent", async () => {
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/agents/nonexistent/budget/reset",
+        undefined,
+        {},
+      );
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain("Agent not found");
+    });
+
+    it("allows reset when agent has no budget configured", async () => {
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        `/api/agents/${agentId}/budget/reset`,
+        undefined,
+        {},
+      );
+
+      // Reset should succeed even without budget configured
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true });
+    });
+
+    it("clears usage percent back to zero after reset", async () => {
+      // Set up with budget and usage
+      await REQUEST(
+        buildApp(),
+        "PATCH",
+        `/api/agents/${agentId}`,
+        JSON.stringify({
+          runtimeConfig: {
+            budgetConfig: {
+              tokenBudget: 100000,
+              usageThreshold: 0.8,
+            },
+          },
+          totalInputTokens: 90000,
+          totalOutputTokens: 10000,
+        }),
+        { "Content-Type": "application/json" },
+      );
+
+      await REQUEST(
+        buildApp(),
+        "POST",
+        `/api/agents/${agentId}/budget/reset`,
+        undefined,
+        {},
+      );
+
+      const res = await GET(buildApp(), `/api/agents/${agentId}/budget`);
+      expect(res.body.usagePercent).toBe(0);
+      expect(res.body.isOverThreshold).toBe(false);
+      expect(res.body.isOverBudget).toBe(false);
+    });
+  });
+});
+
 describe("Agent Reflection routes", () => {
   let tempDir: string;
   let fusionDir: string;

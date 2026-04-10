@@ -26,6 +26,8 @@ vi.mock("../../api", () => ({
   startAgentGeneration: vi.fn(),
   generateAgentSpec: vi.fn(),
   cancelAgentGeneration: vi.fn(),
+  fetchAgentBudgetStatus: vi.fn(),
+  resetAgentBudget: vi.fn(),
 }));
 
 vi.mock("../AgentLogViewer", () => ({
@@ -50,6 +52,8 @@ const mockCreateAgent = vi.mocked(api.createAgent);
 const mockStartAgentGeneration = vi.mocked(api.startAgentGeneration);
 const mockGenerateAgentSpec = vi.mocked(api.generateAgentSpec);
 const mockCancelAgentGeneration = vi.mocked(api.cancelAgentGeneration);
+const mockFetchAgentBudgetStatus = vi.mocked(api.fetchAgentBudgetStatus);
+const mockResetAgentBudget = vi.mocked(api.resetAgentBudget);
 
 const originalFetch = globalThis.fetch;
 
@@ -134,6 +138,8 @@ describe("agent modal mobile CSS structure", () => {
       },
     });
     mockCancelAgentGeneration.mockResolvedValue({ success: true });
+    mockFetchAgentBudgetStatus.mockResolvedValue({ agentId: "agent-001", currentUsage: 0, budgetLimit: null, usagePercent: null, thresholdPercent: null, isOverBudget: false, isOverThreshold: false, lastResetAt: null, nextResetAt: null });
+    mockResetAgentBudget.mockResolvedValue(undefined);
 
     globalThis.fetch = vi.fn(async () =>
       ({

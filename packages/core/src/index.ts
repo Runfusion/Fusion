@@ -66,6 +66,31 @@ export type { ScheduleType, ScheduledTask, ScheduledTaskCreateInput, ScheduledTa
 export { AutomationStore } from "./automation-store.js";
 export type { AutomationStoreEvents } from "./automation-store.js";
 
+// ── Routine System ───────────────────────────────────────────────────
+export {
+  MAX_ROUTINE_RUN_HISTORY,
+  isCronTrigger,
+  isWebhookTrigger,
+  isApiTrigger,
+  isManualTrigger,
+} from "./routine.js";
+export type {
+  RoutineTriggerType,
+  RoutineCronTrigger,
+  RoutineWebhookTrigger,
+  RoutineApiTrigger,
+  RoutineManualTrigger,
+  RoutineTrigger,
+  RoutineCatchUpPolicy,
+  RoutineExecutionPolicy,
+  RoutineExecutionResult,
+  Routine,
+  RoutineCreateInput,
+  RoutineUpdateInput,
+} from "./routine.js";
+export { RoutineStore } from "./routine-store.js";
+export type { RoutineStoreEvents } from "./routine-store.js";
+
 // ── Plugin System ─────────────────────────────────────────────────────
 export type {
   PluginManifest,
