@@ -397,12 +397,14 @@ CREATE TABLE IF NOT EXISTS plugins (
 -- Routines table for recurring task automation
 CREATE TABLE IF NOT EXISTS routines (
   id TEXT PRIMARY KEY,
+  agentId TEXT NOT NULL DEFAULT '',
   name TEXT NOT NULL,
   description TEXT,
   triggerType TEXT NOT NULL,
   triggerConfig TEXT NOT NULL,
   catchUpPolicy TEXT NOT NULL DEFAULT 'run_one',
   executionPolicy TEXT NOT NULL DEFAULT 'queue',
+  catchUpLimit INTEGER DEFAULT 5,
   enabled INTEGER DEFAULT 1,
   lastRunAt TEXT,
   lastRunResult TEXT,
@@ -970,12 +972,14 @@ export class Database {
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS routines (
             id TEXT PRIMARY KEY,
+            agentId TEXT NOT NULL DEFAULT '',
             name TEXT NOT NULL,
             description TEXT,
             triggerType TEXT NOT NULL,
             triggerConfig TEXT NOT NULL,
             catchUpPolicy TEXT NOT NULL DEFAULT 'run_one',
             executionPolicy TEXT NOT NULL DEFAULT 'queue',
+            catchUpLimit INTEGER DEFAULT 5,
             enabled INTEGER DEFAULT 1,
             lastRunAt TEXT,
             lastRunResult TEXT,

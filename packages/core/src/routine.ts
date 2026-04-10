@@ -107,6 +107,8 @@ export interface RoutineExecutionResult extends AutomationRunResult {
 export interface Routine {
   /** Unique identifier (UUID). */
   id: string;
+  /** ID of the agent that executes this routine. */
+  agentId: string;
   /** Human-readable name. */
   name: string;
   /** Optional description of what this routine does. */
@@ -129,6 +131,8 @@ export interface Routine {
   runCount: number;
   /** History of recent run results (most recent first, capped at MAX_ROUTINE_RUN_HISTORY). */
   runHistory: RoutineExecutionResult[];
+  /** Maximum number of catch-up executions when policy is "run". */
+  catchUpLimit?: number;
   /** Optional cron expression stored directly for due-routine queries (derived from trigger). */
   cronExpression?: string;
   /** ISO-8601 timestamp of when this routine was created. */
@@ -143,6 +147,8 @@ export interface Routine {
 export interface RoutineCreateInput {
   /** Human-readable name. Required. */
   name: string;
+  /** ID of the agent that executes this routine. Required. */
+  agentId: string;
   /** Optional description. */
   description?: string;
   /** Trigger configuration. Required. */

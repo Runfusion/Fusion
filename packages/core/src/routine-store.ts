@@ -105,6 +105,7 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
 
     return {
       id: row.id,
+      agentId: row.agentId || "",
       name: row.name,
       description: row.description || undefined,
       trigger,
@@ -116,6 +117,7 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
       nextRunAt: row.nextRunAt || undefined,
       runCount: row.runCount || 0,
       runHistory: fromJson<RoutineExecutionResult[]>(row.runHistory) || [],
+      catchUpLimit: row.catchUpLimit ?? 5,
       cronExpression: isCronTrigger(trigger) ? trigger.cronExpression : undefined,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
@@ -144,19 +146,21 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
 
     this.db.prepare(`
       INSERT OR REPLACE INTO routines (
-        id, name, description, triggerType, triggerConfig,
-        catchUpPolicy, executionPolicy, enabled,
+        id, agentId, name, description, triggerType, triggerConfig,
+        catchUpPolicy, executionPolicy, catchUpLimit, enabled,
         lastRunAt, lastRunResult, nextRunAt,
         runCount, runHistory, createdAt, updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       routine.id,
+      routine.agentId,
       routine.name,
       routine.description ?? null,
       trigger.type,
       JSON.stringify(triggerConfig),
       routine.catchUpPolicy,
       routine.executionPolicy,
+      routine.catchUpLimit ?? 5,
       routine.enabled ? 1 : 0,
       routine.lastRunAt ?? null,
       routine.lastRunResult ? JSON.stringify(routine.lastRunResult) : null,
@@ -244,6 +248,7 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
 
     const routine: Routine = {
       id,
+      agentId: input.agentId,
       name: input.name.trim(),
       description: input.description?.trim() || undefined,
       trigger: input.trigger,
@@ -374,6 +379,54 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
       this.upsertRoutine(routine);
       this.emit("routine:run", { routine, result });
       return routine;
+    });
+  }
+
+  /**
+   * Mark a routine execution as started (pre-run bookkeeping).
+   */
+  async startRoutineExecution(
+    id: string,
+    meta: { triggeredAt: string; catchUpFrom?: string; invocationSource: string },
+  ): Promise<void> {
+    await this.withRoutineLock(id, async () => {
+      const routine = await this.getRoutine(id);
+      routine.lastRunAt = meta.triggeredAt;
+      routine.updatedAt = new Date().toISOString();
+      this.upsertRoutine(routine);
+    });
+  }
+
+  /**
+   * Record the completion (success or failure) of a routine execution.
+   */
+  async completeRoutineExecution(
+    id: string,
+    meta: { completedAt: string; success: boolean; resultJson?: Record<string, unknown>; error?: string },
+  ): Promise<void> {
+    const routine = await this.getRoutine(id);
+    const result: RoutineExecutionResult = {
+      routineId: id,
+      success: meta.success,
+      output: meta.success ? JSON.stringify(meta.resultJson ?? {}) : "",
+      error: meta.error,
+      startedAt: routine.lastRunAt ?? meta.completedAt,
+      completedAt: meta.completedAt,
+    };
+    await this.recordRun(id, result);
+  }
+
+  /**
+   * Cancel a routine execution (no result recorded, just reset state).
+   */
+  async cancelRoutineExecution(id: string): Promise<void> {
+    await this.withRoutineLock(id, async () => {
+      const routine = await this.getRoutine(id);
+      if (routine.enabled && isCronTrigger(routine.trigger)) {
+        routine.nextRunAt = this.computeNextRun(routine.trigger.cronExpression);
+      }
+      routine.updatedAt = new Date().toISOString();
+      this.upsertRoutine(routine);
     });
   }
 

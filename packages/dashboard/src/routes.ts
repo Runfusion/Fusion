@@ -8042,11 +8042,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       throw new ApiError(503, "Routine store not available");
     }
     try {
-      const { name, description, trigger, catchUpPolicy, executionPolicy, enabled } = req.body;
+      const { name, agentId, description, trigger, catchUpPolicy, executionPolicy, enabled } = req.body;
 
       // Validation
       if (!name?.trim()) {
         throw badRequest("Name is required");
+      }
+      if (!agentId?.trim()) {
+        throw badRequest("agentId is required");
       }
       if (!trigger) {
         throw badRequest("Trigger is required");
@@ -8081,6 +8084,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const routine = await routineStore.createRoutine({
         name: name.trim(),
+        agentId: agentId.trim(),
         description,
         trigger,
         catchUpPolicy,
