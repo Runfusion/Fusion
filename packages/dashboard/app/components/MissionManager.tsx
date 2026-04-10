@@ -20,9 +20,11 @@ import {
   Sparkles,
   Zap,
   Activity,
+  FileText,
 } from "lucide-react";
 import type { ToastType } from "../hooks/useToast";
 import { MissionInterviewModal } from "./MissionInterviewModal";
+import { MilestoneSliceInterviewModal } from "./MilestoneSliceInterviewModal";
 import type {
   Mission,
   MissionWithHierarchy,
@@ -118,6 +120,38 @@ const autopilotStateColors: Record<AutopilotState, { bg: string; text: string }>
   activating: { bg: "var(--autopilot-activating-bg)", text: "var(--autopilot-activating-text)" },
   completing: { bg: "var(--autopilot-completing-bg)", text: "var(--autopilot-completing-text)" },
 };
+
+/** Get the plan state for a milestone (derived from interviewState) */
+function getMilestonePlanState(interviewState?: string): "not_started" | "planned" | "needs_update" {
+  if (interviewState === "completed") return "planned";
+  if (interviewState === "needs_update") return "needs_update";
+  return "not_started";
+}
+
+/** Render a plan state indicator badge */
+function PlanStateIndicator({ state }: { state: "not_started" | "planned" | "needs_update" }) {
+  const stateClass =
+    state === "planned"
+      ? "mission-plan-state-indicator--planned"
+      : state === "needs_update"
+        ? "mission-plan-state-indicator--needs-update"
+        : "mission-plan-state-indicator--not-started";
+
+  const title =
+    state === "planned"
+      ? "Planned"
+      : state === "needs_update"
+        ? "Needs update"
+        : "Not planned";
+
+  return (
+    <span
+      className={`mission-plan-state-indicator ${stateClass}`}
+      title={title}
+      aria-label={title}
+    />
+  );
+}
 
 // Form types
 interface MissionFormData {
@@ -363,6 +397,13 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
   // AI Interview modal
   const [showInterviewModal, setShowInterviewModal] = useState(false);
+
+  // Milestone/Slice interview modal
+  const [interviewTarget, setInterviewTarget] = useState<{
+    type: "milestone" | "slice";
+    id: string;
+    title: string;
+  } | null>(null);
 
   // Auto-open interview modal when resuming a session
   useEffect(() => {
@@ -1446,6 +1487,17 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                         {milestone.status}
                       </span>
                       <span className="mission-milestone__count">{milestone.slices.length} slices</span>
+                      <PlanStateIndicator state={getMilestonePlanState(milestone.interviewState)} />
+                      {milestone.status !== "complete" && (
+                        <button
+                          className="mission-icon-btn"
+                          onClick={() => setInterviewTarget({ type: "milestone", id: milestone.id, title: milestone.title })}
+                          title="Plan milestone"
+                          aria-label="Plan milestone"
+                        >
+                          <FileText size={14} />
+                        </button>
+                      )}
                       <div className="mission-milestone__actions" onClick={(e) => e.stopPropagation()}>
                         <button
                           className="mission-icon-btn"
@@ -1522,6 +1574,17 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                   {slice.status}
                                 </span>
                                 <span className="mission-slice__count">{slice.features?.length || 0} features</span>
+                                <PlanStateIndicator state={slice.planState ?? "not_started"} />
+                                {slice.status !== "complete" && (
+                                  <button
+                                    className="mission-icon-btn"
+                                    onClick={() => setInterviewTarget({ type: "slice", id: slice.id, title: slice.title })}
+                                    title="Plan slice"
+                                    aria-label="Plan slice"
+                                  >
+                                    <FileText size={14} />
+                                  </button>
+                                )}
                                 <div className="mission-slice__actions" onClick={(e) => e.stopPropagation()}>
                                   {slice.status === "pending" && (
                                     <button
@@ -2281,11 +2344,28 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     />
   );
 
+  const milestoneSliceInterviewModal = interviewTarget ? (
+    <MilestoneSliceInterviewModal
+      isOpen={true}
+      onClose={() => setInterviewTarget(null)}
+      onApplied={() => {
+        setInterviewTarget(null);
+        if (selectedMission) loadMissionDetail(selectedMission.id);
+      }}
+      targetType={interviewTarget.type}
+      targetId={interviewTarget.id}
+      targetTitle={interviewTarget.title}
+      missionContext={selectedMission?.title}
+      projectId={projectId}
+    />
+  ) : null;
+
   if (isInline) {
     return (
       <>
         {manager}
         {interviewModal}
+        {milestoneSliceInterviewModal}
       </>
     );
   }
@@ -2300,6 +2380,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         {manager}
       </div>
       {interviewModal}
+      {milestoneSliceInterviewModal}
     </>
   );
 }
