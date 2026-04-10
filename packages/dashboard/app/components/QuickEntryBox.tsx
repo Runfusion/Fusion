@@ -4,7 +4,7 @@ import type { ToastType } from "../hooks/useToast";
 import type { Task, TaskCreateInput, Settings } from "@fusion/core";
 import type { ModelInfo, RefinementType, Agent } from "../api";
 import { fetchModels, fetchSettings, refineText, getRefineErrorMessage, updateGlobalSettings, fetchAgents, uploadAttachment } from "../api";
-import { Link, Paperclip, Brain, Lightbulb, ListTree, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot, Maximize2, Minimize2 } from "lucide-react";
+import { Link, Paperclip, Brain, Lightbulb, ListTree, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 
@@ -92,10 +92,6 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   // isDisclosureExpanded controls visibility of the controls panel (Deps, Models, etc.)
   // Always starts collapsed — user must explicitly toggle each session
   const [isDisclosureExpanded, setIsDisclosureExpanded] = useState(false);
-  // isDescriptionExpanded controls fullscreen description editing mode
-  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
-  // Track textarea focus for expand button visibility
-  const [isDescriptionFocused, setIsDescriptionFocused] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const justResetRef = useRef(false);
@@ -264,15 +260,12 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     const textarea = textareaRef.current;
     if (!textarea) return;
 
-    // In fullscreen mode, CSS handles sizing via flex: 1, don't set inline height
-    if (isDescriptionExpanded) return;
-
     // Reset height to auto to get accurate scrollHeight
     textarea.style.height = "auto";
     // Set to scrollHeight (capped at max-height via CSS)
     const newHeight = Math.min(textarea.scrollHeight, 200);
     textarea.style.height = `${newHeight}px`;
-  }, [isDescriptionExpanded]);
+  }, []);
 
   // Resize when description changes (not in fullscreen mode since CSS handles it)
   useEffect(() => {
@@ -375,7 +368,6 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     setIsRefining(false);
     setIsExpanded(false); // Collapse textarea height on reset
     setIsDisclosureExpanded(false); // Always reset controls to collapsed after creation
-    setIsDescriptionExpanded(false); // Exit fullscreen mode on reset
     justResetRef.current = true;
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -483,7 +475,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === "Enter") {
-        if (e.shiftKey && (isExpanded || isDescriptionExpanded)) {
+        if (e.shiftKey && isExpanded) {
           // Allow Shift+Enter to insert newline when expanded or in fullscreen mode
           // Don't prevent default - let the newline be inserted
           return;
@@ -493,11 +485,6 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         handleSubmit();
       } else if (e.key === "Escape") {
         e.preventDefault();
-        // Exit fullscreen mode first - highest priority
-        if (isDescriptionExpanded) {
-          setIsDescriptionExpanded(false);
-          return;
-        }
         // Close model submenu first if open
         if (activeModelSubmenu) {
           setActiveModelSubmenu(null);
@@ -543,7 +530,6 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       handleSubmit,
       description,
       isExpanded,
-      isDescriptionExpanded,
       showDeps,
       showAgentPicker,
       isModelMenuOpen,
@@ -560,8 +546,6 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     if (justResetRef.current) {
       justResetRef.current = false;
     }
-    // Track description focus for expand button visibility
-    setIsDescriptionFocused(false);
   }, []);
 
   const handleFocus = useCallback(() => {
@@ -569,8 +553,6 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     if (autoExpand) {
       setIsExpanded(true);
     }
-    // Track description focus for expand button visibility
-    setIsDescriptionFocused(true);
   }, [autoExpand]);
 
   const toggleDep = useCallback((id: string) => {
@@ -922,108 +904,40 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     });
   }, []);
 
-  const handleToggleDescriptionExpand = useCallback(() => {
-    setIsDescriptionExpanded((prev) => {
-      const next = !prev;
-      // Focus the fullscreen textarea after it renders
-      if (next && textareaRef.current) {
-        // Use setTimeout to ensure focus happens after the textarea is rendered
-        setTimeout(() => textareaRef.current?.focus(), 0);
-      }
-      return next;
-    });
-  }, []);
-
-  const handleDescriptionFullscreenKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (!isDescriptionExpanded || e.key !== "Escape") return;
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDescriptionExpanded(false);
-  }, [isDescriptionExpanded]);
-
   return (
     <div className={`quick-entry-box ${isDisclosureExpanded ? "quick-entry-box--expanded" : "quick-entry-box--collapsed"}`} data-testid="quick-entry-box">
-      <div
-        className={`description-with-refine${isDescriptionExpanded ? " description--fullscreen" : ""}`}
-        onKeyDown={handleDescriptionFullscreenKeyDown}
-      >
-        {isDescriptionExpanded && (
-          <div className="description-fullscreen-header">
-            <span>Editing Description</span>
-            <button
-              type="button"
-              className="btn btn-sm description-expand-btn"
-              onClick={handleToggleDescriptionExpand}
-              aria-label="Collapse description"
-              title="Collapse description"
-              data-testid="quick-entry-collapse"
-            >
-              <Minimize2 size={14} />
-            </button>
-          </div>
-        )}
-        {!isDescriptionExpanded && (
-          <div className="quick-entry-main-row">
-            <div className="quick-entry-textarea-wrap">
-              <textarea
-                ref={textareaRef}
-                className={`quick-entry-input ${isExpanded ? "quick-entry-input--expanded" : ""}`}
-                placeholder={isSubmitting ? "Creating..." : "Add a task..."}
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                onKeyDown={handleKeyDown}
-                onPaste={handlePaste}
-                onFocus={handleFocus}
-                onBlur={handleBlur}
-                disabled={isSubmitting || isDisabled}
-                data-testid="quick-entry-input"
-                rows={1}
-                aria-controls="quick-entry-controls"
-                aria-expanded={isDisclosureExpanded}
-              />
-              {isDescriptionFocused && description.trim() && !isDisabled && !isSubmitting && (
-                <button
-                  type="button"
-                  className="btn btn-sm quick-entry-expand-btn"
-                  onClick={handleToggleDescriptionExpand}
-                  onMouseDown={(e) => e.preventDefault()}
-                  aria-label="Expand description"
-                  title="Expand description"
-                  data-testid="quick-entry-expand"
-                >
-                  <Maximize2 size={14} />
-                </button>
-              )}
-            </div>
-            <button
-              type="button"
-              className="btn btn-sm quick-entry-toggle"
-              onClick={toggleExpanded}
-              aria-expanded={isDisclosureExpanded}
+      <div className="description-with-refine">
+        <div className="quick-entry-main-row">
+          <div className="quick-entry-textarea-wrap">
+            <textarea
+              ref={textareaRef}
+              className={`quick-entry-input ${isExpanded ? "quick-entry-input--expanded" : ""}`}
+              placeholder={isSubmitting ? "Creating..." : "Add a task..."}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              onFocus={handleFocus}
+              onBlur={handleBlur}
+              disabled={isSubmitting || isDisabled}
+              data-testid="quick-entry-input"
+              rows={1}
               aria-controls="quick-entry-controls"
-              data-testid="quick-entry-toggle"
-              title={isDisclosureExpanded ? "Collapse" : "Expand"}
-            >
-              {isDisclosureExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-            </button>
+              aria-expanded={isDisclosureExpanded}
+            />
           </div>
-        )}
-        {isDescriptionExpanded && (
-          <textarea
-            ref={textareaRef}
-            className="quick-entry-input quick-entry-input--fullscreen"
-            placeholder={isSubmitting ? "Creating..." : "Add a task..."}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            onFocus={handleFocus}
-            onBlur={handleBlur}
-            disabled={isSubmitting || isDisabled}
-            data-testid="quick-entry-input-fullscreen"
-            rows={10}
-          />
-        )}
+          <button
+            type="button"
+            className="btn btn-sm quick-entry-toggle"
+            onClick={toggleExpanded}
+            aria-expanded={isDisclosureExpanded}
+            aria-controls="quick-entry-controls"
+            data-testid="quick-entry-toggle"
+            title={isDisclosureExpanded ? "Collapse" : "Expand"}
+          >
+            {isDisclosureExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+        </div>
       </div>
       <div
         id="quick-entry-controls"

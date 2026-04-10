@@ -2435,8 +2435,8 @@ describe("QuickEntryBox", () => {
     });
   });
 
-  describe("description fullscreen expansion", () => {
-    it("shows expand button when textarea is focused and has content", async () => {
+  describe("description expand functionality removed", () => {
+    it("does not render expand button when textarea is focused and has content", async () => {
       renderQuickEntryBox({});
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -2444,125 +2444,74 @@ describe("QuickEntryBox", () => {
       fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Test task description" } });
 
-      // Expand button should be visible
-      await waitFor(() => {
-        expect(screen.getByTestId("quick-entry-expand")).toBeInTheDocument();
-      });
-    });
-
-    it("hides expand button when textarea is empty", async () => {
-      renderQuickEntryBox({});
-      const textarea = screen.getByTestId("quick-entry-input");
-
-      // Focus without typing
-      fireEvent.focus(textarea);
-
-      // Expand button should not be visible when empty
+      // Expand button should NOT be present
       expect(screen.queryByTestId("quick-entry-expand")).not.toBeInTheDocument();
     });
 
-    it("hides expand button when textarea is blurred", async () => {
+    it("does not render collapse button", () => {
       renderQuickEntryBox({});
-      const textarea = screen.getByTestId("quick-entry-input");
 
-      // Focus, type, then blur
-      fireEvent.focus(textarea);
-      fireEvent.change(textarea, { target: { value: "Test content" } });
-      fireEvent.blur(textarea);
-
-      // Expand button should be hidden after blur
-      await act(async () => {
-        vi.advanceTimersByTime(100);
-      });
-      expect(screen.queryByTestId("quick-entry-expand")).not.toBeInTheDocument();
+      // Collapse button should NOT be present
+      expect(screen.queryByTestId("quick-entry-collapse")).not.toBeInTheDocument();
     });
 
-    it("enters fullscreen mode when expand button is clicked", async () => {
+    it("does not render fullscreen textarea", () => {
       renderQuickEntryBox({});
+
+      // Fullscreen textarea should NOT be present
+      expect(screen.queryByTestId("quick-entry-input-fullscreen")).not.toBeInTheDocument();
+    });
+
+    it("task creation from primary textarea still works", async () => {
+      const onCreate = vi.fn().mockResolvedValue({ id: "FN-001", title: "", description: "Test task", column: "triage" });
+      renderQuickEntryBox({ onCreate });
       const textarea = screen.getByTestId("quick-entry-input");
 
       // Focus and type content
       fireEvent.focus(textarea);
-      fireEvent.change(textarea, { target: { value: "Test description" } });
+      fireEvent.change(textarea, { target: { value: "Test task description" } });
 
-      // Click expand button
+      // Submit with Enter key
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      // onCreate should have been called
       await waitFor(() => {
-        fireEvent.click(screen.getByTestId("quick-entry-expand"));
-      });
-
-      // Fullscreen textarea should be visible
-      await waitFor(() => {
-        expect(screen.getByTestId("quick-entry-input-fullscreen")).toBeInTheDocument();
-      });
-
-      // Collapse button should be visible
-      expect(screen.getByTestId("quick-entry-collapse")).toBeInTheDocument();
-    });
-
-    it("exits fullscreen mode when collapse button is clicked", async () => {
-      renderQuickEntryBox({});
-      const textarea = screen.getByTestId("quick-entry-input");
-
-      // Enter fullscreen mode
-      fireEvent.focus(textarea);
-      fireEvent.change(textarea, { target: { value: "Test description" } });
-      await waitFor(() => {
-        fireEvent.click(screen.getByTestId("quick-entry-expand"));
-      });
-      await waitFor(() => {
-        expect(screen.getByTestId("quick-entry-input-fullscreen")).toBeInTheDocument();
-      });
-
-      // Click collapse button
-      fireEvent.click(screen.getByTestId("quick-entry-collapse"));
-
-      // Fullscreen textarea should be hidden
-      await waitFor(() => {
-        expect(screen.queryByTestId("quick-entry-input-fullscreen")).not.toBeInTheDocument();
+        expect(onCreate).toHaveBeenCalledWith(
+          expect.objectContaining({ description: "Test task description" }),
+        );
       });
     });
 
-    it("exits fullscreen mode when Escape key is pressed in fullscreen", async () => {
-      renderQuickEntryBox({});
+    it("textarea expands on focus with autoExpand", async () => {
+      renderQuickEntryBox({ autoExpand: true });
       const textarea = screen.getByTestId("quick-entry-input");
 
-      // Enter fullscreen mode
+      // Focus should trigger expansion
       fireEvent.focus(textarea);
-      fireEvent.change(textarea, { target: { value: "Test description" } });
-      await waitFor(() => {
-        fireEvent.click(screen.getByTestId("quick-entry-expand"));
-      });
-      await waitFor(() => {
-        expect(screen.getByTestId("quick-entry-input-fullscreen")).toBeInTheDocument();
-      });
 
-      // Press Escape
-      const fullscreenTextarea = screen.getByTestId("quick-entry-input-fullscreen");
-      fireEvent.keyDown(fullscreenTextarea, { key: "Escape" });
-
-      // Fullscreen should be exited
+      // Textarea should have expanded class
       await waitFor(() => {
-        expect(screen.queryByTestId("quick-entry-input-fullscreen")).not.toBeInTheDocument();
+        expect(textarea).toHaveClass("quick-entry-input--expanded");
       });
     });
 
-    it("preserves description text when entering fullscreen", async () => {
+    it("Shift+Enter inserts newline in expanded textarea", async () => {
       renderQuickEntryBox({});
       const textarea = screen.getByTestId("quick-entry-input");
 
-      // Type some content
+      // Expand textarea first
       fireEvent.focus(textarea);
-      fireEvent.change(textarea, { target: { value: "My test task description" } });
-
-      // Enter fullscreen
       await waitFor(() => {
-        fireEvent.click(screen.getByTestId("quick-entry-expand"));
+        expect(textarea).toHaveClass("quick-entry-input--expanded");
       });
 
-      // Check fullscreen textarea has the content
+      // Type and press Shift+Enter
+      fireEvent.change(textarea, { target: { value: "Line 1" } });
+      fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
+
+      // Content should still be present (newline was inserted)
       await waitFor(() => {
-        const fullscreenTextarea = screen.getByTestId("quick-entry-input-fullscreen") as HTMLTextAreaElement;
-        expect(fullscreenTextarea.value).toBe("My test task description");
+        expect((textarea as HTMLTextAreaElement).value).toBe("Line 1");
       });
     });
   });
