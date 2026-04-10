@@ -1,10 +1,8 @@
 name: CI
 
+# CI auto-trigger disabled per FN-1541 — workflow preserved for manual use via workflow_dispatch
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   ci:
