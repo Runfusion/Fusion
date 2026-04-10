@@ -59,7 +59,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 27;
+const SCHEMA_VERSION = 28;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -988,6 +988,43 @@ export class Database {
         `);
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxRoutinesNextRunAt ON routines(nextRunAt)`);
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxRoutinesEnabled ON routines(enabled)`);
+      });
+    }
+
+    // Dashboard load performance indexes (FN-1532)
+    // Added indexes to eliminate full table scans and temp B-tree sorts
+    // in boot-critical query paths (listTasks, listActive, activityLog, agents)
+    if (version < 28) {
+      this.applyMigration(28, () => {
+        // Index on tasks.createdAt to avoid temp B-tree sort for ORDER BY createdAt
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxTasksCreatedAt ON tasks(createdAt)`);
+
+        // Composite index on ai_sessions for status filter + updatedAt ordering
+        // Covers: WHERE status IN (...) ORDER BY updatedAt DESC
+        // Only create if the table exists (it was added in v9)
+        if (this.hasTable("ai_sessions")) {
+          this.db.exec(`CREATE INDEX IF NOT EXISTS idxAiSessionsStatusUpdatedAt ON ai_sessions(status, updatedAt DESC)`);
+        }
+
+        // Composite index on activityLog for taskId filter + timestamp ordering
+        // Covers: WHERE taskId = ? ORDER BY timestamp DESC
+        if (this.hasTable("activityLog")) {
+          this.db.exec(`CREATE INDEX IF NOT EXISTS idxActivityLogTaskIdTimestamp ON activityLog(taskId, timestamp DESC)`);
+          this.db.exec(`CREATE INDEX IF NOT EXISTS idxActivityLogTypeTimestamp ON activityLog(type, timestamp DESC)`);
+        }
+
+        // Composite index on agentHeartbeats for agentId filter + timestamp ordering
+        // Covers: WHERE agentId = ? ORDER BY timestamp DESC
+        // Only create if the table exists (it was added in v2)
+        if (this.hasTable("agentHeartbeats")) {
+          this.db.exec(`CREATE INDEX IF NOT EXISTS idxAgentHeartbeatsAgentIdTimestamp ON agentHeartbeats(agentId, timestamp DESC)`);
+        }
+
+        // Index on agents.state for state filtering
+        // Covers: WHERE state = ?
+        if (this.hasTable("agents")) {
+          this.db.exec(`CREATE INDEX IF NOT EXISTS idxAgentsState ON agents(state)`);
+        }
       });
     }
   }

@@ -404,3 +404,14 @@ The `@fusion/tui` package provides Ink-based React components for terminal UI.
 - The `isContextLimitError()` function uses regex patterns to match error messages - patterns must be tested independently
 - When fixing executor recovery paths that fall through to failure, ensure the fix adds an explicit `return` after successful recovery to prevent execution from continuing to the failure path
 - Vitest runs source files directly (`.ts`) rather than compiled dist files - rebuild with `tsc` before running tests if changes aren't picked up
+
+## FN-1532: SQLite Index Optimization
+
+When adding indexes to SQLite schema migrations:
+- Always use `CREATE INDEX IF NOT EXISTS` to make migrations idempotent
+- For indexes on tables that may not exist in legacy databases, wrap in `if (this.hasTable("tableName"))` before creating
+- Profile query plans using `EXPLAIN QUERY PLAN` to identify full scans and temp B-tree sorts
+- Composite indexes can cover both filtering and ordering: `CREATE INDEX ON table(col1, col2 DESC)`
+- Update `SCHEMA_VERSION` constant AND all hardcoded version assertions in tests (e.g., `expect(db.getSchemaVersion()).toBe(N)`)
+- The `creates all expected indexes` test in `db.test.ts` must list all indexes including new ones
+- Memory pitfall: Test files like `run-audit.test.ts` and `__tests__/task-documents.test.ts` also assert schema version

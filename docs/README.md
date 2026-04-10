@@ -31,6 +31,7 @@ For a full walkthrough (installation, onboarding, first task, and lifecycle), st
 | [Multi-Project](./multi-project.md) | Central registry architecture, project management, isolation modes, and migration paths. |
 | [UX Audit Report](./ux-audit-report.md) | Comprehensive UX audit with prioritized recommendations for dashboard improvements. |
 | [Codebase Improvement Audit](./codebase-improvement-audit.md) | Evidence-based technical debt and reliability gap audit with prioritized recommendations. |
+| [Dashboard Load Performance](./performance/dashboard-load.md) | SQLite index analysis and optimization for dashboard boot path queries. |
 | [Contributing](./contributing.md) | Local development setup, testing, release flow, and contributor conventions. |
 | [Code Signing Setup](./CODE_SIGNING.md) | macOS and Windows code signing configuration for release binaries. |
 

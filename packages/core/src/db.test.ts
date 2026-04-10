@@ -86,12 +86,17 @@ describe("Database", () => {
       expect(indexNames).toContain("idxActivityLogTimestamp");
       expect(indexNames).toContain("idxActivityLogType");
       expect(indexNames).toContain("idxActivityLogTaskId");
+      expect(indexNames).toContain("idxActivityLogTaskIdTimestamp");
+      expect(indexNames).toContain("idxActivityLogTypeTimestamp");
       expect(indexNames).toContain("idxArchivedTasksId");
       expect(indexNames).toContain("idxAgentHeartbeatsAgentId");
+      expect(indexNames).toContain("idxAgentHeartbeatsAgentIdTimestamp");
       expect(indexNames).toContain("idxAgentHeartbeatsRunId");
       expect(indexNames).toContain("idxAiSessionsStatus");
+      expect(indexNames).toContain("idxAiSessionsStatusUpdatedAt");
       expect(indexNames).toContain("idxAiSessionsType");
       expect(indexNames).toContain("idxAiSessionsLock");
+      expect(indexNames).toContain("idxAgentsState");
       expect(indexNames).toContain("idxMessagesCreatedAt");
       expect(indexNames).toContain("idxMessagesFrom");
       expect(indexNames).toContain("idxMessagesTo");
@@ -103,10 +108,11 @@ describe("Database", () => {
       expect(indexNames).toContain("idxTaskDocumentsTaskKey");
       expect(indexNames).toContain("idxTaskDocumentsTaskId");
       expect(indexNames).toContain("idxTaskDocumentRevisionsTaskKey");
+      expect(indexNames).toContain("idxTasksCreatedAt");
     });
 
     it("seeds schema version", () => {
-      expect(db.getSchemaVersion()).toBe(27);
+      expect(db.getSchemaVersion()).toBe(28);
     });
 
     it("seeds lastModified", () => {
@@ -129,7 +135,7 @@ describe("Database", () => {
 
     it("is idempotent - calling init() twice does not fail", () => {
       expect(() => db.init()).not.toThrow();
-      expect(db.getSchemaVersion()).toBe(27);
+      expect(db.getSchemaVersion()).toBe(28);
     });
 
     it("does not overwrite existing config on re-init", () => {
@@ -735,8 +741,8 @@ describe("schema migrations", () => {
     // Now run init() which should trigger migration
     db.init();
 
-    // Verify version bumped to 27 (includes v1→v2 through v26→v27)
-    expect(db.getSchemaVersion()).toBe(27);
+    // Verify version bumped to 28 (includes v1→v2 through v26→v28)
+    expect(db.getSchemaVersion()).toBe(28);
 
     // Verify new columns exist and existing data is intact
     const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
@@ -761,11 +767,11 @@ describe("schema migrations", () => {
     const db = new Database(kbDir);
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(27);
+    expect(db.getSchemaVersion()).toBe(28);
 
     // Re-init should not fail
     db.init();
-    expect(db.getSchemaVersion()).toBe(27);
+    expect(db.getSchemaVersion()).toBe(28);
 
     db.close();
   });
@@ -781,7 +787,7 @@ describe("schema migrations", () => {
 
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(27);
+    expect(db.getSchemaVersion()).toBe(28);
 
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = 'agentRatings'").all() as Array<{ name: string }>;
     expect(tables).toEqual([{ name: "agentRatings" }]);
@@ -805,7 +811,7 @@ describe("schema migrations", () => {
 
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(27);
+    expect(db.getSchemaVersion()).toBe(28);
 
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = 'mission_events'").all() as Array<{ name: string }>;
     expect(tables).toEqual([{ name: "mission_events" }]);
@@ -908,8 +914,8 @@ describe("schema migrations", () => {
     // Now run init() which should trigger migrations v2→v3→v4
     db.init();
 
-    // Verify version bumped to 27
-    expect(db.getSchemaVersion()).toBe(27);
+    // Verify version bumped to 28
+    expect(db.getSchemaVersion()).toBe(28);
 
     // Verify new columns exist and existing data is intact
     const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
@@ -1275,7 +1281,7 @@ describe("createDatabase factory", () => {
     const db = createDatabase(kbDir);
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(27);
+    expect(db.getSchemaVersion()).toBe(28);
     expect(db.getLastModified()).toBeGreaterThan(0);
 
     db.close();
