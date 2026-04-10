@@ -214,3 +214,25 @@ The background memory summarization feature uses a three-layer architecture:
 **Test patterns**:
 - For CLI test suites with hoisted mocks (`vi.hoisted()`), helper functions like `triggerSignal` must be defined inside each `describe` block since they're not accessible from sibling blocks.
 - When testing settings-change handlers in CLI commands, emit events on the mock store instance stored in `taskStores[0]` to trigger the handler.
+
+## Plugin Examples & Authoring (FN-1114)
+
+Three example plugins demonstrate different plugin capabilities:
+
+**Example plugins location**: `plugins/examples/`
+- `fusion-plugin-notification/` — Sends webhook notifications (Slack, Discord, generic) on task lifecycle events. Demonstrates: `onLoad`, `onTaskCompleted`, `onTaskMoved`, `onError` hooks, settings schema, event filtering.
+- `fusion-plugin-auto-label/` — Automatic task categorization using keyword matching. Demonstrates: `onTaskCreated` hook, plugin tools, event emission.
+- `fusion-plugin-ci-status/` — Polls CI status for branches with custom REST API. Demonstrates: plugin routes, `setInterval` polling, `onLoad`/`onUnload` lifecycle.
+
+**Plugin scaffold command**: `fn plugin create <name>` generates a new plugin project with:
+- `package.json`, `tsconfig.json`, `vitest.config.ts`
+- `src/index.ts` with minimal `definePlugin()` call
+- `src/__tests__/index.test.ts` with basic test
+- `README.md` template
+
+**Plugin authoring guide**: `docs/PLUGIN_AUTHORING.md` covers:
+- Getting started, manifest reference, settings schema
+- All hooks with exact TypeScript signatures
+- Tools and routes registration patterns
+- Plugin context API reference
+- Testing patterns and publishing guide
