@@ -55,6 +55,7 @@ const { runAgentStop, runAgentStart } = await import("./commands/agent.js");
 const { runAgentImport } = await import("./commands/agent-import.js");
 const { runAgentExport } = await import("./commands/agent-export.js");
 const { runMessageInbox, runMessageOutbox, runMessageSend, runMessageRead, runMessageDelete, runAgentMailbox } = await import("./commands/message.js");
+const { runPluginList, runPluginInstall, runPluginUninstall, runPluginEnable, runPluginDisable } = await import("./commands/plugin.js");
 
 const HELP = `
 fn — AI-orchestrated task board
@@ -974,6 +975,46 @@ async function main() {
           default:
             console.error(`Unknown subcommand: message ${subcommand || ""}`);
             console.log("Try: fn message inbox | fn message outbox | fn message send | fn message read | fn message delete");
+            process.exit(1);
+        }
+        break;
+      }
+
+      case "plugin": {
+        const sub = args[1];
+        switch (sub) {
+          case "list":
+          case "ls":
+            await runPluginList(projectName);
+            break;
+          case "install": {
+            const source = args[2];
+            if (!source) { console.error("Usage: fn plugin install <path-or-package>"); process.exit(1); }
+            await runPluginInstall(source, { projectName });
+            break;
+          }
+          case "uninstall": {
+            const id = args[2];
+            if (!id) { console.error("Usage: fn plugin uninstall <id> [--force]"); process.exit(1); }
+            const force = args.includes("--force");
+            await runPluginUninstall(id, { force, projectName });
+            break;
+          }
+          case "enable": {
+            const id = args[2];
+            if (!id) { console.error("Usage: fn plugin enable <id>"); process.exit(1); }
+            await runPluginEnable(id, { projectName });
+            break;
+          }
+          case "disable": {
+            const id = args[2];
+            if (!id) { console.error("Usage: fn plugin disable <id>"); process.exit(1); }
+            await runPluginDisable(id, { projectName });
+            break;
+          }
+          default:
+            console.error(`Unknown subcommand: plugin ${sub || ""}`);
+            console.log("Try: fn plugin list | install | uninstall | enable | disable");
             process.exit(1);
         }
         break;
