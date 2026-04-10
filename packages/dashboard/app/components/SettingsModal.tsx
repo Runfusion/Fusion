@@ -18,6 +18,7 @@ import { applyPresetToSelection, generateUniquePresetId } from "../utils/modelPr
  * Sections have a `scope` to indicate where their settings are stored:
  *   - "global": User-level settings stored in ~/.pi/fusion/settings.json (shared across projects)
  *   - "project": Project-specific settings stored in .fusion/config.json
+ *   - "mixed": Section contains both global and project settings (rendered specially)
  *   - undefined: Section operates independently of settings storage (e.g. authentication)
  *
  * To add a new section:
@@ -26,8 +27,9 @@ import { applyPresetToSelection, generateUniquePresetId } from "../utils/modelPr
  *
  * Sections:
  *   - general: Task prefix configuration (project)
- *   - models: All model settings — default model (global), planning & validator models,
+ *   - models: Mixed scope — default/fallback models (global), planning & validator models,
  *     model presets, and AI summarization (project). Rendered as sub-sections on one screen.
+ *     The sidebar shows both global and project icons for this section.
  *   - appearance: Theme and color settings (global)
  *   - scheduling: Concurrency, poll interval, file overlap serialization, and step execution
  *     settings (runStepsInNewSessions, maxParallelSteps) (project)
@@ -41,7 +43,7 @@ import { applyPresetToSelection, generateUniquePresetId } from "../utils/modelPr
 type SettingsSection = {
   id: string;
   label: string;
-  scope: "global" | "project" | undefined;
+  scope: "global" | "project" | "mixed" | undefined;
   icon?: typeof Globe;
 };
 
@@ -50,7 +52,7 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "appearance", label: "Appearance", scope: "global" },
   { id: "notifications", label: "Notifications", scope: "global" },
   { id: "general", label: "General", scope: "project" },
-  { id: "models", label: "Models", scope: "project" },
+  { id: "models", label: "Models", scope: "mixed" },
   { id: "scheduling", label: "Scheduling", scope: "project" },
   { id: "worktrees", label: "Worktrees", scope: "project" },
   { id: "commands", label: "Commands", scope: "project" },
@@ -595,6 +597,17 @@ export function SettingsModal({
         </div>
       );
     }
+    if (activeSectionScope === "mixed") {
+      return (
+        <div className="settings-scope-banner settings-scope-mixed">
+          <span>🌐📁</span>
+          <span>
+            This section contains both global settings (default &amp; fallback models) and project
+            settings (planning, validator, presets, and AI summarization).
+          </span>
+        </div>
+      );
+    }
     return null;
   };
 
@@ -661,7 +674,7 @@ export function SettingsModal({
 
             {/* --- Default Model --- */}
             <h4 className="settings-section-heading">Default Model</h4>
-            <small className="settings-muted" style={{ display: "block", marginBottom: "0.5rem" }}>🌐 Default model is shared across all projects.</small>
+            <small className="settings-note">🌐 Default model is shared across all projects.</small>
             {modelsLoading ? (
               <div className="settings-empty-state">Loading available models…</div>
             ) : availableModels.length === 0 ? (
@@ -2010,11 +2023,27 @@ export function SettingsModal({
                   key={section.id}
                   className={`settings-nav-item${activeSection === section.id ? " active" : ""}`}
                   onClick={() => setActiveSection(section.id)}
-                  title={section.scope === "global" ? "Shared across all projects" : section.scope === "project" ? "Specific to this project" : undefined}
+                  title={
+                    section.scope === "global"
+                      ? "Shared across all projects"
+                      : section.scope === "project"
+                        ? "Specific to this project"
+                        : section.scope === "mixed"
+                          ? "Global and project settings"
+                          : undefined
+                  }
                 >
                   {section.scope === "global" && <Globe className="settings-scope-icon" aria-label="Global setting" size={16} />}
                   {section.scope === "project" && <Folder className="settings-scope-icon" aria-label="Project setting" size={16} />}
-                  {section.icon && section.scope !== "global" && section.scope !== "project" && <section.icon className="settings-scope-icon" aria-label="Global setting" size={16} />}
+                  {section.scope === "mixed" && (
+                    <>
+                      <Globe className="settings-scope-icon" aria-label="Global setting" size={16} />
+                      <Folder className="settings-scope-icon" aria-label="Project setting" size={16} />
+                    </>
+                  )}
+                  {section.icon && section.scope !== "global" && section.scope !== "project" && section.scope !== "mixed" && (
+                    <section.icon className="settings-scope-icon" aria-label="Global setting" size={16} />
+                  )}
                   {section.label}
                 </button>
               ))}

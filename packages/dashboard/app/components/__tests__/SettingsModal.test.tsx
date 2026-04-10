@@ -2059,10 +2059,11 @@ describe("SettingsModal", () => {
     expect(container.querySelector(".settings-scope-project")).toBeTruthy();
     expect(container.querySelector(".settings-scope-global")).toBeNull();
 
-    // Switch to Models → should show project banner
+    // Switch to Models → should show mixed scope banner (contains both global and project settings)
     fireEvent.click(screen.getAllByText("Models")[0]);
-    expect(container.querySelector(".settings-scope-project")).toBeTruthy();
-    expect(container.querySelector(".settings-scope-global")).toBeNull();
+    expect(container.querySelector(".settings-scope-mixed")).toBeTruthy();
+    expect(container.querySelector(".settings-scope-mixed")?.textContent).toContain("global");
+    expect(container.querySelector(".settings-scope-mixed")?.textContent).toContain("project");
   });
 
   // --- Settings save error handling tests ---
