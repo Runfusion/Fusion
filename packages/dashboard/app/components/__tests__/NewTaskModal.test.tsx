@@ -11,6 +11,8 @@ vi.mock("lucide-react", () => ({
   ChevronDown: () => null,
   X: () => null,
   Bot: () => null,
+  Maximize2: () => null,
+  Minimize2: () => null,
 }));
 
 // Mock the api module
@@ -72,7 +74,7 @@ describe("NewTaskModal", () => {
     renderNewTaskModal();
 
     expect(screen.getByText("New Task")).toBeTruthy();
-    expect(screen.getByLabelText(/Description/i)).toBeTruthy();
+    expect(screen.getByRole('textbox')).toBeTruthy();
     expect(screen.getByRole("button", { name: "Plan" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Subtask" })).toBeTruthy();
 
@@ -114,7 +116,7 @@ describe("NewTaskModal", () => {
   it("focuses description textarea when modal opens", async () => {
     renderNewTaskModal();
     
-    const textarea = screen.getByLabelText(/Description/i);
+    const textarea = screen.getByRole('textbox');
     await waitFor(() => {
       expect(document.activeElement).toBe(textarea);
     });
@@ -123,7 +125,7 @@ describe("NewTaskModal", () => {
   it("creates task with description when submitted", async () => {
     const { props } = renderNewTaskModal();
     
-    const descTextarea = screen.getByLabelText(/Description/i);
+    const descTextarea = screen.getByRole('textbox');
     fireEvent.change(descTextarea, { target: { value: "Test description" } });
     
     fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
@@ -140,7 +142,7 @@ describe("NewTaskModal", () => {
   it("closes modal after successful creation", async () => {
     const { props } = renderNewTaskModal();
     
-    const descTextarea = screen.getByLabelText(/Description/i);
+    const descTextarea = screen.getByRole('textbox');
     fireEvent.change(descTextarea, { target: { value: "Test" } });
     
     fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
@@ -164,7 +166,7 @@ describe("NewTaskModal", () => {
       onCreateTask: vi.fn().mockResolvedValue({ id: "FN-042" }),
     });
     
-    const descTextarea = screen.getByLabelText(/Description/i);
+    const descTextarea = screen.getByRole('textbox');
     fireEvent.change(descTextarea, { target: { value: "Test description" } });
     
     fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
@@ -177,7 +179,7 @@ describe("NewTaskModal", () => {
   it("confirms before closing with dirty state", () => {
     const { props } = renderNewTaskModal();
     
-    const descTextarea = screen.getByLabelText(/Description/i);
+    const descTextarea = screen.getByRole('textbox');
     fireEvent.change(descTextarea, { target: { value: "Test description" } });
     
     // Mock confirm to return false (cancel)
@@ -202,7 +204,7 @@ describe("NewTaskModal", () => {
   it("creates task with title undefined by default", async () => {
     const { props } = renderNewTaskModal();
     
-    const descTextarea = screen.getByLabelText(/Description/i);
+    const descTextarea = screen.getByRole('textbox');
     fireEvent.change(descTextarea, { target: { value: "Only description" } });
     
     fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
@@ -222,7 +224,7 @@ describe("NewTaskModal", () => {
     const onPlanningMode = vi.fn();
     const { props } = renderNewTaskModal({ onPlanningMode });
     
-    const descTextarea = screen.getByLabelText(/Description/i);
+    const descTextarea = screen.getByRole('textbox');
     fireEvent.change(descTextarea, { target: { value: "Build a login system" } });
     
     // Wait for models to load
@@ -241,7 +243,7 @@ describe("NewTaskModal", () => {
     const onPlanningMode = vi.fn();
     const { props } = renderNewTaskModal({ onPlanningMode });
     
-    const descTextarea = screen.getByLabelText(/Description/i);
+    const descTextarea = screen.getByRole('textbox');
     fireEvent.change(descTextarea, { target: { value: "Normal task" } });
     
     fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
@@ -269,7 +271,7 @@ describe("NewTaskModal", () => {
   it("enables Create Task when description has content", () => {
     renderNewTaskModal();
     
-    const descTextarea = screen.getByLabelText(/Description/i);
+    const descTextarea = screen.getByRole('textbox');
     fireEvent.change(descTextarea, { target: { value: "Some text" } });
     
     const createButton = screen.getByRole("button", { name: "Create Task" });
@@ -281,7 +283,7 @@ describe("NewTaskModal", () => {
     it("omits modelPresetId from payload when in default mode", async () => {
       const { props } = renderNewTaskModal();
 
-      const descTextarea = screen.getByLabelText(/Description/i);
+      const descTextarea = screen.getByRole('textbox');
       fireEvent.change(descTextarea, { target: { value: "Default mode task" } });
 
       fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
@@ -315,7 +317,7 @@ describe("NewTaskModal", () => {
       });
 
       // Type a description
-      fireEvent.change(screen.getByLabelText(/Description/i), { target: { value: "Preset task" } });
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: "Preset task" } });
 
       // Select the preset
       const select = document.getElementById("model-preset") as HTMLSelectElement;
@@ -356,7 +358,7 @@ describe("NewTaskModal", () => {
       });
 
       // Type a description
-      fireEvent.change(screen.getByLabelText(/Description/i), { target: { value: "Custom task" } });
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: "Custom task" } });
 
       // Select a preset first
       const select = document.getElementById("model-preset") as HTMLSelectElement;
@@ -395,7 +397,7 @@ describe("NewTaskModal", () => {
       const checkbox = screen.getByTestId("workflow-step-checkbox-WS-001").querySelector('input[type="checkbox"]') as HTMLInputElement;
       fireEvent.click(checkbox);
 
-      fireEvent.change(screen.getByLabelText(/Description/i), { target: { value: "Task with workflow step" } });
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: "Task with workflow step" } });
       fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
 
       await waitFor(() => {
@@ -428,7 +430,7 @@ describe("NewTaskModal", () => {
       fireEvent.click(checkbox2);
 
       // Type description and submit
-      fireEvent.change(screen.getByLabelText(/Description/i), { target: { value: "Ordered task" } });
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: "Ordered task" } });
       fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
 
       await waitFor(() => {
@@ -467,7 +469,7 @@ describe("NewTaskModal", () => {
       fireEvent.click(screen.getByTestId("workflow-step-move-up-WS-002"));
 
       // Type description and submit
-      fireEvent.change(screen.getByLabelText(/Description/i), { target: { value: "Reordered task" } });
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: "Reordered task" } });
       fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
 
       await waitFor(() => {
@@ -496,7 +498,7 @@ describe("NewTaskModal", () => {
       });
 
       // Don't interact with workflow steps at all
-      fireEvent.change(screen.getByLabelText(/Description/i), { target: { value: "No interaction task" } });
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: "No interaction task" } });
       fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
 
       await waitFor(() => {
@@ -530,7 +532,7 @@ describe("NewTaskModal", () => {
       const checkbox = screen.getByTestId("workflow-step-checkbox-WS-001").querySelector('input[type="checkbox"]') as HTMLInputElement;
       fireEvent.click(checkbox);
 
-      fireEvent.change(screen.getByLabelText(/Description/i), { target: { value: "Deselected task" } });
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: "Deselected task" } });
       fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
 
       await waitFor(() => {
@@ -564,7 +566,7 @@ describe("NewTaskModal", () => {
       // Don't modify the selection — just submit.
       // Since user hasn't explicitly changed steps, the explicitlySet flag is false,
       // so the modal sends undefined (backend applies its own defaults)
-      fireEvent.change(screen.getByLabelText(/Description/i), { target: { value: "Auto-selected task" } });
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: "Auto-selected task" } });
       fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
 
       await waitFor(() => {
@@ -648,7 +650,7 @@ describe("NewTaskModal", () => {
       const { props } = renderNewTaskModal();
 
       // Type description
-      fireEvent.change(screen.getByLabelText(/Description/i), { target: { value: "Task with agent" } });
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: "Task with agent" } });
 
       // Open agent picker and select agent
       fireEvent.click(screen.getByTestId("new-task-agent-button"));
@@ -674,7 +676,7 @@ describe("NewTaskModal", () => {
     it("omits assignedAgentId from payload when no agent is selected", async () => {
       const { props } = renderNewTaskModal();
 
-      fireEvent.change(screen.getByLabelText(/Description/i), { target: { value: "Task without agent" } });
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: "Task without agent" } });
 
       fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
 
@@ -696,7 +698,7 @@ describe("NewTaskModal", () => {
       const { props } = renderNewTaskModal();
 
       // Type description
-      fireEvent.change(screen.getByLabelText(/Description/i), { target: { value: "Task with agent" } });
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: "Task with agent" } });
 
       // Open agent picker and select agent
       fireEvent.click(screen.getByTestId("new-task-agent-button"));
@@ -766,7 +768,7 @@ describe("NewTaskModal", () => {
       renderNewTaskModal();
 
       // Type description
-      fireEvent.change(screen.getByLabelText(/Description/i), { target: { value: "Task with agent" } });
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: "Task with agent" } });
 
       // Open agent picker and select agent
       fireEvent.click(screen.getByTestId("new-task-agent-button"));

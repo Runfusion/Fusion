@@ -268,13 +268,34 @@ describe("TaskForm", () => {
     expect(textarea.getAttribute("rows")).toBe("5");
   });
 
-  it("does not render expand button in create mode", () => {
-    renderTaskForm({
+  it("renders expand button in create mode and toggles fullscreen", () => {
+    const { container } = renderTaskForm({
+      mode: "create",
+      description: "Some description to expand",
+    });
+
+    const expandButton = screen.getByRole("button", { name: "Expand description" });
+    expect(expandButton).toBeTruthy();
+
+    fireEvent.click(expandButton);
+    expect(container.querySelector(".description-with-refine.description--fullscreen")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Collapse description" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Collapse description" }));
+    expect(container.querySelector(".description-with-refine.description--fullscreen")).toBeNull();
+  });
+
+  it("collapses fullscreen description editor on Escape in create mode", () => {
+    const { container } = renderTaskForm({
       mode: "create",
       description: "Some description",
     });
 
-    expect(screen.queryByRole("button", { name: "Expand description" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Expand description" }));
+    const textarea = screen.getByRole("textbox", { name: /Description/i });
+    fireEvent.keyDown(textarea, { key: "Escape" });
+
+    expect(container.querySelector(".description-with-refine.description--fullscreen")).toBeNull();
   });
 
   it("debounces auto-save in edit mode and calls onAutoSaveDescription after 1.5s", async () => {

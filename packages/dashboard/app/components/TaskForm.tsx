@@ -575,7 +575,7 @@ export function TaskForm({
             rows={mode === "edit" ? 8 : 5}
             disabled={disabled || isRefining}
           />
-          {mode === "edit" && !disabled && !isDescriptionExpanded && (
+          {!disabled && !isDescriptionExpanded && (
             <button
               type="button"
               className="btn btn-sm description-expand-btn"
