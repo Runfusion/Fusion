@@ -4755,6 +4755,10 @@ body {
   cursor: pointer;
   transition: text-decoration var(--transition-fast);
   text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
 }
 
 .detail-dep-link:hover {
@@ -4765,6 +4769,20 @@ body {
   outline: 1px solid var(--todo);
   outline-offset: 2px;
   border-radius: 2px;
+}
+
+.detail-dep-id {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.detail-dep-label {
+  color: var(--text-muted);
+  font-family: var(--font-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .detail-agent-section {

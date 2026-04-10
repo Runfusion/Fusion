@@ -492,9 +492,15 @@ describe("TaskDetailModal", () => {
   });
 
   it("renders dependency list when dependencies exist", () => {
+    const allTasks: Task[] = [
+      { id: "FN-001", title: "First dependency", description: "Desc 1", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
+      { id: "FN-002", title: "Second dependency", description: "Desc 2", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
+    ];
+
     render(
       <TaskDetailModal
         task={makeTask({ dependencies: ["FN-001", "FN-002"] })}
+        tasks={allTasks}
         onClose={noop}
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
@@ -504,8 +510,18 @@ describe("TaskDetailModal", () => {
       />,
     );
 
-    expect(screen.getByText("FN-001")).toBeTruthy();
-    expect(screen.getByText("FN-002")).toBeTruthy();
+    // Check that dependency IDs are rendered
+    const depIds = document.querySelectorAll(".detail-dep-id");
+    expect(depIds).toHaveLength(2);
+    expect(depIds[0].textContent).toBe("FN-001");
+    expect(depIds[1].textContent).toBe("FN-002");
+
+    // Check that dependency labels (titles) are rendered
+    const depLabels = document.querySelectorAll(".detail-dep-label");
+    expect(depLabels).toHaveLength(2);
+    expect(depLabels[0].textContent).toBe("First dependency");
+    expect(depLabels[1].textContent).toBe("Second dependency");
+
     expect(screen.queryByText("(no dependencies)")).toBeNull();
   });
 
@@ -2067,10 +2083,17 @@ describe("TaskDetailModal", () => {
   });
 
   describe("clickable dependency links", () => {
-    it("renders dependency list items with clickable class", () => {
+    it("renders dependency list items with clickable class and ID + label", () => {
+      // Provide tasks prop to enable title lookup
+      const allTasks: Task[] = [
+        { id: "FN-001", title: "Fix login bug", description: "Login broken", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
+        { id: "FN-002", title: "Add tests", description: "Test coverage", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
+      ];
+
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ dependencies: ["FN-001", "FN-002"] })}
+          tasks={allTasks}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2082,8 +2105,112 @@ describe("TaskDetailModal", () => {
 
       const depLinks = container.querySelectorAll(".detail-dep-link");
       expect(depLinks).toHaveLength(2);
-      expect(depLinks[0].textContent).toBe("FN-001");
-      expect(depLinks[1].textContent).toBe("FN-002");
+
+      // Check detail-dep-id elements
+      const depIds = container.querySelectorAll(".detail-dep-id");
+      expect(depIds).toHaveLength(2);
+      expect(depIds[0].textContent).toBe("FN-001");
+      expect(depIds[1].textContent).toBe("FN-002");
+
+      // Check detail-dep-label elements
+      const depLabels = container.querySelectorAll(".detail-dep-label");
+      expect(depLabels).toHaveLength(2);
+      expect(depLabels[0].textContent).toBe("Fix login bug");
+      expect(depLabels[1].textContent).toBe("Add tests");
+    });
+
+    it("renders dependency label from description when title is not available", () => {
+      const allTasks: Task[] = [
+        { id: "FN-001", description: "Login is broken", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
+      ];
+
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ dependencies: ["FN-001"] })}
+          tasks={allTasks}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const depLabels = container.querySelectorAll(".detail-dep-label");
+      expect(depLabels).toHaveLength(1);
+      expect(depLabels[0].textContent).toBe("Login is broken");
+    });
+
+    it("renders dependency ID as label when no title or description available", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ dependencies: ["FN-001"] })}
+          // No tasks prop - dependency not found
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const depLabels = container.querySelectorAll(".detail-dep-label");
+      expect(depLabels).toHaveLength(1);
+      // Should fall back to the ID itself
+      expect(depLabels[0].textContent).toBe("FN-001");
+    });
+
+    it("truncates long dependency labels at 40 characters", () => {
+      // Title is exactly 50 chars, should be truncated to 40 with ellipsis
+      const longTitle = "This is a very long task title that exceeds the limit";
+      const allTasks: Task[] = [
+        { id: "FN-001", title: longTitle, description: "Short desc", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
+      ];
+
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ dependencies: ["FN-001"] })}
+          tasks={allTasks}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const depLabels = container.querySelectorAll(".detail-dep-label");
+      expect(depLabels).toHaveLength(1);
+      // Title is 50 chars, should be truncated to 40 with ellipsis
+      // "This is a very long task title that exceed" + "…" = 41 chars
+      expect(depLabels[0].textContent!.length).toBe(41); // 40 chars + ellipsis
+      expect(depLabels[0].textContent).toContain("…");
+    });
+
+    it("preserves full text in title attribute for truncated labels", () => {
+      const allTasks: Task[] = [
+        { id: "FN-001", title: "Very long title that gets truncated in the UI but should show full text on hover", description: "Desc", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
+      ];
+
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ dependencies: ["FN-001"] })}
+          tasks={allTasks}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const depLink = container.querySelector(".detail-dep-link")!;
+      // The title attribute should contain the full ID for context
+      expect(depLink.getAttribute("title")).toContain("FN-001");
     });
 
     it("calls fetchTaskDetail and onOpenDetail when clicking a dependency", async () => {

@@ -1332,32 +1332,39 @@ export function TaskDetailModal({
             <h4>Dependencies</h4>
             {dependencies.length > 0 ? (
               <ul className="detail-dep-list">
-                {dependencies.map((dep) => (
-                  <li key={dep} className="detail-dep-item">
-                    <span
-                      className="detail-dep-link"
-                      onClick={() => handleDepClick(dep)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          handleDepClick(dep);
-                        }
-                      }}
-                      role="link"
-                      tabIndex={0}
-                      title={`Click to view ${dep}`}
-                    >
-                      {dep}
-                    </span>
-                    <button
-                      className="dep-remove-btn"
-                      onClick={(e) => handleRemoveDep(e, dep)}
-                      title={`Remove dependency ${dep}`}
-                    >
-                      ×
-                    </button>
-                  </li>
-                ))}
+                {dependencies.map((dep) => {
+                  // Look up dependency metadata from tasks prop
+                  const depTask = tasks.find((t) => t.id === dep);
+                  const depLabel = depTask?.title || depTask?.description || dep;
+
+                  return (
+                    <li key={dep} className="detail-dep-item">
+                      <span
+                        className="detail-dep-link"
+                        onClick={() => handleDepClick(dep)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            handleDepClick(dep);
+                          }
+                        }}
+                        role="link"
+                        tabIndex={0}
+                        title={`Click to view ${dep}`}
+                      >
+                        <span className="detail-dep-id">{dep}</span>
+                        <span className="detail-dep-label">{truncate(depLabel, 40)}</span>
+                      </span>
+                      <button
+                        className="dep-remove-btn"
+                        onClick={(e) => handleRemoveDep(e, dep)}
+                        title={`Remove dependency ${dep}`}
+                      >
+                        ×
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
             ) : (
               <div className="detail-empty-inline">(no dependencies)</div>
