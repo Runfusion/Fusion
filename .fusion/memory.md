@@ -105,6 +105,44 @@ The `PluginRunner` bridges the plugin core system with the Fusion engine runtime
 - Tools registered via `getPluginTools()` → merged with built-in agent tools
 - Routes registered via `getPluginRoutes()` → mounted under `/api/plugins/:pluginId/`
 
+### Plugin Lifecycle SSE Event Propagation (FN-1412)
+
+Dashboard SSE (`/api/events`) streams plugin lifecycle events as normalized `plugin:lifecycle` SSE events.
+
+**Payload contract** (`PluginLifecyclePayload`):
+- `pluginId` — Plugin identifier
+- `transition` — Normalized transition type: `installing`, `enabled`, `disabled`, `error`, `uninstalled`, `settings-updated`
+- `sourceEvent` — Underlying store event that triggered this transition
+- `timestamp` — ISO-8601 timestamp
+- `projectId` — Included for project-scoped streams (omitted for default streams)
+- `enabled` — Whether the plugin is currently enabled
+- `state` — Current plugin state (`installed`, `started`, `stopped`, `error`)
+- `version` — Plugin version
+- `settings` — Plugin settings snapshot
+- `error` — Error message (only when state is "error")
+
+**Transition mapping**:
+| Source Event | Transition |
+|--------------|-----------|
+| `plugin:registered` | `installing` |
+| `plugin:enabled` | `enabled` |
+| `plugin:disabled` | `disabled` |
+| `plugin:stateChanged` (state === "error") | `error` |
+| `plugin:unregistered` | `uninstalled` |
+| `plugin:updated` | `settings-updated` |
+
+**Project-scoped wiring**:
+- `/api/events` (no projectId) → uses `store.getPluginStore()` for default store
+- `/api/events?projectId=X` → uses `scopedStore.getPluginStore()` from `getOrCreateProjectStore(projectId)`
+- Both streams share the same EventEmitter via the project-store resolver pattern
+- Listener cleanup happens on `req.on("close")` and write-failure paths
+
+**Implementation files**:
+- `packages/dashboard/src/sse.ts` — `createSSE()` with plugin lifecycle relay
+- `packages/dashboard/src/server.ts` — `/api/events` route wiring with scoped plugin sources
+- `packages/dashboard/src/__tests__/sse.test.ts` — Plugin lifecycle SSE tests
+- `packages/dashboard/src/server.events.test.ts` — Server wiring tests
+
 ## Pitfalls
 
 - When adding props to a React component interface that were previously declared but not destructured in the function body, remember to add them to the destructuring list too. TypeScript won't warn about unused interface fields, so `onOpenScripts` in `MobileNavBarProps` compiled fine but caused `ReferenceError: onOpenScripts is not defined` at runtime.

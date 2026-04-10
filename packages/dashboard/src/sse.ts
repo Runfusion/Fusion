@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import type { TaskStore, MissionStore, PluginStore } from "@fusion/core";
+import type { TaskStore, MissionStore, PluginStore, PluginInstallation, PluginState } from "@fusion/core";
 import type { AiSessionStore } from "./ai-session-store.js";
 
 let activeConnections = 0;
@@ -24,7 +24,123 @@ function safeWrite(res: Response, data: string): boolean {
   }
 }
 
-export function createSSE(store: TaskStore, missionStore?: MissionStore, aiSessionStore?: AiSessionStore, pluginStore?: PluginStore) {
+/**
+ * Normalized plugin lifecycle transition types.
+ * These are the unified set of transitions that the SSE stream emits.
+ */
+export type PluginLifecycleTransition =
+  | "installing"
+  | "enabled"
+  | "disabled"
+  | "error"
+  | "uninstalled"
+  | "settings-updated";
+
+/**
+ * Normalized plugin lifecycle payload emitted via SSE.
+ * This is the stable contract the UI can reconcile.
+ */
+export interface PluginLifecyclePayload {
+  /** Plugin identifier */
+  pluginId: string;
+  /** Normalized transition type */
+  transition: PluginLifecycleTransition;
+  /** Underlying store/runtime event that triggered this transition */
+  sourceEvent: string;
+  /** ISO-8601 timestamp of the event */
+  timestamp: string;
+  /** Project ID when stream is project-scoped (omitted for default streams) */
+  projectId?: string;
+  /** Whether the plugin is currently enabled */
+  enabled: boolean;
+  /** Current plugin state */
+  state: PluginState;
+  /** Plugin version */
+  version: string;
+  /** Plugin settings snapshot */
+  settings: Record<string, unknown>;
+  /** Error message (only present when state is "error") */
+  error?: string;
+}
+
+/**
+ * Map source event names to normalized plugin lifecycle transitions.
+ * This ensures equivalent source events always map to the same transition value.
+ */
+function mapSourceEventToTransition(
+  sourceEvent: string,
+  plugin: PluginInstallation,
+  previousState?: PluginState,
+): PluginLifecycleTransition {
+  switch (sourceEvent) {
+    case "plugin:registered":
+      return "installing";
+
+    case "plugin:enabled":
+      return "enabled";
+
+    case "plugin:disabled":
+      return "disabled";
+
+    case "plugin:stateChanged":
+      // If the new state is "error", emit the "error" transition
+      if (plugin.state === "error") {
+        return "error";
+      }
+      // For other state changes (started, stopped), we don't emit a dedicated transition
+      // but still emit the lifecycle event for observability
+      return "error"; // Map to "error" as a fallback for non-standard state transitions
+
+    case "plugin:unregistered":
+      return "uninstalled";
+
+    case "plugin:updated":
+      // Check if this looks like a settings update
+      // (we emit settings-updated for any update, as the UI can diff if needed)
+      return "settings-updated";
+
+    default:
+      // Unknown events map to error for safety
+      return "error";
+  }
+}
+
+/**
+ * Create a normalized plugin lifecycle payload from a source event.
+ */
+function createPluginLifecyclePayload(
+  sourceEvent: string,
+  plugin: PluginInstallation,
+  projectId?: string,
+): PluginLifecyclePayload {
+  return {
+    pluginId: plugin.id,
+    transition: mapSourceEventToTransition(sourceEvent, plugin),
+    sourceEvent,
+    timestamp: new Date().toISOString(),
+    projectId,
+    enabled: plugin.enabled,
+    state: plugin.state,
+    version: plugin.version,
+    settings: plugin.settings,
+    error: plugin.error,
+  };
+}
+
+export interface CreateSSEOptions {
+  /** Project ID for project-scoped streams (enables scope attribution) */
+  projectId?: string;
+}
+
+export function createSSE(
+  store: TaskStore,
+  missionStore?: MissionStore,
+  aiSessionStore?: AiSessionStore,
+  pluginStore?: PluginStore,
+  options?: CreateSSEOptions,
+) {
+  const { projectId } = options ?? {};
+
   return (_req: Request, res: Response) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -113,24 +229,39 @@ export function createSSE(store: TaskStore, missionStore?: MissionStore, aiSessi
       send(`event: ai_session:deleted\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
-    // Plugin event handlers
-    const onPluginRegistered = (data: any) => {
-      send(`event: plugin:registered\ndata: ${JSON.stringify(data)}\n\n`);
+    // --- Unified plugin lifecycle handler ---
+    // Instead of emitting individual plugin events, we normalize all plugin
+    // lifecycle changes into a single `plugin:lifecycle` SSE event with
+    // a deterministic payload contract.
+
+    const onPluginRegistered = (plugin: PluginInstallation) => {
+      const payload = createPluginLifecyclePayload("plugin:registered", plugin, projectId);
+      send(`event: plugin:lifecycle\ndata: ${JSON.stringify(payload)}\n\n`);
     };
-    const onPluginUnregistered = (data: any) => {
-      send(`event: plugin:unregistered\ndata: ${JSON.stringify(data)}\n\n`);
+
+    const onPluginUnregistered = (plugin: PluginInstallation) => {
+      const payload = createPluginLifecyclePayload("plugin:unregistered", plugin, projectId);
+      send(`event: plugin:lifecycle\ndata: ${JSON.stringify(payload)}\n\n`);
     };
-    const onPluginUpdated = (data: any) => {
-      send(`event: plugin:updated\ndata: ${JSON.stringify(data)}\n\n`);
+
+    const onPluginUpdated = (plugin: PluginInstallation) => {
+      const payload = createPluginLifecyclePayload("plugin:updated", plugin, projectId);
+      send(`event: plugin:lifecycle\ndata: ${JSON.stringify(payload)}\n\n`);
     };
-    const onPluginEnabled = (data: any) => {
-      send(`event: plugin:enabled\ndata: ${JSON.stringify(data)}\n\n`);
+
+    const onPluginEnabled = (plugin: PluginInstallation) => {
+      const payload = createPluginLifecyclePayload("plugin:enabled", plugin, projectId);
+      send(`event: plugin:lifecycle\ndata: ${JSON.stringify(payload)}\n\n`);
     };
-    const onPluginDisabled = (data: any) => {
-      send(`event: plugin:disabled\ndata: ${JSON.stringify(data)}\n\n`);
+
+    const onPluginDisabled = (plugin: PluginInstallation) => {
+      const payload = createPluginLifecyclePayload("plugin:disabled", plugin, projectId);
+      send(`event: plugin:lifecycle\ndata: ${JSON.stringify(payload)}\n\n`);
     };
-    const onPluginStateChanged = (data: any) => {
-      send(`event: plugin:stateChanged\ndata: ${JSON.stringify(data)}\n\n`);
+
+    const onPluginStateChanged = (plugin: PluginInstallation) => {
+      const payload = createPluginLifecyclePayload("plugin:stateChanged", plugin, projectId);
+      send(`event: plugin:lifecycle\ndata: ${JSON.stringify(payload)}\n\n`);
     };
 
     // --- Cleanup (all handlers are defined above, safe to reference) ---

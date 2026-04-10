@@ -32,6 +32,47 @@ function createMockRequest() {
   return emitter as unknown as Request;
 }
 
+/**
+ * Extract and parse the JSON data from an SSE message chunk.
+ * SSE format: "event: event-name\ndata: {...json...}\n\n"
+ * The regex needs to handle multiline JSON (e.g., with \n in strings).
+ */
+function extractSSEPayload(sseMsg: string): any {
+  // Match everything between "data: " and the final "\n\n"
+  const dataMatch = sseMsg.match(/data: ([\s\S]*?)\n\n/);
+  if (!dataMatch) {
+    return {};
+  }
+  return JSON.parse(dataMatch[1]);
+}
+
+/** Sample plugin installation for testing */
+function createMockPlugin(overrides: Partial<{
+  id: string;
+  enabled: boolean;
+  state: string;
+  error?: string;
+  settings: Record<string, unknown>;
+}> = {}) {
+  return {
+    id: overrides.id ?? "test-plugin",
+    name: "Test Plugin",
+    version: "1.0.0",
+    description: "A test plugin",
+    author: "Test Author",
+    homepage: "https://example.com",
+    path: "/path/to/plugin",
+    enabled: overrides.enabled ?? true,
+    state: overrides.state ?? "installed",
+    settings: overrides.settings ?? {},
+    settingsSchema: undefined,
+    error: overrides.error,
+    dependencies: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 describe("createSSE", () => {
   let store: ReturnType<typeof createMockStore>;
 
@@ -209,5 +250,242 @@ describe("createSSE", () => {
     expect(getActiveSSEConnections()).toBe(initial + 1);
     req2.emit("close");
     expect(getActiveSSEConnections()).toBe(initial);
+  });
+
+  // ── Plugin Lifecycle Event Tests ─────────────────────────────────────────────
+
+  describe("plugin lifecycle events", () => {
+    it("emits plugin:lifecycle event for plugin:registered (installing transition)", () => {
+      const pluginStore = createMockStore();
+      const req = createMockRequest();
+      const { res, chunks } = createMockResponse();
+      createSSE(store, undefined, undefined, pluginStore)(req, res);
+
+      const plugin = createMockPlugin({ id: "my-plugin", state: "installed" });
+      pluginStore.emit("plugin:registered", plugin);
+
+      const sseMsg = chunks.find((c) => c.includes("event: plugin:lifecycle"));
+      expect(sseMsg).toBeDefined();
+      expect(sseMsg).toContain("plugin:lifecycle");
+
+      // Parse the payload
+      const payload = extractSSEPayload(sseMsg!);
+      expect(payload.pluginId).toBe("my-plugin");
+      expect(payload.transition).toBe("installing");
+      expect(payload.sourceEvent).toBe("plugin:registered");
+      expect(payload.timestamp).toBeDefined();
+      expect(payload.enabled).toBe(true);
+      expect(payload.state).toBe("installed");
+      expect(payload.version).toBe("1.0.0");
+      expect(payload.settings).toEqual({});
+    });
+
+    it("emits plugin:lifecycle event for plugin:enabled (enabled transition)", () => {
+      const pluginStore = createMockStore();
+      const req = createMockRequest();
+      const { res, chunks } = createMockResponse();
+      createSSE(store, undefined, undefined, pluginStore)(req, res);
+
+      const plugin = createMockPlugin({ id: "enabled-plugin", enabled: true, state: "started" });
+      pluginStore.emit("plugin:enabled", plugin);
+
+      const sseMsg = chunks.find((c) => c.includes("event: plugin:lifecycle"));
+      expect(sseMsg).toBeDefined();
+
+      const payload = extractSSEPayload(sseMsg!);
+      expect(payload.pluginId).toBe("enabled-plugin");
+      expect(payload.transition).toBe("enabled");
+      expect(payload.sourceEvent).toBe("plugin:enabled");
+      expect(payload.enabled).toBe(true);
+    });
+
+    it("emits plugin:lifecycle event for plugin:disabled (disabled transition)", () => {
+      const pluginStore = createMockStore();
+      const req = createMockRequest();
+      const { res, chunks } = createMockResponse();
+      createSSE(store, undefined, undefined, pluginStore)(req, res);
+
+      const plugin = createMockPlugin({ id: "disabled-plugin", enabled: false, state: "stopped" });
+      pluginStore.emit("plugin:disabled", plugin);
+
+      const sseMsg = chunks.find((c) => c.includes("event: plugin:lifecycle"));
+      expect(sseMsg).toBeDefined();
+
+      const payload = extractSSEPayload(sseMsg!);
+      expect(payload.pluginId).toBe("disabled-plugin");
+      expect(payload.transition).toBe("disabled");
+      expect(payload.sourceEvent).toBe("plugin:disabled");
+      expect(payload.enabled).toBe(false);
+    });
+
+    it("emits plugin:lifecycle event for plugin:stateChanged with error state (error transition)", () => {
+      const pluginStore = createMockStore();
+      const req = createMockRequest();
+      const { res, chunks } = createMockResponse();
+      createSSE(store, undefined, undefined, pluginStore)(req, res);
+
+      const plugin = createMockPlugin({
+        id: "error-plugin",
+        state: "error",
+        error: "Failed to load: missing dependency",
+      });
+      pluginStore.emit("plugin:stateChanged", plugin);
+
+      const sseMsg = chunks.find((c) => c.includes("event: plugin:lifecycle"));
+      expect(sseMsg).toBeDefined();
+
+      const payload = extractSSEPayload(sseMsg!);
+      expect(payload.pluginId).toBe("error-plugin");
+      expect(payload.transition).toBe("error");
+      expect(payload.sourceEvent).toBe("plugin:stateChanged");
+      expect(payload.state).toBe("error");
+      expect(payload.error).toBe("Failed to load: missing dependency");
+    });
+
+    it("emits plugin:lifecycle event for plugin:unregistered (uninstalled transition)", () => {
+      const pluginStore = createMockStore();
+      const req = createMockRequest();
+      const { res, chunks } = createMockResponse();
+      createSSE(store, undefined, undefined, pluginStore)(req, res);
+
+      const plugin = createMockPlugin({ id: "uninstalled-plugin" });
+      pluginStore.emit("plugin:unregistered", plugin);
+
+      const sseMsg = chunks.find((c) => c.includes("event: plugin:lifecycle"));
+      expect(sseMsg).toBeDefined();
+
+      const payload = extractSSEPayload(sseMsg!);
+      expect(payload.pluginId).toBe("uninstalled-plugin");
+      expect(payload.transition).toBe("uninstalled");
+      expect(payload.sourceEvent).toBe("plugin:unregistered");
+    });
+
+    it("emits plugin:lifecycle event for plugin:updated (settings-updated transition)", () => {
+      const pluginStore = createMockStore();
+      const req = createMockRequest();
+      const { res, chunks } = createMockResponse();
+      createSSE(store, undefined, undefined, pluginStore)(req, res);
+
+      const plugin = createMockPlugin({
+        id: "settings-plugin",
+        settings: { apiKey: "secret123", debugMode: true },
+      });
+      pluginStore.emit("plugin:updated", plugin);
+
+      const sseMsg = chunks.find((c) => c.includes("event: plugin:lifecycle"));
+      expect(sseMsg).toBeDefined();
+
+      const payload = extractSSEPayload(sseMsg!);
+      expect(payload.pluginId).toBe("settings-plugin");
+      expect(payload.transition).toBe("settings-updated");
+      expect(payload.sourceEvent).toBe("plugin:updated");
+      expect(payload.settings).toEqual({ apiKey: "secret123", debugMode: true });
+    });
+
+    it("includes projectId in payload when options.projectId is provided", () => {
+      const pluginStore = createMockStore();
+      const req = createMockRequest();
+      const { res, chunks } = createMockResponse();
+      createSSE(store, undefined, undefined, pluginStore, { projectId: "proj_abc123" })(req, res);
+
+      const plugin = createMockPlugin({ id: "scoped-plugin" });
+      pluginStore.emit("plugin:registered", plugin);
+
+      const sseMsg = chunks.find((c) => c.includes("event: plugin:lifecycle"));
+      expect(sseMsg).toBeDefined();
+
+      const payload = extractSSEPayload(sseMsg!);
+      expect(payload.projectId).toBe("proj_abc123");
+    });
+
+    it("does not include projectId in payload for default streams", () => {
+      const pluginStore = createMockStore();
+      const req = createMockRequest();
+      const { res, chunks } = createMockResponse();
+      createSSE(store, undefined, undefined, pluginStore)(req, res);
+
+      const plugin = createMockPlugin({ id: "default-plugin" });
+      pluginStore.emit("plugin:registered", plugin);
+
+      const sseMsg = chunks.find((c) => c.includes("event: plugin:lifecycle"));
+      expect(sseMsg).toBeDefined();
+
+      const payload = extractSSEPayload(sseMsg!);
+      expect(payload.projectId).toBeUndefined();
+    });
+
+    it("cleans up plugin listeners when client disconnects", () => {
+      const pluginStore = createMockStore();
+      const req = createMockRequest();
+      const { res } = createMockResponse();
+      createSSE(store, undefined, undefined, pluginStore)(req, res);
+
+      // Verify listeners are attached
+      expect(pluginStore.listenerCount("plugin:registered")).toBe(1);
+      expect(pluginStore.listenerCount("plugin:unregistered")).toBe(1);
+      expect(pluginStore.listenerCount("plugin:updated")).toBe(1);
+      expect(pluginStore.listenerCount("plugin:enabled")).toBe(1);
+      expect(pluginStore.listenerCount("plugin:disabled")).toBe(1);
+      expect(pluginStore.listenerCount("plugin:stateChanged")).toBe(1);
+
+      req.emit("close");
+
+      // All plugin listeners should be removed
+      expect(pluginStore.listenerCount("plugin:registered")).toBe(0);
+      expect(pluginStore.listenerCount("plugin:unregistered")).toBe(0);
+      expect(pluginStore.listenerCount("plugin:updated")).toBe(0);
+      expect(pluginStore.listenerCount("plugin:enabled")).toBe(0);
+      expect(pluginStore.listenerCount("plugin:disabled")).toBe(0);
+      expect(pluginStore.listenerCount("plugin:stateChanged")).toBe(0);
+    });
+
+    it("stops writing and cleans up plugin listeners when res.write throws", () => {
+      const pluginStore = createMockStore();
+      const req = createMockRequest();
+      const { res } = createMockResponse();
+      createSSE(store, undefined, undefined, pluginStore)(req, res);
+
+      // Make write throw on next call
+      (res.write as any).mockImplementation(() => {
+        throw new Error("Socket closed");
+      });
+
+      // Emit a plugin event — should not throw
+      const plugin = createMockPlugin({ id: "cleanup-plugin" });
+      expect(() => pluginStore.emit("plugin:registered", plugin)).not.toThrow();
+
+      // All plugin listeners should be removed
+      expect(pluginStore.listenerCount("plugin:registered")).toBe(0);
+      expect(pluginStore.listenerCount("plugin:enabled")).toBe(0);
+    });
+
+    it("handles multiple plugin lifecycle events in sequence", () => {
+      const pluginStore = createMockStore();
+      const req = createMockRequest();
+      const { res, chunks } = createMockResponse();
+      createSSE(store, undefined, undefined, pluginStore)(req, res);
+
+      // Simulate a plugin lifecycle: install → enable → update settings
+      const plugin1 = createMockPlugin({ id: "multi-plugin", state: "installed" });
+      pluginStore.emit("plugin:registered", plugin1);
+
+      const plugin2 = createMockPlugin({ id: "multi-plugin", enabled: true, state: "started" });
+      pluginStore.emit("plugin:enabled", plugin2);
+
+      const plugin3 = createMockPlugin({ id: "multi-plugin", settings: { key: "value" } });
+      pluginStore.emit("plugin:updated", plugin3);
+
+      const lifecycleEvents = chunks.filter((c) => c.includes("event: plugin:lifecycle"));
+      expect(lifecycleEvents.length).toBe(3);
+
+      const payload1 = extractSSEPayload(lifecycleEvents[0]);
+      expect(payload1.transition).toBe("installing");
+
+      const payload2 = extractSSEPayload(lifecycleEvents[1]);
+      expect(payload2.transition).toBe("enabled");
+
+      const payload3 = extractSSEPayload(lifecycleEvents[2]);
+      expect(payload3.transition).toBe("settings-updated");
+    });
   });
 });

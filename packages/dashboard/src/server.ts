@@ -218,7 +218,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   app.get("/api/events", rateLimit(RATE_LIMITS.sse), async (req, res) => {
     const projectId = typeof req.query.projectId === "string" ? req.query.projectId : undefined;
     if (!projectId) {
-      createSSE(store, store.getMissionStore(), aiSessionStore)(req, res);
+      createSSE(store, store.getMissionStore(), aiSessionStore, store.getPluginStore())(req, res);
       return;
     }
 
@@ -226,7 +226,9 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       // Use the shared project-store resolver so SSE listeners attach to
       // the same EventEmitter used by project-scoped task API routes.
       const scopedStore = await getOrCreateProjectStore(projectId);
-      createSSE(scopedStore, scopedStore.getMissionStore(), aiSessionStore)(req, res);
+      createSSE(scopedStore, scopedStore.getMissionStore(), aiSessionStore, scopedStore.getPluginStore(), {
+        projectId,
+      })(req, res);
     } catch (err: any) {
       sendErrorResponse(res, 500, err.message ?? "Failed to open project event stream");
     }
