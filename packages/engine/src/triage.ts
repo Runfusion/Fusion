@@ -525,9 +525,10 @@ export class TriageProcessor {
             stuckDetector?.recordActivity(task.id);
             this.options.onAgentText?.(id, delta);
           },
-          onAgentTool: (_id, name) => {
+          onAgentTool: (_id, _name) => {
             stuckDetector?.recordActivity(task.id);
-            triageLog.log(`${task.id} tool: ${name}`);
+            // Tool events are persisted via AgentLogger (tool/tool_result/tool_error)
+            // for fn task logs and agent log history — no stdout spam
           },
         });
 

@@ -1968,3 +1968,128 @@ describe("stuck task detector integration", () => {
     expect(recordActivity).toHaveBeenCalled();
   });
 });
+
+describe("tool callback behavior (FN-1500)", () => {
+  it("records activity via stuckTaskDetector on tool callbacks", async () => {
+    const recordActivity = vi.fn();
+    const mockDetector = { trackTask: vi.fn(), untrackTask: vi.fn(), recordActivity } as any;
+
+    const store = createMockStore();
+    const processor = new TriageProcessor(store, "/tmp/root", { stuckTaskDetector: mockDetector });
+
+    // Access the agentLogger via internal agentWork closure
+    // by running specifyTask and intercepting the createKbAgent call
+    let capturedOnAgentTool: ((id: string, name: string) => void) | undefined;
+    mockCreateKbAgent.mockImplementation(async (opts: any) => {
+      // Capture the onToolStart callback that was passed to createKbAgent
+      // This is the onAgentTool from agentLogger
+      if (opts.onToolStart) {
+        capturedOnAgentTool = opts.onToolStart;
+      }
+      return {
+        session: {
+          state: {},
+          sessionManager: {},
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          navigateTree: vi.fn(),
+        },
+      };
+    });
+
+    const task: Task = { id: "FN-TOOL-001", description: "test tool callbacks", column: "triage", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" };
+    await processor.specifyTask(task);
+
+    // Simulate tool callbacks
+    if (capturedOnAgentTool) {
+      capturedOnAgentTool("call-1", "read");
+      capturedOnAgentTool("call-2", "write");
+      capturedOnAgentTool("call-3", "bash");
+    }
+
+    // Stuck detector should have recorded activity
+    expect(recordActivity).toHaveBeenCalledWith("FN-TOOL-001");
+    // Activity should have been recorded at least once (for each tool callback)
+    expect(recordActivity.mock.calls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("agent logger persists tool events via appendAgentLog", async () => {
+    const store = createMockStore();
+    const processor = new TriageProcessor(store, "/tmp/root");
+
+    let capturedOnToolStart: ((name: string, args?: Record<string, unknown>) => void) | undefined;
+    mockCreateKbAgent.mockImplementation(async (opts: any) => {
+      if (opts.onToolStart) {
+        capturedOnToolStart = opts.onToolStart;
+      }
+      return {
+        session: {
+          state: {},
+          sessionManager: {},
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          navigateTree: vi.fn(),
+        },
+      };
+    });
+
+    const task: Task = { id: "FN-TOOL-002", description: "test tool logging", column: "triage", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" };
+    await processor.specifyTask(task);
+
+    // Simulate tool call
+    if (capturedOnToolStart) {
+      capturedOnToolStart("read", { path: "test.txt" });
+    }
+
+    // Agent logger should have persisted via appendAgentLog
+    expect(store.appendAgentLog).toHaveBeenCalledWith(
+      "FN-TOOL-002",
+      "read",
+      "tool",
+      "test.txt",
+      "triage",
+    );
+  });
+
+  it("does not emit stdout 'tool:' log pattern during triage (FN-1500)", async () => {
+    // Spy on console.log to verify no tool: spam
+    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const store = createMockStore();
+    const processor = new TriageProcessor(store, "/tmp/root");
+
+    let capturedOnToolStart: ((name: string, args?: Record<string, unknown>) => void) | undefined;
+    mockCreateKbAgent.mockImplementation(async (opts: any) => {
+      if (opts.onToolStart) {
+        capturedOnToolStart = opts.onToolStart;
+      }
+      return {
+        session: {
+          state: {},
+          sessionManager: {},
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          navigateTree: vi.fn(),
+        },
+      };
+    });
+
+    const task: Task = { id: "FN-STDOUT-001", description: "test no stdout spam", column: "triage", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" };
+    await processor.specifyTask(task);
+
+    // Simulate multiple tool calls
+    if (capturedOnToolStart) {
+      capturedOnToolStart("read", { path: "file1.txt" });
+      capturedOnToolStart("edit", { path: "file2.txt" });
+      capturedOnToolStart("bash", { command: "npm test" });
+    }
+
+    // Verify no stdout "tool:" pattern was emitted
+    const toolSpamLogs = (consoleLogSpy.mock.calls as string[][]).filter(
+      (args) => args.some((arg) => typeof arg === "string" && arg.includes("tool:"))
+    );
+    expect(toolSpamLogs).toHaveLength(0);
+
+    consoleLogSpy.mockRestore();
+  });
+});
