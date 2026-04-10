@@ -288,6 +288,16 @@ export async function runServe(
   const mergeQueue: string[] = [];
   const mergeActive = new Set<string>();
   let mergeRunning = false;
+  const maxAutoMergeRetries = 3;
+
+  /**
+   * Check if a task can be merged (not blocked and within retry limit).
+   * This is the final validation gate before attempting a merge.
+   */
+  function canMergeTask(task: { mergeRetries?: number | null; column: string; paused?: boolean; status?: string | null; error?: string | null; steps?: Array<{ status: string }>; workflowStepResults?: Array<{ status: string }> }): boolean {
+    if (getTaskMergeBlocker(task as any)) return false;
+    return (task.mergeRetries ?? 0) < maxAutoMergeRetries;
+  }
 
   function enqueueMerge(taskId: string): void {
     if (mergeActive.has(taskId)) return;
@@ -316,7 +326,7 @@ export async function runServe(
           }
 
           const task = await store.getTask(taskId);
-          if (getTaskMergeBlocker(task)) {
+          if (!canMergeTask(task as any)) {
             continue;
           }
 
@@ -353,9 +363,8 @@ export async function runServe(
 
             if (task && isConflictError) {
               const currentRetries = task.mergeRetries ?? 0;
-              const maxRetries = 3;
 
-              if (settings.autoResolveConflicts !== false && currentRetries < maxRetries) {
+              if (settings.autoResolveConflicts !== false && currentRetries < maxAutoMergeRetries) {
                 const newRetryCount = currentRetries + 1;
                 await store.updateTask(taskId, {
                   mergeRetries: newRetryCount,
@@ -364,16 +373,16 @@ export async function runServe(
 
                 const delayMs = 5000 * Math.pow(2, currentRetries);
                 console.log(
-                  `[auto-merge] ↻ ${taskId}: retry ${newRetryCount}/${maxRetries} in ${delayMs / 1000}s`,
+                  `[auto-merge] ↻ ${taskId}: retry ${newRetryCount}/${maxAutoMergeRetries} in ${delayMs / 1000}s`,
                 );
 
                 setTimeout(() => {
                   enqueueMerge(taskId);
                 }, delayMs);
               } else {
-                if (currentRetries >= maxRetries) {
+                if (currentRetries >= maxAutoMergeRetries) {
                   console.log(
-                    `[auto-merge] ⊘ ${taskId}: max retries (${maxRetries}) exceeded — manual resolution required`,
+                    `[auto-merge] ⊘ ${taskId}: max retries (${maxAutoMergeRetries}) exceeded — manual resolution required`,
                   );
                 } else {
                   console.log(
@@ -387,15 +396,26 @@ export async function runServe(
                 }
               }
             } else {
+              // Non-conflict error - stop auto-retrying until a user intervenes.
+              // This prevents the periodic sweep from re-enqueueing the same
+              // broken merge on every poll cycle.
               try {
-                await store.updateTask(taskId, { status: null });
+                await store.updateTask(taskId, {
+                  status: null,
+                  mergeRetries: maxAutoMergeRetries,
+                  error: errorMsg,
+                });
               } catch {
                 // best-effort
               }
             }
           } else {
             try {
-              await store.updateTask(taskId, { status: null });
+              await store.updateTask(taskId, {
+                status: null,
+                mergeRetries: maxAutoMergeRetries,
+                error: errorMsg,
+              });
             } catch {
               // best-effort
             }

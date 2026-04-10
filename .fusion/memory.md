@@ -282,3 +282,8 @@ The `@fusion/tui` package provides Ink-based React components for terminal UI.
 - Mock `useInput` with `vi.mock("ink", ...)` to avoid "Raw mode is not supported" errors
 - Use `setTimeout(resolve, ms)` for async state updates in tests
 - Track captured handlers via module-level variables for test assertions
+
+## Kimi/Moonshot API Usage
+
+- Kimi usage endpoint uses `/v1/coding_plan/usage` (underscore) as the primary endpoint — this is the Codexbar-validated working endpoint. The hyphen variant (`/v1/coding-plan/usage`) is a legacy fallback that may return 404 `url.not_found` for some accounts.
+- When implementing endpoint fallbacks for API providers, test the fallback logic with extra fields in the error payload (e.g., `{"code":5,"error":"url.not_found","message":"没找到对象",...}`) to ensure the fallback trigger remains robust.
