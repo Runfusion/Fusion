@@ -153,8 +153,7 @@ describe("ci-status plugin", () => {
 
       await plugin.hooks.onUnload?.();
 
-      // Should log that plugin is shutting down (logged as part of onUnload)
-      expect(ctx.logger.info).toHaveBeenCalled();
+      expect(ctx.logger.info).toHaveBeenCalledWith("CI Status plugin unloaded");
     });
   });
 
@@ -297,9 +296,15 @@ describe("ci-status plugin", () => {
           (r) => r.method === "GET" && r.path === "/status/:branch",
         )!;
 
-        await expect(
-          route.handler(req as any, ctx as any),
-        ).rejects.toThrow("Branch not found");
+        expect(() => route.handler(req as any, ctx as any)).toThrow(
+          "Branch not found",
+        );
+
+        try {
+          route.handler(req as any, ctx as any);
+        } catch (error) {
+          expect((error as { statusCode?: number }).statusCode).toBe(404);
+        }
       });
     });
 

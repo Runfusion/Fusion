@@ -27,7 +27,7 @@ const CATEGORY_RULES: CategoryRule[] = [
     label: "documentation",
   },
   {
-    keywords: ["test", "testing", "spec", "coverage"],
+    keywords: ["test", "tests", "testing", "spec", "coverage"],
     label: "testing",
   },
   {
@@ -97,6 +97,7 @@ const autoLabelTool: PluginToolDefinition = {
     const labels = classifyText(text);
     return {
       content: [{ type: "text", text: JSON.stringify(labels) }],
+      isError: false,
     };
   },
 };
@@ -119,7 +120,7 @@ const plugin: FusionPlugin = definePlugin({
       );
     },
 
-    onTaskCreated: (task, ctx) => {
+    onTaskCreated: async (task, ctx) => {
       const labels = classifyText(task.description || "");
       if (labels.length > 0) {
         ctx.logger.info(

@@ -9,6 +9,7 @@ const mockAddRating = vi.fn();
 const mockGetRatings = vi.fn();
 const mockGetRatingSummary = vi.fn();
 const mockDeleteRating = vi.fn();
+const mockChatStoreInit = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@fusion/core", () => {
   return {
@@ -18,6 +19,9 @@ vi.mock("@fusion/core", () => {
       getRatings = mockGetRatings;
       getRatingSummary = mockGetRatingSummary;
       deleteRating = mockDeleteRating;
+    },
+    ChatStore: class MockChatStore {
+      init = mockChatStoreInit;
     },
   };
 });

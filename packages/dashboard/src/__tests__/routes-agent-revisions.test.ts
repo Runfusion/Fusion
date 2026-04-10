@@ -8,6 +8,7 @@ const mockGetConfigRevisions = vi.fn();
 const mockGetConfigRevision = vi.fn();
 const mockRollbackConfig = vi.fn();
 const mockListAgents = vi.fn().mockResolvedValue([]);
+const mockChatStoreInit = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@fusion/core", () => {
   return {
@@ -18,6 +19,9 @@ vi.mock("@fusion/core", () => {
       getConfigRevision = mockGetConfigRevision;
       rollbackConfig = mockRollbackConfig;
       listAgents = mockListAgents;
+    },
+    ChatStore: class MockChatStore {
+      init = mockChatStoreInit;
     },
   };
 });

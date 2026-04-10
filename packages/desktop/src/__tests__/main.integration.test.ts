@@ -83,7 +83,7 @@ vi.mock("../renderer.js", () => ({
   getRendererFilePath: vi.fn(() => "/path/to/dist/client/index.html"),
   isUrlRenderer: vi.fn(() => false),
   IS_DEVELOPMENT: false,
-  DASHBOARD_URL: "file:///path/to/dist/client/index.html",
+  DASHBOARD_URL: vi.fn(() => "file:///path/to/dist/client/index.html"),
 }));
 
 describe("main module integration", () => {

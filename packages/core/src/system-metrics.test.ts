@@ -1,17 +1,42 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { collectSystemMetrics } from "./system-metrics.js";
 
-const { checkDiskSpaceMock } = vi.hoisted(() => ({
+const { checkDiskSpaceMock, cpusMock, totalmemMock, freememMock, uptimeMock } = vi.hoisted(() => ({
   checkDiskSpaceMock: vi.fn(),
+  cpusMock: vi.fn(),
+  totalmemMock: vi.fn(),
+  freememMock: vi.fn(),
+  uptimeMock: vi.fn(),
 }));
 
 vi.mock("check-disk-space", () => ({
   default: checkDiskSpaceMock,
 }));
 
+vi.mock("node:os", () => ({
+  cpus: cpusMock,
+  totalmem: totalmemMock,
+  freemem: freememMock,
+  uptime: uptimeMock,
+}));
+
 describe("collectSystemMetrics", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    cpusMock.mockReturnValue([
+      {
+        times: {
+          user: 100,
+          nice: 0,
+          sys: 50,
+          idle: 150,
+          irq: 0,
+        },
+      },
+    ]);
+    totalmemMock.mockReturnValue(16_000);
+    freememMock.mockReturnValue(6_000);
+    uptimeMock.mockReturnValue(12.345);
     checkDiskSpaceMock.mockResolvedValue({
       diskPath: "/",
       free: 250_000,

@@ -12040,32 +12040,6 @@ Output ONLY the prompt text (no markdown, no explanations).`;
     }
   });
 
-  /**
-   * GET /api/mesh/state
-   * Get full mesh topology state (all nodes with their metrics and known peers).
-   */
-  router.get("/mesh/state", async (_req, res) => {
-    try {
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
-
-      const nodes = await central.listNodes();
-      const meshStates = await Promise.all(
-        nodes.map((node) => central.getMeshState(node.id))
-      );
-
-      await central.close();
-
-      res.json(meshStates);
-    } catch (err: any) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      rethrowAsApiError(err);
-    }
-  });
-
   // ── Mesh Topology Routes ────────────────────────────────────────────────
 
   /**

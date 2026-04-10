@@ -14,6 +14,7 @@ const mockUnregisterNode = vi.fn();
 const mockCheckNodeHealth = vi.fn();
 const mockIsDiscoveryActive = vi.fn().mockReturnValue(false);
 const mockGetDiscoveryConfig = vi.fn().mockReturnValue(null);
+const mockChatStoreInit = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@fusion/core", () => {
   return {
@@ -28,6 +29,9 @@ vi.mock("@fusion/core", () => {
       checkNodeHealth = mockCheckNodeHealth;
       isDiscoveryActive = mockIsDiscoveryActive;
       getDiscoveryConfig = mockGetDiscoveryConfig;
+    },
+    ChatStore: class MockChatStore {
+      init = mockChatStoreInit;
     },
   };
 });
@@ -277,15 +281,26 @@ describe("Node routes", () => {
 
   describe("GET /api/nodes/:id/metrics", () => {
     it("returns metrics for local node", async () => {
-      const node = createMockNode({ id: "node-001", type: "local" });
+      const node = createMockNode({
+        id: "node-001",
+        type: "local",
+        systemMetrics: {
+          cpu: { usagePercent: 12 },
+          memory: { totalBytes: 1024, usedBytes: 512, freeBytes: 512, usagePercent: 50 },
+          uptime: { seconds: 123 },
+          platform: "darwin",
+          hostname: "local-node",
+          timestamp: "2026-01-01T00:00:00.000Z",
+        },
+      });
       mockGetNode.mockResolvedValue(node);
 
       const res = await get(app, "/api/nodes/node-001/metrics");
 
       expect(res.status).toBe(200);
       expect(res.body).toMatchObject({
-        status: "online",
-        maxConcurrent: 2,
+        cpu: { usagePercent: 12 },
+        hostname: "local-node",
       });
     });
 
@@ -299,15 +314,14 @@ describe("Node routes", () => {
   });
 
   describe("DELETE /api/nodes/:id", () => {
-    it("removes node and returns 200 with success", async () => {
+    it("removes node and returns 204", async () => {
       const node = createMockNode({ id: "node-001" });
       mockGetNode.mockResolvedValue(node);
       mockUnregisterNode.mockResolvedValue(undefined);
 
       const res = await request(app, "DELETE", "/api/nodes/node-001");
 
-      expect(res.status).toBe(200);
-      expect(res.body).toEqual({ success: true });
+      expect(res.status).toBe(204);
       expect(mockUnregisterNode).toHaveBeenCalledWith("node-001");
     });
 

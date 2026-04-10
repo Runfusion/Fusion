@@ -3442,7 +3442,9 @@ describe("TaskCard mission badge", () => {
     render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} />);
 
     await waitFor(() => {
-      const badge = screen.getByTitle("Mission: MSN-LONG");
+      const badge = screen.getByTitle(
+        "Mission: This is a very long mission title that should be truncated",
+      );
       expect(badge).toBeInTheDocument();
       expect(badge).toHaveClass("card-mission-badge");
       // MAX_MISSION_TITLE_LENGTH is 12, so truncated form is 9 chars + "..."
@@ -3466,7 +3468,9 @@ describe("TaskCard mission badge", () => {
     render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} />);
 
     await waitFor(() => {
-      const badge = screen.getByTitle("Mission: MSN-ELLIPSIS");
+      const badge = screen.getByTitle(
+        "Mission: A very long mission name that exceeds twelve chars",
+      );
       // Check computed styles for ellipsis properties
       expect(window.getComputedStyle(badge).textOverflow).toBe("ellipsis");
       expect(window.getComputedStyle(badge).whiteSpace).toBe("nowrap");

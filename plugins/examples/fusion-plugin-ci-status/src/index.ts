@@ -42,6 +42,7 @@ const settingsSchema: Record<string, PluginSettingSchema> = {
 
 const branchStatuses = new Map<string, BranchStatus>();
 let pollInterval: ReturnType<typeof setInterval> | null = null;
+let pluginLogger: PluginContext["logger"] | null = null;
 
 // ── CI Polling Logic ───────────────────────────────────────────────────────────
 
@@ -180,6 +181,7 @@ const plugin: FusionPlugin = definePlugin({
   routes,
   hooks: {
     onLoad: (ctx) => {
+      pluginLogger = ctx.logger;
       ctx.logger.info("CI Status plugin loaded");
 
       const pollIntervalMs = (ctx.settings.pollIntervalMs as number) || 30000;
@@ -206,6 +208,8 @@ const plugin: FusionPlugin = definePlugin({
       }
       // Clear branch statuses on unload
       branchStatuses.clear();
+      pluginLogger?.info("CI Status plugin unloaded");
+      pluginLogger = null;
     },
 
     onTaskMoved: (task, fromColumn, toColumn, ctx) => {
