@@ -519,7 +519,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
       <div className="modal modal-lg planning-modal">
         <div className="modal-header">
           <div className="detail-title-row">
-            <ListTree size={20} style={{ color: "var(--triage)" }} />
+            <ListTree size={20} className="icon-triage" />
             <h3>Subtask Breakdown</h3>
           </div>
           <div className="modal-header-actions">
@@ -565,7 +565,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
                   <div className="conversation-separator" />
                 </>
               )}
-              <Loader2 size={40} className="spin" style={{ color: "var(--todo)" }} />
+              <Loader2 size={40} className="spin icon-todo" />
               <p>AI is generating subtasks...</p>
               <div className="planning-thinking-container">
                 <button className="planning-thinking-toggle" onClick={() => setShowThinking(!showThinking)} type="button">
@@ -592,21 +592,13 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
                 <div
                   className="ai-error-panel"
                   role="alert"
-                  style={{
-                    border: "1px solid var(--color-error, #dc2626)",
-                    borderRadius: "10px",
-                    background: "color-mix(in srgb, var(--color-error, #dc2626) 10%, transparent)",
-                    padding: "14px",
-                    display: "grid",
-                    gap: "10px",
-                  }}
                 >
-                  <div className="ai-error-icon" style={{ fontSize: "20px" }}>⚠️</div>
+                  <div className="ai-error-icon">⚠️</div>
                   <div className="ai-error-message">{view.errorMessage}</div>
-                  <div className="ai-error-actions" style={{ display: "flex", gap: "8px" }}>
+                  <div className="ai-error-actions">
                     <button className="btn btn-primary" onClick={() => void handleRetry()} disabled={isRetrying}>
                       {isRetrying ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
-                      <span style={{ marginLeft: "6px" }}>{isRetrying ? "Retrying..." : "Retry"}</span>
+                      <span className="icon-ml-6">{isRetrying ? "Retrying..." : "Retry"}</span>
                     </button>
                     <button className="btn" onClick={() => void handleClose()} disabled={isRetrying}>Cancel</button>
                   </div>
@@ -626,7 +618,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
                 )}
 
                 <div className="planning-summary-header">
-                  <CheckCircle size={24} style={{ color: "var(--color-success)" }} />
+                  <CheckCircle size={24} className="icon-success" />
                   <h4>Review your subtasks</h4>
                   <p className="text-muted">Edit titles, descriptions, sizes, and dependencies before creating all tasks at once.</p>
                 </div>
@@ -656,7 +648,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
                         onDrop={handleDrop(subtask.id)}
                         onDragLeave={handleDragLeave}
                       >
-                        <div className="detail-title-row subtask-item-header" style={{ justifyContent: "space-between" }}>
+                        <div className="detail-title-row subtask-item-header subtask-item-header--between">
                           <div className="subtask-drag-handle" title="Drag to reorder">
                             <GripVertical size={16} />
                             <strong>{subtask.id}</strong>
@@ -765,7 +757,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
                   })}
 
                   <button type="button" className="btn" onClick={addSubtask} disabled={view.type === "creating"}>
-                    <Plus size={16} style={{ marginRight: 6 }} /> Add subtask
+                    <Plus size={16} className="icon-mr-6" /> Add subtask
                   </button>
 
                   {hasDependencyCycle(subtasks) && (
@@ -781,7 +773,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
                 <button className="btn btn-primary" onClick={() => void handleCreateTasks()} disabled={view.type === "creating" || isInvalid}>
                   {view.type === "creating" ? (
                     <>
-                      <Loader2 size={16} className="spin" style={{ marginRight: 8 }} />
+                      <Loader2 size={16} className="spin icon-mr-6" />
                       Creating...
                     </>
                   ) : (

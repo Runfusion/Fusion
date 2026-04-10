@@ -584,7 +584,7 @@ export function MissionInterviewModal({
       <div className="modal modal-lg planning-modal">
         <div className="modal-header">
           <div className="detail-title-row">
-            <Target size={20} style={{ color: "var(--triage)" }} />
+            <Target size={20} className="icon-triage" />
             <h3>Plan Mission with AI</h3>
           </div>
           <div className="modal-header-actions">
@@ -617,7 +617,7 @@ export function MissionInterviewModal({
             <div className="planning-initial">
               <div className="planning-view-scroll">
                 <div className="planning-intro">
-                  <Sparkles size={32} style={{ color: "var(--triage)", marginBottom: "12px" }} />
+                  <Sparkles size={32} className="icon-triage-lg" />
                   <h4>Transform your vision into a structured mission</h4>
                   <p className="text-muted">
                     Describe what you want to build. The AI will interview you to understand scope,
@@ -667,7 +667,7 @@ export function MissionInterviewModal({
                   onClick={() => handleStartInterview()}
                   disabled={!missionGoal.trim()}
                 >
-                  <Target size={16} style={{ marginRight: "8px" }} />
+                  <Target size={16} className="icon-mr-8" />
                   Start Interview
                 </button>
               </div>
@@ -676,7 +676,7 @@ export function MissionInterviewModal({
 
           {view.type === "loading" && (
             <div className="planning-loading">
-              <Loader2 size={40} className="spin" style={{ color: "var(--todo)" }} />
+              <Loader2 size={40} className="spin icon-todo" />
               <p>{streamingOutput ? "AI is thinking..." : "Preparing next question..."}</p>
               <div className="planning-thinking-container">
                 <button
@@ -708,21 +708,13 @@ export function MissionInterviewModal({
                 <div
                   className="ai-error-panel"
                   role="alert"
-                  style={{
-                    border: "1px solid var(--color-error, #dc2626)",
-                    borderRadius: "10px",
-                    background: "color-mix(in srgb, var(--color-error, #dc2626) 10%, transparent)",
-                    padding: "14px",
-                    display: "grid",
-                    gap: "10px",
-                  }}
                 >
-                  <div className="ai-error-icon" style={{ fontSize: "20px" }}>⚠️</div>
+                  <div className="ai-error-icon">⚠️</div>
                   <div className="ai-error-message">{view.errorMessage}</div>
-                  <div className="ai-error-actions" style={{ display: "flex", gap: "8px" }}>
+                  <div className="ai-error-actions">
                     <button className="btn btn-primary" onClick={() => void handleRetryFromError()} disabled={isRetrying}>
                       {isRetrying ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
-                      <span style={{ marginLeft: "6px" }}>{isRetrying ? "Retrying..." : "Retry"}</span>
+                      <span className="icon-ml-6">{isRetrying ? "Retrying..." : "Retry"}</span>
                     </button>
                     <button className="btn" onClick={handleCancel} disabled={isRetrying}>Cancel</button>
                   </div>
@@ -960,7 +952,7 @@ function InterviewQuestionForm({ question, progress, historyEntries, onSubmit }:
           disabled={!isValid()}
         >
           Continue
-          <ArrowRight size={16} style={{ marginLeft: "4px" }} />
+          <ArrowRight size={16} className="icon-ml-4" />
         </button>
       </div>
     </div>
@@ -1093,7 +1085,7 @@ function MissionPlanReview({
         )}
 
         <div className="planning-summary-header">
-          <CheckCircle size={24} style={{ color: "var(--color-success)" }} />
+          <CheckCircle size={24} className="icon-success" />
           <h4>Mission Plan Ready</h4>
           <p className="text-muted">
             {summary.milestones.length} milestones, {totalFeatures} features. Review and edit before approving.
@@ -1124,76 +1116,61 @@ function MissionPlanReview({
           {/* Milestones hierarchy */}
           <div className="form-group">
             <label>Roadmap</label>
-            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            <div className="roadmap-list">
               {summary.milestones.map((milestone, mi) => (
                 <div
                   key={mi}
-                  style={{
-                    border: "1px solid var(--border-primary)",
-                    borderRadius: "8px",
-                    overflow: "hidden",
-                  }}
+                  className="roadmap-card"
                 >
                   {/* Milestone header */}
                   <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "8px",
-                      padding: "10px 12px",
-                      background: "var(--bg-secondary)",
-                      cursor: "pointer",
-                    }}
+                    className="roadmap-card-header"
                     onClick={() => toggleMilestone(mi)}
                   >
                     {expandedMilestones.has(mi) ? (
-                      <ChevronDown size={16} style={{ color: "var(--text-secondary)", flexShrink: 0 }} />
+                      <ChevronDown size={16} className="icon-text-secondary" />
                     ) : (
-                      <ChevronRight size={16} style={{ color: "var(--text-secondary)", flexShrink: 0 }} />
+                      <ChevronRight size={16} className="icon-text-secondary" />
                     )}
-                    <Layers size={16} style={{ color: "var(--icon-milestone)", flexShrink: 0 }} />
+                    <Layers size={16} className="icon-milestone" />
                     <input
                       type="text"
-                      className="form-input"
-                      style={{ flex: 1, padding: "4px 8px", fontSize: "13px", fontWeight: 600 }}
+                      className="form-input roadmap-input-title"
                       value={milestone.title}
                       onChange={(e) => updateMilestone(mi, { title: e.target.value })}
                       onClick={(e) => e.stopPropagation()}
                     />
                     {summary.milestones.length > 1 && (
                       <button
-                        className="btn-icon"
-                        style={{ flexShrink: 0 }}
+                        className="btn-icon roadmap-shrink"
                         onClick={(e) => {
                           e.stopPropagation();
                           removeMilestone(mi);
                         }}
                         title="Remove milestone"
                       >
-                        <Trash2 size={14} style={{ color: "var(--text-secondary)" }} />
+                        <Trash2 size={14} className="icon-text-secondary" />
                       </button>
                     )}
                   </div>
 
                   {expandedMilestones.has(mi) && (
-                    <div style={{ padding: "0 12px 12px 36px" }}>
+                    <div className="roadmap-card-body">
                       <textarea
-                        className="planning-textarea"
+                        className="planning-textarea roadmap-textarea-md"
                         rows={2}
                         placeholder="Milestone description..."
-                        style={{ marginTop: "8px", fontSize: "12px" }}
                         value={milestone.description || ""}
                         onChange={(e) => updateMilestone(mi, { description: e.target.value })}
                       />
-                      <div style={{ marginTop: "6px" }}>
-                        <label style={{ fontSize: "11px", color: "var(--text-secondary)", fontWeight: 500 }}>
+                      <div className="roadmap-field-group">
+                        <label className="roadmap-field-label">
                           Verification Criteria
                         </label>
                         <textarea
-                          className="planning-textarea"
+                          className="planning-textarea roadmap-textarea-sm"
                           rows={2}
                           placeholder="How to confirm this milestone is complete..."
-                          style={{ fontSize: "12px", marginTop: "2px" }}
                           value={milestone.verification || ""}
                           onChange={(e) => updateMilestone(mi, { verification: e.target.value })}
                         />
@@ -1205,65 +1182,50 @@ function MissionPlanReview({
                         return (
                           <div
                             key={si}
-                            style={{
-                              marginTop: "8px",
-                              border: "1px solid var(--border-primary)",
-                              borderRadius: "6px",
-                              overflow: "hidden",
-                            }}
+                            className="roadmap-slice-card"
                           >
                             <div
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "6px",
-                                padding: "8px 10px",
-                                background: "var(--bg-tertiary)",
-                                cursor: "pointer",
-                              }}
+                              className="roadmap-slice-header"
                               onClick={() => toggleSlice(sliceKey)}
                             >
                               {expandedSlices.has(sliceKey) ? (
-                                <ChevronDown size={14} style={{ color: "var(--text-secondary)", flexShrink: 0 }} />
+                                <ChevronDown size={14} className="icon-text-secondary" />
                               ) : (
-                                <ChevronRight size={14} style={{ color: "var(--text-secondary)", flexShrink: 0 }} />
+                                <ChevronRight size={14} className="icon-text-secondary" />
                               )}
-                              <Package size={14} style={{ color: "var(--icon-slice)", flexShrink: 0 }} />
+                              <Package size={14} className="icon-slice" />
                               <input
                                 type="text"
-                                className="form-input"
-                                style={{ flex: 1, padding: "3px 6px", fontSize: "12px", fontWeight: 500 }}
+                                className="form-input roadmap-input-subtitle"
                                 value={slice.title}
                                 onChange={(e) => updateSlice(mi, si, { title: e.target.value })}
                                 onClick={(e) => e.stopPropagation()}
                               />
                               {milestone.slices.length > 1 && (
                                 <button
-                                  className="btn-icon"
-                                  style={{ flexShrink: 0 }}
+                                  className="btn-icon roadmap-shrink"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     removeSlice(mi, si);
                                   }}
                                   title="Remove slice"
                                 >
-                                  <Trash2 size={12} style={{ color: "var(--text-secondary)" }} />
+                                  <Trash2 size={12} className="icon-text-secondary" />
                                 </button>
                               )}
                             </div>
 
                             {expandedSlices.has(sliceKey) && (
-                              <div style={{ padding: "8px 10px 10px 30px" }}>
+                              <div className="roadmap-slice-body">
                                 {/* Slice verification */}
-                                <div style={{ marginBottom: "8px" }}>
-                                  <label style={{ fontSize: "11px", color: "var(--text-secondary)", fontWeight: 500 }}>
+                                <div className="roadmap-slice-field-group">
+                                  <label className="roadmap-field-label">
                                     Slice Verification
                                   </label>
                                   <textarea
-                                    className="planning-textarea"
+                                    className="planning-textarea roadmap-textarea-xs"
                                     rows={1}
                                     placeholder="How to confirm this slice is done..."
-                                    style={{ fontSize: "11px", marginTop: "2px" }}
                                     value={slice.verification || ""}
                                     onChange={(e) => updateSlice(mi, si, { verification: e.target.value })}
                                   />
@@ -1272,73 +1234,41 @@ function MissionPlanReview({
                                 {slice.features.map((feature, fi) => (
                                   <div
                                     key={fi}
-                                    style={{
-                                      display: "flex",
-                                      alignItems: "flex-start",
-                                      gap: "6px",
-                                      padding: "6px 0",
-                                      borderBottom:
-                                        fi < slice.features.length - 1
-                                          ? "1px solid var(--border-primary)"
-                                          : "none",
-                                    }}
+                                    className="roadmap-feature-row"
                                   >
-                                    <Box size={12} style={{ color: "var(--icon-feature)", marginTop: "4px", flexShrink: 0 }} />
-                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                    <Box size={12} className="icon-feature" />
+                                    <div className="roadmap-feature-content">
                                       <input
                                         type="text"
-                                        className="form-input"
-                                        style={{ width: "100%", padding: "2px 6px", fontSize: "12px" }}
+                                        className="form-input roadmap-input-feature"
                                         value={feature.title}
                                         onChange={(e) =>
                                           updateFeature(mi, si, fi, { title: e.target.value })
                                         }
                                       />
                                       {feature.description && (
-                                        <p
-                                          style={{
-                                            fontSize: "11px",
-                                            color: "var(--text-secondary)",
-                                            margin: "2px 0 0 6px",
-                                          }}
-                                        >
+                                        <p className="roadmap-feature-text">
                                           {feature.description}
                                         </p>
                                       )}
                                       {feature.acceptanceCriteria && (
-                                        <p
-                                          style={{
-                                            fontSize: "11px",
-                                            color: "var(--text-secondary)",
-                                            margin: "2px 0 0 6px",
-                                            fontStyle: "italic",
-                                          }}
-                                        >
+                                        <p className="roadmap-feature-text--italic">
                                           AC: {feature.acceptanceCriteria}
                                         </p>
                                       )}
                                     </div>
                                     <button
-                                      className="btn-icon"
-                                      style={{ flexShrink: 0 }}
+                                      className="btn-icon roadmap-shrink"
                                       onClick={() => removeFeature(mi, si, fi)}
                                       title="Remove feature"
                                     >
-                                      <Trash2 size={12} style={{ color: "var(--text-secondary)" }} />
+                                      <Trash2 size={12} className="icon-text-secondary" />
                                     </button>
                                   </div>
                                 ))}
 
                                 <button
-                                  className="btn"
-                                  style={{
-                                    fontSize: "11px",
-                                    padding: "4px 8px",
-                                    marginTop: "6px",
-                                    gap: "4px",
-                                    display: "flex",
-                                    alignItems: "center",
-                                  }}
+                                  className="btn roadmap-add-feature-btn"
                                   onClick={() => addFeature(mi, si)}
                                 >
                                   <Plus size={12} />
@@ -1360,7 +1290,7 @@ function MissionPlanReview({
 
       <div className="planning-actions planning-summary-actions">
         <button className="btn" onClick={onStartOver} disabled={isCreating}>
-          <ArrowLeft size={16} style={{ marginRight: "4px" }} />
+          <ArrowLeft size={16} className="icon-mr-4" />
           Start Over
         </button>
         <button
@@ -1370,12 +1300,12 @@ function MissionPlanReview({
         >
           {isCreating ? (
             <>
-              <Loader2 size={16} className="spin" style={{ marginRight: "8px" }} />
+              <Loader2 size={16} className="spin icon-mr-8" />
               Creating Mission...
             </>
           ) : (
             <>
-              <CheckCircle size={16} style={{ marginRight: "8px" }} />
+              <CheckCircle size={16} className="icon-mr-8" />
               Approve Plan
             </>
           )}

@@ -16004,6 +16004,229 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   }
 }
 
+/* === Planning & Breakdown Modal — Inline Style Replacements === */
+
+/* Icon color utilities */
+.icon-triage {
+  color: var(--triage);
+}
+.icon-triage-lg {
+  color: var(--triage);
+  margin-bottom: 12px;
+}
+.icon-todo {
+  color: var(--todo);
+}
+.icon-success {
+  color: var(--color-success);
+}
+.icon-text-secondary {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.icon-milestone {
+  color: var(--icon-milestone);
+  flex-shrink: 0;
+}
+.icon-slice {
+  color: var(--icon-slice);
+  flex-shrink: 0;
+}
+.icon-feature {
+  color: var(--icon-feature);
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
+/* Icon margin utilities */
+.icon-mr-4 {
+  margin-right: 4px;
+}
+.icon-mr-6 {
+  margin-right: 6px;
+}
+.icon-mr-8 {
+  margin-right: 8px;
+}
+.icon-ml-4 {
+  margin-left: 4px;
+}
+.icon-ml-6 {
+  margin-left: 6px;
+}
+
+/* Error panel */
+.ai-error-panel {
+  border: 1px solid var(--color-error);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+.ai-error-icon {
+  font-size: 20px;
+}
+.ai-error-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Text link button */
+.text-link-btn {
+  font-size: 12px;
+  background: none;
+  border: none;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* Form hint error variant */
+.form-hint-error {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--color-error);
+}
+
+/* Text muted small */
+.text-muted-sm {
+  margin-left: 8px;
+  font-size: 12px;
+}
+
+/* Model selector spacing */
+.model-select-row--left {
+  margin-right: auto;
+  min-width: min(100%, 320px);
+  max-width: 420px;
+  text-align: left;
+}
+.model-selector-current--spaced {
+  margin-top: 8px;
+}
+
+/* Roadmap hierarchy (MissionInterviewModal) */
+.roadmap-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.roadmap-card {
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.roadmap-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  cursor: pointer;
+}
+.roadmap-card-body {
+  padding: 0 12px 12px 36px;
+}
+.roadmap-textarea-sm {
+  font-size: 12px;
+  margin-top: 2px;
+}
+.roadmap-textarea-md {
+  font-size: 12px;
+  margin-top: 8px;
+}
+.roadmap-textarea-xs {
+  font-size: 11px;
+  margin-top: 2px;
+}
+.roadmap-field-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.roadmap-field-group {
+  margin-top: 6px;
+}
+.roadmap-slice-card {
+  margin-top: 8px;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.roadmap-slice-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--bg-tertiary);
+  cursor: pointer;
+}
+.roadmap-slice-body {
+  padding: 8px 10px 10px 30px;
+}
+.roadmap-slice-field-group {
+  margin-bottom: 8px;
+}
+.roadmap-input-title {
+  flex: 1;
+  padding: 4px 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.roadmap-input-subtitle {
+  flex: 1;
+  padding: 3px 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.roadmap-input-feature {
+  width: 100%;
+  padding: 2px 6px;
+  font-size: 12px;
+}
+.roadmap-feature-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 0;
+}
+.roadmap-feature-row + .roadmap-feature-row {
+  border-top: 1px solid var(--border-primary);
+}
+.roadmap-feature-text {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin: 2px 0 0 6px;
+}
+.roadmap-feature-text--italic {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin: 2px 0 0 6px;
+  font-style: italic;
+}
+.roadmap-feature-content {
+  flex: 1;
+  min-width: 0;
+}
+.roadmap-add-feature-btn {
+  font-size: 11px;
+  padding: 4px 8px;
+  margin-top: 6px;
+  gap: 4px;
+  display: flex;
+  align-items: center;
+}
+.roadmap-shrink {
+  flex-shrink: 0;
+}
+
+/* Subtask header override */
+.subtask-item-header--between {
+  justify-content: space-between;
+}
+
 /* ============================================================
    USAGE INDICATOR STYLES
    ============================================================ */

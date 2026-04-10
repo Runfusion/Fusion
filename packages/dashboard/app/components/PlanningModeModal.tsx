@@ -678,7 +678,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       <div className="modal modal-lg planning-modal">
         <div className="modal-header">
           <div className="detail-title-row">
-            <Lightbulb size={20} style={{ color: "var(--triage)" }} />
+            <Lightbulb size={20} className="icon-triage" />
             <h3>Planning Mode</h3>
           </div>
           <div className="modal-header-actions">
@@ -711,7 +711,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             <div className="planning-initial">
               <div className="planning-view-scroll">
                 <div className="planning-intro">
-                  <Sparkles size={32} style={{ color: "var(--triage)", marginBottom: "12px" }} />
+                  <Sparkles size={32} className="icon-triage-lg" />
                   <h4>Transform your idea into a detailed task</h4>
                   <p className="text-muted">
                     Describe what you want to build in plain language. The AI will ask clarifying
@@ -757,7 +757,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                   <label htmlFor="planning-modal-model" className="form-label">
                     Planning Model
                     {modelsLoading && (
-                      <span className="text-muted" style={{ marginLeft: "8px", fontSize: "12px" }}>
+                      <span className="text-muted text-muted-sm">
                         Loading models…
                       </span>
                     )}
@@ -779,28 +779,20 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                     onToggleModelFavorite={handleToggleFavoriteModel}
                   />
                   {modelsError && (
-                    <div className="form-hint" style={{ marginTop: "6px", fontSize: "12px", color: "var(--color-error)" }}>
+                    <div className="form-hint form-hint-error">
                       {modelsError}{" "}
                       <button
                         type="button"
+                        className="text-link-btn"
                         onClick={() => {
                           void loadModels();
-                        }}
-                        style={{
-                          fontSize: "12px",
-                          background: "none",
-                          border: "none",
-                          color: "inherit",
-                          textDecoration: "underline",
-                          cursor: "pointer",
-                          padding: 0,
                         }}
                       >
                         Retry
                       </button>
                     </div>
                   )}
-                  <div className="model-selector-current" style={{ marginTop: "8px" }}>
+                  <div className="model-selector-current model-selector-current--spaced">
                     <span
                       className={`model-badge ${
                         planningModelProvider && planningModelId
@@ -820,7 +812,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                   onClick={() => handleStartPlanning()}
                   disabled={!initialPlan.trim()}
                 >
-                  <Lightbulb size={16} style={{ marginRight: "8px" }} />
+                  <Lightbulb size={16} className="icon-mr-8" />
                   Start Planning
                 </button>
               </div>
@@ -829,7 +821,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
           {view.type === "loading" && (
             <div className="planning-loading">
-              <Loader2 size={40} className="spin" style={{ color: "var(--todo)" }} />
+              <Loader2 size={40} className="spin icon-todo" />
               <p>{streamingOutput ? "AI is thinking..." : "Generating next question..."}</p>
               <div className="planning-thinking-container">
                 <button
@@ -861,21 +853,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 <div
                   className="ai-error-panel"
                   role="alert"
-                  style={{
-                    border: "1px solid var(--color-error, #dc2626)",
-                    borderRadius: "10px",
-                    background: "color-mix(in srgb, var(--color-error, #dc2626) 10%, transparent)",
-                    padding: "14px",
-                    display: "grid",
-                    gap: "10px",
-                  }}
                 >
-                  <div className="ai-error-icon" style={{ fontSize: "20px" }}>⚠️</div>
+                  <div className="ai-error-icon">⚠️</div>
                   <div className="ai-error-message">{view.errorMessage}</div>
-                  <div className="ai-error-actions" style={{ display: "flex", gap: "8px" }}>
+                  <div className="ai-error-actions">
                     <button className="btn btn-primary" onClick={() => void handleRetryFromError()} disabled={isRetrying}>
                       {isRetrying ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
-                      <span style={{ marginLeft: "6px" }}>{isRetrying ? "Retrying..." : "Retry"}</span>
+                      <span className="icon-ml-6">{isRetrying ? "Retrying..." : "Retry"}</span>
                     </button>
                     <button className="btn" onClick={handleCancel} disabled={isRetrying}>Dismiss</button>
                   </div>
@@ -886,7 +870,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
           {view.type === "creating" && (
             <div className="planning-loading">
-              <Loader2 size={40} className="spin" style={{ color: "var(--todo)" }} />
+              <Loader2 size={40} className="spin icon-todo" />
               <p>Creating tasks...</p>
             </div>
           )}
@@ -1139,7 +1123,7 @@ function QuestionForm({ question, progress, historyEntries, onSubmit, onBack }: 
       <div className="planning-actions">
         {onBack && (
           <button className="btn" onClick={onBack}>
-            <ArrowLeft size={16} style={{ marginRight: "4px" }} />
+            <ArrowLeft size={16} className="icon-mr-4" />
             Back
           </button>
         )}
@@ -1149,7 +1133,7 @@ function QuestionForm({ question, progress, historyEntries, onSubmit, onBack }: 
           disabled={!isValid()}
         >
           Continue
-          <ArrowRight size={16} style={{ marginLeft: "4px" }} />
+          <ArrowRight size={16} className="icon-ml-4" />
         </button>
       </div>
     </div>
@@ -1201,7 +1185,7 @@ function SummaryView({
         )}
 
         <div className="planning-summary-header">
-          <CheckCircle size={24} style={{ color: "var(--color-success)" }} />
+          <CheckCircle size={24} className="icon-success" />
           <h4>Planning Complete!</h4>
           <p className="text-muted">Review and refine your task before creating it.</p>
         </div>
@@ -1282,7 +1266,7 @@ function SummaryView({
 
       <div className="planning-actions planning-summary-actions">
         <button className="btn" onClick={onRefine} disabled={isLoading}>
-          <ArrowLeft size={16} style={{ marginRight: "4px" }} />
+          <ArrowLeft size={16} className="icon-mr-4" />
           Refine Further
         </button>
         <div className="planning-summary-actions-right">
@@ -1294,12 +1278,12 @@ function SummaryView({
           >
             {isLoading ? (
               <>
-                <Loader2 size={16} className="spin" style={{ marginRight: "8px" }} />
+                <Loader2 size={16} className="spin icon-mr-8" />
                 Breaking down...
               </>
             ) : (
               <>
-                <ListTree size={16} style={{ marginRight: "8px" }} />
+                <ListTree size={16} className="icon-mr-8" />
                 Break into Tasks
               </>
             )}
@@ -1311,12 +1295,12 @@ function SummaryView({
           >
             {isLoading ? (
               <>
-                <Loader2 size={16} className="spin" style={{ marginRight: "8px" }} />
+                <Loader2 size={16} className="spin icon-mr-8" />
                 Creating...
               </>
             ) : (
               <>
-                <CheckCircle size={16} style={{ marginRight: "8px" }} />
+                <CheckCircle size={16} className="icon-mr-8" />
                 Create Task
               </>
             )}
@@ -1480,7 +1464,7 @@ function BreakdownView({
     <div className="planning-summary">
       <div className="planning-view-scroll planning-summary-scroll">
         <div className="planning-summary-header">
-          <ListTree size={24} style={{ color: "var(--triage)" }} />
+          <ListTree size={24} className="icon-triage" />
           <h4>Break into Tasks</h4>
           <p className="text-muted">
             Review and edit the subtasks generated from your plan. Adjust titles,
@@ -1516,8 +1500,7 @@ function BreakdownView({
                 onDragLeave={handleDragLeave}
               >
                 <div
-                  className="detail-title-row subtask-item-header"
-                  style={{ justifyContent: "space-between" }}
+                  className="detail-title-row subtask-item-header subtask-item-header--between"
                 >
                   <div className="subtask-drag-handle" title="Drag to reorder">
                     <GripVertical size={16} />
@@ -1652,7 +1635,7 @@ function BreakdownView({
           })}
 
           <button type="button" className="btn" onClick={addSubtask} disabled={isLoading}>
-            <Plus size={16} style={{ marginRight: 6 }} /> Add subtask
+            <Plus size={16} className="icon-mr-6" /> Add subtask
           </button>
 
           {hasDependencyCycle(subtasks) && (
@@ -1665,7 +1648,7 @@ function BreakdownView({
 
       <div className="planning-actions planning-summary-actions">
         <button className="btn" onClick={onBack} disabled={isLoading}>
-          <ArrowLeft size={16} style={{ marginRight: "4px" }} />
+          <ArrowLeft size={16} className="icon-mr-4" />
           Back to Summary
         </button>
         <button
@@ -1675,7 +1658,7 @@ function BreakdownView({
         >
           {isLoading ? (
             <>
-              <Loader2 size={16} className="spin" style={{ marginRight: 8 }} />
+              <Loader2 size={16} className="spin icon-mr-6" />
               Creating...
             </>
           ) : (
