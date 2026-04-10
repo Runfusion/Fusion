@@ -131,8 +131,10 @@ function ZaiIcon({ size, color, label = "Z.ai" }: { size: number; color: string;
   );
 }
 
-// Kimi / Moonshot AI logo — stylized "K" mark from official Moonshot AI brand identity
-// Source: https://iconify.design/icon/logos:moonshot-ai
+// Kimi / Moonshot AI logo — crescent moon mark from official Moonshot AI brand identity
+// Source: https://raw.githubusercontent.com/gilbarbara/logos/master/logos/moonshot-ai.svg
+// The moon crescent shape is derived from the official Moonshot AI logo
+// For a 24x24 icon, we use a simplified crescent moon path
 function KimiIcon({ size, color, label = "Kimi" }: { size: number; color: string; label?: string }) {
   return (
     <svg
@@ -144,9 +146,9 @@ function KimiIcon({ size, color, label = "Kimi" }: { size: number; color: string
       data-testid="kimi-icon"
       aria-label={label}
     >
-      {/* Stylized "K" character from Moonshot AI brand */}
+      {/* Crescent moon from official Moonshot AI logo mark */}
       <path
-        d="M5.5 5.5h8v2.5h-5v2h3.5v2.5h-3.5v6.5h-3z"
+        d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8c.2-.07.4-.1.64-.1z"
         fill={color}
       />
     </svg>

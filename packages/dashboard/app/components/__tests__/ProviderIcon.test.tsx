@@ -290,4 +290,19 @@ describe("ProviderIcon", () => {
     const wrapper = screen.getByTestId("kimi-icon").parentElement;
     expect(wrapper).toHaveAttribute("data-provider", "moonshot");
   });
+
+  // Regression test: verify the Kimi icon is the crescent moon shape, not the old "K" placeholder
+  it("renders crescent moon icon geometry (not the old K placeholder)", () => {
+    render(<ProviderIcon provider="kimi" />);
+    const svg = screen.getByTestId("kimi-icon");
+    const path = svg.querySelector("path");
+    expect(path).toBeInTheDocument();
+    
+    // The old "K" placeholder path was: "M5.5 5.5h8v2.5h-5v2h3.5v2.5h-3.5v6.5h-3z"
+    // The new crescent moon path should contain "a9 9" (circle arc) not "h8" (horizontal line)
+    const pathD = path?.getAttribute("d") || "";
+    expect(pathD).not.toBe("M5.5 5.5h8v2.5h-5v2h3.5v2.5h-3.5v6.5h-3z");
+    // Verify the new crescent moon geometry: contains circle arc notation "a9 9"
+    expect(pathD).toContain("a9 9");
+  });
 });
