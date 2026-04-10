@@ -56,6 +56,7 @@ const { runAgentImport } = await import("./commands/agent-import.js");
 const { runAgentExport } = await import("./commands/agent-export.js");
 const { runMessageInbox, runMessageOutbox, runMessageSend, runMessageRead, runMessageDelete, runAgentMailbox } = await import("./commands/message.js");
 const { runPluginList, runPluginInstall, runPluginUninstall, runPluginEnable, runPluginDisable } = await import("./commands/plugin.js");
+const { runPluginCreate } = await import("./commands/plugin-scaffold.js");
 
 const HELP = `
 fn — AI-orchestrated task board
@@ -142,6 +143,12 @@ Usage:
   fn backup --list           List all database backups
   fn backup --restore <file> Restore database from a backup file
   fn backup --cleanup        Remove old backups exceeding retention limit
+  fn plugin list | ls                List installed plugins
+  fn plugin install <path>           Install a plugin from path
+  fn plugin uninstall <id> [--force] Uninstall a plugin
+  fn plugin enable <id>             Enable a plugin
+  fn plugin disable <id>             Disable a plugin
+  fn plugin create <name>           Scaffold a new plugin project
 
 Options:
   --project, -P <name>       Target a specific project (bypasses CWD detection)
@@ -1012,9 +1019,15 @@ async function main() {
             await runPluginDisable(id, { projectName });
             break;
           }
+          case "create": {
+            const pluginName = args[2];
+            if (!pluginName) { console.error("Usage: fn plugin create <name>"); process.exit(1); }
+            await runPluginCreate(pluginName);
+            break;
+          }
           default:
             console.error(`Unknown subcommand: plugin ${sub || ""}`);
-            console.log("Try: fn plugin list | install | uninstall | enable | disable");
+            console.log("Try: fn plugin list | install | uninstall | enable | disable | create");
             process.exit(1);
         }
         break;
