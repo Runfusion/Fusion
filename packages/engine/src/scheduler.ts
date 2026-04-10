@@ -764,15 +764,24 @@ export class Scheduler {
       // Check if the slice became complete after the feature update
       const slice = missionStore.getSlice(sliceIdBeforeUpdate);
       if (slice && slice.status === "complete") {
-        // If MissionAutopilot is available, delegate progression to it.
-        // The autopilot handles: watching missions, autoAdvance guard,
-        // retry logic, and state tracking. The autopilot will call back
-        // into scheduler.activateNextPendingSlice() when appropriate.
-        if (this.options.missionAutopilot) {
+        // If MissionAutopilot is available AND actively watching this mission,
+        // delegate progression to it. The autopilot handles: watching missions,
+        // autoAdvance guard, retry logic, and state tracking. The autopilot
+        // will call back into scheduler.activateNextPendingSlice() when appropriate.
+        //
+        // If autopilot is not watching this mission (e.g., legacy missions with
+        // autoAdvance=true but no autopilot instance, or autopilot unwatched),
+        // fall back to onSliceComplete() which uses the compatibility rule.
+        const autopilot = this.options.missionAutopilot;
+        const milestone = missionStore.getMilestone(slice.milestoneId);
+        const missionId = milestone?.missionId;
+        const isWatching = autopilot && missionId ? autopilot.isWatching(missionId) : false;
+
+        if (autopilot && isWatching) {
           schedulerLog.log(`Slice ${slice.id} is complete — delegating to autopilot`);
-          await this.options.missionAutopilot.handleTaskCompletion(taskId);
+          await autopilot.handleTaskCompletion(taskId);
         } else {
-          // Legacy path for missions without autopilot
+          // Fallback path: onSliceComplete uses autopilotEnabled/autoAdvance compat
           schedulerLog.log(`Slice ${slice.id} is complete — triggering auto-advance`);
           await this.onSliceComplete(slice);
         }

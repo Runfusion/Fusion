@@ -310,11 +310,13 @@ function createMockMissionStore() {
       };
       slices.set(id, updated);
 
-      // Simulate auto-triage: when mission.autoAdvance is true, triage "defined" features
+      // Simulate auto-triage: when mission.autopilotEnabled OR autoAdvance is true
+      // This matches the real MissionStore.activateSlice behavior:
+      // autopilotEnabled is canonical, autoAdvance is legacy fallback
       const milestone = milestones.get(slice.milestoneId);
       if (milestone) {
         const mission = missions.get(milestone.missionId);
-        if (mission?.autoAdvance === true) {
+        if (mission?.autopilotEnabled === true || mission?.autoAdvance === true) {
           const sliceFeatures = Array.from(features.values()).filter(
             (f) => f.sliceId === id && f.status === "defined"
           );
@@ -2515,7 +2517,9 @@ describe("Mission API", () => {
       expect(missionAutopilot.recoverStaleMission).toHaveBeenCalledWith(mission.id);
     });
 
-    it("does not trigger stale recovery when active slice still has in-progress features", async () => {
+    it("triggers stale recovery even when active slice has in-progress features", async () => {
+      // Recovery is always triggered on resume to reconcile any inconsistent state.
+      // recoverStaleMission handles the decision internally based on actual state.
       const missionAutopilot = createMockMissionAutopilot();
       const { app, missionStore } = buildApp({ missionAutopilot });
       const ms = missionStore as ReturnType<typeof createMockMissionStore>;
@@ -2539,7 +2543,8 @@ describe("Mission API", () => {
 
       expect(res.status).toBe(200);
       expect(missionAutopilot.watchMission).toHaveBeenCalledWith(mission.id);
-      expect(missionAutopilot.recoverStaleMission).not.toHaveBeenCalled();
+      // recoverStaleMission is always called to reconcile state
+      expect(missionAutopilot.recoverStaleMission).toHaveBeenCalledWith(mission.id);
     });
 
     it("skips autopilot re-engagement when mission autopilot is disabled", async () => {
@@ -2949,7 +2954,9 @@ describe("Mission API", () => {
         expect(missionAutopilot.checkAndStartMission).not.toHaveBeenCalled(); // Not planning
       });
 
-      it("enables autopilot on active mission with in-progress slice (no recovery needed)", async () => {
+      it("enables autopilot on active mission with in-progress slice (triggers recovery)", async () => {
+        // Recovery is always triggered to reconcile any inconsistent state.
+        // recoverStaleMission handles the decision internally based on actual state.
         const missionAutopilot = createMockMissionAutopilot();
         const { app, missionStore } = buildApp({ missionAutopilot });
 
@@ -2977,8 +2984,8 @@ describe("Mission API", () => {
 
         expect(res.status).toBe(200);
         expect(missionAutopilot.watchMission).toHaveBeenCalledWith(mission.id);
-        // Should NOT call recoverStaleMission - slice is already in-progress
-        expect(missionAutopilot.recoverStaleMission).not.toHaveBeenCalled();
+        // recoverStaleMission is always called to reconcile state
+        expect(missionAutopilot.recoverStaleMission).toHaveBeenCalledWith(mission.id);
       });
     });
 
@@ -3041,6 +3048,42 @@ describe("Mission API", () => {
 
         expect(res.status).toBe(503);
       });
+
+      it("triggers recovery when starting autopilot on active mission", async () => {
+        // For active missions, /autopilot/start should trigger recovery to reconcile state
+        const missionAutopilot = createMockMissionAutopilot();
+        const { app, missionStore } = buildApp({ missionAutopilot });
+        const mission = missionStore.createMission({ title: "Active Mission" });
+        missionStore.updateMission(mission.id, {
+          autopilotEnabled: true,
+          status: "active",
+        });
+
+        const milestone = missionStore.addMilestone(mission.id, { title: "MS1" });
+        const slice = missionStore.addSlice(milestone.id, { title: "Slice1" });
+        missionStore.updateSlice(slice.id, { status: "active" });
+
+        missionAutopilot.getAutopilotStatus.mockReturnValue({
+          enabled: true,
+          state: "watching",
+          watched: true,
+          lastActivityAt: undefined,
+        });
+
+        const res = await request(
+          app,
+          "POST",
+          `/api/missions/${mission.id}/autopilot/start`,
+          JSON.stringify({}),
+          { "content-type": "application/json" },
+        );
+
+        expect(res.status).toBe(200);
+        expect(missionAutopilot.watchMission).toHaveBeenCalledWith(mission.id);
+        // For active missions, recoverStaleMission should be called
+        expect(missionAutopilot.recoverStaleMission).toHaveBeenCalledWith(mission.id);
+        expect(missionAutopilot.checkAndStartMission).not.toHaveBeenCalled(); // Not planning
+      });
     });
 
     describe("POST /api/missions/:missionId/autopilot/stop", () => {
@@ -3091,6 +3134,125 @@ describe("Mission API", () => {
           watched: false,
           lastActivityAt: "2026-04-07T15:00:00.000Z",
         });
+      });
+    });
+
+    describe("Stale mission recovery integration", () => {
+      it("full re-engagement path: resume triggers recoverStaleMission which advances slice", async () => {
+        // This tests the complete flow: blocked mission with autopilot enabled,
+        // resume API triggers recoverStaleMission, which advances to next pending slice
+        const missionAutopilot = createMockMissionAutopilot();
+        const { app, missionStore } = buildApp({ missionAutopilot });
+        const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+        // Create mission: first slice complete, second slice pending
+        const mission = ms.createMission({ title: "Stale Recovery Mission" });
+        ms.updateMission(mission.id, {
+          status: "blocked",
+          autopilotEnabled: true,
+          autopilotState: "inactive",
+        });
+
+        const milestone = ms.addMilestone(mission.id, { title: "M1" });
+        const slice1 = ms.addSlice(milestone.id, { title: "S1" });
+        ms.updateSlice(slice1.id, { status: "complete" });
+
+        const slice2 = ms.addSlice(milestone.id, { title: "S2" });
+        // slice2 remains pending
+
+        // The mock recoverStaleMission will advance to slice2
+        missionAutopilot.recoverStaleMission.mockImplementation(async (missionId: string) => {
+          ms.updateSlice(slice2.id, { status: "active" });
+        });
+
+        // Resume the mission
+        const res = await request(
+          app,
+          "POST",
+          `/api/missions/${mission.id}/resume`,
+          JSON.stringify({}),
+          { "content-type": "application/json" },
+        );
+
+        expect(res.status).toBe(200);
+        expect(res.body.status).toBe("active");
+
+        // Verify the full re-engagement path was triggered
+        expect(missionAutopilot.watchMission).toHaveBeenCalledWith(mission.id);
+        expect(missionAutopilot.recoverStaleMission).toHaveBeenCalledWith(mission.id);
+
+        // Verify slice was advanced by recoverStaleMission
+        const updatedSlice2 = ms.getSlice(slice2.id);
+        expect(updatedSlice2?.status).toBe("active");
+      });
+
+      it("enable autopilot on stalled active mission triggers recovery", async () => {
+        // This tests enabling autopilot on an already-active mission that may be
+        // stalled (no active work). Recovery should be triggered.
+        const missionAutopilot = createMockMissionAutopilot();
+        const { app, missionStore } = buildApp({ missionAutopilot });
+        const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+        // Create active mission with no active slices (stalled)
+        const mission = ms.createMission({ title: "Stalled Mission" });
+        ms.updateMission(mission.id, { status: "active" });
+        // No slices at all
+
+        missionAutopilot.getAutopilotStatus.mockReturnValue({
+          enabled: true,
+          state: "watching",
+          watched: true,
+          lastActivityAt: undefined,
+        });
+
+        const res = await request(
+          app,
+          "PATCH",
+          `/api/missions/${mission.id}/autopilot`,
+          JSON.stringify({ enabled: true }),
+          { "content-type": "application/json" },
+        );
+
+        expect(res.status).toBe(200);
+        expect(missionAutopilot.watchMission).toHaveBeenCalledWith(mission.id);
+        expect(missionAutopilot.recoverStaleMission).toHaveBeenCalledWith(mission.id);
+      });
+
+      it("autopilot/start on active mission with autopilot enabled triggers recovery", async () => {
+        // Test the /autopilot/start endpoint on an active mission with autopilot
+        // enabled. This should watch + recover to reconcile inconsistent state.
+        const missionAutopilot = createMockMissionAutopilot();
+        const { app, missionStore } = buildApp({ missionAutopilot });
+        const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+        const mission = ms.createMission({ title: "Start Test" });
+        ms.updateMission(mission.id, {
+          status: "active",
+          autopilotEnabled: true,
+        });
+
+        const milestone = ms.addMilestone(mission.id, { title: "MS1" });
+        const slice = ms.addSlice(milestone.id, { title: "Slice1" });
+        ms.updateSlice(slice.id, { status: "complete" });
+
+        missionAutopilot.getAutopilotStatus.mockReturnValue({
+          enabled: true,
+          state: "watching",
+          watched: true,
+          lastActivityAt: undefined,
+        });
+
+        const res = await request(
+          app,
+          "POST",
+          `/api/missions/${mission.id}/autopilot/start`,
+          JSON.stringify({}),
+          { "content-type": "application/json" },
+        );
+
+        expect(res.status).toBe(200);
+        expect(missionAutopilot.watchMission).toHaveBeenCalledWith(mission.id);
+        expect(missionAutopilot.recoverStaleMission).toHaveBeenCalledWith(mission.id);
       });
     });
   });

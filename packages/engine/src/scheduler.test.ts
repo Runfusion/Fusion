@@ -1743,6 +1743,7 @@ describe("Scheduler", () => {
         start: vi.fn(),
         stop: vi.fn(),
         handleTaskCompletion: vi.fn().mockResolvedValue(undefined),
+        isWatching: vi.fn(() => true), // autopilot IS watching
       };
       const completeSlice = {
         id: "SL-001",
@@ -1759,6 +1760,7 @@ describe("Scheduler", () => {
         }),
         updateFeatureStatus: vi.fn(),
         getSlice: vi.fn().mockReturnValue(completeSlice),
+        getMilestone: vi.fn().mockReturnValue({ id: "MS-001", missionId: "M-001" }),
       });
 
       const scheduler = new Scheduler(store, {
@@ -1836,6 +1838,7 @@ describe("Scheduler", () => {
         start: vi.fn(),
         stop: vi.fn(),
         handleTaskCompletion: vi.fn().mockResolvedValue(undefined),
+        isWatching: vi.fn(() => true), // autopilot IS watching
       };
 
       const mockMissionStore = createMockMissionStore({
@@ -1851,6 +1854,7 @@ describe("Scheduler", () => {
           status: "complete",
           orderIndex: 0,
         }),
+        getMilestone: vi.fn().mockReturnValue({ id: "MS-001", missionId: "M-001" }),
       });
 
       const scheduler = new Scheduler(store, {

@@ -456,12 +456,14 @@ Status flows automatically: when features are linked to tasks and completed, sli
 
 Enable **autopilot** to let Fusion progress a mission with less manual intervention.
 
-- `autoAdvance` — Existing behavior: activate the next pending slice when the current slice completes
-- `autopilotEnabled` — Enable active monitoring and progression orchestration for a mission
+- `autopilotEnabled` — Primary control to enable active monitoring and progression orchestration for a mission
+- `autoAdvance` — Legacy compatibility field (deprecated); autopilot uses `autopilotEnabled` as the canonical control
 
 When autopilot is enabled, the runtime tracks task completions and advances mission state through:
 
 `inactive → watching → activating → completing`
+
+**Recovery behavior:** When autopilot is enabled and re-engaged (via `/resume`, PATCH `/autopilot`, or POST `/autopilot/start`), the system automatically calls `recoverStaleMission` to reconcile any inconsistent state (defined features without tasks, stale feature status, etc.) and progress if possible.
 
 Autopilot API endpoints:
 

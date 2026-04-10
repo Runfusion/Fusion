@@ -1748,23 +1748,10 @@ export function createMissionRouter(
       if (missionAutopilot && mission.autopilotEnabled) {
         missionAutopilot.watchMission(missionId);
 
-        // Check whether the current active slice is already complete or
-        // there are no active slices — if so, trigger recovery which
-        // advances to the next pending slice.
-        const hierarchy = missionStore.getMissionWithHierarchy(missionId);
-        if (hierarchy) {
-          const activeSlices = hierarchy.milestones
-            .flatMap((milestone) => milestone.slices)
-            .filter((slice) => slice.status === "active");
-
-          const hasCompletedActiveSlice = activeSlices.some(
-            (slice) => slice.features.length > 0 && slice.features.every((feature) => feature.status === "done"),
-          );
-
-          if (hasCompletedActiveSlice || activeSlices.length === 0) {
-            await missionAutopilot.recoverStaleMission(missionId);
-          }
-        }
+        // Always call recoverStaleMission for resumed missions to reconcile
+        // any inconsistent state (defined features without tasks, stale status, etc.)
+        // and progress if possible.
+        await missionAutopilot.recoverStaleMission(missionId);
       }
 
       const refreshed = missionStore.getMission(missionId);
@@ -1933,26 +1920,10 @@ export function createMissionRouter(
           if (mission.status === "planning") {
             await missionAutopilot.checkAndStartMission(missionId);
           } else if (mission.status === "active") {
-            // For already-active missions, check if recovery is needed:
-            // - No active slice exists
-            // - Active slice is already complete
-            const hierarchy = missionStore.getMissionWithHierarchy(missionId);
-            if (hierarchy) {
-              const activeSlices = hierarchy.milestones
-                .flatMap((milestone) => milestone.slices)
-                .filter((slice) => slice.status === "active");
-
-              const hasCompletedActiveSlice = activeSlices.some(
-                (slice) =>
-                  slice.features.length > 0 &&
-                  slice.features.every((feature) => feature.status === "done"),
-              );
-
-              if (hasCompletedActiveSlice || activeSlices.length === 0) {
-                // Need recovery: advance to next pending slice
-                await missionAutopilot.recoverStaleMission(missionId);
-              }
-            }
+            // For already-active missions, call recoverStaleMission to reconcile
+            // any inconsistent state (defined features without tasks, stale status, etc.)
+            // and progress if possible.
+            await missionAutopilot.recoverStaleMission(missionId);
           }
         } else {
           // Disable: stop watching
@@ -2002,9 +1973,12 @@ export function createMissionRouter(
 
       missionAutopilot.watchMission(missionId);
 
-      // If mission is in planning, start it
+      // If mission is in planning, start it. If already active, trigger recovery
+      // to reconcile any inconsistent state and progress if possible.
       if (mission.status === "planning") {
         await missionAutopilot.checkAndStartMission(missionId);
+      } else if (mission.status === "active") {
+        await missionAutopilot.recoverStaleMission(missionId);
       }
 
       const status = missionAutopilot.getAutopilotStatus(missionId);

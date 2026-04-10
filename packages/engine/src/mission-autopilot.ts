@@ -557,7 +557,8 @@ export class MissionAutopilot {
 
   /**
    * Attempt to recover a mission that appears stalled in the activating state.
-   * Re-evaluates active/pending slices and advances when progression is possible.
+   * First reconciles any task/feature inconsistencies, then re-evaluates
+   * active/pending slices and advances when progression is possible.
    */
   async recoverStaleMission(missionId: string): Promise<void> {
     try {
@@ -567,7 +568,18 @@ export class MissionAutopilot {
         return;
       }
 
-      const activeSlices = mission.milestones.flatMap((milestone) => milestone.slices)
+      // Reconcile task/feature inconsistencies before making progression decisions.
+      // This fixes drifted states (e.g., feature still "in-progress" but task is done)
+      // so that completion checks are accurate.
+      await this.reconcileMissionConsistency(mission);
+
+      // Re-fetch hierarchy after reconciliation to get accurate slice statuses
+      const refreshedMission = this.missionStore.getMissionWithHierarchy(missionId);
+      if (!refreshedMission) {
+        return;
+      }
+
+      const activeSlices = refreshedMission.milestones.flatMap((milestone) => milestone.slices)
         .filter((slice) => slice.status === "active");
 
       let advanced = false;
@@ -582,7 +594,7 @@ export class MissionAutopilot {
           advanced = true;
         }
       } else {
-        const hasPendingSlice = mission.milestones.some((milestone) =>
+        const hasPendingSlice = refreshedMission.milestones.some((milestone) =>
           milestone.slices.some((slice) => slice.status === "pending"),
         );
 

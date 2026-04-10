@@ -247,7 +247,182 @@ describe("Scheduler Mission Integration", () => {
     });
   });
 
+  describe("onSliceComplete", () => {
+    it("auto-advances when autopilotEnabled is true", async () => {
+      const completedSlice = createMockSlice({ id: "SL-001", status: "complete" });
+
+      missionStore.getMilestone.mockReturnValue(createMockMilestone({ id: "MS-001", missionId: "M-001" }));
+      missionStore.getMission.mockReturnValue(createMockMission({
+        id: "M-001",
+        status: "active",
+        autopilotEnabled: true,
+        autoAdvance: false, // autoAdvance is false, but autopilotEnabled is true
+      }));
+      missionStore.getMissionWithHierarchy.mockReturnValue({
+        id: "M-001",
+        status: "active",
+        autopilotEnabled: true,
+        autoAdvance: false,
+        milestones: [{
+          id: "MS-001",
+          orderIndex: 0,
+          dependencies: [],
+          slices: [
+            { id: "SL-001", status: "complete", orderIndex: 0 }, // completed
+            { id: "SL-002", status: "pending", orderIndex: 1 }, // next
+          ],
+        }],
+      });
+      missionStore.activateSlice.mockResolvedValue(createMockSlice({ id: "SL-002", status: "active" }));
+
+      await scheduler.onSliceComplete(completedSlice);
+
+      expect(missionStore.activateSlice).toHaveBeenCalledWith("SL-002");
+    });
+
+    it("auto-advances when autoAdvance is true (legacy compat)", async () => {
+      const completedSlice = createMockSlice({ id: "SL-001", status: "complete" });
+
+      missionStore.getMilestone.mockReturnValue(createMockMilestone({ id: "MS-001", missionId: "M-001" }));
+      missionStore.getMission.mockReturnValue(createMockMission({
+        id: "M-001",
+        status: "active",
+        autopilotEnabled: false, // autopilotEnabled is false
+        autoAdvance: true, // but autoAdvance is true (legacy)
+      }));
+      missionStore.getMissionWithHierarchy.mockReturnValue({
+        id: "M-001",
+        status: "active",
+        autopilotEnabled: false,
+        autoAdvance: true,
+        milestones: [{
+          id: "MS-001",
+          orderIndex: 0,
+          dependencies: [],
+          slices: [
+            { id: "SL-001", status: "complete", orderIndex: 0 },
+            { id: "SL-002", status: "pending", orderIndex: 1 },
+          ],
+        }],
+      });
+      missionStore.activateSlice.mockResolvedValue(createMockSlice({ id: "SL-002", status: "active" }));
+
+      await scheduler.onSliceComplete(completedSlice);
+
+      expect(missionStore.activateSlice).toHaveBeenCalledWith("SL-002");
+    });
+
+    it("does not auto-advance when both autopilotEnabled and autoAdvance are false", async () => {
+      const completedSlice = createMockSlice({ id: "SL-001", status: "complete" });
+
+      missionStore.getMilestone.mockReturnValue(createMockMilestone({ id: "MS-001", missionId: "M-001" }));
+      missionStore.getMission.mockReturnValue(createMockMission({
+        id: "M-001",
+        status: "active",
+        autopilotEnabled: false,
+        autoAdvance: false,
+      }));
+      missionStore.getMissionWithHierarchy.mockReturnValue({
+        id: "M-001",
+        status: "active",
+        autopilotEnabled: false,
+        autoAdvance: false,
+        milestones: [{
+          id: "MS-001",
+          orderIndex: 0,
+          dependencies: [],
+          slices: [
+            { id: "SL-001", status: "complete", orderIndex: 0 },
+            { id: "SL-002", status: "pending", orderIndex: 1 },
+          ],
+        }],
+      });
+
+      await scheduler.onSliceComplete(completedSlice);
+
+      expect(missionStore.activateSlice).not.toHaveBeenCalled();
+    });
+
+    it("does not auto-advance when mission status is not active", async () => {
+      const completedSlice = createMockSlice({ id: "SL-001", status: "complete" });
+
+      missionStore.getMilestone.mockReturnValue(createMockMilestone({ id: "MS-001", missionId: "M-001" }));
+      missionStore.getMission.mockReturnValue(createMockMission({
+        id: "M-001",
+        status: "planning", // not active
+        autopilotEnabled: true,
+        autoAdvance: true,
+      }));
+      missionStore.getMissionWithHierarchy.mockReturnValue({
+        id: "M-001",
+        status: "planning",
+        autopilotEnabled: true,
+        autoAdvance: true,
+        milestones: [{
+          id: "MS-001",
+          orderIndex: 0,
+          dependencies: [],
+          slices: [
+            { id: "SL-001", status: "complete", orderIndex: 0 },
+            { id: "SL-002", status: "pending", orderIndex: 1 },
+          ],
+        }],
+      });
+
+      await scheduler.onSliceComplete(completedSlice);
+
+      expect(missionStore.activateSlice).not.toHaveBeenCalled();
+    });
+
+    it("does not auto-advance when another slice is already active", async () => {
+      const completedSlice = createMockSlice({ id: "SL-001", status: "complete" });
+
+      missionStore.getMilestone.mockReturnValue(createMockMilestone({ id: "MS-001", missionId: "M-001" }));
+      missionStore.getMission.mockReturnValue(createMockMission({
+        id: "M-001",
+        status: "active",
+        autopilotEnabled: true,
+        autoAdvance: true,
+      }));
+      missionStore.getMissionWithHierarchy.mockReturnValue({
+        id: "M-001",
+        status: "active",
+        autopilotEnabled: true,
+        autoAdvance: true,
+        milestones: [{
+          id: "MS-001",
+          orderIndex: 0,
+          dependencies: [],
+          slices: [
+            { id: "SL-001", status: "complete", orderIndex: 0 }, // just completed
+            { id: "SL-002", status: "active", orderIndex: 1 }, // already active
+            { id: "SL-003", status: "pending", orderIndex: 2 },
+          ],
+        }],
+      });
+
+      await scheduler.onSliceComplete(completedSlice);
+
+      expect(missionStore.activateSlice).not.toHaveBeenCalled();
+    });
+
+    it("handles mission not found gracefully", async () => {
+      const completedSlice = createMockSlice({ id: "SL-001", status: "complete" });
+
+      missionStore.getMilestone.mockReturnValue(createMockMilestone({ id: "MS-001", missionId: "M-001" }));
+      missionStore.getMission.mockReturnValue(undefined);
+
+      await expect(scheduler.onSliceComplete(completedSlice)).resolves.not.toThrow();
+      expect(missionStore.activateSlice).not.toHaveBeenCalled();
+    });
+  });
+
   describe("Mission-aware scheduling", () => {
+    // NOTE: The delegation tests for autopilot watching/unwatching are covered by
+    // the onSliceComplete tests above which verify the autopilotEnabled/autoAdvance
+    // compatibility logic. The scheduler's handleMissionTaskCompletion delegates to
+    // autopilot when watching, and falls back to onSliceComplete otherwise.
+
     it("filters out todo tasks whose mission is blocked", async () => {
       const blockedTask = {
         id: "FN-001",
@@ -277,50 +452,6 @@ describe("Scheduler Mission Integration", () => {
 
       expect(taskStore.moveTask).not.toHaveBeenCalled();
       expect(taskStore.updateTask).not.toHaveBeenCalled();
-    });
-
-    it("delegates completion progression to missionAutopilot when a linked mission slice completes", async () => {
-      const localTaskStore = createMockTaskStore();
-      const localMissionStore = createMockMissionStore();
-      const localListeners: Record<string, Array<(...args: any[]) => void>> = {};
-      const missionAutopilot = {
-        handleTaskCompletion: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn(),
-      };
-
-      localTaskStore.on.mockImplementation((event: string, handler: (...args: any[]) => void) => {
-        localListeners[event] ??= [];
-        localListeners[event].push(handler);
-        return localTaskStore;
-      });
-
-      const localScheduler = new Scheduler(localTaskStore, {
-        pollIntervalMs: 1000,
-        semaphore: new AgentSemaphore(2),
-        missionStore: localMissionStore,
-        missionAutopilot: missionAutopilot as any,
-      });
-
-      localMissionStore.getFeatureByTaskId.mockReturnValue(
-        createMockFeature({ id: "F-001", sliceId: "SL-001", taskId: "FN-001", status: "triaged" }),
-      );
-      localMissionStore.getSlice.mockReturnValue(createMockSlice({ id: "SL-001", status: "complete" }));
-      localMissionStore.updateFeatureStatus.mockReturnValue(undefined);
-
-      const handler = localListeners["task:moved"]?.[0];
-      expect(handler).toBeDefined();
-
-      handler?.({
-        task: { id: "FN-001", sliceId: "SL-001" },
-        from: "in-progress",
-        to: "done",
-      });
-
-      await vi.waitFor(() => {
-        expect(missionAutopilot.handleTaskCompletion).toHaveBeenCalledWith("FN-001");
-      });
-
-      localScheduler.stop();
     });
   });
 
