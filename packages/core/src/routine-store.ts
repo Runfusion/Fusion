@@ -404,16 +404,34 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
     id: string,
     meta: { completedAt: string; success: boolean; resultJson?: Record<string, unknown>; error?: string },
   ): Promise<void> {
-    const routine = await this.getRoutine(id);
-    const result: RoutineExecutionResult = {
-      routineId: id,
-      success: meta.success,
-      output: meta.success ? JSON.stringify(meta.resultJson ?? {}) : "",
-      error: meta.error,
-      startedAt: routine.lastRunAt ?? meta.completedAt,
-      completedAt: meta.completedAt,
-    };
-    await this.recordRun(id, result);
+    await this.withRoutineLock(id, async () => {
+      const routine = await this.getRoutine(id);
+      const result: RoutineExecutionResult = {
+        routineId: id,
+        success: meta.success,
+        output: meta.success ? JSON.stringify(meta.resultJson ?? {}) : "",
+        error: meta.error,
+        startedAt: routine.lastRunAt ?? meta.completedAt,
+        completedAt: meta.completedAt,
+      };
+
+      routine.lastRunAt = result.startedAt;
+      routine.lastRunResult = result;
+      routine.runCount += 1;
+
+      routine.runHistory.unshift(result);
+      if (routine.runHistory.length > MAX_ROUTINE_RUN_HISTORY) {
+        routine.runHistory = routine.runHistory.slice(0, MAX_ROUTINE_RUN_HISTORY);
+      }
+
+      if (routine.enabled && isCronTrigger(routine.trigger)) {
+        routine.nextRunAt = this.computeNextRun(routine.trigger.cronExpression);
+      }
+
+      routine.updatedAt = new Date().toISOString();
+      this.upsertRoutine(routine);
+      this.emit("routine:run", { routine, result });
+    });
   }
 
   /**
