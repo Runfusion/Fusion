@@ -194,8 +194,15 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
     },
 
     database: async (input: DatabaseAuditInput) => {
+      // Infer taskId from target when it looks like a task ID (FN-*, KB-*).
+      // This handles cases like "task:update" where target is the task ID itself,
+      // falling back to context.taskId when target is not a task ID (e.g., document keys).
+      const inferredTaskId = input.target.startsWith("FN-") || input.target.startsWith("KB-")
+        ? input.target
+        : context.taskId;
+
       const eventInput: RunAuditEventInput = {
-        taskId: input.target.startsWith("FN-") || input.target.startsWith("KB-") ? input.target : context.taskId,
+        taskId: inferredTaskId,
         agentId: context.agentId,
         runId: context.runId,
         domain: "database",
