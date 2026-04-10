@@ -325,6 +325,7 @@ export class SelfHealingManager {
       this.checkpointWal();
       await this.enforceWorktreeCap();
       await this.recoverCompletedTasks();
+      await this.recoverMergedReviewTasks();
       await this.recoverMisclassifiedFailures();
       await this.recoverOrphanedExecutions();
       await this.recoverApprovedTriageTasks();
@@ -386,6 +387,58 @@ export class SelfHealingManager {
   }
 
   // ── Misclassified failure recovery ───────────────────────────────
+
+  /**
+   * Recover tasks that already merged successfully but never reached `done`.
+   *
+   * This catches races where the merge completed and merge metadata was stored,
+   * but a later transition failed or another process moved the task before the
+   * final `in-review` → `done` update completed.
+   *
+   * @returns Number of tasks recovered
+   */
+  async recoverMergedReviewTasks(): Promise<number> {
+    try {
+      const tasks = await this.store.listTasks();
+
+      const mergedButNotDone = tasks.filter((t) =>
+        t.column === "in-review" &&
+        t.mergeDetails?.mergeConfirmed === true,
+      );
+
+      if (mergedButNotDone.length === 0) return 0;
+
+      log.warn(`Found ${mergedButNotDone.length} merged task(s) stuck in in-review`);
+
+      let recovered = 0;
+      for (const task of mergedButNotDone) {
+        try {
+          await this.store.updateTask(task.id, {
+            status: null,
+            error: null,
+            mergeRetries: 0,
+          });
+          await this.store.moveTask(task.id, "done");
+          await this.store.logEntry(
+            task.id,
+            "Auto-recovered: merge already confirmed — moved from in-review to done",
+          );
+          log.log(`Recovered merged task ${task.id}: moved to done`);
+          recovered++;
+        } catch (err: any) {
+          log.error(`Failed to recover merged task ${task.id}: ${err.message}`);
+        }
+      }
+
+      if (recovered > 0) {
+        log.log(`Recovered ${recovered} merged task(s) → done`);
+      }
+      return recovered;
+    } catch (err: any) {
+      log.error(`Merged review recovery failed: ${err.message}`);
+      return 0;
+    }
+  }
 
   /**
    * Recover tasks in `in-review` marked as `failed` where all steps are

@@ -3164,6 +3164,44 @@ describe("TaskExecutor global pause behavior", () => {
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" });
   });
 
+  it("finalizes to in-review when global pause hits after task_done", async () => {
+    const store = createMockStore();
+
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      const customTools = opts.customTools || [];
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+            if (taskDoneTool) {
+              await taskDoneTool.execute("tool-1", {});
+            }
+            store._trigger("settings:updated", {
+              settings: { globalPause: true },
+              previous: { globalPause: false },
+            });
+            throw new Error("Session terminated");
+          }),
+          dispose: vi.fn(),
+          subscribe: vi.fn(),
+          on: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+          state: {},
+        },
+      } as any;
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.execute({
+      id: "FN-001", title: "Test", description: "T", column: "in-progress",
+      dependencies: [], steps: [{ name: "Step 1", status: "pending" }], currentStep: 0, log: [],
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
+  });
+
   it("takes no action when globalPause remains false", async () => {
     const store = createMockStore();
     const disposeFn = vi.fn();

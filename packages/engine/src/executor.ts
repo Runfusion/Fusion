@@ -544,6 +544,12 @@ export class TaskExecutor {
     }
   }
 
+  private async shouldFinalizeCompletedTask(taskId: string, taskDone: boolean): Promise<boolean> {
+    if (taskDone) return true;
+    const task = await this.store.getTask(taskId);
+    return this.isTaskWorkComplete(task);
+  }
+
   /**
    * Execute a review handoff: move the task to in-review column with
    * awaiting-user-review status, assign the requesting user, and dispose
@@ -797,6 +803,7 @@ export class TaskExecutor {
     // the finally block so this.executing is cleared first (prevents re-dispatch race).
     // true = requeue to todo, false = budget exhausted (already marked failed).
     let stuckRequeue: boolean | null = null;
+    let taskDone = false;
 
     try {
       // Check dependencies
@@ -1153,7 +1160,6 @@ export class TaskExecutor {
       // (block task_update status="done" until the agent re-reviews and gets APPROVE).
       const codeReviewVerdicts = new Map<number, ReviewVerdict>();
 
-      let taskDone = false;
       let wasPaused = false;
       // Mutable ref — populated after createKbAgent, tools access lazily via closure
       const sessionRef: { current: AgentSession | null } = { current: null };
@@ -1375,9 +1381,16 @@ export class TaskExecutor {
           if (this.pausedAborted.has(task.id)) {
             this.pausedAborted.delete(task.id);
             wasPaused = true;
-            executorLog.log(`${task.id} paused (graceful session exit) — moving to todo`);
-            await this.store.logEntry(task.id, "Execution paused — session preserved for resume, moved to todo");
-            await this.store.moveTask(task.id, "todo");
+            if (await this.shouldFinalizeCompletedTask(task.id, taskDone)) {
+              executorLog.log(`${task.id} paused after completion (graceful session exit) — finalizing to in-review`);
+              await this.store.logEntry(task.id, "Execution paused after completion — finalizing to in-review");
+              await this.store.moveTask(task.id, "in-review");
+              this.options.onComplete?.(task);
+            } else {
+              executorLog.log(`${task.id} paused (graceful session exit) — moving to todo`);
+              await this.store.logEntry(task.id, "Execution paused — session preserved for resume, moved to todo");
+              await this.store.moveTask(task.id, "todo");
+            }
             return;
           }
 
@@ -1576,19 +1589,26 @@ export class TaskExecutor {
         this.options.onComplete?.(task);
       } else if (this.pausedAborted.has(task.id)) {
         // Task was paused mid-execution — clean up worktree and move to todo
-        executorLog.log(`${task.id} paused — moving to todo`);
         this.pausedAborted.delete(task.id);
-        if (worktreePath && existsSync(worktreePath)) {
-          try {
-            execSync(`git worktree remove "${worktreePath}" --force`, { cwd: this.rootDir, stdio: "pipe" });
-            executorLog.log(`Removed old worktree for paused task: ${worktreePath}`);
-          } catch (cleanupErr: any) {
-            executorLog.warn(`Failed to remove old worktree ${worktreePath}: ${cleanupErr.message}`);
+        if (await this.shouldFinalizeCompletedTask(task.id, taskDone)) {
+          executorLog.log(`${task.id} paused after completion — finalizing to in-review`);
+          await this.store.logEntry(task.id, "Execution paused after completion — finalizing to in-review", undefined, this.currentRunContext);
+          await this.store.moveTask(task.id, "in-review");
+          this.options.onComplete?.(task);
+        } else {
+          executorLog.log(`${task.id} paused — moving to todo`);
+          if (worktreePath && existsSync(worktreePath)) {
+            try {
+              execSync(`git worktree remove "${worktreePath}" --force`, { cwd: this.rootDir, stdio: "pipe" });
+              executorLog.log(`Removed old worktree for paused task: ${worktreePath}`);
+            } catch (cleanupErr: any) {
+              executorLog.warn(`Failed to remove old worktree ${worktreePath}: ${cleanupErr.message}`);
+            }
           }
+          await this.store.updateTask(task.id, { worktree: undefined, branch: undefined });
+          await this.store.logEntry(task.id, "Execution paused — agent terminated, moved to todo", undefined, this.currentRunContext);
+          await this.store.moveTask(task.id, "todo");
         }
-        await this.store.updateTask(task.id, { worktree: undefined, branch: undefined });
-        await this.store.logEntry(task.id, "Execution paused — agent terminated, moved to todo", undefined, this.currentRunContext);
-        await this.store.moveTask(task.id, "todo");
       } else if (this.stuckAborted.has(task.id)) {
         // Task was killed by stuck task detector — defer requeue to finally block
         // (after this.executing is cleared) to prevent re-dispatch race.

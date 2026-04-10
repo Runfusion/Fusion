@@ -687,6 +687,70 @@ describe("SelfHealingManager", () => {
     });
   });
 
+  describe("recoverMergedReviewTasks", () => {
+    it("moves merged in-review tasks to done and clears transient merge state", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-350",
+          column: "in-review",
+          status: "failed",
+          error: "Invalid transition: 'todo' → 'done'. Valid targets: in-progress, triage",
+          mergeRetries: 3,
+          mergeDetails: {
+            mergeConfirmed: true,
+            mergedAt: "2026-01-01T00:00:00.000Z",
+          },
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverMergedReviewTasks();
+
+      expect(result).toBe(1);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-350", {
+        status: null,
+        error: null,
+        mergeRetries: 0,
+      });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-350", "done");
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-350",
+        expect.stringContaining("merge already confirmed"),
+      );
+
+      managerWithRecovery.stop();
+    });
+
+    it("ignores in-review tasks without confirmed merge metadata", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-351",
+          column: "in-review",
+          mergeDetails: {
+            mergeConfirmed: false,
+          },
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverMergedReviewTasks();
+
+      expect(result).toBe(0);
+      expect(store.updateTask).not.toHaveBeenCalled();
+      expect(store.moveTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+  });
+
   describe("recoverOrphanedExecutions", () => {
     it("requeues in-progress tasks whose reserved worktree is missing", async () => {
       const getExecuting = vi.fn().mockReturnValue(new Set<string>());
