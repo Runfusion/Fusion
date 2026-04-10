@@ -40,6 +40,8 @@ import {
   fetchProjectTasks,
   fetchProjectConfig,
   fetchExecutorStats,
+  fetchAgentRunAudit,
+  fetchAgentRunTimeline,
   type ProjectInfo,
   type ProjectHealth,
   type ActivityFeedEntry,
@@ -2939,5 +2941,180 @@ describe("resilient SSE reconnect", () => {
     expect(onThinking).toHaveBeenCalledWith("still-streaming");
     expect(onError).not.toHaveBeenCalled();
     expect(stream.readyState).toBe(ControlledEventSource.OPEN);
+  });
+});
+
+describe("fetchAgentRunAudit", () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.useRealTimers();
+  });
+
+  it("fetches run audit events with correct URL encoding", async () => {
+    const mockResponse = {
+      runId: "run-001",
+      events: [],
+      filters: {},
+      totalCount: 0,
+      hasMore: false,
+    };
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockResponse));
+
+    const result = await fetchAgentRunAudit("agent-001", "run-001");
+
+    expect(result).toEqual(mockResponse);
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/agents/agent-001/runs/run-001/audit",
+      expect.objectContaining({ headers: { "Content-Type": "application/json" } })
+    );
+  });
+
+  it("passes projectId as query param", async () => {
+    const mockResponse = { runId: "run-001", events: [], filters: {}, totalCount: 0, hasMore: false };
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockResponse));
+
+    await fetchAgentRunAudit("agent-001", "run-001", undefined, "my-project");
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/agents/agent-001/runs/run-001/audit?projectId=my-project",
+      expect.objectContaining({ headers: { "Content-Type": "application/json" } })
+    );
+  });
+
+  it("includes filter params in query string", async () => {
+    const mockResponse = { runId: "run-001", events: [], filters: {}, totalCount: 0, hasMore: false };
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockResponse));
+
+    await fetchAgentRunAudit("agent-001", "run-001", {
+      domain: "git",
+      taskId: "FN-001",
+      limit: 50,
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/agents/agent-001/runs/run-001/audit?taskId=FN-001&domain=git&limit=50",
+      expect.objectContaining({ headers: { "Content-Type": "application/json" } })
+    );
+  });
+
+  it("throws on 404 with 'Run not found' message", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(
+      mockFetchResponse(false, { error: "Run not found" }, 404)
+    );
+
+    await expect(fetchAgentRunAudit("agent-001", "run-nonexistent")).rejects.toThrow("Run not found");
+  });
+
+  it("throws on 400 for blank runId before calling fetch", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { runId: "run-001", events: [], filters: {}, totalCount: 0, hasMore: false }));
+
+    // Blank runId should throw synchronously before fetch is called
+    expect(() => fetchAgentRunAudit("agent-001", "")).toThrow("runId is required");
+    expect(() => fetchAgentRunAudit("agent-001", "   ")).toThrow("runId is required");
+    // Note: URL-encoded values like "%20" are valid runId values (they're decoded at the URL level, not parameter level)
+
+    // Verify fetch was never called for blank runId
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("fetchAgentRunTimeline", () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.useRealTimers();
+  });
+
+  it("fetches run timeline with correct URL encoding", async () => {
+    const mockResponse = {
+      run: { id: "run-001", agentId: "agent-001", startedAt: "2026-01-01T00:00:00Z", status: "active" },
+      auditByDomain: { database: [], git: [], filesystem: [] },
+      counts: { auditEvents: 0, logEntries: 0 },
+      timeline: [],
+    };
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockResponse));
+
+    const result = await fetchAgentRunTimeline("agent-001", "run-001");
+
+    expect(result).toEqual(mockResponse);
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/agents/agent-001/runs/run-001/timeline",
+      expect.objectContaining({ headers: { "Content-Type": "application/json" } })
+    );
+  });
+
+  it("passes projectId as query param", async () => {
+    const mockResponse = {
+      run: { id: "run-001", agentId: "agent-001", startedAt: "2026-01-01T00:00:00Z", status: "active" },
+      auditByDomain: { database: [], git: [], filesystem: [] },
+      counts: { auditEvents: 0, logEntries: 0 },
+      timeline: [],
+    };
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockResponse));
+
+    await fetchAgentRunTimeline("agent-001", "run-001", undefined, "my-project");
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/agents/agent-001/runs/run-001/timeline?projectId=my-project",
+      expect.objectContaining({ headers: { "Content-Type": "application/json" } })
+    );
+  });
+
+  it("includes options in query string", async () => {
+    const mockResponse = {
+      run: { id: "run-001", agentId: "agent-001", startedAt: "2026-01-01T00:00:00Z", status: "active" },
+      auditByDomain: { database: [], git: [], filesystem: [] },
+      counts: { auditEvents: 0, logEntries: 0 },
+      timeline: [],
+    };
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockResponse));
+
+    await fetchAgentRunTimeline("agent-001", "run-001", {
+      domain: "filesystem",
+      taskId: "FN-001",
+      includeLogs: false,
+      limit: 100,
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/agents/agent-001/runs/run-001/timeline?taskId=FN-001&domain=filesystem&includeLogs=false&limit=100",
+      expect.objectContaining({ headers: { "Content-Type": "application/json" } })
+    );
+  });
+
+  it("throws on 404 with 'Run not found' message", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(
+      mockFetchResponse(false, { error: "Run not found" }, 404)
+    );
+
+    await expect(fetchAgentRunTimeline("agent-001", "run-nonexistent")).rejects.toThrow("Run not found");
+  });
+
+  it("throws on 400 for blank runId before calling fetch", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, {
+      run: { id: "run-001", agentId: "agent-001", startedAt: "2026-01-01T00:00:00Z", status: "active" },
+      auditByDomain: { database: [], git: [], filesystem: [] },
+      counts: { auditEvents: 0, logEntries: 0 },
+      timeline: [],
+    }));
+
+    // Blank runId should throw synchronously before fetch is called
+    expect(() => fetchAgentRunTimeline("agent-001", "")).toThrow("runId is required");
+    expect(() => fetchAgentRunTimeline("agent-001", "   ")).toThrow("runId is required");
+    // Note: URL-encoded values like "%20" are valid runId values (they're decoded at the URL level, not parameter level)
+
+    // Verify fetch was never called for blank runId
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 });

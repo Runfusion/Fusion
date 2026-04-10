@@ -2307,6 +2307,7 @@ export interface RunTimelineResponse {
  * @param filters - Optional filter parameters
  * @param projectId - Optional project ID for multi-project workspaces
  * @returns Promise resolving to RunAuditResponse with normalized events
+ * @throws Error if runId is blank or whitespace-only
  */
 export function fetchAgentRunAudit(
   agentId: string,
@@ -2314,6 +2315,11 @@ export function fetchAgentRunAudit(
   filters?: RunAuditFilters,
   projectId?: string,
 ): Promise<RunAuditResponse> {
+  // Validate runId before making API call
+  if (!runId || runId.trim().length === 0) {
+    throw new Error("runId is required");
+  }
+
   const params = new URLSearchParams();
   if (filters?.taskId) params.set("taskId", filters.taskId);
   if (filters?.domain) params.set("domain", filters.domain);
@@ -2340,6 +2346,7 @@ export function fetchAgentRunAudit(
  * @param options.limit - Maximum audit events to return
  * @param projectId - Optional project ID for multi-project workspaces
  * @returns Promise resolving to RunTimelineResponse with merged timeline
+ * @throws Error if runId is blank or whitespace-only
  */
 export function fetchAgentRunTimeline(
   agentId: string,
@@ -2354,6 +2361,11 @@ export function fetchAgentRunTimeline(
   },
   projectId?: string,
 ): Promise<RunTimelineResponse> {
+  // Validate runId before making API call
+  if (!runId || runId.trim().length === 0) {
+    throw new Error("runId is required");
+  }
+
   const params = new URLSearchParams();
   if (options?.taskId) params.set("taskId", options.taskId);
   if (options?.domain) params.set("domain", options.domain);

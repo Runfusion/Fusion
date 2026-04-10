@@ -789,5 +789,337 @@ describe("Agent runs routes (with HeartbeatMonitor)", () => {
       expect(response.body.auditByDomain.filesystem.length).toBe(1);
       expect(response.body.counts.auditEvents).toBe(3);
     });
+
+    it("returns 400 for blank runId (URL-encoded space)", async () => {
+      const response = await request(app, "GET", "/api/agents/agent-001/runs/%20/audit");
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain("runId is required");
+    });
+
+    it("returns 400 for whitespace-only runId", async () => {
+      const response = await request(app, "GET", "/api/agents/agent-001/runs/%09%09/audit");
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain("runId is required");
+    });
+
+    it("returns 404 with exact 'Run not found' message for unknown runId", async () => {
+      mockGetRunDetail.mockResolvedValue(null);
+
+      const response = await request(app, "GET", "/api/agents/agent-001/runs/run-nonexistent/audit");
+
+      expect(response.status).toBe(404);
+      expect(response.body.error).toContain("Run not found");
+    });
+
+    it("handles legacy/partial contextSnapshot (no taskId) without falling back to agent.taskId", async () => {
+      // Create a run with no contextSnapshot (legacy/partial context)
+      const mockRun = createMockRun({
+        id: "run-legacy",
+        contextSnapshot: undefined, // No contextSnapshot at all
+      });
+      mockGetRunDetail.mockResolvedValue(mockRun);
+      mockGetRunAuditEvents.mockReturnValue([
+        {
+          id: "audit-legacy-1",
+          timestamp: "2026-01-01T00:01:00.000Z",
+          agentId: "agent-001",
+          runId: "run-legacy",
+          domain: "database",
+          mutationType: "task:update",
+          target: "FN-001",
+          taskId: undefined, // No taskId in event either
+        },
+      ]);
+
+      const response = await request(app, "GET", "/api/agents/agent-001/runs/run-legacy/audit");
+
+      expect(response.status).toBe(200);
+      expect(response.body.runId).toBe("run-legacy");
+      expect(Array.isArray(response.body.events)).toBe(true);
+      expect(response.body.events.length).toBe(1);
+      // Verify the event has undefined taskId, not a fallback value
+      expect(response.body.events[0].taskId).toBeUndefined();
+      expect(response.body.filters.taskId).toBeUndefined();
+    });
+
+    it("handles empty contextSnapshot object (no taskId field) without falling back to agent.taskId", async () => {
+      // Create a run with empty contextSnapshot object
+      const mockRun = createMockRun({
+        id: "run-empty-context",
+        contextSnapshot: {}, // Empty object, no taskId
+      });
+      mockGetRunDetail.mockResolvedValue(mockRun);
+      mockGetRunAuditEvents.mockReturnValue([]);
+
+      const response = await request(app, "GET", "/api/agents/agent-001/runs/run-empty-context/audit");
+
+      expect(response.status).toBe(200);
+      expect(response.body.runId).toBe("run-empty-context");
+      expect(response.body.events).toEqual([]);
+      expect(response.body.filters.taskId).toBeUndefined();
+    });
+
+    it("asserts deterministic ordering for timeline with duplicate timestamps using sortKey", async () => {
+      const mockRun = createMockRun({
+        id: "run-dup-ts",
+        contextSnapshot: { taskId: "FN-001" },
+      });
+      mockGetRunDetail.mockResolvedValue(mockRun);
+
+      // Create events with IDENTICAL millisecond timestamps but different IDs
+      // This tests the sortKey tie-breaking logic
+      const sameTimestamp = "2026-01-01T00:05:00.000Z";
+      const mockAuditEvents = [
+        {
+          id: "audit-d-1",
+          timestamp: sameTimestamp,
+          agentId: "agent-001",
+          runId: "run-dup-ts",
+          domain: "database",
+          mutationType: "task:update",
+          target: "FN-001",
+        },
+        {
+          id: "audit-d-2",
+          timestamp: sameTimestamp,
+          agentId: "agent-001",
+          runId: "run-dup-ts",
+          domain: "git",
+          mutationType: "git:commit",
+          target: "branch-name",
+        },
+        {
+          id: "audit-d-3",
+          timestamp: sameTimestamp,
+          agentId: "agent-001",
+          runId: "run-dup-ts",
+          domain: "filesystem",
+          mutationType: "file:write",
+          target: "src/file.ts",
+        },
+      ];
+      mockGetRunAuditEvents.mockReturnValue(mockAuditEvents);
+
+      // Run multiple times to verify deterministic ordering
+      const orderings: string[][] = [];
+      for (let i = 0; i < 5; i++) {
+        const response = await request(app, "GET", "/api/agents/agent-001/runs/run-dup-ts/timeline");
+        expect(response.status).toBe(200);
+        const ids = response.body.timeline.map((entry: { audit?: { id: string }; log?: unknown }) =>
+          entry.audit?.id ?? "log"
+        );
+        orderings.push(ids);
+      }
+
+      // All orderings should be identical (deterministic)
+      for (const ordering of orderings) {
+        expect(ordering).toEqual(orderings[0]);
+      }
+
+      // Verify sortKey-based tie-breaking: audit events with same timestamp should sort by ID
+      const timeline = orderings[0];
+      const auditIds = timeline.filter((id: string) => id.startsWith("audit-d-"));
+      expect(auditIds.length).toBe(3);
+      // The IDs should be in ascending order based on the sortKey (A_timestamp_id format)
+      expect(auditIds).toEqual(["audit-d-1", "audit-d-2", "audit-d-3"]);
+    });
+
+    it("traces filesystem/file-change audit records in correlated timeline response", async () => {
+      const mockRun = createMockRun({
+        id: "run-fs-trace",
+        contextSnapshot: { taskId: "FN-001" },
+      });
+      mockGetRunDetail.mockResolvedValue(mockRun);
+
+      // Filesystem event with metadata for traceability
+      const mockAuditEvents = [
+        {
+          id: "audit-fs-1",
+          timestamp: "2026-01-01T00:03:00.000Z",
+          agentId: "agent-001",
+          runId: "run-fs-trace",
+          domain: "filesystem",
+          mutationType: "file:write",
+          target: "src/task-impl.ts",
+          metadata: {
+            filesChanged: 2,
+            paths: ["src/task-impl.ts", "src/task-impl.test.ts"],
+            operation: "create",
+          },
+        },
+        {
+          id: "audit-fs-2",
+          timestamp: "2026-01-01T00:03:01.000Z",
+          agentId: "agent-001",
+          runId: "run-fs-trace",
+          domain: "filesystem",
+          mutationType: "file:modify",
+          target: "src/task-impl.ts",
+          metadata: {
+            filesChanged: 1,
+            paths: ["src/task-impl.ts"],
+            operation: "modify",
+          },
+        },
+      ];
+      mockGetRunAuditEvents.mockReturnValue(mockAuditEvents);
+      store.getAgentLogsByTimeRange = vi.fn().mockResolvedValue([]);
+
+      const response = await request(app, "GET", "/api/agents/agent-001/runs/run-fs-trace/timeline");
+
+      expect(response.status).toBe(200);
+
+      // Verify filesystem domain grouping
+      expect(response.body.auditByDomain.filesystem.length).toBe(2);
+
+      // Verify traceability: each filesystem event should have runId and domain in response
+      const fsEntries = response.body.timeline.filter(
+        (entry: { type: string; audit?: { domain: string; runId: string } }) =>
+          entry.type === "audit" && entry.audit?.domain === "filesystem"
+      );
+      expect(fsEntries.length).toBe(2);
+
+      // Verify metadata is preserved in the response
+      const fsEntry1 = fsEntries.find(
+        (entry: { audit?: { id: string } }) => entry.audit?.id === "audit-fs-1"
+      );
+      expect(fsEntry1).toBeDefined();
+      expect(fsEntry1.audit.metadata).toEqual({
+        filesChanged: 2,
+        paths: ["src/task-impl.ts", "src/task-impl.test.ts"],
+        operation: "create",
+      });
+
+      // Verify runId correlation is present
+      expect(fsEntry1.audit.domain).toBe("filesystem");
+
+      // Verify timeline ordering (filesystem events should be in correct order)
+      expect(fsEntries[0].audit.id).toBe("audit-fs-1");
+      expect(fsEntries[1].audit.id).toBe("audit-fs-2");
+    });
+
+    it("normalizes filesystem events with file-change mutation type", async () => {
+      const mockRun = createMockRun({ id: "run-file-change" });
+      mockGetRunDetail.mockResolvedValue(mockRun);
+
+      const mockAuditEvents = [
+        {
+          id: "audit-filechange-1",
+          timestamp: "2026-01-01T00:04:00.000Z",
+          agentId: "agent-001",
+          runId: "run-file-change",
+          domain: "filesystem",
+          mutationType: "file:change",
+          target: "src/main.ts",
+          taskId: "FN-001",
+          metadata: {
+            filesChanged: 5,
+            paths: ["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts", "src/e.ts"],
+            operation: "batch-modify",
+          },
+        },
+      ];
+      mockGetRunAuditEvents.mockReturnValue(mockAuditEvents);
+
+      const response = await request(app, "GET", "/api/agents/agent-001/runs/run-file-change/audit");
+
+      expect(response.status).toBe(200);
+      expect(response.body.events.length).toBe(1);
+      expect(response.body.events[0].domain).toBe("filesystem");
+      expect(response.body.events[0].mutationType).toBe("file:change");
+      expect(response.body.events[0].metadata).toEqual({
+        filesChanged: 5,
+        paths: ["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts", "src/e.ts"],
+        operation: "batch-modify",
+      });
+      // Summary should include filesystem domain prefix
+      expect(response.body.events[0].summary).toContain("FS");
+      expect(response.body.events[0].summary).toContain("change");
+    });
+  });
+
+  // ── Timeline endpoint additional tests ──────────────────────────────────
+
+  describe("GET /api/agents/:id/runs/:runId/timeline (extended)", () => {
+    it("returns 400 for blank runId (URL-encoded space)", async () => {
+      const response = await request(app, "GET", "/api/agents/agent-001/runs/%20/timeline");
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain("runId is required");
+    });
+
+    it("returns 404 with exact 'Run not found' message for unknown runId", async () => {
+      mockGetRunDetail.mockResolvedValue(null);
+
+      const response = await request(app, "GET", "/api/agents/agent-001/runs/run-nonexistent/timeline");
+
+      expect(response.status).toBe(404);
+      expect(response.body.error).toContain("Run not found");
+    });
+
+    it("handles legacy/partial contextSnapshot (no taskId) without falling back to agent.taskId", async () => {
+      // Create a run with no contextSnapshot - timeline should still work
+      const mockRun = createMockRun({
+        id: "run-legacy-tl",
+        contextSnapshot: undefined,
+      });
+      mockGetRunDetail.mockResolvedValue(mockRun);
+      mockGetRunAuditEvents.mockReturnValue([]);
+      store.getAgentLogsByTimeRange = vi.fn().mockResolvedValue([]);
+
+      const response = await request(app, "GET", "/api/agents/agent-001/runs/run-legacy-tl/timeline");
+
+      expect(response.status).toBe(200);
+      expect(response.body.run.id).toBe("run-legacy-tl");
+      // taskId should be undefined (no fallback to current agent state)
+      expect(response.body.run.taskId).toBeUndefined();
+      expect(response.body.timeline).toEqual([]);
+    });
+
+    it("verifies timeline sortKey tie-breaking with mixed audit and log entries at same timestamp", async () => {
+      const sameTimestamp = "2026-01-01T00:06:00.000Z";
+      const mockRun = createMockRun({
+        id: "run-mixed-ts",
+        startedAt: sameTimestamp,
+        contextSnapshot: { taskId: "FN-001" },
+      });
+      mockGetRunDetail.mockResolvedValue(mockRun);
+
+      // Audit event at timestamp
+      const mockAuditEvents = [
+        {
+          id: "audit-mixed-a",
+          timestamp: sameTimestamp,
+          agentId: "agent-001",
+          runId: "run-mixed-ts",
+          domain: "database",
+          mutationType: "task:update",
+          target: "FN-001",
+        },
+      ];
+      mockGetRunAuditEvents.mockReturnValue(mockAuditEvents);
+
+      // Log entry at EXACT same timestamp (using timestamp as unique key)
+      store.getAgentLogsByTimeRange = vi.fn().mockResolvedValue([
+        { timestamp: sameTimestamp, type: "info", message: "Log at exact same time" },
+      ]);
+
+      const response = await request(app, "GET", "/api/agents/agent-001/runs/run-mixed-ts/timeline");
+
+      expect(response.status).toBe(200);
+      expect(response.body.timeline.length).toBe(2);
+
+      // Verify deterministic ordering: audit (A prefix) should come before log (L prefix)
+      // SortKey format: "A_timestamp_id" vs "L_timestamp_timestamp"
+      // A < L alphabetically, so audit comes first at same timestamp
+      expect(response.body.timeline[0].type).toBe("audit");
+      expect(response.body.timeline[1].type).toBe("log");
+
+      // Run multiple times to verify determinism
+      for (let i = 0; i < 3; i++) {
+        const response2 = await request(app, "GET", "/api/agents/agent-001/runs/run-mixed-ts/timeline");
+        expect(response2.body.timeline[0].type).toBe("audit");
+        expect(response2.body.timeline[1].type).toBe("log");
+      }
+    });
   });
 });

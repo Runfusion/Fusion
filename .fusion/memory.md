@@ -43,6 +43,11 @@
 - `TaskStore.logEntry()`, `addComment()`, `addSteeringComment()`, `pauseTask()` accept an optional `RunMutationContext` parameter for audit trail correlation. Always pass it when the caller is an engine module (executor, heartbeat monitor) to maintain the audit trail. The executor constructs a synthetic `runContext` with `runId: "exec-{taskId}-{timestamp}-{random}"` since it doesn't use `AgentHeartbeatRun`.
 - **Run-Audit Instrumentation (FN-1404)**: The engine instruments mutation calls with audit events via `createRunAuditor()` from `run-audit.ts`. Each active run (heartbeat, executor, merger) creates an `EngineRunContext` with `runId`, `agentId`, `taskId`, and `phase`. The auditor no-ops cleanly when no run context exists (backward compatible with manual/non-run paths). Use `generateSyntheticRunId()` for executor/merger synthetic IDs. Audit events are emitted for git mutations (worktree/branch/create/remove/reset), database mutations (task:update/move/comment/assign/checkout), and filesystem mutations (file:capture-modified).
 - **Write-through cache pattern (FN-1336)**: When adding caching to a store, use write-through invalidation (update cache in setter, return cached value in getter). For `GlobalSettingsStore`, the cache survives for the lifetime of the process since it's a singleton per server instance. Add `invalidateCache()` for testing and edge cases where external processes modify the file.
+- **API wrapper tests for validation**: When testing functions that validate parameters synchronously before calling fetch:
+  - Use `expect(() => fn()).toThrow()` for synchronous throws (not `rejects.toThrow()`)
+  - The `api()` function in `app/api.ts` only passes `headers: { "Content-Type": "application/json" }` when no `opts.method` is specified — GET requests don't include `method: "GET"` in the fetch options
+  - URL-encoded parameter values (like `%20`) are valid values — they're decoded at the URL level, not parameter level
+  - Mock setups for successful responses should return 200 status to avoid triggering error paths
 
 ## Color Theme System
 

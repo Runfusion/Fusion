@@ -10422,6 +10422,12 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
 
+      // Validate runId is not blank/whitespace
+      const runId = req.params.runId;
+      if (!runId || runId.trim().length === 0) {
+        throw badRequest("runId is required");
+      }
+
       // Verify the run exists
       const run = await agentStore.getRunDetail(req.params.id, req.params.runId);
       if (!run) {
@@ -10499,6 +10505,12 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const { AgentStore } = await import("@fusion/core");
       const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
+
+      // Validate runId is not blank/whitespace
+      const runId = req.params.runId;
+      if (!runId || runId.trim().length === 0) {
+        throw badRequest("runId is required");
+      }
 
       // Verify the run exists
       const run = await agentStore.getRunDetail(req.params.id, req.params.runId);
