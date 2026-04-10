@@ -3545,4 +3545,127 @@ describe("Mission API", () => {
       expect(skipSpy).toHaveBeenCalledWith("slice", slice.id, expect.anything());
     });
   });
+
+  // ── Interview Error Mapping Tests ──────────────────────────────────────────
+
+  describe("interview error mapping", () => {
+    it("POST milestone interview/respond returns 404 for unknown session", async () => {
+      const { app } = buildApp({});
+
+      const importMock = await import("./milestone-slice-interview.js");
+      vi.spyOn(importMock, "submitTargetInterviewResponse").mockImplementation(async () => {
+        const { TargetSessionNotFoundError } = await import("./milestone-slice-interview.js");
+        throw new TargetSessionNotFoundError("Session not found");
+      });
+
+      const res = await request(
+        app,
+        "POST",
+        "/api/missions/milestones/MS-TEST1/interview/respond",
+        JSON.stringify({ sessionId: "nonexistent-session", responses: {} }),
+        { "content-type": "application/json" },
+      );
+
+      expect(res.status).toBe(404);
+    });
+
+    it("POST slice interview/respond returns 404 for unknown session", async () => {
+      const { app } = buildApp({});
+
+      const importMock = await import("./milestone-slice-interview.js");
+      vi.spyOn(importMock, "submitTargetInterviewResponse").mockImplementation(async () => {
+        const { TargetSessionNotFoundError } = await import("./milestone-slice-interview.js");
+        throw new TargetSessionNotFoundError("Session not found");
+      });
+
+      const res = await request(
+        app,
+        "POST",
+        "/api/missions/slices/SL-TEST1/interview/respond",
+        JSON.stringify({ sessionId: "nonexistent-session", responses: {} }),
+        { "content-type": "application/json" },
+      );
+
+      expect(res.status).toBe(404);
+    });
+
+    it("POST milestone interview/start returns 429 when rate limited", async () => {
+      const { app, missionStore } = buildApp({});
+      const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+      const mission = ms.createMission({ title: "Rate Limit Test" });
+      const milestone = ms.addMilestone(mission.id, { title: "Rate Limit Milestone" });
+
+      const importMock = await import("./milestone-slice-interview.js");
+      vi.spyOn(importMock, "createTargetInterviewSession").mockImplementation(async () => {
+        const { RateLimitError } = await import("./milestone-slice-interview.js");
+        throw new RateLimitError("Rate limit exceeded", new Date(Date.now() + 3600000));
+      });
+
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/milestones/${milestone.id}/interview/start`,
+        JSON.stringify({}),
+        { "content-type": "application/json" },
+      );
+
+      expect(res.status).toBe(429);
+      expect(res.body).toHaveProperty("error");
+    });
+
+    it("POST slice interview/start returns 429 when rate limited", async () => {
+      const { app, missionStore } = buildApp({});
+      const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+      const mission = ms.createMission({ title: "Rate Limit Test" });
+      const milestone = ms.addMilestone(mission.id, { title: "Rate Limit Milestone" });
+      const slice = ms.addSlice(milestone.id, { title: "Rate Limit Slice" });
+
+      const importMock = await import("./milestone-slice-interview.js");
+      vi.spyOn(importMock, "createTargetInterviewSession").mockImplementation(async () => {
+        const { RateLimitError } = await import("./milestone-slice-interview.js");
+        throw new RateLimitError("Rate limit exceeded");
+      });
+
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/slices/${slice.id}/interview/start`,
+        JSON.stringify({}),
+        { "content-type": "application/json" },
+      );
+
+      expect(res.status).toBe(429);
+      expect(res.body).toHaveProperty("error");
+    });
+
+    it("POST milestone interview/skip returns 404 for nonexistent milestone", async () => {
+      const { app } = buildApp({});
+
+      const res = await request(
+        app,
+        "POST",
+        "/api/missions/milestones/MS-NONEXISTENT/interview/skip",
+        JSON.stringify({}),
+        { "content-type": "application/json" },
+      );
+
+      expect(res.status).toBe(404);
+    });
+
+    it("POST slice interview/skip returns 404 for nonexistent slice", async () => {
+      const { app } = buildApp({});
+
+      const res = await request(
+        app,
+        "POST",
+        "/api/missions/slices/SL-NONEXISTENT/interview/skip",
+        JSON.stringify({}),
+        { "content-type": "application/json" },
+      );
+
+      expect(res.status).toBe(404);
+    });
+  });
 });

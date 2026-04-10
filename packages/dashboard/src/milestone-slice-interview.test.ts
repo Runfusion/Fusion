@@ -21,6 +21,7 @@ import {
   getTargetInterviewSummary,
   getRateLimitResetTime,
   InvalidSessionStateError,
+  TargetInvalidSessionStateError,
   milestoneSliceInterviewStreamManager,
   parseTargetInterviewResponse,
   rehydrateFromStore,
@@ -462,12 +463,157 @@ describe("milestone-slice-interview module", () => {
 
   describe("applyTargetInterview", () => {
     // Note: Full end-to-end tests with AI completion are complex due to async agent mocking.
-    // These tests verify error handling.
+    // These tests verify error handling and integration with MissionStore.
 
     it("throws when session not found", () => {
       const mockMissionStore = {} as any;
       expect(() => applyTargetInterview("missing", mockMissionStore)).toThrow(
         TargetSessionNotFoundError
+      );
+    });
+
+    it("persists milestone planning notes and verification to store", async () => {
+      // Create a session and set its summary
+      const sessionId = await createTargetInterviewSession(
+        "127.0.0.1",
+        "milestone",
+        "ms-apply",
+        "Apply Test",
+        "Mission context",
+        "/tmp/project"
+      );
+      await waitForCurrentQuestion(sessionId);
+
+      // Set the session's summary directly to simulate completed interview
+      const session = getTargetInterviewSession(sessionId);
+      if (session) {
+        (session as any).summary = {
+          description: "Refined milestone description",
+          planningNotes: "Key decisions: JWT tokens, refresh token support",
+          verification: "All auth flows work correctly",
+        };
+      }
+
+      // Mock MissionStore
+      const mockUpdateMilestone = vi.fn().mockReturnValue({ id: "ms-apply" });
+      const mockGetMilestone = vi.fn().mockReturnValue({ id: "ms-apply", title: "Apply Test" });
+      const mockMissionStore = {
+        getMilestone: mockGetMilestone,
+        updateMilestone: mockUpdateMilestone,
+      } as any;
+
+      // Apply the interview results
+      const result = applyTargetInterview(sessionId, mockMissionStore);
+
+      // Verify update was called with correct fields
+      expect(mockUpdateMilestone).toHaveBeenCalledWith("ms-apply", expect.objectContaining({
+        description: "Refined milestone description",
+        planningNotes: "Key decisions: JWT tokens, refresh token support",
+        verification: "All auth flows work correctly",
+        interviewState: "completed",
+      }));
+    });
+
+    it("persists slice planning notes and planState to store", async () => {
+      // Create a slice session
+      const sessionId = await createTargetInterviewSession(
+        "127.0.0.1",
+        "slice",
+        "sl-apply",
+        "Apply Slice Test",
+        "Mission | Milestone context",
+        "/tmp/project"
+      );
+      await waitForCurrentQuestion(sessionId);
+
+      // Set the session's summary directly
+      const session = getTargetInterviewSession(sessionId);
+      if (session) {
+        (session as any).summary = {
+          description: "Refined slice description",
+          planningNotes: "Slice decisions: React Hook Form, Zod validation",
+          verification: "All form validations pass",
+        };
+      }
+
+      // Mock MissionStore
+      const mockUpdateSlice = vi.fn().mockReturnValue({ id: "sl-apply" });
+      const mockGetSlice = vi.fn().mockReturnValue({ id: "sl-apply", title: "Apply Slice Test" });
+      const mockMissionStore = {
+        getSlice: mockGetSlice,
+        updateSlice: mockUpdateSlice,
+      } as any;
+
+      // Apply the interview results
+      const result = applyTargetInterview(sessionId, mockMissionStore);
+
+      // Verify update was called with correct fields
+      expect(mockUpdateSlice).toHaveBeenCalledWith("sl-apply", expect.objectContaining({
+        description: "Refined slice description",
+        planningNotes: "Slice decisions: React Hook Form, Zod validation",
+        verification: "All form validations pass",
+        planState: "planned",
+      }));
+    });
+
+    it("cleans up session after persisting", async () => {
+      // Create a milestone session
+      const sessionId = await createTargetInterviewSession(
+        "127.0.0.1",
+        "milestone",
+        "ms-cleanup",
+        "Cleanup Test",
+        "Context",
+        "/tmp/project"
+      );
+      await waitForCurrentQuestion(sessionId);
+
+      // Set the session's summary
+      const session = getTargetInterviewSession(sessionId);
+      if (session) {
+        (session as any).summary = {
+          description: "Desc",
+          planningNotes: "Notes",
+          verification: "Verify",
+        };
+      }
+
+      // Verify session exists before apply
+      expect(getTargetInterviewSession(sessionId)).toBeDefined();
+
+      // Mock MissionStore
+      const mockUpdateMilestone = vi.fn().mockReturnValue({ id: "ms-cleanup" });
+      const mockGetMilestone = vi.fn().mockReturnValue({ id: "ms-cleanup" });
+      const mockMissionStore = {
+        getMilestone: mockGetMilestone,
+        updateMilestone: mockUpdateMilestone,
+      } as any;
+
+      // Apply the interview results
+      applyTargetInterview(sessionId, mockMissionStore);
+
+      // Verify session was cleaned up
+      expect(getTargetInterviewSession(sessionId)).toBeUndefined();
+    });
+
+    it("throws when session has no summary to apply", async () => {
+      // Create a session without setting summary
+      const sessionId = await createTargetInterviewSession(
+        "127.0.0.1",
+        "milestone",
+        "ms-no-summary",
+        "No Summary",
+        "Context",
+        "/tmp/project"
+      );
+      await waitForCurrentQuestion(sessionId);
+
+      const mockMissionStore = {
+        getMilestone: vi.fn().mockReturnValue({ id: "ms-no-summary" }),
+      } as any;
+
+      expect(() => applyTargetInterview(sessionId, mockMissionStore)).toThrow(
+        TargetInvalidSessionStateError
       );
     });
   });

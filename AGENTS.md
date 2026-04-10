@@ -2098,6 +2098,159 @@ The `autopilotEnabled` flag is the sole control for autopilot behavior. When ena
 - `POST /api/missions/:missionId/autopilot/start` — Manually start watching (programmatic access)
 - `POST /api/missions/:missionId/autopilot/stop` — Manually stop watching (programmatic access)
 
+## Mission Planning Context
+
+The mission planning context system enables AI-guided planning at multiple levels of the mission hierarchy. When features are triaged to tasks, they receive enriched descriptions containing full mission context, helping AI agents make informed decisions during implementation.
+
+### Architecture Overview
+
+The planning system operates at three levels:
+
+1. **Mission-level interview** — Produces the overall mission specification (via existing `MissionInterviewModal`)
+2. **Per-milestone interviews** — Refine scope and produce `planningNotes` and `verification` criteria
+3. **Per-slice interviews** — Further refine scope and produce `planningNotes`, `verification`, and set `planState`
+
+When features are triaged to tasks via `triageFeature()`, the system automatically enriches task descriptions with the full hierarchy context (mission → milestone → slice → feature), giving implementation agents comprehensive context.
+
+### Data Model
+
+**New fields on `Milestone`:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `planningNotes` | `string?` | Optional text field for storing interview/planning output |
+| `verification` | `string?` | Optional text field for storing verification criteria |
+
+**New fields on `Slice`:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `planningNotes` | `string?` | Optional text field for storing interview/planning output |
+| `verification` | `string?` | Optional text field for storing verification criteria |
+| `planState` | `SlicePlanState` | Tracks whether per-slice planning has been done: `"not_started"` \| `"planned"` \| `"needs_update"` |
+
+**Existing fields enhanced for planning:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Milestone.interviewState` | `InterviewState` | `"not_started"` \| `"in_progress"` \| `"completed"` \| `"needs_update"` — tracks milestone interview state |
+| `Slice.status` | `SliceStatus` | `"pending"` \| `"active"` \| `"complete"` — lifecycle status (separate from `planState`) |
+
+### Interview Flow
+
+The `MilestoneSliceInterviewModal` component provides the UI for milestone and slice interviews:
+
+1. User clicks the **Plan** button on a milestone or slice in MissionManager
+2. Dashboard opens the `MilestoneSliceInterviewModal`
+3. User chooses from three options:
+   - **Start Interview** — Begins AI-guided Q&A to refine scope
+   - **Use Mission Context** — Skips interview, applies mission-level context directly
+   - **Cancel** — Dismisses without changes
+
+For AI interviews:
+4. Session created via `createTargetInterviewSession()`
+5. AI asks clarifying questions via `submitTargetInterviewResponse()`
+6. User reviews summary and clicks **Apply** to persist results
+7. Results stored via `applyTargetInterview()`:
+   - Milestone: `planningNotes`, `verification`, `interviewState: "completed"`
+   - Slice: `planningNotes`, `verification`, `planState: "planned"`
+
+For skip flow:
+4. `skipTargetInterview()` called directly
+5. Planning notes populated with mission context message
+6. State set: `interviewState: "completed"` (milestone) or `planState: "planned"` (slice)
+
+### Triage Enrichment
+
+The `MissionStore.buildEnrichedDescription()` method assembles structured markdown task descriptions:
+
+```
+## Mission: Authentication System
+Build a complete auth system
+
+## Milestone: Core Auth
+**Description:** Implement core authentication
+**Verification:** Users can log in and log out
+**Planning Notes:** Decided on JWT strategy
+
+## Slice: Login Page
+**Description:** Build the login UI
+**Verification:** Login form accepts valid credentials
+**Planning Notes:** Use existing design system
+
+## Feature: Login Form
+Standard login form with email/password
+
+**Acceptance Criteria:**
+Form validates input and shows errors
+```
+
+**Key behaviors:**
+- Only non-empty fields are included in the output
+- Custom description overrides bypass enrichment entirely
+- Enrichment reads current state at triage time (historical tasks keep original context)
+
+### API Endpoints
+
+**Milestone Interview:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/missions/milestones/:milestoneId/interview/start` | Start milestone interview session |
+| `POST` | `/api/missions/milestones/:milestoneId/interview/respond` | Submit responses to interview questions |
+| `GET` | `/api/missions/milestones/:milestoneId/interview/stream` | SSE stream for real-time interview updates |
+| `POST` | `/api/missions/milestones/:milestoneId/interview/apply` | Apply interview results to milestone |
+| `POST` | `/api/missions/milestones/:milestoneId/interview/skip` | Skip interview, use mission-level context |
+
+**Slice Interview:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/missions/slices/:sliceId/interview/start` | Start slice interview session |
+| `POST` | `/api/missions/slices/:sliceId/interview/respond` | Submit responses to interview questions |
+| `GET` | `/api/missions/slices/:sliceId/interview/stream` | SSE stream for real-time interview updates |
+| `POST` | `/api/missions/slices/:sliceId/interview/apply` | Apply interview results to slice |
+| `POST` | `/api/missions/slices/:sliceId/interview/skip` | Skip interview, use mission-level context |
+
+### Database Schema
+
+Migration version 21 adds the new planning fields to the schema:
+
+```sql
+-- milestones table additions
+ALTER TABLE milestones ADD COLUMN planningNotes TEXT;
+ALTER TABLE milestones ADD COLUMN verification TEXT;
+
+-- slices table additions
+ALTER TABLE slices ADD COLUMN planningNotes TEXT;
+ALTER TABLE slices ADD COLUMN verification TEXT;
+ALTER TABLE slices ADD COLUMN planState TEXT NOT NULL DEFAULT 'not_started';
+```
+
+### Key Implementation Files
+
+- `packages/core/src/mission-types.ts` — Type definitions for `SlicePlanState`, `SLICE_PLAN_STATES`, updated `Milestone` and `Slice` interfaces
+- `packages/core/src/mission-store.ts` — `buildEnrichedDescription()`, `triageFeature()` with enrichment, `updateMilestone()` and `updateSlice()` with new fields
+- `packages/dashboard/src/milestone-slice-interview.ts` — Interview engine: `createTargetInterviewSession()`, `applyTargetInterview()`, `skipTargetInterview()`
+- `packages/dashboard/app/components/MilestoneSliceInterviewModal.tsx` — React component for the interview UI
+- `packages/dashboard/app/components/MissionManager.tsx` — Plan buttons and planning state indicators
+
+### Dashboard UI Elements
+
+**Plan Buttons:**
+- Appear next to non-complete milestones and slices
+- Hidden for completed items
+- Trigger `MilestoneSliceInterviewModal` on click
+
+**Planning State Indicators:**
+- Visual badges showing interview/plan state
+- Color-coded: grey (not started), green (completed), amber (needs update)
+
+**Triage Preview:**
+- Shows enriched description before creating task
+- Allows user to preview context that will be injected
+- "Create Task" confirms triage, "Cancel" dismisses
+
 ## Workflow Steps
 
 Workflow steps are reusable quality gates that run at configurable lifecycle phases. Each step can be configured to run as **pre-merge** (after implementation, before merge — can block) or **post-merge** (after merge success — informational only). They enable post-implementation review, documentation checks, QA validation, deployment notifications, and other automated checks.

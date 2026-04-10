@@ -882,13 +882,15 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       orderIndex,
       interviewState: "not_started",
       dependencies: input.dependencies || [],
+      planningNotes: input.planningNotes,
+      verification: input.verification,
       createdAt: now,
       updatedAt: now,
     };
 
     this.db.prepare(`
-      INSERT INTO milestones (id, missionId, title, description, status, orderIndex, interviewState, dependencies, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO milestones (id, missionId, title, description, status, orderIndex, interviewState, dependencies, planningNotes, verification, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       milestone.id,
       milestone.missionId,
@@ -898,6 +900,8 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       milestone.orderIndex,
       milestone.interviewState,
       toJson(milestone.dependencies),
+      milestone.planningNotes ?? null,
+      milestone.verification ?? null,
       milestone.createdAt,
       milestone.updatedAt,
     );
@@ -1089,13 +1093,15 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       status: "pending",
       planState: "not_started",
       orderIndex,
+      planningNotes: input.planningNotes,
+      verification: input.verification,
       createdAt: now,
       updatedAt: now,
     };
 
     this.db.prepare(`
-      INSERT INTO slices (id, milestoneId, title, description, status, orderIndex, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO slices (id, milestoneId, title, description, status, orderIndex, planState, planningNotes, verification, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       slice.id,
       slice.milestoneId,
@@ -1103,6 +1109,9 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       slice.description ?? null,
       slice.status,
       slice.orderIndex,
+      slice.planState,
+      slice.planningNotes ?? null,
+      slice.verification ?? null,
       slice.createdAt,
       slice.updatedAt,
     );
@@ -1611,17 +1620,104 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
   // ── Triage Operations ────────────────────────────────────────────────
 
   /**
+   * Build an enriched task description that includes the full mission hierarchy context.
+   *
+   * When a feature is triaged to a task, this method constructs a structured markdown
+   * description that includes context from all levels of the hierarchy:
+   * - Mission: title and description
+   * - Milestone: title, description, verification criteria, planning notes
+   * - Slice: title, description, verification criteria, planning notes
+   * - Feature: description and acceptance criteria
+   *
+   * Only non-empty fields are included in the output. This provides AI agents
+   * with full context for making informed decisions during task implementation.
+   *
+   * @param featureId - Feature ID to build enriched description for
+   * @returns The enriched description string, or undefined if feature not found
+   */
+  buildEnrichedDescription(featureId: string): string | undefined {
+    const feature = this.getFeature(featureId);
+    if (!feature) {
+      return undefined;
+    }
+
+    const slice = this.getSlice(feature.sliceId);
+    if (!slice) {
+      return undefined;
+    }
+
+    const milestone = this.getMilestone(slice.milestoneId);
+    if (!milestone) {
+      return undefined;
+    }
+
+    const mission = this.getMission(milestone.missionId);
+    if (!mission) {
+      return undefined;
+    }
+
+    const sections: string[] = [];
+
+    // Mission context (always included)
+    sections.push(`## Mission: ${mission.title}`);
+    if (mission.description) {
+      sections.push(mission.description);
+    }
+
+    // Milestone context
+    const milestoneSections: string[] = [`## Milestone: ${milestone.title}`];
+    if (milestone.description) {
+      milestoneSections.push(`**Description:** ${milestone.description}`);
+    }
+    if (milestone.verification) {
+      milestoneSections.push(`**Verification:** ${milestone.verification}`);
+    }
+    if (milestone.planningNotes) {
+      milestoneSections.push(`**Planning Notes:** ${milestone.planningNotes}`);
+    }
+    sections.push(milestoneSections.join("\n"));
+
+    // Slice context
+    const sliceSections: string[] = [`## Slice: ${slice.title}`];
+    if (slice.description) {
+      sliceSections.push(`**Description:** ${slice.description}`);
+    }
+    if (slice.verification) {
+      sliceSections.push(`**Verification:** ${slice.verification}`);
+    }
+    if (slice.planningNotes) {
+      sliceSections.push(`**Planning Notes:** ${slice.planningNotes}`);
+    }
+    sections.push(sliceSections.join("\n"));
+
+    // Feature context
+    const featureSections: string[] = [`## Feature: ${feature.title}`];
+    if (feature.description) {
+      featureSections.push(feature.description);
+    }
+    if (feature.acceptanceCriteria) {
+      featureSections.push(`**Acceptance Criteria:**\n${feature.acceptanceCriteria}`);
+    }
+    sections.push(featureSections.join("\n"));
+
+    return sections.join("\n\n");
+  }
+
+  /**
    * Triage a feature by creating a new task and linking it.
    *
    * Creates a fn task from the feature's title and description, then links
    * the feature to the newly created task using `linkFeatureToTask()`.
    * The feature status transitions from "defined" to "triaged".
    *
+   * When no custom description is provided, the task description is enriched
+   * with the full mission hierarchy context (mission → milestone → slice → feature).
+   *
    * Requires MissionStore to have been constructed with a TaskStore reference.
    *
    * @param featureId - Feature ID to triage
    * @param taskTitle - Optional title override (defaults to feature title)
-   * @param taskDescription - Optional description override (defaults to feature description + acceptance criteria)
+   * @param taskDescription - Optional description override (skips enrichment if provided)
    * @returns The updated feature with taskId set
    * @throws Error if feature not found, already triaged, or TaskStore not available
    */
@@ -1643,11 +1739,16 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       throw new Error(`Feature ${featureId} is already ${feature.status} (status must be "defined" to triage)`);
     }
 
-    // Build description from feature + acceptance criteria
-    const description = taskDescription || [
-      feature.description,
-      feature.acceptanceCriteria ? `\n**Acceptance Criteria:**\n${feature.acceptanceCriteria}` : "",
-    ].filter(Boolean).join("\n\n") || feature.title;
+    // Build description: use custom description if provided, otherwise use enriched description
+    let description: string;
+    if (taskDescription) {
+      // Custom description provided - skip enrichment
+      description = taskDescription;
+    } else {
+      // Use enriched description with full hierarchy context
+      const enriched = this.buildEnrichedDescription(featureId);
+      description = enriched || feature.title;
+    }
 
     // Create the task
     const task = await this.taskStore.createTask({
