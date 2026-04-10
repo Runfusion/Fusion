@@ -666,60 +666,98 @@ describe("Header", () => {
     });
   });
 
-  describe("search functionality", () => {
-    it("does not render search input when onSearchChange is not provided", () => {
+  describe("non-mobile search toggle", () => {
+    it("does not render search toggle when onSearchChange is not provided", () => {
       renderHeader({ view: "board" });
+      expect(screen.queryByTestId("desktop-header-search-btn")).toBeNull();
+    });
+
+    it("renders search toggle button when onSearchChange and view='board' are provided", () => {
+      renderHeader({ onSearchChange: vi.fn(), view: "board" });
+      expect(screen.getByTestId("desktop-header-search-btn")).toBeDefined();
+    });
+
+    it("renders search toggle button when onSearchChange and view='list' are provided", () => {
+      renderHeader({ onSearchChange: vi.fn(), view: "list" });
+      expect(screen.getByTestId("desktop-header-search-btn")).toBeDefined();
+    });
+
+    it("does not render search toggle when view is 'agents'", () => {
+      renderHeader({ onSearchChange: vi.fn(), view: "agents" });
+      expect(screen.queryByTestId("desktop-header-search-btn")).toBeNull();
+    });
+
+    it("does not render search toggle when view is 'missions'", () => {
+      renderHeader({ onSearchChange: vi.fn(), view: "missions" });
+      expect(screen.queryByTestId("desktop-header-search-btn")).toBeNull();
+    });
+
+    it("does not render search input by default when toggle is visible", () => {
+      renderHeader({ onSearchChange: vi.fn(), view: "board" });
       expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
     });
 
-    it("renders search input when onSearchChange and view='board' are provided", () => {
-      renderHeader({ onSearchChange: vi.fn(), view: "board" });
+    it("opens search input when toggle button is clicked", () => {
+      const onSearchChange = vi.fn();
+      renderHeader({ onSearchChange, view: "board" });
+      fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
       expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
     });
 
-    it("does not render search input when view is 'list'", () => {
-      renderHeader({ onSearchChange: vi.fn(), view: "list" });
+    it("closes search when close button is clicked", () => {
+      renderHeader({ onSearchChange: vi.fn(), view: "board" });
+      fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+      expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
+      fireEvent.click(screen.getByLabelText("Close search"));
       expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
+    });
+
+    it("clears search query when close button is clicked", () => {
+      const onSearchChange = vi.fn();
+      renderHeader({ onSearchChange, view: "board" });
+      fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+      fireEvent.click(screen.getByLabelText("Close search"));
+      expect(onSearchChange).toHaveBeenCalledWith("");
+    });
+
+    it("keeps search open when searchQuery is non-empty", () => {
+      renderHeader({ onSearchChange: vi.fn(), view: "board", searchQuery: "test" });
+      expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
+      expect(screen.queryByTestId("desktop-header-search-btn")).toBeNull();
+    });
+
+    it("shows search input with active query and hides toggle", () => {
+      renderHeader({ onSearchChange: vi.fn(), view: "list", searchQuery: "test" });
+      expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
+      expect(screen.getByDisplayValue("test")).toBeDefined();
+      expect(screen.queryByTestId("desktop-header-search-btn")).toBeNull();
     });
 
     it("calls onSearchChange when typing in search input", () => {
       const onSearchChange = vi.fn();
       renderHeader({ onSearchChange, view: "board" });
+      fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
       const input = screen.getByPlaceholderText("Search tasks...");
       fireEvent.change(input, { target: { value: "test query" } });
       expect(onSearchChange).toHaveBeenCalledWith("test query");
     });
 
-    it("shows clear button when search query is not empty", () => {
-      renderHeader({ onSearchChange: vi.fn(), view: "board", searchQuery: "test" });
-      expect(screen.getByLabelText("Clear search")).toBeDefined();
-    });
-
-    it("does not show clear button when search query is empty", () => {
-      renderHeader({ onSearchChange: vi.fn(), view: "board", searchQuery: "" });
-      expect(screen.queryByLabelText("Clear search")).toBeNull();
-    });
-
-    it("calls onSearchChange with empty string when clear button is clicked", () => {
-      const onSearchChange = vi.fn();
-      renderHeader({ onSearchChange, view: "board", searchQuery: "test" });
-      fireEvent.click(screen.getByLabelText("Clear search"));
-      expect(onSearchChange).toHaveBeenCalledWith("");
-    });
-
     it("search input has correct placeholder text", () => {
       renderHeader({ onSearchChange: vi.fn(), view: "board" });
+      fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
       const input = screen.getByPlaceholderText("Search tasks...");
       expect(input).toBeDefined();
     });
 
     it("renders search input inside header-floating-search on desktop board view", () => {
       const { container } = renderHeader({ onSearchChange: vi.fn(), view: "board" });
+      fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
       expect(container.querySelector(".header-floating-search .header-search")).not.toBeNull();
     });
 
     it("does not render search input inside header-actions", () => {
       const { container } = renderHeader({ onSearchChange: vi.fn(), view: "board" });
+      fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
       expect(container.querySelector(".header-actions .header-search")).toBeNull();
     });
 
@@ -728,7 +766,34 @@ describe("Header", () => {
       const wrapper = container.querySelector(".header-wrapper");
       expect(wrapper).not.toBeNull();
       expect(wrapper.querySelector("header.header")).not.toBeNull();
-      expect(wrapper.querySelector(".header-floating-search")).not.toBeNull();
+    });
+
+    it("toggling search twice reopens the search (use close button to dismiss)", () => {
+      renderHeader({ onSearchChange: vi.fn(), view: "board" });
+      fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+      expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
+      // Second toggle click reopens search since first close was via toggle
+      // (toggle always opens, use close button to dismiss)
+      fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+      // Search stays open because toggle only opens
+      expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
+      // Use close button to dismiss
+      fireEvent.click(screen.getByLabelText("Close search"));
+      expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
+    });
+
+    it("supports search toggle flow on list view", () => {
+      const onSearchChange = vi.fn();
+      renderHeader({ onSearchChange, view: "list" });
+      // Toggle visible on list view
+      expect(screen.getByTestId("desktop-header-search-btn")).toBeDefined();
+      // Click toggle
+      fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+      // Search opens
+      expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
+      // Close and clear
+      fireEvent.click(screen.getByLabelText("Close search"));
+      expect(onSearchChange).toHaveBeenCalledWith("");
     });
   });
 

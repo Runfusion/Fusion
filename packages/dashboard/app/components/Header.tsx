@@ -107,6 +107,9 @@ export function Header({
   const isCompact = isMobile || isTablet;
   const hideFullNav = isMobile && mobileNavEnabled;
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
+  const [isNonMobileSearchOpen, setIsNonMobileSearchOpen] = useState(false);
+  // Track when user has explicitly closed the search (used for toggle visibility)
+  const [isNonMobileSearchExplicitlyClosed, setIsNonMobileSearchExplicitlyClosed] = useState(false);
   const [isOverflowMenuOpen, setIsOverflowMenuOpen] = useState(false);
   const [isTerminalSubmenuOpen, setIsTerminalSubmenuOpen] = useState(false);
   const [overflowScripts, setOverflowScripts] = useState<Record<string, string>>({});
@@ -159,6 +162,19 @@ export function Header({
   // Keep mobile search open if there's an active search query
   const shouldShowMobileSearch = isMobileSearchOpen || searchQuery.length > 0;
 
+  // Non-mobile search: toggled open OR has active query, but not if explicitly closed
+  const shouldShowNonMobileSearch = (isNonMobileSearchOpen || searchQuery.length > 0) && !isNonMobileSearchExplicitlyClosed;
+  // Show toggle when search is available, NOT currently shown, NOT explicitly closed, AND query is empty
+  const canShowNonMobileSearchToggle = (view === "board" || view === "list") && !isMobile && onSearchChange && !isNonMobileSearchExplicitlyClosed && searchQuery.length === 0;
+  const canShowNonMobileSearch = (view === "board" || view === "list") && !isMobile && onSearchChange;
+
+  // Reset explicit close flag when query becomes empty (so toggle reappears)
+  useEffect(() => {
+    if (searchQuery === "") {
+      setIsNonMobileSearchExplicitlyClosed(false);
+    }
+  }, [searchQuery]);
+
   // Close overflow menu on outside click
   useEffect(() => {
     if (!isOverflowMenuOpen) return;
@@ -198,6 +214,17 @@ export function Header({
   const handleMobileSearchToggle = useCallback(() => {
     setIsMobileSearchOpen((prev) => !prev);
   }, []);
+
+  const handleNonMobileSearchToggle = useCallback(() => {
+    setIsNonMobileSearchOpen(true);
+    setIsNonMobileSearchExplicitlyClosed(false);
+  }, []);
+
+  const handleNonMobileSearchClose = useCallback(() => {
+    setIsNonMobileSearchOpen(false);
+    setIsNonMobileSearchExplicitlyClosed(true);
+    if (onSearchChange) onSearchChange("");
+  }, [onSearchChange]);
 
   const handleOverflowToggle = useCallback(() => {
     setIsOverflowMenuOpen((prev) => !prev);
@@ -294,6 +321,19 @@ export function Header({
             aria-label="Open search"
             aria-expanded={false}
             data-testid="mobile-header-search-btn"
+          >
+            <Search size={16} />
+          </button>
+        )}
+
+        {/* Desktop/Tablet Search Toggle - show icon when search is available but hidden */}
+        {canShowNonMobileSearchToggle && (
+          <button
+            className="btn-icon"
+            onClick={handleNonMobileSearchToggle}
+            title="Open search"
+            aria-label="Open search"
+            data-testid="desktop-header-search-btn"
           >
             <Search size={16} />
           </button>
@@ -769,27 +809,26 @@ export function Header({
       </div>
     </header>
 
-    {/* Desktop Search - floating below header, only in board view */}
-    {onSearchChange && view === "board" && !isMobile && (
+    {/* Desktop/Tablet Search - floating below header, in board or list view */}
+    {canShowNonMobileSearch && shouldShowNonMobileSearch && (
       <div className="header-floating-search">
         <div className="header-search">
           <Search size={14} className="header-search-icon" />
           <input
+            autoFocus
             type="text"
             placeholder="Search tasks..."
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
             className="header-search-input"
           />
-          {searchQuery && (
-            <button
-              className="header-search-clear"
-              onClick={() => onSearchChange("")}
-              aria-label="Clear search"
-            >
-              <X size={14} />
-            </button>
-          )}
+          <button
+            className="header-search-clear"
+            onClick={handleNonMobileSearchClose}
+            aria-label="Close search"
+          >
+            <X size={14} />
+          </button>
         </div>
       </div>
     )}

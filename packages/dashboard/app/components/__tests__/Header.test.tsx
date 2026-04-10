@@ -330,7 +330,7 @@ describe("Header", () => {
 
   // ── Search Visibility by View ─────────────────────────────────────
 
-  it("shows search input when view is 'board'", () => {
+  it("shows search toggle when view is 'board' on desktop", () => {
     const onSearchChange = vi.fn();
     render(
       <Header
@@ -340,10 +340,12 @@ describe("Header", () => {
         onSearchChange={onSearchChange}
       />
     );
-    expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
+    // Toggle button is visible, search input is hidden by default
+    expect(screen.getByTestId("desktop-header-search-btn")).toBeDefined();
+    expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
   });
 
-  it("hides search input when view is 'list' on desktop", () => {
+  it("shows search toggle when view is 'list' on desktop", () => {
     const onSearchChange = vi.fn();
     render(
       <Header
@@ -353,11 +355,88 @@ describe("Header", () => {
         onSearchChange={onSearchChange}
       />
     );
-    // Desktop search only appears in board view
+    // Toggle button is visible on list view
+    expect(screen.getByTestId("desktop-header-search-btn")).toBeDefined();
     expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
   });
 
-  it("hides search input when view is 'agents'", () => {
+  it("opens search input when toggle is clicked on board view", () => {
+    const onSearchChange = vi.fn();
+    render(
+      <Header
+        view="board"
+        onChangeView={vi.fn()}
+        searchQuery=""
+        onSearchChange={onSearchChange}
+      />
+    );
+    fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+    expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
+  });
+
+  it("opens search input when toggle is clicked on list view", () => {
+    const onSearchChange = vi.fn();
+    render(
+      <Header
+        view="list"
+        onChangeView={vi.fn()}
+        searchQuery=""
+        onSearchChange={onSearchChange}
+      />
+    );
+    fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+    expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
+  });
+
+  it("keeps search open when searchQuery is non-empty (board view)", () => {
+    const onSearchChange = vi.fn();
+    render(
+      <Header
+        view="board"
+        onChangeView={vi.fn()}
+        searchQuery="test query"
+        onSearchChange={onSearchChange}
+      />
+    );
+    // Search visible, toggle hidden
+    expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
+    expect(screen.queryByTestId("desktop-header-search-btn")).toBeNull();
+  });
+
+  it("keeps search open when searchQuery is non-empty (list view)", () => {
+    const onSearchChange = vi.fn();
+    render(
+      <Header
+        view="list"
+        onChangeView={vi.fn()}
+        searchQuery="test query"
+        onSearchChange={onSearchChange}
+      />
+    );
+    // Search visible, toggle hidden
+    expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
+    expect(screen.queryByTestId("desktop-header-search-btn")).toBeNull();
+  });
+
+  it("closes search and clears query when close button is clicked", () => {
+    const onSearchChange = vi.fn();
+    render(
+      <Header
+        view="board"
+        onChangeView={vi.fn()}
+        searchQuery="test query"
+        onSearchChange={onSearchChange}
+      />
+    );
+    fireEvent.click(screen.getByLabelText("Close search"));
+    expect(onSearchChange).toHaveBeenCalledWith("");
+    // Search should close (in real app, parent would update searchQuery prop)
+    // In test without state update, search remains visible with cleared input
+    // The toggle does not reappear until searchQuery prop becomes empty
+    expect(screen.queryByTestId("desktop-header-search-btn")).toBeNull();
+  });
+
+  it("hides search input and toggle when view is 'agents'", () => {
     const onSearchChange = vi.fn();
     render(
       <Header
@@ -368,6 +447,21 @@ describe("Header", () => {
       />
     );
     expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
+    expect(screen.queryByTestId("desktop-header-search-btn")).toBeNull();
+  });
+
+  it("hides search input and toggle when view is 'missions'", () => {
+    const onSearchChange = vi.fn();
+    render(
+      <Header
+        view="missions"
+        onChangeView={vi.fn()}
+        searchQuery=""
+        onSearchChange={onSearchChange}
+      />
+    );
+    expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
+    expect(screen.queryByTestId("desktop-header-search-btn")).toBeNull();
   });
 
   // ── Terminal Button ─────────────────────────────────────────────

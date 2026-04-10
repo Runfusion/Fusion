@@ -303,15 +303,57 @@ describe("tablet header controls", () => {
 
   // ── Search on tablet ───────────────────────────────────────────
 
-  it("renders desktop-style search input on tablet (not mobile search trigger)", () => {
+  it("renders search toggle button on tablet board view (not mobile search trigger)", () => {
     renderTabletHeader({ onSearchChange: noop, view: "board" });
-    // Tablet uses the desktop-style inline search, not the mobile trigger
-    expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
-    expect(screen.queryByTitle("Open search")).toBeNull();
+    // Tablet uses the desktop-style toggle, not the mobile trigger
+    expect(screen.getByTestId("desktop-header-search-btn")).toBeDefined();
+    expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
   });
 
-  it("does not render search when view is not board on tablet", () => {
+  it("renders search toggle button on tablet list view", () => {
     renderTabletHeader({ onSearchChange: noop, view: "list" });
+    // List view now also supports search on tablet
+    expect(screen.getByTestId("desktop-header-search-btn")).toBeDefined();
+    expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
+  });
+
+  it("opens search input when toggle is clicked on tablet board view", () => {
+    renderTabletHeader({ onSearchChange: noop, view: "board" });
+    fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+    expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
+  });
+
+  it("opens search input when toggle is clicked on tablet list view", () => {
+    renderTabletHeader({ onSearchChange: noop, view: "list" });
+    fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+    expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
+  });
+
+  it("closes search and clears query when close button is clicked on tablet", () => {
+    const onSearchChange = vi.fn();
+    renderTabletHeader({ onSearchChange, view: "board" });
+    fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+    expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
+    fireEvent.click(screen.getByLabelText("Close search"));
+    expect(onSearchChange).toHaveBeenCalledWith("");
+    expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
+  });
+
+  it("keeps search open when searchQuery is non-empty on tablet", () => {
+    renderTabletHeader({ onSearchChange: noop, view: "board", searchQuery: "test" });
+    expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
+    expect(screen.queryByTestId("desktop-header-search-btn")).toBeNull();
+  });
+
+  it("does not render search toggle when view is agents on tablet", () => {
+    renderTabletHeader({ onSearchChange: noop, view: "agents" });
+    expect(screen.queryByTestId("desktop-header-search-btn")).toBeNull();
+    expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
+  });
+
+  it("does not render search toggle when view is missions on tablet", () => {
+    renderTabletHeader({ onSearchChange: noop, view: "missions" });
+    expect(screen.queryByTestId("desktop-header-search-btn")).toBeNull();
     expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
   });
 
