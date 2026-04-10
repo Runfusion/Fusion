@@ -123,6 +123,34 @@ export interface InsightExtractionResult {
   summary: string;
   /** ISO-8601 timestamp of when extraction occurred. */
   extractedAt: string;
+  /** Optional pruned working memory candidate (durable items only). */
+  prunedMemory?: string;
+}
+
+/** Validation result for a prune candidate. */
+export interface PruneValidationResult {
+  /** Whether the prune candidate is valid. */
+  valid: boolean;
+  /** Human-readable reason if invalid. */
+  reason?: string;
+  /** Size of the pruned content. */
+  size: number;
+  /** Whether canonical section headers are preserved. */
+  hasRequiredSections: boolean;
+}
+
+/** Outcome of a pruning operation. */
+export interface PruneOutcome {
+  /** Whether pruning was applied. */
+  applied: boolean;
+  /** Human-readable reason for the outcome. */
+  reason: string;
+  /** Size delta (new size - old size) in characters. */
+  sizeDelta: number;
+  /** Original size in characters. */
+  originalSize: number;
+  /** New size in characters. */
+  newSize: number;
 }
 
 // ── Run Processing Types ───────────────────────────────────────────────
@@ -167,6 +195,14 @@ export interface MemoryAuditReport {
     skippedCount: number;
     summary: string;
     error?: string;
+  };
+  /** Pruning operation outcome. */
+  pruning: {
+    applied: boolean;
+    reason: string;
+    sizeDelta: number;
+    originalSize: number;
+    newSize: number;
   };
   /** Individual audit checks. */
   checks: MemoryAuditCheck[];
@@ -233,6 +269,23 @@ export async function readInsightsMemory(rootDir: string): Promise<string | null
  */
 export async function writeInsightsMemory(rootDir: string, content: string): Promise<void> {
   const filePath = join(rootDir, MEMORY_INSIGHTS_PATH);
+  const dir = join(rootDir, ".fusion");
+  if (!existsSync(dir)) {
+    await mkdir(dir, { recursive: true });
+  }
+  await writeFile(filePath, content, "utf-8");
+}
+
+/**
+ * Write the working memory file (`memory.md`).
+ *
+ * Creates the `.fusion` directory if it does not exist.
+ *
+ * @param rootDir - Absolute path to the project root directory.
+ * @param content - The markdown content to write.
+ */
+export async function writeWorkingMemory(rootDir: string, content: string): Promise<void> {
+  const filePath = join(rootDir, MEMORY_WORKING_PATH);
   const dir = join(rootDir, ".fusion");
   if (!existsSync(dir)) {
     await mkdir(dir, { recursive: true });
@@ -345,8 +398,12 @@ If no new insights are found, return: {"summary": "No new insights found", "insi
  * - JSON wrapped in markdown code fences
  * - JSON with leading/trailing whitespace or text
  *
+ * The response may include a `prunedMemory` field containing a candidate
+ * for the pruned working memory. This field is optional and may be
+ * present alongside insights.
+ *
  * @param response - The raw AI agent response text.
- * @returns Array of parsed MemoryInsight objects.
+ * @returns Parsed InsightExtractionResult with insights and optional prune candidate.
  * @throws Error if the response cannot be parsed as valid JSON.
  */
 export function parseInsightExtractionResponse(response: string): InsightExtractionResult {
@@ -390,10 +447,20 @@ export function parseInsightExtractionResponse(response: string): InsightExtract
     }
   }
 
+  // Extract optional pruned memory candidate
+  // Handle various formats: string, empty string, null, undefined
+  let prunedMemory: string | undefined;
+  if (parsed.prunedMemory !== undefined && parsed.prunedMemory !== null) {
+    if (typeof parsed.prunedMemory === "string" && parsed.prunedMemory.trim()) {
+      prunedMemory = parsed.prunedMemory.trim();
+    }
+  }
+
   return {
     insights,
     summary,
     extractedAt: new Date().toISOString(),
+    prunedMemory,
   };
 }
 
@@ -407,6 +474,116 @@ function validateCategory(value: unknown): MemoryInsightCategory {
     return value as MemoryInsightCategory;
   }
   return "context";
+}
+
+// ── Prune Validation ─────────────────────────────────────────────────
+
+/** Canonical section headers that must be preserved in working memory. */
+const REQUIRED_MEMORY_SECTIONS = ["Architecture", "Conventions", "Pitfalls"];
+
+/**
+ * Validate a prune candidate for safety.
+ *
+ * A valid prune candidate must:
+ * 1. Not be empty
+ * 2. Preserve at least 2 of the 3 required section headers (Architecture, Conventions, Pitfalls)
+ *
+ * @param candidate - The pruned memory content to validate.
+ * @returns Validation result with details.
+ */
+export function validatePruneCandidate(candidate: string | undefined): PruneValidationResult {
+  // Undefined is invalid
+  if (!candidate || typeof candidate !== "string") {
+    return {
+      valid: false,
+      reason: "Prune candidate is undefined or empty",
+      size: 0,
+      hasRequiredSections: false,
+    };
+  }
+
+  const trimmed = candidate.trim();
+  const size = trimmed.length;
+
+  // Empty after trim is invalid
+  if (size === 0) {
+    return {
+      valid: false,
+      reason: "Prune candidate is empty after trimming",
+      size: 0,
+      hasRequiredSections: false,
+    };
+  }
+
+  // Check for required sections
+  const foundSections: string[] = [];
+  for (const section of REQUIRED_MEMORY_SECTIONS) {
+    if (trimmed.includes(`## ${section}`)) {
+      foundSections.push(section);
+    }
+  }
+
+  const hasRequiredSections = foundSections.length >= 2;
+
+  // Must have at least 2 of the 3 required sections
+  if (!hasRequiredSections) {
+    return {
+      valid: false,
+      reason: `Missing required sections: only ${foundSections.length} of ${REQUIRED_MEMORY_SECTIONS.length} required sections found (${foundSections.join(", ") || "none"})`,
+      size,
+      hasRequiredSections: false,
+    };
+  }
+
+  return {
+    valid: true,
+    size,
+    hasRequiredSections: true,
+  };
+}
+
+/**
+ * Safely apply pruning to working memory.
+ *
+ * This function validates the prune candidate before writing. If validation
+ * fails, the existing working memory is preserved.
+ *
+ * @param rootDir - Absolute path to the project root directory.
+ * @param pruneCandidate - The pruned memory content from AI.
+ * @returns The prune outcome with details.
+ */
+export async function applyMemoryPruning(
+  rootDir: string,
+  pruneCandidate: string | undefined,
+): Promise<PruneOutcome> {
+  // Read current working memory size
+  const existingContent = await readWorkingMemory(rootDir);
+  const originalSize = existingContent.length;
+
+  // Validate the prune candidate
+  const validation = validatePruneCandidate(pruneCandidate);
+
+  if (!validation.valid) {
+    return {
+      applied: false,
+      reason: validation.reason || "Invalid prune candidate",
+      sizeDelta: 0,
+      originalSize,
+      newSize: originalSize,
+    };
+  }
+
+  // Validate passes — write the pruned content
+  const newContent = pruneCandidate!.trim();
+  await writeWorkingMemory(rootDir, newContent);
+
+  return {
+    applied: true,
+    reason: "Prune candidate validated and applied",
+    sizeDelta: validation.size - originalSize,
+    originalSize,
+    newSize: validation.size,
+  };
 }
 
 // ── Insight Merging ──────────────────────────────────────────────────
@@ -615,38 +792,86 @@ export function createInsightExtractionAutomation(
   // Build the prompt that reads working memory and existing insights.
   // Note: At automation execution time, the AI agent has access to the
   // filesystem and can read the memory files directly.
-  const prompt = `You are the Memory Insight Extraction agent. Your job is to analyze the project's working memory and extract long-term insights.
+  const prompt = `You are the Memory Insight Extraction and Pruning agent. Your job is to analyze the project's working memory, extract long-term insights, and prune working memory to only durable items.
 
 ## Instructions
 
 1. Read the working memory file at \`.fusion/memory.md\` using your file reading tools
 2. Read the existing insights file at \`.fusion/memory-insights.md\` (it may not exist yet)
-3. Analyze the working memory content and identify new insights that should be preserved
-4. Focus on extracting:
-   - **Patterns**: Recurring themes or approaches that work well
-   - **Principles**: Key decisions and their rationale
-   - **Conventions**: Project-specific standards or practices
-   - **Pitfalls**: Known issues to avoid
-   - **Context**: Important background information
-5. Output ONLY a JSON object with this structure:
+3. Analyze the working memory content and identify:
+   a) **New insights** that should be preserved in long-term memory
+   b) **Durable content** that should remain in working memory
+   c) **Transient content** that can be pruned (one-time observations, task-specific notes, outdated entries)
+
+## Insight Extraction Guidelines
+
+Focus on extracting:
+- **Patterns**: Recurring themes or approaches that work well
+- **Principles**: Key decisions and their rationale
+- **Conventions**: Project-specific standards or practices
+- **Pitfalls**: Known issues to avoid
+- **Context**: Important background information
+
+Do NOT duplicate insights already in the existing insights file.
+
+## Working Memory Pruning Guidelines
+
+After extracting insights, also produce a PRUNED version of working memory containing ONLY durable items:
+
+**MUST PRESERVE (durable items):**
+- Architecture: Project structure, key abstractions, major components
+- Conventions: Coding standards, naming patterns, established practices
+- Pitfalls: Known issues to avoid, anti-patterns to watch for
+- Context: Important background that informs decision-making
+- Any section header (## <name>) should stay if it contains durable content
+
+**SHOULD PRUNE (transient items):**
+- One-time observations from completed tasks
+- Task-specific implementation notes
+- Outdated or superseded entries
+- Verbose explanations that can be condensed
+- Entries that are now obvious/common knowledge
+
+**CRITICAL REQUIREMENTS:**
+- You MUST preserve at least 2 of these 3 core sections: Architecture, Conventions, Pitfalls
+- If working memory doesn't have enough durable content to justify pruning, omit \`prunedMemory\` entirely (do not force a prune)
+- The \`prunedMemory\` field should be a complete, valid markdown file that can replace \`.fusion/memory.md\`
+
+## Output Format
+
+Return ONLY a JSON object with this exact structure (no markdown fences, no extra text):
+
+\`\`\`json
 {
-  "summary": "Brief summary of what was extracted",
+  "summary": "Brief summary of what was extracted and pruned",
   "insights": [
     {
       "category": "pattern|principle|convention|pitfall|context",
       "content": "The insight text",
       "source": "Optional reference to what triggered this insight"
     }
-  ]
+  ],
+  "prunedMemory": "## Architecture\\n\\nDurable architecture notes...\\n\\n## Conventions\\n\\nDurable conventions...\\n\\n## Pitfalls\\n\\nDurable pitfalls..."
 }
-6. Do not duplicate insights already in the existing insights file
-7. If no new insights are found, return: {"summary": "No new insights found", "insights": []}
+\`\`\`
 
-If the working memory file does not exist or is empty, return: {"summary": "No working memory to analyze", "insights": []}`;
+**Important:** The \`prunedMemory\` field is OPTIONAL. Only include it if:
+1. There is substantial transient content to prune (more than ~20% can be removed)
+2. You can preserve at least 2 of the 3 core sections (Architecture, Conventions, Pitfalls)
+
+If no new insights are found AND nothing substantial can be pruned, return:
+\`\`\`json
+{"summary": "No new insights found, no pruning needed", "insights": [], "prunedMemory": null}
+\`\`\`
+
+If the working memory file does not exist or is empty, return:
+\`\`\`json
+{"summary": "No working memory to analyze", "insights": []}
+\`\`\``;
 
   return {
     name: INSIGHT_EXTRACTION_SCHEDULE_NAME,
-    description: "Extracts insights from working memory into long-term memory",
+    description: "Extracts insights from working memory and prunes transient content",
     scheduleType: "custom",
     cronExpression: schedule,
     command: "", // Required by type but unused when steps are present
@@ -655,7 +880,7 @@ If the working memory file does not exist or is empty, return: {"summary": "No w
       {
         id: "memory-insight-extraction",
         type: "ai-prompt",
-        name: "Extract Memory Insights",
+        name: "Extract Memory Insights and Prune",
         prompt,
         ...(modelProvider && modelId ? { modelProvider, modelId } : {}),
         timeoutMs: 120_000, // 2 minutes
@@ -725,23 +950,23 @@ export async function syncInsightExtractionAutomation(
  * Process an insight extraction run and persist results.
  *
  * This function takes the raw AI response from an insight extraction step,
- * parses it, merges new insights into the insights memory file, and generates
- * an audit report.
+ * parses it, merges new insights into the insights memory file, applies
+ * memory pruning if valid, and generates an audit report.
  *
  * **Safety guarantees:**
  * - Malformed AI output does not destroy existing insights content
+ * - Malformed prune candidates never overwrite working memory
  * - Failures are surfaced as controlled errors and keep prior files intact
  * - All operations are atomic where possible
  *
  * @param rootDir - Absolute path to the project root directory.
  * @param input - The run processing input containing raw response and metadata.
- * @returns The processed insight extraction result, or throws on failure.
- * @throws Error if processing fails after all recovery attempts.
+ * @returns The processed insight extraction result with prune outcome.
  */
 export async function processInsightExtractionRun(
   rootDir: string,
   input: ProcessRunInput,
-): Promise<InsightExtractionResult & { newInsightCount: number; duplicateCount: number }> {
+): Promise<InsightExtractionResult & { newInsightCount: number; duplicateCount: number; pruneOutcome: PruneOutcome }> {
   const { rawResponse, stepSuccess, runAt, error: stepError } = input;
 
   // Read existing insights before any modification
@@ -757,6 +982,7 @@ export async function processInsightExtractionRun(
     } catch (err) {
       parseError = err instanceof Error ? err.message : String(err);
       // Create a fallback result that indicates the parse failure
+      // Note: we don't re-throw here to preserve existing behavior
       parsedResult = {
         insights: [],
         summary: `Parse error: ${parseError}`,
@@ -793,10 +1019,14 @@ export async function processInsightExtractionRun(
   const afterCount = countInsightsInMarkdown(newInsightsContent);
   const newInsightCount = Math.max(0, afterCount - beforeCount);
 
+  // Apply pruning if a prune candidate was provided
+  const pruneOutcome = await applyMemoryPruning(rootDir, parsedResult.prunedMemory);
+
   return {
     ...parsedResult,
     newInsightCount,
     duplicateCount,
+    pruneOutcome,
   };
 }
 
@@ -864,9 +1094,11 @@ function countInsightsInMarkdown(markdown: string): number {
  * - Memory size and change metadata
  * - Duplicate/empty insight handling
  * - Extraction timestamp and summary
+ * - Pruning outcome (if applicable)
  *
  * @param rootDir - Absolute path to the project root directory.
  * @param lastExtraction - Optional information about the last extraction run.
+ * @param pruningOutcome - Optional pruning outcome from the last extraction.
  * @returns The generated audit report.
  */
 export async function generateMemoryAudit(
@@ -880,6 +1112,7 @@ export async function generateMemoryAudit(
     summary: string;
     error?: string;
   },
+  pruningOutcome?: PruneOutcome,
 ): Promise<MemoryAuditReport> {
   const checks: MemoryAuditCheck[] = [];
   const now = new Date().toISOString();
@@ -1059,6 +1292,18 @@ export async function generateMemoryAudit(
     });
   }
 
+  // ── Check 8: Pruning outcome ──────────────────────────────────────
+  if (pruningOutcome) {
+    checks.push({
+      id: "pruning-applied",
+      name: "Memory pruning outcome",
+      passed: pruningOutcome.applied,
+      details: pruningOutcome.applied
+        ? `Pruning applied: ${pruningOutcome.originalSize} → ${pruningOutcome.newSize} chars (${pruningOutcome.sizeDelta >= 0 ? "+" : ""}${pruningOutcome.sizeDelta} chars)`
+        : `Pruning skipped: ${pruningOutcome.reason}`,
+    });
+  }
+
   // ── Calculate overall health ──────────────────────────────────────
   const failedChecks = checks.filter((c) => !c.passed);
   let health: "healthy" | "warning" | "issues" = "healthy";
@@ -1105,6 +1350,13 @@ export async function generateMemoryAudit(
           skippedCount: 0,
           summary: "No extraction runs recorded",
         },
+    pruning: pruningOutcome ?? {
+      applied: false,
+      reason: "No pruning run recorded",
+      sizeDelta: 0,
+      originalSize: workingMemorySize,
+      newSize: workingMemorySize,
+    },
     checks,
     health,
   };
@@ -1219,6 +1471,21 @@ export function renderMemoryAuditMarkdown(report: MemoryAuditReport): string {
   }
   lines.push(``);
 
+  // Pruning Section
+  lines.push(`## Memory Pruning`);
+  if (report.pruning) {
+    lines.push(`- **Applied:** ${report.pruning.applied ? "✓ Yes" : "✗ No"}`);
+    lines.push(`- **Reason:** ${report.pruning.reason}`);
+    if (report.pruning.applied) {
+      lines.push(`- **Size Change:** ${report.pruning.originalSize} → ${report.pruning.newSize} characters`);
+      const deltaStr = report.pruning.sizeDelta >= 0 ? `+${report.pruning.sizeDelta}` : `${report.pruning.sizeDelta}`;
+      lines.push(`- **Delta:** ${deltaStr} characters`);
+    }
+  } else {
+    lines.push(`- No pruning recorded`);
+  }
+  lines.push(``);
+
   // Checks Section
   lines.push(`## Audit Checks`);
   for (const check of report.checks) {
@@ -1252,7 +1519,7 @@ function getHealthEmoji(health: "healthy" | "warning" | "issues"): string {
  * Process an insight extraction run and generate an audit report.
  *
  * This is a convenience function that combines:
- * 1. Processing the insight extraction run (parsing, merging, writing)
+ * 1. Processing the insight extraction run (parsing, merging, pruning)
  * 2. Generating an audit report
  * 3. Writing the audit report to disk
  *
@@ -1278,9 +1545,10 @@ export async function processAndAuditInsightExtraction(
     summary: string;
     error?: string;
   };
+  let pruneOutcome: PruneOutcome | undefined;
 
   try {
-    // Process the run
+    // Process the run (includes pruning)
     const result = await processInsightExtractionRun(rootDir, input);
 
     extractionInfo = {
@@ -1292,6 +1560,9 @@ export async function processAndAuditInsightExtraction(
       summary: result.summary,
       error: input.error,
     };
+
+    // Capture pruning outcome
+    pruneOutcome = result.pruneOutcome;
   } catch (err) {
     // On processing failure, generate audit with error info
     extractionInfo = {
@@ -1303,10 +1574,19 @@ export async function processAndAuditInsightExtraction(
       summary: `Processing failed: ${err instanceof Error ? err.message : String(err)}`,
       error: err instanceof Error ? err.message : String(err),
     };
+    // Get the current working memory size for the pruning report
+    const currentMemory = await readWorkingMemory(rootDir);
+    pruneOutcome = {
+      applied: false,
+      reason: `Processing failed before pruning: ${err instanceof Error ? err.message : String(err)}`,
+      sizeDelta: 0,
+      originalSize: currentMemory.length,
+      newSize: currentMemory.length,
+    };
   }
 
-  // Generate the audit report
-  const auditReport = await generateMemoryAudit(rootDir, extractionInfo);
+  // Generate the audit report with pruning info
+  const auditReport = await generateMemoryAudit(rootDir, extractionInfo, pruneOutcome);
 
   // Write the audit report (best-effort)
   try {

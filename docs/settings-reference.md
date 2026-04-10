@@ -290,20 +290,25 @@ See also: [Workflow Steps](./workflow-steps.md) for how `scripts` and workflow m
 
 ## Background Memory Summarization & Audit
 
-Fusion can automatically extract insights from project memory and generate audit reports on a schedule. This feature is disabled by default and can be enabled via settings.
+Fusion can automatically extract insights from project memory and prune transient content on a schedule. This feature is disabled by default and can be enabled via settings.
 
 ### How It Works
 
 1. **Scheduled Extraction**: When `insightExtractionEnabled` is `true`, a background automation runs on the configured `insightExtractionSchedule` (default: daily at 2 AM).
 
-2. **AI-Powered Analysis**: The automation uses an AI agent to read `.fusion/memory.md` and `.fusion/memory-insights.md`, extract new insights, and return structured JSON.
+2. **AI-Powered Analysis**: The automation uses an AI agent to read `.fusion/memory.md` and `.fusion/memory-insights.md`, extract new insights, and produce a pruned working memory candidate.
 
 3. **Insight Merging**: New insights are automatically merged into `.fusion/memory-insights.md` under the appropriate category (Patterns, Principles, Conventions, Pitfalls, Context). Duplicates are skipped.
 
-4. **Audit Report**: After each extraction run, a `.fusion/memory-audit.md` file is generated with:
+4. **Memory Pruning**: The AI agent also produces a pruned version of working memory containing only durable items:
+   - **Preserved**: Architecture, Conventions, Pitfalls, Context sections with durable content
+   - **Pruned**: Task-specific notes, one-time observations, outdated entries
+
+5. **Audit Report**: After each extraction run, a `.fusion/memory-audit.md` file is generated with:
    - Working memory status (presence, size, sections)
    - Insights memory status (insight counts by category)
    - Last extraction results (success/failure, insight count, duplicates skipped)
+   - **Pruning outcome** (applied/skipped, size delta, reason)
    - Health status (healthy/warning/issues)
    - Individual audit checks
 
@@ -311,7 +316,7 @@ Fusion can automatically extract insights from project memory and generate audit
 
 | File | Description |
 |------|-------------|
-| `.fusion/memory.md` | Working memory (read-only during extraction, never overwritten) |
+| `.fusion/memory.md` | Working memory (updated when pruning is applied and validated) |
 | `.fusion/memory-insights.md` | Long-term insights distilled from working memory |
 | `.fusion/memory-audit.md` | Human-readable audit report after each extraction |
 
@@ -325,10 +330,11 @@ Fusion can automatically extract insights from project memory and generate audit
 
 ### Safety Guarantees
 
-- **No working memory mutation**: Background extraction reads `.fusion/memory.md` but never writes to it.
-- **Graceful failures**: Malformed AI output does not destroy existing insights. Prior files are preserved.
+- **Pruning validation**: Before pruning is applied, the candidate is validated to ensure it preserves at least 2 of 3 required sections (Architecture, Conventions, Pitfalls). Invalid candidates are safely ignored.
+- **Graceful failures**: Malformed AI output does not destroy existing memory. Prior files are preserved.
 - **Isolated processing**: Post-run callback errors are logged but do not flip successful runs to failed.
 - **Startup sync**: Automation schedule is synchronized before the cron runner starts, preventing stale config races.
+- **Non-destructive by default**: If the AI produces no prune candidate or validation fails, working memory remains unchanged.
 
 ### Configuration Example
 

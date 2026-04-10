@@ -13,12 +13,15 @@ import {
   readWorkingMemory,
   readInsightsMemory,
   writeInsightsMemory,
+  writeWorkingMemory,
   buildInsightExtractionPrompt,
   parseInsightExtractionResponse,
   mergeInsights,
   shouldTriggerExtraction,
   getDefaultInsightsTemplate,
   createInsightExtractionAutomation,
+  validatePruneCandidate,
+  applyMemoryPruning,
 } from "./memory-insights.js";
 import type { MemoryInsight, InsightExtractionResult } from "./memory-insights.js";
 import type { ProjectSettings } from "./types.js";
@@ -94,6 +97,34 @@ describe("memory-insights", () => {
       // .fusion dir does not exist yet
       await writeInsightsMemory(newDir, "test content");
       expect(existsSync(join(newDir, MEMORY_INSIGHTS_PATH))).toBe(true);
+    });
+  });
+
+  // ── writeWorkingMemory ──────────────────────────────────────────────
+
+  describe("writeWorkingMemory", () => {
+    it("should create the file with correct content", async () => {
+      const content = "# Working Memory\n\n## Architecture\n\nSome content";
+      await writeWorkingMemory(tempDir, content);
+
+      const filePath = join(tempDir, MEMORY_WORKING_PATH);
+      expect(existsSync(filePath)).toBe(true);
+      expect(readFileSync(filePath, "utf-8")).toBe(content);
+    });
+
+    it("should overwrite existing content", async () => {
+      writeFileSync(join(tempDir, MEMORY_WORKING_PATH), "old content");
+      await writeWorkingMemory(tempDir, "new content");
+
+      expect(readFileSync(join(tempDir, MEMORY_WORKING_PATH), "utf-8")).toBe("new content");
+    });
+
+    it("should create .fusion directory if it does not exist", async () => {
+      const newDir = join(tempDir, "new-project");
+      await mkdir(newDir, { recursive: true });
+      // .fusion dir does not exist yet
+      await writeWorkingMemory(newDir, "test content");
+      expect(existsSync(join(newDir, MEMORY_WORKING_PATH))).toBe(true);
     });
   });
 
@@ -237,6 +268,62 @@ describe("memory-insights", () => {
 
       const result = parseInsightExtractionResponse(response);
       expect(result.insights).toHaveLength(0);
+    });
+
+    it("should parse response with prunedMemory field", () => {
+      const response = JSON.stringify({
+        summary: "Extracted and pruned",
+        insights: [{ category: "pattern", content: "Test pattern" }],
+        prunedMemory: "## Architecture\n\nPruned durable content.",
+      });
+
+      const result = parseInsightExtractionResponse(response);
+      expect(result.insights).toHaveLength(1);
+      expect(result.prunedMemory).toBe("## Architecture\n\nPruned durable content.");
+    });
+
+    it("should handle null prunedMemory", () => {
+      const response = JSON.stringify({
+        summary: "No pruning needed",
+        insights: [],
+        prunedMemory: null,
+      });
+
+      const result = parseInsightExtractionResponse(response);
+      expect(result.prunedMemory).toBeUndefined();
+    });
+
+    it("should handle empty string prunedMemory", () => {
+      const response = JSON.stringify({
+        summary: "No pruning",
+        insights: [],
+        prunedMemory: "",
+      });
+
+      const result = parseInsightExtractionResponse(response);
+      expect(result.prunedMemory).toBeUndefined();
+    });
+
+    it("should handle whitespace-only prunedMemory", () => {
+      const response = JSON.stringify({
+        summary: "No pruning",
+        insights: [],
+        prunedMemory: "   \n  \n  ",
+      });
+
+      const result = parseInsightExtractionResponse(response);
+      expect(result.prunedMemory).toBeUndefined();
+    });
+
+    it("should trim prunedMemory content", () => {
+      const response = JSON.stringify({
+        summary: "Test",
+        insights: [],
+        prunedMemory: "  \n## Architecture\n\nContent\n  ",
+      });
+
+      const result = parseInsightExtractionResponse(response);
+      expect(result.prunedMemory).toBe("## Architecture\n\nContent");
     });
   });
 
@@ -729,6 +816,153 @@ describe("memory-insights run processing", () => {
       const content = readFileSync(join(tempDir, MEMORY_INSIGHTS_PATH), "utf-8");
       expect(content).toContain("Important existing pattern");
     });
+
+    it("should apply pruning when valid candidate provided", async () => {
+      // Create working memory with transient content
+      const existingMemory = `## Architecture
+
+This is durable architecture content that should be kept.
+
+## Conventions
+
+Durable conventions.
+
+## Pitfalls
+
+Durable pitfalls to avoid.
+
+## Context
+
+One-time task notes that can be pruned.
+These are task-specific observations from FN-001 that are no longer needed.`;
+
+      writeFileSync(join(tempDir, MEMORY_WORKING_PATH), existingMemory);
+
+      const prunedMemory = `## Architecture
+
+This is durable architecture content that should be kept.
+
+## Conventions
+
+Durable conventions.
+
+## Pitfalls
+
+Durable pitfalls to avoid.`;
+
+      const rawResponse = JSON.stringify({
+        summary: "Extracted insights and pruned transient content",
+        insights: [{ category: "pattern", content: "New pattern" }],
+        prunedMemory,
+      });
+
+      const result = await processInsightExtractionRun(tempDir, {
+        rawResponse,
+        stepSuccess: true,
+        runAt: new Date().toISOString(),
+      });
+
+      expect(result.pruneOutcome).toBeDefined();
+      expect(result.pruneOutcome!.applied).toBe(true);
+      expect(result.pruneOutcome!.originalSize).toBe(existingMemory.length);
+      expect(result.pruneOutcome!.newSize).toBe(prunedMemory.length);
+      expect(result.pruneOutcome!.sizeDelta).toBeLessThan(0);
+
+      // Verify working memory was updated
+      const updatedMemory = readFileSync(join(tempDir, MEMORY_WORKING_PATH), "utf-8");
+      expect(updatedMemory).toBe(prunedMemory);
+    });
+
+    it("should not apply pruning when validation fails", async () => {
+      // Create working memory
+      const existingMemory = `## Architecture
+
+Durable architecture content.`;
+
+      writeFileSync(join(tempDir, MEMORY_WORKING_PATH), existingMemory);
+
+      // Invalid prune candidate (missing required sections)
+      const invalidPrunedMemory = `## Architecture
+
+Durable but missing Conventions and Pitfalls.`;
+
+      const rawResponse = JSON.stringify({
+        summary: "Extracted insights",
+        insights: [{ category: "pattern", content: "New pattern" }],
+        prunedMemory: invalidPrunedMemory,
+      });
+
+      const result = await processInsightExtractionRun(tempDir, {
+        rawResponse,
+        stepSuccess: true,
+        runAt: new Date().toISOString(),
+      });
+
+      expect(result.pruneOutcome).toBeDefined();
+      expect(result.pruneOutcome!.applied).toBe(false);
+      expect(result.pruneOutcome!.reason).toContain("required sections");
+
+      // Verify working memory was NOT updated
+      const updatedMemory = readFileSync(join(tempDir, MEMORY_WORKING_PATH), "utf-8");
+      expect(updatedMemory).toBe(existingMemory);
+    });
+
+    it("should not apply pruning when prune candidate is empty", async () => {
+      // Create working memory
+      const existingMemory = `## Architecture
+
+Durable content.`;
+
+      writeFileSync(join(tempDir, MEMORY_WORKING_PATH), existingMemory);
+
+      const rawResponse = JSON.stringify({
+        summary: "Extracted insights",
+        insights: [{ category: "pattern", content: "New pattern" }],
+        prunedMemory: "",
+      });
+
+      const result = await processInsightExtractionRun(tempDir, {
+        rawResponse,
+        stepSuccess: true,
+        runAt: new Date().toISOString(),
+      });
+
+      expect(result.pruneOutcome).toBeDefined();
+      expect(result.pruneOutcome!.applied).toBe(false);
+      expect(result.pruneOutcome!.reason).toContain("empty");
+
+      // Verify working memory was NOT updated
+      const updatedMemory = readFileSync(join(tempDir, MEMORY_WORKING_PATH), "utf-8");
+      expect(updatedMemory).toBe(existingMemory);
+    });
+
+    it("should skip pruning when no prune candidate provided", async () => {
+      // Create working memory
+      const existingMemory = `## Architecture
+
+Durable content.`;
+
+      writeFileSync(join(tempDir, MEMORY_WORKING_PATH), existingMemory);
+
+      const rawResponse = JSON.stringify({
+        summary: "No pruning needed",
+        insights: [],
+      });
+
+      const result = await processInsightExtractionRun(tempDir, {
+        rawResponse,
+        stepSuccess: true,
+        runAt: new Date().toISOString(),
+      });
+
+      expect(result.pruneOutcome).toBeDefined();
+      expect(result.pruneOutcome!.applied).toBe(false);
+      expect(result.pruneOutcome!.reason).toContain("undefined or empty");
+
+      // Verify working memory was NOT updated
+      const updatedMemory = readFileSync(join(tempDir, MEMORY_WORKING_PATH), "utf-8");
+      expect(updatedMemory).toBe(existingMemory);
+    });
   });
 
   describe("processAndAuditInsightExtraction", () => {
@@ -866,6 +1100,64 @@ describe("memory-insights audit generation", () => {
       expect(report.extraction.duplicateCount).toBe(2);
     });
 
+    it("should include pruning outcome in report", async () => {
+      writeFileSync(join(tempDir, MEMORY_WORKING_PATH), "## Architecture\n\nNotes");
+
+      const report = await generateMemoryAudit(tempDir, {
+        runAt: new Date().toISOString(),
+        success: true,
+        insightCount: 3,
+        duplicateCount: 1,
+        skippedCount: 0,
+        summary: "Found patterns and pruned",
+      }, {
+        applied: true,
+        reason: "Prune candidate validated and applied",
+        sizeDelta: -100,
+        originalSize: 500,
+        newSize: 400,
+      });
+
+      expect(report.pruning).toBeDefined();
+      expect(report.pruning.applied).toBe(true);
+      expect(report.pruning.reason).toBe("Prune candidate validated and applied");
+      expect(report.pruning.sizeDelta).toBe(-100);
+      expect(report.pruning.originalSize).toBe(500);
+      expect(report.pruning.newSize).toBe(400);
+
+      // Check the pruning audit check
+      const pruneCheck = report.checks.find((c) => c.id === "pruning-applied");
+      expect(pruneCheck).toBeDefined();
+      expect(pruneCheck!.passed).toBe(true);
+    });
+
+    it("should include skipped pruning outcome in report", async () => {
+      writeFileSync(join(tempDir, MEMORY_WORKING_PATH), "## Architecture\n\nNotes");
+
+      const report = await generateMemoryAudit(tempDir, {
+        runAt: new Date().toISOString(),
+        success: true,
+        insightCount: 0,
+        duplicateCount: 0,
+        skippedCount: 0,
+        summary: "No pruning needed",
+      }, {
+        applied: false,
+        reason: "Invalid prune candidate",
+        sizeDelta: 0,
+        originalSize: 200,
+        newSize: 200,
+      });
+
+      expect(report.pruning.applied).toBe(false);
+      expect(report.pruning.reason).toBe("Invalid prune candidate");
+
+      // Check the pruning audit check
+      const pruneCheck = report.checks.find((c) => c.id === "pruning-applied");
+      expect(pruneCheck!.passed).toBe(false);
+      expect(pruneCheck!.details).toContain("skipped");
+    });
+
     it("should calculate health status", async () => {
       // No files = issues
       const noFilesReport = await generateMemoryAudit(tempDir);
@@ -900,6 +1192,205 @@ describe("memory-insights audit generation", () => {
     });
   });
 
+  // ── validatePruneCandidate ─────────────────────────────────────────
+
+  describe("validatePruneCandidate", () => {
+    it("should validate candidate with all required sections", () => {
+      const valid = `## Architecture
+
+Architecture content.
+
+## Conventions
+
+Conventions content.
+
+## Pitfalls
+
+Pitfalls content.`;
+
+      const result = validatePruneCandidate(valid);
+      expect(result.valid).toBe(true);
+      expect(result.hasRequiredSections).toBe(true);
+      expect(result.size).toBeGreaterThan(0);
+    });
+
+    it("should validate candidate with exactly 2 of 3 required sections", () => {
+      const valid = `## Architecture
+
+Architecture content.
+
+## Conventions
+
+Conventions content.
+
+## Context
+
+Context content.`;
+
+      const result = validatePruneCandidate(valid);
+      expect(result.valid).toBe(true);
+      expect(result.hasRequiredSections).toBe(true);
+    });
+
+    it("should reject candidate with only 1 required section", () => {
+      const invalid = `## Architecture
+
+Architecture content.
+
+## Context
+
+Context content.`;
+
+      const result = validatePruneCandidate(invalid);
+      expect(result.valid).toBe(false);
+      expect(result.hasRequiredSections).toBe(false);
+      expect(result.reason).toContain("required sections");
+    });
+
+    it("should reject candidate with no required sections", () => {
+      const invalid = `## Context
+
+Context content.
+
+## Other
+
+Other content.`;
+
+      const result = validatePruneCandidate(invalid);
+      expect(result.valid).toBe(false);
+      expect(result.hasRequiredSections).toBe(false);
+    });
+
+    it("should reject undefined candidate", () => {
+      const result = validatePruneCandidate(undefined);
+      expect(result.valid).toBe(false);
+      expect(result.reason).toContain("undefined or empty");
+    });
+
+    it("should reject null candidate", () => {
+      // @ts-expect-error - testing edge case
+      const result = validatePruneCandidate(null);
+      expect(result.valid).toBe(false);
+    });
+
+    it("should reject empty string candidate", () => {
+      const result = validatePruneCandidate("");
+      expect(result.valid).toBe(false);
+      expect(result.reason).toContain("empty");
+    });
+
+    it("should reject whitespace-only candidate", () => {
+      const result = validatePruneCandidate("   \n\n   ");
+      expect(result.valid).toBe(false);
+      expect(result.reason).toContain("empty");
+    });
+  });
+
+  // ── applyMemoryPruning ───────────────────────────────────────────
+
+  describe("applyMemoryPruning", () => {
+    it("should apply valid prune and update working memory", async () => {
+      // Create existing working memory
+      const existingMemory = `## Architecture
+
+Old architecture notes.
+
+## Conventions
+
+Old conventions.
+
+## Pitfalls
+
+Old pitfalls.
+
+## Context
+
+Task-specific notes.`;
+
+      writeFileSync(join(tempDir, MEMORY_WORKING_PATH), existingMemory);
+
+      const prunedMemory = `## Architecture
+
+New architecture notes.
+
+## Conventions
+
+New conventions.
+
+## Pitfalls
+
+New pitfalls.`;
+
+      const result = await applyMemoryPruning(tempDir, prunedMemory);
+
+      expect(result.applied).toBe(true);
+      expect(result.originalSize).toBe(existingMemory.length);
+      expect(result.newSize).toBe(prunedMemory.length);
+      expect(result.sizeDelta).toBeLessThan(0);
+
+      // Verify file was updated
+      const updatedMemory = readFileSync(join(tempDir, MEMORY_WORKING_PATH), "utf-8");
+      expect(updatedMemory).toBe(prunedMemory);
+    });
+
+    it("should not modify working memory when validation fails", async () => {
+      const existingMemory = `## Architecture
+
+Durable content.`;
+
+      writeFileSync(join(tempDir, MEMORY_WORKING_PATH), existingMemory);
+
+      // Invalid prune (missing required sections)
+      const invalidPrunedMemory = `## Context
+
+Only context section.`;
+
+      const result = await applyMemoryPruning(tempDir, invalidPrunedMemory);
+
+      expect(result.applied).toBe(false);
+      expect(result.reason).toContain("required sections");
+      expect(result.sizeDelta).toBe(0);
+
+      // Verify file was NOT modified
+      const updatedMemory = readFileSync(join(tempDir, MEMORY_WORKING_PATH), "utf-8");
+      expect(updatedMemory).toBe(existingMemory);
+    });
+
+    it("should handle undefined prune candidate", async () => {
+      const existingMemory = `## Architecture
+
+Durable content.`;
+
+      writeFileSync(join(tempDir, MEMORY_WORKING_PATH), existingMemory);
+
+      const result = await applyMemoryPruning(tempDir, undefined);
+
+      expect(result.applied).toBe(false);
+      expect(result.reason).toContain("undefined or empty");
+
+      // Verify file was NOT modified
+      const updatedMemory = readFileSync(join(tempDir, MEMORY_WORKING_PATH), "utf-8");
+      expect(updatedMemory).toBe(existingMemory);
+    });
+
+    it("should handle empty prune candidate", async () => {
+      const existingMemory = `## Architecture
+
+Durable content.`;
+
+      writeFileSync(join(tempDir, MEMORY_WORKING_PATH), existingMemory);
+
+      const result = await applyMemoryPruning(tempDir, "");
+
+      expect(result.applied).toBe(false);
+      expect(result.reason).toContain("empty");
+
+      // Verify file was NOT modified
+      const updatedMemory = readFileSync(join(tempDir, MEMORY_WORKING_PATH), "utf-8");
+      expect(updatedMemory).toBe(existingMemory);
+    });
+  });
+
   describe("renderMemoryAuditMarkdown", () => {
     it("should render a complete audit report", async () => {
       writeFileSync(join(tempDir, MEMORY_WORKING_PATH), "## Architecture\n\nNotes");
@@ -931,6 +1422,58 @@ describe("memory-insights audit generation", () => {
       expect(markdown).toContain("Memory Audit Report");
       expect(markdown).toContain("Working Memory");
       expect(markdown).toContain("Insights Memory");
+    });
+
+    it("should render pruning section when applied", async () => {
+      writeFileSync(join(tempDir, MEMORY_WORKING_PATH), "## Architecture\n\nNotes");
+      writeFileSync(join(tempDir, MEMORY_INSIGHTS_PATH), "# Memory Insights\n\n## Patterns\n- Pattern 1\n\n## Last Updated: 2026-04-09");
+
+      const report = await generateMemoryAudit(tempDir, {
+        runAt: new Date().toISOString(),
+        success: true,
+        insightCount: 1,
+        duplicateCount: 0,
+        skippedCount: 0,
+        summary: "Test summary",
+      }, {
+        applied: true,
+        reason: "Prune applied",
+        sizeDelta: -50,
+        originalSize: 200,
+        newSize: 150,
+      });
+
+      const markdown = renderMemoryAuditMarkdown(report);
+
+      expect(markdown).toContain("## Memory Pruning");
+      expect(markdown).toContain("Pruning applied");
+      expect(markdown).toContain("200");
+      expect(markdown).toContain("150");
+    });
+
+    it("should render pruning section when skipped", async () => {
+      writeFileSync(join(tempDir, MEMORY_WORKING_PATH), "## Architecture\n\nNotes");
+      writeFileSync(join(tempDir, MEMORY_INSIGHTS_PATH), "# Memory Insights\n\n## Patterns\n- Pattern 1\n\n## Last Updated: 2026-04-09");
+
+      const report = await generateMemoryAudit(tempDir, {
+        runAt: new Date().toISOString(),
+        success: true,
+        insightCount: 0,
+        duplicateCount: 0,
+        skippedCount: 0,
+        summary: "No pruning needed",
+      }, {
+        applied: false,
+        reason: "No prune candidate provided",
+        sizeDelta: 0,
+        originalSize: 100,
+        newSize: 100,
+      });
+
+      const markdown = renderMemoryAuditMarkdown(report);
+
+      expect(markdown).toContain("## Memory Pruning");
+      expect(markdown).toContain("No prune candidate provided");
     });
   });
 });

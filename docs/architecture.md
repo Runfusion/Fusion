@@ -153,6 +153,7 @@ Fusion includes a pluggable memory backend system for storing durable project le
 - **Plugin architecture**: `MemoryBackend` interface enables alternative storage backends
 - **Settings integration**: `memoryEnabled` toggle controls agent prompt injection
 - **Insight extraction**: Scheduled AI-powered distillation of patterns, principles, pitfalls
+- **Memory pruning**: Daily extraction automatically prunes transient content from working memory
 
 See [Memory Plugin Contract](./memory-plugin-contract.md) for the full specification.
 

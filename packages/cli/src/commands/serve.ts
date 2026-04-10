@@ -578,7 +578,10 @@ export async function runServe(
 
     // Extract the AI step output from the result
     const stepResults = result.stepResults ?? [];
-    const aiStep = stepResults.find((sr) => sr.stepName === "Extract Memory Insights");
+    // Step name updated in FN-1477 to include pruning
+    const aiStep = stepResults.find(
+      (sr) => sr.stepName === "Extract Memory Insights and Prune" || sr.stepName === "Extract Memory Insights",
+    );
 
     if (!aiStep) {
       console.log(`[memory-audit] No insight extraction step found in ${schedule.name} result`);
@@ -595,9 +598,13 @@ export async function runServe(
         error: aiStep.error,
       });
 
+      const pruneStatus = auditReport.pruning.applied
+        ? ` | Pruned: ${auditReport.pruning.originalSize} → ${auditReport.pruning.newSize} chars`
+        : ` | Pruning: ${auditReport.pruning.reason}`;
+
       console.log(
         `[memory-audit] ✓ Audit complete — Health: ${auditReport.health}, ` +
-        `Insights: ${auditReport.insightsMemory.insightCount}`,
+        `Insights: ${auditReport.insightsMemory.insightCount}${pruneStatus}`,
       );
     } catch (err) {
       console.error(

@@ -99,10 +99,11 @@ Use it for reusable patterns, constraints, and pitfalls that should persist acro
 
 ### Background Memory Summarization
 
-Fusion can automatically extract insights from working memory and distill them into long-term memory. Enable via `insightExtractionEnabled` setting:
+Fusion can automatically extract insights from working memory and prune transient content. Enable via `insightExtractionEnabled` setting:
 
+- `.fusion/memory.md` — Working memory (automatically pruned to durable items)
 - `.fusion/memory-insights.md` — Long-term distilled insights
-- `.fusion/memory-audit.md` — Audit report after each extraction run
+- `.fusion/memory-audit.md` — Audit report after each extraction (includes pruning outcome)
 
 See [Settings Reference](./settings-reference.md#background-memory-summarization--audit) for configuration details.
 

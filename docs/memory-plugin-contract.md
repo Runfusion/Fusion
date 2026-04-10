@@ -45,11 +45,11 @@ readProjectMemory(rootDir: string): Promise<string>      // Read current content
 - `ensureMemoryFile` is idempotent: safe to call multiple times; never overwrites existing content
 - Bootstrap failure is non-fatal: `store.ts` wraps the call in try/catch
 
-#### `memory-insights.ts` — Two-Stage Memory System
+#### `memory-insights.ts` — Two-Stage Memory System with Pruning
 
-The module implements a two-tier memory architecture:
+The module implements a two-tier memory architecture with automatic pruning:
 
-1. **Working memory** (`memory.md`) — agent-maintained, manually edited
+1. **Working memory** (`memory.md`) — agent-maintained, manually edited, automatically pruned
 2. **Insights memory** (`memory-insights.md`) — AI-extracted distilled knowledge
 
 ```typescript
@@ -65,6 +65,7 @@ INSIGHT_EXTRACTION_SCHEDULE_NAME: "Memory Insight Extraction"
 readWorkingMemory(rootDir: string): Promise<string>      // "" if absent
 readInsightsMemory(rootDir: string): Promise<string|null> // null if absent
 writeInsightsMemory(rootDir: string, content: string): void
+writeWorkingMemory(rootDir: string, content: string): void
 buildInsightExtractionPrompt(workingMemory: string, existingInsights: string|null): string
 parseInsightExtractionResponse(response: string): InsightExtractionResult
 mergeInsights(existing: string, newInsights: MemoryInsight[]): string
@@ -72,12 +73,26 @@ shouldTriggerExtraction(lastRun, settings, workingMemorySize, lastMemorySize): b
 getDefaultInsightsTemplate(): string
 createInsightExtractionAutomation(settings): ScheduledTaskCreateInput
 syncInsightExtractionAutomation(automationStore, settings): ScheduledTask | undefined
+validatePruneCandidate(candidate: string | undefined): PruneValidationResult
+applyMemoryPruning(rootDir: string, pruneCandidate: string | undefined): Promise<PruneOutcome>
+processInsightExtractionRun(rootDir: string, input: ProcessRunInput): Promise<Result>
+processAndAuditInsightExtraction(rootDir: string, input: ProcessRunInput): Promise<MemoryAuditReport>
 
 // Types
 MemoryInsightCategory: "pattern" | "principle" | "convention" | "pitfall" | "context"
 MemoryInsight: { category, content, source?, extractedAt }
-InsightExtractionResult: { insights: MemoryInsight[], summary, extractedAt }
+InsightExtractionResult: { insights: MemoryInsight[], summary, extractedAt, prunedMemory?: string }
+PruneValidationResult: { valid: boolean, reason?: string, size: number, hasRequiredSections: boolean }
+PruneOutcome: { applied: boolean, reason: string, sizeDelta: number, originalSize: number, newSize: number }
+MemoryAuditReport: { ..., pruning: { applied: boolean, reason: string, sizeDelta: number, ... } }
 ```
+
+**Pruning behavior (FN-1477):**
+- AI response may include `prunedMemory` field with a pruned working memory candidate
+- `validatePruneCandidate()` checks that at least 2 of 3 required sections are preserved (Architecture, Conventions, Pitfalls)
+- `applyMemoryPruning()` only writes to `.fusion/memory.md` if validation passes
+- Invalid prune candidates are safely ignored; existing memory is preserved
+- Pruning outcome is included in audit reports for operator visibility
 
 ### 1.2 Settings
 
