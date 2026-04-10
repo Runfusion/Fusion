@@ -990,6 +990,28 @@ Both components provide the same task creation experience. The chevron toggle is
 - Regular task creation (Enter key) works as before without AI assistance.
 - Escape dismisses overlays in order: model submenu → model menu → agent picker → deps popover → refine menu → input clear/collapse.
 
+### New Task Modal
+
+The New Task modal provides a full-featured task creation form with agent assignment support. It is opened from the board or list header and includes all task creation options.
+
+**Agent Assignment:**
+- The modal includes an "Assign Agent" dropdown below the TaskForm
+- Clicking the agent button loads available agents via `fetchAgents` (excludes terminated agents)
+- Selecting an agent includes `assignedAgentId` in the create payload
+- Clearing the selection removes the assignment
+- Agent selection is tracked in dirty state, triggering confirmation on close attempts
+
+**Form Controls:**
+- Description textarea with AI refinement options
+- Plan and Subtask buttons for AI-assisted creation
+- Attachments, Dependencies, and Model Configuration in "More options"
+- Workflow step selection
+- Agent assignment picker
+
+**Payload:**
+- `assignedAgentId` is included only when an agent is explicitly selected
+- All other task creation fields (description, dependencies, model overrides, workflow steps) follow the same semantics as QuickEntryBox/InlineCreateCard
+
 ### Subtask Breakdown Dialog
 
 The subtask breakdown dialog (accessed via the Subtask button) allows users to break down a task into smaller, manageable subtasks with the following features:

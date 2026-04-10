@@ -1,7 +1,9 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import type { Task, TaskCreateInput } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
-import { uploadAttachment } from "../api";
+import { uploadAttachment, fetchAgents } from "../api";
+import type { Agent } from "../api";
+import { Bot } from "lucide-react";
 import { TaskForm, type PendingImage } from "./TaskForm";
 
 interface NewTaskModalProps {
@@ -30,6 +32,13 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   const [selectedWorkflowSteps, setSelectedWorkflowSteps] = useState<string[]>([]);
   const [workflowStepsExplicitlySet, setWorkflowStepsExplicitlySet] = useState(false);
 
+  // Agent assignment state
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [showAgentPicker, setShowAgentPicker] = useState(false);
+  const [agentsLoading, setAgentsLoading] = useState(false);
+  const agentPickerRef = useRef<HTMLDivElement>(null);
+
   // Handler for workflow step changes that detects explicit user interaction
   const handleWorkflowStepsChange = useCallback((steps: string[]) => {
     setWorkflowStepsExplicitlySet(true);
@@ -42,6 +51,40 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     setWorkflowStepsExplicitlySet(false);
   }, []);
 
+  // Load agents for agent picker
+  const loadAgents = useCallback(async () => {
+    if (agents.length > 0) {
+      setShowAgentPicker(true);
+      return;
+    }
+
+    setAgentsLoading(true);
+    try {
+      const result = await fetchAgents(undefined, projectId);
+      setAgents(result);
+      setShowAgentPicker(true);
+    } catch (err: any) {
+      addToast(err?.message ? `Failed to load agents: ${err.message}` : "Failed to load agents", "error");
+      setShowAgentPicker(false);
+    } finally {
+      setAgentsLoading(false);
+    }
+  }, [agents.length, projectId, addToast]);
+
+  // Close agent picker when clicking outside
+  useEffect(() => {
+    if (!showAgentPicker) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (agentPickerRef.current && !agentPickerRef.current.contains(e.target as Node)) {
+        setShowAgentPicker(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showAgentPicker]);
+
   // Track dirty state
   useEffect(() => {
     const isDirty =
@@ -52,9 +95,10 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       validatorModel !== "" ||
       planningModel !== "" ||
       thinkingLevel !== "off" ||
-      selectedWorkflowSteps.length > 0;
+      selectedWorkflowSteps.length > 0 ||
+      selectedAgentId !== null;
     setHasDirtyState(isDirty);
-  }, [description, dependencies, pendingImages, executorModel, validatorModel, planningModel, thinkingLevel, selectedWorkflowSteps]);
+  }, [description, dependencies, pendingImages, executorModel, validatorModel, planningModel, thinkingLevel, selectedWorkflowSteps, selectedAgentId]);
 
   const handleClose = useCallback(() => {
     if (hasDirtyState) {
@@ -74,6 +118,8 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     setPresetMode("default");
     setSelectedWorkflowSteps([]);
     setWorkflowStepsExplicitlySet(false);
+    setSelectedAgentId(null);
+    setShowAgentPicker(false);
     setHasDirtyState(false);
     onClose();
   }, [hasDirtyState, onClose, pendingImages]);
@@ -96,6 +142,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
         // When user explicitly cleared all workflow steps, send empty array to prevent backend re-applying defaults.
         // When user hasn't interacted with workflow steps (or left auto-selected defaults), send undefined to let backend apply defaults.
         enabledWorkflowSteps: workflowStepsExplicitlySet ? (selectedWorkflowSteps.length > 0 ? selectedWorkflowSteps : []) : undefined,
+        ...(selectedAgentId ? { assignedAgentId: selectedAgentId } : {}),
         modelPresetId: presetMode === "preset" ? selectedPresetId || undefined : undefined,
         modelProvider: executorModel && executorSlashIdx !== -1 ? executorModel.slice(0, executorSlashIdx) : undefined,
         modelId: executorModel && executorSlashIdx !== -1 ? executorModel.slice(executorSlashIdx + 1) : undefined,
@@ -134,6 +181,8 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       setPresetMode("default");
       setSelectedWorkflowSteps([]);
       setWorkflowStepsExplicitlySet(false);
+      setSelectedAgentId(null);
+      setShowAgentPicker(false);
 
       addToast(`Created ${task.id}`, "success");
       onClose();
@@ -142,7 +191,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     } finally {
       setIsSubmitting(false);
     }
-  }, [description, dependencies, pendingImages, executorModel, validatorModel, planningModel, thinkingLevel, isSubmitting, onCreateTask, addToast, onClose, projectId, presetMode, selectedPresetId, selectedWorkflowSteps, workflowStepsExplicitlySet]);
+  }, [description, dependencies, pendingImages, executorModel, validatorModel, planningModel, thinkingLevel, isSubmitting, onCreateTask, addToast, onClose, projectId, presetMode, selectedPresetId, selectedWorkflowSteps, workflowStepsExplicitlySet, selectedAgentId]);
 
   // Handle keyboard shortcuts
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -151,6 +200,10 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       handleClose();
     }
   }, [handleClose]);
+
+  // Compute selected agent label for display
+  const selectedAgent = selectedAgentId ? agents.find((agent) => agent.id === selectedAgentId) : undefined;
+  const selectedAgentLabel = selectedAgent?.name ?? selectedAgentId;
 
   if (!isOpen) return null;
 
@@ -200,6 +253,66 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
             thinkingLevel={thinkingLevel}
             onThinkingLevelChange={setThinkingLevel}
           />
+
+          {/* Agent Assignment */}
+          <div className="form-group" style={{ marginTop: "12px" }}>
+            <label>Assign Agent</label>
+            <div className="agent-trigger-wrap" ref={agentPickerRef}>
+              <button
+                type="button"
+                className="btn btn-sm dep-trigger"
+                onClick={() => {
+                  if (showAgentPicker) {
+                    setShowAgentPicker(false);
+                  } else {
+                    void loadAgents();
+                  }
+                }}
+                disabled={isSubmitting}
+                data-testid="new-task-agent-button"
+              >
+                <Bot size={12} style={{ verticalAlign: "middle" }} />
+                {selectedAgentLabel ? ` ${selectedAgentLabel}` : " Assign agent"}
+              </button>
+              {showAgentPicker && (
+                <div className="dep-dropdown agent-picker-dropdown" onMouseDown={(e) => e.preventDefault()}>
+                  <div className="dep-dropdown-search-header">Select agent</div>
+                  {agentsLoading && <div className="dep-dropdown-empty">Loading agents...</div>}
+                  {!agentsLoading && agents.filter((a) => a.state !== "terminated").map((a) => (
+                    <div
+                      key={a.id}
+                      className={`dep-dropdown-item${selectedAgentId === a.id ? " selected" : ""}`}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setSelectedAgentId(a.id === selectedAgentId ? null : a.id);
+                        setShowAgentPicker(false);
+                      }}
+                      data-testid={`agent-option-${a.id}`}
+                    >
+                      <Bot size={12} style={{ marginRight: 6 }} />
+                      <span className="dep-dropdown-id">{a.role}</span>
+                      <span className="dep-dropdown-title">{a.name}</span>
+                    </div>
+                  ))}
+                  {!agentsLoading && agents.filter((a) => a.state !== "terminated").length === 0 && (
+                    <div className="dep-dropdown-empty">No agents available</div>
+                  )}
+                  {selectedAgentId && (
+                    <div
+                      className="dep-dropdown-item"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setSelectedAgentId(null);
+                        setShowAgentPicker(false);
+                      }}
+                    >
+                      <span className="dep-dropdown-title">Clear selection</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         <div className="modal-actions">

@@ -10,6 +10,7 @@ vi.mock("lucide-react", () => ({
   ChevronUp: () => null,
   ChevronDown: () => null,
   X: () => null,
+  Bot: () => null,
 }));
 
 // Mock the api module
@@ -25,6 +26,7 @@ vi.mock("../../api", () => ({
     defaultPresetBySize: {},
   }),
   fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
+  fetchAgents: vi.fn().mockResolvedValue([]),
   refineText: vi.fn(),
   getRefineErrorMessage: vi.fn((err) => err?.message || "Failed to refine text. Please try again."),
   updateGlobalSettings: vi.fn().mockResolvedValue({}),
@@ -571,6 +573,215 @@ describe("NewTaskModal", () => {
             enabledWorkflowSteps: undefined,
           }),
         );
+      });
+    });
+  });
+
+  // Agent assignment tests (FN-1483)
+  describe("agent assignment", () => {
+    it("renders agent picker button", () => {
+      renderNewTaskModal();
+      expect(screen.getByTestId("new-task-agent-button")).toBeTruthy();
+      expect(screen.getByText("Assign agent")).toBeTruthy();
+    });
+
+    it("shows dropdown when agent button is clicked", async () => {
+      const { fetchAgents } = await import("../../api");
+      vi.mocked(fetchAgents).mockResolvedValueOnce([
+        { id: "agent-1", name: "Executor Bot", role: "executor", state: "active" as const, createdAt: "", updatedAt: "" },
+      ]);
+
+      renderNewTaskModal();
+
+      fireEvent.click(screen.getByTestId("new-task-agent-button"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Select agent")).toBeTruthy();
+        expect(screen.getByText("Executor Bot")).toBeTruthy();
+      });
+    });
+
+    it("excludes terminated agents from picker", async () => {
+      const { fetchAgents } = await import("../../api");
+      vi.mocked(fetchAgents).mockResolvedValueOnce([
+        { id: "agent-1", name: "Active Agent", role: "executor", state: "active" as const, createdAt: "", updatedAt: "" },
+        { id: "agent-2", name: "Terminated Agent", role: "executor", state: "terminated" as const, createdAt: "", updatedAt: "" },
+      ]);
+
+      renderNewTaskModal();
+
+      fireEvent.click(screen.getByTestId("new-task-agent-button"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Active Agent")).toBeTruthy();
+        expect(screen.queryByText("Terminated Agent")).toBeNull();
+      });
+    });
+
+    it("shows selected agent name in button", async () => {
+      const { fetchAgents } = await import("../../api");
+      vi.mocked(fetchAgents).mockResolvedValueOnce([
+        { id: "agent-1", name: "Executor Bot", role: "executor", state: "active" as const, createdAt: "", updatedAt: "" },
+      ]);
+
+      renderNewTaskModal();
+
+      fireEvent.click(screen.getByTestId("new-task-agent-button"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Select agent")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByText("Executor Bot"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("new-task-agent-button")).toHaveTextContent("Executor Bot");
+      });
+    });
+
+    it("includes assignedAgentId in payload when agent is selected", async () => {
+      const { fetchAgents } = await import("../../api");
+      vi.mocked(fetchAgents).mockResolvedValueOnce([
+        { id: "agent-1", name: "Executor Bot", role: "executor", state: "active" as const, createdAt: "", updatedAt: "" },
+      ]);
+
+      const { props } = renderNewTaskModal();
+
+      // Type description
+      fireEvent.change(screen.getByLabelText(/Description/i), { target: { value: "Task with agent" } });
+
+      // Open agent picker and select agent
+      fireEvent.click(screen.getByTestId("new-task-agent-button"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Executor Bot")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByText("Executor Bot"));
+
+      // Submit
+      fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+
+      await waitFor(() => {
+        expect(props.onCreateTask).toHaveBeenCalledWith(
+          expect.objectContaining({
+            assignedAgentId: "agent-1",
+          }),
+        );
+      });
+    });
+
+    it("omits assignedAgentId from payload when no agent is selected", async () => {
+      const { props } = renderNewTaskModal();
+
+      fireEvent.change(screen.getByLabelText(/Description/i), { target: { value: "Task without agent" } });
+
+      fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+
+      await waitFor(() => {
+        expect(props.onCreateTask).toHaveBeenCalledWith(
+          expect.not.objectContaining({
+            assignedAgentId: expect.anything(),
+          }),
+        );
+      });
+    });
+
+    it("omits assignedAgentId from payload after clearing selection", async () => {
+      const { fetchAgents } = await import("../../api");
+      vi.mocked(fetchAgents).mockResolvedValueOnce([
+        { id: "agent-1", name: "Executor Bot", role: "executor", state: "active" as const, createdAt: "", updatedAt: "" },
+      ]);
+
+      const { props } = renderNewTaskModal();
+
+      // Type description
+      fireEvent.change(screen.getByLabelText(/Description/i), { target: { value: "Task with agent" } });
+
+      // Open agent picker and select agent
+      fireEvent.click(screen.getByTestId("new-task-agent-button"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Executor Bot")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByText("Executor Bot"));
+
+      // Open picker again and clear selection
+      fireEvent.click(screen.getByTestId("new-task-agent-button"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Clear selection")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByText("Clear selection"));
+
+      // Submit
+      fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+
+      await waitFor(() => {
+        expect(props.onCreateTask).toHaveBeenCalledWith(
+          expect.not.objectContaining({
+            assignedAgentId: expect.anything(),
+          }),
+        );
+      });
+    });
+
+    it("triggers dirty state when agent is selected", async () => {
+      const { fetchAgents } = await import("../../api");
+      vi.mocked(fetchAgents).mockResolvedValueOnce([
+        { id: "agent-1", name: "Executor Bot", role: "executor", state: "active" as const, createdAt: "", updatedAt: "" },
+      ]);
+
+      renderNewTaskModal();
+
+      // Open agent picker and select agent
+      fireEvent.click(screen.getByTestId("new-task-agent-button"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Executor Bot")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByText("Executor Bot"));
+
+      // Mock confirm to return true (confirm discard)
+      const originalConfirm = window.confirm;
+      window.confirm = vi.fn().mockReturnValue(true);
+
+      // Try to close - should show confirm
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+      expect(window.confirm).toHaveBeenCalledWith("You have unsaved changes. Discard them?");
+
+      window.confirm = originalConfirm;
+    });
+
+    it("resets agent selection after successful task creation", async () => {
+      const { fetchAgents } = await import("../../api");
+      vi.mocked(fetchAgents).mockResolvedValueOnce([
+        { id: "agent-1", name: "Executor Bot", role: "executor", state: "active" as const, createdAt: "", updatedAt: "" },
+      ]);
+
+      renderNewTaskModal();
+
+      // Type description
+      fireEvent.change(screen.getByLabelText(/Description/i), { target: { value: "Task with agent" } });
+
+      // Open agent picker and select agent
+      fireEvent.click(screen.getByTestId("new-task-agent-button"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Executor Bot")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByText("Executor Bot"));
+
+      // Submit
+      fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("new-task-agent-button")).toHaveTextContent("Assign agent");
       });
     });
   });
