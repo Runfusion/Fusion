@@ -335,4 +335,89 @@ describe("agent-generation module", () => {
       expect(retrieved!.roleDescription).toBe("Security auditor role");
     });
   });
+
+  describe("prompt override support", () => {
+    // Mock createKbAgent to capture the systemPrompt passed to it
+    let capturedSystemPrompt: string | undefined;
+
+    beforeEach(async () => {
+      capturedSystemPrompt = undefined;
+      // Mock createKbAgent before tests run
+      vi.doMock("@fusion/engine", () => ({
+        createKbAgent: vi.fn(async (options: { cwd: string; systemPrompt: string; tools: string }) => {
+          capturedSystemPrompt = options.systemPrompt;
+          return {
+            session: {
+              state: { messages: [] },
+              prompt: vi.fn(async () => {}),
+              dispose: vi.fn(),
+            },
+          };
+        }),
+      }));
+      // Reset the module to pick up the mock
+      vi.resetModules();
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.resetModules();
+    });
+
+    it("generates spec with default system prompt when no overrides provided", async () => {
+      const { generateAgentSpec: genSpec, startAgentGeneration: startGen } = await import("./agent-generation.js");
+
+      const session = await startGen(getUniqueIp(), "Test role");
+      const spec = await genSpec(session.id, "/tmp");
+
+      // The spec should be empty since we mocked an empty response
+      expect(spec).toBeDefined();
+      // The system prompt should be the default
+      expect(capturedSystemPrompt).toBeDefined();
+      expect(capturedSystemPrompt).toContain("agent specification generator");
+    });
+
+    it("generates spec with override system prompt when overrides provided", async () => {
+      const { generateAgentSpec: genSpec, startAgentGeneration: startGen } = await import("./agent-generation.js");
+
+      const customPrompt = "CUSTOM AGENT GENERATION PROMPT";
+      const overrides = { "agent-generation-system": customPrompt };
+
+      const session = await startGen(getUniqueIp(), "Test role");
+      const spec = await genSpec(session.id, "/tmp", overrides);
+
+      // The spec should be empty since we mocked an empty response
+      expect(spec).toBeDefined();
+      // The system prompt should be the custom override
+      expect(capturedSystemPrompt).toBe(customPrompt);
+    });
+
+    it("falls back to default when override key not recognized", async () => {
+      const { generateAgentSpec: genSpec, startAgentGeneration: startGen } = await import("./agent-generation.js");
+
+      // Provide an override with a non-existent key
+      const overrides = { "non-existent-key": "Some prompt" };
+
+      const session = await startGen(getUniqueIp(), "Test role");
+      const spec = await genSpec(session.id, "/tmp", overrides);
+
+      // Should fall back to default
+      expect(spec).toBeDefined();
+      expect(capturedSystemPrompt).toBeDefined();
+      expect(capturedSystemPrompt).toContain("agent specification generator");
+    });
+
+    it("falls back to AGENT_GENERATION_SYSTEM_PROMPT constant when resolvePrompt returns empty", async () => {
+      const { generateAgentSpec: genSpec, startAgentGeneration: startGen, AGENT_GENERATION_SYSTEM_PROMPT } = await import("./agent-generation.js");
+
+      // Empty overrides should still get the default constant
+      const overrides = { "agent-generation-system": "" };
+
+      const session = await startGen(getUniqueIp(), "Test role");
+      const spec = await genSpec(session.id, "/tmp", overrides);
+
+      expect(spec).toBeDefined();
+      expect(capturedSystemPrompt).toBe(AGENT_GENERATION_SYSTEM_PROMPT);
+    });
+  });
 });

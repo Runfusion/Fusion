@@ -176,6 +176,8 @@ Fusion supports fine-grained customization of AI agent prompts through the `prom
 | `triage-context` | triage | Context-gathering instructions |
 | `reviewer-verdict` | reviewer | Verdict criteria and format |
 | `merger-conflicts` | merger | Merge conflict resolution instructions |
+| `agent-generation-system` | — | System prompt for AI-assisted agent specification generation |
+| `workflow-step-refine` | — | System prompt for refining workflow step descriptions into detailed agent prompts |
 
 ### How It Works
 

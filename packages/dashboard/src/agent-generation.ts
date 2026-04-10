@@ -14,6 +14,31 @@
 
 import { randomUUID } from "node:crypto";
 
+// Dynamic import for @fusion/core to get prompt override resolution
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type PromptOverrideMap = Record<string, string | undefined>;
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+type ResolvePromptFn = (key: string, overrides?: PromptOverrideMap) => string;
+let resolvePrompt: ResolvePromptFn = () => "";
+let promptCatalogReady = false;
+
+async function initPromptCatalog() {
+  if (promptCatalogReady) return;
+  try {
+    const core = await import("@fusion/core");
+    resolvePrompt = (key: string, overrides?: PromptOverrideMap) =>
+      core.resolvePrompt(key as keyof typeof core.PROMPT_KEY_CATALOG, overrides);
+    promptCatalogReady = true;
+  } catch {
+    // Use fallback resolution when core is unavailable
+    resolvePrompt = () => "";
+    promptCatalogReady = true;
+  }
+}
+
+// Initialize prompt catalog (will be awaited in actual usage)
+const promptCatalogReadyPromise = initPromptCatalog();
+
 // Dynamic import for @fusion/engine to avoid resolution issues in test environment
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports, @typescript-eslint/no-explicit-any
 type AgentResult = any;
@@ -424,11 +449,13 @@ export async function startAgentGeneration(
  *
  * @param sessionId - The session identifier
  * @param rootDir - Project root directory for AI agent context
+ * @param promptOverrides - Optional prompt overrides from project settings
  * @returns The generated agent specification
  */
 export async function generateAgentSpec(
   sessionId: string,
-  rootDir: string
+  rootDir: string,
+  promptOverrides?: PromptOverrideMap
 ): Promise<AgentGenerationSpec> {
   const session = sessions.get(sessionId);
   if (!session) {
@@ -437,7 +464,8 @@ export async function generateAgentSpec(
 
   try {
     await engineReady;
-    const spec = await generateSpecWithAI(session, rootDir);
+    await promptCatalogReadyPromise;
+    const spec = await generateSpecWithAI(session, rootDir, promptOverrides);
     session.spec = spec;
     session.updatedAt = new Date();
     return spec;
@@ -450,14 +478,21 @@ export async function generateAgentSpec(
 /**
  * Generate an agent specification using the AI agent.
  */
-async function generateSpecWithAI(session: Session, rootDir: string): Promise<AgentGenerationSpec> {
+async function generateSpecWithAI(
+  session: Session,
+  rootDir: string,
+  promptOverrides?: PromptOverrideMap
+): Promise<AgentGenerationSpec> {
   if (!createKbAgent) {
     throw new Error("AI agent not available. Ensure the engine is properly configured.");
   }
 
+  // Resolve the system prompt using prompt overrides (with fallback to default)
+  const effectiveSystemPrompt = resolvePrompt("agent-generation-system", promptOverrides) || AGENT_GENERATION_SYSTEM_PROMPT;
+
   const agent = await createKbAgent({
     cwd: rootDir,
-    systemPrompt: AGENT_GENERATION_SYSTEM_PROMPT,
+    systemPrompt: effectiveSystemPrompt,
     tools: "none",
   });
 

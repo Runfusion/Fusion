@@ -9946,6 +9946,89 @@ describe("POST /workflow-steps/:id/refine", () => {
     expect(res.body.workflowStep.prompt).toBe("Check docs");
     expect(store.updateWorkflowStep).toHaveBeenCalledWith("WS-001", { prompt: "Check docs" });
   });
+
+  it("uses custom prompt from promptOverrides when provided", async () => {
+    const ws = { id: "WS-001", name: "Docs", description: "Check docs", mode: "prompt", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    (store.getWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(ws);
+    const customPrompt = "CUSTOM WORKFLOW STEP REFINE PROMPT";
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      promptOverrides: {
+        "workflow-step-refine": customPrompt,
+      },
+    });
+
+    const updatedWs = { ...ws, prompt: "Refined prompt from AI" };
+    (store.updateWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updatedWs);
+
+    let capturedSystemPrompt: string | undefined;
+    const session = {
+      on: vi.fn((event: string, cb: (delta: string) => void) => {
+        if (event === "text") {
+          cb("Refined ");
+          cb("prompt from AI");
+        }
+      }),
+      prompt: vi.fn(async () => {}),
+      dispose: vi.fn(),
+    };
+
+    const createKbAgentMock = vi.fn(async (options: { cwd: string; systemPrompt: string; tools: string }) => {
+      capturedSystemPrompt = options.systemPrompt;
+      return { session };
+    });
+    __setCreateKbAgentForRefine(createKbAgentMock);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps/WS-001/refine", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(createKbAgentMock).toHaveBeenCalledTimes(1);
+    // Verify the custom prompt was passed
+    expect(capturedSystemPrompt).toBe(customPrompt);
+  });
+
+  it("uses default prompt when promptOverrides does not contain workflow-step-refine", async () => {
+    const ws = { id: "WS-001", name: "Docs", description: "Check docs", mode: "prompt", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    (store.getWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(ws);
+    // Settings with other overrides but not workflow-step-refine
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      promptOverrides: {
+        "executor-welcome": "Some other prompt",
+      },
+    });
+
+    const updatedWs = { ...ws, prompt: "Refined prompt from AI" };
+    (store.updateWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updatedWs);
+
+    let capturedSystemPrompt: string | undefined;
+    const session = {
+      on: vi.fn((event: string, cb: (delta: string) => void) => {
+        if (event === "text") {
+          cb("Refined ");
+          cb("prompt from AI");
+        }
+      }),
+      prompt: vi.fn(async () => {}),
+      dispose: vi.fn(),
+    };
+
+    const createKbAgentMock = vi.fn(async (options: { cwd: string; systemPrompt: string; tools: string }) => {
+      capturedSystemPrompt = options.systemPrompt;
+      return { session };
+    });
+    __setCreateKbAgentForRefine(createKbAgentMock);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps/WS-001/refine", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(createKbAgentMock).toHaveBeenCalledTimes(1);
+    // Should use the default prompt (contains "You are an expert at creating")
+    expect(capturedSystemPrompt).toContain("You are an expert at creating");
+    expect(capturedSystemPrompt).toContain("workflow steps");
+  });
 });
 
 // ── Workflow Step Template Tests ──────────────────────────────────────────

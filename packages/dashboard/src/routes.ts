@@ -108,6 +108,43 @@ export function __setCreateKbAgentForRefine(mock: typeof createKbAgentForRefine)
   createKbAgentForRefine = mock;
 }
 
+// Default system prompt for workflow step refinement (fallback when overrides unavailable)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let resolveWorkflowStepRefinePrompt: (key: string, overrides?: Record<string, string | undefined>) => string = () => DEFAULT_WORKFLOW_STEP_REFINE_PROMPT;
+let promptOverridesReady = false;
+
+async function initPromptOverrides() {
+  if (promptOverridesReady) return;
+  try {
+    const core = await import("@fusion/core");
+    resolveWorkflowStepRefinePrompt = (key: string, overrides?: Record<string, string | undefined>) =>
+      core.resolvePrompt(key as keyof typeof core.PROMPT_KEY_CATALOG, overrides);
+    promptOverridesReady = true;
+  } catch {
+    resolveWorkflowStepRefinePrompt = () => DEFAULT_WORKFLOW_STEP_REFINE_PROMPT;
+    promptOverridesReady = true;
+  }
+}
+
+// Initialize on module load
+initPromptOverrides();
+
+/** Default system prompt for workflow step refinement */
+const DEFAULT_WORKFLOW_STEP_REFINE_PROMPT = `You are an expert at creating detailed agent prompts for workflow steps.
+
+A workflow step is a quality gate that runs after a task is implemented but before it's marked complete.
+
+Given a rough description, create a detailed prompt that an AI agent can follow to execute this workflow step.
+
+The prompt should:
+1. Define the purpose clearly
+2. Specify what files/context to examine
+3. List specific criteria to check
+4. Describe what "success" looks like
+5. Include guidance on handling common edge cases
+
+Output ONLY the prompt text (no markdown, no explanations).`;
+
 function validateOptionalModelField(value: unknown, name: string): string | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "string") {
@@ -8636,20 +8673,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
         const settings = await scopedStore.getSettings();
 
-        const systemPrompt = `You are an expert at creating detailed agent prompts for workflow steps.
-
-A workflow step is a quality gate that runs after a task is implemented but before it's marked complete.
-
-Given a rough description, create a detailed prompt that an AI agent can follow to execute this workflow step.
-
-The prompt should:
-1. Define the purpose clearly
-2. Specify what files/context to examine
-3. List specific criteria to check
-4. Describe what "success" looks like
-5. Include guidance on handling common edge cases
-
-Output ONLY the prompt text (no markdown, no explanations).`;
+        // Resolve the system prompt using prompt overrides (with fallback to default)
+        const systemPrompt = resolveWorkflowStepRefinePrompt(
+          "workflow-step-refine",
+          settings.promptOverrides
+        ) || DEFAULT_WORKFLOW_STEP_REFINE_PROMPT;
 
         const { session } = await createKbAgent({
           cwd: scopedStore.getRootDir(),
@@ -11116,8 +11144,9 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       const scopedStore = await getScopedStore(req);
       const rootDir = scopedStore.getRootDir();
+      const settings = await scopedStore.getSettings();
 
-      const spec = await generateAgentSpec(sessionId, rootDir);
+      const spec = await generateAgentSpec(sessionId, rootDir, settings.promptOverrides);
       res.json({ spec });
     } catch (err: any) {
       if (err instanceof ApiError) {
