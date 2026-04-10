@@ -872,6 +872,164 @@ describe("TaskStore", () => {
     });
   });
 
+  // ── Prompt Overrides Tests ─────────────────────────────────────────
+
+  describe("promptOverrides settings", () => {
+    it("can set a single prompt override", async () => {
+      await store.updateSettings({
+        promptOverrides: { "executor-welcome": "Custom executor welcome message" },
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.promptOverrides).toEqual({ "executor-welcome": "Custom executor welcome message" });
+    });
+
+    it("can set multiple prompt overrides", async () => {
+      await store.updateSettings({
+        promptOverrides: {
+          "executor-welcome": "Custom welcome",
+          "triage-welcome": "Custom triage welcome",
+        },
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.promptOverrides).toEqual({
+        "executor-welcome": "Custom welcome",
+        "triage-welcome": "Custom triage welcome",
+      });
+    });
+
+    it("promptOverrides is undefined by default", async () => {
+      const settings = await store.getSettings();
+      expect(settings.promptOverrides).toBeUndefined();
+    });
+
+    it("can merge new overrides with existing overrides", async () => {
+      // Set initial overrides
+      await store.updateSettings({
+        promptOverrides: { "executor-welcome": "Initial welcome" },
+      });
+
+      // Add more overrides
+      await store.updateSettings({
+        promptOverrides: { "triage-welcome": "Custom triage" },
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.promptOverrides).toEqual({
+        "executor-welcome": "Initial welcome",
+        "triage-welcome": "Custom triage",
+      });
+    });
+
+    it("can update an existing override", async () => {
+      await store.updateSettings({
+        promptOverrides: { "executor-welcome": "Original" },
+      });
+
+      await store.updateSettings({
+        promptOverrides: { "executor-welcome": "Updated" },
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.promptOverrides).toEqual({ "executor-welcome": "Updated" });
+    });
+
+    it("can clear a specific override with null value", async () => {
+      // Set initial overrides
+      await store.updateSettings({
+        promptOverrides: {
+          "executor-welcome": "Welcome",
+          "triage-welcome": "Triage",
+        },
+      });
+
+      // Clear only executor-welcome
+      await store.updateSettings({
+        promptOverrides: { "executor-welcome": null as unknown as string },
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.promptOverrides).toEqual({ "triage-welcome": "Triage" });
+    });
+
+    it("clears entire promptOverrides when all keys are cleared", async () => {
+      await store.updateSettings({
+        promptOverrides: { "executor-welcome": "Welcome" },
+      });
+
+      await store.updateSettings({
+        promptOverrides: { "executor-welcome": null as unknown as string },
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.promptOverrides).toBeUndefined();
+    });
+
+    it("can clear entire promptOverrides with null", async () => {
+      await store.updateSettings({
+        promptOverrides: { "executor-welcome": "Welcome", "triage-welcome": "Triage" },
+      });
+
+      await store.updateSettings({
+        promptOverrides: null as unknown as Record<string, string>,
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.promptOverrides).toBeUndefined();
+    });
+
+    it("persists empty string overrides as cleared (not stored)", async () => {
+      // Setting an empty string should be treated as "clear" and not persist
+      await store.updateSettings({
+        promptOverrides: { "executor-welcome": "" },
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.promptOverrides).toBeUndefined();
+    });
+
+    it("handles promptOverrides in getSettingsByScope", async () => {
+      await store.updateSettings({
+        promptOverrides: { "executor-welcome": "Scoped welcome" },
+      });
+
+      const { project } = await store.getSettingsByScope();
+      expect(project.promptOverrides).toEqual({ "executor-welcome": "Scoped welcome" });
+    });
+
+    it("preserves other settings when updating promptOverrides", async () => {
+      await store.updateSettings({
+        maxConcurrent: 5,
+        autoMerge: false,
+      });
+
+      await store.updateSettings({
+        promptOverrides: { "executor-welcome": "Welcome" },
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.maxConcurrent).toBe(5);
+      expect(settings.autoMerge).toBe(false);
+      expect(settings.promptOverrides).toEqual({ "executor-welcome": "Welcome" });
+    });
+
+    it("preserves promptOverrides when updating other settings", async () => {
+      await store.updateSettings({
+        promptOverrides: { "executor-welcome": "Welcome", "triage-welcome": "Triage" },
+      });
+
+      await store.updateSettings({ maxConcurrent: 7 });
+
+      const settings = await store.getSettings();
+      expect(settings.maxConcurrent).toBe(7);
+      expect(settings.promptOverrides).toEqual({
+        "executor-welcome": "Welcome",
+        "triage-welcome": "Triage",
+      });
+    });
+  });
+
   // ── Concurrent stress test ───────────────────────────────────────
 
   describe("concurrent stress", () => {

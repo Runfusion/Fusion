@@ -94,6 +94,7 @@ const PROJECT_KEYS: (keyof ProjectSettings)[] = [
   "missionMaxTaskRetries",
   "missionHealthCheckIntervalMs",
   "agentPrompts",
+  "promptOverrides",
   "reflectionEnabled",
   "reflectionIntervalMs",
   "reflectionAfterTask",

@@ -1105,6 +1105,20 @@ export interface ProjectSettings {
    *  When set, allows per-project customization of system prompts
    *  for different agent roles (executor, triage, reviewer, merger). */
   agentPrompts?: AgentPromptsConfig;
+  /** Prompt segment overrides for fine-grained customization of agent prompts.
+   *  Each key maps to a customizable prompt segment (e.g., "executor-welcome",
+   *  "triage-context"). When a key is present with a non-empty value, that
+   *  override replaces the default prompt segment. Missing or empty values
+   *  fall back to the default prompt content.
+   *
+   *  This is separate from `agentPrompts` which controls full role templates.
+   *  `promptOverrides` allows surgical customization of specific prompt segments
+   *  without replacing entire role prompts.
+   *
+   *  Supported keys: "executor-welcome", "executor-guardrails", "executor-spawning",
+   *  "executor-completion", "triage-welcome", "triage-context", "reviewer-verdict",
+   *  "merger-conflicts". */
+  promptOverrides?: Record<string, string>;
   /** Enable/disable agent self-reflection workflows. Default: false. */
   reflectionEnabled?: boolean;
   /** How often periodic reflections occur in milliseconds. Default: 3_600_000 (1 hour). */
@@ -1217,6 +1231,7 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   missionMaxTaskRetries: 3,
   missionHealthCheckIntervalMs: 300_000,
   agentPrompts: undefined,
+  promptOverrides: undefined,
   reflectionEnabled: false,
   reflectionIntervalMs: 3_600_000,
   reflectionAfterTask: true,
@@ -1321,6 +1336,7 @@ export const PROJECT_SETTINGS_KEYS: ReadonlyArray<keyof ProjectSettings> = [
   "missionMaxTaskRetries",
   "missionHealthCheckIntervalMs",
   "agentPrompts",
+  "promptOverrides",
   "reflectionEnabled",
   "reflectionIntervalMs",
   "reflectionAfterTask",

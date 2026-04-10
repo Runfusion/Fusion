@@ -7,6 +7,28 @@ export {
   getAvailableTemplates,
   getTemplatesForRole,
 } from "./agent-prompts.js";
+
+// ── Prompt Overrides ─────────────────────────────────────────────────
+export {
+  PROMPT_KEY_CATALOG,
+  resolvePrompt,
+  resolveRolePrompts,
+  hasRoleOverrides,
+  getOverriddenKeys,
+  clearOverrides,
+  getPromptKeyMetadata,
+  getPromptKeysForRole,
+  isValidPromptKey,
+  isValidPromptOverrideMap,
+  assertValidPromptOverrideMap,
+} from "./prompt-overrides.js";
+export type {
+  PromptKey,
+  PromptKeyMetadata,
+  PromptKeyCatalog,
+  PromptOverrideEntry,
+  PromptOverrideMap,
+} from "./prompt-overrides.js";
 export {
   ROLE_DEFAULT_PERMISSIONS,
   normalizePermissions,

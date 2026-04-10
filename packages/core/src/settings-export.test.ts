@@ -388,6 +388,105 @@ describe("settings-export", () => {
     });
   });
 
+  describe("promptOverrides export/import", () => {
+    it("should export promptOverrides when set", async () => {
+      await store.updateSettings({
+        promptOverrides: { "executor-welcome": "Custom welcome" },
+      });
+
+      const result = await exportSettings(store, { scope: "project" });
+
+      expect(result.project?.promptOverrides).toEqual({ "executor-welcome": "Custom welcome" });
+    });
+
+    it("should not export promptOverrides when not set", async () => {
+      const result = await exportSettings(store, { scope: "project" });
+
+      expect(result.project?.promptOverrides).toBeUndefined();
+    });
+
+    it("should import promptOverrides in merge mode", async () => {
+      const importData: SettingsExportData = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        project: {
+          promptOverrides: { "executor-welcome": "Imported welcome" },
+        },
+      };
+
+      const result = await importSettings(store, importData, { scope: "project", merge: true });
+
+      expect(result.success).toBe(true);
+      expect(result.projectCount).toBe(1);
+
+      const settings = await store.getSettings();
+      expect(settings.promptOverrides).toEqual({ "executor-welcome": "Imported welcome" });
+    });
+
+    it("should merge promptOverrides with existing overrides", async () => {
+      // Set initial overrides
+      await store.updateSettings({
+        promptOverrides: { "executor-welcome": "Original" },
+      });
+
+      const importData: SettingsExportData = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        project: {
+          promptOverrides: { "triage-welcome": "Imported triage" },
+        },
+      };
+
+      await importSettings(store, importData, { scope: "project", merge: true });
+
+      const settings = await store.getSettings();
+      expect(settings.promptOverrides).toEqual({
+        "executor-welcome": "Original",
+        "triage-welcome": "Imported triage",
+      });
+    });
+
+    it("should clear promptOverrides when importing null", async () => {
+      // Set initial overrides
+      await store.updateSettings({
+        promptOverrides: { "executor-welcome": "Original", "triage-welcome": "Triage" },
+      });
+
+      const importData: SettingsExportData = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        project: {
+          promptOverrides: null as any,
+        },
+      };
+
+      await importSettings(store, importData, { scope: "project", merge: true });
+
+      const settings = await store.getSettings();
+      expect(settings.promptOverrides).toBeUndefined();
+    });
+
+    it("should clear specific promptOverride key when importing null value", async () => {
+      // Set initial overrides
+      await store.updateSettings({
+        promptOverrides: { "executor-welcome": "Original", "triage-welcome": "Triage" },
+      });
+
+      const importData: SettingsExportData = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        project: {
+          promptOverrides: { "executor-welcome": null as unknown as string },
+        },
+      };
+
+      await importSettings(store, importData, { scope: "project", merge: true });
+
+      const settings = await store.getSettings();
+      expect(settings.promptOverrides).toEqual({ "triage-welcome": "Triage" });
+    });
+  });
+
   describe("readExportFile", () => {
     it("should read and parse valid export file", async () => {
       const filePath = join(env.tempDir, "test-export.json");

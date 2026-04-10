@@ -123,6 +123,7 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `runStepsInNewSessions` | `boolean` | `false` | Run each task step in a fresh agent session. |
 | `maxParallelSteps` | `number` | `2` | Max concurrent step sessions (1–4). |
 | `agentPrompts` | `object` | `undefined` | Custom agent prompt templates + role assignments. |
+| `promptOverrides` | `Record<string, string>` | `undefined` | Fine-grained prompt segment overrides (e.g., `{"executor-welcome": "..."}`). |
 
 ### Additional ProjectSettings fields
 
@@ -156,6 +157,67 @@ These exist in `ProjectSettings` but are not part of `PROJECT_SETTINGS_KEYS`.
 2. Global/project `validatorProvider` + `validatorModelId`
 3. Global `defaultProvider` + `defaultModelId`
 4. Automatic provider/model resolution
+
+---
+
+## Prompt Overrides
+
+Fusion supports fine-grained customization of AI agent prompts through the `promptOverrides` setting. This enables surgical customization of specific prompt segments without replacing entire role prompts (which `agentPrompts` does).
+
+### Supported Prompt Keys
+
+| Key | Agent Role | Description |
+|-----|-----------|-------------|
+| `executor-welcome` | executor | Introductory section for the executor agent |
+| `executor-guardrails` | executor | Behavioral guardrails and constraints |
+| `executor-spawning` | executor | Instructions for spawning child agents |
+| `executor-completion` | executor | Completion criteria and signaling |
+| `triage-welcome` | triage | Introductory section for the triage/specification agent |
+| `triage-context` | triage | Context-gathering instructions |
+| `reviewer-verdict` | reviewer | Verdict criteria and format |
+| `merger-conflicts` | merger | Merge conflict resolution instructions |
+
+### How It Works
+
+1. **Override Selection**: When a prompt key is present with a non-empty value, that override replaces the default prompt segment.
+
+2. **Fallback to Defaults**: Missing or empty values fall back to the built-in default content.
+
+3. **Cascade**: `agentPrompts` provides full-role template customization, while `promptOverrides` provides segment-level customization. Both can be used together — `promptOverrides` applies to the segment even within a custom role template.
+
+### Clearing Overrides
+
+To clear a specific override, set it to `null`:
+
+```json
+{
+  "promptOverrides": {
+    "executor-welcome": null
+  }
+}
+```
+
+To clear all overrides, set `promptOverrides` to `null`:
+
+```json
+{
+  "promptOverrides": null
+}
+```
+
+### Configuration Example
+
+```json
+{
+  "settings": {
+    "promptOverrides": {
+      "executor-welcome": "Custom executor welcome message for this project...",
+      "executor-guardrails": "## Custom Guardrails\n- Project-specific rules...",
+      "triage-welcome": "Custom triage introduction..."
+    }
+  }
+}
+```
 
 ---
 

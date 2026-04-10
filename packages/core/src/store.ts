@@ -650,6 +650,46 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       // Handle null values as "delete this key from settings"
       // This allows the frontend to explicitly clear a setting by sending null
       // (since JSON.stringify drops undefined keys, we use null as a sentinel)
+
+      // Handle special null-as-delete semantics for promptOverrides
+      const incomingPromptOverrides = (projectPatch as Record<string, unknown>)["promptOverrides"];
+      if (incomingPromptOverrides === null) {
+        // promptOverrides: null → clear the entire promptOverrides object
+        delete (config.settings as unknown as Record<string, unknown>)["promptOverrides"];
+        delete (projectPatch as Record<string, unknown>)["promptOverrides"];
+      } else if (
+        incomingPromptOverrides !== undefined &&
+        typeof incomingPromptOverrides === "object" &&
+        incomingPromptOverrides !== null
+      ) {
+        // promptOverrides: { key: value } → merge with existing, treating null values as delete
+        const incomingMap = incomingPromptOverrides as Record<string, unknown>;
+        const existingMap = ((config.settings as unknown as Record<string, unknown>)["promptOverrides"] as Record<string, string>) ?? {};
+        const mergedMap: Record<string, string> = { ...existingMap };
+
+        for (const [key, value] of Object.entries(incomingMap)) {
+          if (value === null) {
+            // null → delete this specific key
+            delete mergedMap[key];
+          } else if (typeof value === "string" && value !== "") {
+            // non-empty string → set this key
+            // Empty strings are treated as "clear" and not stored
+            mergedMap[key] = value;
+          }
+          // Empty strings are silently ignored (treated as "clear")
+        }
+
+        // If merged map is empty, remove the entire promptOverrides
+        if (Object.keys(mergedMap).length === 0) {
+          delete (config.settings as unknown as Record<string, unknown>)["promptOverrides"];
+          delete (projectPatch as Record<string, unknown>)["promptOverrides"];
+        } else {
+          (config.settings as unknown as Record<string, unknown>)["promptOverrides"] = mergedMap;
+          (projectPatch as Record<string, unknown>)["promptOverrides"] = mergedMap;
+        }
+      }
+
+      // Handle null values for other top-level keys (non-promptOverrides)
       for (const key of Object.keys(projectPatch)) {
         if ((projectPatch as Record<string, unknown>)[key] === null) {
           delete (config.settings as unknown as Record<string, unknown>)[key];
