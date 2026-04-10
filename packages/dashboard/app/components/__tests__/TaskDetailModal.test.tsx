@@ -218,6 +218,86 @@ describe("TaskDetailModal", () => {
     expect(screen.queryByText("Retry")).toBeNull();
   });
 
+  describe("retry action uniqueness for in-review failed tasks", () => {
+    it("shows exactly one Retry button when task is in-review AND failed", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ column: "in-review", status: "failed" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          onRetryTask={noopRetry}
+          addToast={noop}
+        />,
+      );
+
+      // Should have exactly one Retry button (not two)
+      const retryButtons = screen.getAllByText("Retry");
+      expect(retryButtons).toHaveLength(1);
+    });
+
+    it("shows exactly one Retry button when task is in-review AND stuck-killed", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ column: "in-review", status: "stuck-killed" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          onRetryTask={noopRetry}
+          addToast={noop}
+        />,
+      );
+
+      // Should have exactly one Retry button (not two)
+      const retryButtons = screen.getAllByText("Retry");
+      expect(retryButtons).toHaveLength(1);
+    });
+
+    it("shows 'Move to Todo' as distinct label for in-review tasks (not 'Retry')", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ column: "in-review" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Should show "Move to Todo" button, not "Retry"
+      expect(screen.getByText("Move to Todo")).toBeTruthy();
+      expect(screen.queryByText("Retry")).toBeNull();
+    });
+
+    it("in-review failed task shows both 'Retry' and 'Move to Todo' actions with distinct labels", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ column: "in-review", status: "failed" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          onRetryTask={noopRetry}
+          addToast={noop}
+        />,
+      );
+
+      // Retry button from failed status
+      expect(screen.getByText("Retry")).toBeTruthy();
+      // Move to Todo from in-review column (distinct from Retry)
+      expect(screen.getByText("Move to Todo")).toBeTruthy();
+      // Total count: exactly one Retry
+      expect(screen.getAllByText("Retry")).toHaveLength(1);
+    });
+  });
+
   it("shows description exactly once for a task without title", () => {
     const { container } = render(
       <TaskDetailModal

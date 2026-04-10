@@ -1512,7 +1512,7 @@ export function TaskDetailModal({
           {task.column === "in-review" ? (
             <>
               <button className="btn btn-sm" onClick={() => handleMove("todo")}>
-                Retry
+                Move to Todo
               </button>
               <button className="btn btn-sm" onClick={() => handleMove("in-progress")}>
                 Back to In Progress
