@@ -156,11 +156,13 @@ describe("Board and Column mobile CSS", () => {
     expectRuleToContain(mobileSection, ".board::-webkit-scrollbar", "display: none;");
   });
 
-  it("keeps safe-area-inset-bottom handling on .board in the mobile media block", () => {
+  it("uses simple padding-bottom on .board (safe-area handled by parent)", () => {
     const css = fs.readFileSync(stylesPath, "utf-8");
     const mobileSection = getMainMobileSection(css);
 
-    expectRuleToContain(mobileSection, ".board", "env(safe-area-inset-bottom");
+    // Board padding-bottom is just var(--space-md) to avoid double-counting safe-area-inset-bottom
+    // which is already handled by .project-content--with-mobile-nav padding
+    expectRuleToContain(mobileSection, ".board", "padding-bottom: var(--space-md);");
   });
 });
 

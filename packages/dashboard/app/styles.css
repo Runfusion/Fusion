@@ -6087,7 +6087,7 @@ body {
     scroll-behavior: smooth;
     scrollbar-width: none;
     padding: var(--space-md);
-    padding-bottom: max(var(--space-md), env(safe-area-inset-bottom, 0px));
+    padding-bottom: var(--space-md);
     gap: var(--space-md);
     height: 100%;
   }
@@ -21537,7 +21537,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
     font-size: 11px;
     height: 32px;
     overflow: hidden;
-    bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(48px + env(safe-area-inset-bottom, 0px));
   }
 
   .executor-status-bar__segment {
@@ -27874,7 +27874,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   align-items: stretch;
   background: var(--surface);
   border-top: 1px solid var(--border);
-  min-height: 56px;
+  min-height: 48px;
   padding-bottom: env(safe-area-inset-bottom, 0px);
   box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.15);
 }
@@ -27890,12 +27890,12 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 
   /* Content padding: mobile nav only (no footer) */
   .project-content--with-mobile-nav:not(.project-content--with-footer) {
-    padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(48px + env(safe-area-inset-bottom, 0px));
   }
 
   /* Content padding: both mobile nav AND footer */
   .project-content--with-footer.project-content--with-mobile-nav {
-    padding-bottom: calc(32px + 56px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(32px + 48px + env(safe-area-inset-bottom, 0px));
   }
 }
 
