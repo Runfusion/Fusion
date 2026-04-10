@@ -39,6 +39,9 @@ const CONTEXT_OVERFLOW_PATTERNS: RegExp[] = [
   /too many tokens/i,
   // Anthropic variant: "messages with that many tokens would exceed"
   /tokens? would exceed/i,
+  // Provider JSON error envelope variant: "context window exceeds limit (2013)"
+  // Matches when "context window" and "exceeds" appear together (order-flexible)
+  /context\s+window\s+exceeds/i,
 ];
 
 /**

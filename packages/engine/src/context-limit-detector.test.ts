@@ -68,6 +68,26 @@ describe("isContextLimitError", () => {
     expect(isContextLimitError("token limit reached for context window")).toBe(true);
   });
 
+  // ── Provider JSON envelope variants ────────────────────────────────
+
+  it("matches 'context window exceeds limit' variant from provider JSON envelope", () => {
+    // This is the specific error from the bug report:
+    // 400 {"type":"error","error":{"type":"invalid_request_error","message":"invalid params, context window exceeds limit (2013)"}}
+    expect(isContextLimitError("invalid params, context window exceeds limit (2013)")).toBe(true);
+  });
+
+  it("matches 'context window exceeds limit' without surrounding text", () => {
+    expect(isContextLimitError("context window exceeds limit")).toBe(true);
+  });
+
+  it("matches 'context window exceeds limit' with error code", () => {
+    expect(isContextLimitError("context window exceeds limit (2003)")).toBe(true);
+  });
+
+  it("matches 'context window exceeds' in mixed case", () => {
+    expect(isContextLimitError("Context Window Exceeds limit")).toBe(true);
+  });
+
   // ── Negative matches: must NOT trigger ─────────────────────────────
 
   it("returns false for empty string", () => {
