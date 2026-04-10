@@ -165,3 +165,46 @@ Manage mission hierarchy and progression state.
 Inspect logs, step progress, workflow outcomes, and model overrides.
 
 ![Task detail modal](./screenshots/task-detail.png)
+
+## Node Dashboard
+
+The Node Dashboard provides a mesh view of connected Fusion nodes. Each node can be a local instance or a remote headless node (`fn serve`).
+
+### Local/Remote Node Switching
+
+When remote nodes are available, the dashboard header displays a node status indicator:
+
+- **Local mode** — Shows a green "Local" badge, indicating the dashboard is connected to the local Fusion instance
+- **Remote mode** — Shows the remote node name with its connection status (online/offline/connecting)
+
+Click the chevron next to the status indicator to open the node selector dropdown:
+
+- **Local** — Switch back to viewing the local Fusion instance
+- **Remote nodes** — Select a remote node to view its tasks, projects, and status
+
+### How Node Switching Works
+
+1. The node selector appears in the header when remote nodes are registered in the mesh
+2. Selecting a remote node routes all API calls through the proxy endpoint (`/api/proxy/:nodeId/...`)
+3. Task data (projects, tasks) is fetched from the remote node and displayed in the dashboard
+4. SSE events from the remote node are streamed via the proxy and update the dashboard in real-time
+5. Selecting "Local" returns to the local Fusion instance with full local data
+
+### Benefits of Remote Node Viewing
+
+- Monitor task progress across distributed teams
+- View task status on remote headless nodes without direct SSH access
+- Compare project health across multiple Fusion instances
+- Stay informed about remote agent activity and task completion
+
+### Node Status Indicators
+
+| Status | Color | Meaning |
+|--------|-------|---------|
+| Online | Green | Node is connected and responsive |
+| Offline | Red | Node is unreachable or shut down |
+| Connecting | Yellow (pulsing) | Connection attempt in progress |
+
+### Persistence
+
+The selected node persists across browser sessions via localStorage. If the selected remote node is unregistered, the dashboard automatically falls back to local mode.

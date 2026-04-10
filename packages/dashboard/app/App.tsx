@@ -30,6 +30,9 @@ import { useAuthOnboarding } from "./hooks/useAuthOnboarding";
 import { useViewState, type TaskView } from "./hooks/useViewState";
 import { useProjectActions } from "./hooks/useProjectActions";
 import { useTaskHandlers } from "./hooks/useTaskHandlers";
+import { useRemoteNodeData } from "./hooks/useRemoteNodeData";
+import { useRemoteNodeEvents } from "./hooks/useRemoteNodeEvents";
+import { NodeProvider, useNodeContext } from "./context/NodeContext";
 import type { AiSessionSummary } from "./api";
 
 function AppInner() {
@@ -40,6 +43,28 @@ function AppInner() {
   const { projects, loading: projectsLoading, error: projectsError, refresh: refreshProjects, register: registerProject, update: updateProjectHook, unregister: unregisterProjectHook } = useProjects();
   const { nodes } = useNodes();
   const { currentProject, setCurrentProject, clearCurrentProject, loading: currentProjectLoading } = useCurrentProject(projects);
+  
+  // Node context for local/remote node switching
+  const { currentNode, currentNodeId, isRemote, setCurrentNode, clearCurrentNode } = useNodeContext();
+  
+  // Sync node context with useNodes() results - fall back to local if selected node is missing
+  useEffect(() => {
+    if (currentNodeId && nodes.length > 0) {
+      const nodeExists = nodes.some((n) => n.id === currentNodeId);
+      if (!nodeExists) {
+        // Selected node was deleted or unregistered - fall back to local
+        clearCurrentNode();
+      }
+    }
+  }, [currentNodeId, nodes, clearCurrentNode]);
+  
+  // Remote node data and events when in remote mode
+  const remoteData = useRemoteNodeData(currentNodeId, { projectId: currentProject?.id });
+  const remoteEvents = useRemoteNodeEvents(currentNodeId);
+  
+  // Use remote data when in remote mode, local data otherwise
+  const effectiveProjects = isRemote && remoteData.projects.length > 0 ? remoteData.projects : projects;
+  const effectiveTasks = isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : [];
   
   // Search query state - must be defined before useTasks
   const [searchQuery, setSearchQuery] = useState("");
@@ -309,7 +334,7 @@ function AppInner() {
       return (
         <PageErrorBoundary>
           <Board
-            tasks={tasks}
+            tasks={isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks}
             projectId={currentProject?.id}
             maxConcurrent={maxConcurrent}
             onMoveTask={moveTask}
@@ -344,7 +369,7 @@ function AppInner() {
     return (
       <PageErrorBoundary>
         <ListView
-          tasks={tasks}
+          tasks={isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks}
           projectId={currentProject?.id}
           onMoveTask={moveTask}
           onOpenDetail={modalManager.openDetailTask}
@@ -405,12 +430,23 @@ function AppInner() {
         onChangeView={viewMode === "project" && currentProject ? handleTaskViewChange : undefined}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
-        projects={projects}
+        projects={effectiveProjects}
         currentProject={currentProject}
         onSelectProject={handleSelectProject}
         onViewAllProjects={handleViewAllProjects}
         projectId={currentProject?.id}
         mobileNavEnabled={isMobile}
+        // Node switching props
+        availableNodes={nodes}
+        currentNode={currentNode}
+        onSelectNode={(node) => {
+          if (node === null) {
+            clearCurrentNode();
+          } else {
+            setCurrentNode(node);
+          }
+        }}
+        isRemote={isRemote}
       />
       {viewMode === "project" && currentProject && !nodesOpen && (
         <SessionNotificationBanner
@@ -427,7 +463,7 @@ function AppInner() {
       </div>
       {viewMode === "project" && currentProject && !nodesOpen && (
         <ExecutorStatusBar
-          tasks={tasks}
+          tasks={isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks}
           projectId={currentProject.id}
           taskStuckTimeoutMs={taskStuckTimeoutMs}
           backgroundSessions={bgSessions}
@@ -492,7 +528,9 @@ function AppInner() {
 export function App() {
   return (
     <ToastProvider>
-      <AppInner />
+      <NodeProvider>
+        <AppInner />
+      </NodeProvider>
     </ToastProvider>
   );
 }

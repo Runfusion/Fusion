@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Server, Workflow, Bot, ChevronLeft, Target, ChevronRight, FileCode, Loader2, Grid3X3, Mail } from "lucide-react";
 import type { ProjectInfo } from "../api";
+import type { NodeConfig } from "@fusion/core";
 import { fetchScripts } from "../api";
 import { ProjectSelector } from "./ProjectSelector";
 import { QuickScriptsDropdown } from "./QuickScriptsDropdown";
+import { NodeStatusIndicator } from "./NodeStatusIndicator";
 import { useViewportMode, type ViewportMode } from "../hooks/useViewportMode";
 
 export { useViewportMode };
@@ -64,6 +66,14 @@ export interface HeaderProps {
   isElectron?: boolean;
   /** When true, the mobile bottom nav bar handles primary navigation and header nav controls are hidden. */
   mobileNavEnabled?: boolean;
+  /** Available nodes for the node selector */
+  availableNodes?: NodeConfig[];
+  /** Currently selected node (null for local) */
+  currentNode?: NodeConfig | null;
+  /** Callback when a node is selected */
+  onSelectNode?: (node: NodeConfig | null) => void;
+  /** Whether the current view is a remote node */
+  isRemote?: boolean;
 }
 
 export function Header({
@@ -100,6 +110,10 @@ export function Header({
   projectId,
   isElectron = false,
   mobileNavEnabled,
+  availableNodes = [],
+  currentNode,
+  onSelectNode,
+  isRemote = false,
 }: HeaderProps) {
   const mode: ViewportMode = useViewportMode();
   const isMobile = mode === "mobile";
@@ -112,6 +126,7 @@ export function Header({
   const [isNonMobileSearchExplicitlyClosed, setIsNonMobileSearchExplicitlyClosed] = useState(false);
   const [isOverflowMenuOpen, setIsOverflowMenuOpen] = useState(false);
   const [isTerminalSubmenuOpen, setIsTerminalSubmenuOpen] = useState(false);
+  const [isNodeSelectorOpen, setIsNodeSelectorOpen] = useState(false);
   const [overflowScripts, setOverflowScripts] = useState<Record<string, string>>({});
   const [overflowScriptsLoading, setOverflowScriptsLoading] = useState(false);
   const overflowButtonRef = useRef<HTMLButtonElement>(null);
@@ -119,6 +134,14 @@ export function Header({
   const mobileSearchRef = useRef<HTMLDivElement>(null);
   const mobileSearchInputRef = useRef<HTMLInputElement>(null);
   const terminalSubmenuOpenRef = useRef(false);
+  const nodeSelectorRef = useRef<HTMLDivElement>(null);
+  
+  // Get remote nodes only (exclude local node type)
+  const remoteNodes = useMemo(() => 
+    availableNodes.filter((node) => node.type === "remote"),
+    [availableNodes]
+  );
+  const showNodeSelector = remoteNodes.length > 0;
 
   // Script entries sorted alphabetically for overflow submenu
   const overflowScriptEntries = useMemo(() => {
@@ -194,6 +217,23 @@ export function Header({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isOverflowMenuOpen]);
 
+  // Close node selector on outside click
+  useEffect(() => {
+    if (!isNodeSelectorOpen) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        nodeSelectorRef.current &&
+        !nodeSelectorRef.current.contains(e.target as Node)
+      ) {
+        setIsNodeSelectorOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isNodeSelectorOpen]);
+
   // Close menus on Escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -204,6 +244,7 @@ export function Header({
         }
         setIsOverflowMenuOpen(false);
         setIsMobileSearchOpen(false);
+        setIsNodeSelectorOpen(false);
       }
     };
 
@@ -308,6 +349,69 @@ export function Header({
             <Grid3X3 size={14} />
             <span>Projects</span>
           </button>
+        )}
+
+        {/* Node selector and status indicator */}
+        {showNodeSelector && (
+          <div className="header-node-selector" ref={nodeSelectorRef}>
+            {/* Node status indicator - always visible */}
+            <NodeStatusIndicator node={currentNode ?? null} showDetails />
+            
+            {/* Node selector dropdown */}
+            <button
+              className={`btn-icon node-selector-trigger${isNodeSelectorOpen ? " node-selector-trigger--open" : ""}`}
+              onClick={() => setIsNodeSelectorOpen((prev) => !prev)}
+              title="Switch node"
+              aria-label="Switch node"
+              aria-expanded={isNodeSelectorOpen}
+              aria-haspopup="listbox"
+              data-testid="node-selector-trigger"
+            >
+              <ChevronRight
+                size={12}
+                className={`node-selector-chevron${isNodeSelectorOpen ? " node-selector-chevron--open" : ""}`}
+              />
+            </button>
+
+            {/* Node selector dropdown menu */}
+            {isNodeSelectorOpen && (
+              <div className="node-selector-dropdown" role="listbox" aria-label="Select node">
+                {/* Local option */}
+                <button
+                  className={`node-selector-option${!isRemote ? " node-selector-option--active" : ""}`}
+                  onClick={() => {
+                    onSelectNode?.(null);
+                    setIsNodeSelectorOpen(false);
+                  }}
+                  role="option"
+                  aria-selected={!isRemote}
+                  data-testid="node-option-local"
+                >
+                  <span className="node-selector-option-dot node-selector-option-dot--local" />
+                  <span className="node-selector-option-label">Local</span>
+                </button>
+
+                {/* Remote nodes */}
+                {remoteNodes.map((node) => (
+                  <button
+                    key={node.id}
+                    className={`node-selector-option${currentNode?.id === node.id ? " node-selector-option--active" : ""}`}
+                    onClick={() => {
+                      onSelectNode?.(node);
+                      setIsNodeSelectorOpen(false);
+                    }}
+                    role="option"
+                    aria-selected={currentNode?.id === node.id}
+                    data-testid={`node-option-${node.id}`}
+                  >
+                    <span className={`node-selector-option-dot node-selector-option-dot--${node.status}`} />
+                    <span className="node-selector-option-label">{node.name}</span>
+                    <span className="node-selector-option-status">{node.status}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         )}
       </div>
 

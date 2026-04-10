@@ -610,6 +610,209 @@ body {
   flex-shrink: 0;
 }
 
+/* Node Selector */
+.header-node-selector {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-right: var(--space-sm);
+}
+
+.node-selector-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.node-selector-trigger:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.node-selector-trigger--open {
+  color: var(--todo);
+  background: var(--card-hover);
+}
+
+.node-selector-chevron {
+  transition: transform var(--transition-fast);
+}
+
+.node-selector-chevron--open {
+  transform: rotate(90deg);
+}
+
+.node-selector-dropdown {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  right: 0;
+  min-width: 180px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-xs);
+  z-index: 100;
+}
+
+.node-selector-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.node-selector-option:hover {
+  background: var(--card-hover);
+}
+
+.node-selector-option--active {
+  background: var(--card);
+  color: var(--todo);
+}
+
+.node-selector-option-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.node-selector-option-dot--local {
+  background: var(--color-success);
+}
+
+.node-selector-option-dot--online {
+  background: var(--color-success);
+}
+
+.node-selector-option-dot--offline {
+  background: var(--color-error);
+}
+
+.node-selector-option-dot--connecting {
+  background: var(--triage);
+  animation: node-connecting-pulse 1s ease-in-out infinite;
+}
+
+.node-selector-option-dot--error {
+  background: var(--color-error);
+}
+
+@keyframes node-connecting-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.node-selector-option-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-selector-option-status {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: capitalize;
+}
+
+/* Node Status Indicator */
+.node-status-indicator {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 2px var(--space-sm);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+
+.node-status-indicator--local {
+  background: var(--state-active-bg);
+  color: var(--state-active-text);
+}
+
+.node-status-indicator--remote {
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.node-status-indicator__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.node-status-indicator__dot--online {
+  background: var(--color-success);
+}
+
+.node-status-indicator__dot--offline {
+  background: var(--color-error);
+}
+
+.node-status-indicator__dot--connecting {
+  background: var(--triage);
+  animation: node-connecting-pulse 1s ease-in-out infinite;
+}
+
+.node-status-indicator__dot--error {
+  background: var(--color-error);
+}
+
+.node-status-indicator__spinner {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--triage);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.node-status-indicator__label {
+  font-weight: 500;
+}
+
+.node-status-indicator__name {
+  font-weight: 500;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-status-indicator__details {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: capitalize;
+}
+
 /* View Toggle */
 .view-toggle {
   display: flex;

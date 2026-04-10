@@ -68,6 +68,40 @@ vi.mock("../../hooks/useTasks", () => ({
   useTasks: () => mockUseTasks(),
 }));
 
+// Mock useRemoteNodeData
+vi.mock("../../hooks/useRemoteNodeData", () => ({
+  useRemoteNodeData: vi.fn(() => ({
+    projects: [],
+    tasks: [],
+    health: null,
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+  })),
+}));
+
+// Mock useRemoteNodeEvents
+vi.mock("../../hooks/useRemoteNodeEvents", () => ({
+  useRemoteNodeEvents: vi.fn(() => ({
+    isConnected: false,
+    lastEvent: null,
+  })),
+}));
+
+// Mock NodeContext - default to local mode
+const mockNodeContextValue = {
+  currentNode: null,
+  currentNodeId: null,
+  isRemote: false,
+  setCurrentNode: vi.fn(),
+  clearCurrentNode: vi.fn(),
+};
+
+vi.mock("../../context/NodeContext", () => ({
+  NodeProvider: ({ children }: { children: React.ReactNode }) => children,
+  useNodeContext: vi.fn(() => mockNodeContextValue),
+}));
+
 // Mock state holders for dynamic mocking
 const mockProjectsState = {
   projects: [] as any[],
@@ -116,6 +150,20 @@ vi.mock("../../hooks/useTerminal", () => ({
   }),
 }));
 
+// Mock useNodes for node selector
+vi.mock("../../hooks/useNodes", () => ({
+  useNodes: vi.fn(() => ({
+    nodes: [],
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+    register: vi.fn(),
+    update: vi.fn(),
+    unregister: vi.fn(),
+    healthCheck: vi.fn(),
+  })),
+}));
+
 import { App } from "../../App";
 import { fetchAuthStatus, fetchSettings, fetchGlobalSettings, fetchTaskDetail, updateSettings, runScript, fetchScripts } from "../../api";
 
@@ -141,6 +189,14 @@ beforeEach(() => {
   mockCurrentProjectState.currentProject = { id: DEFAULT_PROJECT_ID, name: "Test Project", path: "/test", status: "active", isolationMode: "in-process", createdAt: "", updatedAt: "" };
   mockCurrentProjectState.setCurrentProject.mockClear();
   mockCurrentProjectState.clearCurrentProject.mockClear();
+  // Reset node context mocks
+  mockNodeContextValue.currentNode = null;
+  mockNodeContextValue.currentNodeId = null;
+  mockNodeContextValue.isRemote = false;
+  mockNodeContextValue.setCurrentNode.mockClear();
+  mockNodeContextValue.clearCurrentNode.mockClear();
+  // Clear node selection from localStorage to avoid cross-test leakage
+  localStorage.removeItem("fusion-dashboard-current-node");
 });
 
 describe("App deep link handling", () => {
@@ -1423,6 +1479,259 @@ describe("App footer-safe project layout", () => {
       expect(board).toBeTruthy();
       // Verify the board is a descendant of the wrapper (not a sibling)
       expect(wrapper?.contains(board!)).toBe(true);
+    });
+  });
+});
+
+describe("App node mode switching", () => {
+  it("does not render node selector when no remote nodes are available", async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(fetchSettings).toHaveBeenCalled();
+    });
+
+    // Wait for initial load to complete
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+
+    // Node selector should not be visible when no remote nodes available
+    expect(screen.queryByTestId("node-selector-trigger")).toBeNull();
+  });
+
+  it("renders node selector trigger when remote nodes are available", async () => {
+    // Get the mocked useNodes and set up the return value
+    const { useNodes } = await import("../../hooks/useNodes");
+    vi.mocked(useNodes).mockReturnValue({
+      nodes: [
+        {
+          id: "node_remote_1",
+          name: "Remote Node 1",
+          type: "remote" as const,
+          url: "http://remote:4040",
+          status: "online" as const,
+          maxConcurrent: 2,
+          createdAt: "",
+          updatedAt: "",
+        },
+      ],
+      loading: false,
+      error: null,
+      refresh: vi.fn(),
+      register: vi.fn(),
+      update: vi.fn(),
+      unregister: vi.fn(),
+      healthCheck: vi.fn(),
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(fetchSettings).toHaveBeenCalled();
+    });
+
+    // Wait for initial load to complete
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+
+    // Node selector trigger should be visible when remote nodes available
+    expect(screen.getByTestId("node-selector-trigger")).toBeInTheDocument();
+  });
+
+  it("shows remote node name when remote node is selected", async () => {
+    // Get the mocked useNodes and set up the return value
+    const { useNodes } = await import("../../hooks/useNodes");
+    vi.mocked(useNodes).mockReturnValue({
+      nodes: [
+        {
+          id: "node_remote_1",
+          name: "Remote Node 1",
+          type: "remote" as const,
+          url: "http://remote:4040",
+          status: "online" as const,
+          maxConcurrent: 2,
+          createdAt: "",
+          updatedAt: "",
+        },
+      ],
+      loading: false,
+      error: null,
+      refresh: vi.fn(),
+      register: vi.fn(),
+      update: vi.fn(),
+      unregister: vi.fn(),
+      healthCheck: vi.fn(),
+    });
+
+    // Mock node context to return remote node
+    mockNodeContextValue.currentNode = {
+      id: "node_remote_1",
+      name: "Remote Node 1",
+      type: "remote",
+      url: "http://remote:4040",
+      status: "online",
+      maxConcurrent: 2,
+      createdAt: "",
+      updatedAt: "",
+    };
+    mockNodeContextValue.currentNodeId = "node_remote_1";
+    mockNodeContextValue.isRemote = true;
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(fetchSettings).toHaveBeenCalled();
+    });
+
+    // Wait for initial load to complete
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+
+    // Should show remote node name
+    await waitFor(() => {
+      expect(screen.getByText("Remote Node 1")).toBeInTheDocument();
+    });
+  });
+
+  it("calls clearCurrentNode when Local option is selected", async () => {
+    // Get the mocked useNodes and set up the return value
+    const { useNodes } = await import("../../hooks/useNodes");
+    vi.mocked(useNodes).mockReturnValue({
+      nodes: [
+        {
+          id: "node_remote_1",
+          name: "Remote Node 1",
+          type: "remote" as const,
+          url: "http://remote:4040",
+          status: "online" as const,
+          maxConcurrent: 2,
+          createdAt: "",
+          updatedAt: "",
+        },
+      ],
+      loading: false,
+      error: null,
+      refresh: vi.fn(),
+      register: vi.fn(),
+      update: vi.fn(),
+      unregister: vi.fn(),
+      healthCheck: vi.fn(),
+    });
+
+    // Mock node context to return remote node
+    mockNodeContextValue.currentNode = {
+      id: "node_remote_1",
+      name: "Remote Node 1",
+      type: "remote",
+      url: "http://remote:4040",
+      status: "online",
+      maxConcurrent: 2,
+      createdAt: "",
+      updatedAt: "",
+    };
+    mockNodeContextValue.currentNodeId = "node_remote_1";
+    mockNodeContextValue.isRemote = true;
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(fetchSettings).toHaveBeenCalled();
+    });
+
+    // Wait for initial load to complete
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Remote Node 1")).toBeInTheDocument();
+    });
+
+    // Open the node selector
+    fireEvent.click(screen.getByTestId("node-selector-trigger"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("node-option-local")).toBeInTheDocument();
+    });
+
+    // Click Local option
+    fireEvent.click(screen.getByTestId("node-option-local"));
+
+    await waitFor(() => {
+      expect(mockNodeContextValue.clearCurrentNode).toHaveBeenCalled();
+    });
+  });
+
+  it("calls setCurrentNode when a remote node is selected", async () => {
+    // Get the mocked useNodes and set up the return value
+    const { useNodes } = await import("../../hooks/useNodes");
+    vi.mocked(useNodes).mockReturnValue({
+      nodes: [
+        {
+          id: "node_remote_1",
+          name: "Remote Node 1",
+          type: "remote" as const,
+          url: "http://remote:4040",
+          status: "online" as const,
+          maxConcurrent: 2,
+          createdAt: "",
+          updatedAt: "",
+        },
+        {
+          id: "node_remote_2",
+          name: "Remote Node 2",
+          type: "remote" as const,
+          url: "http://remote2:4040",
+          status: "offline" as const,
+          maxConcurrent: 2,
+          createdAt: "",
+          updatedAt: "",
+        },
+      ],
+      loading: false,
+      error: null,
+      refresh: vi.fn(),
+      register: vi.fn(),
+      update: vi.fn(),
+      unregister: vi.fn(),
+      healthCheck: vi.fn(),
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(fetchSettings).toHaveBeenCalled();
+    });
+
+    // Wait for initial load to complete
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+
+    // Open the node selector
+    fireEvent.click(screen.getByTestId("node-selector-trigger"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("node-option-node_remote_2")).toBeInTheDocument();
+    });
+
+    // Click the second remote node
+    fireEvent.click(screen.getByTestId("node-option-node_remote_2"));
+
+    await waitFor(() => {
+      expect(mockNodeContextValue.setCurrentNode).toHaveBeenCalledWith({
+        id: "node_remote_2",
+        name: "Remote Node 2",
+        type: "remote",
+        url: "http://remote2:4040",
+        status: "offline",
+        maxConcurrent: 2,
+        createdAt: "",
+        updatedAt: "",
+      });
     });
   });
 });

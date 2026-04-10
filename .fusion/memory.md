@@ -5,7 +5,6 @@
 - `TaskExecutor` terminates active agent sessions (single and step) when tasks are moved away from `in-progress` via the `task:moved` event handler. This prevents zombie sessions when users manually send tasks back to todo/triage from the board UI.
 - **Review Handoff (FN-1259)**: Agents can hand off tasks to users for human review via steering comments containing handoff phrases ("send it back to me", "hand off to user", etc.). When `reviewHandoffPolicy` is `"comment-triggered"`, the executor detects handoff intent in agent-authored steering comments and executes the handoff: sets `status: "awaiting-user-review"`, `assigneeUserId: "requesting-user"`, moves task to `in-review`, and disposes the agent session. The merger skips tasks with `"awaiting-user-review"` status (via `BLOCKING_TASK_STATUSES` in `task-merge.ts`). Users can accept review (clear status) or return to agent (move to todo). The `assigneeUserId` field stores the user ID who should review the task.
 - Agent preset templates in `NewAgentDialog.tsx` are a UI-only concept (`AgentPreset` interface), separate from the engine's `AgentPromptTemplate` type. Presets populate agent creation fields (name, icon, role, soul, instructionsText) but don't map to engine types.
-- Agent preset templates in `NewAgentDialog.tsx` are a UI-only concept (`AgentPreset` interface), separate from the engine's `AgentPromptTemplate` type. Presets populate agent creation fields (name, icon, role, soul, instructionsText) but don't map to engine types.
 - `soul` and `instructionsText` are already supported in `AgentCreateInput` and `AgentUpdateInput` — no API changes needed when adding these to presets.
 - `CronRunner` uses dependency injection for AI prompt execution: an `AiPromptExecutor` function is injected via options. This keeps it decoupled from `createKbAgent` and testable without real agent sessions.
 - `createAiPromptExecutor(cwd)` is an async factory function that creates a new agent session per call, uses `onText` for text accumulation, and disposes sessions in a `finally` block.
@@ -287,3 +286,15 @@ The `@fusion/tui` package provides Ink-based React components for terminal UI.
 
 - Kimi usage endpoint uses `/v1/coding_plan/usage` (underscore) as the primary endpoint — this is the Codexbar-validated working endpoint. The hyphen variant (`/v1/coding-plan/usage`) is a legacy fallback that may return 404 `url.not_found` for some accounts.
 - When implementing endpoint fallbacks for API providers, test the fallback logic with extra fields in the error payload (e.g., `{"code":5,"error":"url.not_found","message":"没找到对象",...}`) to ensure the fallback trigger remains robust.
+## FN-1516: Periodic Auto-Merge Sweep
+
+- The `canAutoMergeTask()` function must be defined locally inside `runDashboard()` to work correctly with Vitest mocks. Module-level exports capture the real `getTaskMergeBlocker` at import time, before mocks are applied.
+- When importing shared utilities from dashboard.ts in serve.ts, ensure both files define compatible predicates (same `mergeRetries` limit check).
+- Periodic sweep tests using `vi.useFakeTimers()` must be isolated in their own test file or properly reset timers to avoid affecting subsequent tests.
+
+## FN-1408: Node Provider and Remote Node Status
+
+- When adding node context (`NodeProvider`, `useNodeContext`) to the App shell, update mocks in `App.test.tsx` for `useNodes`, `useRemoteNodeData`, `useRemoteNodeEvents`, and the `NodeContext` module.
+- Clear `fusion-dashboard-current-node` from localStorage in test `beforeEach` to avoid cross-test leakage.
+- Use `mockReturnValue` (not `mockReturnValueOnce`) for repeated mocks in tests with dynamic imports.
+- Add `await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); })` in tests that wait for App initial load to complete before interacting with Header components.
