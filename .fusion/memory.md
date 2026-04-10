@@ -549,3 +549,34 @@ Key learnings from adding integration test coverage for run-audit:
 - When moving functions to new modules, update test imports accordingly
 - The serve test mocks `./task-lifecycle.js` and `./port-prompt.js` (not dashboard.js)
 - The dashboard test imports helpers from `./task-lifecycle.js` and `runDashboard` from `./dashboard.js`
+
+## FN-1269: Routine Engine Integration
+
+The Routine Engine Integration adds scheduled, webhook-triggered, and manual routine execution via the heartbeat system:
+
+**Key components:**
+- `RoutineRunner` (`packages/engine/src/routine-runner.ts`) — Executes routines via heartbeat with concurrency policy enforcement (allow/skip/replace/queue)
+- `RoutineScheduler` (`packages/engine/src/routine-scheduler.ts`) — Polls for due routines and triggers execution via RoutineRunner
+- API endpoints: `POST /api/routines/:id/trigger` (manual), `POST /api/routines/:id/webhook` (webhook with HMAC-SHA256 verification)
+
+**Concurrency policies:**
+- `allow` — Run immediately regardless of existing executions
+- `skip` — Return failed result without calling heartbeat if already running
+- `replace` — Cancel existing execution, then run new one
+- `queue` — Wait for existing execution to complete, then run
+
+**Catch-up policy:**
+- `skip` — Update `lastTriggeredAt` without additional executions
+- `catchUp` — Execute missed intervals up to 10 max (prevents runaway catch-up)
+
+**HMAC signature verification pattern for routine webhooks:**
+```typescript
+import { createHmac, timingSafeEqual } from "node:crypto";
+const signature = `sha256=${createHmac("sha256", secret).update(rawBody).digest("hex")}`;
+const isValid = timingSafeEqual(Buffer.from(signature), Buffer.from(req.headers["x-webhook-signature"]));
+```
+
+**InProcessRuntime lifecycle integration:**
+- RoutineScheduler initialized after HeartbeatMonitor/TriggerScheduler
+- Graceful degradation if RoutineStore not available (FN-1519 types incomplete)
+- `getRoutineScheduler()` and `getRoutineRunner()` getters for testing access

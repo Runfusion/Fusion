@@ -177,7 +177,7 @@ If there are merge conflicts:
   "agent-generation-system": {
     key: "agent-generation-system",
     name: "Agent Generation System",
-    roles: [],
+    roles: ["executor"],
     description: "System prompt for the AI agent that generates agent specifications from role descriptions",
     defaultContent: `You are an agent specification generator for the fn task board system.
 
@@ -234,7 +234,7 @@ You MUST respond with ONLY valid JSON (no markdown, no explanation):
   "workflow-step-refine": {
     key: "workflow-step-refine",
     name: "Workflow Step Refine",
-    roles: [],
+    roles: ["executor"],
     description: "System prompt for refining workflow step descriptions into detailed agent prompts",
     defaultContent: `You are an expert at creating detailed agent prompts for workflow steps.
 
