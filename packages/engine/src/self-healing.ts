@@ -95,6 +95,20 @@ export class SelfHealingManager {
     log.log("Started");
   }
 
+  /**
+   * Run only the recovery subset needed at runtime startup, after the executor
+   * has had a chance to resume orphaned sessions.
+   *
+   * This avoids waiting for the periodic maintenance interval before fixing
+   * stale in-progress/specifying tasks that no longer have a live worker.
+   */
+  async runStartupRecovery(): Promise<void> {
+    await this.recoverCompletedTasks();
+    await this.recoverMisclassifiedFailures();
+    await this.recoverOrphanedExecutions();
+    await this.recoverApprovedTriageTasks();
+  }
+
   stop(): void {
     // Remove settings listener
     if (this.settingsListener) {

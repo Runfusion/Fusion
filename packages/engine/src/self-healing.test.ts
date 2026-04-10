@@ -320,6 +320,20 @@ describe("SelfHealingManager", () => {
       await vi.advanceTimersByTimeAsync(200);
       expect(store.updateSettings).not.toHaveBeenCalled();
     });
+
+    it("runStartupRecovery invokes the startup recovery subset", async () => {
+      const recoverCompletedTasks = vi.spyOn(manager, "recoverCompletedTasks").mockResolvedValue(1);
+      const recoverMisclassifiedFailures = vi.spyOn(manager, "recoverMisclassifiedFailures").mockResolvedValue(1);
+      const recoverOrphanedExecutions = vi.spyOn(manager, "recoverOrphanedExecutions").mockResolvedValue(1);
+      const recoverApprovedTriageTasks = vi.spyOn(manager, "recoverApprovedTriageTasks").mockResolvedValue(1);
+
+      await manager.runStartupRecovery();
+
+      expect(recoverCompletedTasks).toHaveBeenCalledTimes(1);
+      expect(recoverMisclassifiedFailures).toHaveBeenCalledTimes(1);
+      expect(recoverOrphanedExecutions).toHaveBeenCalledTimes(1);
+      expect(recoverApprovedTriageTasks).toHaveBeenCalledTimes(1);
+    });
   });
 
   // ── cleanupOrphanedBranches ────────────────────────────────────────

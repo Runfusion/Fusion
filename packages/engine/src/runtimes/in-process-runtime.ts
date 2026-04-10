@@ -360,6 +360,12 @@ export class InProcessRuntime
       // 9. Resume orphaned in-progress tasks
       await this.executor.resumeOrphaned();
 
+      // Some "stuck" tasks are already orphaned by the time the runtime boots:
+      // they no longer have a tracked session/worktree, so the stuck detector
+      // cannot recover them. Delegate the startup recovery pass to
+      // SelfHealingManager so the policy lives in one place.
+      await this.selfHealingManager.runStartupRecovery();
+
       // 10. Start scheduler
       this.scheduler.start();
 

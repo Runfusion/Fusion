@@ -8,11 +8,13 @@ const {
   mockSelfHealingStart,
   mockSelfHealingStop,
   mockSelfHealingCtor,
+  mockRunStartupRecovery,
   mockExecutorCtor,
 } = vi.hoisted(() => ({
   mockSelfHealingStart: vi.fn(),
   mockSelfHealingStop: vi.fn(),
   mockSelfHealingCtor: vi.fn(),
+  mockRunStartupRecovery: vi.fn().mockResolvedValue(undefined),
   mockExecutorCtor: vi.fn(),
 }));
 
@@ -92,6 +94,7 @@ vi.mock("../self-healing.js", async () => {
       return {
         start: mockSelfHealingStart,
         stop: mockSelfHealingStop,
+        runStartupRecovery: mockRunStartupRecovery,
       };
     }),
   };
@@ -182,6 +185,12 @@ describe("InProcessRuntime", () => {
         }),
       );
       expect(mockSelfHealingStart).toHaveBeenCalled();
+    }, 30000);
+
+    it("runs self-healing startup recovery immediately after orphan resume on startup", async () => {
+      await runtime.start();
+
+      expect(mockRunStartupRecovery).toHaveBeenCalledTimes(1);
     }, 30000);
 
     it("creates a stuck task detector and passes it to the executor", async () => {
