@@ -13,6 +13,7 @@ import {
   Lightbulb,
   Loader2,
   Mail,
+  MessageSquare,
   MoreHorizontal,
   Play,
   Settings,
@@ -25,9 +26,9 @@ import { useViewportMode } from "./Header";
 
 export interface MobileNavBarProps {
   /** Current task view mode */
-  view: "board" | "list" | "agents" | "missions";
+  view: "board" | "list" | "agents" | "missions" | "chat";
   /** Change task view handler */
-  onChangeView: (view: "board" | "list" | "agents" | "missions") => void;
+  onChangeView: (view: "board" | "list" | "agents" | "missions" | "chat") => void;
   /** Whether the ExecutorStatusBar footer is visible */
   footerVisible: boolean;
   /** Whether any full-screen modal is currently open (hides the tab bar) */
@@ -210,6 +211,18 @@ export function MobileNavBar({
         >
           <Target />
           <span className="mobile-nav-tab-label">Missions</span>
+        </button>
+
+        <button
+          type="button"
+          className={`mobile-nav-tab${view === "chat" ? " mobile-nav-tab--active" : ""}`}
+          data-testid="mobile-nav-tab-chat"
+          role="tab"
+          aria-selected={view === "chat"}
+          onClick={() => onChangeView("chat")}
+        >
+          <MessageSquare />
+          <span className="mobile-nav-tab-label">Chat</span>
         </button>
 
         <button

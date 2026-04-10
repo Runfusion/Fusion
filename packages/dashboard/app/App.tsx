@@ -7,6 +7,7 @@ import { ProjectOverview } from "./components/ProjectOverview";
 import { AgentsView } from "./components/AgentsView";
 import { MissionManager } from "./components/MissionManager";
 import { NodesView } from "./components/NodesView";
+import { ChatView } from "./components/ChatView";
 import { PageErrorBoundary } from "./components/ErrorBoundary";
 import { AppModals } from "./components/AppModals";
 import { DashboardLoader, type DashboardLoaderStage } from "./components/DashboardLoader";
@@ -297,6 +298,14 @@ function AppInner() {
     }
 
     // Project view
+    if (taskView === "chat") {
+      return (
+        <PageErrorBoundary>
+          <ChatView addToast={addToast} projectId={currentProject?.id} />
+        </PageErrorBoundary>
+      );
+    }
+
     if (taskView === "missions") {
       return (
         <PageErrorBoundary>
@@ -497,7 +506,7 @@ function AppInner() {
         onRunScript={modalManager.runScript}
         projectId={currentProject?.id}
       />
-      {viewMode === "project" && currentProject && (
+      {viewMode === "project" && currentProject && taskView !== "chat" && (
         <QuickChatFAB projectId={currentProject.id} addToast={addToast} />
       )}
       <AppModals

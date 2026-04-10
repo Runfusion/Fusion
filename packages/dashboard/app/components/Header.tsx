@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Server, Workflow, Bot, ChevronLeft, Target, ChevronRight, FileCode, Loader2, Grid3X3, Mail } from "lucide-react";
+import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Server, Workflow, Bot, ChevronLeft, Target, ChevronRight, FileCode, Loader2, Grid3X3, Mail, MessageSquare } from "lucide-react";
 import type { ProjectInfo } from "../api";
 import type { NodeConfig } from "@fusion/core";
 import { fetchScripts } from "../api";
@@ -53,8 +53,8 @@ export interface HeaderProps {
   enginePaused?: boolean;
   onToggleGlobalPause?: () => void;
   onToggleEnginePause?: () => void;
-  view?: "board" | "list" | "agents" | "missions";
-  onChangeView?: (view: "board" | "list" | "agents" | "missions") => void;
+  view?: "board" | "list" | "agents" | "missions" | "chat";
+  onChangeView?: (view: "board" | "list" | "agents" | "missions" | "chat") => void;
   searchQuery?: string;
   onSearchChange?: (query: string) => void;
   /** Multi-project props */
@@ -493,6 +493,15 @@ export function Header({
               aria-pressed={view === "missions"}
             >
               <Target size={16} />
+            </button>
+            <button
+              className={`view-toggle-btn${view === "chat" ? " active" : ""}`}
+              onClick={() => onChangeView("chat")}
+              title="Chat view"
+              aria-label="Chat view"
+              aria-pressed={view === "chat"}
+            >
+              <MessageSquare size={16} />
             </button>
           </div>
         )}

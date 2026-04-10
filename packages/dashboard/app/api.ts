@@ -35,6 +35,8 @@ import type {
   AgentRating,
   AgentRatingSummary,
   AgentRatingInput,
+  ChatSession,
+  ChatMessage,
 } from "@fusion/core";
 import type { PlanningQuestion, PlanningSummary, PlanningResponse } from "@fusion/core";
 import type { ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, AutomationStep } from "@fusion/core";
@@ -3880,4 +3882,222 @@ export async function reloadPlugin(id: string, projectId?: string): Promise<Plug
   return api<PluginInstallation>(withProjectId(`/plugins/${encodeURIComponent(id)}/reload`, projectId), {
     method: "POST",
   });
+}
+
+// ── Chat API ─────────────────────────────────────────────────────────────────
+
+export interface ChatSessionListResponse {
+  sessions: ChatSession[];
+}
+
+export interface ChatSessionResponse {
+  session: ChatSession;
+}
+
+export interface ChatMessageListResponse {
+  messages: ChatMessage[];
+}
+
+/** Fetch all chat sessions for a project */
+export function fetchChatSessions(projectId?: string, status?: string): Promise<ChatSessionListResponse> {
+  const search = new URLSearchParams();
+  if (projectId) search.set("projectId", projectId);
+  if (status) search.set("status", status);
+  const qs = search.toString();
+  return api<ChatSessionListResponse>(`/chat/sessions${qs ? `?${qs}` : ""}`);
+}
+
+/** Create a new chat session */
+export function createChatSession(
+  input: { agentId: string; title?: string; modelProvider?: string; modelId?: string },
+  projectId?: string,
+): Promise<ChatSessionResponse> {
+  return api<ChatSessionResponse>(withProjectId("/chat/sessions", projectId), {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+/** Fetch a single chat session */
+export function fetchChatSession(id: string, projectId?: string): Promise<ChatSessionResponse> {
+  return api<ChatSessionResponse>(withProjectId(`/chat/sessions/${encodeURIComponent(id)}`, projectId));
+}
+
+/** Update a chat session (title, status) */
+export function updateChatSession(
+  id: string,
+  updates: { title?: string; status?: string },
+  projectId?: string,
+): Promise<ChatSessionResponse> {
+  return api<ChatSessionResponse>(withProjectId(`/chat/sessions/${encodeURIComponent(id)}`, projectId), {
+    method: "PATCH",
+    body: JSON.stringify(updates),
+  });
+}
+
+/** Delete a chat session */
+export function deleteChatSession(id: string, projectId?: string): Promise<{ success: boolean }> {
+  return api<{ success: boolean }>(withProjectId(`/chat/sessions/${encodeURIComponent(id)}`, projectId), {
+    method: "DELETE",
+  });
+}
+
+/** Fetch messages for a chat session */
+export function fetchChatMessages(
+  sessionId: string,
+  opts?: { limit?: number; offset?: number; before?: string },
+  projectId?: string,
+): Promise<ChatMessageListResponse> {
+  const search = new URLSearchParams();
+  if (opts?.limit !== undefined) search.set("limit", String(opts.limit));
+  if (opts?.offset !== undefined) search.set("offset", String(opts.offset));
+  if (opts?.before) search.set("before", opts.before);
+  const qs = search.toString();
+  return api<ChatMessageListResponse>(
+    withProjectId(`/chat/sessions/${encodeURIComponent(sessionId)}/messages${qs ? `?${qs}` : ""}`, projectId),
+  );
+}
+
+/** Delete a specific message from a chat session */
+export function deleteChatMessage(
+  sessionId: string,
+  messageId: string,
+  projectId?: string,
+): Promise<{ success: boolean }> {
+  return api<{ success: boolean }>(
+    withProjectId(`/chat/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`, projectId),
+    {
+      method: "DELETE",
+    },
+  );
+}
+
+/** Send a chat message and receive the AI response via SSE streaming.
+ *
+ *  The backend exposes `POST /api/chat/sessions/:id/messages` which returns an SSE
+ *  stream (not JSON). Events: `thinking`, `text`, `done`, `error`.
+ *
+ *  Since `EventSource` only supports GET requests, this function uses `fetch()`
+ *  with a ReadableStream to parse SSE events from the POST response body.
+ */
+export function streamChatResponse(
+  sessionId: string,
+  content: string,
+  handlers: {
+    onThinking?: (data: string) => void;
+    onText?: (data: string) => void;
+    onDone?: (data: { messageId: string }) => void;
+    onError?: (data: string) => void;
+    onConnectionStateChange?: (state: StreamConnectionState) => void;
+  },
+  projectId?: string,
+  _options?: { maxReconnectAttempts?: number },
+): { close: () => void; isConnected: () => boolean } {
+  const url = buildApiUrl(withProjectId(`/chat/sessions/${encodeURIComponent(sessionId)}/messages`, projectId));
+
+  let abortController = new AbortController();
+  let closedByUser = false;
+
+  // Start streaming via POST
+  (async () => {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content }),
+        signal: abortController.signal,
+      });
+
+      if (!res.ok) {
+        const errorBody = await res.text();
+        let errorMsg = `Request failed: ${res.status}`;
+        try {
+          const parsed = JSON.parse(errorBody);
+          errorMsg = parsed.error || errorMsg;
+        } catch { /* use default */ }
+        handlers.onError?.(errorMsg);
+        return;
+      }
+
+      if (!res.body) {
+        handlers.onError?.("No response body");
+        return;
+      }
+
+      handlers.onConnectionStateChange?.("connected");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        let currentEvent = "";
+        let currentData = "";
+
+        for (const line of lines) {
+          if (line.startsWith("event: ")) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith("data: ")) {
+            currentData = line.slice(6);
+          } else if (line === "") {
+            // End of event
+            if (currentEvent && currentData) {
+              switch (currentEvent) {
+                case "thinking":
+                  try {
+                    handlers.onThinking?.(JSON.parse(currentData));
+                  } catch {
+                    handlers.onThinking?.(currentData);
+                  }
+                  break;
+                case "text":
+                  try {
+                    handlers.onText?.(JSON.parse(currentData));
+                  } catch {
+                    handlers.onText?.(currentData);
+                  }
+                  break;
+                case "done":
+                  try {
+                    handlers.onDone?.(JSON.parse(currentData));
+                  } catch {
+                    handlers.onDone?.({ messageId: "" });
+                  }
+                  break;
+                case "error":
+                  try {
+                    const parsed = JSON.parse(currentData);
+                    handlers.onError?.(parsed.message || parsed);
+                  } catch {
+                    handlers.onError?.(currentData || "Stream error");
+                  }
+                  break;
+              }
+            }
+            currentEvent = "";
+            currentData = "";
+          }
+        }
+      }
+    } catch (err: unknown) {
+      if (closedByUser) return;
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      handlers.onError?.(err instanceof Error ? err.message : "Connection error");
+    }
+  })();
+
+  return {
+    close: () => {
+      closedByUser = true;
+      abortController.abort();
+    },
+    isConnected: () => !closedByUser,
+  };
 }
