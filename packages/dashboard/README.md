@@ -744,6 +744,53 @@ The dashboard exposes run-audit retrieval and correlation endpoints for inspecti
 - `POST /api/auth/login` - Initiate OAuth login
 - `POST /api/auth/logout` - Logout from provider
 
+### Plugins
+Plugin management endpoints with multi-project scoping support via `projectId` query/body parameter.
+
+#### Plugin Listing
+- `GET /api/plugins` - List all installed plugins
+  - Query: `projectId?` (scope to project), `enabled?` (filter by enabled status)
+  - Response: `PluginInstallation[]`
+
+- `GET /api/plugins/:id` - Get a single plugin by ID
+  - Query: `projectId?` (scope to project)
+  - Response: `PluginInstallation`
+  - Error: `404` if plugin not found
+
+#### Plugin Registration (mode: register)
+- `POST /api/plugins` - Register a new plugin with explicit manifest
+  - Body: `{ mode: "register", id, name, version, path, description?, author?, homepage?, dependencies?, settingsSchema?, settings? }`
+  - Query/Body: `projectId?` (scope to project)
+  - Response: `201` with `PluginInstallation`
+  - Errors: `400` validation, `409` conflict (already registered)
+
+#### Plugin Installation (mode: install)
+- `POST /api/plugins` - Install plugin from local path (loads manifest automatically)
+  - Body: `{ mode: "install", path }`
+  - Query/Body: `projectId?` (scope to project)
+  - Response: `201` with `PluginInstallation`
+  - Errors: `400` install not supported, `404` manifest not found, `400` invalid manifest, `409` conflict
+
+#### Plugin Lifecycle
+- `POST /api/plugins/:id/enable` - Enable and start a plugin
+  - Body: `{ projectId? }`
+  - Response: Updated `PluginInstallation`
+
+- `POST /api/plugins/:id/disable` - Disable and stop a plugin
+  - Body: `{ projectId? }`
+  - Response: Updated `PluginInstallation`
+
+#### Plugin Settings
+- `PATCH /api/plugins/:id/settings` - Update plugin settings
+  - Body: `{ settings: Record<string, unknown>, projectId? }`
+  - Response: Updated `PluginInstallation`
+  - Errors: `400` validation, `404` not found
+
+#### Plugin Uninstall
+- `DELETE /api/plugins/:id` - Uninstall a plugin
+  - Query: `projectId?` (scope to project)
+  - Response: `204` No Content
+
 ## Architecture
 
 - **Frontend**: React + Vite, TypeScript, xterm.js for terminal emulation, CSS custom properties for theming

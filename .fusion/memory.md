@@ -25,6 +25,12 @@
 - Dashboard SSE clients (planning/subtask/mission interview) now use a shared keep-alive pattern: start a 25s `setInterval` in stream `onOpen` that `POST`s `/api/ai-sessions/:id/ping`, and always stop it on stream `close`, `complete`, and fatal errors.
 - **Peer Gossip Protocol (FN-1224)**: Nodes exchange peer information via `POST /api/mesh/sync` endpoint. `PeerExchangeService` runs periodic sync cycles (default 60s interval) with all online remote nodes. `CentralCore.mergePeers()` handles peer data merging — new peers are registered via `registerGossipPeer()`, stale peers are updated with fresher data, and the local node is never overwritten. The service uses single-flight pattern to prevent overlapping syncs and refreshes local metrics before each sync.
 - **Node Plugin Sync (FN-1246)**: Nodes track version information for plugin synchronization. Central schema v4 adds `versionInfo` and `pluginVersions` columns to the `nodes` table. `getAppVersion()` utility reads from nearest package.json. CentralCore methods: `updateNodeVersionInfo()`, `getNodeVersionInfo()`, `syncPlugins()`, `checkVersionCompatibility()`. Events: `node:version:updated`, `node:plugins:synced`. Key integration points for FN-1247 (API routes, CLI commands).
+- **Plugin Management API Routes (FN-1411)**: Plugin CRUD endpoints implemented in `createApiRoutes` with `getScopedStore(req)` pattern for multi-project support:
+  - **Mode discriminator pattern** for POST /plugins: Deterministic behavior via required `mode` field with `"register"` (explicit manifest) or `"install"` (load from path) values. Missing mode, unknown mode, or ambiguous shapes return 400.
+  - **Error mapping matrix**: Input/validation → 400, not found (ENOENT) → 404, lifecycle conflicts (EEXISTS) → 409, unexpected → 500.
+  - **Project scoping**: All routes support `projectId` in query param or request body. Uses `getScopedStore(req)` which calls `getOrCreateProjectStore(projectId)`.
+  - **Scoping test strategy**: Mock `projectStoreResolver.getOrCreateProjectStore` to return a scoped store with scoped plugin store. Tests verify the scoped store is used and data comes from the scoped plugin store.
+  - **Plugin store access**: Routes use `scopedStore.getPluginStore()` to get the plugin store from the scoped task store, enabling per-project plugin isolation.
 
 ## FN-1354: Auto-Summarize Titles Bug Fix
 

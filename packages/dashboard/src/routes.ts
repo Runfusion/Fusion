@@ -28,7 +28,6 @@ import {
   type BadgeUrlComponents,
 } from "./github-webhooks.js";
 import { createMissionRouter } from "./mission-routes.js";
-import { createPluginRouter } from "./plugin-routes.js";
 import { getOrCreateProjectStore } from "./project-store-resolver.js";
 import { AiSessionStore, SESSION_CLEANUP_DEFAULT_MAX_AGE_MS } from "./ai-session-store.js";
 import { getSession as getPlanningSession, cleanupSession as cleanupPlanningSession } from "./planning.js";
@@ -11178,10 +11177,311 @@ Output ONLY the prompt text (no markdown, no explanations).`;
   router.use("/missions", createMissionRouter(store, options?.missionAutopilot, aiSessionStore));
 
   // ── Plugin Routes ─────────────────────────────────────────────────────────
-  // Mount plugin routes at /api/plugins
-  if (options?.pluginStore && options?.pluginLoader) {
-    router.use("/plugins", createPluginRouter(options.pluginStore, options.pluginLoader, options.pluginRunner));
-  }
+  // Plugin management endpoints with projectId scoping support.
+  // Uses getScopedStore(req) pattern for multi-project support.
+  // Requires pluginStore in options.
+
+  /**
+   * GET /api/plugins
+   * List all installed plugins.
+   * Query: { projectId?: string, enabled?: boolean }
+   */
+  router.get("/plugins", async (req: Request, res: Response) => {
+    const scopedStore = await getScopedStore(req);
+    const pluginStore = scopedStore.getPluginStore();
+
+    const filter: { enabled?: boolean } = {};
+    if (req.query.enabled !== undefined) {
+      filter.enabled = req.query.enabled === "true";
+    }
+
+    const plugins = await pluginStore.listPlugins(filter);
+    res.json(plugins);
+  });
+
+  /**
+   * GET /api/plugins/:id
+   * Get a single plugin by ID.
+   * Query: { projectId?: string }
+   */
+  router.get("/plugins/:id", async (req: Request, res: Response) => {
+    const scopedStore = await getScopedStore(req);
+    const pluginStore = scopedStore.getPluginStore();
+    const id = req.params.id as string;
+
+    try {
+      const plugin = await pluginStore.getPlugin(id);
+      res.json(plugin);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message.includes("not found")) {
+        throw notFound(`Plugin "${id}" not found`);
+      }
+      throw internalError(err instanceof Error ? err.message : "Unknown error");
+    }
+  });
+
+  /**
+   * POST /api/plugins
+   * Create or register a plugin.
+   * Requires `mode` discriminator in body:
+   *   - mode: "register" → body must include { id, name, version, path }, optional { enabled, settings, projectId }
+   *   - mode: "install" → body must include { path }, optional { projectId }
+   * Returns 201 on success, 400 for validation errors, 409 for conflicts.
+   */
+  router.post("/plugins", async (req: Request, res: Response) => {
+    const scopedStore = await getScopedStore(req);
+    const pluginStore = scopedStore.getPluginStore();
+
+    if (!req.body || typeof req.body !== "object") {
+      throw badRequest("Request body is required");
+    }
+
+    const body = req.body as Record<string, unknown>;
+
+    // Validate mode discriminator is present
+    if (!("mode" in body) || typeof body.mode !== "string") {
+      throw badRequest("Request body must have a 'mode' field with value 'register' or 'install'");
+    }
+
+    const mode = body.mode as string;
+
+    if (mode === "register") {
+      // Register mode: requires id, name, version, path
+      if (typeof body.id !== "string" || !body.id.trim()) {
+        throw badRequest("'id' is required for register mode and must be a non-empty string");
+      }
+      if (typeof body.name !== "string" || !body.name.trim()) {
+        throw badRequest("'name' is required for register mode and must be a non-empty string");
+      }
+      if (typeof body.version !== "string" || !body.version.trim()) {
+        throw badRequest("'version' is required for register mode and must be a non-empty string");
+      }
+      if (typeof body.path !== "string" || !body.path.trim()) {
+        throw badRequest("'path' is required for register mode and must be a non-empty string");
+      }
+
+      const manifest: import("@fusion/core").PluginManifest = {
+        id: body.id as string,
+        name: body.name as string,
+        version: body.version as string,
+        description: typeof body.description === "string" ? body.description : undefined,
+        author: typeof body.author === "string" ? body.author : undefined,
+        homepage: typeof body.homepage === "string" ? body.homepage : undefined,
+        dependencies: Array.isArray(body.dependencies) ? (body.dependencies as string[]) : undefined,
+        settingsSchema: typeof body.settingsSchema === "object" && body.settingsSchema !== null
+          ? (body.settingsSchema as Record<string, import("@fusion/core").PluginSettingSchema>)
+          : undefined,
+      };
+
+      const settings = typeof body.settings === "object" && body.settings !== null
+        ? (body.settings as Record<string, unknown>)
+        : undefined;
+
+      // If enabled and loader is available, try to load the plugin
+      let plugin: import("@fusion/core").PluginInstallation;
+      try {
+        plugin = await pluginStore.registerPlugin({
+          manifest,
+          path: body.path as string,
+          settings,
+        });
+
+        if (plugin.enabled && options?.pluginLoader) {
+          try {
+            await options.pluginLoader.loadPlugin(plugin.id);
+          } catch (loadErr) {
+            // Log but don't fail - plugin is registered, just not loaded
+            console.error(`[plugin-routes] Failed to load plugin ${plugin.id}:`, loadErr);
+          }
+        }
+
+        res.status(201).json(plugin);
+      } catch (err: unknown) {
+        if (err instanceof Error && err.message.includes("already registered")) {
+          throw conflict(err.message);
+        }
+        throw internalError(err instanceof Error ? err.message : "Failed to register plugin");
+      }
+    } else if (mode === "install") {
+      // Install mode: requires path, loads manifest from path
+      if (typeof body.path !== "string" || !body.path.trim()) {
+        throw badRequest("'path' is required for install mode and must be a non-empty string");
+      }
+
+      // Check if runtime install interface is available
+      if (!options?.pluginLoader) {
+        throw badRequest("Plugin install mode is not supported: plugin loader not available");
+      }
+
+      const { existsSync } = await import("node:fs");
+      const { join: pathJoin } = await import("node:path");
+      const { readFile } = await import("node:fs/promises");
+      const { validatePluginManifest } = await import("@fusion/core");
+
+      const installPath = body.path as string;
+      const manifestPath = pathJoin(installPath, "manifest.json");
+
+      if (!existsSync(manifestPath)) {
+        throw notFound(`Plugin manifest not found at: ${manifestPath}`);
+      }
+
+      let manifestContent: string;
+      try {
+        manifestContent = await readFile(manifestPath, "utf-8");
+      } catch (readErr) {
+        throw internalError(`Failed to read manifest: ${readErr instanceof Error ? readErr.message : "Unknown error"}`);
+      }
+
+      let manifest: import("@fusion/core").PluginManifest;
+      try {
+        manifest = JSON.parse(manifestContent);
+      } catch {
+        throw badRequest("Plugin manifest is not valid JSON");
+      }
+
+      // Validate manifest
+      const validation = validatePluginManifest(manifest);
+      if (!validation.valid) {
+        throw badRequest(`Invalid plugin manifest: ${validation.errors.join(", ")}`);
+      }
+
+      try {
+        const plugin = await pluginStore.registerPlugin({
+          manifest,
+          path: installPath,
+        });
+
+        // If enabled, try to load the plugin
+        if (plugin.enabled) {
+          try {
+            await options.pluginLoader.loadPlugin(plugin.id);
+          } catch (loadErr) {
+            console.error(`[plugin-routes] Failed to load plugin ${plugin.id}:`, loadErr);
+          }
+        }
+
+        res.status(201).json(plugin);
+      } catch (err: unknown) {
+        if (err instanceof Error && err.message.includes("already registered")) {
+          throw conflict(err.message);
+        }
+        throw internalError(err instanceof Error ? err.message : "Failed to register plugin");
+      }
+    } else {
+      throw badRequest(`Invalid mode: '${mode}'. Must be 'register' or 'install'`);
+    }
+  });
+
+  /**
+   * POST /api/plugins/:id/enable
+   * Enable a plugin and start it.
+   * Body: { projectId?: string }
+   */
+  router.post("/plugins/:id/enable", async (req: Request, res: Response) => {
+    const scopedStore = await getScopedStore(req);
+    const pluginStore = scopedStore.getPluginStore();
+    const id = req.params.id as string;
+
+    let plugin = await pluginStore.enablePlugin(id);
+
+    // Start the plugin if loader is available
+    if (options?.pluginLoader) {
+      try {
+        await options.pluginLoader.loadPlugin(id);
+      } catch (loadErr) {
+        // Update state to error
+        await pluginStore.updatePluginState(
+          id,
+          "error",
+          loadErr instanceof Error ? loadErr.message : String(loadErr),
+        );
+        plugin = await pluginStore.getPlugin(id);
+      }
+    }
+
+    res.json(plugin);
+  });
+
+  /**
+   * POST /api/plugins/:id/disable
+   * Disable a plugin and stop it.
+   * Body: { projectId?: string }
+   */
+  router.post("/plugins/:id/disable", async (req: Request, res: Response) => {
+    const scopedStore = await getScopedStore(req);
+    const pluginStore = scopedStore.getPluginStore();
+    const id = req.params.id as string;
+
+    // Stop the plugin if loader is available
+    if (options?.pluginLoader) {
+      try {
+        await options.pluginLoader.stopPlugin(id);
+      } catch {
+        // Ignore errors from stopping - plugin might not be loaded
+      }
+    }
+
+    const plugin = await pluginStore.disablePlugin(id);
+    res.json(plugin);
+  });
+
+  /**
+   * PATCH /api/plugins/:id/settings
+   * Update plugin settings.
+   * Body: { settings: Record<string, unknown>, projectId?: string }
+   */
+  router.patch("/plugins/:id/settings", async (req: Request, res: Response) => {
+    const scopedStore = await getScopedStore(req);
+    const pluginStore = scopedStore.getPluginStore();
+    const id = req.params.id as string;
+
+    if (!req.body || typeof req.body !== "object") {
+      throw badRequest("Request body must be an object with 'settings' field");
+    }
+
+    const body = req.body as Record<string, unknown>;
+    const settings = body.settings as Record<string, unknown> | undefined;
+
+    if (!settings || typeof settings !== "object") {
+      throw badRequest("Request body must have a 'settings' object");
+    }
+
+    try {
+      const plugin = await pluginStore.updatePluginSettings(id, settings);
+      res.json(plugin);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message.includes("not found")) {
+        throw notFound(`Plugin "${id}" not found`);
+      }
+      if (err instanceof Error && err.message.includes("validation failed")) {
+        throw badRequest(err.message);
+      }
+      throw internalError(err instanceof Error ? err.message : "Failed to update settings");
+    }
+  });
+
+  /**
+   * DELETE /api/plugins/:id
+   * Uninstall a plugin.
+   * Query: { projectId?: string }
+   */
+  router.delete("/plugins/:id", async (req: Request, res: Response) => {
+    const scopedStore = await getScopedStore(req);
+    const pluginStore = scopedStore.getPluginStore();
+    const id = req.params.id as string;
+
+    // Stop the plugin if loader is available
+    if (options?.pluginLoader) {
+      try {
+        await options.pluginLoader.stopPlugin(id);
+      } catch {
+        // Ignore - plugin might not be loaded
+      }
+    }
+
+    await pluginStore.unregisterPlugin(id);
+    res.status(204).send();
+  });
 
   // ── AI Session Routes (Background Tasks) ─────────────────────────────────
 
