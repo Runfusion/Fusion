@@ -352,3 +352,10 @@ The `@fusion/tui` package provides Ink-based React components for terminal UI.
 - Clear `fusion-dashboard-current-node` from localStorage in test `beforeEach` to avoid cross-test leakage.
 - Use `mockReturnValue` (not `mockReturnValueOnce`) for repeated mocks in tests with dynamic imports.
 - Add `await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); })` in tests that wait for App initial load to complete before interacting with Header components.
+
+## FN-1462: Context-Limit Error Recovery
+
+- When fixing context-limit error detection, add test cases for the specific error message format before making the fix
+- The `isContextLimitError()` function uses regex patterns to match error messages - patterns must be tested independently
+- When fixing executor recovery paths that fall through to failure, ensure the fix adds an explicit `return` after successful recovery to prevent execution from continuing to the failure path
+- Vitest runs source files directly (`.ts`) rather than compiled dist files - rebuild with `tsc` before running tests if changes aren't picked up
