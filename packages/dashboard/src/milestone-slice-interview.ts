@@ -20,13 +20,68 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { AiSessionStore, AiSessionRow } from "./ai-session-store.js";
 import { SessionEventBuffer, type SessionBufferedEvent } from "./sse-buffer.js";
+import {
+  parseMissionAgentResponse,
+  extractJsonCandidate,
+  repairJson,
+} from "./mission-interview.js";
 
-// Re-export JSON parsing utilities from mission-interview
+// Re-export JSON parsing utilities from mission-interview for external consumers
 export {
   parseMissionAgentResponse,
   extractJsonCandidate,
   repairJson,
 } from "./mission-interview.js";
+
+/**
+ * Parse a target interview response (milestone or slice) from the AI agent.
+ * Validates the response structure and extracts the typed data.
+ */
+function parseTargetInterviewResponseImpl(text: string): TargetInterviewResponse {
+  const candidate = extractJsonCandidate(text);
+
+  if (!candidate) {
+    console.error("[milestone-slice-interview] No JSON candidate found in agent response:", text.slice(0, 500));
+    throw new Error("AI returned no valid JSON. Please try again.");
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(candidate);
+  } catch (parseErr) {
+    try {
+      const repaired = repairJson(candidate);
+      parsed = JSON.parse(repaired);
+    } catch (repairErr) {
+      console.error("[milestone-slice-interview] Failed to parse agent response:", candidate.slice(0, 500));
+      throw new Error(
+        `Failed to parse AI response: ${repairErr instanceof Error ? repairErr.message : "Unknown error"}. Please try again.`
+      );
+    }
+  }
+
+  // Validate structure
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    "type" in parsed &&
+    "data" in parsed
+  ) {
+    const typed = parsed as { type: string; data: unknown };
+    if (typed.type === "question" && typed.data !== null && typed.data !== undefined) {
+      return typed as TargetInterviewResponse;
+    }
+    if (typed.type === "complete" && typed.data !== null && typeof typed.data === "object") {
+      return typed as TargetInterviewResponse;
+    }
+  }
+
+  console.error("[milestone-slice-interview] Invalid response structure:", JSON.stringify(parsed).slice(0, 500));
+  throw new Error("AI returned an invalid response structure. Please try again.");
+}
+
+// Export the parse function for tests
+export { parseTargetInterviewResponseImpl as parseTargetInterviewResponse };
 
 // Dynamic import for @fusion/engine to avoid resolution issues in test environment
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports, @typescript-eslint/no-explicit-any
@@ -757,14 +812,13 @@ async function continueAgentConversation(session: TargetInterviewSession, messag
       }
     }
 
-    // Parse with retry using the imported parseMissionAgentResponse
-    const { parseMissionAgentResponse } = await import("./mission-interview.js");
+    // Parse with retry using the target interview parser
     let parsed: TargetInterviewResponse | undefined;
     let lastError: Error | undefined;
 
     for (let attempt = 0; attempt <= MAX_PARSE_RETRIES; attempt++) {
       try {
-        parsed = parseMissionAgentResponse(responseText) as TargetInterviewResponse;
+        parsed = parseTargetInterviewResponseImpl(responseText);
         break;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
