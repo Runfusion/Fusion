@@ -5,8 +5,8 @@ import {
   ExternalLink, CheckCircle, XCircle, Loader2, GitBranch, ListChecks,
   ChevronDown, ChevronRight, BarChart3, Star
 } from "lucide-react";
-import type { AgentDetail, AgentState, AgentHeartbeatRun } from "../api";
-import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogs, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentTasks, fetchChainOfCommand } from "../api";
+import type { AgentDetail, AgentState, AgentHeartbeatRun, AgentBudgetStatus } from "../api";
+import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogs, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget } from "../api";
 import type { Agent } from "../api";
 import type { AgentLogEntry, Task } from "@fusion/core";
 import { AgentLogViewer } from "./AgentLogViewer";
@@ -502,6 +502,14 @@ function DashboardTab({
   const stateStyle = STATE_COLORS[agent.state];
   const [chainOfCommand, setChainOfCommand] = useState<Agent[]>([]);
   const [isLoadingChainOfCommand, setIsLoadingChainOfCommand] = useState(true);
+  const [budgetStatus, setBudgetStatus] = useState<AgentBudgetStatus | null>(null);
+
+  // Fetch budget status on mount
+  useEffect(() => {
+    fetchAgentBudgetStatus(agent.id, projectId)
+      .then(setBudgetStatus)
+      .catch(() => setBudgetStatus(null));
+  }, [agent.id, projectId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -556,6 +564,14 @@ function DashboardTab({
 
   return (
     <div className="dashboard-tab">
+      {/* Budget Exhausted Warning */}
+      {budgetStatus?.isOverBudget && (
+        <div className="budget-warning-banner" role="alert">
+          <span>⚠️</span>
+          <span><strong>Budget Exhausted:</strong> This agent has exceeded its token budget and may be operating with limited functionality.</span>
+        </div>
+      )}
+
       {/* Agent Info Card */}
       <div className="dashboard-section">
         <h3>Agent Information</h3>
@@ -585,6 +601,33 @@ function DashboardTab({
               {health.label}
             </span>
           </div>
+          {budgetStatus?.budgetLimit != null && (
+            <div className="info-item">
+              <span className="info-label">Budget</span>
+              <span className="info-value">
+                <span
+                  className="budget-badge"
+                  style={{
+                    background: budgetStatus.isOverBudget
+                      ? "var(--state-error-bg, rgba(248,81,73,0.15))"
+                      : budgetStatus.isOverThreshold
+                        ? "var(--state-paused-bg, rgba(227,181,65,0.15))"
+                        : "var(--state-active-bg, rgba(63,185,80,0.15))",
+                    color: budgetStatus.isOverBudget
+                      ? "var(--state-error-text, #f85149)"
+                      : budgetStatus.isOverThreshold
+                        ? "var(--state-paused-text, #e3b541)"
+                        : "var(--state-active-text, #3fb950)",
+                    border: `1px solid ${budgetStatus.isOverBudget ? "var(--state-error-border, #f85149)" : budgetStatus.isOverThreshold ? "var(--state-paused-border, #e3b541)" : "var(--state-active-border, #3fb950)"}`,
+                  }}
+                >
+                  {budgetStatus.isOverBudget
+                    ? "⚠ Budget Exhausted"
+                    : `${Math.round(budgetStatus.usagePercent ?? 0)}% used`}
+                </span>
+              </span>
+            </div>
+          )}
           <div className="info-item">
             <span className="info-label">Created</span>
             <span className="info-value">{new Date(agent.createdAt).toLocaleDateString()}</span>
@@ -1901,6 +1944,32 @@ function ConfigTab({
     return initial;
   });
 
+  // Budget status for progress bar display
+  const [budgetStatus, setBudgetStatus] = useState<AgentBudgetStatus | null>(null);
+  const [isResettingBudget, setIsResettingBudget] = useState(false);
+
+  // Fetch budget status on mount
+  useEffect(() => {
+    fetchAgentBudgetStatus(agent.id, projectId)
+      .then(setBudgetStatus)
+      .catch(() => setBudgetStatus(null));
+  }, [agent.id, projectId]);
+
+  const handleResetBudget = async () => {
+    setIsResettingBudget(true);
+    try {
+      await resetAgentBudget(agent.id, projectId);
+      addToast("Budget usage reset successfully", "success");
+      // Refresh budget status
+      const status = await fetchAgentBudgetStatus(agent.id, projectId);
+      setBudgetStatus(status);
+    } catch (err: any) {
+      addToast(`Failed to reset budget: ${err.message}`, "error");
+    } finally {
+      setIsResettingBudget(false);
+    }
+  };
+
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingInstructions, setIsSavingInstructions] = useState(false);
   const [errors, setErrors] = useState<ValidationErrors>({});
@@ -2365,6 +2434,54 @@ function ConfigTab({
               </span>
             )}
           </div>
+
+          {/* Budget Usage Progress Bar */}
+          {budgetStatus?.budgetLimit != null && (
+            <div className="config-field">
+              <label>Current Usage</label>
+              <div className="budget-progress-container">
+                <div className="budget-progress-bar">
+                  <div
+                    className={cn(
+                      "budget-progress-bar__fill",
+                      (budgetStatus.usagePercent ?? 0) >= 100
+                        ? "budget-progress-bar__fill--red"
+                        : (budgetStatus.usagePercent ?? 0) >= 80
+                          ? "budget-progress-bar__fill--amber"
+                          : "budget-progress-bar__fill--green"
+                    )}
+                    style={{ width: `${Math.min(budgetStatus.usagePercent ?? 0, 100)}%` }}
+                  />
+                </div>
+                <span className="budget-progress-label">
+                  {(budgetStatus.currentUsage ?? 0).toLocaleString()} / {(budgetStatus.budgetLimit ?? 0).toLocaleString()} tokens ({Math.round(budgetStatus.usagePercent ?? 0)}% used)
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Reset Budget Button */}
+          {budgetStatus?.budgetLimit != null && (
+            <div className="config-field">
+              <button
+                className="btn btn-reset-budget"
+                onClick={() => void handleResetBudget()}
+                disabled={isResettingBudget}
+              >
+                {isResettingBudget ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    Resetting…
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw size={14} />
+                    Reset Budget Usage
+                  </>
+                )}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

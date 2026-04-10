@@ -1975,8 +1975,9 @@ import type {
   AgentReflection,
   AgentPerformanceSummary,
   ReflectionTrigger,
+  AgentBudgetStatus,
 } from "@fusion/core";
-export type { Agent, AgentDetail, AgentCapability, AgentState, AgentHeartbeatEvent, AgentHeartbeatRun, AgentCreateInput, AgentUpdateInput, AgentTaskSession, AgentStats, HeartbeatInvocationSource, OrgTreeNode, AgentReflection, AgentPerformanceSummary, ReflectionTrigger };
+export type { Agent, AgentDetail, AgentCapability, AgentState, AgentHeartbeatEvent, AgentHeartbeatRun, AgentCreateInput, AgentUpdateInput, AgentTaskSession, AgentStats, HeartbeatInvocationSource, OrgTreeNode, AgentReflection, AgentPerformanceSummary, ReflectionTrigger, AgentBudgetStatus };
 
 function withProjectId(path: string, projectId?: string): string {
   if (!projectId) return path;
@@ -3796,6 +3797,20 @@ export function fetchAgentRatingSummary(agentId: string, projectId?: string): Pr
 export function deleteAgentRating(agentId: string, ratingId: string, projectId?: string): Promise<void> {
   return api<void>(withProjectId(`/agents/${encodeURIComponent(agentId)}/ratings/${encodeURIComponent(ratingId)}`, projectId), {
     method: "DELETE",
+  });
+}
+
+// ── Agent Budget API ──────────────────────────────────────────────────────
+
+/** Fetch budget status for an agent */
+export function fetchAgentBudgetStatus(agentId: string, projectId?: string): Promise<AgentBudgetStatus> {
+  return api<AgentBudgetStatus>(withProjectId(`/agents/${encodeURIComponent(agentId)}/budget`, projectId));
+}
+
+/** Reset budget usage for an agent */
+export function resetAgentBudget(agentId: string, projectId?: string): Promise<void> {
+  return api<void>(withProjectId(`/agents/${encodeURIComponent(agentId)}/budget/reset`, projectId), {
+    method: "POST",
   });
 }
 

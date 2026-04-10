@@ -8800,6 +8800,66 @@ Output ONLY the prompt text (no markdown, no explanations).`;
   });
 
   /**
+   * GET /api/agents/:id/budget
+   * Get budget status for an agent.
+   */
+  router.get("/agents/:id/budget", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const agent = await agentStore.getAgent(req.params.id);
+      if (!agent) {
+        throw notFound("Agent not found");
+      }
+
+      const budgetStatus = await agentStore.getBudgetStatus(req.params.id);
+      res.json(budgetStatus);
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err.message?.includes("not found")) {
+        throw notFound(err.message);
+      } else {
+        rethrowAsApiError(err);
+      }
+    }
+  });
+
+  /**
+   * POST /api/agents/:id/budget/reset
+   * Reset budget usage for an agent.
+   */
+  router.post("/agents/:id/budget/reset", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const agent = await agentStore.getAgent(req.params.id);
+      if (!agent) {
+        throw notFound("Agent not found");
+      }
+
+      await agentStore.resetBudgetUsage(req.params.id);
+      res.json({ success: true });
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err.message?.includes("not found")) {
+        throw notFound(err.message);
+      } else {
+        rethrowAsApiError(err);
+      }
+    }
+  });
+
+  /**
    * POST /api/agents/:id/keys
    * Create a new API key for an agent.
    * Body: { label?: string }

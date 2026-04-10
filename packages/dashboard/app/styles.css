@@ -26195,3 +26195,76 @@ html .column.drag-over * {
     transform: rotate(360deg);
   }
 }
+
+/* ── Budget Progress Bar ────────────────────────────────────────────────────── */
+
+.budget-progress-container {
+  margin-top: 4px;
+}
+
+.budget-progress-bar {
+  width: 100%;
+  height: 8px;
+  background: var(--bg-secondary, #161b22);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.budget-progress-bar__fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+.budget-progress-bar__fill--green {
+  background: var(--state-active-text, #3fb950);
+}
+
+.budget-progress-bar__fill--amber {
+  background: var(--state-paused-text, #e3b541);
+}
+
+.budget-progress-bar__fill--red {
+  background: var(--state-error-text, #f85149);
+}
+
+.budget-progress-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary, #8b949e);
+  margin-top: 4px;
+  display: block;
+}
+
+/* ── Budget Badge ────────────────────────────────────────────────────────────── */
+
+.budget-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+/* ── Budget Warning Banner ──────────────────────────────────────────────────── */
+
+.budget-warning-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--state-error-bg, rgba(248,81,73,0.15));
+  color: var(--state-error-text, #f85149);
+  border: 1px solid var(--state-error-border, #f85149);
+  font-size: 0.875rem;
+  margin-bottom: 12px;
+}
+
+/* ── Budget Reset Button ─────────────────────────────────────────────────────── */
+
+.btn-reset-budget {
+  margin-top: 8px;
+}

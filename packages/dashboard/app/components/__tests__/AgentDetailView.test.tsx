@@ -22,6 +22,8 @@ vi.mock("../../api", () => ({
   updateAgentMemory: vi.fn(),
   fetchAgentTasks: vi.fn(),
   fetchChainOfCommand: vi.fn(),
+  fetchAgentBudgetStatus: vi.fn(),
+  resetAgentBudget: vi.fn(),
 }));
 
 vi.mock("../AgentLogViewer", () => ({
@@ -32,7 +34,7 @@ vi.mock("../AgentLogViewer", () => ({
   ),
 }));
 
-import { fetchAgent, updateAgent, updateAgentState, fetchAgentChildren, fetchAgentRunLogs, fetchAgentRuns, fetchAgentRunDetail, fetchAgentTasks, fetchChainOfCommand } from "../../api";
+import { fetchAgent, updateAgent, updateAgentState, fetchAgentChildren, fetchAgentRunLogs, fetchAgentRuns, fetchAgentRunDetail, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget } from "../../api";
 
 const mockFetchAgent = vi.mocked(fetchAgent);
 const mockUpdateAgent = vi.mocked(updateAgent);
@@ -43,6 +45,8 @@ const mockFetchAgentRuns = vi.mocked(fetchAgentRuns);
 const mockFetchAgentRunDetail = vi.mocked(fetchAgentRunDetail);
 const mockFetchAgentTasks = vi.mocked(fetchAgentTasks);
 const mockFetchChainOfCommand = vi.mocked(fetchChainOfCommand);
+const mockFetchAgentBudgetStatus = vi.mocked(fetchAgentBudgetStatus);
+const mockResetAgentBudget = vi.mocked(resetAgentBudget);
 
 describe("AgentDetailView", () => {
   const createMockAgent = (overrides: Partial<{
@@ -98,6 +102,19 @@ describe("AgentDetailView", () => {
     mockFetchAgentChildren.mockResolvedValue([]);
     mockFetchAgentTasks.mockResolvedValue([]);
     mockFetchChainOfCommand.mockResolvedValue([mockAgent]);
+    // Default: no budget limit configured
+    mockFetchAgentBudgetStatus.mockResolvedValue({
+      agentId: "agent-001",
+      currentUsage: 0,
+      budgetLimit: null,
+      usagePercent: 0,
+      isOverBudget: false,
+      isOverThreshold: false,
+      budgetPeriod: "lifetime",
+      lastResetAt: null,
+      nextResetAt: null,
+    });
+    mockResetAgentBudget.mockResolvedValue(undefined);
   });
 
   it("shows loading state initially", () => {
@@ -1602,6 +1619,146 @@ describe("AgentDetailView", () => {
 
       await waitFor(() => {
         expect(screen.getByText("Save Settings")).not.toBeDisabled();
+      });
+    });
+
+    it("shows budget progress bar when budget status has limit configured", async () => {
+      // Need to mock twice: once for DashboardTab and once for ConfigTab
+      mockFetchAgentBudgetStatus.mockResolvedValue({
+        agentId: "agent-001",
+        currentUsage: 40000,
+        budgetLimit: 50000,
+        usagePercent: 80,
+        isOverBudget: false,
+        isOverThreshold: true,
+        budgetPeriod: "monthly",
+        lastResetAt: "2026-01-01T00:00:00.000Z",
+        nextResetAt: null,
+      });
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await navigateToSettings(user);
+
+      await waitFor(() => {
+        expect(screen.getByText("40,000 / 50,000 tokens (80% used)")).toBeInTheDocument();
+      });
+    });
+
+    it("hides progress bar when no budget limit is configured", async () => {
+      mockFetchAgentBudgetStatus.mockResolvedValueOnce({
+        agentId: "agent-001",
+        currentUsage: 10000,
+        budgetLimit: null,
+        usagePercent: 0,
+        isOverBudget: false,
+        isOverThreshold: false,
+        budgetPeriod: "lifetime",
+        lastResetAt: null,
+        nextResetAt: null,
+      });
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await navigateToSettings(user);
+
+      await waitFor(() => {
+        // Progress bar should not be visible
+        expect(screen.queryByText(/tokens/)).not.toBeInTheDocument();
+      });
+    });
+
+    it("shows Reset Budget button when budget limit is configured", async () => {
+      // Need to mock twice: once for DashboardTab and once for ConfigTab
+      mockFetchAgentBudgetStatus.mockResolvedValue({
+        agentId: "agent-001",
+        currentUsage: 30000,
+        budgetLimit: 50000,
+        usagePercent: 60,
+        isOverBudget: false,
+        isOverThreshold: false,
+        budgetPeriod: "lifetime",
+        lastResetAt: "2026-01-01T00:00:00.000Z",
+        nextResetAt: null,
+      });
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await navigateToSettings(user);
+
+      await waitFor(() => {
+        expect(screen.getByText("Reset Budget Usage")).toBeInTheDocument();
+      });
+    });
+
+    it("calls resetAgentBudget when Reset Budget button is clicked", async () => {
+      const addToast = vi.fn();
+      // First call (ConfigTab on mount)
+      mockFetchAgentBudgetStatus.mockResolvedValueOnce({
+        agentId: "agent-001",
+        currentUsage: 30000,
+        budgetLimit: 50000,
+        usagePercent: 60,
+        isOverBudget: false,
+        isOverThreshold: false,
+        budgetPeriod: "lifetime",
+        lastResetAt: "2026-01-01T00:00:00.000Z",
+        nextResetAt: null,
+      });
+      // Second call (after reset)
+      mockFetchAgentBudgetStatus.mockResolvedValueOnce({
+        agentId: "agent-001",
+        currentUsage: 0,
+        budgetLimit: 50000,
+        usagePercent: 0,
+        isOverBudget: false,
+        isOverThreshold: false,
+        budgetPeriod: "lifetime",
+        lastResetAt: "2026-04-10T00:00:00.000Z",
+        nextResetAt: null,
+      });
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={addToast}
+        />
+      );
+
+      await navigateToSettings(user);
+
+      await waitFor(() => {
+        expect(screen.getByText("Reset Budget Usage")).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText("Reset Budget Usage"));
+
+      await waitFor(() => {
+        expect(mockResetAgentBudget).toHaveBeenCalledWith("agent-001", undefined);
+        expect(addToast).toHaveBeenCalledWith("Budget usage reset successfully", "success");
       });
     });
   });
