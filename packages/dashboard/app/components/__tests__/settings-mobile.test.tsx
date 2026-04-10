@@ -131,9 +131,14 @@ describe("SettingsModal mobile adaptations", () => {
 
     expectMobileRule(css, ".settings-layout", "flex-direction: column;");
     expectMobileRule(css, ".settings-sidebar", "flex-direction: row;");
+    expectMobileRule(css, ".settings-sidebar", "align-items: center;");
     expectMobileRule(css, ".settings-sidebar", "overflow-x: auto;");
     expectMobileRule(css, ".settings-sidebar", "scrollbar-width: none;");
     expectMobileRule(css, ".settings-sidebar::-webkit-scrollbar", "display: none;");
+    expectMobileRule(css, ".settings-nav-item", "display: flex;");
+    expectMobileRule(css, ".settings-nav-item", "align-items: center;");
+    expectMobileRule(css, ".settings-nav-item", "justify-content: center;");
+    expectMobileRule(css, ".settings-nav-item", "gap: 4px;");
     expectMobileRule(css, ".settings-content textarea", "font-size: 16px;");
   });
 });

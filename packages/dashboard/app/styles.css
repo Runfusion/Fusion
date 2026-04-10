@@ -6485,6 +6485,7 @@ body {
     width: auto;
     min-width: 0;
     flex-direction: row;
+    align-items: center;
     border-right: none;
     border-bottom: 1px solid var(--border);
     overflow-x: auto;
@@ -6499,12 +6500,15 @@ body {
   }
 
   .settings-nav-item {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
     border-left: none;
     border-bottom: 2px solid transparent;
     border-radius: var(--radius) var(--radius) 0 0;
     padding: 6px 12px;
     white-space: nowrap;
-    text-align: center;
   }
 
   .settings-nav-item:hover {

@@ -75,7 +75,13 @@ describe("core modals mobile css coverage", () => {
     expect(mobileBlock).toContain("flex-direction: column;");
     expect(mobileBlock).toContain(".settings-sidebar {");
     expect(mobileBlock).toContain("flex-direction: row;");
+    expect(mobileBlock).toContain("align-items: center;");
     expect(mobileBlock).toContain("overflow-x: auto;");
+    expect(mobileBlock).toContain(".settings-nav-item {");
+    expect(mobileBlock).toContain("display: flex;");
+    expect(mobileBlock).toContain("align-items: center;");
+    expect(mobileBlock).toContain("justify-content: center;");
+    expect(mobileBlock).toContain("gap: 4px;");
   });
 
   it("GitManagerModal: 768px mobile block includes stacked layout rules", () => {
