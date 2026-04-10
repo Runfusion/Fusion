@@ -166,6 +166,7 @@ When a task reaches **In Review**, Fusion handles merge with rich metadata:
 - Merge commit SHA, files changed, insertions/deletions, timestamps
 - Smart conflict resolution: lock files ("ours"), generated files ("theirs"), whitespace conflicts
 - 3-attempt retry logic with escalating strategies (AI resolve → auto-resolve patterns → `git merge -X theirs`)
+- **Deterministic merge verification** — When `testCommand` or `buildCommand` are configured, these run as hard gates before final merge completion. If either command exits non-zero, the merge is aborted and the task stays out of `done`, ensuring repository health. Commands run in order: `testCommand` first, then `buildCommand`.
 - **Changes tab** — View file-level diffs from the merge commit, even after worktree cleanup. Done tasks without a recorded commit SHA show a safe summary fallback instead of inflated repository-wide diffs.
 
 ## Multi-Project Support

@@ -1,293 +1,334 @@
+/**
+ * RoutineRunner — orchestrates routine execution via the heartbeat system.
+ *
+ * - Validates routine state before execution (enabled, has assigned agent)
+ * - Enforces concurrency policies (parallel/skip/queue/replace)
+ * - Handles catch-up for missed runs
+ * - Triggers heartbeat execution for routines
+ */
+
+import { CronExpressionParser } from "cron-parser";
 import type {
-  Routine,
   RoutineStore,
-  HeartbeatInvocationSource,
+  Routine,
+  RoutineExecutionResult,
 } from "@fusion/core";
 import type { HeartbeatMonitor } from "./agent-heartbeat.js";
 import { createLogger } from "./logger.js";
 
-const logger = createLogger("routine-runner");
+const log = createLogger("routine-runner");
 
-/**
- * Options for RoutineRunner.
- */
+/** Options for RoutineRunner constructor */
 export interface RoutineRunnerOptions {
-  /** The heartbeat monitor for executing routines */
-  heartbeatMonitor: HeartbeatMonitor;
-  /** The routine store for persisting execution state */
+  /** RoutineStore for querying and updating routines */
   routineStore: RoutineStore;
+  /** HeartbeatMonitor for triggering agent execution */
+  heartbeatMonitor: HeartbeatMonitor;
+  /** Project root directory */
+  rootDir: string;
 }
 
 /**
- * Tracks in-flight executions per routine ID.
+ * Maximum number of catch-up executions to prevent runaway loops.
  */
-const inFlightExecutions = new Map<string, boolean>();
+const MAX_CATCH_UP_INTERVALS = 10;
 
 /**
- * Result of a routine execution.
- */
-export interface RoutineExecutionResult {
-  routineId: string;
-  success: boolean;
-  error?: string;
-  executedAt: string;
-  catchUpExecution?: boolean;
-}
-
-/**
- * RoutineRunner orchestrates execution of a single routine through the heartbeat system.
+ * RoutineRunner orchestrates routine execution via the heartbeat system.
  *
- * It handles:
- * - Concurrency policy enforcement (parallel/queue/reject)
- * - Catch-up policy handling for missed schedule windows
- * - Execution state persistence via RoutineStore
+ * Key behaviors:
+ * - Enforces concurrency policies before starting executions
+ * - Handles catch-up for missed runs based on catch-up policy
+ * - Triggers heartbeats with routine context in the trigger detail
  */
 export class RoutineRunner {
-  private heartbeatMonitor: HeartbeatMonitor;
-  private routineStore: RoutineStore;
+  private options: RoutineRunnerOptions;
+  /** Tracks currently-running executions by routine ID */
+  private inFlightExecutions: Map<string, Promise<RoutineExecutionResult>> = new Map();
 
   constructor(options: RoutineRunnerOptions) {
-    this.heartbeatMonitor = options.heartbeatMonitor;
-    this.routineStore = options.routineStore;
+    this.options = options;
   }
 
   /**
-   * Check if a routine is currently being executed.
-   */
-  isExecuting(routineId: string): boolean {
-    return inFlightExecutions.get(routineId) === true;
-  }
-
-  /**
-   * Execute a routine based on its configuration and policies.
+   * Execute a routine by ID with a given trigger type.
    *
-   * @param routine - The routine to execute
-   * @param options.catchUpFrom - Optional timestamp to use for catch-up execution
-   * @returns The result of the execution attempt
+   * @param routineId - ID of the routine to execute
+   * @param triggerType - What triggered this execution: "cron", "webhook", or "api"
+   * @param context - Additional context passed to the heartbeat execution
+   * @returns The execution result
+   * @throws Error if routine not found or disabled
    */
-  async execute(
-    routine: Routine,
-    options: { catchUpFrom?: string } = {}
+  async executeRoutine(
+    routineId: string,
+    triggerType: "cron" | "webhook" | "api",
+    context?: Record<string, unknown>,
   ): Promise<RoutineExecutionResult> {
-    const { catchUpFrom } = options;
-    const routineId = routine.id;
+    // 1. Load routine
+    let routine: Routine;
+    try {
+      routine = await this.options.routineStore.getRoutine(routineId);
+    } catch {
+      throw new Error(`Routine '${routineId}' not found`);
+    }
 
-    // Check concurrency policy
-    const policyResult = this.checkConcurrencyPolicy(routine);
-    if (!policyResult.shouldExecute) {
-      logger.log(
-        `[${routineId}] Skipped by concurrency policy: ${policyResult.reason}`
-      );
+    // 2. Validate routine state
+    if (!routine.enabled) {
+      throw new Error(`Routine '${routineId}' is disabled`);
+    }
+
+    if (!routine.agentId) {
+      throw new Error(`Routine '${routineId}' has no assigned agent`);
+    }
+
+    // 3. Enforce concurrency policy
+    const concurrency = routine.executionPolicy ?? "queue";
+
+    if (concurrency === "reject" && this.inFlightExecutions.has(routineId)) {
+      log.log(`Routine ${routineId} rejected — already running`);
+      // Return a failed result without creating an execution record
       return {
         routineId,
-        success: true,
-        executedAt: new Date().toISOString(),
-        catchUpExecution: !!catchUpFrom,
-        error: policyResult.reason,
+        success: false,
+        output: "Routine rejected — already running",
+        error: "Routine rejected — already running",
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
       };
     }
 
-    // Mark as in-flight
-    inFlightExecutions.set(routineId, true);
+    // If queue, wait for existing execution
+    if (concurrency === "queue" && this.inFlightExecutions.has(routineId)) {
+      log.log(`Routine ${routineId} queued — waiting for existing execution`);
+      const existingResult = await this.inFlightExecutions.get(routineId);
+      if (existingResult) {
+        await existingResult;
+      }
+    }
+
+    // 4. Record execution start
+    const startedAt = new Date().toISOString();
+
+    // Set in-flight BEFORE starting execution to prevent race conditions
+    const executionPromise = this.runExecution(routine, triggerType, context, startedAt);
+    this.inFlightExecutions.set(routineId, executionPromise);
 
     try {
-      // Persist execution start
-      const startedAt = new Date().toISOString();
-      await this.routineStore.startRoutineExecution(routineId, {
+      await this.options.routineStore.startRoutineExecution(routineId, {
         triggeredAt: startedAt,
-        catchUpFrom,
         invocationSource: "routine",
       });
 
-      logger.log(`[${routineId}] Starting routine execution`);
+      const result = await executionPromise;
+      return result;
+    } finally {
+      this.inFlightExecutions.delete(routineId);
+    }
+  }
 
+  /**
+   * Internal execution logic for a routine.
+   */
+  private async runExecution(
+    routine: Routine,
+    triggerType: string,
+    context: Record<string, unknown> | undefined,
+    startedAt: string,
+  ): Promise<RoutineExecutionResult> {
+    const routineId = routine.id;
+
+    try {
       // Execute via heartbeat monitor
-      const run = await this.heartbeatMonitor.executeHeartbeat({
+      const run = await this.options.heartbeatMonitor.executeHeartbeat({
         agentId: routine.agentId,
-        source: "routine" as HeartbeatInvocationSource,
-        triggerDetail: `routine:${routineId}`,
+        source: "routine",
+        triggerDetail: `routine:${routine.id}:${triggerType}`,
         contextSnapshot: {
-          routineId,
-          catchUpFrom,
-          executionPolicy: routine.executionPolicy,
-          catchUpPolicy: routine.catchUpPolicy,
+          routineId: routine.id,
+          routineName: routine.name,
+          triggerType,
+          ...context,
         },
       });
 
-      // Handle failed/terminated runs
+      // Determine status from run
+      let success = true;
+      let output = "";
+      let error: string | undefined;
+
       if (run.status === "failed" || run.status === "terminated") {
-        const error = run.stderrExcerpt || `Run ${run.status}`;
-        logger.log(`[${routineId}] Execution ${run.status}: ${error}`);
-        await this.routineStore.completeRoutineExecution(routineId, {
-          completedAt: run.endedAt ?? new Date().toISOString(),
-          success: false,
-          error,
-        });
-        return {
-          routineId,
-          success: false,
-          error,
-          executedAt: startedAt,
-          catchUpExecution: !!catchUpFrom,
-        };
+        success = false;
+        error = run.stderrExcerpt || `Run ${run.status}`;
+        output = error;
+      } else {
+        output = run.resultJson ? JSON.stringify(run.resultJson) : "Routine completed successfully";
       }
 
-      // Persist execution completion
-      const completedAt = run.endedAt ?? new Date().toISOString();
-      await this.routineStore.completeRoutineExecution(routineId, {
-        completedAt,
-        success: true,
+      // Complete the execution
+      await this.options.routineStore.completeRoutineExecution(routineId, {
+        completedAt: new Date().toISOString(),
+        success,
         resultJson: run.resultJson,
+        error,
       });
-
-      logger.log(`[${routineId}] Routine execution completed successfully`);
 
       return {
         routineId,
-        success: true,
-        executedAt: completedAt,
-        catchUpExecution: !!catchUpFrom,
+        success,
+        output,
+        startedAt,
+        completedAt: new Date().toISOString(),
+        error,
       };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.log(`[${routineId}] Routine execution failed: ${errorMessage}`);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.error(`Routine ${routineId} execution failed: ${errorMessage}`);
 
-      // Persist execution failure
+      // Record failure
       try {
-        await this.routineStore.completeRoutineExecution(routineId, {
+        await this.options.routineStore.completeRoutineExecution(routineId, {
           completedAt: new Date().toISOString(),
           success: false,
           error: errorMessage,
         });
       } catch (persistError) {
-        logger.error(`[${routineId}] Failed to persist error state: ${persistError}`);
+        log.error(`[${routineId}] Failed to persist error state: ${persistError}`);
       }
 
       return {
         routineId,
         success: false,
+        output: errorMessage,
+        startedAt,
+        completedAt: new Date().toISOString(),
         error: errorMessage,
-        executedAt: new Date().toISOString(),
-        catchUpExecution: !!catchUpFrom,
       };
-    } finally {
-      // Clear in-flight flag
-      inFlightExecutions.delete(routineId);
     }
   }
 
   /**
-   * Check if a routine should be executed based on its concurrency policy.
+   * Handle catch-up for missed routine executions based on the catch-up policy.
+   *
+   * @param routine - The routine to check for catch-up
    */
-  private checkConcurrencyPolicy(
-    routine: Routine
-  ): { shouldExecute: boolean; reason?: string } {
-    const routineId = routine.id;
-    const isInFlight = this.isExecuting(routineId);
+  async handleCatchUp(routine: Routine): Promise<void> {
+    const catchUpPolicy = routine.catchUpPolicy ?? "skip";
 
-    if (isInFlight) {
-      switch (routine.executionPolicy) {
-        case "parallel":
-          return { shouldExecute: true };
-
-        case "reject":
-          return {
-            shouldExecute: false,
-            reason: `Routine ${routineId} is already being executed (policy: reject)`,
-          };
-
-        case "queue":
-          // Queue for later execution - return without executing
-          return {
-            shouldExecute: false,
-            reason: `Routine ${routineId} is already being executed (policy: queue)`,
-          };
-
-        default:
-          return {
-            shouldExecute: false,
-            reason: `Unknown execution policy for ${routineId}`,
-          };
-      }
+    if (catchUpPolicy === "skip") {
+      return;
     }
 
-    return { shouldExecute: true };
-  }
-
-  /**
-   * Determine if a catch-up execution should occur based on the routine's catch-up policy.
-   */
-  determineCatchUp(
-    routine: Routine,
-    lastRunAt: string | null,
-    currentTime: Date
-  ): { shouldCatchUp: boolean; catchUpFrom?: string } {
-    if (!lastRunAt) {
-      return { shouldCatchUp: false };
+    // "run_one" or "run" policy - need to catch up
+    if (!routine.lastRunAt) {
+      // Never run before — nothing to catch up
+      return;
     }
 
-    switch (routine.catchUpPolicy) {
-      case "skip":
-        return { shouldCatchUp: false };
+    // Calculate missed intervals
+    if (!routine.cronExpression) {
+      return;
+    }
 
-      case "run_one":
-        return { shouldCatchUp: true, catchUpFrom: lastRunAt };
+    try {
+      const cronExpr = CronExpressionParser.parse(routine.cronExpression, {
+        currentDate: new Date(routine.lastRunAt ?? Date.now()),
+      });
+      const lastRun = new Date(routine.lastRunAt ?? Date.now());
+      const now = new Date();
 
-      case "run": {
-        const catchUpLimit = routine.catchUpLimit ?? 5;
-        const lastExecuted = new Date(lastRunAt);
-        const diffMs = currentTime.getTime() - lastExecuted.getTime();
+      const missedIntervals: Date[] = [];
 
-        const intervalMs = this.getRoutineIntervalMs(routine);
-        if (intervalMs <= 0) {
-          return { shouldCatchUp: false };
+      // Get next interval after lastRun, then iterate
+      let intervalDate = new Date(cronExpr.next().toISOString() ?? Date.now());
+
+      while (intervalDate.getTime() <= now.getTime() && missedIntervals.length < MAX_CATCH_UP_INTERVALS) {
+        if (intervalDate.getTime() > lastRun.getTime()) {
+          missedIntervals.push(new Date(intervalDate));
         }
-
-        const missedCount = Math.floor(diffMs / intervalMs);
-        const boundedCount = Math.min(missedCount, catchUpLimit);
-
-        if (boundedCount <= 1) {
-          return { shouldCatchUp: false };
-        }
-
-        const catchUpFrom = new Date(
-          lastExecuted.getTime() + intervalMs
-        ).toISOString();
-
-        logger.log(
-          `[${routine.id}] Catch-up: ${boundedCount} missed executions (limit: ${catchUpLimit})`
-        );
-
-        return { shouldCatchUp: true, catchUpFrom };
+        const nextIso = cronExpr.next().toISOString();
+        if (!nextIso) break;
+        intervalDate = new Date(nextIso);
       }
 
-      default:
-        return { shouldCatchUp: false };
+      if (missedIntervals.length === 0) {
+        return;
+      }
+
+      log.log(`[${routine.id}] Running ${missedIntervals.length} catch-up executions`);
+
+      // Execute each missed interval
+      for (const missedInterval of missedIntervals) {
+        try {
+          await this.executeRoutine(routine.id, "cron", {
+            catchUp: true,
+            missedInterval: missedInterval.toISOString(),
+          });
+        } catch (err) {
+          log.error(`[${routine.id}] Catch-up execution failed: ${err}`);
+        }
+      }
+    } catch (err) {
+      log.error(`[${routine.id}] Error calculating catch-up intervals: ${err}`);
     }
   }
 
   /**
-   * Get the interval in milliseconds for a routine based on its cron schedule.
+   * Trigger a routine manually (via API).
+   *
+   * @param routineId - The ID of the routine to trigger
+   * @returns The execution result
+   * @throws Error if routine not found or disabled
    */
-  private getRoutineIntervalMs(routine: Routine): number {
-    if (routine.trigger.type === "cron") {
-      const cron = routine.trigger.cronExpression;
-      if (cron.includes("* * *")) return 60_000;
-      if (cron.includes("*/5")) return 5 * 60_000;
-      if (cron.includes("*/10")) return 10 * 60_000;
-      if (cron.includes("*/15")) return 15 * 60_000;
-      if (cron.includes("*/30")) return 30 * 60_000;
-      if (cron.includes("0 * *")) return 60 * 60_000;
-      if (cron.includes("0 0 *")) return 24 * 60 * 60_000;
-      return 5 * 60_000;
+  async triggerManual(routineId: string): Promise<RoutineExecutionResult> {
+    const routine = await this.options.routineStore.getRoutine(routineId);
+
+    if (!routine.enabled) {
+      throw new Error(`Routine '${routineId}' is disabled`);
     }
-    return 5 * 60_000;
+
+    return this.executeRoutine(routineId, "api");
   }
 
   /**
-   * Clear the in-flight flag for a routine (for testing).
+   * Trigger a routine via webhook.
+   *
+   * @param routineId - The ID of the routine to trigger
+   * @param payload - The webhook payload
+   * @param _signature - The webhook signature (verified by RoutineScheduler)
+   * @returns The execution result
+   * @throws Error if routine not found, not a webhook trigger, or disabled
    */
-  clearInFlight(routineId: string): void {
-    inFlightExecutions.delete(routineId);
+  async triggerWebhook(
+    routineId: string,
+    payload: Record<string, unknown>,
+    _signature?: string
+  ): Promise<RoutineExecutionResult> {
+    const routine = await this.options.routineStore.getRoutine(routineId);
+
+    if (routine.trigger.type !== "webhook") {
+      throw new Error(
+        `Routine '${routineId}' does not have webhook trigger type`
+      );
+    }
+
+    if (!routine.enabled) {
+      throw new Error(`Routine '${routineId}' is disabled`);
+    }
+
+    return this.executeRoutine(routineId, "webhook", { webhookPayload: payload });
+  }
+
+  /**
+   * Get the number of currently-running executions.
+   */
+  getInFlightCount(): number {
+    return this.inFlightExecutions.size;
+  }
+
+  /**
+   * Check if a routine is currently being executed.
+   */
+  isRoutineRunning(routineId: string): boolean {
+    return this.inFlightExecutions.has(routineId);
   }
 }

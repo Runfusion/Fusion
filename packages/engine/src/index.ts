@@ -26,6 +26,8 @@ export { PrMonitor, type PrComment, type TrackedPr, type OnNewCommentsCallback }
 export { PrCommentHandler } from "./pr-comment-handler.js";
 export { NtfyNotifier, type NtfyNotifierOptions } from "./notifier.js";
 export { CronRunner, type CronRunnerOptions, type AiPromptExecutor, createAiPromptExecutor } from "./cron-runner.js";
+export { RoutineRunner, type RoutineRunnerOptions } from "./routine-runner.js";
+export { RoutineScheduler, type RoutineSchedulerOptions } from "./routine-scheduler.js";
 export { StuckTaskDetector, type StuckTaskDetectorOptions, type DisposableSession } from "./stuck-task-detector.js";
 export { HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "./agent-heartbeat.js";
 export { TokenCapDetector, type TokenCapCheckResult } from "./token-cap-detector.js";

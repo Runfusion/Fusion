@@ -84,6 +84,11 @@ export interface ServerOptions {
   automationStore?: AutomationStore;
   /** Optional RoutineStore for recurring task automation */
   routineStore?: RoutineStore;
+  /** Optional RoutineRunner for triggering routine execution via heartbeat */
+  routineRunner?: {
+    triggerManual(routineId: string): Promise<import("@fusion/core").RoutineExecutionResult>;
+    triggerWebhook(routineId: string, payload: Record<string, unknown>, signature?: string): Promise<import("@fusion/core").RoutineExecutionResult>;
+  };
   /** Optional AiSessionStore — if not provided, one is created from the default store's database */
   aiSessionStore?: AiSessionStore;
   /** Optional MissionAutopilot for autonomous mission progression */

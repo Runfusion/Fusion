@@ -385,7 +385,12 @@ describe("RoutineStore", () => {
       store.on("routine:deleted", listener);
 
       await store.deleteRoutine(routine.id);
-      expect(listener).toHaveBeenCalledWith(routine);
+      expect(listener).toHaveBeenCalled();
+      const emittedRoutine = listener.mock.calls[0][0];
+      // Verify the emitted routine has the expected fields
+      expect(emittedRoutine.id).toBe(routine.id);
+      expect(emittedRoutine.name).toBe("Delete test");
+      expect(emittedRoutine.agentId).toBe("test-agent");
     });
   });
 

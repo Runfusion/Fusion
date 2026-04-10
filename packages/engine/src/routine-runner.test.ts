@@ -1,260 +1,512 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { Routine, RoutineStore } from "@fusion/core";
-import { RoutineRunner } from "./routine-runner.js";
+import { RoutineRunner, type RoutineRunnerOptions } from "./routine-runner.js";
+import type {
+  RoutineStore,
+  Routine,
+  RoutineExecutionResult,
+  AgentStore,
+  TaskStore,
+  Settings,
+} from "@fusion/core";
 import type { HeartbeatMonitor } from "./agent-heartbeat.js";
 
-// Mock the logger
-vi.mock("./logger.js", () => ({
-  createLogger: () => ({
-    log: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
-}));
+// Default settings inline to avoid @fusion/core build dependency during tests
+const DEFAULT_SETTINGS: Settings = {
+  maxConcurrent: 2,
+  maxWorktrees: 4,
+  pollIntervalMs: 30000,
+  autoResolveConflicts: true,
+  requirePlanApproval: false,
+  recycleWorktrees: false,
+  worktreeNaming: "random",
+  globalPause: false,
+  enginePaused: false,
+  ntfyEnabled: false,
+  defaultProvider: "anthropic",
+  defaultModelId: "claude-sonnet-4-5",
+  planningProvider: "anthropic",
+  planningModelId: "claude-sonnet-4-5",
+  validatorProvider: "openai",
+  validatorModelId: "gpt-4o",
+  taskStuckTimeoutMs: undefined,
+  groupOverlappingFiles: false,
+  autoMerge: true,
+};
 
-describe("RoutineRunner", () => {
-  let mockHeartbeatMonitor: HeartbeatMonitor;
-  let mockRoutineStore: RoutineStore;
-  let runner: RoutineRunner;
+function createMockRoutine(overrides: Partial<Routine> = {}): Routine {
+  return {
+    id: "test-routine-id",
+    agentId: "test-agent",
+    name: "Test Routine",
+    description: "A test routine",
+    trigger: { type: "cron", cronExpression: "0 * * * *" },
+    catchUpPolicy: "run_one",
+    executionPolicy: "parallel",
+    enabled: true,
+    runCount: 0,
+    runHistory: [],
+    cronExpression: "0 * * * *",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
 
-  const createMockRoutine = (overrides: Partial<Routine> = {}): Routine =>
-    ({
-      id: "routine-1",
-      agentId: "agent-1",
-      name: "Test Routine",
-      description: "A test routine",
-      enabled: true,
-      trigger: {
-        type: "cron",
-        cronExpression: "*/5 * * * *",
-      },
-      executionPolicy: "reject",
-      catchUpPolicy: "skip",
-      catchUpLimit: 5,
-      lastRunAt: null,
-      nextRunAt: new Date().toISOString(),
-      runCount: 0,
-      runHistory: [],
+function createMockRoutineStore(routines: Routine[] = []): RoutineStore {
+  const routineMap = new Map(routines.map((r) => [r.id, r]));
+
+  return {
+    getRoutine: vi.fn().mockImplementation((id: string) => {
+      const routine = routineMap.get(id);
+      if (!routine) {
+        throw Object.assign(new Error(`Routine '${id}' not found`), { code: "ENOENT" });
+      }
+      return routine;
+    }),
+    listRoutines: vi.fn().mockResolvedValue(routines),
+    updateRoutine: vi.fn().mockImplementation((id: string, _updates: any) => {
+      const routine = routineMap.get(id);
+      if (!routine) {
+        throw Object.assign(new Error(`Routine '${id}' not found`), { code: "ENOENT" });
+      }
+      return routine;
+    }),
+    getDueRoutines: vi.fn().mockResolvedValue([]),
+    recordRun: vi.fn().mockImplementation((id: string, result: RoutineExecutionResult) => {
+      return createMockRoutine({ id, lastRunResult: result });
+    }),
+    startRoutineExecution: vi.fn().mockResolvedValue(undefined),
+    completeRoutineExecution: vi.fn().mockResolvedValue(undefined),
+    cancelRoutineExecution: vi.fn().mockResolvedValue(undefined),
+    init: vi.fn().mockResolvedValue(undefined),
+    on: vi.fn(),
+    off: vi.fn(),
+  } as unknown as RoutineStore;
+}
+
+function createMockAgentStore(): AgentStore {
+  return {
+    getAgent: vi.fn().mockImplementation(async (id: string) => ({
+      id,
+      name: "Test Agent",
+      role: "executor" as const,
+      state: "idle" as const,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      ...overrides,
-    } as Routine);
+    })),
+    updateAgentState: vi.fn().mockResolvedValue(undefined),
+    getBudgetStatus: vi.fn().mockResolvedValue({
+      agentId: "",
+      currentUsage: 0,
+      budgetLimit: null,
+      usagePercent: null,
+      thresholdPercent: null,
+      isOverBudget: false,
+      isOverThreshold: false,
+      lastResetAt: null,
+      nextResetAt: null,
+    }),
+    on: vi.fn(),
+    off: vi.fn(),
+  } as unknown as AgentStore;
+}
 
-  beforeEach(() => {
-    mockHeartbeatMonitor = {
-      executeHeartbeat: vi.fn().mockResolvedValue({
-        id: "run-1",
-        agentId: "agent-1",
-        startedAt: new Date().toISOString(),
-        endedAt: new Date().toISOString(),
-        status: "completed",
-      }),
-      start: vi.fn(),
-      stop: vi.fn(),
-      isAgentHealthy: vi.fn(),
-      checkMissedHeartbeats: vi.fn(),
-      on: vi.fn(),
-      off: vi.fn(),
-      getAgentHeartbeatConfig: vi.fn(),
-    } as unknown as HeartbeatMonitor;
+function createMockTaskStore(): TaskStore {
+  return {
+    getSettings: vi.fn().mockResolvedValue(DEFAULT_SETTINGS),
+    on: vi.fn(),
+    off: vi.fn(),
+  } as unknown as TaskStore;
+}
 
-    mockRoutineStore = {
-      getRoutine: vi.fn(),
-      getRoutines: vi.fn(),
-      createRoutine: vi.fn(),
-      updateRoutine: vi.fn(),
-      deleteRoutine: vi.fn(),
-      getDueRoutines: vi.fn(),
-      startRoutineExecution: vi.fn().mockResolvedValue(undefined),
-      completeRoutineExecution: vi.fn().mockResolvedValue(undefined),
-      cancelRoutineExecution: vi.fn().mockResolvedValue(undefined),
-      recordRun: vi.fn(),
-      on: vi.fn(),
-      off: vi.fn(),
-    } as unknown as RoutineStore;
+function createMockHeartbeatMonitor(): HeartbeatMonitor {
+  return {
+    executeHeartbeat: vi.fn().mockResolvedValue({
+      id: "run-123",
+      agentId: "test-agent",
+      status: "completed" as const,
+      startedAt: new Date().toISOString(),
+      endedAt: new Date().toISOString(),
+    }),
+    start: vi.fn(),
+    stop: vi.fn(),
+    trackAgent: vi.fn(),
+    on: vi.fn(),
+    off: vi.fn(),
+  } as unknown as HeartbeatMonitor;
+}
 
-    runner = new RoutineRunner({
-      heartbeatMonitor: mockHeartbeatMonitor,
-      routineStore: mockRoutineStore,
-    });
+function createRoutineRunner(options?: Partial<RoutineRunnerOptions>): RoutineRunner {
+  return new RoutineRunner({
+    routineStore: options?.routineStore ?? createMockRoutineStore(),
+    heartbeatMonitor: options?.heartbeatMonitor ?? createMockHeartbeatMonitor(),
+    rootDir: options?.rootDir ?? "/test/root",
   });
+}
 
-  afterEach(() => {
-    vi.clearAllMocks();
-    runner.clearInFlight("routine-1");
-    runner.clearInFlight("routine-2");
-  });
+describe("RoutineRunner", () => {
+  describe("executeRoutine", () => {
+    it("successfully executes a routine with trigger type 'cron'", async () => {
+      const routine = createMockRoutine({ id: "routine-1", name: "Test Routine" });
+      const routineStore = createMockRoutineStore([routine]);
+      const heartbeatMonitor = createMockHeartbeatMonitor();
+      const runner = createRoutineRunner({ routineStore, heartbeatMonitor });
 
-  describe("execute", () => {
-    it("should execute a routine successfully", async () => {
-      const routine = createMockRoutine();
+      const result = await runner.executeRoutine("routine-1", "cron");
 
-      const result = await runner.execute(routine);
-
-      expect(result.success).toBe(true);
       expect(result.routineId).toBe("routine-1");
-      expect(mockRoutineStore.startRoutineExecution).toHaveBeenCalledWith(
-        "routine-1",
+      expect(result.success).toBe(true);
+      expect(heartbeatMonitor.executeHeartbeat).toHaveBeenCalledTimes(1);
+      expect(heartbeatMonitor.executeHeartbeat).toHaveBeenCalledWith(
         expect.objectContaining({
-          triggeredAt: expect.any(String),
-          invocationSource: "routine",
-        })
-      );
-      expect(mockRoutineStore.completeRoutineExecution).toHaveBeenCalledWith(
-        "routine-1",
-        expect.objectContaining({
-          success: true,
-        })
+          source: "routine",
+          triggerDetail: "routine:routine-1:cron",
+        }),
       );
     });
 
-    it("should skip execution when already in-flight with reject policy", async () => {
-      const routine = createMockRoutine({ executionPolicy: "reject" });
+    it("throws descriptive error when routine not found", async () => {
+      const routineStore = createMockRoutineStore([]);
+      const runner = createRoutineRunner({ routineStore });
 
-      // First execution - starts but doesn't complete yet
-      vi.mocked(mockHeartbeatMonitor.executeHeartbeat).mockImplementation(
-        () => new Promise(() => {}) // Never resolves
+      await expect(runner.executeRoutine("nonexistent", "cron")).rejects.toThrow(
+        "Routine 'nonexistent' not found",
       );
-
-      // Start first execution (won't complete due to mock)
-      const firstExecution = runner.execute(routine);
-      // Give it a tick to start
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      // Second execution should be skipped
-      const secondResult = await runner.execute(routine);
-
-      expect(secondResult.success).toBe(true);
-      expect(secondResult.error).toContain("reject");
     });
 
-    it("should handle execution failure", async () => {
-      const routine = createMockRoutine();
-      vi.mocked(mockHeartbeatMonitor.executeHeartbeat).mockResolvedValue({
-        id: "run-1",
-        agentId: "agent-1",
-        startedAt: new Date().toISOString(),
-        endedAt: new Date().toISOString(),
-        status: "failed",
-        stderrExcerpt: "Agent session failed",
-      } as any);
+    it("throws descriptive error when routine is disabled", async () => {
+      const routine = createMockRoutine({ id: "routine-disabled", enabled: false });
+      const routineStore = createMockRoutineStore([routine]);
+      const runner = createRoutineRunner({ routineStore });
 
-      const result = await runner.execute(routine);
+      await expect(runner.executeRoutine("routine-disabled", "cron")).rejects.toThrow(
+        "Routine 'routine-disabled' is disabled",
+      );
+    });
 
-      expect(result.success).toBe(false);
-      expect(result.error).toBe("Agent session failed");
-      expect(mockRoutineStore.completeRoutineExecution).toHaveBeenCalledWith(
-        "routine-1",
+    it("calls executeHeartbeat with source 'routine' and correct triggerDetail format", async () => {
+      const routine = createMockRoutine({ id: "routine-trigger", name: "Trigger Test" });
+      const routineStore = createMockRoutineStore([routine]);
+      const heartbeatMonitor = createMockHeartbeatMonitor();
+      const runner = createRoutineRunner({ routineStore, heartbeatMonitor });
+
+      await runner.executeRoutine("routine-trigger", "webhook");
+
+      expect(heartbeatMonitor.executeHeartbeat).toHaveBeenCalledWith(
         expect.objectContaining({
-          success: false,
-          error: "Agent session failed",
-        })
+          source: "routine",
+          triggerDetail: "routine:routine-trigger:webhook",
+        }),
       );
     });
 
-    it("should propagate catch-up context to heartbeat", async () => {
-      const routine = createMockRoutine();
+    it("includes routineId, routineName, triggerType in contextSnapshot", async () => {
+      const routine = createMockRoutine({ id: "routine-context", name: "Context Test" });
+      const routineStore = createMockRoutineStore([routine]);
+      const heartbeatMonitor = createMockHeartbeatMonitor();
+      const runner = createRoutineRunner({ routineStore, heartbeatMonitor });
 
-      const catchUpTime = "2024-01-01T00:00:00.000Z";
-      await runner.execute(routine, { catchUpFrom: catchUpTime });
+      await runner.executeRoutine("routine-context", "api");
 
-      expect(mockHeartbeatMonitor.executeHeartbeat).toHaveBeenCalledWith(
+      expect(heartbeatMonitor.executeHeartbeat).toHaveBeenCalledWith(
         expect.objectContaining({
           contextSnapshot: expect.objectContaining({
-            routineId: "routine-1",
-            catchUpFrom: catchUpTime,
+            routineId: "routine-context",
+            routineName: "Context Test",
+            triggerType: "api",
           }),
-        })
+        }),
       );
     });
 
-    it("should allow concurrent execution with parallel policy", async () => {
-      const routine = createMockRoutine({ executionPolicy: "parallel" });
+    it("calls completeRoutineExecution after execution completes", async () => {
+      const routine = createMockRoutine({ id: "routine-record" });
+      const routineStore = createMockRoutineStore([routine]);
+      const heartbeatMonitor = createMockHeartbeatMonitor();
+      const runner = createRoutineRunner({ routineStore, heartbeatMonitor });
 
-      // Both executions should succeed
+      await runner.executeRoutine("routine-record", "cron");
+
+      // completeRoutineExecution is called once with the result
+      expect(routineStore.completeRoutineExecution).toHaveBeenCalledTimes(1);
+      expect(routineStore.completeRoutineExecution).toHaveBeenCalledWith(
+        "routine-record",
+        expect.objectContaining({
+          success: true,
+        }),
+      );
+    });
+
+    it("marks execution as failed when executeHeartbeat rejects", async () => {
+      const routine = createMockRoutine({ id: "routine-fail" });
+      const routineStore = createMockRoutineStore([routine]);
+      const heartbeatMonitor = createMockHeartbeatMonitor();
+      (heartbeatMonitor.executeHeartbeat as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("Heartbeat failed"),
+      );
+      const runner = createRoutineRunner({ routineStore, heartbeatMonitor });
+
+      const result = await runner.executeRoutine("routine-fail", "cron");
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe("Heartbeat failed");
+    });
+
+    it("cleans up inFlightExecutions map after successful completion", async () => {
+      const routine = createMockRoutine({ id: "routine-cleanup" });
+      const routineStore = createMockRoutineStore([routine]);
+      const heartbeatMonitor = createMockHeartbeatMonitor();
+      const runner = createRoutineRunner({ routineStore, heartbeatMonitor });
+
+      expect(runner.isRoutineRunning("routine-cleanup")).toBe(false);
+
+      await runner.executeRoutine("routine-cleanup", "cron");
+
+      // After completion, should not be in-flight
+      expect(runner.isRoutineRunning("routine-cleanup")).toBe(false);
+    });
+
+    it("cleans up inFlightExecutions map even on error", async () => {
+      const routine = createMockRoutine({ id: "routine-error-cleanup", enabled: false });
+      const routineStore = createMockRoutineStore([routine]);
+      const runner = createRoutineRunner({ routineStore });
+
+      try {
+        await runner.executeRoutine("routine-error-cleanup", "cron");
+      } catch {
+        // Expected to throw
+      }
+
+      // After an error, the routine should not be in the in-flight map
+      expect(runner.isRoutineRunning("routine-error-cleanup")).toBe(false);
+    });
+  });
+
+  describe("concurrency policies", () => {
+    it("parallel policy: runs even when another execution is in-flight", async () => {
+      const routine = createMockRoutine({
+        id: "routine-parallel",
+        executionPolicy: "parallel",
+      });
+      const routineStore = createMockRoutineStore([routine]);
+      const heartbeatMonitor = createMockHeartbeatMonitor();
+      // Make heartbeat slow
+      (heartbeatMonitor.executeHeartbeat as ReturnType<typeof vi.fn>).mockImplementation(
+        async () => {
+          await new Promise((r) => setTimeout(r, 50));
+          return {
+            id: "run-123",
+            agentId: "test-agent",
+            status: "completed" as const,
+            startedAt: new Date().toISOString(),
+            endedAt: new Date().toISOString(),
+          };
+        },
+      );
+      const runner = createRoutineRunner({ routineStore, heartbeatMonitor });
+
+      // Start two executions
       const [result1, result2] = await Promise.all([
-        runner.execute(routine),
-        runner.execute(routine),
+        runner.executeRoutine("routine-parallel", "cron"),
+        runner.executeRoutine("routine-parallel", "cron"),
       ]);
 
+      // Both should succeed (parallel)
       expect(result1.success).toBe(true);
       expect(result2.success).toBe(true);
     });
-  });
 
-  describe("determineCatchUp", () => {
-    it("should not catch up when policy is skip", () => {
-      const routine = createMockRoutine({ catchUpPolicy: "skip" });
-      const lastRunAt = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-
-      const result = runner.determineCatchUp(routine, lastRunAt, new Date());
-
-      expect(result.shouldCatchUp).toBe(false);
-    });
-
-    it("should catch up once when policy is run_one", () => {
-      const routine = createMockRoutine({ catchUpPolicy: "run_one" });
-      const lastRunAt = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-
-      const result = runner.determineCatchUp(routine, lastRunAt, new Date());
-
-      expect(result.shouldCatchUp).toBe(true);
-      expect(result.catchUpFrom).toBe(lastRunAt);
-    });
-
-    it("should handle bounded catch-up with run policy", () => {
+    it("reject policy: returns failed result when another execution is in-flight", async () => {
       const routine = createMockRoutine({
-        catchUpPolicy: "run",
-        catchUpLimit: 3,
+        id: "routine-reject",
+        executionPolicy: "reject",
       });
-      // Last executed 30 minutes ago
-      const lastRunAt = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-
-      const result = runner.determineCatchUp(routine, lastRunAt, new Date());
-
-      expect(result.shouldCatchUp).toBe(true);
-      expect(result.catchUpFrom).toBeDefined();
-    });
-
-    it("should not catch up when never executed", () => {
-      const routine = createMockRoutine({ catchUpPolicy: "run" });
-
-      const result = runner.determineCatchUp(routine, null, new Date());
-
-      expect(result.shouldCatchUp).toBe(false);
-    });
-
-    it("should not catch up for non-cron triggers", () => {
-      const routine = createMockRoutine({
-        trigger: { type: "manual" },
-        catchUpPolicy: "run",
-      });
-      const lastRunAt = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-
-      const result = runner.determineCatchUp(routine, lastRunAt, new Date());
-
-      // Manual triggers return 5 * 60_000 default interval, 10min / 5min = 2 missed
-      // With catchUpLimit 5, boundedCount = 2, which is > 1 so shouldCatchUp = true
-      expect(result.shouldCatchUp).toBe(true);
-    });
-  });
-
-  describe("isExecuting", () => {
-    it("should return false when routine is not executing", () => {
-      expect(runner.isExecuting("routine-1")).toBe(false);
-    });
-
-    it("should return true when routine is executing", async () => {
-      const routine = createMockRoutine();
-
-      vi.mocked(mockHeartbeatMonitor.executeHeartbeat).mockImplementation(
-        () => new Promise(() => {}) // Never resolves
+      const routineStore = createMockRoutineStore([routine]);
+      const heartbeatMonitor = createMockHeartbeatMonitor();
+      // Make heartbeat slow
+      (heartbeatMonitor.executeHeartbeat as ReturnType<typeof vi.fn>).mockImplementation(
+        async () => {
+          await new Promise((r) => setTimeout(r, 100));
+          return {
+            id: "run-123",
+            agentId: "test-agent",
+            status: "completed" as const,
+            startedAt: new Date().toISOString(),
+            endedAt: new Date().toISOString(),
+          };
+        },
       );
+      const runner = createRoutineRunner({ routineStore, heartbeatMonitor });
 
-      const execution = runner.execute(routine);
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      // Start first execution
+      const promise1 = runner.executeRoutine("routine-reject", "cron");
 
-      expect(runner.isExecuting("routine-1")).toBe(true);
+      // Immediately try second execution - should be rejected
+      const result2 = await runner.executeRoutine("routine-reject", "cron");
+
+      expect(result2.success).toBe(false);
+      expect(result2.error).toBe("Routine rejected — already running");
+      expect(heartbeatMonitor.executeHeartbeat).toHaveBeenCalledTimes(1); // Only first call
+
+      await promise1; // Clean up
+    });
+
+    it("queue policy: waits for existing execution to complete", async () => {
+      const routine = createMockRoutine({
+        id: "routine-queue",
+        executionPolicy: "queue",
+      });
+      const routineStore = createMockRoutineStore([routine]);
+      const heartbeatMonitor = createMockHeartbeatMonitor();
+      let callCount = 0;
+      (heartbeatMonitor.executeHeartbeat as ReturnType<typeof vi.fn>).mockImplementation(
+        async () => {
+          callCount++;
+          await new Promise((r) => setTimeout(r, 50));
+          return {
+            id: "run-123",
+            agentId: "test-agent",
+            status: "completed" as const,
+            startedAt: new Date().toISOString(),
+            endedAt: new Date().toISOString(),
+          };
+        },
+      );
+      const runner = createRoutineRunner({ routineStore, heartbeatMonitor });
+
+      // Start first execution
+      const [result1, result2] = await Promise.all([
+        runner.executeRoutine("routine-queue", "cron"),
+        runner.executeRoutine("routine-queue", "cron"),
+      ]);
+
+      // Both should succeed (second waited for first)
+      expect(result1.success).toBe(true);
+      expect(result2.success).toBe(true);
+      // Both heartbeats should have been called (sequential due to queue)
+      expect(callCount).toBe(2);
+    });
+  });
+
+  describe("handleCatchUp", () => {
+    it("skip policy: does NOT call executeRoutine, only logs", async () => {
+      const routine = createMockRoutine({
+        id: "routine-catchup-skip",
+        catchUpPolicy: "skip",
+        lastRunAt: new Date(Date.now() - 7200000).toISOString(), // 2 hours ago
+        cronExpression: "0 * * * *",
+      });
+      const routineStore = createMockRoutineStore([routine]);
+      const heartbeatMonitor = createMockHeartbeatMonitor();
+      const runner = createRoutineRunner({ routineStore, heartbeatMonitor });
+
+      await runner.handleCatchUp(routine);
+
+      // No executions should have happened
+      expect(heartbeatMonitor.executeHeartbeat).not.toHaveBeenCalled();
+    });
+
+    it("never-run routine (lastRunAt undefined): skips catch-up", async () => {
+      const routine = createMockRoutine({
+        id: "routine-never-run",
+        lastRunAt: undefined,
+        cronExpression: "0 * * * *",
+      });
+      const routineStore = createMockRoutineStore([routine]);
+      const heartbeatMonitor = createMockHeartbeatMonitor();
+      const runner = createRoutineRunner({ routineStore, heartbeatMonitor });
+
+      await runner.handleCatchUp(routine);
+
+      // No executions should have happened
+      expect(heartbeatMonitor.executeHeartbeat).not.toHaveBeenCalled();
+    });
+
+    it("caps at MAX_CATCH_UP_INTERVALS (10) even when more intervals exist", async () => {
+      const twoHoursAgo = new Date(Date.now() - 7200000);
+      const routine = createMockRoutine({
+        id: "routine-many-missed",
+        catchUpPolicy: "run",
+        lastRunAt: twoHoursAgo.toISOString(),
+        cronExpression: "*/5 * * * *", // Every 5 minutes = 24 missed in 2 hours
+      });
+      const routineStore = createMockRoutineStore([routine]);
+      const heartbeatMonitor = createMockHeartbeatMonitor();
+      const runner = createRoutineRunner({ routineStore, heartbeatMonitor });
+
+      await runner.handleCatchUp(routine);
+
+      // Should be capped at 10
+      expect(heartbeatMonitor.executeHeartbeat).toHaveBeenCalledTimes(10);
+    });
+  });
+
+  describe("helper methods", () => {
+    it("getInFlightCount returns correct count", async () => {
+      const routine1 = createMockRoutine({ id: "routine-count-1" });
+      const routine2 = createMockRoutine({ id: "routine-count-2" });
+      const routineStore = createMockRoutineStore([routine1, routine2]);
+      const heartbeatMonitor = createMockHeartbeatMonitor();
+      // Make heartbeat slow to allow checking in-flight count
+      (heartbeatMonitor.executeHeartbeat as ReturnType<typeof vi.fn>).mockImplementation(
+        async () => {
+          await new Promise((r) => setTimeout(r, 100));
+          return {
+            id: "run-123",
+            agentId: "test-agent",
+            status: "completed" as const,
+            startedAt: new Date().toISOString(),
+            endedAt: new Date().toISOString(),
+          };
+        },
+      );
+      const runner = createRoutineRunner({ routineStore, heartbeatMonitor });
+
+      expect(runner.getInFlightCount()).toBe(0);
+
+      // Start first execution
+      const promise1 = runner.executeRoutine("routine-count-1", "cron");
+      // Allow microtask to complete to see the in-flight state
+      await new Promise((r) => setTimeout(r, 10));
+      expect(runner.getInFlightCount()).toBe(1);
+
+      // Start second execution (will run in parallel since policy is "parallel")
+      const promise2 = runner.executeRoutine("routine-count-2", "cron");
+      await new Promise((r) => setTimeout(r, 10));
+      expect(runner.getInFlightCount()).toBe(2);
+
+      await Promise.all([promise1, promise2]);
+      expect(runner.getInFlightCount()).toBe(0);
+    });
+
+    it("isRoutineRunning returns true during execution, false after", async () => {
+      const routine = createMockRoutine({ id: "routine-running" });
+      const routineStore = createMockRoutineStore([routine]);
+      const heartbeatMonitor = createMockHeartbeatMonitor();
+      // Make heartbeat slow to allow checking in-flight state
+      (heartbeatMonitor.executeHeartbeat as ReturnType<typeof vi.fn>).mockImplementation(
+        async () => {
+          await new Promise((r) => setTimeout(r, 50));
+          return {
+            id: "run-123",
+            agentId: "test-agent",
+            status: "completed" as const,
+            startedAt: new Date().toISOString(),
+            endedAt: new Date().toISOString(),
+          };
+        },
+      );
+      const runner = createRoutineRunner({ routineStore, heartbeatMonitor });
+
+      expect(runner.isRoutineRunning("routine-running")).toBe(false);
+
+      const promise = runner.executeRoutine("routine-running", "cron");
+      // Allow microtask to complete to see the in-flight state
+      await new Promise((r) => setTimeout(r, 10));
+      expect(runner.isRoutineRunning("routine-running")).toBe(true);
+
+      await promise;
+      expect(runner.isRoutineRunning("routine-running")).toBe(false);
     });
   });
 });

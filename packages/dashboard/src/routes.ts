@@ -8019,6 +8019,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   // ── Routine Routes ──────────────────────────────────────────────────
 
   const routineStore = options?.routineStore;
+  const routineRunner = options?.routineRunner;
 
   // GET /routines — list all routines
   router.get("/routines", async (_req: Request, res: Response) => {
@@ -8197,22 +8198,21 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     if (!routineStore) {
       throw new ApiError(503, "Routine store not available");
     }
+    if (!routineRunner) {
+      throw new ApiError(503, "Routine execution not available");
+    }
     try {
       const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
       const routine = await routineStore.getRoutine(id);
 
-      // Create a placeholder result for now (actual execution in future task)
-      const startedAt = new Date().toISOString();
-      const result: RoutineExecutionResult = {
-        routineId: id,
-        startedAt,
-        triggerType: routine.trigger.type,
-        success: true,
-        output: "Manual run triggered",
-        completedAt: new Date().toISOString(),
-      };
+      // Validate routine is enabled
+      if (!routine.enabled) {
+        throw badRequest("Routine is disabled");
+      }
 
-      const updated = await routineStore.recordRun(id, result);
+      // Execute via RoutineRunner
+      const result = await routineRunner.triggerManual(id);
+      const updated = await routineStore.getRoutine(id);
       res.json({ routine: updated, result });
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -8250,6 +8250,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     if (!routineStore) {
       throw new ApiError(503, "Routine store not available");
     }
+    if (!routineRunner) {
+      throw new ApiError(503, "Routine execution not available");
+    }
     try {
       const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
       const routine = await routineStore.getRoutine(id);
@@ -8282,18 +8285,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         }
       }
 
-      // Create a placeholder result for now (actual execution in future task)
-      const startedAt = new Date().toISOString();
-      const result: RoutineExecutionResult = {
-        routineId: id,
-        startedAt,
-        triggerType: "webhook",
-        success: true,
-        output: "Webhook trigger received",
-        completedAt: new Date().toISOString(),
-      };
-
-      const updated = await routineStore.recordRun(id, result);
+      // Execute via RoutineRunner
+      const payload = req.body;
+      const result = await routineRunner.triggerWebhook(id, payload, signatureHeader);
+      const updated = await routineStore.getRoutine(id);
       res.json({ routine: updated, result });
     } catch (err: any) {
       if (err instanceof ApiError) {

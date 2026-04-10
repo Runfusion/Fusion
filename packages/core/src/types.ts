@@ -1907,7 +1907,7 @@ export interface AgentHeartbeatEvent {
 }
 
 /** What triggered a heartbeat run */
-export type HeartbeatInvocationSource = "on_demand" | "timer" | "assignment" | "automation";
+export type HeartbeatInvocationSource = "on_demand" | "timer" | "assignment" | "automation" | "routine";
 
 /** Snapshot of the last blocked state for a task, used for dedup comparison. */
 export interface BlockedStateSnapshot {

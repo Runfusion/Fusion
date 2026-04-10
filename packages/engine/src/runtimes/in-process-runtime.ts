@@ -14,6 +14,8 @@ import { TaskExecutor, type TaskExecutorOptions } from "../executor.js";
 import { WorktreePool } from "../worktree-pool.js";
 import { AgentSemaphore } from "../concurrency.js";
 import { HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "../agent-heartbeat.js";
+import { RoutineRunner, type RoutineRunnerOptions } from "../routine-runner.js";
+import { RoutineScheduler } from "../routine-scheduler.js";
 import type {
   ProjectRuntime,
   ProjectRuntimeConfig,
@@ -82,6 +84,8 @@ export class InProcessRuntime
   private pluginRunner?: PluginRunner;
   private pluginStore?: PluginStore;
   private pluginLoader?: PluginLoader;
+  private routineRunner?: RoutineRunner;
+  private routineScheduler?: RoutineScheduler;
 
   /**
    * @param config - Runtime configuration
@@ -345,6 +349,39 @@ export class InProcessRuntime
         runtimeLog.warn(`AgentStore initialization failed (continuing without agent monitoring):`, agentErr);
       }
 
+      // Initialize RoutineScheduler (requires RoutineStore from FN-1519)
+      try {
+        const { RoutineStore: RoutineStoreClass } = await import("@fusion/core");
+        // Verify RoutineStore actually has the expected methods (FN-1519 complete)
+        if (typeof RoutineStoreClass.prototype.getDueRoutines === "function") {
+          const routineStore = new RoutineStoreClass(this.taskStore.getFusionDir());
+          await routineStore.init();
+
+          if (this.heartbeatMonitor) {
+            const routineRunnerOptions: RoutineRunnerOptions = {
+              routineStore,
+              heartbeatMonitor: this.heartbeatMonitor,
+              rootDir: this.config.workingDirectory,
+            };
+            this.routineRunner = new RoutineRunner(routineRunnerOptions);
+
+            this.routineScheduler = new RoutineScheduler({
+              taskStore: this.taskStore,
+              routineStore,
+              routineRunner: this.routineRunner,
+              pollIntervalMs: 60000,
+            });
+            this.routineScheduler.start();
+            runtimeLog.log("RoutineScheduler initialized and started");
+          }
+        } else {
+          runtimeLog.log("RoutineStore not available (FN-1519 types not complete) — skipping RoutineScheduler");
+        }
+      } catch (routineErr) {
+        // Non-fatal — RoutineStore may not be exported if FN-1519 is not complete
+        runtimeLog.warn("RoutineScheduler initialization skipped:", routineErr instanceof Error ? routineErr.message : routineErr);
+      }
+
       // 7. Initialize SelfHealingManager
       this.selfHealingManager = new SelfHealingManager(this.taskStore, {
         rootDir: this.config.workingDirectory,
@@ -420,31 +457,37 @@ export class InProcessRuntime
         runtimeLog.log("SelfHealingManager stopped");
       }
 
-      // 2. Stop trigger scheduler
+      // 2. Stop routine scheduler (stops new routine triggers; in-flight executions continue)
+      if (this.routineScheduler) {
+        this.routineScheduler.stop();
+        runtimeLog.log("RoutineScheduler stopped");
+      }
+
+      // 3. Stop trigger scheduler
       if (this.triggerScheduler) {
         this.triggerScheduler.stop();
         runtimeLog.log("TriggerScheduler stopped");
       }
 
-      // 3. Stop stuck task detector
+      // 4. Stop stuck task detector
       if (this.stuckTaskDetector) {
         this.stuckTaskDetector.stop();
         runtimeLog.log("StuckTaskDetector stopped");
       }
 
-      // 4. Stop heartbeat monitor
+      // 5. Stop heartbeat monitor
       if (this.heartbeatMonitor) {
         this.heartbeatMonitor.stop();
         runtimeLog.log("HeartbeatMonitor stopped");
       }
 
-      // 5. Stop scheduler (prevents new task scheduling)
+      // 6. Stop scheduler (prevents new task scheduling)
       if (this.scheduler) {
         this.scheduler.stop();
         runtimeLog.log("Scheduler stopped");
       }
 
-      // 2. Wait for active tasks to complete (30 second timeout)
+      // 7. Wait for active tasks to complete (30 second timeout)
       const shutdownTimeout = 30000;
       const startTime = Date.now();
 
@@ -467,13 +510,13 @@ export class InProcessRuntime
         );
       }
 
-      // 6. Shutdown plugin runner
+      // 8. Shutdown plugin runner
       if (this.pluginRunner) {
         await this.pluginRunner.shutdown();
         runtimeLog.log("PluginRunner shutdown complete");
       }
 
-      // 7. Drain and cleanup worktree pool
+      // 9. Drain and cleanup worktree pool
       if (this.worktreePool) {
         const worktrees = this.worktreePool.drain();
         if (worktrees.length > 0) {
@@ -558,6 +601,22 @@ export class InProcessRuntime
    */
   getTriggerScheduler(): HeartbeatTriggerScheduler | undefined {
     return this.triggerScheduler;
+  }
+
+  /**
+   * Get the RoutineRunner instance (if initialized).
+   * Returns undefined when RoutineStore is not available.
+   */
+  getRoutineRunner(): RoutineRunner | undefined {
+    return this.routineRunner;
+  }
+
+  /**
+   * Get the RoutineScheduler instance (if initialized).
+   * Returns undefined when RoutineStore is not available.
+   */
+  getRoutineScheduler(): RoutineScheduler | undefined {
+    return this.routineScheduler;
   }
 
   /**

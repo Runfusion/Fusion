@@ -73,8 +73,8 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `autoMerge` | `boolean` | `true` | Auto-finalize tasks from `in-review`. |
 | `mergeStrategy` | `"direct" \| "pull-request"` | `"direct"` | Completion mode (local direct merge or PR-first). |
 | `worktreeInitCommand` | `string` | `undefined` | Shell command run after worktree creation. |
-| `testCommand` | `string` | `undefined` | Custom test command override. |
-| `buildCommand` | `string` | `undefined` | Custom build command override. |
+| `testCommand` | `string` | `undefined` | Test command run deterministically at merge time (before `buildCommand`). Fails the merge if the command exits non-zero. |
+| `buildCommand` | `string` | `undefined` | Build command run deterministically at merge time (after `testCommand`). Fails the merge if the command exits non-zero. |
 | `recycleWorktrees` | `boolean` | `false` | Reuse worktrees from a pool for faster startup. |
 | `worktreeNaming` | `"random" \| "task-id" \| "task-title"` | `"random"` | Naming mode for fresh worktree directories. |
 | `taskPrefix` | `string` | `"FN"` | Prefix for generated task IDs. |

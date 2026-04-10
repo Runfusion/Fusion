@@ -1,4 +1,16 @@
-import type { Routine, RoutineStore, ProjectSettings } from "@fusion/core";
+/**
+ * RoutineScheduler — polls for due routines and triggers their execution via RoutineRunner.
+ *
+ * Handles:
+ * - Polling interval with configurable interval
+ * - Re-entrance guard (prevents overlapping polls)
+ * - Pause awareness (globalPause / enginePaused)
+ * - Catch-up execution before normal due execution
+ * - Per-routine failure isolation
+ */
+
+import { CronExpressionParser } from "cron-parser";
+import type { Routine, RoutineStore, TaskStore } from "@fusion/core";
 import { RoutineRunner } from "./routine-runner.js";
 import { createLogger } from "./logger.js";
 
@@ -8,151 +20,98 @@ const logger = createLogger("routine-scheduler");
  * Options for RoutineScheduler.
  */
 export interface RoutineSchedulerOptions {
-  /** The routine store */
+  /** TaskStore for checking pause state */
+  taskStore: TaskStore;
+  /** RoutineStore for querying routines */
   routineStore: RoutineStore;
-  /** The routine runner */
+  /** RoutineRunner for executing routines */
   routineRunner: RoutineRunner;
-  /** Polling interval in milliseconds */
+  /** Polling interval in milliseconds. Default: 60000 (60s). Minimum: 10000 (10s). */
   pollIntervalMs?: number;
-  /** Get current settings (for pause checks) */
-  getSettings: () => ProjectSettings;
-  /** Callback when scheduler is started */
-  onStart?: () => void;
-  /** Callback when scheduler is stopped */
-  onStop?: () => void;
 }
 
 /**
- * Minimum poll interval (30 seconds).
- */
-const MIN_POLL_INTERVAL_MS = 30_000;
-
-/**
- * Default poll interval (1 minute).
- */
-const DEFAULT_POLL_INTERVAL_MS = 60_000;
-
-/**
  * RoutineScheduler polls for due routines and triggers their execution.
- *
- * It handles:
- * - Polling interval with clamping
- * - Re-entrance guard (prevents overlapping polls)
- * - Pause awareness (globalPause / enginePaused)
- * - Catch-up execution before normal due execution
- * - Per-routine failure isolation
  */
 export class RoutineScheduler {
+  private taskStore: TaskStore;
   private routineStore: RoutineStore;
   private routineRunner: RoutineRunner;
   private pollIntervalMs: number;
-  private getSettings: () => ProjectSettings;
-  private onStart?: () => void;
-  private onStop?: () => void;
 
-  private pollTimer: ReturnType<typeof setInterval> | null = null;
-  private isRunning = false;
-  private isPolling = false;
+  private running: boolean = false;
+  private ticking: boolean = false;
+  private pollInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: RoutineSchedulerOptions) {
+    this.taskStore = options.taskStore;
     this.routineStore = options.routineStore;
     this.routineRunner = options.routineRunner;
-    this.getSettings = options.getSettings;
-    this.onStart = options.onStart;
-    this.onStop = options.onStop;
-
-    // Clamp poll interval to minimum
-    this.pollIntervalMs = Math.max(
-      options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
-      MIN_POLL_INTERVAL_MS
-    );
+    this.pollIntervalMs = Math.max(10000, options.pollIntervalMs ?? 60000);
   }
 
   /**
    * Start the scheduler.
    */
   start(): void {
-    if (this.isRunning) {
+    if (this.running) {
       logger.log("RoutineScheduler already running");
       return;
     }
 
-    this.isRunning = true;
-    logger.log(
-      `RoutineScheduler started with ${this.pollIntervalMs}ms poll interval`
-    );
+    this.running = true;
+    logger.log(`RoutineScheduler started with ${this.pollIntervalMs}ms poll interval`);
 
-    // Subscribe to routine store events
-    this.routineStore.on("routine:created", this.handleRoutineCreated);
-    this.routineStore.on("routine:updated", this.handleRoutineUpdated);
-    this.routineStore.on("routine:deleted", this.handleRoutineDeleted);
+    // Run first tick immediately
+    void this.tick();
 
-    // Start polling
-    this.pollTimer = setInterval(() => {
-      void this.poll();
+    // Start polling interval
+    this.pollInterval = setInterval(() => {
+      void this.tick();
     }, this.pollIntervalMs);
-
-    // Run initial poll
-    void this.poll();
-
-    this.onStart?.();
   }
 
   /**
    * Stop the scheduler.
    */
   stop(): void {
-    if (!this.isRunning) {
+    if (!this.running) {
       return;
     }
 
-    this.isRunning = false;
+    this.running = false;
     logger.log("RoutineScheduler stopping");
 
-    // Clear timer
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = null;
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
     }
 
-    // Unsubscribe from events
-    this.routineStore.off("routine:created", this.handleRoutineCreated);
-    this.routineStore.off("routine:updated", this.handleRoutineUpdated);
-    this.routineStore.off("routine:deleted", this.handleRoutineDeleted);
-
-    this.onStop?.();
     logger.log("RoutineScheduler stopped");
   }
 
   /**
-   * Check if the scheduler is running.
+   * Check if the scheduler is active (running).
    */
-  getStatus(): "running" | "stopped" {
-    return this.isRunning ? "running" : "stopped";
+  isActive(): boolean {
+    return this.running;
   }
 
   /**
-   * Trigger an immediate poll (for testing).
+   * Process a single tick — poll for due routines and execute them.
    */
-  async triggerPoll(): Promise<void> {
-    await this.poll();
-  }
-
-  /**
-   * Poll for due routines and execute them.
-   */
-  private async poll(): Promise<void> {
+  async tick(): Promise<void> {
     // Re-entrance guard
-    if (this.isPolling) {
-      logger.log("Poll already in progress, skipping");
+    if (this.ticking) {
+      logger.log("Tick already in progress, skipping");
       return;
     }
 
-    this.isPolling = true;
+    this.ticking = true;
 
     try {
       // Check pause state
-      const settings = this.getSettings();
+      const settings = await this.taskStore.getSettings();
       if (settings.globalPause || settings.enginePaused) {
         logger.log(
           `Paused: globalPause=${settings.globalPause}, enginePaused=${settings.enginePaused}`
@@ -161,86 +120,117 @@ export class RoutineScheduler {
       }
 
       // Get due routines
-      const dueRoutines = await this.routineStore.getDueRoutines();
+      const dueRoutines = await this.getDueRoutines();
+      if (dueRoutines.length === 0) {
+        return;
+      }
+
       logger.log(`Found ${dueRoutines.length} due routines`);
 
       // Process each routine
       for (const routine of dueRoutines) {
-        await this.processRoutine(routine);
+        // Re-check pause state (may have changed mid-loop)
+        const currentSettings = await this.taskStore.getSettings();
+        if (currentSettings.globalPause || currentSettings.enginePaused) {
+          logger.log("Paused mid-loop, stopping processing");
+          break;
+        }
+
+        try {
+          await this.processRoutine(routine);
+        } catch (err) {
+          logger.error(`[${routine.id}] Failed to process: ${err}`);
+          // Continue to next routine
+        }
       }
-    } catch (error) {
-      logger.error(`Poll error: ${error}`);
     } finally {
-      this.isPolling = false;
+      this.ticking = false;
     }
   }
 
   /**
-   * Process a single routine, handling catch-up and normal execution.
+   * Process a single routine.
    */
   private async processRoutine(routine: Routine): Promise<void> {
     const routineId = routine.id;
 
-    try {
-      // Skip if routine is disabled
-      if (!routine.enabled) {
-        logger.log(`[${routineId}] Skipped: routine is disabled`);
-        return;
-      }
+    // Skip if disabled
+    if (!routine.enabled) {
+      logger.log(`[${routineId}] Skipped: routine is disabled`);
+      return;
+    }
 
-      // Skip if already executing
-      if (this.routineRunner.isExecuting(routineId)) {
-        logger.log(`[${routineId}] Skipped: already executing`);
-        return;
-      }
+    // Handle catch-up
+    await this.routineRunner.handleCatchUp(routine);
 
-      // Handle catch-up if needed
-      const lastRunAt = routine.lastRunAt ?? null;
-      const currentTime = new Date();
-      const catchUp = this.routineRunner.determineCatchUp(
-        routine,
-        lastRunAt,
-        currentTime
-      );
+    // Execute the routine
+    await this.routineRunner.executeRoutine(routineId, "cron");
 
-      if (catchUp.shouldCatchUp && catchUp.catchUpFrom) {
-        logger.log(
-          `[${routineId}] Executing catch-up from ${catchUp.catchUpFrom}`
-        );
-        await this.routineRunner.execute(routine, {
-          catchUpFrom: catchUp.catchUpFrom,
-        });
+    // Update next run time
+    if (routine.cronExpression) {
+      try {
+        const nextRun = CronExpressionParser.parse(routine.cronExpression).next();
+        // Note: We can't update nextRunAt directly as it's derived from trigger
+        // The RoutineStore handles this internally
+      } catch (err) {
+        logger.error(`[${routineId}] Failed to calculate next run: ${err}`);
       }
-
-      // Normal execution
-      if (!this.routineRunner.isExecuting(routineId)) {
-        logger.log(`[${routineId}] Executing routine`);
-        await this.routineRunner.execute(routine);
-      }
-    } catch (error) {
-      // Per-routine failure isolation - don't let one failure affect others
-      logger.error(`[${routineId}] Failed to process: ${error}`);
     }
   }
 
   /**
-   * Handle routine created event.
+   * Get routines that are due for execution.
    */
-  private handleRoutineCreated = (routine: Routine): void => {
-    logger.log(`[${routine.id}] Routine created, will check at next poll`);
-  };
+  private async getDueRoutines(): Promise<Routine[]> {
+    try {
+      return await this.routineStore.getDueRoutines();
+    } catch (err) {
+      logger.error(`Failed to get due routines: ${err}`);
+      return [];
+    }
+  }
 
   /**
-   * Handle routine updated event.
+   * Trigger a routine manually via the API.
    */
-  private handleRoutineUpdated = (routine: Routine): void => {
-    logger.log(`[${routine.id}] Routine updated`);
-  };
+  async triggerManual(routineId: string): Promise<import("@fusion/core").RoutineExecutionResult> {
+    return this.routineRunner.executeRoutine(routineId, "api");
+  }
 
   /**
-   * Handle routine deleted event.
+   * Trigger a routine via webhook.
    */
-  private handleRoutineDeleted = (routine: Routine): void => {
-    logger.log(`[${routine.id}] Routine deleted`);
-  };
+  async triggerWebhook(
+    routineId: string,
+    payload: Record<string, unknown>,
+    signature?: string
+  ): Promise<import("@fusion/core").RoutineExecutionResult> {
+    // Load routine to validate webhook trigger type
+    const routine = await this.routineStore.getRoutine(routineId);
+
+    if (routine.trigger.type !== "webhook") {
+      throw new Error(`Routine '${routineId}' does not have webhook trigger type`);
+    }
+
+    // Verify webhook signature if secret is configured
+    const webhookSecret = process.env.FUSION_ROUTINE_WEBHOOK_SECRET;
+    if (webhookSecret) {
+      if (!signature) {
+        throw new Error("Missing webhook signature");
+      }
+      const { createHmac, timingSafeEqual } = await import("node:crypto");
+      const [algo, expectedSig] = signature.split("=");
+      if (algo !== "sha256") {
+        throw new Error("Invalid webhook signature algorithm");
+      }
+      const computed = createHmac("sha256", webhookSecret).update(JSON.stringify(payload)).digest("hex");
+      const sigBuffer = Buffer.from(expectedSig, "hex");
+      const computedBuffer = Buffer.from(computed, "hex");
+      if (sigBuffer.length !== computedBuffer.length || !timingSafeEqual(sigBuffer, computedBuffer)) {
+        throw new Error("Invalid webhook signature");
+      }
+    }
+
+    return this.routineRunner.executeRoutine(routineId, "webhook", { webhookPayload: payload });
+  }
 }
