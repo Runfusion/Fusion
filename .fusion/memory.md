@@ -218,6 +218,12 @@ Tasks can get into contradictory states (e.g., `column: "done"` with `status: "b
 - Regex tests using `[\s\S]*` (greedy match across lines) to check CSS rules inside `@media` blocks are unreliable — they can match across block boundaries. Use non-greedy `[^}]*` scoped to a single rule block instead.
 - Touch target sizing in `styles.css` mobile media queries uses 36px (reduced from the original 44px). The `.touch-target` opt-in utility class remains at 44px. Comments mentioning "44px" in the mobile sections have been updated to reflect the actual values.
 
+## FN-1458: Mobile Header Search Safe-Area-Inset Fix
+
+- When fixing mobile header search positioning issues (search box clipping off-screen), add safe-area-inset handling to both `.header` and `.header-floating-search` in the mobile media query
+- Use `padding-left: max(var(--space-md), env(safe-area-inset-left, 0px))` pattern to ensure content respects device notches
+- CSS regression tests should verify: (1) `.mobile-search-expanded` has `width: 100%`, (2) no fixed negative offsets (`left: -NNpx`, `right: -NNpx`) exist in mobile search rules, (3) `.header-floating-search` has safe-area-inset handling
+
 ## UX Audit Findings (FN-1379)
 
 - **Header overload**: The Header component (`Header.tsx`) has 15+ icon buttons with no labels, making discovery difficult. Consider grouping secondary actions into overflow menus.

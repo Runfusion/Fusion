@@ -126,4 +126,23 @@ describe("mobile-header-controls.css", () => {
     // The selector should have width: 100% rule
     expect(mobileCss).toMatch(/\.mobile-search-expanded\s*\{[^}]*width:\s*100%/);
   });
+
+  it("does not contain fixed-offset patterns that can push mobile search off-screen", () => {
+    // Extract all mobile .mobile-search-expanded rules and check they don't have
+    // position: absolute with negative left/right offsets
+    const expandedBlocks = mobileCss.match(/\.mobile-search-expanded\s*\{[^}]*\}/g) || [];
+    for (const block of expandedBlocks) {
+      // Fail if any fixed negative offset is found (these push the element off-screen)
+      expect(block).not.toMatch(/left:\s*-\d/);
+      expect(block).not.toMatch(/right:\s*-\d/);
+    }
+  });
+
+  it("has mobile header-floating-search with safe-area-inset padding", () => {
+    // The header-floating-search in mobile must respect safe-area-inset
+    // to prevent clipping on notched devices
+    expect(mobileCss).toContain(".header-floating-search");
+    // Should have safe-area-inset handling for left/right
+    expect(mobileCss).toMatch(/\.header-floating-search\s*\{[^}]*env\(safe-area-inset/);
+  });
 });

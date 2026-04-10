@@ -6403,6 +6403,12 @@ body {
     width: 100%;
   }
 
+  /* Mobile: floating search must respect safe-area-inset to stay on-screen */
+  .header-floating-search {
+    padding-left: max(var(--space-md), env(safe-area-inset-left, 0px));
+    padding-right: max(var(--space-md), env(safe-area-inset-right, 0px));
+  }
+
   /* Modal: full-screen on mobile */
   .modal-overlay {
     padding-top: 0;

@@ -946,6 +946,57 @@ describe("Header", () => {
       fireEvent.click(screen.getByTestId("overflow-scripts-manage"));
       expect(onOpenScripts).toHaveBeenCalledOnce();
     });
+
+    // ── Mobile Search with mobileNavEnabled ───────────────────────
+
+    it("renders mobile search input when searchQuery is active with mobileNavEnabled", () => {
+      const onSearchChange = vi.fn();
+      render(
+        <Header
+          view="board"
+          onChangeView={vi.fn()}
+          searchQuery="test query"
+          onSearchChange={onSearchChange}
+          mobileNavEnabled={true}
+        />
+      );
+      // Search should be visible even with mobileNavEnabled when query is active
+      expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
+      expect(screen.getByDisplayValue("test query")).toBeDefined();
+    });
+
+    it("can open mobile search when mobileNavEnabled is true", () => {
+      const onSearchChange = vi.fn();
+      render(
+        <Header
+          view="board"
+          onChangeView={vi.fn()}
+          searchQuery=""
+          onSearchChange={onSearchChange}
+          mobileNavEnabled={true}
+        />
+      );
+      // Should show the trigger button
+      expect(screen.getByTestId("mobile-header-search-btn")).toBeDefined();
+      // Expanded search should not be visible initially
+      expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
+    });
+
+    it("closes mobile search and clears query when close button clicked with mobileNavEnabled", () => {
+      const onSearchChange = vi.fn();
+      render(
+        <Header
+          view="board"
+          onChangeView={vi.fn()}
+          searchQuery="test query"
+          onSearchChange={onSearchChange}
+          mobileNavEnabled={true}
+        />
+      );
+      const closeBtn = screen.getByLabelText("Close search");
+      fireEvent.click(closeBtn);
+      expect(onSearchChange).toHaveBeenCalledWith("");
+    });
   });
 
   // ── Multi-Project Selector ────────────────────────────────────

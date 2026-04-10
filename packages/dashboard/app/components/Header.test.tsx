@@ -902,6 +902,31 @@ describe("Header", () => {
     });
   });
 
+  describe("mobile search with mobileNavEnabled", () => {
+    it("renders mobile search input when searchQuery is active with mobileNavEnabled", () => {
+      renderHeader({ view: "board", searchQuery: "test query", onSearchChange: vi.fn(), onChangeView: noop }, "mobile");
+      // Search should be visible even with mobileNavEnabled when query is active
+      expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
+      expect(screen.getByDisplayValue("test query")).toBeDefined();
+    });
+
+    it("can open mobile search when mobileNavEnabled is true", () => {
+      renderHeader({ view: "board", searchQuery: "", onSearchChange: vi.fn(), onChangeView: noop }, "mobile");
+      // Should show the trigger button
+      expect(screen.getByTestId("mobile-header-search-btn")).toBeDefined();
+      // Expanded search should not be visible initially
+      expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
+    });
+
+    it("closes mobile search and clears query when close button clicked with mobileNavEnabled", () => {
+      const onSearchChange = vi.fn();
+      renderHeader({ view: "board", searchQuery: "test query", onSearchChange, onChangeView: noop }, "mobile");
+      const closeBtn = screen.getByLabelText("Close search");
+      fireEvent.click(closeBtn);
+      expect(onSearchChange).toHaveBeenCalledWith("");
+    });
+  });
+
   describe("Projects button", () => {
     const singleProject = [
       { id: "1", name: "Test Project", path: "/path/to/project", status: "active" as const },
