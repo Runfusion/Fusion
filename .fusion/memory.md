@@ -37,8 +37,8 @@
 
 ## Color Theme System
 
-- There are **48 unique color themes** in `packages/dashboard/app/public/theme-data.css` (default, ocean, forest, sunset, zen, berry, high-contrast, industrial, monochrome, slate, ash, graphite, silver, solarized, factory, ayu, one-dark, nord, dracula, gruvbox, tokyo-night, catppuccin-mocha, github-dark, everforest, rose-pine, kanagawa, night-owl, palenight, monokai-pro, slime, brutalist, neon-city, parchment, terminal, glass, horizon, vitesse, outrun, snazzy, porple, espresso, mars, poimandres, ember, rust, copper, foundry, carbon). Each has a dark variant `[data-color-theme="<name>"]` and a light variant `[data-color-theme="<name>"][data-theme="light"]`. Theme blocks were extracted to a separate file in FN-1409 to enable lazy loading — theme-data.css is only loaded when a non-default color theme is active.
-- When adding CSS custom properties that should be theme-aware (like `--accent`, `--status-*-bg`), add them to all 48 theme blocks plus `:root` and `[data-theme="light"]` base blocks. The test in `status-colors-theme.test.ts` iterates all blocks programmatically to prevent regressions.
+- There are **54 unique color themes** in `packages/dashboard/app/public/theme-data.css` (default, ocean, forest, sunset, zen, berry, high-contrast, industrial, monochrome, slate, ash, graphite, silver, solarized, factory, ayu, one-dark, nord, dracula, gruvbox, tokyo-night, catppuccin-mocha, github-dark, everforest, rose-pine, kanagawa, night-owl, palenight, monokai-pro, slime, brutalist, neon-city, parchment, terminal, glass, horizon, vitesse, outrun, snazzy, porple, espresso, mars, poimandres, ember, rust, copper, foundry, carbon, sandstone, lagoon, frost, lavender, neon-bloom, sepia). Each has a dark variant `[data-color-theme="<name>"]` and a light variant `[data-color-theme="<name>"][data-theme="light"]`. Theme blocks were extracted to a separate file in FN-1409 to enable lazy loading — theme-data.css is only loaded when a non-default color theme is active.
+- When adding CSS custom properties that should be theme-aware (like `--accent`, `--status-*-bg`), add them to all 54 theme blocks plus `:root` and `[data-theme="light"]` base blocks. The test in `status-colors-theme.test.ts` iterates all blocks programmatically to prevent regressions.
 - **Semantic tokens** (tokens describing purpose, not appearance) that maintain consistent meaning across all color themes (e.g., "autopilot active" is always green-tinted, "event error" is always red-tinted) only need dark/light adaptation via the base `[data-theme="light"]` block. They do NOT need per-color-theme overrides because the semantic meaning is consistent. Examples from FN-1357: `--autopilot-pulse`, `--event-*-text`, `--event-*-bg`, `--terminal-bg`, `--star-idle`, `--star-active`, `--badge-mission-*`, `--fab-*`.
 
 ## Plugin System (FN-1111 / FN-1400)
@@ -105,6 +105,16 @@ The plugin system is built on three layers:
 - `--surface-hover` is used but never defined as a CSS custom property in the root or light theme blocks — it resolves to invalid/empty. Components using `var(--surface-hover)` (like `.github-import-tab:hover`) get no background. Either define it in the theme roots or use fallbacks like `var(--surface-hover, rgba(0,0,0,0.03))`.
 - `.form-error` and similar error-state selectors should use `color-mix(in srgb, var(--color-error) 10%, transparent)` instead of hardcoded `rgba(248, 81, 73, 0.1)` for theme adaptability.
 - When styling `input[type="radio"]` elements in `.imported` items, the selector must match `.issue-item.imported input[type="radio"]` (classes on the same element, not nested), because the HTML structure is `<div class="issue-item imported"><input type="radio">`.
+
+## FN-1522: Task State Reconciliation Pattern
+
+Tasks can get into contradictory states (e.g., `column: "done"` with `status: "blocked"` in summary/log). This happens when agents mark tasks done without verifying actual completion. Reconciliation steps:
+- Audit actual deliverables (code files, exports, database schema) before assuming task is complete
+- When reconciliation is needed, update BOTH `task.json` AND SQLite (`fusion.db`) to maintain consistency
+- For SQLite updates, use `sqlite3` directly or use TaskStore methods that write to both
+- Replace stale dependency references (e.g., FN-1267 → FN-1519) when the replacement task exists
+- Add a single reconciliation log entry explaining the state reset, don't duplicate existing diagnostic entries
+- Reset ALL completion-related fields: column, status, currentStep, steps, mergeDetails, branch, baseCommitSha, worktree, stuckKillCount
 
 ## CSS Testing Patterns
 
