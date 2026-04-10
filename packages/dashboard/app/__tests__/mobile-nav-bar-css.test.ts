@@ -65,8 +65,9 @@ describe("mobile-nav-bar.css", () => {
 
   it("executor status bar has bottom offset above nav bar on mobile", () => {
     // ExecutorStatusBar mobile override positions it above the mobile nav bar
+    // Uses --mobile-nav-height variable for consistent nav-height contract
     expect(mobileMediaBlock).toMatch(
-      /\.executor-status-bar\s*\{[^}]*bottom:\s*calc\(48px/,
+      /\.executor-status-bar\s*\{[^}]*bottom:\s*calc\(var\(--mobile-nav-height\)/,
     );
   });
 

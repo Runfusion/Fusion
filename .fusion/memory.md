@@ -254,6 +254,16 @@ Tasks can get into contradictory states (e.g., `column: "done"` with `status: "b
 - Regex tests using `[\s\S]*` (greedy match across lines) to check CSS rules inside `@media` blocks are unreliable — they can match across block boundaries. Use non-greedy `[^}]*` scoped to a single rule block instead.
 - Touch target sizing in `styles.css` mobile media queries uses 36px (reduced from the original 44px). The `.touch-target` opt-in utility class remains at 44px. Comments mentioning "44px" in the mobile sections have been updated to reflect the actual values.
 
+## FN-1464: Mobile Bottom-Spacing Contract
+
+The mobile bottom-spacing is controlled by a single CSS variable `--mobile-nav-height` (defined at `:root`) to ensure consistent spacing across all bottom-positioned elements:
+- **`.mobile-nav-bar`**: Uses `min-height: var(--mobile-nav-height)` (currently 44px)
+- **`.executor-status-bar` mobile**: Uses `bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom))` to position above the nav bar
+- **`.project-content--with-mobile-nav`**: Uses `padding-bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom))` to reserve nav space
+- **`.project-content--with-footer.project-content--with-mobile-nav`**: Uses `padding-bottom: calc(32px + var(--mobile-nav-height) + env(safe-area-inset-bottom))` to reserve footer + nav space
+
+When adjusting mobile bottom spacing, change `--mobile-nav-height` in one place and all related elements will update. Tab touch targets (`.mobile-nav-tab`) remain at 36px minimum regardless of nav height changes.
+
 ## FN-1458: Mobile Header Search Safe-Area-Inset Fix
 
 - When fixing mobile header search positioning issues (search box clipping off-screen), add safe-area-inset handling to both `.header` and `.header-floating-search` in the mobile media query

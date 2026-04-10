@@ -18709,7 +18709,7 @@ html .column.drag-over * {
     font-size: 11px;
     height: 32px;
     overflow: hidden;
-    bottom: calc(48px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px));
   }
 
   .executor-status-bar__segment {
@@ -25567,6 +25567,11 @@ html .column.drag-over * {
    Sits at the very bottom; ExecutorStatusBar appears above when visible.
    Uses safe-area-inset-bottom for notched devices. */
 
+/* Mobile nav height token - used by nav bar, executor status bar, and content padding */
+:root {
+  --mobile-nav-height: 44px;
+}
+
 .mobile-nav-bar {
   position: fixed;
   bottom: 0;
@@ -25577,7 +25582,7 @@ html .column.drag-over * {
   align-items: stretch;
   background: var(--surface);
   border-top: 1px solid var(--border);
-  min-height: 48px;
+  min-height: var(--mobile-nav-height);
   padding-bottom: env(safe-area-inset-bottom, 0px);
   box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.15);
 }
@@ -25593,12 +25598,12 @@ html .column.drag-over * {
 
   /* Content padding: mobile nav only (no footer) */
   .project-content--with-mobile-nav:not(.project-content--with-footer) {
-    padding-bottom: calc(48px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px));
   }
 
   /* Content padding: both mobile nav AND footer */
   .project-content--with-footer.project-content--with-mobile-nav {
-    padding-bottom: calc(32px + 48px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(32px + var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px));
   }
 }
 

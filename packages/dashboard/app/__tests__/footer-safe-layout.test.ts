@@ -124,10 +124,10 @@ describe("footer-safe project workspace layout", () => {
       );
     });
 
-    it("on mobile, positions above the mobile nav bar", () => {
+    it("on mobile, positions above the mobile nav bar using nav-height contract", () => {
       const mobileCss = extractMobileMediaBlocks(css);
       expect(mobileCss).toMatch(
-        /\.executor-status-bar\s*\{[^}]*bottom:\s*calc\(48px/,
+        /\.executor-status-bar\s*\{[^}]*bottom:\s*calc\(var\(--mobile-nav-height\)/,
       );
     });
 
