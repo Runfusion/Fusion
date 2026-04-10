@@ -8,6 +8,7 @@ import type { ToastType } from "../hooks/useToast";
 import { ThemeSelector } from "./ThemeSelector";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { FileEditor } from "./FileEditor";
+import { PluginManager } from "./PluginManager";
 import { applyPresetToSelection, generateUniquePresetId } from "../utils/modelPresets";
 
 /**
@@ -47,6 +48,7 @@ const SETTINGS_SECTIONS = [
   { id: "memory", label: "Memory", scope: "project" as const },
   { id: "backups", label: "Backups", scope: "project" as const },
   { id: "notifications", label: "Notifications", scope: "global" as const },
+  { id: "plugins", label: "Plugins", scope: "project" as const },
   { id: "authentication", label: "Authentication", scope: undefined },
 ] as const;
 
@@ -1873,6 +1875,13 @@ export function SettingsModal({
               </div>
               </>
             )}
+          </>
+        );
+      case "plugins":
+        return (
+          <>
+            <h4 className="settings-section-heading">Plugins</h4>
+            <PluginManager addToast={addToast} projectId={projectId} />
           </>
         );
       case "authentication":

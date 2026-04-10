@@ -18,6 +18,9 @@ import type {
   WorkflowStep,
   WorkflowStepInput,
   WorkflowStepResult,
+  PluginInstallation,
+  PluginState,
+
   Message,
   MessageType,
   ParticipantType,
@@ -3771,5 +3774,66 @@ export function fetchAgentRatingSummary(agentId: string, projectId?: string): Pr
 export function deleteAgentRating(agentId: string, ratingId: string, projectId?: string): Promise<void> {
   return api<void>(withProjectId(`/agents/${encodeURIComponent(agentId)}/ratings/${encodeURIComponent(ratingId)}`, projectId), {
     method: "DELETE",
+  });
+}
+
+// ── Plugin Management ────────────────────────────────────────────────────────
+
+/** Fetch all installed plugins */
+export async function fetchPlugins(projectId?: string): Promise<PluginInstallation[]> {
+  return api<PluginInstallation[]>(withProjectId("/plugins", projectId));
+}
+
+/** Fetch a single plugin by ID */
+export async function fetchPluginDetail(id: string, projectId?: string): Promise<PluginInstallation> {
+  return api<PluginInstallation>(withProjectId(`/plugins/${encodeURIComponent(id)}`, projectId));
+}
+
+/** Install a plugin from local path or npm package */
+export async function installPlugin(
+  source: { path: string } | { package: string },
+  projectId?: string,
+): Promise<PluginInstallation> {
+  return api<PluginInstallation>(withProjectId("/plugins/install", projectId), {
+    method: "POST",
+    body: JSON.stringify(source),
+  });
+}
+
+/** Enable a plugin */
+export async function enablePlugin(id: string, projectId?: string): Promise<PluginInstallation> {
+  return api<PluginInstallation>(withProjectId(`/plugins/${encodeURIComponent(id)}/enable`, projectId), {
+    method: "POST",
+  });
+}
+
+/** Disable a plugin */
+export async function disablePlugin(id: string, projectId?: string): Promise<PluginInstallation> {
+  return api<PluginInstallation>(withProjectId(`/plugins/${encodeURIComponent(id)}/disable`, projectId), {
+    method: "POST",
+  });
+}
+
+/** Uninstall a plugin */
+export async function uninstallPlugin(id: string, projectId?: string): Promise<void> {
+  return api<void>(withProjectId(`/plugins/${encodeURIComponent(id)}`, projectId), {
+    method: "DELETE",
+  });
+}
+
+/** Fetch plugin settings */
+export async function fetchPluginSettings(id: string, projectId?: string): Promise<Record<string, unknown>> {
+  return api<Record<string, unknown>>(withProjectId(`/plugins/${encodeURIComponent(id)}/settings`, projectId));
+}
+
+/** Update plugin settings */
+export async function updatePluginSettings(
+  id: string,
+  settings: Record<string, unknown>,
+  projectId?: string,
+): Promise<Record<string, unknown>> {
+  return api<Record<string, unknown>>(withProjectId(`/plugins/${encodeURIComponent(id)}/settings`, projectId), {
+    method: "PUT",
+    body: JSON.stringify({ settings }),
   });
 }
