@@ -466,9 +466,11 @@ Theme preferences are automatically saved to localStorage and persist across ses
 To add a new color theme:
 
 1. Add the theme to `COLOR_THEMES` in `packages/core/src/types.ts`
-2. Add CSS variables in `packages/dashboard/app/styles.css` under `[data-color-theme="your-theme"]`
+2. Add CSS variables in `packages/dashboard/app/public/theme-data.css` under `[data-color-theme="your-theme"]` (dark variant) and `[data-color-theme="your-theme"][data-theme="light"]` (light variant)
 3. Add the swatch class for the theme picker in the CSS
 4. Update `ThemeSelector.tsx` with the new theme option
+
+**Note:** Theme variable blocks are stored in a separate `theme-data.css` file for optimized loading. This file is only loaded when a non-default color theme is active, reducing the initial payload for users with the default theme.
 
 ### Theme-Driven Logo and Task-Creation CTAs
 

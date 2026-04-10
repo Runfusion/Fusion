@@ -71,11 +71,17 @@ describe("useTheme", () => {
     // Clear document attributes
     document.documentElement.removeAttribute("data-theme");
     document.documentElement.removeAttribute("data-color-theme");
+
+    // Clear any theme-data stylesheet links from previous tests
+    document.querySelectorAll('link[id="theme-data"]').forEach((link) => link.remove());
   });
 
   afterEach(() => {
     consoleWarnSpy.mockRestore();
     vi.unstubAllGlobals();
+
+    // Clean up any theme-data stylesheet links
+    document.querySelectorAll('link[id="theme-data"]').forEach((link) => link.remove());
   });
 
   it("initializes with default values when localStorage is empty", () => {
@@ -350,8 +356,11 @@ describe("useTheme", () => {
   });
 
   it("applies factory-specific design tokens from the stylesheet", () => {
+    // Load both base styles and theme data (theme blocks are in a separate file)
     const style = document.createElement("style");
-    style.textContent = readFileSync("app/styles.css", "utf8");
+    const baseCss = readFileSync("app/styles.css", "utf8");
+    const themeDataCss = readFileSync("app/public/theme-data.css", "utf8");
+    style.textContent = baseCss + "\n" + themeDataCss;
     document.head.appendChild(style);
 
     localStorageMock[COLOR_THEME_STORAGE_KEY] = "factory";
@@ -421,6 +430,100 @@ describe("useTheme", () => {
 
     expect(result.current.themeMode).toBe("dark");
     expect(result.current.colorTheme).toBe("default");
+  });
+
+  describe("dynamic theme-data.css loading", () => {
+    it("loads theme-data.css when switching to non-default theme", () => {
+      const { result } = renderHook(() => useTheme());
+
+      // Initially default theme - no theme-data link should exist
+      expect(document.getElementById("theme-data")).toBeNull();
+
+      // Switch to ocean theme
+      act(() => {
+        result.current.setColorTheme("ocean");
+      });
+
+      // theme-data link should be present
+      const link = document.getElementById("theme-data");
+      expect(link).not.toBeNull();
+      expect(link?.tagName.toLowerCase()).toBe("link");
+      expect(link?.getAttribute("rel")).toBe("stylesheet");
+      expect(link?.getAttribute("href")).toBe("/theme-data.css");
+    });
+
+    it("removes theme-data.css when switching back to default theme", () => {
+      const { result } = renderHook(() => useTheme());
+
+      // First switch to non-default theme
+      act(() => {
+        result.current.setColorTheme("ocean");
+      });
+
+      // theme-data link should exist
+      expect(document.getElementById("theme-data")).not.toBeNull();
+
+      // Switch back to default
+      act(() => {
+        result.current.setColorTheme("default");
+      });
+
+      // theme-data link should be removed
+      expect(document.getElementById("theme-data")).toBeNull();
+    });
+
+    it("does not inject duplicate theme-data links when switching themes", () => {
+      const { result } = renderHook(() => useTheme());
+
+      // Switch to ocean theme multiple times
+      act(() => {
+        result.current.setColorTheme("ocean");
+      });
+      act(() => {
+        result.current.setColorTheme("forest");
+      });
+      act(() => {
+        result.current.setColorTheme("sunset");
+      });
+
+      // Should only have one theme-data link
+      const links = document.querySelectorAll('link[id="theme-data"]');
+      expect(links.length).toBe(1);
+    });
+
+    it("theme-data.css not required for default theme", () => {
+      const { result } = renderHook(() => useTheme());
+
+      // Default theme should not have theme-data link
+      expect(document.getElementById("theme-data")).toBeNull();
+
+      // Even after any state changes, default theme doesn't need theme-data
+      act(() => {
+        result.current.setThemeMode("light");
+      });
+      expect(document.getElementById("theme-data")).toBeNull();
+    });
+
+    it("loads theme-data.css for all non-default themes", () => {
+      const { result } = renderHook(() => useTheme());
+
+      // Test a few representative non-default themes
+      const nonDefaultThemes = ["factory", "dracula", "nord", "tokyo-night"] as const;
+
+      for (const theme of nonDefaultThemes) {
+        // Clear any existing link
+        const existing = document.getElementById("theme-data");
+        if (existing) existing.remove();
+
+        act(() => {
+          result.current.setColorTheme(theme);
+        });
+
+        const link = document.getElementById("theme-data");
+        expect(link).not.toBeNull();
+        expect(link?.getAttribute("href")).toBe("/theme-data.css");
+      }
+    });
   });
 });
 

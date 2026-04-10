@@ -25,6 +25,14 @@
           var effectiveMode = mode === 'system' ? (systemDark ? 'dark' : 'light') : mode;
           document.documentElement.setAttribute('data-theme', effectiveMode);
           document.documentElement.setAttribute('data-color-theme', colorTheme);
+          // Load theme-data.css for non-default themes to prevent flash
+          if (colorTheme !== 'default') {
+            var link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = '/theme-data.css';
+            link.id = 'theme-data';
+            document.head.appendChild(link);
+          }
         } catch (e) {
           document.documentElement.setAttribute('data-theme', 'dark');
           document.documentElement.setAttribute('data-color-theme', 'default');

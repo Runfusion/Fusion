@@ -5,6 +5,7 @@ import { fetchGlobalSettings, updateGlobalSettings } from "../api";
 const THEME_MODE_STORAGE_KEY = "kb-dashboard-theme-mode";
 const COLOR_THEME_STORAGE_KEY = "kb-dashboard-color-theme";
 const VALID_COLOR_THEMES = [...COLOR_THEMES] satisfies ColorTheme[];
+const THEME_DATA_ID = "theme-data";
 
 // Check if we're in a browser environment
 const isBrowser = typeof window !== "undefined";
@@ -88,6 +89,32 @@ function applyThemeAttributes(themeMode: ThemeMode, colorTheme: ColorTheme, syst
   const effectiveMode = getEffectiveThemeMode(themeMode, systemIsDark);
   document.documentElement.setAttribute("data-theme", effectiveMode);
   document.documentElement.setAttribute("data-color-theme", colorTheme);
+}
+
+/**
+ * Load theme-data.css for non-default themes.
+ * Prevents duplicate injections by checking for existing link.
+ */
+function loadThemeDataStylesheet(): void {
+  if (!isBrowser) return;
+  if (document.getElementById(THEME_DATA_ID)) return; // Already loaded
+
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = "/theme-data.css";
+  link.id = THEME_DATA_ID;
+  document.head.appendChild(link);
+}
+
+/**
+ * Unload theme-data.css when returning to default theme.
+ */
+function unloadThemeDataStylesheet(): void {
+  if (!isBrowser) return;
+  const existing = document.getElementById(THEME_DATA_ID);
+  if (existing) {
+    existing.remove();
+  }
 }
 
 /**
@@ -183,6 +210,17 @@ export function useTheme(): UseThemeReturn {
     applyThemeAttributes(themeMode, colorTheme, isSystemDark);
   }, [themeMode, colorTheme, isSystemDark]);
 
+  // Ensure theme-data.css is loaded/unloaded based on colorTheme.
+  // This handles both initial hydration from backend and runtime theme changes.
+  useEffect(() => {
+    if (!isBrowser || isHydrating) return;
+    if (colorTheme !== "default") {
+      loadThemeDataStylesheet();
+    } else {
+      unloadThemeDataStylesheet();
+    }
+  }, [colorTheme, isHydrating]);
+
   // Wrapper setters with write-through persistence.
   const setThemeMode = useCallback((mode: ThemeMode) => {
     setThemeModeState(mode);
@@ -196,6 +234,13 @@ export function useTheme(): UseThemeReturn {
   const setColorTheme = useCallback((theme: ColorTheme) => {
     setColorThemeState(theme);
     writeCachedColorTheme(theme);
+
+    // Load or unload theme-data.css based on whether it's a non-default theme
+    if (theme !== "default") {
+      loadThemeDataStylesheet();
+    } else {
+      unloadThemeDataStylesheet();
+    }
 
     void updateGlobalSettings({ colorTheme: theme }).catch((error) => {
       console.warn("[useTheme] Failed to persist colorTheme to global settings", error);

@@ -264,11 +264,15 @@ describe("CSS modifier classes for status colors", () => {
 });
 
 describe("Accent color per color theme", () => {
+  // Theme blocks are now in a separate theme-data.css file
   const stylesPath = path.resolve(__dirname, "../styles.css");
+  const themeDataPath = path.resolve(__dirname, "../public/theme-data.css");
   let css: string;
+  let themeData: string;
 
   beforeAll(() => {
     css = fs.readFileSync(stylesPath, "utf-8");
+    themeData = fs.readFileSync(themeDataPath, "utf-8");
   });
 
   /**
@@ -280,10 +284,10 @@ describe("Accent color per color theme", () => {
     const regex = /^\[data-color-theme="([^"]+)"\]\s*\{/gm;
     let match: RegExpExecArray | null;
 
-    while ((match = regex.exec(css)) !== null) {
+    while ((match = regex.exec(themeData)) !== null) {
       const themeName = match[1];
       // Skip if this is actually a light variant or compound selector
-      const fullLine = css.slice(match.index, css.indexOf("\n", match.index));
+      const fullLine = themeData.slice(match.index, themeData.indexOf("\n", match.index));
       if (fullLine.includes("[data-theme=") || fullLine.includes(".") || fullLine.includes(",")) {
         continue;
       }
@@ -291,15 +295,15 @@ describe("Accent color per color theme", () => {
       const openBraceIdx = match.index + match[0].length - 1;
       let depth = 1;
       let end = openBraceIdx;
-      for (let i = openBraceIdx + 1; i < css.length; i++) {
-        if (css[i] === "{") depth++;
-        if (css[i] === "}") depth--;
+      for (let i = openBraceIdx + 1; i < themeData.length; i++) {
+        if (themeData[i] === "{") depth++;
+        if (themeData[i] === "}") depth--;
         if (depth === 0) {
           end = i;
           break;
         }
       }
-      blocks.set(themeName, css.slice(match.index, end + 1));
+      blocks.set(themeName, themeData.slice(match.index, end + 1));
     }
     return blocks;
   }
@@ -312,20 +316,20 @@ describe("Accent color per color theme", () => {
     const regex = /^\[data-color-theme="([^"]+)"\]\[data-theme="light"\]\s*\{/gm;
     let match: RegExpExecArray | null;
 
-    while ((match = regex.exec(css)) !== null) {
+    while ((match = regex.exec(themeData)) !== null) {
       const themeName = match[1];
       const openBraceIdx = match.index + match[0].length - 1;
       let depth = 1;
       let end = openBraceIdx;
-      for (let i = openBraceIdx + 1; i < css.length; i++) {
-        if (css[i] === "{") depth++;
-        if (css[i] === "}") depth--;
+      for (let i = openBraceIdx + 1; i < themeData.length; i++) {
+        if (themeData[i] === "{") depth++;
+        if (themeData[i] === "}") depth--;
         if (depth === 0) {
           end = i;
           break;
         }
       }
-      blocks.set(themeName, css.slice(match.index, end + 1));
+      blocks.set(themeName, themeData.slice(match.index, end + 1));
     }
     return blocks;
   }
