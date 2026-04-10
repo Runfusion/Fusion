@@ -3105,8 +3105,9 @@ body {
 /* Scope indicators in sidebar nav items */
 .settings-scope-icon {
   margin-right: 6px;
-  font-size: 12px;
-  line-height: 1;
+  display: inline-flex;
+  vertical-align: middle;
+  color: var(--text-muted);
 }
 
 /* Scope banner above section content */
