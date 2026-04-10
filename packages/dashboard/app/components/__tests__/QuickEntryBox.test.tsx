@@ -2335,6 +2335,104 @@ describe("QuickEntryBox", () => {
         expect(payload.assignedAgentId).toBeUndefined();
       });
     });
+
+    it("fetches fresh agents when projectId changes to prevent stale cache leakage", async () => {
+      const project1Agents = [
+        {
+          id: "agent-001",
+          name: "Project One Agent",
+          role: "executor",
+          state: "active",
+          metadata: {},
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ] as any;
+
+      const project2Agents = [
+        {
+          id: "agent-002",
+          name: "Project Two Agent",
+          role: "executor",
+          state: "active",
+          metadata: {},
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ] as any;
+
+      // First render with project 1
+      vi.mocked(fetchAgents).mockResolvedValueOnce(project1Agents);
+      const { rerender } = renderQuickEntryBox({ projectId: "proj-1" });
+      expandQuickEntry();
+
+      // Open agent picker - should show project 1 agent
+      fireEvent.click(screen.getByTestId("quick-entry-agent-button"));
+      await waitFor(() => {
+        expect(screen.getByText("Project One Agent")).toBeInTheDocument();
+      });
+
+      // Close picker and switch to project 2
+      fireEvent.click(screen.getByTestId("quick-entry-agent-button"));
+
+      // Rerender with different projectId - agents should be cleared and re-fetched
+      vi.mocked(fetchAgents).mockResolvedValueOnce(project2Agents);
+      rerender(<QuickEntryBox
+        onCreate={vi.fn()}
+        addToast={vi.fn()}
+        tasks={[]}
+        availableModels={MOCK_MODELS}
+        projectId="proj-2"
+      />);
+
+      // Open picker again for project 2
+      expandQuickEntry();
+      fireEvent.click(screen.getByTestId("quick-entry-agent-button"));
+
+      await waitFor(() => {
+        // Should show project 2's agent, not the stale project 1 agent
+        expect(screen.getByText("Project Two Agent")).toBeInTheDocument();
+      });
+
+      // Verify project 1's agent is NOT shown
+      expect(screen.queryByText("Project One Agent")).not.toBeInTheDocument();
+    });
+
+    it("clears selected agent when projectId changes", async () => {
+      const agents = [
+        {
+          id: "agent-001",
+          name: "Test Agent",
+          role: "executor",
+          state: "active",
+          metadata: {},
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ] as any;
+
+      vi.mocked(fetchAgents).mockResolvedValue(agents);
+      const { rerender } = renderQuickEntryBox({ projectId: "proj-1" });
+      expandQuickEntry();
+
+      // Select an agent
+      fireEvent.click(screen.getByTestId("quick-entry-agent-button"));
+      await waitFor(() => expect(screen.getByText("Test Agent")).toBeInTheDocument());
+      fireEvent.click(screen.getByText("Test Agent"));
+
+      // Switch to different project
+      rerender(<QuickEntryBox
+        onCreate={vi.fn()}
+        addToast={vi.fn()}
+        tasks={[]}
+        availableModels={MOCK_MODELS}
+        projectId="proj-2"
+      />);
+
+      // Selected agent should be cleared, picker should show "Agent" without name
+      const agentButton = screen.getByTestId("quick-entry-agent-button");
+      expect(agentButton.textContent).toBe(" Agent");
+    });
   });
 
   describe("description fullscreen expansion", () => {

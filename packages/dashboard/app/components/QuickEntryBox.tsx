@@ -230,6 +230,12 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     }
   }, [description, projectId]);
 
+  // Clear agents cache when projectId changes to prevent stale agents from leaking across projects
+  useEffect(() => {
+    setAgents([]);
+    setSelectedAgentId(null);
+  }, [projectId]);
+
   // Clean up legacy disclosure persistence key from previous versions
   useEffect(() => {
     if (typeof window !== "undefined") {

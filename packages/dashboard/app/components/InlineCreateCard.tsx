@@ -119,6 +119,12 @@ export function InlineCreateCard({
     }
   }, [description, projectId]);
 
+  // Clear agents cache when projectId changes to prevent stale agents from leaking across projects
+  useEffect(() => {
+    setAgents([]);
+    setSelectedAgentId(null);
+  }, [projectId]);
+
   const loadModels = useCallback(async () => {
     if (availableModels) {
       setLoadedModels(availableModels);
