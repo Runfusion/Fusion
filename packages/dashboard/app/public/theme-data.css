@@ -3396,3 +3396,369 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --accent: #3a6a9f;
 }
 
+/* SANDSTONE - Warm desert sandstone */
+[data-color-theme="sandstone"] {
+  --bg: #1a1712;
+  --surface: #241f18;
+  --card: #2e2820;
+  --card-hover: #38322a;
+  --border: #4a4035;
+  --text: #f0e8dc;
+  --text-muted: #a09080;
+  --text-dim: #706858;
+
+  --todo: #d4a06a;
+  --in-progress: #e0b080;
+  --in-progress-rgb: 224, 176, 128;
+  --in-review: #c09060;
+  --triage: #b08070;
+  --done: #a09080;
+  --color-success: #80a070;
+  --color-error: #b06060;
+
+  --cta-bg: #a07840;
+  --cta-border: #c09060;
+  --cta-text: #fff;
+  --cta-bg-hover: #b08850;
+  --cta-border-hover: #d0a070;
+  --cta-glow: 0 0 8px rgba(192, 144, 96, 0.3);
+  --logo-accent: var(--todo);
+  --color-info: #90a8c0;
+  --accent: #c4905a;
+}
+
+[data-color-theme="sandstone"][data-theme="light"] {
+  --bg: #f5f0e8;
+  --surface: #ebe4d8;
+  --card: #faf6ee;
+  --card-hover: #f0e8e0;
+  --border: #d0c8b8;
+  --text: #2a2418;
+  --text-muted: #605848;
+  --text-dim: #888070;
+
+  --todo: #a07040;
+  --in-progress: #b08050;
+  --in-progress-rgb: 176, 128, 80;
+  --in-review: #907060;
+  --triage: #c09080;
+  --done: #807060;
+  --color-success: #607840;
+  --color-error: #a04040;
+
+  --cta-bg: #8a6830;
+  --cta-border: #a08050;
+  --cta-text: #fff;
+  --cta-bg-hover: #9a7840;
+  --cta-border-hover: #b09060;
+  --cta-glow: 0 0 8px rgba(160, 128, 80, 0.3);
+  --logo-accent: var(--todo);
+  --color-info: #5888a8;
+  --accent: #a07040;
+}
+
+/* LAGOON - Deep tropical lagoon */
+[data-color-theme="lagoon"] {
+  --bg: #0a1214;
+  --surface: #101c1f;
+  --card: #162628;
+  --card-hover: #1c3034;
+  --border: #2a4045;
+  --text: #e0f0f0;
+  --text-muted: #80a0a8;
+  --text-dim: #507880;
+
+  --todo: #50d8c0;
+  --in-progress: #60e8d0;
+  --in-progress-rgb: 96, 232, 208;
+  --in-review: #48c0b0;
+  --triage: #c08080;
+  --done: #70a8a0;
+  --color-success: #50c8b0;
+  --color-error: #b05060;
+
+  --cta-bg: #308880;
+  --cta-border: #40a8a0;
+  --cta-text: #fff;
+  --cta-bg-hover: #409898;
+  --cta-border-hover: #50b8b0;
+  --cta-glow: 0 0 8px rgba(64, 168, 160, 0.3);
+  --logo-accent: var(--todo);
+  --color-info: #50a8c0;
+  --accent: #40c8b0;
+}
+
+[data-color-theme="lagoon"][data-theme="light"] {
+  --bg: #eef5f3;
+  --surface: #e0ebe8;
+  --card: #f0f8f5;
+  --card-hover: #e4f0ec;
+  --border: #b0c8c0;
+  --text: #102420;
+  --text-muted: #486058;
+  --text-dim: #688078;
+
+  --todo: #208070;
+  --in-progress: #289080;
+  --in-progress-rgb: 40, 144, 128;
+  --in-review: #308078;
+  --triage: #a06060;
+  --done: #587878;
+  --color-success: #308070;
+  --color-error: #983030;
+
+  --cta-bg: #287060;
+  --cta-border: #389080;
+  --cta-text: #fff;
+  --cta-bg-hover: #308070;
+  --cta-border-hover: #40a090;
+  --cta-glow: 0 0 8px rgba(56, 144, 128, 0.3);
+  --logo-accent: var(--todo);
+  --color-info: #2880a0;
+  --accent: #2a9080;
+}
+
+/* FROST - Cool icy blue-white */
+[data-color-theme="frost"] {
+  --bg: #0c0e14;
+  --surface: #121520;
+  --card: #1a1e2c;
+  --card-hover: #222638;
+  --border: #2a3048;
+  --text: #e8f0f8;
+  --text-muted: #8098b0;
+  --text-dim: #506878;
+
+  --todo: #8ac8f8;
+  --in-progress: #9ad8ff;
+  --in-progress-rgb: 154, 216, 255;
+  --in-review: #78b8e8;
+  --triage: #c08080;
+  --done: #6878a0;
+  --color-success: #70b8d0;
+  --color-error: #b06070;
+
+  --cta-bg: #4070a8;
+  --cta-border: #5888c0;
+  --cta-text: #fff;
+  --cta-bg-hover: #5080b8;
+  --cta-border-hover: #6898d0;
+  --cta-glow: 0 0 8px rgba(88, 136, 192, 0.3);
+  --logo-accent: var(--todo);
+  --color-info: #60a0c8;
+  --accent: #7ab8e8;
+}
+
+[data-color-theme="frost"][data-theme="light"] {
+  --bg: #f0f4f8;
+  --surface: #e4eaf0;
+  --card: #f8fafc;
+  --card-hover: #ecf2f8;
+  --border: #b0c0d0;
+  --text: #101828;
+  --text-muted: #485868;
+  --text-dim: #687888;
+
+  --todo: #3078a8;
+  --in-progress: #4088b8;
+  --in-progress-rgb: 64, 136, 184;
+  --in-review: #407898;
+  --triage: #a06060;
+  --done: #586878;
+  --color-success: #3088a0;
+  --color-error: #982830;
+
+  --cta-bg: #2870a0;
+  --cta-border: #3888b8;
+  --cta-text: #fff;
+  --cta-bg-hover: #3080b0;
+  --cta-border-hover: #4898c8;
+  --cta-glow: 0 0 8px rgba(56, 136, 184, 0.3);
+  --logo-accent: var(--todo);
+  --color-info: #2080a8;
+  --accent: #4a90c0;
+}
+
+/* LAVENDER - Soft purple-lavender tones */
+[data-color-theme="lavender"] {
+  --bg: #14101a;
+  --surface: #1c1624;
+  --card: #241e30;
+  --card-hover: #2c2838;
+  --border: #3a3050;
+  --text: #f0e8f8;
+  --text-muted: #a090b8;
+  --text-dim: #706880;
+
+  --todo: #c8a0e8;
+  --in-progress: #d8b0f0;
+  --in-progress-rgb: 216, 176, 240;
+  --in-review: #b890d8;
+  --triage: #c080a0;
+  --done: #9880a8;
+  --color-success: #a090c0;
+  --color-error: #b06878;
+
+  --cta-bg: #8060a0;
+  --cta-border: #9878b8;
+  --cta-text: #fff;
+  --cta-bg-hover: #9070b0;
+  --cta-border-hover: #a888c8;
+  --cta-glow: 0 0 8px rgba(152, 120, 184, 0.3);
+  --logo-accent: var(--todo);
+  --color-info: #9090c0;
+  --accent: #b890d8;
+}
+
+[data-color-theme="lavender"][data-theme="light"] {
+  --bg: #f4f0f8;
+  --surface: #e8e2f0;
+  --card: #faf8fc;
+  --card-hover: #f2eef8;
+  --border: #c8c0d8;
+  --text: #18101c;
+  --text-muted: #504858;
+  --text-dim: #706878;
+
+  --todo: #8060a0;
+  --in-progress: #9070b0;
+  --in-progress-rgb: 144, 112, 176;
+  --in-review: #7870a0;
+  --triage: #a08090;
+  --done: #786878;
+  --color-success: #607898;
+  --color-error: #983048;
+
+  --cta-bg: #685090;
+  --cta-border: #8068a8;
+  --cta-text: #fff;
+  --cta-bg-hover: #7860a0;
+  --cta-border-hover: #9078b8;
+  --cta-glow: 0 0 8px rgba(128, 104, 168, 0.3);
+  --logo-accent: var(--todo);
+  --color-info: #6868a0;
+  --accent: #8060a8;
+}
+
+/* NEON-BLOOM - Vibrant neon pastels */
+[data-color-theme="neon-bloom"] {
+  --bg: #120a18;
+  --surface: #1a1024;
+  --card: #241630;
+  --card-hover: #2c1e3c;
+  --border: #3a2850;
+  --text: #f8e8f8;
+  --text-muted: #b090b8;
+  --text-dim: #806880;
+
+  --todo: #f080d0;
+  --in-progress: #ff90e0;
+  --in-progress-rgb: 255, 144, 224;
+  --in-review: #e870c0;
+  --triage: #c0a0a8;
+  --done: #b090c0;
+  --color-success: #c0d0a0;
+  --color-error: #c06878;
+
+  --cta-bg: #a04898;
+  --cta-border: #c060b8;
+  --cta-text: #fff;
+  --cta-bg-hover: #b058a8;
+  --cta-border-hover: #d070c8;
+  --cta-glow: 0 0 8px rgba(192, 96, 184, 0.3);
+  --logo-accent: var(--todo);
+  --color-info: #b090d0;
+  --accent: #e870c0;
+}
+
+[data-color-theme="neon-bloom"][data-theme="light"] {
+  --bg: #f8f0f8;
+  --surface: #f0e4f0;
+  --card: #fcf8fc;
+  --card-hover: #f8f0f8;
+  --border: #d8d0e0;
+  --text: #18081c;
+  --text-muted: #584868;
+  --text-dim: #786888;
+
+  --todo: #a03090;
+  --in-progress: #b040a0;
+  --in-progress-rgb: 176, 64, 160;
+  --in-review: #9838a0;
+  --triage: #a08090;
+  --done: #786878;
+  --color-success: #587898;
+  --color-error: #982848;
+
+  --cta-bg: #8030a0;
+  --cta-border: #9848b8;
+  --cta-text: #fff;
+  --cta-bg-hover: #9040b0;
+  --cta-border-hover: #a858c8;
+  --cta-glow: 0 0 8px rgba(152, 72, 184, 0.3);
+  --logo-accent: var(--todo);
+  --color-info: #7878c0;
+  --accent: #c040a0;
+}
+
+/* SEPIA - Warm vintage sepia photography aesthetic */
+[data-color-theme="sepia"] {
+  --bg: #161210;
+  --surface: #201a16;
+  --card: #2a2420;
+  --card-hover: #342e28;
+  --border: #4a4038;
+  --text: #f0e8d8;
+  --text-muted: #a09078;
+  --text-dim: #706858;
+
+  --todo: #d8b878;
+  --in-progress: #e8c888;
+  --in-progress-rgb: 232, 200, 136;
+  --in-review: #c8a868;
+  --triage: #b8a088;
+  --done: #908070;
+  --color-success: #a0b080;
+  --color-error: #b87068;
+
+  --cta-bg: #907850;
+  --cta-border: #a89068;
+  --cta-text: #fff;
+  --cta-bg-hover: #a08858;
+  --cta-border-hover: #b8a078;
+  --cta-glow: 0 0 8px rgba(168, 144, 104, 0.3);
+  --logo-accent: var(--todo);
+  --color-info: #a8a0b0;
+  --accent: #c8a868;
+}
+
+[data-color-theme="sepia"][data-theme="light"] {
+  --bg: #f5f0e4;
+  --surface: #ece4d4;
+  --card: #faf8f0;
+  --card-hover: #f4eedc;
+  --border: #d0c8b8;
+  --text: #201810;
+  --text-muted: #584838;
+  --text-dim: #786858;
+
+  --todo: #907040;
+  --in-progress: #a08050;
+  --in-progress-rgb: 160, 128, 80;
+  --in-review: #886838;
+  --triage: #a08878;
+  --done: #786858;
+  --color-success: #607038;
+  --color-error: #983020;
+
+  --cta-bg: #786030;
+  --cta-border: #907840;
+  --cta-text: #fff;
+  --cta-bg-hover: #887038;
+  --cta-border-hover: #a08848;
+  --cta-glow: 0 0 8px rgba(144, 120, 64, 0.3);
+  --logo-accent: var(--todo);
+  --color-info: #888098;
+  --accent: #9a8050;
+}
+
