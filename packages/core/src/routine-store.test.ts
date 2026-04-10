@@ -79,6 +79,7 @@ describe("RoutineStore", () => {
     it("creates a routine with cron trigger", async () => {
       const input: RoutineCreateInput = {
         name: "Hourly check",
+        agentId: "test-agent",
         trigger: { type: "cron", cronExpression: "0 * * * *" },
       };
 
@@ -101,6 +102,7 @@ describe("RoutineStore", () => {
     it("creates a routine with webhook trigger", async () => {
       const input: RoutineCreateInput = {
         name: "Webhook routine",
+        agentId: "test-agent",
         trigger: { type: "webhook", webhookPath: "/trigger/my-routine" },
       };
 
@@ -113,6 +115,7 @@ describe("RoutineStore", () => {
     it("creates a routine with api trigger", async () => {
       const input: RoutineCreateInput = {
         name: "API routine",
+        agentId: "test-agent",
         trigger: { type: "api", endpoint: "/api/routines/run" },
       };
 
@@ -125,6 +128,7 @@ describe("RoutineStore", () => {
     it("creates a routine with manual trigger", async () => {
       const input: RoutineCreateInput = {
         name: "Manual routine",
+        agentId: "test-agent",
         trigger: { type: "manual" },
       };
 
@@ -137,6 +141,7 @@ describe("RoutineStore", () => {
     it("creates disabled routine without nextRunAt", async () => {
       const input: RoutineCreateInput = {
         name: "Disabled",
+        agentId: "test-agent",
         trigger: { type: "cron", cronExpression: "0 * * * *" },
         enabled: false,
       };
@@ -150,6 +155,7 @@ describe("RoutineStore", () => {
     it("creates routine with custom policies", async () => {
       const input: RoutineCreateInput = {
         name: "Custom policies",
+        agentId: "test-agent",
         trigger: { type: "cron", cronExpression: "0 * * * *" },
         catchUpPolicy: "skip",
         executionPolicy: "parallel",
@@ -164,6 +170,7 @@ describe("RoutineStore", () => {
     it("rejects empty name", async () => {
       const input: RoutineCreateInput = {
         name: "",
+        agentId: "test-agent",
         trigger: { type: "manual" },
       };
 
@@ -173,6 +180,7 @@ describe("RoutineStore", () => {
     it("rejects invalid cron expression", async () => {
       const input: RoutineCreateInput = {
         name: "Bad cron",
+        agentId: "test-agent",
         trigger: { type: "cron", cronExpression: "bad cron" },
       };
 
@@ -185,6 +193,7 @@ describe("RoutineStore", () => {
 
       const routine = await store.createRoutine({
         name: "Event test",
+        agentId: "test-agent",
         trigger: { type: "manual" },
       });
 
@@ -198,6 +207,7 @@ describe("RoutineStore", () => {
     it("reads a routine by id", async () => {
       const created = await store.createRoutine({
         name: "Get test",
+        agentId: "test-agent",
         trigger: { type: "manual" },
       });
 
@@ -220,9 +230,9 @@ describe("RoutineStore", () => {
     });
 
     it("returns all routines sorted by createdAt", async () => {
-      await store.createRoutine({ name: "A", trigger: { type: "manual" } });
+      await store.createRoutine({ name: "A", agentId: "test-agent", trigger: { type: "manual" } });
       await new Promise((r) => setTimeout(r, 5));
-      await store.createRoutine({ name: "B", trigger: { type: "manual" } });
+      await store.createRoutine({ name: "B", agentId: "test-agent", trigger: { type: "manual" } });
 
       const list = await store.listRoutines();
       expect(list).toHaveLength(2);
@@ -237,6 +247,7 @@ describe("RoutineStore", () => {
     it("updates name and description", async () => {
       const routine = await store.createRoutine({
         name: "Original",
+        agentId: "test-agent",
         trigger: { type: "manual" },
       });
 
@@ -257,6 +268,7 @@ describe("RoutineStore", () => {
     it("updates trigger from manual to cron", async () => {
       const routine = await store.createRoutine({
         name: "Test",
+        agentId: "test-agent",
         trigger: { type: "manual" },
       });
 
@@ -272,6 +284,7 @@ describe("RoutineStore", () => {
     it("updates enabled state", async () => {
       const routine = await store.createRoutine({
         name: "Toggle",
+        agentId: "test-agent",
         trigger: { type: "cron", cronExpression: "0 * * * *" },
       });
 
@@ -287,6 +300,7 @@ describe("RoutineStore", () => {
     it("updates policies", async () => {
       const routine = await store.createRoutine({
         name: "Policies",
+        agentId: "test-agent",
         trigger: { type: "manual" },
       });
 
@@ -302,6 +316,7 @@ describe("RoutineStore", () => {
     it("rejects empty name", async () => {
       const routine = await store.createRoutine({
         name: "Test",
+        agentId: "test-agent",
         trigger: { type: "manual" },
       });
 
@@ -313,6 +328,7 @@ describe("RoutineStore", () => {
     it("rejects invalid cron on update", async () => {
       const routine = await store.createRoutine({
         name: "Test",
+        agentId: "test-agent",
         trigger: { type: "manual" },
       });
 
@@ -326,6 +342,7 @@ describe("RoutineStore", () => {
     it("emits routine:updated event", async () => {
       const routine = await store.createRoutine({
         name: "Event test",
+        agentId: "test-agent",
         trigger: { type: "manual" },
       });
 
@@ -343,6 +360,7 @@ describe("RoutineStore", () => {
     it("deletes a routine", async () => {
       const routine = await store.createRoutine({
         name: "Delete me",
+        agentId: "test-agent",
         trigger: { type: "manual" },
       });
 
@@ -359,6 +377,7 @@ describe("RoutineStore", () => {
     it("emits routine:deleted event", async () => {
       const routine = await store.createRoutine({
         name: "Delete test",
+        agentId: "test-agent",
         trigger: { type: "manual" },
       });
 
@@ -376,6 +395,7 @@ describe("RoutineStore", () => {
     it("records a successful run", async () => {
       const routine = await store.createRoutine({
         name: "Run test",
+        agentId: "test-agent",
         trigger: { type: "manual" },
       });
 
@@ -398,6 +418,7 @@ describe("RoutineStore", () => {
     it("records a failed run", async () => {
       const routine = await store.createRoutine({
         name: "Fail test",
+        agentId: "test-agent",
         trigger: { type: "manual" },
       });
 
@@ -419,6 +440,7 @@ describe("RoutineStore", () => {
     it("caps run history at MAX_ROUTINE_RUN_HISTORY", async () => {
       const routine = await store.createRoutine({
         name: "History test",
+        agentId: "test-agent",
         trigger: { type: "manual" },
       });
 
@@ -440,6 +462,7 @@ describe("RoutineStore", () => {
     it("emits routine:run event", async () => {
       const routine = await store.createRoutine({
         name: "Event test",
+        agentId: "test-agent",
         trigger: { type: "manual" },
       });
 
@@ -463,6 +486,7 @@ describe("RoutineStore", () => {
       // Use a cron that fires every minute to ensure different nextRunAt
       const routine = await store.createRoutine({
         name: "Cron run test",
+        agentId: "test-agent",
         trigger: { type: "cron", cronExpression: "0 * * * * *" },
       });
 
@@ -498,6 +522,7 @@ describe("RoutineStore", () => {
     it("excludes disabled routines", async () => {
       const routine = await store.createRoutine({
         name: "Disabled test",
+        agentId: "test-agent",
         trigger: { type: "cron", cronExpression: "0 * * * *" },
         enabled: false,
       });
@@ -509,6 +534,7 @@ describe("RoutineStore", () => {
     it("excludes routines with future nextRunAt", async () => {
       const routine = await store.createRoutine({
         name: "Future test",
+        agentId: "test-agent",
         trigger: { type: "cron", cronExpression: "0 * * * *" },
       });
 
@@ -521,6 +547,7 @@ describe("RoutineStore", () => {
       // Create routine with cron trigger
       const routine = await store.createRoutine({
         name: "Due test",
+        agentId: "test-agent",
         trigger: { type: "cron", cronExpression: "0 * * * *" },
       });
 
@@ -543,6 +570,7 @@ describe("RoutineStore", () => {
     it("handles concurrent updates safely", async () => {
       const routine = await store.createRoutine({
         name: "Concurrent",
+        agentId: "test-agent",
         trigger: { type: "manual" },
       });
 
