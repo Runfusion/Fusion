@@ -9712,6 +9712,47 @@ describe("POST /api/agents/:id/runs", () => {
     expect(res2.body.error).toContain("active run");
     expect(res2.body.details?.runId).toBeTruthy();
   });
+
+  it("returns 201 again after a prior run is completed via stop", async () => {
+    // Create first run
+    const res1 = await REQUEST(buildApp(), "POST", `/api/agents/${agentId}/runs`);
+    expect(res1.status).toBe(201);
+    const runId1 = res1.body.id;
+
+    // Stop the run
+    const stopRes = await REQUEST(buildApp(), "POST", `/api/agents/${agentId}/runs/stop`);
+    expect(stopRes.status).toBe(200);
+    expect(stopRes.body.runId).toBe(runId1);
+
+    // Create second run — should succeed now that first is complete
+    const res2 = await REQUEST(buildApp(), "POST", `/api/agents/${agentId}/runs`);
+    expect(res2.status).toBe(201);
+    expect(res2.body.id).not.toBe(runId1);
+    expect(res2.body.status).toBe("active");
+  });
+
+  it("returns 201 again after a prior run is completed via AgentStore.endHeartbeatRun", async () => {
+    // Create first run
+    const res1 = await REQUEST(buildApp(), "POST", `/api/agents/${agentId}/runs`);
+    expect(res1.status).toBe(201);
+    const runId1 = res1.body.id;
+
+    // Complete the run directly via AgentStore
+    const { AgentStore } = await import("@fusion/core");
+    const agentStore = new AgentStore({ rootDir: fusionDir });
+    await agentStore.init();
+    await agentStore.endHeartbeatRun(runId1, "completed");
+
+    // Verify run is completed
+    const activeRun = await agentStore.getActiveHeartbeatRun(agentId);
+    expect(activeRun).toBeNull();
+
+    // Create second run — should succeed now that first is complete
+    const res2 = await REQUEST(buildApp(), "POST", `/api/agents/${agentId}/runs`);
+    expect(res2.status).toBe(201);
+    expect(res2.body.id).not.toBe(runId1);
+    expect(res2.body.status).toBe("active");
+  });
 });
 
 describe("GET /api/agents/:id/runs/:runId/logs", () => {

@@ -1210,20 +1210,25 @@ export class AgentStore extends EventEmitter {
 
   /**
    * Start a new heartbeat run for an agent.
+   * Persists the run to structured storage as the source of truth.
    * @param agentId - The agent ID
    * @returns The created run
    */
   async startHeartbeatRun(agentId: string): Promise<AgentHeartbeatRun> {
     const runId = `run-${randomUUID().slice(0, 8)}`;
+    const now = new Date().toISOString();
     const run: AgentHeartbeatRun = {
       id: runId,
       agentId,
-      startedAt: new Date().toISOString(),
+      startedAt: now,
       endedAt: null,
       status: "active",
     };
 
-    // Record as heartbeat event to track runs
+    // Persist to structured storage as source of truth
+    await this.saveRun(run);
+
+    // Also record as heartbeat event for legacy compatibility
     await this.recordHeartbeat(agentId, "ok", runId);
 
     return run;
@@ -1231,10 +1236,14 @@ export class AgentStore extends EventEmitter {
 
   /**
    * End a heartbeat run.
+   * Updates the persisted run's terminal state in structured storage.
+   * Also records a heartbeat event for legacy compatibility.
    * @param runId - The run ID
    * @param status - End status (completed or terminated)
    */
   async endHeartbeatRun(runId: string, status: "completed" | "terminated"): Promise<void> {
+    const now = new Date().toISOString();
+
     // Find the agent for this run by scanning heartbeat files
     const files = await readdir(this.agentsDir).catch(() => [] as string[]);
     const heartbeatFiles = files.filter((f) => f.endsWith("-heartbeats.jsonl"));
@@ -1246,7 +1255,19 @@ export class AgentStore extends EventEmitter {
       // Check if this run exists in the history
       const hasRun = history.some((h) => h.runId === runId);
       if (hasRun) {
-        // Record end as special event
+        // Try to update the persisted run with terminal state
+        const existingRun = await this.getRunDetail(agentId, runId);
+        if (existingRun) {
+          // Update the persisted run in structured storage
+          const updatedRun: AgentHeartbeatRun = {
+            ...existingRun,
+            endedAt: now,
+            status,
+          };
+          await this.saveRun(updatedRun);
+        }
+
+        // Also record heartbeat event for legacy compatibility
         await this.recordHeartbeat(agentId, status === "terminated" ? "missed" : "ok", runId);
         return;
       }
@@ -1255,10 +1276,28 @@ export class AgentStore extends EventEmitter {
 
   /**
    * Get the active heartbeat run for an agent.
+   * Reads from structured run storage first (source of truth),
+   * falls back to heartbeat event reconstruction for legacy data.
    * @param agentId - The agent ID
    * @returns The active run, or null if none
    */
   async getActiveHeartbeatRun(agentId: string): Promise<AgentHeartbeatRun | null> {
+    // First check structured run storage (source of truth)
+    const recentRuns = await this.getRecentRuns(agentId, 50);
+
+    // If we have structured run data, use it exclusively
+    if (recentRuns.length > 0) {
+      for (const run of recentRuns) {
+        if (run.status === "active") {
+          return run;
+        }
+      }
+      // We have structured data but no active runs - don't fall back
+      return null;
+    }
+
+    // Fallback: reconstruct from heartbeat events for legacy data
+    // This handles runs created before structured storage was used
     const history = await this.getHeartbeatHistory(agentId, 100);
 
     // Find the most recent run that started but hasn't ended
@@ -1296,10 +1335,24 @@ export class AgentStore extends EventEmitter {
 
   /**
    * Get all completed heartbeat runs for an agent.
+   * Reads from structured run storage first (source of truth),
+   * falls back to heartbeat event reconstruction for legacy data.
+   * Returns terminal runs (completed, terminated, failed) in newest-first order.
    * @param agentId - The agent ID
    * @returns Array of completed runs
    */
   async getCompletedHeartbeatRuns(agentId: string): Promise<AgentHeartbeatRun[]> {
+    // First check structured run storage (source of truth)
+    const recentRuns = await this.getRecentRuns(agentId, 50);
+
+    // If we have structured run data, use it exclusively
+    if (recentRuns.length > 0) {
+      return recentRuns
+        .filter((run) => run.status !== "active")
+        .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+    }
+
+    // Fallback: reconstruct from heartbeat events for legacy data
     const history = await this.getHeartbeatHistory(agentId, 1000);
     const runs = new Map<string, AgentHeartbeatRun>();
 
@@ -1321,7 +1374,9 @@ export class AgentStore extends EventEmitter {
       }
     }
 
-    return Array.from(runs.values()).filter((r) => r.status !== "active");
+    return Array.from(runs.values())
+      .filter((r) => r.status !== "active")
+      .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
   }
 
   // ─────────────────────────────────────────────────────────────────────────

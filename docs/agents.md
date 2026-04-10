@@ -44,10 +44,10 @@ Heartbeat values are validated and minimum-clamped.
 
 The New Agent dialog in the dashboard provides quick-start presets for common agent roles. Each preset includes:
 
-- **Name and icon** — Display identification
-- **Professional title** — Descriptive role title
-- **Soul** — Personality and operating principles defining how the agent thinks and communicates
-- **Instructions** — Actionable behavioral guidelines
+- **Name and icon** - Display identification
+- **Professional title** - Descriptive role title
+- **Soul** - Personality and operating principles defining how the agent thinks and communicates
+- **Instructions** - Actionable behavioral guidelines
 
 ### Preset Library Location
 
@@ -98,10 +98,10 @@ Each `soul.md` file is a Markdown document containing:
 
 Soul content should be:
 
-- **First-person** — Written from the agent's perspective ("I am...")
-- **Role-specific** — Defines the unique character of this role
-- **Actionable** — Describes concrete behaviors, not abstract qualities
-- **Paperclip-inspired** — Clear ownership, decision discipline, communication standards
+- **First-person** - Written from the agent's perspective ("I am...")
+- **Role-specific** - Defines the unique character of this role
+- **Actionable** - Describes concrete behaviors, not abstract qualities
+- **Paperclip-inspired** - Clear ownership, decision discipline, communication standards
 
 ### Adding or Modifying Presets
 
@@ -157,13 +157,65 @@ Behavior:
 
 ## Heartbeat Monitoring and Trigger Scheduling
 
-Fusion’s `HeartbeatTriggerScheduler` supports three trigger types:
+Fusion's `HeartbeatTriggerScheduler` supports three trigger types:
 
 - `timer` — periodic wake based on heartbeat interval
 - `assignment` — wake when task is assigned to agent
 - `on_demand` — manual run trigger (`POST /api/agents/:id/runs`)
 
 All triggers respect per-agent `maxConcurrentRuns` and produce structured wake context metadata.
+
+## Heartbeat Run Lifecycle
+
+Agent runs have a defined lifecycle managed by `AgentStore`:
+
+### Run States
+
+A heartbeat run can be in one of these states:
+
+- `active` — Run is currently executing
+- `completed` — Run finished successfully (via `endHeartbeatRun(runId, "completed")`)
+- `terminated` — Run was stopped (via `endHeartbeatRun(runId, "terminated")`)
+- `failed` — Run encountered an error
+
+### Run Lifecycle API
+
+- `startHeartbeatRun(agentId)` — Creates a new run and persists it to structured storage
+- `endHeartbeatRun(runId, status)` — Ends a run with terminal status, updates persisted state
+- `getActiveHeartbeatRun(agentId)` — Returns the current active run (or null)
+- `getCompletedHeartbeatRuns(agentId)` — Returns all terminal runs (newest first)
+- `saveRun(run)` — Persists run to structured storage
+- `getRunDetail(agentId, runId)` — Gets a specific run by ID
+
+### Active-Run Conflict Semantics
+
+When an agent already has an active run, attempts to start a new run return **409 Conflict**:
+
+```
+POST /api/agents/:id/runs → 409 { error: "Agent already has an active run", details: { runId } }
+```
+
+After a run is completed (or terminated), a new run can be started successfully:
+
+```
+POST /api/agents/:id/runs → 201 { id: "run-xxx", status: "active", ... }
+```
+
+### Storage Architecture
+
+Run records are stored in structured JSON files at `.fusion/agents/{agentId}-runs/{runId}.json`.
+
+Heartbeat events are also appended to `.fusion/agents/{agentId}-heartbeats.jsonl` for legacy compatibility. The structured storage is the source of truth; heartbeat events provide a fallback for older run data.
+
+### Stopping Runs
+
+Use `POST /api/agents/:id/runs/stop` to terminate an active run:
+
+```
+POST /api/agents/:id/runs/stop → 200 { ok: true, runId: "run-xxx" }
+```
+
+If there's no active run, returns `{ ok: true, message: "No active run" }`.
 
 ## Related Docs
 

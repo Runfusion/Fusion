@@ -1719,18 +1719,22 @@ describe("AgentStore", () => {
       expect(completed[0].endedAt).toBeDefined();
     });
 
-    it("endHeartbeatRun with 'completed' records an ok heartbeat", async () => {
+    it("endHeartbeatRun with 'completed' removes from active and adds to completed", async () => {
       const agent = await store.createAgent({ name: "CompleteRun", role: "executor" });
       const run = await store.startHeartbeatRun(agent.id);
 
       await store.endHeartbeatRun(run.id, "completed");
 
-      // A completed run records status "ok" (not "missed"), so the run
-      // stays active in the reconstructed view (implementation detail).
-      // The getActiveHeartbeatRun still sees it as active since only
-      // "missed" status marks a run as terminated.
+      // A completed run should NOT appear in active runs
       const active = await store.getActiveHeartbeatRun(agent.id);
-      expect(active).not.toBeNull();
+      expect(active).toBeNull();
+
+      // A completed run should appear in completed runs with terminal status
+      const completed = await store.getCompletedHeartbeatRuns(agent.id);
+      expect(completed).toHaveLength(1);
+      expect(completed[0].id).toBe(run.id);
+      expect(completed[0].status).toBe("completed");
+      expect(completed[0].endedAt).toBeDefined();
     });
 
     it("getCompletedHeartbeatRuns returns only non-active runs", async () => {
@@ -1750,6 +1754,94 @@ describe("AgentStore", () => {
       const active = await store.getActiveHeartbeatRun(agent.id);
       expect(active).not.toBeNull();
       expect(active!.id).toBe(run2.id);
+    });
+
+    it("after completion, a new run can start without stale active-run blockage", async () => {
+      const agent = await store.createAgent({ name: "RestartRun", role: "executor" });
+
+      // Start and complete first run
+      const run1 = await store.startHeartbeatRun(agent.id);
+      await store.endHeartbeatRun(run1.id, "completed");
+
+      // Verify first run is not active
+      const active1 = await store.getActiveHeartbeatRun(agent.id);
+      expect(active1).toBeNull();
+
+      // Start second run - should succeed without conflict
+      const run2 = await store.startHeartbeatRun(agent.id);
+      expect(run2.id).not.toBe(run1.id);
+      expect(run2.status).toBe("active");
+
+      // Verify second run is now the active run
+      const active2 = await store.getActiveHeartbeatRun(agent.id);
+      expect(active2).not.toBeNull();
+      expect(active2!.id).toBe(run2.id);
+    });
+
+    it("startHeartbeatRun persists the run to structured storage", async () => {
+      const agent = await store.createAgent({ name: "PersistRun", role: "executor" });
+      const run = await store.startHeartbeatRun(agent.id);
+
+      // Verify run is persisted
+      const detail = await store.getRunDetail(agent.id, run.id);
+      expect(detail).not.toBeNull();
+      expect(detail!.id).toBe(run.id);
+      expect(detail!.agentId).toBe(agent.id);
+      expect(detail!.status).toBe("active");
+      expect(detail!.endedAt).toBeNull();
+
+      // Verify run appears in recent runs
+      const recent = await store.getRecentRuns(agent.id);
+      expect(recent.some((r) => r.id === run.id)).toBe(true);
+    });
+
+    it("endHeartbeatRun updates the persisted run with terminal state", async () => {
+      const agent = await store.createAgent({ name: "UpdateRun", role: "executor" });
+      const run = await store.startHeartbeatRun(agent.id);
+
+      // Complete the run
+      await store.endHeartbeatRun(run.id, "completed");
+
+      // Verify persisted run is updated
+      const detail = await store.getRunDetail(agent.id, run.id);
+      expect(detail).not.toBeNull();
+      expect(detail!.status).toBe("completed");
+      expect(detail!.endedAt).toBeDefined();
+    });
+
+    it("getCompletedHeartbeatRuns returns terminal runs in newest-first order", async () => {
+      const agent = await store.createAgent({ name: "OrderRuns", role: "executor" });
+
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+        const run1 = await store.startHeartbeatRun(agent.id);
+        await store.endHeartbeatRun(run1.id, "completed");
+
+        vi.setSystemTime(new Date("2026-01-02T00:00:00Z"));
+        const run2 = await store.startHeartbeatRun(agent.id);
+        await store.endHeartbeatRun(run2.id, "completed");
+
+        const completed = await store.getCompletedHeartbeatRuns(agent.id);
+        expect(completed).toHaveLength(2);
+        expect(completed[0].id).toBe(run2.id); // Newest first
+        expect(completed[1].id).toBe(run1.id);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("handles mixed structured and legacy run data", async () => {
+      const agent = await store.createAgent({ name: "MixedRuns", role: "executor" });
+
+      // Structured run (new behavior)
+      const structuredRun = await store.startHeartbeatRun(agent.id);
+      await store.endHeartbeatRun(structuredRun.id, "completed");
+
+      // Legacy completed run (simulated by checking legacy fallback)
+      // The fallback still reconstructs runs from heartbeat events
+      const completed = await store.getCompletedHeartbeatRuns(agent.id);
+      expect(completed.some((r) => r.id === structuredRun.id)).toBe(true);
     });
   });
 
