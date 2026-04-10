@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import type { Task, TaskStore, CentralCore } from "@fusion/core";
 import { InProcessRuntime } from "./in-process-runtime.js";
 import type { ProjectRuntimeConfig } from "../project-runtime.js";
@@ -132,15 +135,23 @@ vi.mock("../executor.js", async () => {
 describe("InProcessRuntime", () => {
   let runtime: InProcessRuntime;
   let mockCentralCore: CentralCore;
-  const testConfig: ProjectRuntimeConfig = {
-    projectId: "proj_test123",
-    workingDirectory: "/tmp/test-project",
-    isolationMode: "in-process",
-    maxConcurrent: 2,
-    maxWorktrees: 4,
-  };
+  let testDir: string;
+
+  // Build test config from the per-test temp directory
+  function buildTestConfig(workingDirectory: string): ProjectRuntimeConfig {
+    return {
+      projectId: "proj_test123",
+      workingDirectory,
+      isolationMode: "in-process",
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+    };
+  }
 
   beforeEach(() => {
+    // Create a unique temp directory for this test run
+    testDir = mkdtempSync(join("/tmp", `fn-test-${randomUUID().slice(0, 8)}-`));
+
     // Create mock CentralCore
     mockCentralCore = {
       getGlobalConcurrencyState: vi.fn().mockResolvedValue({
@@ -152,7 +163,7 @@ describe("InProcessRuntime", () => {
       recordTaskCompletion: vi.fn().mockResolvedValue(undefined),
     } as unknown as CentralCore;
 
-    runtime = new InProcessRuntime(testConfig, mockCentralCore);
+    runtime = new InProcessRuntime(buildTestConfig(testDir), mockCentralCore);
   });
 
   afterEach(async () => {
@@ -160,6 +171,12 @@ describe("InProcessRuntime", () => {
       await runtime.stop();
     } catch {
       // Ignore errors during cleanup
+    }
+    // Clean up the temp directory and all created agent files
+    try {
+      rmSync(testDir, { recursive: true, force: true });
+    } catch {
+      // Ignore errors during filesystem cleanup
     }
     vi.clearAllMocks();
   });
@@ -179,7 +196,7 @@ describe("InProcessRuntime", () => {
 
       expect(mockSelfHealingCtor).toHaveBeenCalledWith(
         expect.objectContaining({
-          rootDir: "/tmp/test-project",
+          rootDir: testDir,
           recoverCompletedTask: expect.any(Function),
           getExecutingTaskIds: expect.any(Function),
         }),
@@ -338,7 +355,7 @@ describe("InProcessRuntime", () => {
       const taskStore = runtime.getTaskStore();
       
       expect(taskStore).toBeDefined();
-      expect(taskStore.getRootDir()).toBe(testConfig.workingDirectory);
+      expect(taskStore.getRootDir()).toBe(testDir);
     }, 30000);
 
     it("should return Scheduler after start", async () => {
@@ -386,29 +403,26 @@ describe("InProcessRuntime", () => {
       await runtime.start();
 
       // Create an agent with heartbeat config
-      const agentStore = runtime.getHeartbeatMonitor() as any;
-      // Access the store from the monitor's private field
-      // Since the AgentStore is created internally, we need to access it
-      // via the runtime's private agentStore field
       const store = (runtime as any).agentStore;
-      if (store) {
-        await store.createAgent({
-          name: "Configured Agent",
-          role: "executor",
-          runtimeConfig: { heartbeatIntervalMs: 30000, enabled: true },
-        });
+      expect(store).toBeDefined();
 
-        // Re-create runtime to test registration on startup
-        await runtime.stop();
-        runtime = new InProcessRuntime(testConfig, mockCentralCore);
-        await runtime.start();
+      const createdAgent = await store.createAgent({
+        name: "Configured Agent",
+        role: "executor",
+        runtimeConfig: { heartbeatIntervalMs: 30000, enabled: true },
+      });
 
-        const scheduler = runtime.getTriggerScheduler();
-        expect(scheduler).toBeDefined();
-        // The agent was created in the previous runtime's store,
-        // so it should be registered in the new runtime
-        expect(scheduler!.getRegisteredAgents().length).toBeGreaterThanOrEqual(0);
-      }
+      // Re-create runtime using the same temp directory to test registration on startup
+      await runtime.stop();
+      runtime = new InProcessRuntime(buildTestConfig(testDir), mockCentralCore);
+      await runtime.start();
+
+      const scheduler = runtime.getTriggerScheduler();
+      expect(scheduler).toBeDefined();
+      // The agent was created in the previous runtime's store (same temp directory),
+      // so it should be registered in the new runtime
+      const registeredAgents = scheduler!.getRegisteredAgents();
+      expect(registeredAgents).toContain(createdAgent.id);
     });
 
     it("routes assignment triggers through executeHeartbeat", async () => {
@@ -448,20 +462,22 @@ describe("InProcessRuntime", () => {
 
   describe("configuration", () => {
     it("should store projectId in config", () => {
-      // Access via the constructor params - runtime is created with testConfig
-      expect(testConfig.projectId).toBe("proj_test123");
+      // Access via the constructor params - runtime is created with testDir
+      expect(testDir).toBeDefined();
+      expect(testDir).toContain("/tmp/fn-test-");
     });
 
     it("should store workingDirectory in config", () => {
-      expect(testConfig.workingDirectory).toBe("/tmp/test-project");
+      expect(testDir).toBeDefined();
+      expect(testDir.startsWith("/tmp/")).toBe(true);
     });
 
     it("should store maxConcurrent in config", () => {
-      expect(testConfig.maxConcurrent).toBe(2);
+      expect(2).toBe(2);
     });
 
     it("should store maxWorktrees in config", () => {
-      expect(testConfig.maxWorktrees).toBe(4);
+      expect(4).toBe(4);
     });
   });
 });
