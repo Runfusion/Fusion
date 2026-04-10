@@ -428,3 +428,29 @@ When adding indexes to SQLite schema migrations:
 - Update `SCHEMA_VERSION` constant AND all hardcoded version assertions in tests (e.g., `expect(db.getSchemaVersion()).toBe(N)`)
 - The `creates all expected indexes` test in `db.test.ts` must list all indexes including new ones
 - Memory pitfall: Test files like `run-audit.test.ts` and `__tests__/task-documents.test.ts` also assert schema version
+
+## FN-1414: Run-Audit Integration Testing
+
+Key learnings from adding integration test coverage for run-audit:
+
+**Test file locations:**
+- `@fusion/core`: `packages/core/src/run-audit.integration.test.ts` (multi-domain correlation, event shape, ordering)
+- `@fusion/engine`: `packages/engine/src/run-audit.integration.test.ts` (engine-to-core correlation, emitter behavior)
+
+**Run commands:**
+- Core: `pnpm --filter @fusion/core exec vitest run src/run-audit.integration.test.ts`
+- Engine: `pnpm --filter @fusion/engine exec vitest run src/run-audit.integration.test.ts`
+
+**Ordering guarantee:**
+- Core uses `ORDER BY timestamp DESC, rowid DESC` for deterministic tie-breaking
+- When splitting synthetic run IDs (e.g., `"exec-FN-001-123-abc"`), use `lastIndexOf("-")` to handle task IDs with dashes
+
+**Metadata normalization:**
+- Engine emitters always include `phase` in metadata
+- `source` is conditionally included only when provided
+- Database domain infers `taskId` from target when target looks like a task ID (`FN-*`, `KB-*`)
+
+**Backward compatibility:**
+- `createRunAuditor(store, null)` returns no-op auditor
+- Store without `recordRunAuditEvent` method returns no-op auditor
+- No throw on null/undefined context or missing methods
