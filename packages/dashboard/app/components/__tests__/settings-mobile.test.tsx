@@ -108,9 +108,21 @@ describe("SettingsModal mobile adaptations", () => {
     // Authentication is first with no scope banner by default - click General to see project scope
     expect(container.querySelectorAll(".settings-scope-icon").length).toBeGreaterThan(0);
     await user.click(getAllByText("General")[0]);
+
+    // Verify project scope banner contains icon elements (SVG from Lucide, not emoji)
+    const projectBanner = container.querySelector(".settings-scope-project");
+    expect(projectBanner).toBeTruthy();
+    const projectBannerIcon = projectBanner!.querySelector(".settings-scope-icon svg");
+    expect(projectBannerIcon).toBeTruthy();
     expect(getByText("These settings only affect this project.")).toBeTruthy();
 
     await user.click(getByText("Appearance"));
+
+    // Verify global scope banner contains icon elements (SVG from Lucide, not emoji)
+    const globalBanner = container.querySelector(".settings-scope-global");
+    expect(globalBanner).toBeTruthy();
+    const globalBannerIcon = globalBanner!.querySelector(".settings-scope-icon svg");
+    expect(globalBannerIcon).toBeTruthy();
     expect(getByText("These settings are shared across all your Fusion projects.")).toBeTruthy();
   });
 

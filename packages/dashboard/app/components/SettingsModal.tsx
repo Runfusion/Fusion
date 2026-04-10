@@ -579,12 +579,12 @@ export function SettingsModal({
     setPresetDraft(null);
   };
 
-  /** Render a scope indicator banner for the current section */
+  /** Render a scope indicator banner for the current section with theme-aware Lucide icons */
   const renderScopeBanner = () => {
     if (activeSectionScope === "global") {
       return (
         <div className="settings-scope-banner settings-scope-global">
-          <span>🌐</span>
+          <span className="settings-scope-icon"><Globe size={14} /></span>
           <span>These settings are shared across all your Fusion projects.</span>
         </div>
       );
@@ -592,7 +592,7 @@ export function SettingsModal({
     if (activeSectionScope === "project") {
       return (
         <div className="settings-scope-banner settings-scope-project">
-          <span>📁</span>
+          <span className="settings-scope-icon"><Folder size={14} /></span>
           <span>These settings only affect this project.</span>
         </div>
       );
@@ -600,7 +600,8 @@ export function SettingsModal({
     if (activeSectionScope === "mixed") {
       return (
         <div className="settings-scope-banner settings-scope-mixed">
-          <span>🌐📁</span>
+          <span className="settings-scope-icon"><Globe size={14} /></span>
+          <span className="settings-scope-icon"><Folder size={14} /></span>
           <span>
             This section contains both global settings (default &amp; fallback models) and project
             settings (planning, validator, presets, and AI summarization).

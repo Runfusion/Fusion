@@ -2040,7 +2040,7 @@ describe("SettingsModal", () => {
     expect(payload.maxStuckKills).toBeUndefined();
   });
 
-  it("scope banners render for global and project sections", async () => {
+  it("scope banners render for global and project sections with theme-aware icons", async () => {
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
@@ -2048,22 +2048,34 @@ describe("SettingsModal", () => {
     expect(container.querySelector(".settings-scope-project")).toBeNull();
     expect(container.querySelector(".settings-scope-global")).toBeNull();
 
-    // Switch to Appearance → should show global banner
+    // Switch to Appearance → should show global banner with Globe icon (SVG, not emoji)
     fireEvent.click(screen.getAllByText("Appearance")[0]);
-    expect(container.querySelector(".settings-scope-global")).toBeTruthy();
-    expect(container.querySelector(".settings-scope-global")?.textContent).toContain("Fusion");
+    const globalBanner = container.querySelector(".settings-scope-global");
+    expect(globalBanner).toBeTruthy();
+    expect(globalBanner?.textContent).toContain("Fusion");
     expect(container.querySelector(".settings-scope-project")).toBeNull();
+    // Verify banner uses SVG icon, not emoji
+    const globalIcon = globalBanner!.querySelector(".settings-scope-icon svg");
+    expect(globalIcon).toBeTruthy();
 
-    // Switch to General → should show project banner
+    // Switch to General → should show project banner with Folder icon (SVG, not emoji)
     fireEvent.click(screen.getAllByText("General")[0]);
-    expect(container.querySelector(".settings-scope-project")).toBeTruthy();
+    const projectBanner = container.querySelector(".settings-scope-project");
+    expect(projectBanner).toBeTruthy();
     expect(container.querySelector(".settings-scope-global")).toBeNull();
+    // Verify banner uses SVG icon, not emoji
+    const projectIcon = projectBanner!.querySelector(".settings-scope-icon svg");
+    expect(projectIcon).toBeTruthy();
 
-    // Switch to Models → should show mixed scope banner (contains both global and project settings)
+    // Switch to Models → should show mixed scope banner with both icons (SVG, not emoji)
     fireEvent.click(screen.getAllByText("Models")[0]);
-    expect(container.querySelector(".settings-scope-mixed")).toBeTruthy();
-    expect(container.querySelector(".settings-scope-mixed")?.textContent).toContain("global");
-    expect(container.querySelector(".settings-scope-mixed")?.textContent).toContain("project");
+    const mixedBanner = container.querySelector(".settings-scope-mixed");
+    expect(mixedBanner).toBeTruthy();
+    expect(mixedBanner?.textContent).toContain("global");
+    expect(mixedBanner?.textContent).toContain("project");
+    // Verify mixed banner uses both icons as SVG elements, not emoji
+    const mixedIcons = mixedBanner!.querySelectorAll(".settings-scope-icon svg");
+    expect(mixedIcons.length).toBe(2);
   });
 
   // --- Settings save error handling tests ---
