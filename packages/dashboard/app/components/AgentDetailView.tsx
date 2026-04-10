@@ -3,10 +3,10 @@ import {
   Bot, Heart, Activity, Pause, Play, Square, Trash2, RefreshCw, 
   Settings, FileText, ActivitySquare, X, Copy, 
   ExternalLink, CheckCircle, XCircle, Loader2, GitBranch, ListChecks,
-  ChevronDown, ChevronRight, BarChart3, Star
+  ChevronDown, ChevronRight, BarChart3, Star, BookOpen
 } from "lucide-react";
 import type { AgentDetail, AgentState, AgentHeartbeatRun, AgentBudgetStatus } from "../api";
-import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogs, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget } from "../api";
+import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogs, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent } from "../api";
 import type { Agent } from "../api";
 import type { AgentLogEntry, Task } from "@fusion/core";
 import { AgentLogViewer } from "./AgentLogViewer";
@@ -52,7 +52,7 @@ interface AgentDetailViewProps {
   onChildClick?: (childId: string) => void;
 }
 
-type TabId = "dashboard" | "logs" | "config" | "runs" | "tasks" | "employees" | "soul" | "memory" | "reflections" | "performance";
+type TabId = "dashboard" | "logs" | "config" | "runs" | "tasks" | "employees" | "soul" | "instructions" | "memory" | "reflections" | "performance";
 
 const TABS: { id: TabId; label: string; icon: typeof Activity }[] = [
   { id: "dashboard", label: "Dashboard", icon: ActivitySquare },
@@ -61,6 +61,7 @@ const TABS: { id: TabId; label: string; icon: typeof Activity }[] = [
   { id: "tasks", label: "Tasks", icon: ListChecks },
   { id: "employees", label: "Employees", icon: GitBranch },
   { id: "soul", label: "Soul", icon: Heart },
+  { id: "instructions", label: "Instructions", icon: BookOpen },
   { id: "memory", label: "Memory", icon: FileText },
   { id: "reflections", label: "Reflections", icon: BarChart3 },
   { id: "performance", label: "Performance", icon: Star },
@@ -420,6 +421,15 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
 
           {activeTab === "soul" && (
             <SoulTab
+              agent={agent}
+              projectId={projectId}
+              addToast={addToast}
+              onSaved={loadAgent}
+            />
+          )}
+
+          {activeTab === "instructions" && (
+            <InstructionsTab
               agent={agent}
               projectId={projectId}
               addToast={addToast}
@@ -1654,6 +1664,265 @@ function MemoryTab({
   );
 }
 
+function InstructionsTab({
+  agent,
+  projectId,
+  addToast,
+  onSaved,
+}: {
+  agent: AgentDetail;
+  projectId?: string;
+  addToast: (message: string, type?: "success" | "error") => void;
+  onSaved: () => Promise<void>;
+}) {
+  // Inline instructions state
+  const [instructionsText, setInstructionsText] = useState(agent.instructionsText ?? "");
+  const [instructionsPath, setInstructionsPath] = useState(agent.instructionsPath ?? "");
+
+  // File content state (when instructionsPath is set)
+  const [fileContent, setFileContent] = useState("");
+  const [isLoadingFile, setIsLoadingFile] = useState(false);
+  const [fileContentDirty, setFileContentDirty] = useState(false);
+
+  // Save state
+  const [isSaving, setIsSaving] = useState(false);
+  const [isSavingFile, setIsSavingFile] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
+  const [justSavedFile, setJustSavedFile] = useState(false);
+
+  // Load file content when instructionsPath changes
+  useEffect(() => {
+    const path = instructionsPath.trim();
+    if (!path) {
+      setFileContent("");
+      setFileContentDirty(false);
+      return;
+    }
+
+    setIsLoadingFile(true);
+    fetchWorkspaceFileContent("project", path)
+      .then((data) => {
+        setFileContent(data.content);
+        setFileContentDirty(false);
+      })
+      .catch((err: any) => {
+        // ENOENT means file doesn't exist yet - treat as empty "new file" state
+        if (err.message?.includes("ENOENT") || err.message?.includes("Not found") || err.message?.includes("not found")) {
+          setFileContent("");
+          setFileContentDirty(false);
+        } else {
+          addToast(`Failed to load instructions file: ${err.message}`, "error");
+          setFileContent("");
+        }
+      })
+      .finally(() => {
+        setIsLoadingFile(false);
+      });
+  }, [instructionsPath, addToast]);
+
+  // Sync with agent data changes
+  useEffect(() => {
+    setInstructionsText(agent.instructionsText ?? "");
+    setInstructionsPath(agent.instructionsPath ?? "");
+    setJustSaved(false);
+    setJustSavedFile(false);
+  }, [agent.id, agent.instructionsText, agent.instructionsPath]);
+
+  const hasInstructionsChanges = (() => {
+    const currentText = instructionsText ?? "";
+    const persistedText = agent.instructionsText ?? "";
+    const currentPath = instructionsPath?.trim() ?? "";
+    const persistedPath = agent.instructionsPath?.trim() ?? "";
+    return currentText !== persistedText || currentPath !== persistedPath;
+  })();
+
+  const handleSaveInstructions = async () => {
+    setIsSaving(true);
+    try {
+      await updateAgentInstructions(
+        agent.id,
+        {
+          instructionsText: instructionsText || undefined,
+          instructionsPath: instructionsPath.trim() || undefined,
+        },
+        projectId,
+      );
+      addToast("Instructions saved", "success");
+      setJustSaved(true);
+      setTimeout(() => setJustSaved(false), 3000);
+      await onSaved();
+    } catch (err: any) {
+      addToast(`Failed to save instructions: ${err.message}`, "error");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaveFile = async () => {
+    const path = instructionsPath.trim();
+    if (!path) {
+      addToast("No instructions file path set", "error");
+      return;
+    }
+
+    setIsSavingFile(true);
+    try {
+      await saveWorkspaceFileContent("project", path, fileContent);
+      addToast("Instructions file saved", "success");
+      setFileContentDirty(false);
+      setJustSavedFile(true);
+      setTimeout(() => setJustSavedFile(false), 3000);
+    } catch (err: any) {
+      addToast(`Failed to save instructions file: ${err.message}`, "error");
+    } finally {
+      setIsSavingFile(false);
+    }
+  };
+
+  const hasFilePath = !!instructionsPath.trim();
+
+  return (
+    <div className="config-tab">
+      <div className="config-section">
+        <h3>Custom Instructions</h3>
+        <p className="config-description">
+          Append custom instructions to this agent&apos;s system prompt at execution time. Use this to customize behavior, coding style, or project conventions without modifying built-in prompts.
+        </p>
+
+        <div className="config-fields">
+          <div className="config-field">
+            <label htmlFor="instructions-text">Inline Instructions</label>
+            <textarea
+              id="instructions-text"
+              className="input"
+              rows={10}
+              placeholder="Enter custom instructions to append to this agent's system prompt..."
+              value={instructionsText}
+              onChange={(e) => {
+                setInstructionsText(e.target.value);
+                setJustSaved(false);
+              }}
+              style={{ fontFamily: "monospace", fontSize: "0.875rem", resize: "vertical" }}
+            />
+            <span className="config-hint">Markdown formatting supported. Max 50,000 characters.</span>
+          </div>
+
+          <div className="config-field">
+            <label htmlFor="instructions-path">Instructions File Path</label>
+            <input
+              id="instructions-path"
+              type="text"
+              className="input"
+              placeholder="e.g., .fusion/agents/my-agent-instructions.md"
+              value={instructionsPath}
+              onChange={(e) => {
+                setInstructionsPath(e.target.value);
+                setJustSaved(false);
+              }}
+            />
+            <span className="config-hint">Path to a .md file (relative to project root). Contents are read and appended at execution time.</span>
+          </div>
+        </div>
+
+        <div className="config-actions">
+          <button
+            className="btn btn--primary"
+            disabled={!hasInstructionsChanges || isSaving}
+            onClick={() => void handleSaveInstructions()}
+          >
+            {isSaving ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                Saving…
+              </>
+            ) : (
+              <>
+                <CheckCircle size={16} />
+                Save Instructions
+              </>
+            )}
+          </button>
+          {!hasInstructionsChanges && justSaved && (
+            <span className="config-saved-indicator">
+              <CheckCircle size={14} />
+              Instructions saved
+            </span>
+          )}
+        </div>
+      </div>
+
+      {hasFilePath && (
+        <div className="config-section">
+          <h3>Instructions File Editor</h3>
+          <p className="config-description">
+            Edit the instructions file directly. Changes are saved separately from the path configuration.
+          </p>
+
+          <div className="config-fields">
+            <div className="config-field">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                <label htmlFor="instructions-file-content">File Content</label>
+                {isLoadingFile && (
+                  <span className="config-hint" style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                    <Loader2 size={12} className="animate-spin" />
+                    Loading...
+                  </span>
+                )}
+                {fileContentDirty && !isLoadingFile && (
+                  <span className="config-hint" style={{ color: "var(--color-warning, #e3b541)" }}>
+                    Unsaved changes
+                  </span>
+                )}
+              </div>
+              <textarea
+                id="instructions-file-content"
+                className="input"
+                rows={20}
+                placeholder="File content will appear here when loaded..."
+                value={fileContent}
+                readOnly={isLoadingFile}
+                onChange={(e) => {
+                  setFileContent(e.target.value);
+                  setFileContentDirty(true);
+                  setJustSavedFile(false);
+                }}
+                style={{ fontFamily: "monospace", fontSize: "0.875rem", resize: "vertical" }}
+              />
+              <span className="config-hint">Edit the markdown file content directly. Save separately using the button below.</span>
+            </div>
+          </div>
+
+          <div className="config-actions">
+            <button
+              className="btn btn--primary"
+              disabled={!fileContentDirty || isSavingFile}
+              onClick={() => void handleSaveFile()}
+            >
+              {isSavingFile ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" />
+                  Saving…
+                </>
+              ) : (
+                <>
+                  <CheckCircle size={16} />
+                  Save File
+                </>
+              )}
+            </button>
+            {!fileContentDirty && justSavedFile && (
+              <span className="config-saved-indicator">
+                <CheckCircle size={14} />
+                File saved
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PerformanceTab({ 
   agentId,
   projectId,
@@ -1971,14 +2240,8 @@ function ConfigTab({
   };
 
   const [isSaving, setIsSaving] = useState(false);
-  const [isSavingInstructions, setIsSavingInstructions] = useState(false);
   const [errors, setErrors] = useState<ValidationErrors>({});
   const [justSaved, setJustSaved] = useState(false);
-  const [justSavedInstructions, setJustSavedInstructions] = useState(false);
-
-  // Custom instructions state
-  const [instructionsText, setInstructionsText] = useState(agent.instructionsText ?? "");
-  const [instructionsPath, setInstructionsPath] = useState(agent.instructionsPath ?? "");
 
   /** Detect whether any local value differs from the persisted metadata */
   const hasChanges = (() => {
@@ -2013,14 +2276,6 @@ function ConfigTab({
     if (currentThreshold !== persistedThreshold) return true;
 
     return false;
-  })();
-
-  const hasInstructionsChanges = (() => {
-    const currentText = instructionsText ?? "";
-    const persistedText = agent.instructionsText ?? "";
-    const currentPath = instructionsPath?.trim() ?? "";
-    const persistedPath = agent.instructionsPath?.trim() ?? "";
-    return currentText !== persistedText || currentPath !== persistedPath;
   })();
 
   const handleFieldChange = (key: string, value: string) => {
@@ -2206,28 +2461,6 @@ function ConfigTab({
       addToast(`Failed to save settings: ${err.message}`, "error");
     } finally {
       setIsSaving(false);
-    }
-  };
-
-  const handleSaveInstructions = async () => {
-    setIsSavingInstructions(true);
-    try {
-      await updateAgentInstructions(
-        agent.id,
-        {
-          instructionsText: instructionsText || undefined,
-          instructionsPath: instructionsPath.trim() || undefined,
-        },
-        projectId,
-      );
-      addToast("Instructions saved", "success");
-      setJustSavedInstructions(true);
-      setTimeout(() => setJustSavedInstructions(false), 3000);
-      await onSaved();
-    } catch (err: any) {
-      addToast(`Failed to save instructions: ${err.message}`, "error");
-    } finally {
-      setIsSavingInstructions(false);
     }
   };
 
@@ -2555,74 +2788,6 @@ function ConfigTab({
             <span className="config-saved-indicator">
               <CheckCircle size={14} />
               Settings saved
-            </span>
-          )}
-        </div>
-      </div>
-
-      <div className="config-section">
-        <h3>Custom Instructions</h3>
-        <p className="config-description">
-          Append custom instructions to this agent&apos;s system prompt at execution time. Use this to customize behavior, coding style, or project conventions without modifying built-in prompts.
-        </p>
-
-        <div className="config-fields">
-          <div className="config-field">
-            <label htmlFor="instructions-text">Inline Instructions</label>
-            <textarea
-              id="instructions-text"
-              className="input"
-              rows={10}
-              placeholder="Enter custom instructions to append to this agent's system prompt..."
-              value={instructionsText}
-              onChange={(e) => {
-                setInstructionsText(e.target.value);
-                setJustSavedInstructions(false);
-              }}
-              style={{ fontFamily: "monospace", fontSize: "0.875rem", resize: "vertical" }}
-            />
-            <span className="config-hint">Markdown formatting supported. Max 50,000 characters.</span>
-          </div>
-
-          <div className="config-field">
-            <label htmlFor="instructions-path">Instructions File Path</label>
-            <input
-              id="instructions-path"
-              type="text"
-              className="input"
-              placeholder="e.g., .fusion/agents/my-agent-instructions.md"
-              value={instructionsPath}
-              onChange={(e) => {
-                setInstructionsPath(e.target.value);
-                setJustSavedInstructions(false);
-              }}
-            />
-            <span className="config-hint">Path to a .md file (relative to project root). Contents are read and appended at execution time.</span>
-          </div>
-        </div>
-
-        <div className="config-actions">
-          <button
-            className="btn btn--primary"
-            disabled={!hasInstructionsChanges || isSavingInstructions}
-            onClick={() => void handleSaveInstructions()}
-          >
-            {isSavingInstructions ? (
-              <>
-                <Loader2 size={16} className="animate-spin" />
-                Saving…
-              </>
-            ) : (
-              <>
-                <CheckCircle size={16} />
-                Save Instructions
-              </>
-            )}
-          </button>
-          {!hasInstructionsChanges && justSavedInstructions && (
-            <span className="config-saved-indicator">
-              <CheckCircle size={14} />
-              Instructions saved
             </span>
           )}
         </div>

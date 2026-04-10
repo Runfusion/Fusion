@@ -24,6 +24,8 @@ vi.mock("../../api", () => ({
   fetchChainOfCommand: vi.fn(),
   fetchAgentBudgetStatus: vi.fn(),
   resetAgentBudget: vi.fn(),
+  fetchWorkspaceFileContent: vi.fn(),
+  saveWorkspaceFileContent: vi.fn(),
 }));
 
 vi.mock("../AgentLogViewer", () => ({
@@ -34,7 +36,7 @@ vi.mock("../AgentLogViewer", () => ({
   ),
 }));
 
-import { fetchAgent, updateAgent, updateAgentState, fetchAgentChildren, fetchAgentRunLogs, fetchAgentRuns, fetchAgentRunDetail, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget } from "../../api";
+import { fetchAgent, updateAgent, updateAgentState, fetchAgentChildren, fetchAgentRunLogs, fetchAgentRuns, fetchAgentRunDetail, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, updateAgentInstructions, fetchWorkspaceFileContent, saveWorkspaceFileContent } from "../../api";
 
 const mockFetchAgent = vi.mocked(fetchAgent);
 const mockUpdateAgent = vi.mocked(updateAgent);
@@ -47,6 +49,9 @@ const mockFetchAgentTasks = vi.mocked(fetchAgentTasks);
 const mockFetchChainOfCommand = vi.mocked(fetchChainOfCommand);
 const mockFetchAgentBudgetStatus = vi.mocked(fetchAgentBudgetStatus);
 const mockResetAgentBudget = vi.mocked(resetAgentBudget);
+const mockUpdateAgentInstructions = vi.mocked(updateAgentInstructions);
+const mockFetchWorkspaceFileContent = vi.mocked(fetchWorkspaceFileContent);
+const mockSaveWorkspaceFileContent = vi.mocked(saveWorkspaceFileContent);
 
 describe("AgentDetailView", () => {
   const createMockAgent = (overrides: Partial<{
@@ -115,6 +120,10 @@ describe("AgentDetailView", () => {
       nextResetAt: null,
     });
     mockResetAgentBudget.mockResolvedValue(undefined);
+    // Default: empty file content
+    mockFetchWorkspaceFileContent.mockResolvedValue({ content: "", mtime: "2024-01-01T00:00:00.000Z", size: 0 });
+    mockSaveWorkspaceFileContent.mockResolvedValue({ success: true, mtime: "2024-01-01T00:00:00.000Z", size: 0 });
+    mockUpdateAgentInstructions.mockResolvedValue({} as any);
   });
 
   it("shows loading state initially", () => {
@@ -407,6 +416,7 @@ describe("AgentDetailView", () => {
       expect(screen.getByText("Tasks")).toBeInTheDocument();
       expect(screen.getByText("Employees")).toBeInTheDocument();
       expect(screen.getByText("Soul")).toBeInTheDocument();
+      expect(screen.getByText("Instructions")).toBeInTheDocument();
       expect(screen.getByText("Memory")).toBeInTheDocument();
       expect(screen.getByText("Settings")).toBeInTheDocument();
     });
@@ -1976,6 +1986,364 @@ describe("AgentDetailView", () => {
         expect(addToast).toHaveBeenCalledWith(
           expect.stringContaining("Failed to load run details"),
           "error",
+        );
+      });
+    });
+  });
+
+  // ── Instructions Tab ──────────────────────────────────────────────────────
+
+  describe("Instructions Tab", () => {
+    const navigateToInstructions = async (user: ReturnType<typeof userEvent.setup>) => {
+      await waitFor(() => {
+        expect(screen.getByText("Instructions")).toBeInTheDocument();
+      });
+      await user.click(screen.getByText("Instructions"));
+    };
+
+    it("renders Instructions tab with inline instructions and path fields", async () => {
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await navigateToInstructions(user);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Inline Instructions")).toBeInTheDocument();
+        expect(screen.getByLabelText("Instructions File Path")).toBeInTheDocument();
+      });
+    });
+
+    it("does not show file editor when instructions path is empty", async () => {
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await navigateToInstructions(user);
+
+      await waitFor(() => {
+        expect(screen.queryByLabelText("File Content")).not.toBeInTheDocument();
+      });
+    });
+
+    it("shows file editor when instructions path is set", async () => {
+      mockFetchAgent.mockResolvedValue(createMockAgent({
+        instructionsPath: ".fusion/agents/test-agent.md",
+      }));
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await navigateToInstructions(user);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("File Content")).toBeInTheDocument();
+      });
+    });
+
+    it("calls fetchWorkspaceFileContent when instructions path is set", async () => {
+      mockFetchAgent.mockResolvedValue(createMockAgent({
+        instructionsPath: ".fusion/agents/test-agent.md",
+      }));
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await navigateToInstructions(user);
+
+      await waitFor(() => {
+        expect(mockFetchWorkspaceFileContent).toHaveBeenCalledWith("project", ".fusion/agents/test-agent.md");
+      });
+    });
+
+    it("shows file content when fetchWorkspaceFileContent succeeds", async () => {
+      mockFetchAgent.mockResolvedValue(createMockAgent({
+        instructionsPath: ".fusion/agents/test-agent.md",
+      }));
+      mockFetchWorkspaceFileContent.mockResolvedValue({
+        content: "# Test Agent Instructions\n\nThese are the agent instructions.",
+        mtime: "2024-01-01T00:00:00.000Z",
+        size: 60,
+      });
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await navigateToInstructions(user);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("File Content")).toHaveValue("# Test Agent Instructions\n\nThese are the agent instructions.");
+      });
+    });
+
+    it("shows error toast when fetchWorkspaceFileContent fails with non-ENOENT error", async () => {
+      const addToast = vi.fn();
+      mockFetchAgent.mockResolvedValue(createMockAgent({
+        instructionsPath: ".fusion/agents/test-agent.md",
+      }));
+      mockFetchWorkspaceFileContent.mockRejectedValue(new Error("Permission denied"));
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={addToast}
+        />
+      );
+
+      await navigateToInstructions(user);
+
+      await waitFor(() => {
+        expect(addToast).toHaveBeenCalledWith(
+          expect.stringContaining("Failed to load instructions file"),
+          "error",
+        );
+      });
+    });
+
+    it("treats ENOENT as empty file (new file state)", async () => {
+      mockFetchAgent.mockResolvedValue(createMockAgent({
+        instructionsPath: ".fusion/agents/new-agent.md",
+      }));
+      mockFetchWorkspaceFileContent.mockRejectedValue(new Error("ENOENT: file not found"));
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await navigateToInstructions(user);
+
+      await waitFor(() => {
+        // Should show empty content (new file state), not show error toast
+        const fileContent = screen.getByLabelText("File Content") as HTMLTextAreaElement;
+        expect(fileContent.value).toBe("");
+      });
+    });
+
+    it("calls updateAgentInstructions with expected payload when saving inline instructions", async () => {
+      const addToast = vi.fn();
+      mockUpdateAgentInstructions.mockResolvedValue({} as any);
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={addToast}
+        />
+      );
+
+      await navigateToInstructions(user);
+
+      const instructionsTextarea = await screen.findByLabelText("Inline Instructions");
+      await user.clear(instructionsTextarea);
+      await user.type(instructionsTextarea, "Custom instructions for the agent");
+
+      const pathInput = await screen.findByLabelText("Instructions File Path");
+      await user.clear(pathInput);
+      await user.type(pathInput, ".fusion/agents/test.md");
+
+      await user.click(screen.getByText("Save Instructions"));
+
+      await waitFor(() => {
+        expect(mockUpdateAgentInstructions).toHaveBeenCalledWith(
+          "agent-001",
+          {
+            instructionsText: "Custom instructions for the agent",
+            instructionsPath: ".fusion/agents/test.md",
+          },
+          undefined,
+        );
+      });
+      expect(addToast).toHaveBeenCalledWith("Instructions saved", "success");
+    });
+
+    it("calls saveWorkspaceFileContent when saving file content", async () => {
+      const addToast = vi.fn();
+      mockFetchAgent.mockResolvedValue(createMockAgent({
+        instructionsPath: ".fusion/agents/test.md",
+      }));
+      mockFetchWorkspaceFileContent.mockResolvedValue({
+        content: "Original content",
+        mtime: "2024-01-01T00:00:00.000Z",
+        size: 16,
+      });
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={addToast}
+        />
+      );
+
+      await navigateToInstructions(user);
+
+      // Wait for file content to load
+      await waitFor(() => {
+        expect(screen.getByLabelText("File Content")).toHaveValue("Original content");
+      });
+
+      // Modify file content
+      const fileContent = screen.getByLabelText("File Content");
+      await user.clear(fileContent);
+      await user.type(fileContent, "Updated content");
+
+      // Save file
+      await user.click(screen.getByText("Save File"));
+
+      await waitFor(() => {
+        expect(mockSaveWorkspaceFileContent).toHaveBeenCalledWith(
+          "project",
+          ".fusion/agents/test.md",
+          "Updated content",
+        );
+      });
+      expect(addToast).toHaveBeenCalledWith("Instructions file saved", "success");
+    });
+
+    it("disables Save Instructions button when no changes", async () => {
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await navigateToInstructions(user);
+
+      await waitFor(() => {
+        expect(screen.getByText("Save Instructions")).toBeDisabled();
+      });
+    });
+
+    it("disables Save File button when file content is not dirty", async () => {
+      mockFetchAgent.mockResolvedValue(createMockAgent({
+        instructionsPath: ".fusion/agents/test.md",
+      }));
+      mockFetchWorkspaceFileContent.mockResolvedValue({
+        content: "Original content",
+        mtime: "2024-01-01T00:00:00.000Z",
+        size: 16,
+      });
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await navigateToInstructions(user);
+
+      await waitFor(() => {
+        expect(screen.getByText("Save File")).toBeDisabled();
+      });
+    });
+
+    it("shows Unsaved changes indicator when file content is dirty", async () => {
+      mockFetchAgent.mockResolvedValue(createMockAgent({
+        instructionsPath: ".fusion/agents/test.md",
+      }));
+      mockFetchWorkspaceFileContent.mockResolvedValue({
+        content: "Original content",
+        mtime: "2024-01-01T00:00:00.000Z",
+        size: 16,
+      });
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await navigateToInstructions(user);
+
+      // Wait for file content to load
+      await waitFor(() => {
+        expect(screen.getByLabelText("File Content")).toHaveValue("Original content");
+      });
+
+      // Modify file content
+      const fileContent = screen.getByLabelText("File Content");
+      await user.clear(fileContent);
+      await user.type(fileContent, "Modified content");
+
+      await waitFor(() => {
+        expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+      });
+    });
+
+    it("forwards projectId to updateAgentInstructions", async () => {
+      const addToast = vi.fn();
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          projectId="proj_456"
+          onClose={vi.fn()}
+          addToast={addToast}
+        />
+      );
+
+      await navigateToInstructions(user);
+
+      const instructionsTextarea = await screen.findByLabelText("Inline Instructions");
+      await user.clear(instructionsTextarea);
+      await user.type(instructionsTextarea, "Custom instructions");
+
+      await user.click(screen.getByText("Save Instructions"));
+
+      await waitFor(() => {
+        expect(mockUpdateAgentInstructions).toHaveBeenCalledWith(
+          "agent-001",
+          expect.objectContaining({
+            instructionsText: "Custom instructions",
+          }),
+          "proj_456",
         );
       });
     });

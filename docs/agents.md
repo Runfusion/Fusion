@@ -40,6 +40,39 @@ Agents can be configured with:
 
 Heartbeat values are validated and minimum-clamped.
 
+## Agent Instructions (Dashboard)
+
+The Agent Detail view includes a dedicated **Instructions** tab for editing agent custom instructions. This replaces the previous embedded instructions editor in the Settings tab, providing a more discoverable and user-friendly experience.
+
+### Inline vs File-Backed Instructions
+
+There are two ways to provide custom instructions:
+
+1. **Inline Instructions**: Direct text entry in the dashboard textarea. Good for simple, short instructions.
+
+2. **File-Backed Instructions**: A path to a `.md` file in the project that contains the instructions. Good for:
+   - Longer, more complex instructions
+   - Version control of instruction changes
+   - Sharing instruction files across teams
+
+### Using the Instructions Tab
+
+1. Open an agent from the Agents view
+2. Click the **Instructions** tab
+3. Enter inline instructions in the **Inline Instructions** textarea
+4. Or set a path in **Instructions File Path** (e.g., `.fusion/agents/my-agent.md`)
+5. When a path is set, a **File Content** editor appears for direct file editing
+6. Save instructions using the **Save Instructions** button
+7. Save file content separately using the **Save File** button
+
+### File Editor Behavior
+
+- File content loads automatically when an instructions path is set
+- Missing files (ENOENT) are treated as new files with empty content
+- Non-ENOENT errors (e.g., permission denied) show an error toast
+- The editor has an **Unsaved changes** indicator when file content is modified
+- File saves are independent from instruction metadata saves
+
 ## New Agent Presets (Dashboard UI)
 
 The New Agent dialog in the dashboard provides quick-start presets for common agent roles. Each preset includes:
