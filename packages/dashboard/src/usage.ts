@@ -1432,24 +1432,11 @@ async function fetchZaiUsage(): Promise<ProviderUsage> {
 // Kimi API endpoints (Moonshot domain)
 // NOTE: Underscore endpoint is first — this is the Codexbar-validated working endpoint.
 // Hyphen variant is kept as fallback for older accounts/API versions that may still use it.
+// Both endpoints are tried in order; any 404 on one triggers fallback to the next.
 const KIMI_ENDPOINTS = [
   "https://api.moonshot.cn/v1/coding_plan/usage", // underscore (primary, Codexbar-validated)
   "https://api.moonshot.cn/v1/coding-plan/usage", // hyphen (legacy fallback)
 ];
-
-/**
- * Check if the response body indicates a Moonshot endpoint-not-found error.
- * Moonshot returns {"error": "url.not_found"} for missing endpoints.
- */
-function isMoonshotNotFound(body: string): boolean {
-  try {
-    const data = JSON.parse(body);
-    // Moonshot returns {"error": "url.not_found"} for missing endpoints
-    return data?.error === "url.not_found";
-  } catch {
-    return false;
-  }
-}
 
 async function fetchKimiUsage(): Promise<ProviderUsage> {
   const usage: ProviderUsage = {
@@ -1482,17 +1469,19 @@ async function fetchKimiUsage(): Promise<ProviderUsage> {
         },
       });
 
-      // Auth errors short-circuit (no fallback for 401/403)
+      // Auth errors short-circuit immediately (no fallback for 401/403)
       if (res.status === 401 || res.status === 403) {
         usage.status = "error";
         usage.error = "Auth expired — check your Kimi API key";
         return usage;
       }
 
-      // 404 with url.not_found triggers fallback to next endpoint
-      if (res.status === 404 && isMoonshotNotFound(res.body)) {
+      // Any 404 triggers fallback to next endpoint (regardless of body content).
+      // Some accounts may return 404 with non-standard body shapes (non-JSON, alternate JSON).
+      // The underscore endpoint is tried first; if it returns 404, the hyphen endpoint is tried.
+      if (res.status === 404) {
         if (isLastEndpoint) {
-          // Last endpoint also returned not_found — return error
+          // Last endpoint also returned 404 — return error
           usage.status = "error";
           usage.error = `HTTP 404: ${res.body.slice(0, 200)}`;
           return usage;

@@ -3238,7 +3238,131 @@ describe("usage", () => {
       expect(requestedPaths).toEqual(["/v1/coding_plan/usage"]);
     });
 
-    it("returns error without fallback when first endpoint returns 404 without url.not_found", async () => {
+    it("falls back to hyphen endpoint when first endpoint returns 404 with non-url.not_found body", async () => {
+      // Regression test: ANY 404 triggers fallback, not just url.not_found
+      const requestedPaths: string[] = [];
+
+      mockReadFileSync.mockImplementation((filePath: string) => {
+        if (filePath.includes(".pi/agent/auth.json")) {
+          return JSON.stringify({
+            "kimi-coding": { type: "api_key", key: "test-api-key" },
+          });
+        }
+        throw new Error("File not found");
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+
+      const mockFallbackResponse = {
+        data: {
+          total: 100,
+          used: 50,
+          remaining: 50,
+          reset_time: Date.now() + 3600000,
+        },
+      };
+
+      mockRequest.mockImplementation((options: any, callback: any) => {
+        const pathname = new URL(`https://${options.hostname}${options.path}`).pathname;
+        requestedPaths.push(pathname);
+
+        let statusCode = 200;
+        let responseBody = mockFallbackResponse;
+
+        if (pathname === "/v1/coding_plan/usage") {
+          // First endpoint returns 404 with non-url.not_found body
+          statusCode = 404;
+          responseBody = { error: "something_else" };
+        }
+
+        const mockRes = {
+          statusCode,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") handler(Buffer.from(JSON.stringify(responseBody)));
+            if (event === "end") handler();
+          }),
+        };
+        callback(mockRes);
+        return { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const kimi = providers.find((p) => p.name === "Kimi")!;
+
+      expect(kimi.status).toBe("ok");
+      expect(kimi.windows).toHaveLength(1);
+      expect(kimi.windows[0].percentUsed).toBe(50);
+      // Should attempt both endpoints: underscore first (404), then hyphen fallback
+      expect(requestedPaths).toEqual(["/v1/coding_plan/usage", "/v1/coding-plan/usage"]);
+    });
+
+    it("falls back when first endpoint returns 404 with non-JSON body", async () => {
+      // Regression test: non-JSON 404 body should still trigger fallback
+      const requestedPaths: string[] = [];
+
+      mockReadFileSync.mockImplementation((filePath: string) => {
+        if (filePath.includes(".pi/agent/auth.json")) {
+          return JSON.stringify({
+            "kimi-coding": { type: "api_key", key: "test-api-key" },
+          });
+        }
+        throw new Error("File not found");
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+
+      const mockFallbackResponse = {
+        data: {
+          total: 100,
+          used: 75,
+          remaining: 25,
+          reset_time: Date.now() + 3600000,
+        },
+      };
+
+      mockRequest.mockImplementation((options: any, callback: any) => {
+        const pathname = new URL(`https://${options.hostname}${options.path}`).pathname;
+        requestedPaths.push(pathname);
+
+        let statusCode = 200;
+        let responseBody = mockFallbackResponse;
+
+        if (pathname === "/v1/coding_plan/usage") {
+          // First endpoint returns 404 with plain text (not JSON)
+          statusCode = 404;
+          responseBody = "Not Found";
+        }
+
+        const mockRes = {
+          statusCode,
+          headers: { "content-type": "text/plain" },
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") {
+              const body = typeof responseBody === "string" ? responseBody : JSON.stringify(responseBody);
+              handler(Buffer.from(body));
+            }
+            if (event === "end") handler();
+          }),
+        };
+        callback(mockRes);
+        return { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const kimi = providers.find((p) => p.name === "Kimi")!;
+
+      expect(kimi.status).toBe("ok");
+      expect(kimi.windows).toHaveLength(1);
+      expect(kimi.windows[0].percentUsed).toBe(75);
+      // Should attempt both endpoints
+      expect(requestedPaths).toEqual(["/v1/coding_plan/usage", "/v1/coding-plan/usage"]);
+    });
+
+    it("returns error when both endpoints return 404", async () => {
+      // Regression test: when both endpoints return 404, should return error
       const requestedPaths: string[] = [];
 
       mockReadFileSync.mockImplementation((filePath: string) => {
@@ -3261,8 +3385,7 @@ describe("usage", () => {
           statusCode: 404,
           headers: {},
           on: vi.fn((event: string, handler: any) => {
-            // Return a 404 without url.not_found
-            if (event === "data") handler(Buffer.from(JSON.stringify({ error: "something_else" })));
+            if (event === "data") handler(Buffer.from("Not Found"));
             if (event === "end") handler();
           }),
         };
@@ -3275,8 +3398,8 @@ describe("usage", () => {
 
       expect(kimi.status).toBe("error");
       expect(kimi.error).toContain("HTTP 404");
-      // Should NOT attempt fallback because error is not url.not_found
-      expect(requestedPaths).toEqual(["/v1/coding_plan/usage"]);
+      // Should attempt both endpoints
+      expect(requestedPaths).toEqual(["/v1/coding_plan/usage", "/v1/coding-plan/usage"]);
     });
 
     it("succeeds with single endpoint when first endpoint works", async () => {
