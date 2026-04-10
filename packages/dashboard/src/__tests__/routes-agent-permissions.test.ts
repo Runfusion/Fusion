@@ -95,6 +95,7 @@ const mockComputeAccessState = vi.fn((agent: AgentRecord) => computeMockAccessSt
 const mockIsValidPermission = vi.fn(
   (key: string) => AGENT_PERMISSIONS.includes(key as (typeof AGENT_PERMISSIONS)[number]),
 );
+const mockChatStoreInit = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@fusion/core", () => {
   return {
@@ -103,6 +104,9 @@ vi.mock("@fusion/core", () => {
       getAgent = mockGetAgent;
       updateAgent = mockUpdateAgent;
       listAgents = mockListAgents;
+    },
+    ChatStore: class MockChatStore {
+      init = mockChatStoreInit;
     },
     computeAccessState: mockComputeAccessState,
     isValidPermission: mockIsValidPermission,

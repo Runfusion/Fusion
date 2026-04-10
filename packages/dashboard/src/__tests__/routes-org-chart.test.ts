@@ -8,6 +8,7 @@ const mockGetChainOfCommand = vi.fn();
 const mockGetOrgTree = vi.fn();
 const mockResolveAgent = vi.fn();
 const mockListAgents = vi.fn().mockResolvedValue([]);
+const mockChatStoreInit = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@fusion/core", () => {
   return {
@@ -18,6 +19,9 @@ vi.mock("@fusion/core", () => {
       getOrgTree = mockGetOrgTree;
       resolveAgent = mockResolveAgent;
       listAgents = mockListAgents;
+    },
+    ChatStore: class MockChatStore {
+      init = mockChatStoreInit;
     },
   };
 });

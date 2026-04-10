@@ -8,6 +8,7 @@ const mockInit = vi.fn().mockResolvedValue(undefined);
 const mockGetAgent = vi.fn();
 const mockGetBudgetStatus = vi.fn();
 const mockResetBudgetUsage = vi.fn();
+const mockChatStoreInit = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@fusion/core", () => {
   return {
@@ -16,6 +17,9 @@ vi.mock("@fusion/core", () => {
       getAgent = mockGetAgent;
       getBudgetStatus = mockGetBudgetStatus;
       resetBudgetUsage = mockResetBudgetUsage;
+    },
+    ChatStore: class MockChatStore {
+      init = mockChatStoreInit;
     },
   };
 });

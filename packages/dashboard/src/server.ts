@@ -177,6 +177,10 @@ function resolveBoundedMs(
   return Math.min(max, Math.max(min, value));
 }
 
+function shouldScheduleAiSessionCleanup(): boolean {
+  return process.env.NODE_ENV !== "test";
+}
+
 export function createServer(store: TaskStore, options?: ServerOptions): ReturnType<typeof express> {
   const app = express();
   const mutationRateLimit = rateLimit(RATE_LIMITS.mutation);
@@ -427,57 +431,59 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     aiSessionCleanupIntervalHandle.unref?.();
   };
 
-  const loadSettings = (store as { getSettings?: () => Promise<{ aiSessionTtlMs?: number; aiSessionCleanupIntervalMs?: number }> }).getSettings;
-  if (typeof loadSettings === "function") {
-    void loadSettings
-      .call(store)
-      .then((settings) => {
-        const ttlMs = resolveBoundedMs(
-          settings.aiSessionTtlMs,
-          DEFAULT_AI_SESSION_TTL_MS,
-          MIN_AI_SESSION_TTL_MS,
-          MAX_AI_SESSION_TTL_MS,
-        );
-        const cleanupIntervalMs = resolveBoundedMs(
-          settings.aiSessionCleanupIntervalMs,
-          DEFAULT_AI_SESSION_CLEANUP_INTERVAL_MS,
-          MIN_AI_SESSION_CLEANUP_INTERVAL_MS,
-          MAX_AI_SESSION_CLEANUP_INTERVAL_MS,
-        );
+  if (shouldScheduleAiSessionCleanup()) {
+    const loadSettings = (store as { getSettings?: () => Promise<{ aiSessionTtlMs?: number; aiSessionCleanupIntervalMs?: number }> }).getSettings;
+    if (typeof loadSettings === "function") {
+      void loadSettings
+        .call(store)
+        .then((settings) => {
+          const ttlMs = resolveBoundedMs(
+            settings.aiSessionTtlMs,
+            DEFAULT_AI_SESSION_TTL_MS,
+            MIN_AI_SESSION_TTL_MS,
+            MAX_AI_SESSION_TTL_MS,
+          );
+          const cleanupIntervalMs = resolveBoundedMs(
+            settings.aiSessionCleanupIntervalMs,
+            DEFAULT_AI_SESSION_CLEANUP_INTERVAL_MS,
+            MIN_AI_SESSION_CLEANUP_INTERVAL_MS,
+            MAX_AI_SESSION_CLEANUP_INTERVAL_MS,
+          );
 
-        void Promise.resolve()
-          .then(() => runAiSessionCleanup(ttlMs, "initial"))
-          .catch((err) => {
-            console.error("[server] Initial AI session cleanup failed", err);
-          });
+          void Promise.resolve()
+            .then(() => runAiSessionCleanup(ttlMs, "initial"))
+            .catch((err) => {
+              console.error("[server] Initial AI session cleanup failed", err);
+            });
 
-        scheduleAiSessionCleanup(cleanupIntervalMs, ttlMs);
-      })
-      .catch((err) => {
-        console.warn("[server] Failed to load settings for AI session cleanup; using defaults", err);
+          scheduleAiSessionCleanup(cleanupIntervalMs, ttlMs);
+        })
+        .catch((err) => {
+          console.warn("[server] Failed to load settings for AI session cleanup; using defaults", err);
 
-        void Promise.resolve()
-          .then(() => runAiSessionCleanup(DEFAULT_AI_SESSION_TTL_MS, "initial"))
-          .catch((cleanupErr) => {
-            console.error("[server] Initial AI session cleanup failed", cleanupErr);
-          });
+          void Promise.resolve()
+            .then(() => runAiSessionCleanup(DEFAULT_AI_SESSION_TTL_MS, "initial"))
+            .catch((cleanupErr) => {
+              console.error("[server] Initial AI session cleanup failed", cleanupErr);
+            });
 
-        scheduleAiSessionCleanup(
-          DEFAULT_AI_SESSION_CLEANUP_INTERVAL_MS,
-          DEFAULT_AI_SESSION_TTL_MS,
-        );
-      });
-  } else {
-    void Promise.resolve()
-      .then(() => runAiSessionCleanup(DEFAULT_AI_SESSION_TTL_MS, "initial"))
-      .catch((err) => {
-        console.error("[server] Initial AI session cleanup failed", err);
-      });
+          scheduleAiSessionCleanup(
+            DEFAULT_AI_SESSION_CLEANUP_INTERVAL_MS,
+            DEFAULT_AI_SESSION_TTL_MS,
+          );
+        });
+    } else {
+      void Promise.resolve()
+        .then(() => runAiSessionCleanup(DEFAULT_AI_SESSION_TTL_MS, "initial"))
+        .catch((err) => {
+          console.error("[server] Initial AI session cleanup failed", err);
+        });
 
-    scheduleAiSessionCleanup(
-      DEFAULT_AI_SESSION_CLEANUP_INTERVAL_MS,
-      DEFAULT_AI_SESSION_TTL_MS,
-    );
+      scheduleAiSessionCleanup(
+        DEFAULT_AI_SESSION_CLEANUP_INTERVAL_MS,
+        DEFAULT_AI_SESSION_TTL_MS,
+      );
+    }
   }
 
   app.get("/api/health", (_req, res) => {

@@ -8,6 +8,7 @@ import { request } from "../test-request.js";
 const mockInit = vi.fn().mockResolvedValue(undefined);
 const mockListAgents = vi.fn().mockResolvedValue([]);
 const mockCreateAgent = vi.fn();
+const mockChatStoreInit = vi.fn().mockResolvedValue(undefined);
 
 const mockParseCompanyDirectory = vi.fn();
 const mockParseCompanyArchive = vi.fn();
@@ -27,6 +28,9 @@ vi.mock("@fusion/core", () => {
       init = mockInit;
       listAgents = mockListAgents;
       createAgent = mockCreateAgent;
+    },
+    ChatStore: class MockChatStore {
+      init = mockChatStoreInit;
     },
     parseCompanyDirectory: (...args: unknown[]) => mockParseCompanyDirectory(...args),
     parseCompanyArchive: (...args: unknown[]) => mockParseCompanyArchive(...args),

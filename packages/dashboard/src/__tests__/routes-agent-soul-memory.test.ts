@@ -20,6 +20,7 @@ const mockGetAgent = vi.fn();
 const mockUpdateAgent = vi.fn();
 const mockGetAgentsByReportsTo = vi.fn();
 const mockListAgents = vi.fn().mockResolvedValue([]);
+const mockChatStoreInit = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@fusion/core", () => {
   return {
@@ -29,6 +30,9 @@ vi.mock("@fusion/core", () => {
       updateAgent = mockUpdateAgent;
       getAgentsByReportsTo = mockGetAgentsByReportsTo;
       listAgents = mockListAgents;
+    },
+    ChatStore: class MockChatStore {
+      init = mockChatStoreInit;
     },
   };
 });

@@ -9,12 +9,16 @@ import { request } from "../test-request.js";
 const mockInit = vi.fn().mockResolvedValue(undefined);
 const mockListAgents = vi.fn().mockResolvedValue([]);
 const mockExportAgentsToDirectory = vi.fn();
+const mockChatStoreInit = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@fusion/core", () => {
   return {
     AgentStore: class MockAgentStore {
       init = mockInit;
       listAgents = mockListAgents;
+    },
+    ChatStore: class MockChatStore {
+      init = mockChatStoreInit;
     },
     exportAgentsToDirectory: (...args: unknown[]) => mockExportAgentsToDirectory(...args),
   };

@@ -8,6 +8,7 @@ const mockCreateApiKey = vi.fn();
 const mockListApiKeys = vi.fn();
 const mockRevokeApiKey = vi.fn();
 const mockListAgents = vi.fn().mockResolvedValue([]);
+const mockChatStoreInit = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@fusion/core", () => {
   return {
@@ -18,6 +19,9 @@ vi.mock("@fusion/core", () => {
       listApiKeys = mockListApiKeys;
       revokeApiKey = mockRevokeApiKey;
       listAgents = mockListAgents;
+    },
+    ChatStore: class MockChatStore {
+      init = mockChatStoreInit;
     },
   };
 });
