@@ -5,6 +5,10 @@ import { MissionManager } from "../MissionManager";
 const mockFetchAiSession = vi.fn();
 const mockCancelMissionInterview = vi.fn();
 const mockConnectMissionInterviewStream = vi.fn();
+const mockPreviewEnrichedDescription = vi.fn();
+const mockSkipMilestoneInterview = vi.fn();
+const mockSkipSliceInterview = vi.fn();
+const mockTriageFeature = vi.fn();
 
 vi.mock("../../api", async () => {
   const actual = await vi.importActual<typeof import("../../api")>("../../api");
@@ -13,8 +17,37 @@ vi.mock("../../api", async () => {
     fetchAiSession: (...args: any[]) => mockFetchAiSession(...args),
     cancelMissionInterview: (...args: any[]) => mockCancelMissionInterview(...args),
     connectMissionInterviewStream: (...args: any[]) => mockConnectMissionInterviewStream(...args),
+    previewEnrichedDescription: (...args: any[]) => mockPreviewEnrichedDescription(...args),
+    skipMilestoneInterview: (...args: any[]) => mockSkipMilestoneInterview(...args),
+    skipSliceInterview: (...args: any[]) => mockSkipSliceInterview(...args),
+    triageFeature: (...args: any[]) => mockTriageFeature(...args),
   };
 });
+
+vi.mock("lucide-react", () => ({
+  X: () => <span data-testid="x-icon">X</span>,
+  Plus: () => <span data-testid="plus-icon">+</span>,
+  Pencil: () => <span data-testid="pencil-icon">Pencil</span>,
+  Trash2: () => <span data-testid="trash-icon">Trash</span>,
+  ChevronRight: () => <span data-testid="chevron-right-icon">ChevronRight</span>,
+  ChevronDown: () => <span data-testid="chevron-down-icon">ChevronDown</span>,
+  ChevronLeft: () => <span data-testid="chevron-left-icon">ChevronLeft</span>,
+  Target: () => <span data-testid="target-icon">Target</span>,
+  Layers: () => <span data-testid="layers-icon">Layers</span>,
+  Package: () => <span data-testid="package-icon">Package</span>,
+  Box: () => <span data-testid="box-icon">Box</span>,
+  Check: () => <span data-testid="check-icon">Check</span>,
+  Loader2: ({ className }: any) => <span data-testid="loader-icon" className={className}>Loader</span>,
+  Link: () => <span data-testid="link-icon">Link</span>,
+  Unlink: () => <span data-testid="unlink-icon">Unlink</span>,
+  Play: () => <span data-testid="play-icon">Play</span>,
+  Square: () => <span data-testid="square-icon">Square</span>,
+  Sparkles: () => <span data-testid="sparkles-icon">Sparkles</span>,
+  Zap: () => <span data-testid="zap-icon">Zap</span>,
+  Activity: () => <span data-testid="activity-icon">Activity</span>,
+  FileText: () => <span data-testid="file-text-icon">FileText</span>,
+  Minimize2: () => <span data-testid="minimize-icon">Minimize2</span>,
+}));
 
 // Mock data
 const mockMissions = [
@@ -58,6 +91,7 @@ const mockMissionDetail = {
       title: "Database Schema",
       description: "Set up auth tables",
       status: "planning",
+      interviewState: "not_started",
       dependencies: [] as string[],
       slices: [
         {
@@ -65,6 +99,7 @@ const mockMissionDetail = {
           title: "User Tables",
           description: "Create user tables",
           status: "pending",
+          planState: "not_started",
           features: [
             {
               id: "F-001",
@@ -1488,6 +1523,431 @@ describe("MissionManager", () => {
 
       await waitFor(() => {
         expect(screen.getByText("Add Milestone")).toBeDefined();
+      });
+    });
+  });
+
+  // ── Plan Buttons & Interview ──
+  describe("plan buttons and interview modal", () => {
+    const mockMissionWithPlanData = {
+      id: "M-PLAN1",
+      title: "Plan Test Mission",
+      description: "Test mission for plan buttons",
+      status: "active",
+      autopilotEnabled: false,
+      autopilotState: "inactive",
+      milestones: [
+        {
+          id: "MS-PLAN1",
+          title: "Test Milestone",
+          description: "A milestone for testing",
+          status: "active",
+          interviewState: "not_started",
+          dependencies: [] as string[],
+          slices: [
+            {
+              id: "SL-PLAN1",
+              title: "Test Slice",
+              description: "A slice for testing",
+              status: "pending",
+              planState: "not_started",
+              features: [
+                {
+                  id: "F-PLAN1",
+                  title: "Test Feature",
+                  description: "A feature for testing",
+                  acceptanceCriteria: "Test criteria",
+                  status: "defined",
+                  taskId: null,
+                  sliceId: "SL-PLAN1",
+                  missionId: "M-PLAN1",
+                },
+              ],
+              milestoneId: "MS-PLAN1",
+              missionId: "M-PLAN1",
+            },
+            {
+              id: "SL-PLAN2",
+              title: "Completed Slice",
+              description: "A completed slice",
+              status: "complete",
+              planState: "planned",
+              features: [],
+              milestoneId: "MS-PLAN1",
+              missionId: "M-PLAN1",
+            },
+          ],
+          missionId: "M-PLAN1",
+        },
+        {
+          id: "MS-PLAN2",
+          title: "Completed Milestone",
+          description: "A completed milestone",
+          status: "complete",
+          interviewState: "completed",
+          dependencies: [] as string[],
+          slices: [],
+          missionId: "M-PLAN1",
+        },
+      ],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    function createPlanFetchMock() {
+      return vi.fn((url: string) => {
+        // Return mission list (array) for the missions endpoint
+        if (url.match(/\/api\/missions$/) || url.match(/\/api\/missions\?/)) {
+          return Promise.resolve(mockApiResponse([mockMissionWithPlanData]));
+        }
+        // Return mission detail for specific mission
+        if (url.includes("/api/missions/")) {
+          return Promise.resolve(mockApiResponse(mockMissionWithPlanData));
+        }
+        return Promise.resolve(mockApiResponse([]));
+      }) as unknown as typeof fetch;
+    }
+
+    beforeEach(() => {
+      mockFetchAiSession.mockReset();
+      mockCancelMissionInterview.mockReset();
+      mockConnectMissionInterviewStream.mockReset();
+      mockPreviewEnrichedDescription.mockReset();
+      mockSkipMilestoneInterview.mockReset();
+      mockSkipSliceInterview.mockReset();
+      mockTriageFeature.mockReset();
+
+      mockFetchAiSession.mockResolvedValue(null);
+      mockCancelMissionInterview.mockResolvedValue(undefined);
+      mockConnectMissionInterviewStream.mockReturnValue({ close: vi.fn(), isConnected: vi.fn(() => false) });
+      mockPreviewEnrichedDescription.mockReset();
+      mockSkipMilestoneInterview.mockResolvedValue({});
+      mockSkipSliceInterview.mockResolvedValue({});
+      mockTriageFeature.mockResolvedValue({});
+    });
+
+    it("shows Plan button next to milestones that are not complete", async () => {
+      globalThis.fetch = createPlanFetchMock();
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      // Navigate to detail
+      await waitFor(() => {
+        expect(screen.getByText("Plan Test Mission")).toBeDefined();
+      });
+      fireEvent.click(screen.getByText("Plan Test Mission"));
+
+      await waitFor(() => {
+        // Should show Plan button for the active milestone
+        const planButton = screen.getByTitle("Plan milestone");
+        expect(planButton).toBeDefined();
+      });
+    });
+
+    it("does NOT show Plan button for completed milestones", async () => {
+      globalThis.fetch = createPlanFetchMock();
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      // Navigate to detail
+      await waitFor(() => {
+        expect(screen.getByText("Plan Test Mission")).toBeDefined();
+      });
+      fireEvent.click(screen.getByText("Plan Test Mission"));
+
+      await waitFor(() => {
+        // Find the "Completed Milestone" section
+        expect(screen.getByText("Completed Milestone")).toBeDefined();
+      });
+
+      // Should not have a Plan button for completed milestone
+      const completedMilestone = screen.getByText("Completed Milestone").closest(".mission-milestone");
+      expect(completedMilestone).toBeDefined();
+    });
+
+    it("shows Plan button next to slices that are not complete", async () => {
+      globalThis.fetch = createPlanFetchMock();
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      // Navigate to detail
+      await waitFor(() => {
+        expect(screen.getByText("Plan Test Mission")).toBeDefined();
+      });
+      fireEvent.click(screen.getByText("Plan Test Mission"));
+
+      await waitFor(() => {
+        // Should show Plan button for the pending slice
+        const planButton = screen.getByTitle("Plan slice");
+        expect(planButton).toBeDefined();
+      });
+    });
+
+    it("does NOT show Plan button for completed slices", async () => {
+      globalThis.fetch = createPlanFetchMock();
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      // Navigate to detail
+      await waitFor(() => {
+        expect(screen.getByText("Plan Test Mission")).toBeDefined();
+      });
+      fireEvent.click(screen.getByText("Plan Test Mission"));
+
+      await waitFor(() => {
+        // Find the "Completed Slice" section
+        expect(screen.getByText("Completed Slice")).toBeDefined();
+      });
+
+      // Should not have a Plan button for completed slice
+      const completedSlice = screen.getByText("Completed Slice").closest(".mission-slice");
+      expect(completedSlice).toBeDefined();
+    });
+
+    it("shows planning state indicator for milestones", async () => {
+      globalThis.fetch = createPlanFetchMock();
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      // Navigate to detail
+      await waitFor(() => {
+        expect(screen.getByText("Plan Test Mission")).toBeDefined();
+      });
+      fireEvent.click(screen.getByText("Plan Test Mission"));
+
+      await waitFor(() => {
+        // Should show a plan state indicator
+        const indicators = document.querySelectorAll(".mission-plan-state-indicator");
+        expect(indicators.length).toBeGreaterThan(0);
+      });
+    });
+
+    it("shows planning state indicator for slices", async () => {
+      globalThis.fetch = createPlanFetchMock();
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      // Navigate to detail
+      await waitFor(() => {
+        expect(screen.getByText("Plan Test Mission")).toBeDefined();
+      });
+      fireEvent.click(screen.getByText("Plan Test Mission"));
+
+      await waitFor(() => {
+        // Should show plan state indicator for the slice
+        const indicators = document.querySelectorAll(".mission-plan-state-indicator");
+        expect(indicators.length).toBeGreaterThan(0);
+      });
+    });
+
+    it("clicking Plan button opens the MilestoneSliceInterviewModal", async () => {
+      globalThis.fetch = createPlanFetchMock();
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      // Navigate to detail
+      await waitFor(() => {
+        expect(screen.getByText("Plan Test Mission")).toBeDefined();
+      });
+      fireEvent.click(screen.getByText("Plan Test Mission"));
+
+      await waitFor(() => {
+        const planButton = screen.getByTitle("Plan milestone");
+        expect(planButton).toBeDefined();
+      });
+
+      // Click Plan button
+      fireEvent.click(screen.getByTitle("Plan milestone"));
+
+      // Modal should open
+      await waitFor(() => {
+        expect(screen.getByTestId("milestone-slice-interview-modal")).toBeDefined();
+      });
+    });
+  });
+
+  // ── Triage Preview ──
+  describe("triage preview", () => {
+    const mockMissionWithFeature = {
+      id: "M-TRIAGE1",
+      title: "Triage Test Mission",
+      description: "Test mission for triage preview",
+      status: "active",
+      autopilotEnabled: false,
+      autopilotState: "inactive",
+      milestones: [
+        {
+          id: "MS-TRIAGE1",
+          title: "Test Milestone",
+          description: "A milestone for testing",
+          status: "active",
+          interviewState: "not_started",
+          dependencies: [] as string[],
+          slices: [
+            {
+              id: "SL-TRIAGE1",
+              title: "Test Slice",
+              description: "A slice for testing",
+              status: "pending",
+              planState: "not_started",
+              features: [
+                {
+                  id: "F-TRIAGE1",
+                  title: "Test Feature",
+                  description: "A feature for testing triage preview",
+                  acceptanceCriteria: "Test criteria",
+                  status: "defined",
+                  taskId: null,
+                  sliceId: "SL-TRIAGE1",
+                  missionId: "M-TRIAGE1",
+                },
+              ],
+              milestoneId: "MS-TRIAGE1",
+              missionId: "M-TRIAGE1",
+            },
+          ],
+          missionId: "M-TRIAGE1",
+        },
+      ],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    function createTriageFetchMock() {
+      return vi.fn((url: string) => {
+        // Return mission list (array) for the missions endpoint
+        if (url.match(/\/api\/missions$/) || url.match(/\/api\/missions\?/)) {
+          return Promise.resolve(mockApiResponse([mockMissionWithFeature]));
+        }
+        // Return mission detail for specific mission
+        if (url.includes("/api/missions/")) {
+          return Promise.resolve(mockApiResponse(mockMissionWithFeature));
+        }
+        return Promise.resolve(mockApiResponse([]));
+      }) as unknown as typeof fetch;
+    }
+
+    beforeEach(() => {
+      mockFetchAiSession.mockReset();
+      mockCancelMissionInterview.mockReset();
+      mockConnectMissionInterviewStream.mockReset();
+      mockPreviewEnrichedDescription.mockReset();
+      mockSkipMilestoneInterview.mockReset();
+      mockSkipSliceInterview.mockReset();
+      mockTriageFeature.mockReset();
+
+      mockFetchAiSession.mockResolvedValue(null);
+      mockCancelMissionInterview.mockResolvedValue(undefined);
+      mockConnectMissionInterviewStream.mockReturnValue({ close: vi.fn(), isConnected: vi.fn(() => false) });
+      mockPreviewEnrichedDescription.mockResolvedValue({ description: "Enriched description with more details" });
+      mockSkipMilestoneInterview.mockResolvedValue({});
+      mockSkipSliceInterview.mockResolvedValue({});
+      mockTriageFeature.mockResolvedValue({});
+    });
+
+    it("shows triage preview when clicking triage button", async () => {
+      globalThis.fetch = createTriageFetchMock();
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      // Navigate to detail
+      await waitFor(() => {
+        expect(screen.getByText("Triage Test Mission")).toBeDefined();
+      });
+      fireEvent.click(screen.getByText("Triage Test Mission"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Test Feature")).toBeDefined();
+      });
+
+      // Click triage button
+      fireEvent.click(screen.getByTitle("Triage — create task"));
+
+      // Preview should appear
+      await waitFor(() => {
+        expect(screen.getByText("Enriched Description Preview")).toBeDefined();
+        expect(screen.getByText("Enriched description with more details")).toBeDefined();
+      });
+    });
+
+    it("Create Task button in preview confirms triage", async () => {
+      globalThis.fetch = createTriageFetchMock();
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      // Navigate to detail
+      await waitFor(() => {
+        expect(screen.getByText("Triage Test Mission")).toBeDefined();
+      });
+      fireEvent.click(screen.getByText("Triage Test Mission"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Test Feature")).toBeDefined();
+      });
+
+      // Click triage button to show preview
+      fireEvent.click(screen.getByTitle("Triage — create task"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Enriched Description Preview")).toBeDefined();
+      });
+
+      // Click Create Task
+      fireEvent.click(screen.getByText("Create Task"));
+
+      // triageFeature should have been called
+      await waitFor(() => {
+        expect(mockTriageFeature).toHaveBeenCalled();
+      });
+    });
+
+    it("Cancel button in preview dismisses without creating task", async () => {
+      globalThis.fetch = createTriageFetchMock();
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      // Navigate to detail
+      await waitFor(() => {
+        expect(screen.getByText("Triage Test Mission")).toBeDefined();
+      });
+      fireEvent.click(screen.getByText("Triage Test Mission"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Test Feature")).toBeDefined();
+      });
+
+      // Click triage button to show preview
+      fireEvent.click(screen.getByTitle("Triage — create task"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Enriched Description Preview")).toBeDefined();
+      });
+
+      // Click Cancel
+      fireEvent.click(screen.getByText("Cancel"));
+
+      // Preview should be gone
+      await waitFor(() => {
+        expect(screen.queryByText("Enriched Description Preview")).toBeNull();
+      });
+
+      // triageFeature should NOT have been called
+      expect(mockTriageFeature).not.toHaveBeenCalled();
+    });
+
+    it("falls back to direct triage when preview endpoint fails", async () => {
+      // Mock preview to reject
+      mockPreviewEnrichedDescription.mockRejectedValue(new Error("Preview not available"));
+
+      globalThis.fetch = createTriageFetchMock();
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      // Navigate to detail
+      await waitFor(() => {
+        expect(screen.getByText("Triage Test Mission")).toBeDefined();
+      });
+      fireEvent.click(screen.getByText("Triage Test Mission"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Test Feature")).toBeDefined();
+      });
+
+      // Click triage button - should fall back to direct triage
+      fireEvent.click(screen.getByTitle("Triage — create task"));
+
+      // Should call triageFeature directly
+      await waitFor(() => {
+        expect(mockTriageFeature).toHaveBeenCalled();
       });
     });
   });
