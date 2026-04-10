@@ -213,6 +213,9 @@ export function validateDescription(description: unknown): string {
 
 // ── AI Integration ───────────────────────────────────────────────────────────
 
+/** Debug flag for AI operations */
+const DEBUG = process.env.FUSION_DEBUG_AI === "true";
+
 /**
  * Summarize a task description into a concise title using AI.
  * @param description - The task description to summarize (must be 201-2000 chars)
@@ -236,6 +239,7 @@ export async function summarizeTitle(
   await engineReady;
 
   if (!createKbAgent) {
+    if (DEBUG) console.log("[ai-summarize] AI engine not available");
     throw new AiServiceError("AI engine not available");
   }
 
@@ -257,24 +261,43 @@ export async function summarizeTitle(
     agentOptions.defaultModelId = modelId;
   }
 
+  if (DEBUG) console.log("[ai-summarize] Creating agent session...");
   const agentResult = await createKbAgent(agentOptions);
 
   if (!agentResult?.session) {
+    if (DEBUG) console.log("[ai-summarize] Failed to initialize AI agent - no session");
     throw new AiServiceError("Failed to initialize AI agent");
   }
+
+  if (DEBUG) console.log("[ai-summarize] Agent session created, sending prompt...");
 
   try {
     // Send the description to the agent
     await agentResult.session.prompt(description);
+
+    // Check for session errors (pi SDK stores errors in state.error, does not throw)
+    if (agentResult.session.state?.error) {
+      const errorMsg = agentResult.session.state.error;
+      if (DEBUG) console.log(`[ai-summarize] Session error: ${errorMsg}`);
+      throw new AiServiceError(`AI session error: ${errorMsg}`);
+    }
+
+    if (DEBUG) console.log("[ai-summarize] Prompt sent, extracting response from messages...");
 
     // Get the response text from the agent's state
     interface AgentMessage {
       role: string;
       content?: string | Array<{ type: string; text: string }>;
     }
-    const lastMessage = (agentResult.session.state.messages as AgentMessage[])
-      .filter((m: AgentMessage) => m.role === "assistant")
-      .pop();
+
+    const messages: AgentMessage[] = agentResult.session.state?.messages ?? [];
+    const assistantMessages = messages.filter((m: AgentMessage) => m.role === "assistant");
+
+    if (DEBUG) {
+      console.log(`[ai-summarize] Total messages: ${messages.length}, Assistant messages: ${assistantMessages.length}`);
+    }
+
+    const lastMessage = assistantMessages.pop();
 
     let title = "";
     if (lastMessage?.content) {
@@ -291,7 +314,10 @@ export async function summarizeTitle(
       }
     }
 
+    if (DEBUG) console.log(`[ai-summarize] Extracted title: "${title}"`);
+
     if (!title) {
+      if (DEBUG) console.log("[ai-summarize] AI returned empty response");
       throw new AiServiceError("AI returned empty response");
     }
 
@@ -300,14 +326,15 @@ export async function summarizeTitle(
       title = title.slice(0, MAX_TITLE_LENGTH).trim();
     }
 
+    if (DEBUG) console.log("[ai-summarize] Title generation successful");
     return title;
   } catch (err) {
     if (err instanceof AiServiceError) {
       throw err;
     }
-    throw new AiServiceError(
-      err instanceof Error ? err.message : "AI processing failed"
-    );
+    const message = err instanceof Error ? err.message : "AI processing failed";
+    if (DEBUG) console.log(`[ai-summarize] Unexpected error: ${message}`);
+    throw new AiServiceError(message);
   } finally {
     // Ensure session is disposed even on error
     try {

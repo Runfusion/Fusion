@@ -5823,10 +5823,10 @@ Task with acceptance criteria
 
       expect(task.title).toBeUndefined();
       expect(task.id).toMatch(/^FN-\d+$/); // Task still created
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Title summarization failed"),
-        expect.stringContaining("AI service failed")
-      );
+      expect(consoleSpy.mock.calls[0][0]).toMatch(/Title summarization failed for task/);
+      expect(consoleSpy.mock.calls[0][0]).toMatch(/AI service failed/);
+      expect(consoleSpy.mock.calls[0][0]).toMatch(/desc length: 201/);
+      expect(consoleSpy.mock.calls[0][0]).toMatch(/auto-summarize: true/);
 
       consoleSpy.mockRestore();
     });

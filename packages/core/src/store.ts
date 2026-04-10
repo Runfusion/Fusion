@@ -1048,7 +1048,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         }
       } catch (err) {
         // Log warning but don't block task creation
-        console.warn(`[TaskStore] Title summarization failed for task ${id}:`, err instanceof Error ? err.message : err);
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        const autoEnabled = options?.settings?.autoSummarizeTitles === true;
+        console.warn(
+          `[TaskStore] Title summarization failed for task ${id}: ${errorMsg}` +
+          ` (desc length: ${input.description.length}, auto-summarize: ${autoEnabled})`
+        );
       }
     }
 

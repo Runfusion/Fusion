@@ -15,6 +15,13 @@
 - **Peer Gossip Protocol (FN-1224)**: Nodes exchange peer information via `POST /api/mesh/sync` endpoint. `PeerExchangeService` runs periodic sync cycles (default 60s interval) with all online remote nodes. `CentralCore.mergePeers()` handles peer data merging — new peers are registered via `registerGossipPeer()`, stale peers are updated with fresher data, and the local node is never overwritten. The service uses single-flight pattern to prevent overlapping syncs and refreshes local metrics before each sync.
 - **Node Plugin Sync (FN-1246)**: Nodes track version information for plugin synchronization. Central schema v4 adds `versionInfo` and `pluginVersions` columns to the `nodes` table. `getAppVersion()` utility reads from nearest package.json. CentralCore methods: `updateNodeVersionInfo()`, `getNodeVersionInfo()`, `syncPlugins()`, `checkVersionCompatibility()`. Events: `node:version:updated`, `node:plugins:synced`. Key integration points for FN-1247 (API routes, CLI commands).
 
+## FN-1354: Auto-Summarize Titles Bug Fix
+
+- The `summarize` field in `TaskCreateInput` must be forwarded by the frontend API (`createTask` in `api.ts`) to enable the auto-summarization flow
+- `summarizeTitle()` in `ai-summarize.ts` uses `session.state.messages` to extract AI responses, with fallback to direct `prompt()` return value
+- Debug logging via `process.env.FUSION_DEBUG_AI` helps diagnose AI session issues
+- When testing `console.warn` calls that expect multiple substrings in a single concatenated string, use `expect(mock.calls[0][0]).toMatch(/substring1/)` pattern instead of `expect.stringContaining()` on multiple arguments
+
 ## Conventions
 
 - When mocking function types with Vitest for the build (tsc), use `vi.fn().mockResolvedValue(x) as unknown as T` instead of `vi.fn<Parameters<T>, ReturnType<T>>()`. The generic syntax works at runtime but fails during `tsc` build.

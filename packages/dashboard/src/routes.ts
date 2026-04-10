@@ -2028,7 +2028,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
                 (settings.defaultProvider && settings.defaultModelId ? settings.defaultModelId : undefined);
 
               return await summarizeTitle(desc, scopedStore.getRootDir(), resolvedProvider, resolvedModelId);
-            } catch {
+            } catch (err) {
+              // Log the full error so server logs show what went wrong
+              const errorMessage = err instanceof Error ? err.message : String(err);
+              console.error(`[routes] Title summarization failed: ${errorMessage}`, err);
               // Return null on error so task creation continues without title
               return null;
             }

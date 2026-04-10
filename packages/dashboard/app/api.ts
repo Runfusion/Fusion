@@ -147,6 +147,7 @@ export function createTask(input: TaskCreateInput, projectId?: string): Promise<
     planningModelProvider,
     planningModelId,
     thinkingLevel,
+    summarize,
   } = input;
 
   return api<Task>(withProjectId("/tasks", projectId), {
@@ -167,6 +168,7 @@ export function createTask(input: TaskCreateInput, projectId?: string): Promise<
       planningModelProvider,
       planningModelId,
       thinkingLevel,
+      summarize,
     }),
   });
 }

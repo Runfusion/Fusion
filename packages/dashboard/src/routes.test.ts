@@ -30,6 +30,7 @@ const mockCentralListProjects = vi.fn().mockResolvedValue([]);
 const mockCentralInit = vi.fn().mockResolvedValue(undefined);
 const mockCentralClose = vi.fn().mockResolvedValue(undefined);
 const mockCentralReconcileProjectStatuses = vi.fn().mockResolvedValue(undefined);
+
 vi.mock("@fusion/core", async () => {
   const actual = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
   return {
@@ -669,6 +670,137 @@ describe("POST /tasks", () => {
       expect.objectContaining({
         settings: { autoSummarizeTitles: undefined },
       }),
+    );
+  });
+
+  it("passes onSummarize callback when autoSummarizeTitles is enabled", async () => {
+    // Mock getSettings to return autoSummarizeTitles: true
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ autoSummarizeTitles: true });
+
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "x".repeat(300), // Long description > 200 chars
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    // Verify onSummarize callback is passed - the route should pass it when autoSummarizeTitles is enabled
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: undefined,
+        description: "x".repeat(300),
+        summarize: false,
+      }),
+      expect.objectContaining({
+        settings: { autoSummarizeTitles: true },
+        onSummarize: expect.any(Function),
+      }),
+    );
+  });
+
+  it("does not create onSummarize callback when autoSummarizeTitles is disabled", async () => {
+    // Mock getSettings to return autoSummarizeTitles: false (default)
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ autoSummarizeTitles: false });
+
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "x".repeat(300), // Long description > 200 chars
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: undefined,
+        description: "x".repeat(300),
+        summarize: false,
+      }),
+      expect.objectContaining({
+        settings: { autoSummarizeTitles: false },
+        onSummarize: undefined,
+      }),
+    );
+  });
+
+  it("passes onSummarize callback when summarize flag is explicitly true", async () => {
+    // Mock getSettings to return autoSummarizeTitles: false
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ autoSummarizeTitles: false });
+
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "x".repeat(300),
+        summarize: true,
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    // Verify onSummarize callback is passed - explicit summarize flag should trigger it even when auto is off
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        summarize: true,
+      }),
+      expect.objectContaining({
+        settings: { autoSummarizeTitles: false },
+        onSummarize: expect.any(Function),
+      }),
+    );
+  });
+
+  it("forwards summarize field when provided in request body", async () => {
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+      summarize: true,
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "Test task",
+        summarize: true,
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        summarize: true,
+      }),
+      expect.any(Object),
     );
   });
 });
