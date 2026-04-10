@@ -1,6 +1,13 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { fetchAiSessions, deleteAiSession, type AiSessionSummary } from "../api";
+import {
+  fetchAiSessions,
+  deleteAiSession,
+  cancelPlanning,
+  cancelSubtaskBreakdown,
+  type AiSessionSummary,
+} from "../api";
 import { useAiSessionSync } from "./useAiSessionSync";
+import { getSessionTabId } from "../utils/getSessionTabId";
 
 interface UseBackgroundSessionsResult {
   sessions: AiSessionSummary[];
@@ -202,11 +209,57 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
     };
   }, [broadcastCompleted, broadcastUpdate, projectId]);
 
-  const dismissSession = useCallback((id: string) => {
-    deleteAiSession(id).catch(() => {});
+  const dismissSession = useCallback(async (id: string) => {
+    // Find the session to determine its type
+    const session = sessions.find((s) => s.id === id);
+    const sessionType = session?.type;
+    const sessionTabId = getSessionTabId();
+
+    // Cancel the session based on its type to ensure proper cleanup
+    // Pass tabId for lock-aware cancellation - if locked by another tab, the API returns 409
+    let cancelFailed = false;
+    let lockConflict = false;
+
+    if (sessionType === "planning") {
+      try {
+        await cancelPlanning(id, projectId, sessionTabId);
+      } catch (err: unknown) {
+        cancelFailed = true;
+        // Check if this was a lock conflict (409)
+        if (err instanceof Error && err.message.includes("locked")) {
+          lockConflict = true;
+          console.warn(`[useBackgroundSessions] Cannot dismiss planning session ${id}: locked by another tab`);
+        }
+      }
+    } else if (sessionType === "subtask") {
+      try {
+        await cancelSubtaskBreakdown(id, projectId, sessionTabId);
+      } catch (err: unknown) {
+        cancelFailed = true;
+        if (err instanceof Error && err.message.includes("locked")) {
+          lockConflict = true;
+          console.warn(`[useBackgroundSessions] Cannot dismiss subtask session ${id}: locked by another tab`);
+        }
+      }
+    }
+    // For other session types (mission_interview, etc.), just delete without cancellation
+
+    // Only proceed with deletion if cancellation succeeded or wasn't needed
+    if (cancelFailed && !lockConflict) {
+      // Non-lock cancellation failure: still try to delete
+      console.warn(`[useBackgroundSessions] Cancellation failed for session ${id}, attempting delete anyway`);
+    }
+
+    // Delete the session and update local state
+    try {
+      await deleteAiSession(id);
+    } catch {
+      // Best-effort: deletion failures should not block local state update
+    }
+
     setSessions((prev) => prev.filter((s) => s.id !== id));
     sessionTimestampsRef.current.delete(id);
-  }, []);
+  }, [projectId, sessions]);
 
   const active = useMemo(
     () => sessions.filter((session) => shouldIncludeSession(session)),

@@ -114,6 +114,12 @@ Features:
 - Two final actions: **Create Task** or **Break into Tasks**
 - Multi-task creation uses key deliverables and dependency linking
 
+### Session Lifecycle
+
+- **Send to Background** — Hides the modal but preserves the session server-side. The session continues running and can be resumed from the Background Sessions panel.
+- **Close (X button or Escape)** — Explicitly abandons the session on the server. The AI stops processing and the session is terminated. Use this when you want to cancel without saving progress.
+- **Session Persistence** — Planning sessions that are actively running (generating, awaiting input, complete, or error) appear in the Background Sessions panel and can be resumed.
+
 ## Subtask Breakdown Dialog
 
 The subtask dialog supports structured decomposition before creation.
@@ -124,6 +130,11 @@ Features:
 - Drag-and-drop reordering
 - Keyboard reordering controls
 - Dependency linking constrained to earlier items
+
+### Session Lifecycle
+
+- **Send to Background** — Hides the modal but preserves the session server-side. The session continues running and can be resumed from the Background Sessions panel.
+- **Close (X button or Cancel)** — Explicitly abandons the session on the server. The AI stops processing and the session is terminated. Confirmation is shown if there are unsaved changes.
 
 ## Settings Modal
 

@@ -16,10 +16,14 @@ import { MockEventSource } from "../../../vitest.setup";
 vi.mock("../../api", () => ({
   fetchAiSessions: vi.fn(),
   deleteAiSession: vi.fn(),
+  cancelPlanning: vi.fn(),
+  cancelSubtaskBreakdown: vi.fn(),
 }));
 
 const mockFetchAiSessions = vi.mocked(apiModule.fetchAiSessions);
 const mockDeleteAiSession = vi.mocked(apiModule.deleteAiSession);
+const mockCancelPlanning = vi.mocked(apiModule.cancelPlanning);
+const mockCancelSubtaskBreakdown = vi.mocked(apiModule.cancelSubtaskBreakdown);
 
 function makeSession(overrides: Partial<apiModule.AiSessionSummary> & Pick<apiModule.AiSessionSummary, "id">): apiModule.AiSessionSummary {
   return {
@@ -40,6 +44,8 @@ describe("useBackgroundSessions", () => {
     __destroyAiSessionSyncStoreForTests();
     mockFetchAiSessions.mockResolvedValue([]);
     mockDeleteAiSession.mockResolvedValue(undefined);
+    mockCancelPlanning.mockResolvedValue(undefined);
+    mockCancelSubtaskBreakdown.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -152,14 +158,72 @@ describe("useBackgroundSessions", () => {
       expect(result.current.sessions.map((session) => session.id)).toEqual(["dismiss-me"]);
     });
 
-    act(() => {
-      result.current.dismissSession("dismiss-me");
+    await act(async () => {
+      await result.current.dismissSession("dismiss-me");
     });
 
     expect(mockDeleteAiSession).toHaveBeenCalledWith("dismiss-me");
     await waitFor(() => {
       expect(result.current.sessions).toEqual([]);
     });
+  });
+
+  it("dismissSession calls cancelPlanning for planning sessions", async () => {
+    mockFetchAiSessions.mockResolvedValueOnce([
+      makeSession({ id: "planning-session", status: "generating", type: "planning" }),
+    ]);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["planning-session"]);
+    });
+
+    await act(async () => {
+      await result.current.dismissSession("planning-session");
+    });
+
+    expect(mockCancelPlanning).toHaveBeenCalledWith("planning-session", undefined, expect.any(String));
+    expect(mockDeleteAiSession).toHaveBeenCalledWith("planning-session");
+  });
+
+  it("dismissSession calls cancelSubtaskBreakdown for subtask sessions", async () => {
+    mockFetchAiSessions.mockResolvedValueOnce([
+      makeSession({ id: "subtask-session", status: "generating", type: "subtask" }),
+    ]);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["subtask-session"]);
+    });
+
+    await act(async () => {
+      await result.current.dismissSession("subtask-session");
+    });
+
+    expect(mockCancelSubtaskBreakdown).toHaveBeenCalledWith("subtask-session", undefined, expect.any(String));
+    expect(mockDeleteAiSession).toHaveBeenCalledWith("subtask-session");
+  });
+
+  it("dismissSession does not call cancel for mission_interview sessions", async () => {
+    mockFetchAiSessions.mockResolvedValueOnce([
+      makeSession({ id: "interview-session", status: "generating", type: "mission_interview" }),
+    ]);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["interview-session"]);
+    });
+
+    await act(async () => {
+      await result.current.dismissSession("interview-session");
+    });
+
+    expect(mockCancelPlanning).not.toHaveBeenCalled();
+    expect(mockCancelSubtaskBreakdown).not.toHaveBeenCalled();
+    expect(mockDeleteAiSession).toHaveBeenCalledWith("interview-session");
   });
 
   it("returns accurate generating/needsInput counts and planningSessions filter", async () => {

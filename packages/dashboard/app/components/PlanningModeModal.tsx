@@ -11,6 +11,7 @@ import {
   startPlanningBreakdown,
   createTasksFromPlanning,
   fetchModels,
+  cancelPlanning,
   type PlanningSession,
   type SubtaskItem,
   type ModelInfo,
@@ -467,6 +468,17 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   }, [onClose]);
 
   const handleCancel = useCallback(() => {
+    // Determine the active session ID to abandon
+    let activeSessionId: string | null = null;
+    if (view.type === "question" || view.type === "summary" || view.type === "error") {
+      activeSessionId = view.session.sessionId;
+    } else if (view.type === "breakdown") {
+      activeSessionId = view.sessionId;
+    } else if (view.type === "loading") {
+      // During loading, the session ID is stored in the ref
+      activeSessionId = currentSessionIdRef.current;
+    }
+
     // Save to localStorage BEFORE any cleanup (preserve for re-entry)
     if (initialPlan) {
       savePlanningDescription(initialPlan, projectId);
@@ -475,6 +487,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     // Always close the stream connection
     streamConnectionRef.current?.close();
     streamConnectionRef.current = null;
+
+    // Explicitly abandon the session on the server to prevent zombie sessions
+    if (activeSessionId) {
+      void cancelPlanning(activeSessionId, projectId, sessionTabId).catch(() => {
+        // Best-effort: cancellation failures should not block UI reset
+      });
+    }
 
     setInitialPlan("");
     setView({ type: "initial" });
@@ -490,7 +509,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     currentSessionIdRef.current = null;
     setLockSessionId(null);
     onClose();
-  }, [initialPlan, onClose, projectId]);
+  }, [initialPlan, onClose, projectId, sessionTabId, view]);
 
   // Handle escape key to close
   useEffect(() => {
