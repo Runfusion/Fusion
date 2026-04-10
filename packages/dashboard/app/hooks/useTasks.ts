@@ -49,7 +49,10 @@ export function useTasks(options?: UseTasksOptions) {
   const tasksRef = useRef(tasks);
   const fetchVersionRef = useRef(0);
   const lastVisibilityRefreshRef = useRef<number>(0);
+  const searchQueryRef = useRef(searchQuery);
+  const refreshTasksRef = useRef<typeof refreshTasks>(null!);
   tasksRef.current = tasks;
+  searchQueryRef.current = searchQuery;
 
   const VISIBILITY_REFRESH_DEBOUNCE_MS = 1000;
 
@@ -74,6 +77,7 @@ export function useTasks(options?: UseTasksOptions) {
       setTasks((current) => current);
     }
   }, [projectId, searchQuery]);
+  refreshTasksRef.current = refreshTasks;
 
   // Debounced search effect - separate from refreshTasks to avoid dependency cycle
   useEffect(() => {
@@ -118,7 +122,7 @@ export function useTasks(options?: UseTasksOptions) {
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
     if (connectionNonce > 0) {
-      void refreshTasks();
+      void refreshTasksRef.current();
     }
     const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
     const es = new EventSource(`/api/events${query}`);
@@ -141,8 +145,8 @@ export function useTasks(options?: UseTasksOptions) {
       resetHeartbeat();
       const task = normalizeTask(JSON.parse(e.data) as Task);
       // When search is active, re-fetch to get server-filtered results
-      if (searchQuery) {
-        void refreshTasks({ searchQueryOverride: searchQuery });
+      if (searchQueryRef.current) {
+        void refreshTasksRef.current({ searchQueryOverride: searchQueryRef.current });
         return;
       }
       // In project mode, only add if this task belongs to our project
@@ -158,8 +162,8 @@ export function useTasks(options?: UseTasksOptions) {
     const handleMoved = (e: MessageEvent) => {
       resetHeartbeat();
       // When search is active, re-fetch to get server-filtered results
-      if (searchQuery) {
-        void refreshTasks({ searchQueryOverride: searchQuery });
+      if (searchQueryRef.current) {
+        void refreshTasksRef.current({ searchQueryOverride: searchQueryRef.current });
         return;
       }
       const { task, to }: { task: Task; from: Column; to: Column } = JSON.parse(e.data);
@@ -174,8 +178,8 @@ export function useTasks(options?: UseTasksOptions) {
     const handleUpdated = (e: MessageEvent) => {
       resetHeartbeat();
       // When search is active, re-fetch to get server-filtered results
-      if (searchQuery) {
-        void refreshTasks({ searchQueryOverride: searchQuery });
+      if (searchQueryRef.current) {
+        void refreshTasksRef.current({ searchQueryOverride: searchQueryRef.current });
         return;
       }
       const incoming = normalizeTask(JSON.parse(e.data) as Task);
@@ -209,8 +213,8 @@ export function useTasks(options?: UseTasksOptions) {
     const handleDeleted = (e: MessageEvent) => {
       resetHeartbeat();
       // When search is active, re-fetch to get server-filtered results
-      if (searchQuery) {
-        void refreshTasks({ searchQueryOverride: searchQuery });
+      if (searchQueryRef.current) {
+        void refreshTasksRef.current({ searchQueryOverride: searchQueryRef.current });
         return;
       }
       const task = normalizeTask(JSON.parse(e.data) as Task);
@@ -220,8 +224,8 @@ export function useTasks(options?: UseTasksOptions) {
     const handleMerged = (e: MessageEvent) => {
       resetHeartbeat();
       // When search is active, re-fetch to get server-filtered results
-      if (searchQuery) {
-        void refreshTasks({ searchQueryOverride: searchQuery });
+      if (searchQueryRef.current) {
+        void refreshTasksRef.current({ searchQueryOverride: searchQueryRef.current });
         return;
       }
       const { task }: { task: Task } = JSON.parse(e.data);
@@ -278,7 +282,10 @@ export function useTasks(options?: UseTasksOptions) {
       closedByCleanup = true;
       cleanup();
     };
-  }, [connectionNonce, projectId, searchQuery, refreshTasks]);
+  // Note: searchQuery and refreshTasks are accessed via refs inside handlers
+  // to avoid tearing down/rebuilding the EventSource on search changes.
+  // The EventSource URL only depends on projectId.
+  }, [connectionNonce, projectId]);
 
   const createTask = useCallback(async (input: TaskCreateInput): Promise<Task> => {
     const task = normalizeTask(await api.createTask(input, projectId));

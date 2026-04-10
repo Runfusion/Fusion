@@ -1819,11 +1819,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     });
   };
 
-  // Scheduler config (includes persisted settings)
+  // Scheduler config (includes persisted settings — only needs maxConcurrent/maxWorktrees)
   router.get("/config", async (req, res) => {
     try {
       const scopedStore = await getScopedStore(req);
-      const settings = await scopedStore.getSettings();
+      const settings = await scopedStore.getSettingsFast();
       res.json({
         maxConcurrent: settings.maxConcurrent ?? options?.maxConcurrent ?? 2,
         maxWorktrees: settings.maxWorktrees ?? 4,

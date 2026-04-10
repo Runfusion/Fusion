@@ -83,12 +83,16 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   private taskLocks: Map<string, Promise<void>> = new Map();
   /** Promise chain for serializing config.json read-modify-write cycles */
   private configLock: Promise<void> = Promise.resolve();
+  /** Cached workflow steps — invalidated on create/update/delete */
+  private workflowStepsCache: import("./types.js").WorkflowStep[] | null = null;
   /** Global settings store (`~/.pi/fusion/settings.json`) */
   private globalSettingsStore: GlobalSettingsStore;
   /** Polling interval for change detection */
   private pollInterval: ReturnType<typeof setInterval> | null = null;
   /** Last known modification timestamp for change detection */
   private lastKnownModified: number = 0;
+  /** ISO timestamp of last poll — used to filter changed tasks */
+  private lastPollTime: string | null = null;
 
   /** Whether the store is actively watching for changes (watcher or polling). */
   private get isWatching(): boolean {
@@ -803,6 +807,21 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return config;
   }
 
+  /**
+   * Fast-path config read that skips the expensive listWorkflowSteps() query.
+   * Returns only the core config fields needed for config.json serialization.
+   */
+  private readConfigFast(): BoardConfig {
+    const row = this.db.prepare("SELECT * FROM config WHERE id = 1").get() as any;
+    if (!row) {
+      return { nextId: 1 };
+    }
+    return {
+      nextId: row.nextId || 1,
+      settings: fromJson<Settings>(row.settings),
+    };
+  }
+
   private async writeConfig(
     config: BoardConfig,
     options?: { nextWorkflowStepId?: number },
@@ -853,17 +872,18 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         this.db.bumpLastModified();
         return taskId;
       }); // Database.transaction() directly executes and returns the result
-      
-      // Sync config.json to disk for backward compatibility
+
+      // Sync config.json to disk for backward compatibility.
+      // Use readConfigFast() to avoid the expensive listWorkflowSteps() query.
       try {
-        const config = await this.readConfig();
+        const config = this.readConfigFast();
         const tmpPath = this.configPath + ".tmp";
         await writeFile(tmpPath, JSON.stringify(config, null, 2));
         await rename(tmpPath, this.configPath);
       } catch {
         // Non-fatal: SQLite is the primary store
       }
-      
+
       return id;
     });
   }
@@ -2669,6 +2689,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   /**
    * Check for changes by comparing lastModified timestamps.
+   * Optimized: only loads tasks modified since the last poll instead of
+   * doing a full table scan + JSON.stringify comparison every cycle.
    */
   private checkForChanges(): void {
     try {
@@ -2676,34 +2698,35 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       if (currentModified <= this.lastKnownModified) return;
       this.lastKnownModified = currentModified;
 
-      // Reload all tasks and diff against cache
-      const rows = this.db.prepare('SELECT * FROM tasks').all() as any[];
-      const currentTasks = new Map<string, Task>();
-      for (const row of rows) {
-        const task = this.rowToTask(row);
-        currentTasks.set(task.id, task);
-      }
-
-      // Check for deleted tasks
+      // Detect deletions cheaply: compare ID sets without loading full rows
+      const idRows = this.db.prepare('SELECT id FROM tasks').all() as Array<{ id: string }>;
+      const currentIds = new Set(idRows.map((r) => r.id));
       for (const [id, cached] of this.taskCache) {
-        if (!currentTasks.has(id)) {
+        if (!currentIds.has(id)) {
           this.taskCache.delete(id);
           this.emit("task:deleted", cached);
         }
       }
 
-      // Check for new and updated tasks
-      for (const [id, task] of currentTasks) {
-        const cached = this.taskCache.get(id);
+      // Only load tasks modified since our last known timestamp.
+      // Use lastKnownPollTime (ISO string) to filter — much cheaper than full scan.
+      const changedRows = this.lastPollTime
+        ? this.db.prepare('SELECT * FROM tasks WHERE updatedAt > ? OR columnMovedAt > ?').all(this.lastPollTime, this.lastPollTime) as any[]
+        : this.db.prepare('SELECT * FROM tasks').all() as any[];
+      this.lastPollTime = new Date().toISOString();
+
+      for (const row of changedRows) {
+        const task = this.rowToTask(row);
+        const cached = this.taskCache.get(task.id);
         if (!cached) {
-          this.taskCache.set(id, { ...task });
+          this.taskCache.set(task.id, { ...task });
           this.emit("task:created", task);
         } else if (cached.column !== task.column) {
           const from = cached.column;
-          this.taskCache.set(id, { ...task });
+          this.taskCache.set(task.id, { ...task });
           this.emit("task:moved", { task, from, to: task.column });
-        } else if (JSON.stringify(cached) !== JSON.stringify(task)) {
-          this.taskCache.set(id, { ...task });
+        } else {
+          this.taskCache.set(task.id, { ...task });
           this.emit("task:updated", task);
         }
       }
@@ -3723,6 +3746,7 @@ ${stepsSection}`;
 
       const config = await this.readConfig();
       await this.writeConfig(config, { nextWorkflowStepId: nextWsId + 1 });
+      this.workflowStepsCache = null;
 
       return step;
     });
@@ -3730,8 +3754,10 @@ ${stepsSection}`;
 
   /**
    * List all workflow step definitions from workflow_steps.
+   * Results are cached and invalidated on create/update/delete.
    */
   async listWorkflowSteps(): Promise<import("./types.js").WorkflowStep[]> {
+    if (this.workflowStepsCache) return this.workflowStepsCache;
     const rows = this.db.prepare("SELECT * FROM workflow_steps ORDER BY createdAt ASC").all() as Array<{
       id: string;
       templateId: string | null;
@@ -3749,7 +3775,8 @@ ${stepsSection}`;
       createdAt: string;
       updatedAt: string;
     }>;
-    return rows.map((row) => this.applyLegacyWorkflowStepOverrides(this.toStoredWorkflowStep(row)));
+    this.workflowStepsCache = rows.map((row) => this.applyLegacyWorkflowStepOverrides(this.toStoredWorkflowStep(row)));
+    return this.workflowStepsCache;
   }
 
   /**
@@ -3911,6 +3938,7 @@ ${stepsSection}`;
       step.id,
     );
     this.db.bumpLastModified();
+    this.workflowStepsCache = null;
 
     return step;
   }
@@ -3930,6 +3958,7 @@ ${stepsSection}`;
     }
 
     this.db.bumpLastModified();
+    this.workflowStepsCache = null;
 
     // Clean up references from existing tasks (best-effort, outside config lock)
     try {
