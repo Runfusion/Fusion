@@ -59,6 +59,12 @@ export const COLOR_THEMES = [
   "copper",
   "foundry",
   "carbon",
+  "sandstone",
+  "lagoon",
+  "frost",
+  "lavender",
+  "neon-bloom",
+  "sepia",
 ] as const;
 export type ColorTheme = (typeof COLOR_THEMES)[number];
 
