@@ -626,6 +626,89 @@ describe("useTheme", () => {
       existingLink.remove();
     });
 
+    it("updates stale theme-data link href when baseURI changes", () => {
+      // Simulate the page loading with a different baseURI than current
+      // This can happen if the inline script runs with one baseURI, then navigation occurs
+      Object.defineProperty(document, "baseURI", {
+        value: "http://localhost:3000/",
+        configurable: true,
+      });
+
+      const { result } = renderHook(() => useTheme());
+
+      // First, inject a link with a stale/wrong href (simulating old baseURI)
+      const staleLink = document.createElement("link");
+      staleLink.id = "theme-data";
+      staleLink.rel = "stylesheet";
+      staleLink.href = "/theme-data.css"; // Wrong path from old base
+      document.head.appendChild(staleLink);
+
+      // Now change baseURI to simulate navigation
+      Object.defineProperty(document, "baseURI", {
+        value: "http://localhost:3000/some/nested/path/",
+        configurable: true,
+      });
+
+      // Switch to non-default theme
+      act(() => {
+        result.current.setColorTheme("ocean");
+      });
+
+      // The link should exist and href should be updated to the correct value
+      const link = document.getElementById("theme-data") as HTMLLinkElement;
+      expect(link).not.toBeNull();
+      // href should be updated to resolve correctly for the new baseURI
+      expect(link?.href).toBe("http://localhost:3000/some/nested/path/theme-data.css");
+
+      // Clean up
+      link?.remove();
+      Object.defineProperty(document, "baseURI", {
+        value: "http://localhost:3000/",
+        configurable: true,
+      });
+    });
+
+    it("updates stale file:// link href when baseURI changes", () => {
+      // Simulate Electron production path change
+      Object.defineProperty(document, "baseURI", {
+        value: "file:///app/old/path/index.html",
+        configurable: true,
+      });
+
+      const { result } = renderHook(() => useTheme());
+
+      // Inject a link with a stale href (simulating wrong baseURI at load time)
+      const staleLink = document.createElement("link");
+      staleLink.id = "theme-data";
+      staleLink.rel = "stylesheet";
+      staleLink.href = "file:///wrong/path/theme-data.css";
+      document.head.appendChild(staleLink);
+
+      // Now change baseURI to the correct production path
+      Object.defineProperty(document, "baseURI", {
+        value: "file:///Users/me/Projects/kb/packages/dashboard/dist/client/index.html",
+        configurable: true,
+      });
+
+      // Switch to non-default theme
+      act(() => {
+        result.current.setColorTheme("nord");
+      });
+
+      // The link should exist and href should be updated
+      const link = document.getElementById("theme-data") as HTMLLinkElement;
+      expect(link).not.toBeNull();
+      // href should be updated to resolve correctly for the new baseURI
+      expect(link?.href).toBe("file:///Users/me/Projects/kb/packages/dashboard/dist/client/theme-data.css");
+
+      // Clean up
+      link?.remove();
+      Object.defineProperty(document, "baseURI", {
+        value: "http://localhost:3000/",
+        configurable: true,
+      });
+    });
+
     it("resolves concrete path for deep nested file:// URL", () => {
       // Simulate a deeply nested Electron production path
       Object.defineProperty(document, "baseURI", {
@@ -789,14 +872,15 @@ describe("getThemeInitScript", () => {
     expect(script).toContain("effectiveMode");
   });
 
-  it("index.html uses correct file:// URL replacement pattern", () => {
+  it("index.html uses correct URL replacement pattern", () => {
     // Verify that the inline script in index.html uses the correct URL replacement
-    // pattern (replace filename with theme-data.css) rather than buggy concatenation
+    // pattern (handle both directory paths and filename paths) rather than buggy concatenation
     const indexHtml = readFileSync("app/index.html", "utf8");
 
-    // The correct pattern: base.replace(/\/[^\/]+$/, '/theme-data.css')
+    // The correct pattern: check if base ends with '/' and use slice or replace accordingly
     // The buggy pattern: base.substring(0, 7) + dirPath + 'theme-data.css'
-    expect(indexHtml).toContain("base.replace(/\\/[^\\/]+$/, '/theme-data.css')");
+    expect(indexHtml).toContain("base.endsWith('/')");
+    expect(indexHtml).toContain("base.slice(0, -1)");
 
     // Ensure the buggy pattern is NOT present
     expect(indexHtml).not.toContain("base.substring(0, 7)");

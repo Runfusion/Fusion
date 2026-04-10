@@ -474,12 +474,24 @@ To add a new color theme:
 
 ### Dynamic Stylesheet Loading
 
-The `theme-data.css` file is loaded dynamically using `document.baseURI` for path resolution, which ensures correct behavior across all runtime contexts:
+The `theme-data.css` file is loaded dynamically to control stylesheet size and enable lazy loading. This file contains CSS custom properties for all 54 color themes and is only loaded when a non-default color theme is active.
 
-- **HTTP/HTTPS serving** (development server, production web deployment): Uses standard root-relative path resolution (`/theme-data.css`)
-- **Electron file:// context** (desktop production): Derives the path relative to the HTML file's directory
+**Path Resolution:**
 
-This approach avoids hardcoded absolute paths that would break in different deployment contexts. Both the pre-hydration inline script in `index.html` and the runtime hook (`useTheme.ts`) use the same path resolution strategy.
+The stylesheet URL is derived from `document.baseURI` for correct resolution across all runtime contexts:
+
+- **HTTP/HTTPS serving** (development server, production web deployment): Derives the path relative to the HTML file's directory (e.g., `/app/theme-data.css`)
+- **Electron file:// context** (desktop production): Same directory-relative resolution for local files
+
+The URL resolution handles two cases:
+1. Base URL ends with `/` (directory path): Replaces trailing `/` with `/theme-data.css`
+2. Base URL ends with filename: Replaces filename with `/theme-data.css`
+
+**Stale Link Correction:**
+
+When switching color themes or after navigation, the runtime hook (`useTheme.ts`) checks if an existing `theme-data.css` link has a stale `href` and updates it to the correct path. This ensures theme changes apply correctly even if the page was loaded with a different base URL.
+
+Both the pre-hydration inline script in `index.html` and the runtime hook use the same path resolution strategy, preventing behavior drift between startup and runtime.
 
 ### Theme-Driven Logo and Task-Creation CTAs
 

@@ -28,22 +28,43 @@
           // Load theme-data.css for non-default themes to prevent flash
           // Use path-safe resolution that works in both HTTP and file:// contexts
           if (colorTheme !== 'default') {
-            var themeDataUrl;
             var base = document.baseURI || (document.location && document.location.href) || '';
+            // Derive path relative to HTML file directory
+            // Handle two cases:
+            // 1. Base ends with "/" (directory path): replace trailing "/" with "/filename"
+            // 2. Base ends with filename: replace filename with "/filename"
+            var themeDataUrl;
             if (base.indexOf('file://') === 0) {
-              // For file:// URLs, derive path relative to the HTML file directory
-              // Replace the filename at the end of the path with theme-data.css
-              // This produces correct paths like: file:///path/to/app/theme-data.css
-              themeDataUrl = base.replace(/\/[^\/]+$/, '/theme-data.css');
+              // For file:// URLs
+              if (base.endsWith('/')) {
+                themeDataUrl = base.slice(0, -1) + '/theme-data.css';
+              } else {
+                themeDataUrl = base.replace(/\/[^\/]+$/, '/theme-data.css');
+              }
             } else {
-              // For HTTP/HTTPS URLs, use URL resolution
-              themeDataUrl = new URL('/theme-data.css', base).href;
+              // For HTTP/HTTPS URLs - same logic
+              if (base.endsWith('/')) {
+                themeDataUrl = base.slice(0, -1) + '/theme-data.css';
+              } else {
+                themeDataUrl = base.replace(/\/[^\/]+$/, '/theme-data.css');
+              }
             }
-            var link = document.createElement('link');
-            link.rel = 'stylesheet';
-            link.href = themeDataUrl;
-            link.id = 'theme-data';
-            document.head.appendChild(link);
+
+            // Check for existing link and update href if stale
+            var existingLink = document.getElementById('theme-data');
+            if (existingLink && existingLink.tagName === 'LINK') {
+              // Update href if it differs (handles baseURI changes between loads)
+              if (existingLink.href !== themeDataUrl) {
+                existingLink.href = themeDataUrl;
+              }
+            } else {
+              // No existing link - create one
+              var link = document.createElement('link');
+              link.rel = 'stylesheet';
+              link.href = themeDataUrl;
+              link.id = 'theme-data';
+              document.head.appendChild(link);
+            }
           }
         } catch (e) {
           document.documentElement.setAttribute('data-theme', 'dark');

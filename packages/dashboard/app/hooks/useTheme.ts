@@ -16,7 +16,8 @@ const THEME_DATA_FILENAME = "theme-data.css";
  * of whether the app is served over HTTP or loaded from a file:// URL.
  *
  * For file:// URLs, the path is derived relative to the HTML file's directory.
- * For HTTP/HTTPS URLs, the path resolves to the server root.
+ * For HTTP/HTTPS URLs, the path is derived relative to the HTML file's directory
+ * (same as file://) to ensure correct resolution in nested deployments.
  */
 function getThemeDataUrl(): string {
   // Get base URL from document.baseURI (most reliable across contexts)
@@ -28,16 +29,17 @@ function getThemeDataUrl(): string {
     return `/${THEME_DATA_FILENAME}`;
   }
 
-  // Handle file:// URLs - derive path relative to HTML file directory
-  // Replace the filename at the end of the path with theme-data.css
-  // This produces correct paths like: file:///path/to/app/theme-data.css
-  if (base.startsWith("file://")) {
+  // Derive path relative to HTML file directory
+  // Handle two cases:
+  // 1. Base ends with "/" (directory path): replace trailing "/" with "/filename"
+  // 2. Base ends with filename: replace filename with "/filename"
+  if (base.endsWith("/")) {
+    // Directory path: replace trailing "/" with "/theme-data.css"
+    return base.slice(0, -1) + `/${THEME_DATA_FILENAME}`;
+  } else {
+    // Filename path: replace last segment with "/theme-data.css"
     return base.replace(/\/[^\/]+$/, `/${THEME_DATA_FILENAME}`);
   }
-
-  // For HTTP/HTTPS URLs, resolve relative to server root
-  const url = new URL(`/${THEME_DATA_FILENAME}`, base);
-  return url.href;
 }
 
 // Check if we're in a browser environment
@@ -126,15 +128,28 @@ function applyThemeAttributes(themeMode: ThemeMode, colorTheme: ColorTheme, syst
 
 /**
  * Load theme-data.css for non-default themes.
- * Prevents duplicate injections by checking for existing link.
+ * Safely handles existing links by checking href and updating if stale.
+ * This ensures correct URL resolution when baseURI changes between renders.
  */
 function loadThemeDataStylesheet(): void {
   if (!isBrowser) return;
-  if (document.getElementById(THEME_DATA_ID)) return; // Already loaded
 
+  const expectedHref = getThemeDataUrl();
+  const existingLink = document.getElementById(THEME_DATA_ID) as HTMLLinkElement | null;
+
+  if (existingLink) {
+    // Link exists - update href if it differs from expected (handles baseURI changes)
+    if (existingLink.href !== expectedHref) {
+      existingLink.href = expectedHref;
+    }
+    // If href matches, link is already correct - nothing to do
+    return;
+  }
+
+  // No existing link - create one
   const link = document.createElement("link");
   link.rel = "stylesheet";
-  link.href = getThemeDataUrl();
+  link.href = expectedHref;
   link.id = THEME_DATA_ID;
   document.head.appendChild(link);
 }
