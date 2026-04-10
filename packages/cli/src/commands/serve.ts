@@ -1,3 +1,14 @@
+/**
+ * Headless Fusion Node server command.
+ *
+ * ⚠️ ARCHITECTURAL BOUNDARY: This module must NOT import from ./dashboard.js.
+ *
+ * The headless command (runServe) runs independently of the dashboard UI.
+ * Shared task lifecycle helpers are imported from ./task-lifecycle.js, and
+ * interactive port prompts from ./port-prompt.js. This ensures clean separation
+ * between the runtime (headless) and UI (dashboard) command paths.
+ */
+
 import type { AddressInfo } from "node:net";
 import {
   TaskStore,
@@ -46,10 +57,10 @@ import {
   createExtensionRuntime,
 } from "@mariozechner/pi-coding-agent";
 import {
-  promptForPort,
   getMergeStrategy,
   processPullRequestMergeTask,
-} from "./dashboard.js";
+} from "./task-lifecycle.js";
+import { promptForPort } from "./port-prompt.js";
 
 export async function runServe(
   port: number,
@@ -333,7 +344,7 @@ export async function runServe(
           const mergeStrategy = getMergeStrategy(settings);
           if (mergeStrategy === "pull-request") {
             console.log(`[auto-merge] Processing PR flow for ${taskId}...`);
-            const result = await processPullRequestMergeTask(store, cwd, taskId, githubClient);
+            const result = await processPullRequestMergeTask(store, cwd, taskId, githubClient, getTaskMergeBlocker);
             if (result === "merged") {
               console.log(`[auto-merge] ✓ ${taskId} merged via pull request`);
             } else if (result === "waiting") {

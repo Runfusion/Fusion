@@ -1,117 +1,17 @@
-import { execSync } from "node:child_process";
 import type { AddressInfo } from "node:net";
-import { createInterface } from "node:readline";
 import { TaskStore, AutomationStore, CentralCore, AgentStore, PluginStore, PluginLoader, getTaskMergeBlocker, syncInsightExtractionAutomation, INSIGHT_EXTRACTION_SCHEDULE_NAME, processAndAuditInsightExtraction } from "@fusion/core";
-import type { Settings, TaskDetail, PrInfo, ScheduledTask, AutomationRunResult } from "@fusion/core";
+import type { Settings, ScheduledTask, AutomationRunResult } from "@fusion/core";
 import { createServer, GitHubClient } from "@fusion/dashboard";
 import { TriageProcessor, TaskExecutor, Scheduler, AgentSemaphore, WorktreePool, aiMergeTask, UsageLimitPauser, PRIORITY_MERGE, scanIdleWorktrees, cleanupOrphanedWorktrees, NtfyNotifier, PrMonitor, PrCommentHandler, CronRunner, StuckTaskDetector, SelfHealingManager, MissionAutopilot, createAiPromptExecutor, HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "@fusion/engine";
 import { AuthStorage, DefaultPackageManager, ModelRegistry, SettingsManager, discoverAndLoadExtensions, getAgentDir, createExtensionRuntime } from "@mariozechner/pi-coding-agent";
+import {
+  getMergeStrategy,
+  processPullRequestMergeTask,
+} from "./task-lifecycle.js";
+import { promptForPort } from "./port-prompt.js";
 
-/**
- * Prompt the user for a port number interactively.
- * Shows "Port [4040]: " and accepts user input or Enter for default.
- * Validates input is a valid port number (1-65535).
- * Re-prompts on invalid input.
- * Handles SIGINT (Ctrl+C) gracefully.
- */
-export function promptForPort(defaultPort: number = 4040, input: NodeJS.ReadableStream = process.stdin): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const rl = createInterface({
-      input,
-      output: process.stdout,
-    });
-
-    // Handle Ctrl+C during prompt
-    const sigintHandler = () => {
-      rl.close();
-      console.log("\n");
-      reject(new Error("Interactive prompt cancelled"));
-    };
-    process.on("SIGINT", sigintHandler);
-
-    const ask = () => {
-      rl.question(`Port [${defaultPort}]: `, (answer) => {
-        const trimmed = answer.trim();
-
-        // Empty input: use default
-        if (trimmed === "") {
-          process.removeListener("SIGINT", sigintHandler);
-          rl.close();
-          resolve(defaultPort);
-          return;
-        }
-
-        // Validate as number
-        const port = parseInt(trimmed, 10);
-        if (isNaN(port)) {
-          console.log(`Invalid input: "${trimmed}" is not a number`);
-          ask();
-          return;
-        }
-
-        // Validate port range
-        if (port < 1 || port > 65535) {
-          console.log(`Invalid port: ${port} (must be between 1 and 65535)`);
-          ask();
-          return;
-        }
-
-        process.removeListener("SIGINT", sigintHandler);
-        rl.close();
-        resolve(port);
-      });
-    };
-
-    ask();
-  });
-}
-
-export function getMergeStrategy(settings: Pick<Settings, "mergeStrategy">): NonNullable<Settings["mergeStrategy"]> {
-  return settings.mergeStrategy ?? "direct";
-}
-
-export function getTaskBranchName(taskId: string): string {
-  return `fusion/${taskId.toLowerCase()}`;
-}
-
-function buildPullRequestTitle(task: Pick<TaskDetail, "id" | "title">): string {
-  return task.title ? `${task.id}: ${task.title}` : task.id;
-}
-
-function buildPullRequestBody(task: Pick<TaskDetail, "id" | "description">): string {
-  return [`Automated PR for ${task.id}.`, "", task.description].join("\n");
-}
-
-function cleanupMergedTaskArtifacts(cwd: string, task: Pick<TaskDetail, "id" | "worktree">): void {
-  const branch = getTaskBranchName(task.id);
-
-  if (task.worktree) {
-    try {
-      execSync(`git worktree remove \"${task.worktree}\" --force`, {
-        cwd,
-        stdio: "pipe",
-      });
-    } catch {
-      // Best-effort cleanup — worktree may already be gone.
-    }
-  }
-
-  try {
-    execSync(`git branch -d \"${branch}\"`, {
-      cwd,
-      stdio: "pipe",
-    });
-  } catch {
-    try {
-      execSync(`git branch -D \"${branch}\"`, {
-        cwd,
-        stdio: "pipe",
-      });
-    } catch {
-      // Best-effort cleanup — branch may already be gone.
-    }
-  }
-}
+// Re-export for backward compatibility with tests
+export { promptForPort };
 
 type LoginCallbacks = Parameters<AuthStorage["login"]>[1];
 
@@ -187,77 +87,6 @@ function wrapAuthStorageWithApiKeyProviders(
       return credential?.type === "api_key" || authStorage.hasAuth(providerId);
     },
   };
-}
-
-export async function processPullRequestMergeTask(
-  store: TaskStore,
-  cwd: string,
-  taskId: string,
-  github: Pick<GitHubClient, "findPrForBranch" | "createPr" | "getPrMergeStatus" | "mergePr">,
-): Promise<"waiting" | "merged" | "skipped"> {
-  const task = await store.getTask(taskId);
-  if (getTaskMergeBlocker(task)) {
-    return "skipped";
-  }
-
-  const branch = getTaskBranchName(task.id);
-  let prInfo: PrInfo | undefined = task.prInfo;
-
-  if (!prInfo) {
-    await store.updateTask(task.id, { status: "creating-pr" });
-
-    const existingPr = await github.findPrForBranch({ head: branch, state: "all" });
-    prInfo = existingPr ?? await github.createPr({
-      title: buildPullRequestTitle(task),
-      body: buildPullRequestBody(task),
-      head: branch,
-    });
-
-    await store.updatePrInfo(task.id, prInfo);
-    await store.logEntry(
-      task.id,
-      existingPr ? "Linked existing PR" : "Created PR",
-      `PR #${prInfo.number}: ${prInfo.url}`,
-    );
-  }
-
-  if (!prInfo) {
-    throw new Error(`Failed to create or resolve pull request for ${task.id}`);
-  }
-
-  const mergeStatus = await github.getPrMergeStatus(undefined, undefined, prInfo.number);
-  const refreshedPrInfo: PrInfo = {
-    ...prInfo,
-    ...mergeStatus.prInfo,
-    lastCheckedAt: new Date().toISOString(),
-  };
-  await store.updatePrInfo(task.id, refreshedPrInfo);
-
-  if (mergeStatus.prInfo.status === "merged") {
-    cleanupMergedTaskArtifacts(cwd, task);
-    await store.moveTask(task.id, "done");
-    await store.updateTask(task.id, { status: null, mergeRetries: 0 });
-    await store.logEntry(task.id, "Pull request merged", `PR #${prInfo.number}: ${prInfo.url}`);
-    return "merged";
-  }
-
-  if (!mergeStatus.mergeReady) {
-    if (mergeStatus.prInfo.status === "open") {
-      await store.updateTask(task.id, { status: "awaiting-pr-checks" });
-    } else {
-      await store.updateTask(task.id, { status: null });
-    }
-    return "waiting";
-  }
-
-  await store.updateTask(task.id, { status: "merging-pr" });
-  const mergedPr = await github.mergePr({ number: prInfo.number, method: "squash" });
-  await store.updatePrInfo(task.id, { ...mergedPr, lastCheckedAt: new Date().toISOString() });
-  cleanupMergedTaskArtifacts(cwd, task);
-  await store.moveTask(task.id, "done");
-  await store.updateTask(task.id, { status: null, mergeRetries: 0 });
-  await store.logEntry(task.id, "Pull request merged", `PR #${mergedPr.number}: ${mergedPr.url}`);
-  return "merged";
 }
 
 export async function runDashboard(port: number, opts: { paused?: boolean; dev?: boolean; interactive?: boolean; open?: boolean } = {}) {
@@ -602,7 +431,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           const mergeStrategy = getMergeStrategy(settings);
           if (mergeStrategy === "pull-request") {
             console.log(`[auto-merge] Processing PR flow for ${taskId}...`);
-            const result = await processPullRequestMergeTask(store, cwd, taskId, githubClient);
+            const result = await processPullRequestMergeTask(store, cwd, taskId, githubClient, getTaskMergeBlocker);
             if (result === "merged") {
               console.log(`[auto-merge] ✓ ${taskId} merged via pull request`);
             } else if (result === "waiting") {

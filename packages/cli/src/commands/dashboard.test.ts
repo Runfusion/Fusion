@@ -322,7 +322,8 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
 
 // ── Import module under test (after mocks) ──────────────────────────
 
-const { runDashboard, processPullRequestMergeTask, getMergeStrategy, getTaskBranchName } = await import("./dashboard.js");
+const { runDashboard } = await import("./dashboard.js");
+const { processPullRequestMergeTask, getMergeStrategy, getTaskBranchName } = await import("./task-lifecycle.js");
 
 // ── Tests ───────────────────────────────────────────────────────────
 
@@ -404,12 +405,25 @@ describe("processPullRequestMergeTask", () => {
       log: [],
     });
 
+    const mockGetTaskMergeBlocker = (task: any) => {
+      if (task.column !== "in-review") return `task is in '${task.column}', must be in 'in-review'`;
+      if (task.paused) return "task is paused";
+      if (task.status === "failed") return "task is marked 'failed'";
+      if (task.steps?.some((step: any) => step.status === "pending" || step.status === "in-progress")) {
+        return "task has incomplete steps";
+      }
+      if (task.workflowStepResults?.some((result: any) => result.status === "pending" || result.status === "failed")) {
+        return "task has incomplete or failed workflow steps";
+      }
+      return undefined;
+    };
+
     const result = await processPullRequestMergeTask(store as any, "/repo", "FN-093", {
       findPrForBranch: mockFindPrForBranch,
       createPr: mockCreatePr,
       getPrMergeStatus: mockGetPrMergeStatus,
       mergePr: mockMergePr,
-    } as any);
+    } as any, mockGetTaskMergeBlocker);
 
     expect(result).toBe("waiting");
     expect(mockFindPrForBranch).toHaveBeenCalledWith({ head: "fusion/fn-093", state: "all" });
@@ -446,12 +460,25 @@ describe("processPullRequestMergeTask", () => {
       log: [],
     });
 
+    const mockGetTaskMergeBlocker = (task: any) => {
+      if (task.column !== "in-review") return `task is in '${task.column}', must be in 'in-review'`;
+      if (task.paused) return "task is paused";
+      if (task.status === "failed") return "task is marked 'failed'";
+      if (task.steps?.some((step: any) => step.status === "pending" || step.status === "in-progress")) {
+        return "task has incomplete steps";
+      }
+      if (task.workflowStepResults?.some((result: any) => result.status === "pending" || result.status === "failed")) {
+        return "task has incomplete or failed workflow steps";
+      }
+      return undefined;
+    };
+
     await processPullRequestMergeTask(store as any, "/repo", "FN-093", {
       findPrForBranch: mockFindPrForBranch,
       createPr: mockCreatePr,
       getPrMergeStatus: mockGetPrMergeStatus,
       mergePr: mockMergePr,
-    } as any);
+    } as any, mockGetTaskMergeBlocker);
 
     expect(mockCreatePr).not.toHaveBeenCalled();
     expect(store.logEntry).toHaveBeenCalledWith(
@@ -497,12 +524,25 @@ describe("processPullRequestMergeTask", () => {
       blockingReasons: [],
     });
 
+    const mockGetTaskMergeBlocker = (task: any) => {
+      if (task.column !== "in-review") return `task is in '${task.column}', must be in 'in-review'`;
+      if (task.paused) return "task is paused";
+      if (task.status === "failed") return "task is marked 'failed'";
+      if (task.steps?.some((step: any) => step.status === "pending" || step.status === "in-progress")) {
+        return "task has incomplete steps";
+      }
+      if (task.workflowStepResults?.some((result: any) => result.status === "pending" || result.status === "failed")) {
+        return "task has incomplete or failed workflow steps";
+      }
+      return undefined;
+    };
+
     const result = await processPullRequestMergeTask(store as any, "/repo", "FN-093", {
       findPrForBranch: mockFindPrForBranch,
       createPr: mockCreatePr,
       getPrMergeStatus: mockGetPrMergeStatus,
       mergePr: mockMergePr,
-    } as any);
+    } as any, mockGetTaskMergeBlocker);
 
     expect(result).toBe("merged");
     expect(mockMergePr).toHaveBeenCalledWith({ number: 42, method: "squash" });
@@ -546,12 +586,25 @@ describe("processPullRequestMergeTask", () => {
       blockingReasons: ["changes requested review is active", "required checks not successful: ci (pending)"],
     });
 
+    const mockGetTaskMergeBlocker = (task: any) => {
+      if (task.column !== "in-review") return `task is in '${task.column}', must be in 'in-review'`;
+      if (task.paused) return "task is paused";
+      if (task.status === "failed") return "task is marked 'failed'";
+      if (task.steps?.some((step: any) => step.status === "pending" || step.status === "in-progress")) {
+        return "task has incomplete steps";
+      }
+      if (task.workflowStepResults?.some((result: any) => result.status === "pending" || result.status === "failed")) {
+        return "task has incomplete or failed workflow steps";
+      }
+      return undefined;
+    };
+
     const result = await processPullRequestMergeTask(store as any, "/repo", "FN-093", {
       findPrForBranch: mockFindPrForBranch,
       createPr: mockCreatePr,
       getPrMergeStatus: mockGetPrMergeStatus,
       mergePr: mockMergePr,
-    } as any);
+    } as any, mockGetTaskMergeBlocker);
 
     expect(result).toBe("waiting");
     expect(mockMergePr).not.toHaveBeenCalled();

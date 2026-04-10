@@ -531,3 +531,21 @@ Key learnings from adding integration test coverage for run-audit:
 - Tests asserting package versions must read dynamically from `package.json` using `JSON.parse(readFileSync(pkgPath, "utf-8"))`
 - Hardcoded version strings in tests (e.g., `expect(version).toBe("0.1.0")`) break after version bumps
 - Use `getAppVersion()` for runtime version checks in tests
+
+## FN-1563: Decoupling CLI Command Dependencies
+
+**Architectural boundary:**
+- `serve.ts` (headless node) must NOT import from `./dashboard.js`
+- Shared task lifecycle helpers live in `./task-lifecycle.js` (no UI/dashboard dependency)
+- Shared interactive utilities (port prompting) live in `./port-prompt.js`
+- Both `runDashboard()` and `runServe()` import from these neutral modules
+
+**Module structure:**
+- `task-lifecycle.ts`: PR merge helpers (`getMergeStrategy`, `getTaskBranchName`, `cleanupMergedTaskArtifacts`, `processPullRequestMergeTask`)
+- `port-prompt.ts`: Interactive port selection (`promptForPort`)
+- `dashboard.ts`: UI-specific logic, re-exports neutral helpers for backward compatibility with tests
+
+**Test imports:**
+- When moving functions to new modules, update test imports accordingly
+- The serve test mocks `./task-lifecycle.js` and `./port-prompt.js` (not dashboard.js)
+- The dashboard test imports helpers from `./task-lifecycle.js` and `runDashboard` from `./dashboard.js`

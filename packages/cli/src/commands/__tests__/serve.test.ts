@@ -377,8 +377,11 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
   createExtensionRuntime: vi.fn(),
 }));
 
-vi.mock("../dashboard.js", () => ({
+vi.mock("../port-prompt.js", () => ({
   promptForPort: vi.fn(async (port: number) => port),
+}));
+
+vi.mock("../task-lifecycle.js", () => ({
   getMergeStrategy: vi.fn((settings: { mergeStrategy?: "direct" | "pull-request" }) => settings.mergeStrategy ?? "direct"),
   processPullRequestMergeTask: vi.fn().mockResolvedValue("waiting"),
 }));
