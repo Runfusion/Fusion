@@ -4,6 +4,7 @@ import { X, Plus, Play, Pause, Square, Activity, Heart, Trash2, RefreshCw, Bot, 
 import type { Agent, AgentCapability, AgentState } from "../api";
 import { fetchAgents, createAgent, updateAgent, updateAgentState, deleteAgent } from "../api";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
+import { getAgentHealthStatus } from "../utils/agentHealth";
 
 interface AgentListModalProps {
   isOpen: boolean;
@@ -80,6 +81,20 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
     }
   }, [isOpen, loadAgents]);
 
+  // Poll for agent updates to keep health statuses fresh (every 30 seconds)
+  // This ensures health badges stay current while the modal is open
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const pollInterval = setInterval(() => {
+      void loadAgents();
+    }, 30_000);
+
+    return () => {
+      clearInterval(pollInterval);
+    };
+  }, [isOpen, loadAgents]);
+
   const handleCreate = async () => {
     if (!newAgentName.trim()) return;
     try {
@@ -143,29 +158,10 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
   const getRoleLabel = (role: AgentCapability) => AGENT_ROLES.find(r => r.value === role)?.label ?? role;
   const getRoleIcon = (role: AgentCapability) => AGENT_ROLES.find(r => r.value === role)?.icon ?? "🤖";
 
+  // Use centralized health status utility for consistent labels across all views
+  // This fixes the previous hardcoded 60s timeout that was inconsistent with other views
   const getHealthStatus = (agent: Agent): { label: string; icon: JSX.Element; color: string } => {
-    if (agent.state === "terminated") {
-      return { label: "Terminated", icon: <Square size={14} />, color: "var(--state-error-text)" };
-    }
-    if (agent.state === "error") {
-      return { label: agent.lastError ?? "Error", icon: <Activity size={14} />, color: "var(--state-error-text)" };
-    }
-    if (agent.state === "running") {
-      return { label: "Running", icon: <Activity size={14} />, color: "var(--state-active-text)" };
-    }
-    if (agent.state === "paused") {
-      return { label: agent.pauseReason ?? "Paused", icon: <Pause size={14} />, color: "var(--state-paused-text)" };
-    }
-    if (!agent.lastHeartbeatAt) {
-      return { label: agent.state === "active" ? "Starting..." : "Idle", icon: <Bot size={14} />, color: "var(--text-secondary)" };
-    }
-    const lastHeartbeat = new Date(agent.lastHeartbeatAt).getTime();
-    const elapsed = Date.now() - lastHeartbeat;
-    const timeoutMs = 60000; // 60 second timeout
-    if (elapsed > timeoutMs) {
-      return { label: "Unresponsive", icon: <Activity size={14} />, color: "var(--state-error-text)" };
-    }
-    return { label: "Healthy", icon: <Heart size={14} />, color: "var(--state-active-text)" };
+    return getAgentHealthStatus(agent);
   };
 
   if (!isOpen) return null;

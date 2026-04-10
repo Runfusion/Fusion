@@ -165,6 +165,38 @@ Fusion's `HeartbeatTriggerScheduler` supports three trigger types:
 
 All triggers respect per-agent `maxConcurrentRuns` and produce structured wake context metadata.
 
+## Dashboard Health Status
+
+The dashboard displays agent health status in AgentsView, AgentListModal, and AgentDetailView using a centralized health evaluation utility (`packages/dashboard/app/utils/agentHealth.ts`).
+
+### Health Labels (Priority Order)
+
+| Label | Condition |
+|-------|-----------|
+| **Terminated** | Agent state is "terminated" |
+| **Error** | Agent state is "error" (uses lastError if available) |
+| **Paused** | Agent state is "paused" (uses pauseReason if available) |
+| **Running** | Agent state is "running" |
+| **Disabled** | `runtimeConfig.enabled === false` |
+| **Starting...** | State is "active" with no lastHeartbeatAt |
+| **Idle** | Non-active state with no lastHeartbeatAt |
+| **Healthy** | Heartbeat is fresh within configured timeout |
+| **Unresponsive** | Heartbeat exceeded configured timeout |
+
+### Timeout Configuration
+
+Health status uses a timeout-based evaluation:
+
+1. If `runtimeConfig.heartbeatTimeoutMs` is set on the agent, use that value
+2. Otherwise, use the default 60-second (60000ms) timeout
+
+### Key Behaviors
+
+- **Monitoring disabled**: Agents with `runtimeConfig.enabled === false` display "Disabled" — they are NOT falsely labeled as "Unresponsive"
+- **Consistent across views**: All dashboard surfaces use the same centralized utility, ensuring consistent health labels everywhere
+- **Auto-refresh**: Health status is refreshed every 30 seconds while views are open to keep status current
+- **State-first evaluation**: Terminal states (terminated, error, paused, running) take priority over timeout-based evaluation
+
 ## Heartbeat Run Lifecycle
 
 Agent runs have a defined lifecycle managed by `AgentStore`:

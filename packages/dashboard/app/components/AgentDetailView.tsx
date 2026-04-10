@@ -11,6 +11,7 @@ import type { Agent } from "../api";
 import type { AgentLogEntry, Task } from "@fusion/core";
 import { AgentLogViewer } from "./AgentLogViewer";
 import { AgentReflectionsTab } from "./AgentReflectionsTab";
+import { getAgentHealthStatus } from "../utils/agentHealth";
 
 /**
  * Simple className utility - joins class names conditionally
@@ -133,6 +134,18 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
     void loadAgent();
   }, [loadAgent]);
 
+  // Poll for agent updates to keep health status fresh (every 30 seconds)
+  // This ensures health badges stay current while the detail view is open
+  useEffect(() => {
+    const pollInterval = setInterval(() => {
+      void loadAgent();
+    }, 30_000);
+
+    return () => {
+      clearInterval(pollInterval);
+    };
+  }, [loadAgent]);
+
   useEffect(() => {
     if (agent?.taskId) {
       void loadLogs();
@@ -202,30 +215,10 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
     }
   };
 
+  // Use centralized health status utility for consistent labels across all views
   const getHealthStatus = () => {
     if (!agent) return { label: "Unknown", color: "var(--text-muted, #8b949e)" };
-    if (agent.state === "terminated") {
-      return { label: "Terminated", color: "var(--state-error-text, #f85149)" };
-    }
-    if (agent.state === "error") {
-      return { label: agent.lastError ?? "Error", color: "var(--state-error-text, #f85149)" };
-    }
-    if (agent.state === "paused") {
-      return { label: agent.pauseReason ? `Paused: ${agent.pauseReason}` : "Paused", color: "var(--state-paused-text, #e3b541)" };
-    }
-    if (agent.state === "running") {
-      return { label: "Running", color: "var(--state-active-text, #3fb950)" };
-    }
-    if (!agent.lastHeartbeatAt) {
-      return { label: agent.state === "active" ? "Starting..." : "Idle", color: "var(--state-idle-text, #8b949e)" };
-    }
-    const lastHeartbeat = new Date(agent.lastHeartbeatAt).getTime();
-    const elapsed = Date.now() - lastHeartbeat;
-    const timeoutMs = (agent as any).runtimeConfig?.heartbeatTimeoutMs ?? 60000;
-    if (elapsed > timeoutMs) {
-      return { label: "Unresponsive", color: "var(--state-error-text, #f85149)" };
-    }
-    return { label: "Healthy", color: "var(--state-active-text, #3fb950)" };
+    return getAgentHealthStatus(agent);
   };
 
   const copyAgentId = () => {
@@ -274,8 +267,7 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
                   {agent.state}
                 </span>
                 <span className="badge" style={{ color: health.color }}>
-                  {health.label === "Healthy" && <Heart size={12} />}
-                  {health.label === "Unresponsive" && <Activity size={12} />}
+                  {health.icon}
                   {health.label}
                 </span>
               </div>
