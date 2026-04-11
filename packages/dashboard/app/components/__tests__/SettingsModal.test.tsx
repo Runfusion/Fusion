@@ -28,6 +28,7 @@ const defaultSettings: Settings = {
   maxStuckKills: 6,
   runStepsInNewSessions: false,
   maxParallelSteps: 2,
+  showQuickChatFAB: true,
 };
 
 vi.mock("../../api", () => ({
@@ -398,6 +399,90 @@ describe("SettingsModal", () => {
     fireEvent.click(screen.getByText("Save"));
     // Should not have called updateSettings due to validation error
     expect(updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("shows Show quick chat button checkbox in General section", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByText("General")[0]);
+    const checkbox = screen.getByLabelText("Show quick chat button");
+    expect(checkbox).toBeTruthy();
+    expect(checkbox.getAttribute("type")).toBe("checkbox");
+  });
+
+  it("showQuickChatFAB defaults to checked (true) when not set", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByText("General")[0]);
+    const checkbox = screen.getByLabelText("Show quick chat button") as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+  });
+
+  it("showQuickChatFAB defaults to checked when setting is true", async () => {
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...defaultSettings,
+      showQuickChatFAB: true,
+    });
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByText("General")[0]);
+    const checkbox = screen.getByLabelText("Show quick chat button") as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+  });
+
+  it("showQuickChatFAB is unchecked when setting is false", async () => {
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...defaultSettings,
+      showQuickChatFAB: false,
+    });
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByText("General")[0]);
+    const checkbox = screen.getByLabelText("Show quick chat button") as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+  });
+
+  it("toggling showQuickChatFAB checkbox sends false in save payload when unchecked", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByText("General")[0]);
+    const checkbox = screen.getByLabelText("Show quick chat button");
+    // Default is checked (true), click to uncheck
+    fireEvent.click(checkbox);
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.showQuickChatFAB).toBe(false);
+  });
+
+  it("toggling showQuickChatFAB checkbox sends true in save payload when checked", async () => {
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...defaultSettings,
+      showQuickChatFAB: false,
+    });
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByText("General")[0]);
+    const checkbox = screen.getByLabelText("Show quick chat button");
+    // Default is unchecked (false), click to check
+    fireEvent.click(checkbox);
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.showQuickChatFAB).toBe(true);
   });
 
   it("shows Auto-completion mode select in Merge section", async () => {

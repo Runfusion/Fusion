@@ -8,6 +8,12 @@ import { useAgents } from "../hooks/useAgents";
 interface QuickChatFABProps {
   projectId?: string;
   addToast: (msg: string, type?: "success" | "error") => void;
+  /** When false, the FAB button is hidden but the panel can still be opened programmatically via the open prop */
+  showFAB?: boolean;
+  /** When true, the chat panel is open */
+  open?: boolean;
+  /** Callback when the panel should be opened/closed */
+  onOpenChange?: (open: boolean) => void;
 }
 
 function getAgentLabel(agent: Agent): string {
@@ -15,9 +21,21 @@ function getAgentLabel(agent: Agent): string {
   return `${base} (${agent.role})`;
 }
 
-export function QuickChatFAB({ projectId, addToast }: QuickChatFABProps) {
+export function QuickChatFAB({ projectId, addToast, showFAB = true, open, onOpenChange }: QuickChatFABProps) {
   const { agents } = useAgents(projectId);
-  const [isOpen, setIsOpen] = useState(false);
+  // Internal state for uncontrolled mode, controlled state when open prop is provided
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isControlled = open !== undefined;
+  const isOpen = isControlled ? open : internalOpen;
+  const setIsOpen = isControlled
+    ? (value: boolean | ((prev: boolean) => boolean)) => {
+        if (typeof value === "function") {
+          onOpenChange?.(value(isOpen));
+        } else {
+          onOpenChange?.(value);
+        }
+      }
+    : setInternalOpen;
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isConversationLoading, setIsConversationLoading] = useState(false);
@@ -137,16 +155,18 @@ export function QuickChatFAB({ projectId, addToast }: QuickChatFABProps) {
 
   return (
     <>
-      <button
-        ref={fabRef}
-        type="button"
-        className="quick-chat-fab"
-        aria-label="Open quick chat"
-        data-testid="quick-chat-fab"
-        onClick={() => setIsOpen((open) => !open)}
-      >
-        <MessageSquare size={24} />
-      </button>
+      {showFAB && (
+        <button
+          ref={fabRef}
+          type="button"
+          className="quick-chat-fab"
+          aria-label="Open quick chat"
+          data-testid="quick-chat-fab"
+          onClick={() => setIsOpen((open) => !open)}
+        >
+          <MessageSquare size={24} />
+        </button>
+      )}
 
       {isOpen && (
         <div className="quick-chat-panel" ref={panelRef} data-testid="quick-chat-panel">

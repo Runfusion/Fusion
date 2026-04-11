@@ -654,6 +654,20 @@ export function SettingsModal({
               </label>
               <small>When enabled, AI-generated task specifications require manual approval before moving to Todo</small>
             </div>
+            <div className="form-group">
+              <label htmlFor="showQuickChatFAB" className="checkbox-label">
+                <input
+                  id="showQuickChatFAB"
+                  type="checkbox"
+                  checked={form.showQuickChatFAB !== false}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, showQuickChatFAB: e.target.checked }))
+                  }
+                />
+                Show quick chat button
+              </label>
+              <small>Show the floating chat button in the dashboard. Chat is still accessible from the More menu.</small>
+            </div>
           </>
         );
       case "models": {

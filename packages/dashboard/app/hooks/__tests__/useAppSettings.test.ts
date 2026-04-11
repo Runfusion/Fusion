@@ -28,6 +28,7 @@ describe("useAppSettings", () => {
       enginePaused: false,
       githubTokenConfigured: true,
       taskStuckTimeoutMs: 600000,
+      showQuickChatFAB: false,
     } as never);
 
     mockUpdateSettings.mockResolvedValue({} as never);
@@ -44,6 +45,7 @@ describe("useAppSettings", () => {
       expect(result.current.enginePaused).toBe(false);
       expect(result.current.githubTokenConfigured).toBe(true);
       expect(result.current.taskStuckTimeoutMs).toBe(600000);
+      expect(result.current.showQuickChatFAB).toBe(false);
     });
 
     expect(mockFetchConfig).toHaveBeenCalledWith("proj_123");

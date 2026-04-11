@@ -227,4 +227,54 @@ describe("QuickChatFAB", () => {
       expect(screen.queryByTestId("quick-chat-panel")).toBeNull();
     });
   });
+
+  it("hides FAB button when showFAB is false", () => {
+    render(<QuickChatFAB addToast={addToast} showFAB={false} />);
+
+    expect(screen.queryByTestId("quick-chat-fab")).toBeNull();
+  });
+
+  it("still opens panel programmatically when showFAB is false with controlled open prop", async () => {
+    render(<QuickChatFAB addToast={addToast} showFAB={false} open={true} />);
+
+    expect(screen.queryByTestId("quick-chat-fab")).toBeNull();
+    expect(screen.getByTestId("quick-chat-panel")).toBeDefined();
+  });
+
+  it("controlled open prop opens panel without clicking FAB", () => {
+    render(<QuickChatFAB addToast={addToast} open={true} />);
+
+    expect(screen.getByTestId("quick-chat-panel")).toBeDefined();
+  });
+
+  it("controlled open prop defaults to closed when not set", () => {
+    render(<QuickChatFAB addToast={addToast} />);
+
+    expect(screen.queryByTestId("quick-chat-panel")).toBeNull();
+  });
+
+  it("onOpenChange callback is called when panel is opened via FAB (controlled mode)", async () => {
+    const onOpenChange = vi.fn();
+    render(<QuickChatFAB addToast={addToast} open={false} onOpenChange={onOpenChange} />);
+
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    await waitFor(() => {
+      expect(onOpenChange).toHaveBeenCalledWith(true);
+    });
+  });
+
+  it("onOpenChange callback is called when panel is closed via FAB", async () => {
+    const onOpenChange = vi.fn();
+    render(<QuickChatFAB addToast={addToast} open={true} onOpenChange={onOpenChange} />);
+
+    // Panel should be open initially
+    expect(screen.getByTestId("quick-chat-panel")).toBeDefined();
+
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    await waitFor(() => {
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+  });
 });

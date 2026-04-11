@@ -121,6 +121,7 @@ function AppInner() {
   const [nodesOpen, setNodesOpen] = useState(false);
   const [missionResumeSessionId, setMissionResumeSessionId] = useState<string | undefined>(undefined);
   const [missionTargetId, setMissionTargetId] = useState<string | undefined>(undefined);
+  const [quickChatOpen, setQuickChatOpen] = useState(false);
 
   // Settings state
   const {
@@ -130,6 +131,7 @@ function AppInner() {
     globalPaused,
     enginePaused,
     taskStuckTimeoutMs,
+    showQuickChatFAB,
     githubTokenConfigured,
     toggleAutoMerge,
     toggleGlobalPause,
@@ -505,10 +507,17 @@ function AppInner() {
         onOpenUsage={modalManager.openUsage}
         onViewAllProjects={handleViewAllProjects}
         onRunScript={modalManager.runScript}
+        onOpenQuickChat={() => setQuickChatOpen(true)}
         projectId={currentProject?.id}
       />
       {viewMode === "project" && currentProject && taskView !== "chat" && (
-        <QuickChatFAB projectId={currentProject.id} addToast={addToast} />
+        <QuickChatFAB
+          projectId={currentProject.id}
+          addToast={addToast}
+          showFAB={showQuickChatFAB}
+          open={quickChatOpen}
+          onOpenChange={setQuickChatOpen}
+        />
       )}
       <AppModals
         projectId={currentProject?.id}

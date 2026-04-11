@@ -11,10 +11,12 @@ export interface UseAppSettingsResult {
   globalPaused: boolean;
   enginePaused: boolean;
   taskStuckTimeoutMs: number | undefined;
+  showQuickChatFAB: boolean;
   githubTokenConfigured: boolean;
   toggleAutoMerge: () => Promise<void>;
   toggleGlobalPause: () => Promise<void>;
   toggleEnginePause: () => Promise<void>;
+  toggleShowQuickChatFAB: () => Promise<void>;
 }
 
 /**
@@ -27,6 +29,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [globalPaused, setGlobalPaused] = useState(false);
   const [enginePaused, setEnginePaused] = useState(false);
   const [taskStuckTimeoutMs, setTaskStuckTimeoutMs] = useState<number | undefined>(undefined);
+  const [showQuickChatFAB, setShowQuickChatFAB] = useState(true);
   const [githubTokenConfigured, setGithubTokenConfigured] = useState(false);
 
   useEffect(() => {
@@ -46,6 +49,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
         setEnginePaused(Boolean(settings.enginePaused));
         setGithubTokenConfigured(Boolean(settings.githubTokenConfigured));
         setTaskStuckTimeoutMs(settings.taskStuckTimeoutMs);
+        setShowQuickChatFAB(settings.showQuickChatFAB !== false);
       })
       .catch(() => {
         // Keep defaults on fetch failure.
@@ -85,6 +89,17 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     }
   }, [enginePaused, projectId]);
 
+  const toggleShowQuickChatFAB = useCallback(async () => {
+    const next = !showQuickChatFAB;
+    setShowQuickChatFAB(next);
+
+    try {
+      await updateSettings({ showQuickChatFAB: next }, projectId);
+    } catch {
+      setShowQuickChatFAB(!next);
+    }
+  }, [showQuickChatFAB, projectId]);
+
   return {
     maxConcurrent,
     rootDir,
@@ -92,9 +107,11 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     globalPaused,
     enginePaused,
     taskStuckTimeoutMs,
+    showQuickChatFAB,
     githubTokenConfigured,
     toggleAutoMerge,
     toggleGlobalPause,
     toggleEnginePause,
+    toggleShowQuickChatFAB,
   };
 }

@@ -1144,6 +1144,10 @@ export interface ProjectSettings {
    *  - "always": Always handoff after completion (not implemented, reserved for future)
    */
   reviewHandoffPolicy?: "disabled" | "comment-triggered" | "always";
+  /** When true, show the quick-chat floating action button (FAB) in the dashboard.
+   *  When false, the FAB is hidden but chat remains accessible via the More menu.
+   *  Default: true. */
+  showQuickChatFAB?: boolean;
 }
 
 /**
@@ -1255,6 +1259,7 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   reflectionIntervalMs: 3_600_000,
   reflectionAfterTask: true,
   reviewHandoffPolicy: "disabled",
+  showQuickChatFAB: true,
 };
 
 /**
@@ -1361,6 +1366,7 @@ export const PROJECT_SETTINGS_KEYS: ReadonlyArray<keyof ProjectSettings> = [
   "reflectionIntervalMs",
   "reflectionAfterTask",
   "reviewHandoffPolicy",
+  "showQuickChatFAB",
 ] as const;
 
 // ── Compile-time parity: ensures every interface key is listed exactly once ──

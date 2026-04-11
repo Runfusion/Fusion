@@ -50,6 +50,7 @@ export interface MobileNavBarProps {
   activePlanningSessionCount?: number;
   onOpenUsage?: () => void;
   onRunScript?: (name: string, command: string) => void;
+  onOpenQuickChat?: () => void;
   projectId?: string;
   onViewAllProjects?: () => void;
 }
@@ -93,6 +94,7 @@ export function MobileNavBar({
   activePlanningSessionCount = 0,
   onOpenUsage,
   onRunScript,
+  onOpenQuickChat,
   projectId,
   onViewAllProjects,
 }: MobileNavBarProps) {
@@ -438,6 +440,16 @@ export function MobileNavBar({
             >
               <Grid3X3 />
               <span>Projects</span>
+            </button>
+
+            <button
+              type="button"
+              className="mobile-more-item"
+              data-testid="mobile-more-item-chat"
+              onClick={() => handleMoreAction(onOpenQuickChat)}
+            >
+              <MessageSquare />
+              <span>Chat</span>
             </button>
 
             <div className="mobile-more-separator" />

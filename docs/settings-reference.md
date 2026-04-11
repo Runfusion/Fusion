@@ -96,6 +96,7 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `buildRetryCount` | `number` | `0` | Build retry attempts during merge. |
 | `buildTimeoutMs` | `number` | `300000` | Build timeout in ms (5 minutes). |
 | `requirePlanApproval` | `boolean` | `false` | Require manual approval before triage → todo. |
+| `showQuickChatFAB` | `boolean` | `true` | Show floating quick-chat button. Chat accessible from More menu when hidden. |
 | `taskStuckTimeoutMs` | `number` | `undefined` | Inactivity timeout for stuck-task recovery. |
 | `autoUnpauseEnabled` | `boolean` | `true` | Auto-unpause after rate-limit-triggered pauses. |
 | `autoUnpauseBaseDelayMs` | `number` | `300000` | Base unpause retry delay in ms (5 min). |

@@ -59,6 +59,7 @@ const createDefaultMobileNavProps = () => ({
   activePlanningSessionCount: 0,
   onOpenUsage: vi.fn(),
   onRunScript: vi.fn(),
+  onOpenQuickChat: vi.fn(),
   projectId: "proj_1",
 });
 
@@ -161,7 +162,18 @@ describe("Mobile Feature Access Regression Guard", () => {
     expect(screen.getByTestId("mobile-more-item-schedules")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-github")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-usage")).toBeDefined();
+    expect(screen.getByTestId("mobile-more-item-chat")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-settings")).toBeDefined();
+  });
+
+  it("chat is accessible via more sheet even when FAB is hidden", () => {
+    const props = createDefaultMobileNavProps();
+    render(<MobileNavBar {...props} />);
+
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    fireEvent.click(screen.getByTestId("mobile-more-item-chat"));
+
+    expect(props.onOpenQuickChat).toHaveBeenCalledOnce();
   });
 
   it("mobile nav bar renders only on mobile viewport and hides for modal or desktop", () => {
