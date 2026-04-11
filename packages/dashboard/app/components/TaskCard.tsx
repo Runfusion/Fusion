@@ -497,7 +497,7 @@ function TaskCardComponent({
     task.column,
     task.mergeDetails?.commitSha,
     projectId,
-    { enabled: isInViewport },
+    { enabled: isInViewport, worktree: task.worktree },
   );
 
   // Get fresh batch data if available
@@ -910,17 +910,24 @@ function TaskCardComponent({
           </>
         );
       })()}
-      {task.worktree && (task.column === "in-progress" || task.column === "in-review") && (
-        <button
-          type="button"
-          className="card-session-files"
-          onClick={handleOpenFiles}
-          disabled={!onOpenDetailWithTab}
-        >
-          <Folder size={12} />
-          <span>View files</span>
-        </button>
-      )}
+      {task.worktree && (task.column === "in-progress" || task.column === "in-review") && (() => {
+        const activeCount = diffStats?.filesChanged;
+        return (
+          <button
+            type="button"
+            className="card-session-files"
+            onClick={handleOpenFiles}
+            disabled={!onOpenDetailWithTab}
+          >
+            <Folder size={12} />
+            <span>
+              {activeCount != null && activeCount > 0
+                ? `${activeCount} ${activeCount === 1 ? "file" : "files"} changed`
+                : "View files"}
+            </span>
+          </button>
+        );
+      })()}
       {task.column === "done" && (() => {
         // Prefer diff stats from the same endpoint the modal uses so the
         // count is always consistent with the Changes tab.

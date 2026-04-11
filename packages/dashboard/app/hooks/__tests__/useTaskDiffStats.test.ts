@@ -53,7 +53,7 @@ describe("useTaskDiffStats", () => {
     expect(mockFetchTaskDiff).toHaveBeenCalledWith("FN-123", undefined, "proj-1");
   });
 
-  it("does not fetch for non-done columns", async () => {
+  it("does not fetch for active columns without a worktree", async () => {
     const { result: inProgress } = renderHook(() =>
       useTaskDiffStats("FN-123", "in-progress", "abc1234", undefined),
     );
@@ -72,6 +72,30 @@ describe("useTaskDiffStats", () => {
     expect(todo.current.stats).toBeNull();
     expect(inReview.current.stats).toBeNull();
     expect(mockFetchTaskDiff).not.toHaveBeenCalled();
+  });
+
+  it("fetches diff stats for active tasks with a worktree", async () => {
+    mockFetchTaskDiff.mockResolvedValueOnce({
+      files: [
+        { path: "src/a.ts", status: "modified", additions: 10, deletions: 2, patch: "" },
+      ],
+      stats: { filesChanged: 1, additions: 10, deletions: 2 },
+    });
+
+    const { result } = renderHook(() =>
+      useTaskDiffStats(
+        "FN-123",
+        "in-progress",
+        undefined,
+        "proj-1",
+        { worktree: "/repo/.worktrees/fn-123" },
+      ),
+    );
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.stats).toEqual({ filesChanged: 1, additions: 10, deletions: 2 });
+    expect(mockFetchTaskDiff).toHaveBeenCalledWith("FN-123", "/repo/.worktrees/fn-123", "proj-1");
   });
 
   it("does not fetch for done tasks without a commit SHA", async () => {

@@ -3227,13 +3227,54 @@ describe("TaskCard singular/plural file count", () => {
     mockUseTaskDiffStats.mockReturnValue({ stats: null, loading: false });
   });
 
-  it("shows a static files action for in-progress worktrees without fetching file counts", () => {
+  it("shows changed-file counts for in-progress worktrees", () => {
     const task = makeTask({
       column: "in-progress",
       worktree: "/repo/.worktrees/fn-099",
       status: "executing",
     });
-    mockUseSessionFiles.mockReturnValue({ files: ["src/a.ts"], loading: false });
+    mockUseTaskDiffStats.mockReturnValue({ stats: { filesChanged: 3, additions: 10, deletions: 2 }, loading: false });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    expect(screen.getByText("3 files changed")).toBeInTheDocument();
+    expect(screen.queryByText("View files")).not.toBeInTheDocument();
+    expect(screen.queryByText("Checking files…")).not.toBeInTheDocument();
+  });
+
+  it("shows changed-file counts for in-review worktrees", () => {
+    const task = makeTask({
+      column: "in-review",
+      worktree: "/repo/.worktrees/fn-099",
+      status: "reviewing",
+    });
+    mockUseTaskDiffStats.mockReturnValue({ stats: { filesChanged: 2, additions: 7, deletions: 1 }, loading: false });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    expect(screen.getByText("2 files changed")).toBeInTheDocument();
+    expect(screen.queryByText("View files")).not.toBeInTheDocument();
+  });
+
+  it("falls back to View files for in-progress worktrees without a positive diff count", () => {
+    const task = makeTask({
+      column: "in-progress",
+      worktree: "/repo/.worktrees/fn-099",
+      status: "executing",
+    });
+    mockUseTaskDiffStats.mockReturnValue({ stats: { filesChanged: 0, additions: 0, deletions: 0 }, loading: false });
 
     render(
       <TaskCard
@@ -3245,27 +3286,6 @@ describe("TaskCard singular/plural file count", () => {
 
     expect(screen.getByText("View files")).toBeInTheDocument();
     expect(screen.queryByText(/files? changed/)).not.toBeInTheDocument();
-    expect(screen.queryByText("Checking files…")).not.toBeInTheDocument();
-  });
-
-  it("does not use session file counts for in-progress worktree cards", () => {
-    const task = makeTask({
-      column: "in-progress",
-      worktree: "/repo/.worktrees/fn-099",
-      status: "executing",
-    });
-    mockUseSessionFiles.mockReturnValue({ files: ["src/a.ts", "src/b.ts"], loading: false });
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-      />
-    );
-
-    expect(screen.getByText("View files")).toBeInTheDocument();
-    expect(screen.queryByText("2 files changed")).not.toBeInTheDocument();
   });
 
   it("displays '1 file changed' (singular) for done column with displayCount=1 via diffStats", () => {

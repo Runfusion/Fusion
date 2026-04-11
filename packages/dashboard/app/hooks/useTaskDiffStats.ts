@@ -15,6 +15,8 @@ interface UseTaskDiffStatsResult {
 interface UseTaskDiffStatsOptions {
   /** Enable fetching when true (default). Suppresses fetches for offscreen cards. */
   enabled?: boolean;
+  /** Worktree path for active task columns. */
+  worktree?: string;
 }
 
 /**
@@ -25,12 +27,12 @@ interface UseTaskDiffStatsOptions {
 const diffStatsCache = new Map<string, { stats: DiffStats; expiresAt: number }>();
 const CACHE_TTL_MS = 30_000; // 30 seconds
 
-function getCacheKey(taskId: string, projectId?: string): string {
-  return `${taskId}:${projectId ?? ""}`;
+function getCacheKey(taskId: string, projectId?: string, worktree?: string): string {
+  return `${taskId}:${projectId ?? ""}:${worktree ?? ""}`;
 }
 
-function getCachedStats(taskId: string, projectId?: string): DiffStats | null {
-  const key = getCacheKey(taskId, projectId);
+function getCachedStats(taskId: string, projectId?: string, worktree?: string): DiffStats | null {
+  const key = getCacheKey(taskId, projectId, worktree);
   const entry = diffStatsCache.get(key);
 
   if (!entry) return null;
@@ -44,8 +46,8 @@ function getCachedStats(taskId: string, projectId?: string): DiffStats | null {
   return entry.stats;
 }
 
-function setCachedStats(taskId: string, projectId: string | undefined, stats: DiffStats): void {
-  const key = getCacheKey(taskId, projectId);
+function setCachedStats(taskId: string, projectId: string | undefined, worktree: string | undefined, stats: DiffStats): void {
+  const key = getCacheKey(taskId, projectId, worktree);
   diffStatsCache.set(key, {
     stats,
     expiresAt: Date.now() + CACHE_TTL_MS,
@@ -61,13 +63,12 @@ export function __test_clearDiffStatsCache(): void {
 }
 
 /**
- * Fetches diff stats for a done task that has a merge commit SHA.
+ * Fetches diff stats for a task's Changes tab.
  *
- * This ensures the TaskCard shows the same file-changed count as the
- * TaskChangesTab (which fetches from `/api/tasks/:id/diff`). Without this
- * hook the card falls back to `mergeDetails.filesChanged`, which is
- * computed at merge time via `git show --shortstat` and can differ from the
- * diff endpoint's count when the merge includes changes from multiple branches.
+ * For active worktree-backed tasks, this keeps the TaskCard count aligned with
+ * the Changes tab. For done tasks, it uses the same endpoint so the card does
+ * not fall back to `mergeDetails.filesChanged`, which is computed at merge time
+ * and can differ from the endpoint's count.
  *
  * @param taskId - Task identifier
  * @param column - Current task column
@@ -83,6 +84,7 @@ export function useTaskDiffStats(
   options: UseTaskDiffStatsOptions = {},
 ): UseTaskDiffStatsResult {
   const enabled = options.enabled ?? true;
+  const worktree = options.worktree;
   const [stats, setStats] = useState<DiffStats | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -94,15 +96,18 @@ export function useTaskDiffStats(
       return;
     }
 
-    // Only fetch for done tasks with a recorded merge commit
-    if (!taskId || column !== "done" || !commitSha) {
+    const shouldFetchDoneTask = column === "done" && Boolean(commitSha);
+    const shouldFetchActiveTask = (column === "in-progress" || column === "in-review") && Boolean(worktree);
+
+    if (!taskId || (!shouldFetchDoneTask && !shouldFetchActiveTask)) {
       setStats(null);
       setLoading(false);
       return;
     }
 
     // Check cache first - return immediately without loading flicker
-    const cached = getCachedStats(taskId, projectId);
+    const activeWorktree = shouldFetchActiveTask ? worktree : undefined;
+    const cached = getCachedStats(taskId, projectId, activeWorktree);
     if (cached) {
       setStats(cached);
       setLoading(false);
@@ -114,11 +119,11 @@ export function useTaskDiffStats(
     async function load() {
       setLoading(true);
       try {
-        const data = await fetchTaskDiff(taskId, undefined, projectId);
+        const data = await fetchTaskDiff(taskId, activeWorktree, projectId);
         if (!cancelled) {
           setStats(data.stats);
           // Store in cache
-          setCachedStats(taskId, projectId, data.stats);
+          setCachedStats(taskId, projectId, activeWorktree, data.stats);
         }
       } catch {
         if (!cancelled) {
@@ -136,7 +141,7 @@ export function useTaskDiffStats(
     return () => {
       cancelled = true;
     };
-  }, [taskId, column, commitSha, projectId, enabled]);
+  }, [taskId, column, commitSha, projectId, enabled, worktree]);
 
   return { stats, loading };
 }
