@@ -2369,3 +2369,187 @@ describe("SettingsModal", () => {
     expect(payload.maxParallelSteps).toBe(3);
   });
 });
+
+describe("Prompts section", () => {
+  it("renders the Prompts section in the sidebar", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    expect(screen.getAllByText("Prompts").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("shows prompt override editor when Prompts section is selected", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    // Click on Prompts section in sidebar (first one is the nav item)
+    fireEvent.click(screen.getAllByText("Prompts")[0]);
+
+    // Should show scope banner (project-scoped)
+    expect(screen.getByText("These settings only affect this project.")).toBeTruthy();
+
+    // Should show the info note
+    expect(screen.getByText(/Customize specific segments/)).toBeTruthy();
+
+    // Should show at least one prompt key (from PROMPT_KEY_CATALOG)
+    // The catalog includes keys like "executor-welcome", "triage-welcome", etc.
+    expect(screen.getByText("executor-welcome")).toBeTruthy();
+  });
+
+  it("renders prompt entries with name, key, and description from catalog", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByText("Prompts")[0]);
+
+    // Should show prompt names from the catalog
+    expect(screen.getByText("Executor Welcome")).toBeTruthy();
+    expect(screen.getByText("Executor Guardrails")).toBeTruthy();
+
+    // Should show prompt keys as code
+    expect(screen.getByText("executor-welcome")).toBeTruthy();
+
+    // Should show descriptions (multiple elements may match)
+    expect(screen.getAllByText(/Introductory section/).length).toBeGreaterThan(0);
+  });
+
+  it("shows textarea for each prompt entry", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByText("Prompts")[0]);
+
+    // Should have textareas for prompt editing
+    const textareas = screen.getAllByRole("textbox");
+    expect(textareas.length).toBeGreaterThan(0);
+
+    // Should have aria-labels for each prompt
+    expect(screen.getByLabelText(/Executor Welcome prompt override/i)).toBeTruthy();
+  });
+
+  it("shows placeholder text with default content hint", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByText("Prompts")[0]);
+
+    // Should show hints about default content
+    const hintElements = screen.getAllByText(/No override set/);
+    expect(hintElements.length).toBeGreaterThan(0);
+  });
+
+  it("shows customized badge and Reset button when override exists", async () => {
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...defaultSettings,
+      promptOverrides: {
+        "executor-welcome": "Custom override text",
+      },
+    });
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByText("Prompts")[0]);
+
+    // Should show "customized" badge
+    expect(screen.getByText("customized")).toBeTruthy();
+
+    // Should show Reset button
+    expect(screen.getByText("Reset")).toBeTruthy();
+  });
+
+  it("editing a prompt textarea includes override in save payload", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByText("Prompts")[0]);
+
+    // Find the textarea for executor-welcome
+    const textarea = screen.getByLabelText(/Executor Welcome prompt override/i) as HTMLTextAreaElement;
+    expect(textarea).toBeTruthy();
+
+    // Type custom content
+    fireEvent.change(textarea, { target: { value: "My custom executor welcome message" } });
+    expect(textarea.value).toBe("My custom executor welcome message");
+
+    // Save
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    // Verify the payload contains the override
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.promptOverrides).toBeDefined();
+    expect(payload.promptOverrides["executor-welcome"]).toBe("My custom executor welcome message");
+  });
+
+  it("resetting an existing override sends null for that prompt key", async () => {
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...defaultSettings,
+      promptOverrides: {
+        "executor-welcome": "Custom override text",
+      },
+    });
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByText("Prompts")[0]);
+
+    // Find and click the Reset button
+    fireEvent.click(screen.getByText("Reset"));
+
+    // Save
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    // Verify the payload contains null for the key
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.promptOverrides).toBeDefined();
+    expect(payload.promptOverrides["executor-welcome"]).toBeNull();
+  });
+
+  it("promptOverrides are sent as project settings (not global)", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByText("Prompts")[0]);
+
+    // Find the textarea and type content
+    const textarea = screen.getByLabelText(/Executor Welcome prompt override/i) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "Custom message" } });
+
+    // Save
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    // Verify promptOverrides is in the project patch (updateSettings), not global
+    const projectPayload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(projectPayload.promptOverrides).toBeDefined();
+    expect(projectPayload.promptOverrides["executor-welcome"]).toBe("Custom message");
+
+    // Verify global settings may be called (for ntfyEvents etc), but promptOverrides should NOT be in global
+    if (updateGlobalSettings.mock.calls.length > 0) {
+      const globalPayload = (updateGlobalSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(globalPayload.promptOverrides).toBeUndefined();
+    }
+  });
+
+  it("shows Reset button only for prompts with existing overrides", async () => {
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...defaultSettings,
+      promptOverrides: {
+        "executor-welcome": "Custom text",
+        "triage-welcome": "Another custom",
+      },
+    });
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByText("Prompts")[0]);
+
+    // Should have exactly 2 Reset buttons (one for each override)
+    const resetButtons = screen.getAllByText("Reset");
+    expect(resetButtons.length).toBe(2);
+  });
+});

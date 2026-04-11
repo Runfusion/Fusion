@@ -1962,6 +1962,7 @@ export function SettingsModal({
                     <div className="prompt-override-editor">
                       <textarea
                         id={`prompt-${key}`}
+                        aria-label={`${promptMeta.name} prompt override (${key})`}
                         className="prompt-override-textarea"
                         value={currentOverride}
                         onChange={(e) => {

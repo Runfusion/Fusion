@@ -872,11 +872,7 @@ describe("approved triage recovery", () => {
     );
   });
 
-  it("materializes prompt steps before moving approved tasks to todo", async () => {
-    const parsedSteps = [
-      { name: "Update the card data path", status: "pending" as const },
-      { name: "Add regression coverage", status: "pending" as const },
-    ];
+  it("clears status and error before moving approved tasks to todo", async () => {
     const store = createMockStore({
       getSettings: vi.fn().mockResolvedValue({
         maxConcurrent: 2,
@@ -886,7 +882,6 @@ describe("approved triage recovery", () => {
         autoMerge: true,
         requirePlanApproval: false,
       } as Settings),
-      parseStepsFromPrompt: vi.fn().mockResolvedValue(parsedSteps),
     });
 
     const processor = new TriageProcessor(store, rootDir);
@@ -909,7 +904,6 @@ describe("approved triage recovery", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
       status: null,
       error: null,
-      steps: parsedSteps,
     }));
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
   });

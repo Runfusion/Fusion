@@ -10092,6 +10092,246 @@ describe("POST /workflow-steps/:id/refine", () => {
   });
 });
 
+// ── Workflow Step Refine with Scoped Settings (projectId) ──────────────────
+
+describe("POST /workflow-steps/:id/refine with projectId scoping", () => {
+  const projectId = "proj-refine-scoped";
+
+  let defaultStore: TaskStore;
+  let scopedStore: TaskStore;
+
+  beforeEach(() => {
+    defaultStore = createMockStore();
+    scopedStore = createMockStore();
+
+    vi.spyOn(projectStoreResolver, "getOrCreateProjectStore").mockResolvedValue(scopedStore);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    __setCreateKbAgentForRefine(undefined);
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(defaultStore));
+    return app;
+  }
+
+  it("uses scoped settings from project store when projectId is provided", async () => {
+    const ws = { id: "WS-001", name: "Docs", description: "Check docs", mode: "prompt", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    (scopedStore.getWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(ws);
+
+    const customPrompt = "CUSTOM SCOPED WORKFLOW REFINE PROMPT";
+    (scopedStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      promptOverrides: {
+        "workflow-step-refine": customPrompt,
+      },
+    });
+
+    const updatedWs = { ...ws, prompt: "Refined prompt from AI" };
+    (scopedStore.updateWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updatedWs);
+
+    let capturedSystemPrompt: string | undefined;
+    const session = {
+      on: vi.fn((event: string, cb: (delta: string) => void) => {
+        if (event === "text") {
+          cb("Refined ");
+          cb("prompt from AI");
+        }
+      }),
+      prompt: vi.fn(async () => {}),
+      dispose: vi.fn(),
+    };
+
+    const createKbAgentMock = vi.fn(async (options: { cwd: string; systemPrompt: string; tools: string }) => {
+      capturedSystemPrompt = options.systemPrompt;
+      return { session };
+    });
+    __setCreateKbAgentForRefine(createKbAgentMock);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/workflow-steps/WS-001/refine?projectId=${projectId}`,
+      JSON.stringify({}),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(res.status).toBe(200);
+    expect(projectStoreResolver.getOrCreateProjectStore).toHaveBeenCalledWith(projectId);
+    expect(scopedStore.getWorkflowStep).toHaveBeenCalledWith("WS-001");
+    expect(scopedStore.getSettings).toHaveBeenCalled();
+    expect(scopedStore.updateWorkflowStep).toHaveBeenCalledWith("WS-001", { prompt: "Refined prompt from AI" });
+    // Verify the custom prompt from scoped settings was used
+    expect(capturedSystemPrompt).toBe(customPrompt);
+  });
+
+  it("uses default prompt from scoped settings when no workflow-step-refine override", async () => {
+    const ws = { id: "WS-001", name: "Docs", description: "Check docs", mode: "prompt", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    (scopedStore.getWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(ws);
+
+    // Scoped settings with other overrides but not workflow-step-refine
+    (scopedStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      promptOverrides: {
+        "executor-welcome": "Some other prompt",
+      },
+    });
+
+    const updatedWs = { ...ws, prompt: "Refined prompt from AI" };
+    (scopedStore.updateWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updatedWs);
+
+    let capturedSystemPrompt: string | undefined;
+    const session = {
+      on: vi.fn((event: string, cb: (delta: string) => void) => {
+        if (event === "text") {
+          cb("Refined ");
+          cb("prompt from AI");
+        }
+      }),
+      prompt: vi.fn(async () => {}),
+      dispose: vi.fn(),
+    };
+
+    const createKbAgentMock = vi.fn(async (options: { cwd: string; systemPrompt: string; tools: string }) => {
+      capturedSystemPrompt = options.systemPrompt;
+      return { session };
+    });
+    __setCreateKbAgentForRefine(createKbAgentMock);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/workflow-steps/WS-001/refine?projectId=${projectId}`,
+      JSON.stringify({}),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(res.status).toBe(200);
+    expect(projectStoreResolver.getOrCreateProjectStore).toHaveBeenCalledWith(projectId);
+    // Should use the default prompt from scoped settings
+    expect(capturedSystemPrompt).toContain("You are an expert at creating");
+    expect(capturedSystemPrompt).toContain("workflow steps");
+  });
+});
+
+// ── Agent Generation Routes ────────────────────────────────────────────────
+
+describe("POST /agents/generate/spec with projectId scoping", () => {
+  const projectId = "proj-agent-gen-scoped";
+
+  let defaultStore: TaskStore;
+  let scopedStore: TaskStore;
+
+  beforeEach(() => {
+    defaultStore = createMockStore();
+    scopedStore = createMockStore({
+      getAgentGenerationSession: vi.fn().mockImplementation((sessionId: string) => {
+        if (sessionId === "test-session-id") {
+          return {
+            id: "test-session-id",
+            roleDescription: "Test role",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          };
+        }
+        return undefined;
+      }),
+    });
+
+    vi.spyOn(projectStoreResolver, "getOrCreateProjectStore").mockResolvedValue(scopedStore);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(defaultStore));
+    return app;
+  }
+
+  it("uses scoped settings for prompt resolution when projectId is provided", async () => {
+    const customPrompt = "CUSTOM SCOPED AGENT GENERATION PROMPT";
+    (scopedStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      promptOverrides: {
+        "agent-generation-system": customPrompt,
+      },
+    });
+
+    let capturedSystemPrompt: string | undefined;
+    const mockSession = {
+      state: { messages: [] },
+      prompt: vi.fn(async () => {
+        capturedSystemPrompt = "mock-prompt-captured";
+      }),
+      dispose: vi.fn(),
+    };
+    const mockAgent = {
+      session: mockSession,
+    };
+
+    // Mock createKbAgent at the module level for agent-generation
+    vi.doMock("@fusion/engine", () => ({
+      createKbAgent: vi.fn(async () => mockAgent),
+    }));
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/agents/generate/spec?projectId=${projectId}`,
+      JSON.stringify({ sessionId: "test-session-id" }),
+      { "Content-Type": "application/json" }
+    );
+
+    // Should use scoped store's settings for prompt resolution
+    expect(projectStoreResolver.getOrCreateProjectStore).toHaveBeenCalledWith(projectId);
+    expect(scopedStore.getSettings).toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
+
+  it("falls back to default prompt when scoped settings has no agent-generation-system override", async () => {
+    // Scoped settings with other overrides but not agent-generation-system
+    (scopedStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      promptOverrides: {
+        "executor-welcome": "Some other prompt",
+      },
+    });
+
+    const mockSession = {
+      state: { messages: [] },
+      prompt: vi.fn(async () => {}),
+      dispose: vi.fn(),
+    };
+    const mockAgent = {
+      session: mockSession,
+    };
+
+    // Mock createKbAgent at the module level for agent-generation
+    vi.doMock("@fusion/engine", () => ({
+      createKbAgent: vi.fn(async () => mockAgent),
+    }));
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/agents/generate/spec?projectId=${projectId}`,
+      JSON.stringify({ sessionId: "test-session-id" }),
+      { "Content-Type": "application/json" }
+    );
+
+    // Should use scoped store's settings (which will fall back to default)
+    expect(projectStoreResolver.getOrCreateProjectStore).toHaveBeenCalledWith(projectId);
+    expect(scopedStore.getSettings).toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
+});
+
 // ── Workflow Step Template Tests ──────────────────────────────────────────
 
 describe("GET /workflow-step-templates", () => {
