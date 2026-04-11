@@ -418,7 +418,7 @@ export function TaskForm({
 
     setIsRefining(true);
     try {
-      const refined = await refineText(trimmed, type);
+      const refined = await refineText(trimmed, type, projectId);
       onDescriptionChange(refined);
       setIsRefineMenuOpen(false);
       addToast("Description refined with AI", "success");
@@ -432,7 +432,7 @@ export function TaskForm({
     } finally {
       setIsRefining(false);
     }
-  }, [description, isRefining, addToast, onDescriptionChange]);
+  }, [description, isRefining, addToast, onDescriptionChange, projectId]);
 
   const handleToggleFavorite = useCallback(async (provider: string) => {
     const currentFavorites = favoriteProviders;

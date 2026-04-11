@@ -329,6 +329,14 @@ export function createMissionRouter(
   }
 
   /**
+   * Helper to resolve scoped store for the current request's project scope.
+   */
+  async function getScopedStoreForRequest(req: Request) {
+    const projectId = getProjectIdFromRequest(req);
+    return projectId ? await getOrCreateProjectStore(projectId) : store;
+  }
+
+  /**
    * POST /api/missions/interview/start
    * Start a mission interview session with AI agent streaming.
    * Body: { missionTitle: string }
@@ -349,14 +357,21 @@ export function createMissionRouter(
 
       try {
         const ip = req.ip || req.socket.remoteAddress || "unknown";
-        const rootDir = await getRootDirForRequest(req);
+        const scopedStore = await getScopedStoreForRequest(req);
+        const rootDir = scopedStore.getRootDir();
+        const settings = await scopedStore.getSettings();
 
         const {
           createMissionInterviewSession,
           RateLimitError,
         } = await import("./mission-interview.js");
 
-        const sessionId = await createMissionInterviewSession(ip, missionTitle.trim(), rootDir);
+        const sessionId = await createMissionInterviewSession(
+          ip,
+          missionTitle.trim(),
+          rootDir,
+          settings.promptOverrides,
+        );
         res.status(201).json({ sessionId });
       } catch (err: any) {
         if (err.name === "RateLimitError") {
@@ -397,14 +412,22 @@ export function createMissionRouter(
       }
 
       try {
+        const scopedStore = await getScopedStoreForRequest(req);
+        const rootDir = scopedStore.getRootDir();
+        const settings = await scopedStore.getSettings();
+
         const {
           submitMissionInterviewResponse,
           SessionNotFoundError,
           InvalidSessionStateError,
         } = await import("./mission-interview.js");
 
-        const rootDir = await getRootDirForRequest(req);
-        const result = await submitMissionInterviewResponse(sessionId, responses, rootDir);
+        const result = await submitMissionInterviewResponse(
+          sessionId,
+          responses,
+          rootDir,
+          settings.promptOverrides,
+        );
         res.json(result);
       } catch (err: any) {
         if (err.name === "SessionNotFoundError") {
@@ -444,14 +467,17 @@ export function createMissionRouter(
       }
 
       try {
+        const scopedStore = await getScopedStoreForRequest(req);
+        const rootDir = scopedStore.getRootDir();
+        const settings = await scopedStore.getSettings();
+
         const {
           retryMissionInterviewSession,
           SessionNotFoundError,
           InvalidSessionStateError,
         } = await import("./mission-interview.js");
 
-        const rootDir = await getRootDirForRequest(req);
-        await retryMissionInterviewSession(sessionId, rootDir);
+        await retryMissionInterviewSession(sessionId, rootDir, settings.promptOverrides);
         res.json({ success: true, sessionId });
       } catch (err: any) {
         if (err.name === "SessionNotFoundError") {

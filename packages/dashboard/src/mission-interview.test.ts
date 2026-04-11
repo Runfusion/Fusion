@@ -567,4 +567,227 @@ describe("mission-interview module", () => {
       expect(new InvalidSessionStateError("bad").name).toBe("InvalidSessionStateError");
     });
   });
+
+  describe("prompt override regression", () => {
+    const customPrompt = "You are a custom mission interview assistant.";
+    const defaultPromptStart = "You are a mission planning assistant";
+
+    it("uses default prompt when no overrides provided", async () => {
+      const mockAgent = createMockAgent([createQuestionJson()]);
+      mockCreateKbAgent.mockImplementationOnce(async () => mockAgent);
+
+      await createMissionInterviewSession("192.168.1.1", "Test Mission", "/tmp/project");
+
+      await waitForCurrentQuestion(await createMissionInterviewSession("192.168.1.1", "Test Mission 2", "/tmp/project"));
+
+      // The first session starts asynchronously, so we need to wait
+      // Check the createKbAgent call was made with default prompt
+      expect(mockCreateKbAgent).toHaveBeenCalled();
+      const lastCall = mockCreateKbAgent.mock.calls[mockCreateKbAgent.mock.calls.length - 1];
+      expect(lastCall[0].systemPrompt).toMatch(/^You are a mission planning assistant/);
+    });
+
+    it("uses override prompt when promptOverrides provided", async () => {
+      const mockAgent = createMockAgent([createQuestionJson()]);
+      mockCreateKbAgent.mockImplementationOnce(async () => mockAgent);
+
+      const sessionId = await createMissionInterviewSession(
+        "192.168.1.2",
+        "Test Mission",
+        "/tmp/project",
+        { "mission-interview-system": customPrompt },
+      );
+      await waitForCurrentQuestion(sessionId);
+
+      expect(mockCreateKbAgent).toHaveBeenCalled();
+      const lastCall = mockCreateKbAgent.mock.calls[mockCreateKbAgent.mock.calls.length - 1];
+      expect(lastCall[0].systemPrompt).toBe(customPrompt);
+    });
+
+    it("falls back to default prompt when override is empty string", async () => {
+      const mockAgent = createMockAgent([createQuestionJson()]);
+      mockCreateKbAgent.mockImplementationOnce(async () => mockAgent);
+
+      const sessionId = await createMissionInterviewSession(
+        "192.168.1.3",
+        "Test Mission",
+        "/tmp/project",
+        { "mission-interview-system": "" },
+      );
+      await waitForCurrentQuestion(sessionId);
+
+      expect(mockCreateKbAgent).toHaveBeenCalled();
+      const lastCall = mockCreateKbAgent.mock.calls[mockCreateKbAgent.mock.calls.length - 1];
+      expect(lastCall[0].systemPrompt).toMatch(/^You are a mission planning assistant/);
+    });
+
+    it("passes prompt overrides through submitMissionInterviewResponse for rehydrated sessions", async () => {
+      const store = new MockAiSessionStore();
+      const row = buildMissionRow({ id: "mission-prompt-override-1", status: "awaiting_input" });
+      store.rows.set(row.id, row);
+      setAiSessionStore(store as any);
+      expect(rehydrateFromStore(store as any)).toBe(1);
+
+      const resumedAgent = createMockAgent([createQuestionJson("q-override")]);
+      mockCreateKbAgent.mockImplementationOnce(async () => resumedAgent);
+
+      await submitMissionInterviewResponse(
+        row.id,
+        { "q-2": "Test response" },
+        "/tmp/project",
+        { "mission-interview-system": customPrompt },
+      );
+
+      expect(mockCreateKbAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          systemPrompt: customPrompt,
+        }),
+      );
+    });
+
+    it("passes prompt overrides through retryMissionInterviewSession", async () => {
+      const store = new MockAiSessionStore();
+      const row = buildMissionRow({
+        id: "mission-retry-prompt-override",
+        status: "error",
+        error: "Test error",
+        conversationHistory: JSON.stringify([
+          {
+            question: { id: "q-1", type: "text", question: "Goal?", description: "scope" },
+            response: { "q-1": "Build app" },
+          },
+        ]),
+      });
+      store.rows.set(row.id, row);
+      setAiSessionStore(store as any);
+
+      const resumedAgent = createMockAgent([createQuestionJson("q-retry")]);
+      mockCreateKbAgent.mockImplementationOnce(async () => resumedAgent);
+
+      await retryMissionInterviewSession(
+        row.id,
+        "/tmp/project",
+        { "mission-interview-system": customPrompt },
+      );
+
+      expect(mockCreateKbAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          systemPrompt: customPrompt,
+        }),
+      );
+    });
+
+    it("does not introduce unexpected model/provider override fields in createKbAgent", async () => {
+      const mockAgent = createMockAgent([createQuestionJson()]);
+      mockCreateKbAgent.mockImplementationOnce(async () => mockAgent);
+
+      const sessionId = await createMissionInterviewSession(
+        "192.168.1.4",
+        "Test Mission",
+        "/tmp/project",
+        { "mission-interview-system": customPrompt },
+      );
+      await waitForCurrentQuestion(sessionId);
+
+      expect(mockCreateKbAgent).toHaveBeenCalled();
+      const lastCall = mockCreateKbAgent.mock.calls[mockCreateKbAgent.mock.calls.length - 1];
+      const agentConfig = lastCall[0];
+
+      // Verify only expected fields are present
+      expect(agentConfig).toHaveProperty("cwd");
+      expect(agentConfig).toHaveProperty("systemPrompt");
+      expect(agentConfig).toHaveProperty("tools");
+      expect(agentConfig).toHaveProperty("onThinking");
+      expect(agentConfig).toHaveProperty("onText");
+
+      // Verify no unexpected model override fields
+      expect(agentConfig).not.toHaveProperty("modelProvider");
+      expect(agentConfig).not.toHaveProperty("modelId");
+      expect(agentConfig).not.toHaveProperty("provider");
+      expect(agentConfig).not.toHaveProperty("model");
+    });
+
+    it("prompt overrides do not affect other prompt keys", async () => {
+      const mockAgent = createMockAgent([createQuestionJson()]);
+      mockCreateKbAgent.mockImplementationOnce(async () => mockAgent);
+
+      // Provide overrides for a different key only
+      const sessionId = await createMissionInterviewSession(
+        "192.168.1.5",
+        "Test Mission",
+        "/tmp/project",
+        { "planning-system": "Should not affect mission interview" },
+      );
+      await waitForCurrentQuestion(sessionId);
+
+      expect(mockCreateKbAgent).toHaveBeenCalled();
+      const lastCall = mockCreateKbAgent.mock.calls[mockCreateKbAgent.mock.calls.length - 1];
+      // Mission interview should use its own default prompt, not affected by planning-system override
+      expect(lastCall[0].systemPrompt).toMatch(/^You are a mission planning assistant/);
+    });
+
+    it("falls back to default prompt on retry when promptOverrides is undefined", async () => {
+      const store = new MockAiSessionStore();
+      const row = buildMissionRow({
+        id: "mission-retry-no-override",
+        status: "error",
+        error: "Test error",
+        conversationHistory: JSON.stringify([
+          {
+            question: { id: "q-1", type: "text", question: "Goal?", description: "scope" },
+            response: { "q-1": "Build app" },
+          },
+        ]),
+      });
+      store.rows.set(row.id, row);
+      setAiSessionStore(store as any);
+
+      const resumedAgent = createMockAgent([createQuestionJson("q-retry")]);
+      mockCreateKbAgent.mockImplementationOnce(async () => resumedAgent);
+
+      await retryMissionInterviewSession(row.id, "/tmp/project", undefined);
+
+      expect(mockCreateKbAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          systemPrompt: expect.stringContaining("mission planning assistant"),
+        }),
+      );
+    });
+
+    it("falls back to default prompt through submitMissionInterviewResponse for rehydrated sessions when overrides undefined", async () => {
+      const store = new MockAiSessionStore();
+      const row = buildMissionRow({ id: "mission-submit-no-override", status: "awaiting_input" });
+      store.rows.set(row.id, row);
+      setAiSessionStore(store as any);
+      expect(rehydrateFromStore(store as any)).toBe(1);
+
+      const resumedAgent = createMockAgent([createQuestionJson("q-fallback")]);
+      mockCreateKbAgent.mockImplementationOnce(async () => resumedAgent);
+
+      await submitMissionInterviewResponse(row.id, { "q-2": "Test" }, "/tmp/project", undefined);
+
+      expect(mockCreateKbAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          systemPrompt: expect.stringContaining("mission planning assistant"),
+        }),
+      );
+    });
+
+    it("falls back to default prompt when promptOverrides is empty object", async () => {
+      const mockAgent = createMockAgent([createQuestionJson()]);
+      mockCreateKbAgent.mockImplementationOnce(async () => mockAgent);
+
+      const sessionId = await createMissionInterviewSession(
+        "192.168.1.6",
+        "Test Mission",
+        "/tmp/project",
+        {},
+      );
+      await waitForCurrentQuestion(sessionId);
+
+      expect(mockCreateKbAgent).toHaveBeenCalled();
+      const lastCall = mockCreateKbAgent.mock.calls[mockCreateKbAgent.mock.calls.length - 1];
+      expect(lastCall[0].systemPrompt).toMatch(/^You are a mission planning assistant/);
+    });
+  });
 });

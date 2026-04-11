@@ -501,7 +501,8 @@ describe("TaskForm", () => {
     fireEvent.click(screen.getByTestId("refine-clarify"));
 
     await waitFor(() => {
-      expect(refineText).toHaveBeenCalledWith("Some text to refine", "clarify");
+      // projectId is undefined in this test context
+      expect(refineText).toHaveBeenCalledWith("Some text to refine", "clarify", undefined);
       expect(onDescriptionChange).toHaveBeenCalledWith("Refined text");
     });
   });

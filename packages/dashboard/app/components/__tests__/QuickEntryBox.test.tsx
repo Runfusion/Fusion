@@ -1665,7 +1665,7 @@ describe("QuickEntryBox", () => {
       fireEvent.click(screen.getByTestId("refine-clarify"));
 
       await waitFor(() => {
-        expect(refineText).toHaveBeenCalledWith("Original text", "clarify");
+        expect(refineText).toHaveBeenCalledWith("Original text", "clarify", TEST_PROJECT_ID);
       });
 
       // Textarea should be updated

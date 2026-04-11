@@ -31,6 +31,7 @@ import {
   submitMissionInterviewResponse,
 } from "./mission-interview.js";
 import * as missionInterviewModule from "./mission-interview.js";
+import * as projectStoreResolver from "./project-store-resolver.js";
 
 // Mock MissionStore factory
 function createMockMissionStore() {
@@ -440,6 +441,7 @@ function createMockStore(): TaskStore {
   return {
     getMissionStore: vi.fn().mockReturnValue(createMockMissionStore()),
     getRootDir: vi.fn().mockReturnValue("/fake/root"),
+    getSettings: vi.fn().mockResolvedValue({ promptOverrides: {} }),
     pauseTask: vi.fn(),
   } as unknown as TaskStore;
 }
@@ -2083,7 +2085,8 @@ describe("Mission API", () => {
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ success: true, sessionId: "session-1" });
-      expect(retrySpy).toHaveBeenCalledWith("session-1", "/fake/root");
+      // Default store returns {} for promptOverrides when projectId is omitted
+      expect(retrySpy).toHaveBeenCalledWith("session-1", "/fake/root", {});
     });
 
     it("returns 404 when interview retry session is missing", async () => {
@@ -2319,6 +2322,183 @@ describe("Mission API", () => {
         question: expect.objectContaining({ id: "q-existing" }),
         response: { "q-existing": "Need milestone planning" },
         thinkingOutput: "First-turn stored reasoning",
+      });
+    });
+  });
+
+  // ── Interview endpoints with projectId scoping ───────────────────────────
+  //
+  // Tests that verify interview endpoints use scoped project context when projectId
+  // is provided, including prompt override resolution from scoped settings.
+  describe("Interview endpoints with projectId scoping", () => {
+    const projectId = "test-project";
+    const scopedRootDir = "/scoped/project/path";
+
+    let scopedStore: TaskStore;
+
+    beforeEach(() => {
+      __resetMissionInterviewState();
+      vi.restoreAllMocks();
+
+      // Create a scoped store mock with settings support
+      scopedStore = {
+        getRootDir: vi.fn().mockReturnValue(scopedRootDir),
+        getSettings: vi.fn().mockResolvedValue({
+          promptOverrides: {
+            "mission-interview-system": "Scoped mission interview prompt",
+          },
+        }),
+        getMissionStore: vi.fn().mockReturnValue(createMockMissionStore()),
+      } as unknown as TaskStore;
+
+      vi.spyOn(projectStoreResolver, "getOrCreateProjectStore").mockResolvedValue(scopedStore);
+    });
+
+    it("POST /api/missions/interview/start uses scoped store settings when projectId provided", async () => {
+      const createSpy = vi
+        .spyOn(missionInterviewModule, "createMissionInterviewSession")
+        .mockResolvedValueOnce("scoped-session-id");
+
+      const { app } = buildApp();
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/interview/start?projectId=${projectId}`,
+        JSON.stringify({ missionTitle: "Scoped Mission" }),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(201);
+      expect(projectStoreResolver.getOrCreateProjectStore).toHaveBeenCalledWith(projectId);
+      expect(scopedStore.getRootDir()).toBe(scopedRootDir);
+      expect(scopedStore.getSettings).toHaveBeenCalled();
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.any(String),
+        "Scoped Mission",
+        scopedRootDir,
+        { "mission-interview-system": "Scoped mission interview prompt" },
+      );
+    });
+
+    it("POST /api/missions/interview/respond uses scoped store settings when projectId provided", async () => {
+      const respondSpy = vi
+        .spyOn(missionInterviewModule, "submitMissionInterviewResponse")
+        .mockResolvedValueOnce({
+          type: "question",
+          data: {
+            id: "q-next",
+            type: "text",
+            question: "Next question?",
+            description: "Continue",
+          },
+        } as any);
+
+      const { app } = buildApp();
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/interview/respond?projectId=${projectId}`,
+        JSON.stringify({ sessionId: "scoped-session", responses: { "q-1": "Answer" } }),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(200);
+      expect(projectStoreResolver.getOrCreateProjectStore).toHaveBeenCalledWith(projectId);
+      expect(scopedStore.getSettings).toHaveBeenCalled();
+      expect(respondSpy).toHaveBeenCalledWith(
+        "scoped-session",
+        { "q-1": "Answer" },
+        scopedRootDir,
+        { "mission-interview-system": "Scoped mission interview prompt" },
+      );
+    });
+
+    it("POST /api/missions/interview/:sessionId/retry uses scoped store settings when projectId provided", async () => {
+      const retrySpy = vi
+        .spyOn(missionInterviewModule, "retryMissionInterviewSession")
+        .mockResolvedValueOnce(undefined);
+
+      const { app } = buildApp();
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/interview/scoped-retry/retry?projectId=${projectId}`
+      );
+
+      expect(res.status).toBe(200);
+      expect(projectStoreResolver.getOrCreateProjectStore).toHaveBeenCalledWith(projectId);
+      expect(scopedStore.getSettings).toHaveBeenCalled();
+      expect(retrySpy).toHaveBeenCalledWith(
+        "scoped-retry",
+        scopedRootDir,
+        { "mission-interview-system": "Scoped mission interview prompt" },
+      );
+    });
+
+    it("POST /api/missions/interview/start uses default store when projectId is omitted", async () => {
+      const createSpy = vi
+        .spyOn(missionInterviewModule, "createMissionInterviewSession")
+        .mockResolvedValueOnce("default-session-id");
+
+      // When projectId is omitted, getOrCreateProjectStore should not be called
+      // The scoped store spy is still active from beforeEach, so we need to mock it to return undefined
+      vi.mocked(projectStoreResolver.getOrCreateProjectStore).mockRejectedValueOnce(
+        new Error("Should not be called when projectId is omitted")
+      );
+
+      const { app } = buildApp();
+
+      const res = await request(
+        app,
+        "POST",
+        "/api/missions/interview/start",
+        JSON.stringify({ missionTitle: "Default Mission" }),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(201);
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.any(String),
+        "Default Mission",
+        "/fake/root",
+        {},
+      );
+    });
+
+    it("returns 409 lock conflict for interview respond when projectId provided", async () => {
+      // First create the session so it exists
+      const createSpy = vi
+        .spyOn(missionInterviewModule, "createMissionInterviewSession")
+        .mockResolvedValueOnce("locked-session");
+
+      const { app } = buildApp({
+        aiSessionStore: {
+          acquireLock: vi.fn().mockReturnValue({ acquired: false, currentHolder: "other-tab" }),
+        },
+      });
+
+      // Create the session first
+      await request(
+        app,
+        "POST",
+        `/api/missions/interview/start?projectId=${projectId}`,
+        JSON.stringify({ missionTitle: "Locked Mission" }),
+        { "content-type": "application/json" }
+      );
+
+      // Now try to respond - should get 409 due to lock conflict
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/interview/respond?projectId=${projectId}`,
+        JSON.stringify({ sessionId: "locked-session", responses: { "q-1": "answer" }, tabId: "my-tab" }),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({
+        error: "Session locked by another tab",
+        lockedByTab: "other-tab",
       });
     });
   });

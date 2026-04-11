@@ -919,7 +919,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     setIsRefineMenuOpen(false);
     setIsRefining(true);
     try {
-      const refined = await refineText(trimmed, type);
+      const refined = await refineText(trimmed, type, projectId);
       setDescription(refined);
       addToast("Description refined with AI", "success");
       // Auto-resize textarea after content update
@@ -933,7 +933,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     } finally {
       setIsRefining(false);
     }
-  }, [description, isRefining, addToast]);
+  }, [description, isRefining, addToast, projectId]);
 
   const truncate = (s: string, len: number) =>
     s.length > len ? s.slice(0, len) + "…" : s;

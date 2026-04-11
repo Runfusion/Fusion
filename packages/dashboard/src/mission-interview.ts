@@ -12,9 +12,11 @@
  * - Rate limiting per IP
  * - Session expiration and cleanup
  * - SSE streaming via MissionInterviewStreamManager
+ * - Prompt override support for project-level customization
  */
 
-import type { PlanningQuestion } from "@fusion/core";
+import type { PlanningQuestion, PromptOverrideMap } from "@fusion/core";
+import { resolvePrompt } from "@fusion/core";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { AiSessionStore, AiSessionRow } from "./ai-session-store.js";
@@ -688,9 +690,13 @@ function disposeMissionAgentForRetry(session: MissionInterviewSession): void {
 /**
  * Initialize the AI agent for a session and start the first turn.
  */
-async function initializeAgent(session: MissionInterviewSession, rootDir: string): Promise<void> {
+async function initializeAgent(
+  session: MissionInterviewSession,
+  rootDir: string,
+  promptOverrides?: PromptOverrideMap,
+): Promise<void> {
   try {
-    session.agent = await createMissionInterviewAgent(session, rootDir);
+    session.agent = await createMissionInterviewAgent(session, rootDir, promptOverrides);
     session.updatedAt = new Date();
 
     // Send initial message to get first question
@@ -714,12 +720,15 @@ async function initializeAgent(session: MissionInterviewSession, rootDir: string
 async function createMissionInterviewAgent(
   session: MissionInterviewSession,
   rootDir: string,
+  promptOverrides?: PromptOverrideMap,
 ): Promise<AgentResult> {
   await engineReady;
 
+  const effectivePrompt = resolvePrompt("mission-interview-system", promptOverrides);
+
   return createKbAgent({
     cwd: rootDir,
-    systemPrompt: MISSION_INTERVIEW_SYSTEM_PROMPT,
+    systemPrompt: effectivePrompt,
     tools: "readonly",
     onThinking: (delta: string) => {
       session.thinkingOutput += delta;
@@ -761,6 +770,7 @@ async function ensureMissionInterviewAgent(
   session: MissionInterviewSession,
   rootDir: string | undefined,
   historyForReplay: Array<{ question: PlanningQuestion; response: unknown }>,
+  promptOverrides?: PromptOverrideMap,
 ): Promise<void> {
   if (session.agent) {
     return;
@@ -772,7 +782,7 @@ async function ensureMissionInterviewAgent(
     );
   }
 
-  session.agent = await createMissionInterviewAgent(session, rootDir);
+  session.agent = await createMissionInterviewAgent(session, rootDir, promptOverrides);
 
   if (historyForReplay.length === 0) {
     return;
@@ -932,7 +942,8 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
 export async function createMissionInterviewSession(
   ip: string,
   missionTitle: string,
-  rootDir: string
+  rootDir: string,
+  promptOverrides?: PromptOverrideMap,
 ): Promise<string> {
   if (!checkRateLimit(ip)) {
     const resetTime = getRateLimitResetTime(ip);
@@ -960,7 +971,7 @@ export async function createMissionInterviewSession(
   persistMissionSession(session, "generating");
 
   // Initialize AI agent in background
-  initializeAgent(session, rootDir).catch((err) => {
+  initializeAgent(session, rootDir, promptOverrides).catch((err) => {
     console.error(`[mission-interview] Failed to initialize agent for session ${sessionId}:`, err);
     persistMissionSession(session, "error", err.message || "Failed to initialize AI agent");
     missionInterviewStreamManager.broadcast(sessionId, {
@@ -980,6 +991,7 @@ export async function submitMissionInterviewResponse(
   sessionId: string,
   responses: Record<string, unknown>,
   rootDir?: string,
+  promptOverrides?: PromptOverrideMap,
 ): Promise<MissionInterviewResponse> {
   const session = getMissionInterviewSession(sessionId);
   if (!session) {
@@ -1001,7 +1013,7 @@ export async function submitMissionInterviewResponse(
 
   if (!session.agent) {
     const replayHistory = session.history.slice(0, -1);
-    await ensureMissionInterviewAgent(session, rootDir, replayHistory);
+    await ensureMissionInterviewAgent(session, rootDir, replayHistory, promptOverrides);
   }
 
   const message = formatResponseForAgent(session.currentQuestion, responses);
@@ -1025,7 +1037,11 @@ export async function submitMissionInterviewResponse(
   };
 }
 
-export async function retryMissionInterviewSession(sessionId: string, rootDir: string): Promise<void> {
+export async function retryMissionInterviewSession(
+  sessionId: string,
+  rootDir: string,
+  promptOverrides?: PromptOverrideMap,
+): Promise<void> {
   const session = getMissionInterviewSession(sessionId);
   if (!session) {
     throw new SessionNotFoundError(`Mission interview session ${sessionId} not found or expired`);
@@ -1049,7 +1065,7 @@ export async function retryMissionInterviewSession(sessionId: string, rootDir: s
   persistMissionSession(session, "generating");
 
   if (session.history.length === 0) {
-    await ensureMissionInterviewAgent(session, rootDir, []);
+    await ensureMissionInterviewAgent(session, rootDir, [], promptOverrides);
     await continueAgentConversation(
       session,
       `I want to plan a mission: "${session.missionTitle}". Interview me to understand what I need, then produce a structured plan.`,
@@ -1060,7 +1076,7 @@ export async function retryMissionInterviewSession(sessionId: string, rootDir: s
   const replayHistory = session.history.slice(0, -1);
   const lastEntry = session.history[session.history.length - 1];
 
-  await ensureMissionInterviewAgent(session, rootDir, replayHistory);
+  await ensureMissionInterviewAgent(session, rootDir, replayHistory, promptOverrides);
   const replayMessage = formatResponseForAgent(
     lastEntry.question,
     coerceResponseRecord(lastEntry.question, lastEntry.response),

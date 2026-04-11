@@ -1829,11 +1829,12 @@ export interface RefineTextResponse {
  * Refine task description text using AI.
  * @param text - The text to refine (1-2000 characters)
  * @param type - The refinement type: clarify, add-details, expand, or simplify
+ * @param projectId - Optional project ID for scoped settings resolution
  * @returns The refined text
  * @throws Error with message for rate limit (429), invalid type (422), validation (400), or server errors
  */
-export async function refineText(text: string, type: RefinementType): Promise<string> {
-  const response = await api<RefineTextResponse>("/ai/refine-text", {
+export async function refineText(text: string, type: RefinementType, projectId?: string): Promise<string> {
+  const response = await api<RefineTextResponse>(withProjectId("/ai/refine-text", projectId), {
     method: "POST",
     body: JSON.stringify({ text, type }),
   });

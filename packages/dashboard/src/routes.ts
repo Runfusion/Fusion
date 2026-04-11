@@ -7690,7 +7690,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const { text, type } = req.body;
       const ip = req.ip || req.socket.remoteAddress || "unknown";
-      const rootDir = store.getRootDir();
+
+      // Get scoped store and settings for prompt overrides
+      const scopedStore = await getScopedStore(req);
+      const rootDir = scopedStore.getRootDir();
+      const settings = await scopedStore.getSettings();
 
       const {
         validateRefineRequest,
@@ -7723,8 +7727,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw err;
       }
 
-      // Process refinement
-      const refined = await refineText(validated.text, validated.type, rootDir);
+      // Process refinement with prompt overrides
+      const refined = await refineText(
+        validated.text,
+        validated.type,
+        rootDir,
+        settings.promptOverrides,
+      );
       res.json({ refined });
     } catch (err: any) {
       if (err instanceof ApiError) {

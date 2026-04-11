@@ -1892,6 +1892,21 @@ describe("refineText", () => {
     });
   });
 
+  it("passes projectId as query param for scoped settings resolution", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(
+      mockFetchResponse(true, { refined: "Refined with scoped settings" })
+    );
+
+    const result = await refineText("Original text", "clarify", "proj-123");
+
+    expect(result).toBe("Refined with scoped settings");
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/ai/refine-text?projectId=proj-123", {
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+      body: JSON.stringify({ text: "Original text", type: "clarify" }),
+    });
+  });
+
   it("works with all four refinement types", async () => {
     globalThis.fetch = vi.fn().mockReturnValue(
       mockFetchResponse(true, { refined: "Refined" })

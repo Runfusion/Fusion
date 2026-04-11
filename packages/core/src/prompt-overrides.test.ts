@@ -82,7 +82,7 @@ describe("prompt-overrides", () => {
   describe("getPromptKeysForRole", () => {
     it("should return all keys for executor role", () => {
       const keys = getPromptKeysForRole("executor");
-      expect(keys).toHaveLength(7);
+      expect(keys).toHaveLength(8);
       expect(keys.map((k) => k.key)).toContain("executor-welcome");
       expect(keys.map((k) => k.key)).toContain("executor-guardrails");
       expect(keys.map((k) => k.key)).toContain("executor-spawning");
@@ -90,14 +90,16 @@ describe("prompt-overrides", () => {
       expect(keys.map((k) => k.key)).toContain("agent-generation-system");
       expect(keys.map((k) => k.key)).toContain("workflow-step-refine");
       expect(keys.map((k) => k.key)).toContain("subtask-breakdown-system");
+      expect(keys.map((k) => k.key)).toContain("ai-refine-system");
     });
 
     it("should return all keys for triage role", () => {
       const keys = getPromptKeysForRole("triage");
-      expect(keys).toHaveLength(3);
+      expect(keys).toHaveLength(4);
       expect(keys.map((k) => k.key)).toContain("triage-welcome");
       expect(keys.map((k) => k.key)).toContain("triage-context");
       expect(keys.map((k) => k.key)).toContain("planning-system");
+      expect(keys.map((k) => k.key)).toContain("mission-interview-system");
     });
 
     it("should return single key for reviewer role", () => {

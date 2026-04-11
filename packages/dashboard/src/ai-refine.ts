@@ -8,7 +8,11 @@
  * - Rate limiting per IP (10 requests per hour)
  * - Dynamic import of @fusion/engine for AI agent creation
  * - Text length validation (1-2000 characters)
+ * - Prompt override support for project-level customization
  */
+
+import type { PromptOverrideMap } from "@fusion/core";
+import { resolvePrompt } from "@fusion/core";
 
 // Dynamic import for @fusion/engine to avoid resolution issues in test environment
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports, @typescript-eslint/no-explicit-any
@@ -252,12 +256,14 @@ export function validateRefineRequest(
  * @param text - The text to refine
  * @param type - The type of refinement to apply
  * @param rootDir - Project root directory for AI agent context
+ * @param promptOverrides - Optional prompt overrides from project settings
  * @returns The refined text
  */
 export async function refineText(
   text: string,
   type: RefinementType,
-  rootDir: string
+  rootDir: string,
+  promptOverrides?: PromptOverrideMap,
 ): Promise<string> {
   // Ensure engine is loaded before using createKbAgent
   await engineReady;
@@ -266,9 +272,11 @@ export async function refineText(
     throw new AiServiceError("AI engine not available");
   }
 
+  const effectivePrompt = resolvePrompt("ai-refine-system", promptOverrides);
+
   const agentResult = await createKbAgent({
     cwd: rootDir,
-    systemPrompt: REFINE_SYSTEM_PROMPT,
+    systemPrompt: effectivePrompt,
     tools: "readonly",
   });
 

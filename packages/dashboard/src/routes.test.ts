@@ -11554,3 +11554,119 @@ describe("Agent Reflection routes", () => {
     });
   });
 });
+
+// ── AI Refine Text Route with Scoped Settings ────────────────────────────────
+
+describe("POST /api/ai/refine-text with projectId scoping", () => {
+  const projectId = "proj-refine-test";
+
+  let defaultStore: TaskStore;
+  let scopedStore: TaskStore;
+
+  beforeEach(() => {
+    defaultStore = createMockStore();
+    scopedStore = createMockStore();
+
+    vi.spyOn(projectStoreResolver, "getOrCreateProjectStore").mockResolvedValue(scopedStore);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(defaultStore));
+    return app;
+  }
+
+  it("uses scoped store when projectId is provided", async () => {
+    (scopedStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      promptOverrides: {
+        "ai-refine-system": "Custom AI refine prompt",
+      },
+    });
+
+    // The route will call refineText which requires AI engine
+    // We verify that scoped store is correctly used by checking settings was called
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/ai/refine-text?projectId=${projectId}`,
+      JSON.stringify({ text: "Task description", type: "clarify" }),
+      { "Content-Type": "application/json" }
+    );
+
+    // The route should call scoped store's getSettings (it may fail on AI call but settings was checked)
+    expect(projectStoreResolver.getOrCreateProjectStore).toHaveBeenCalledWith(projectId);
+    expect(scopedStore.getSettings).toHaveBeenCalled();
+    expect(scopedStore.getRootDir).toHaveBeenCalled();
+  });
+
+  it("returns 400 for missing text field", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/ai/refine-text?projectId=${projectId}`,
+      JSON.stringify({ type: "clarify" }),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("text is required");
+  });
+
+  it("returns 400 for missing type field", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/ai/refine-text?projectId=${projectId}`,
+      JSON.stringify({ text: "Some text" }),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("type is required");
+  });
+
+  it("returns 422 for invalid refinement type", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/ai/refine-text?projectId=${projectId}`,
+      JSON.stringify({ text: "Some text", type: "invalid-type" }),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toContain("type must be one of");
+  });
+
+  it("returns 400 when text is empty", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/ai/refine-text",
+      JSON.stringify({ text: "", type: "clarify" }),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("at least 1 character");
+  });
+
+  it("returns 400 when text exceeds 2000 characters", async () => {
+    const longText = "a".repeat(2001);
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/ai/refine-text",
+      JSON.stringify({ text: longText, type: "clarify" }),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("not exceed 2000 characters");
+  });
+});

@@ -15,15 +15,22 @@ import {
   RATE_LIMIT_WINDOW_MS,
 } from "./ai-refine.js";
 
+// Hoisted mock factory
+const { mockCreateKbAgent } = vi.hoisted(() => ({
+  mockCreateKbAgent: vi.fn(),
+}));
+
 // Mock the engine module to avoid dynamic import issues in tests
 vi.mock("@fusion/engine", () => ({
-  createKbAgent: vi.fn().mockResolvedValue(null),
+  createKbAgent: mockCreateKbAgent,
 }));
 
 describe("ai-refine module", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     __resetRefineState();
+    vi.clearAllMocks();
+    mockCreateKbAgent.mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -285,6 +292,100 @@ describe("ai-refine module", () => {
       // Should be like starting fresh
       expect(getRateLimitResetTime(ip)).toBeNull();
       expect(checkRateLimit(ip)).toBe(true);
+    });
+  });
+
+  describe("prompt override regression", () => {
+    const customPrompt = "You are a custom refine assistant.";
+
+    function createRefineMockAgent(responseText: string) {
+      return {
+        session: {
+          state: {
+            messages: [
+              { role: "assistant", content: responseText },
+            ],
+          },
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+        },
+      };
+    }
+
+    it("uses default prompt when no overrides provided", async () => {
+      const mockAgent = createRefineMockAgent("Refined text here");
+      mockCreateKbAgent.mockResolvedValueOnce(mockAgent);
+
+      await refineText("some text", "clarify", "/tmp/project");
+
+      expect(mockCreateKbAgent).toHaveBeenCalled();
+      const call = mockCreateKbAgent.mock.calls[0];
+      expect(call[0].systemPrompt).toMatch(/^You are a text refinement assistant/);
+    });
+
+    it("uses override prompt when promptOverrides provided", async () => {
+      const mockAgent = createRefineMockAgent("Refined text here");
+      mockCreateKbAgent.mockResolvedValueOnce(mockAgent);
+
+      await refineText("some text", "clarify", "/tmp/project", {
+        "ai-refine-system": customPrompt,
+      });
+
+      expect(mockCreateKbAgent).toHaveBeenCalled();
+      const call = mockCreateKbAgent.mock.calls[0];
+      expect(call[0].systemPrompt).toBe(customPrompt);
+    });
+
+    it("falls back to default prompt when override is empty string", async () => {
+      const mockAgent = createRefineMockAgent("Refined text here");
+      mockCreateKbAgent.mockResolvedValueOnce(mockAgent);
+
+      await refineText("some text", "simplify", "/tmp/project", {
+        "ai-refine-system": "",
+      });
+
+      expect(mockCreateKbAgent).toHaveBeenCalled();
+      const call = mockCreateKbAgent.mock.calls[0];
+      expect(call[0].systemPrompt).toMatch(/^You are a text refinement assistant/);
+    });
+
+    it("does not introduce unexpected model/provider override fields in createKbAgent", async () => {
+      const mockAgent = createRefineMockAgent("Refined text here");
+      mockCreateKbAgent.mockResolvedValueOnce(mockAgent);
+
+      await refineText("some text", "expand", "/tmp/project", {
+        "ai-refine-system": customPrompt,
+      });
+
+      expect(mockCreateKbAgent).toHaveBeenCalled();
+      const call = mockCreateKbAgent.mock.calls[0];
+      const agentConfig = call[0];
+
+      // Verify only expected fields are present
+      expect(agentConfig).toHaveProperty("cwd");
+      expect(agentConfig).toHaveProperty("systemPrompt");
+      expect(agentConfig).toHaveProperty("tools");
+
+      // Verify no unexpected model override fields
+      expect(agentConfig).not.toHaveProperty("modelProvider");
+      expect(agentConfig).not.toHaveProperty("modelId");
+      expect(agentConfig).not.toHaveProperty("provider");
+      expect(agentConfig).not.toHaveProperty("model");
+    });
+
+    it("prompt overrides do not affect other prompt keys", async () => {
+      const mockAgent = createRefineMockAgent("Refined text here");
+      mockCreateKbAgent.mockResolvedValueOnce(mockAgent);
+
+      // Provide overrides for a different key only
+      await refineText("some text", "clarify", "/tmp/project", {
+        "workflow-step-refine": "Should not affect AI refine",
+      });
+
+      expect(mockCreateKbAgent).toHaveBeenCalled();
+      const call = mockCreateKbAgent.mock.calls[0];
+      // AI refine should use its own default prompt, not affected by workflow-step-refine override
+      expect(call[0].systemPrompt).toMatch(/^You are a text refinement assistant/);
     });
   });
 });
