@@ -2706,3 +2706,8 @@ export interface Mailbox {
   /** Most recent message (if any) */
   lastMessage?: Message;
 }
+
+
+// Re-export PROMPT_KEY_CATALOG for backward compatibility with vite alias
+export { PROMPT_KEY_CATALOG } from "./prompt-overrides.js";
+
