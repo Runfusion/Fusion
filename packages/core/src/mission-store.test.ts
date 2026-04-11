@@ -1917,6 +1917,542 @@ describe("MissionStore", () => {
       expect(updatedF1.taskId).toBeTruthy();
     });
   });
+
+  // ── Contract Assertion Tests ────────────────────────────────────────
+
+  describe("Contract Assertions", () => {
+    let mission: ReturnType<typeof store.createMission>;
+    let milestone: ReturnType<typeof store.addMilestone>;
+
+    beforeEach(() => {
+      mission = store.createMission({ title: "Test Mission" });
+      milestone = store.addMilestone(mission.id, { title: "Test Milestone" });
+    });
+
+    it("creates an assertion with correct defaults", () => {
+      const assertion = store.addContractAssertion(milestone.id, {
+        title: "Auth works",
+        assertion: "Users can log in and log out",
+      });
+
+      expect(assertion.id).toMatch(/^CA-/);
+      expect(assertion.milestoneId).toBe(milestone.id);
+      expect(assertion.title).toBe("Auth works");
+      expect(assertion.assertion).toBe("Users can log in and log out");
+      expect(assertion.status).toBe("pending");
+      expect(assertion.orderIndex).toBe(0);
+      expect(assertion.createdAt).toBeTruthy();
+      expect(assertion.updatedAt).toBeTruthy();
+    });
+
+    it("creates assertions with auto-incrementing orderIndex", () => {
+      const a1 = store.addContractAssertion(milestone.id, {
+        title: "First",
+        assertion: "First assertion",
+      });
+      const a2 = store.addContractAssertion(milestone.id, {
+        title: "Second",
+        assertion: "Second assertion",
+      });
+      const a3 = store.addContractAssertion(milestone.id, {
+        title: "Third",
+        assertion: "Third assertion",
+      });
+
+      expect(a1.orderIndex).toBe(0);
+      expect(a2.orderIndex).toBe(1);
+      expect(a3.orderIndex).toBe(2);
+    });
+
+    it("lists assertions in deterministic order", () => {
+      store.addContractAssertion(milestone.id, {
+        title: "First",
+        assertion: "First assertion",
+      });
+      store.addContractAssertion(milestone.id, {
+        title: "Second",
+        assertion: "Second assertion",
+      });
+
+      const assertions = store.listContractAssertions(milestone.id);
+
+      expect(assertions).toHaveLength(2);
+      expect(assertions[0].title).toBe("First");
+      expect(assertions[1].title).toBe("Second");
+    });
+
+    it("gets an assertion by id", () => {
+      const created = store.addContractAssertion(milestone.id, {
+        title: "Get Test",
+        assertion: "Test assertion",
+      });
+
+      const retrieved = store.getContractAssertion(created.id);
+
+      expect(retrieved).toBeDefined();
+      expect(retrieved!.id).toBe(created.id);
+      expect(retrieved!.title).toBe("Get Test");
+    });
+
+    it("returns undefined for non-existent assertion", () => {
+      const result = store.getContractAssertion("CA-NONEXISTENT");
+      expect(result).toBeUndefined();
+    });
+
+    it("updates an assertion", () => {
+      const assertion = store.addContractAssertion(milestone.id, {
+        title: "Original",
+        assertion: "Original assertion",
+      });
+
+      const updated = store.updateContractAssertion(assertion.id, {
+        title: "Updated",
+        status: "passed",
+      });
+
+      expect(updated.id).toBe(assertion.id);
+      expect(updated.title).toBe("Updated");
+      expect(updated.status).toBe("passed");
+      expect(updated.assertion).toBe("Original assertion"); // unchanged
+    });
+
+    it("updates assertion status", () => {
+      const assertion = store.addContractAssertion(milestone.id, {
+        title: "Status Test",
+        assertion: "Test",
+        status: "pending",
+      });
+
+      const passed = store.updateContractAssertion(assertion.id, { status: "passed" });
+      expect(passed.status).toBe("passed");
+
+      const failed = store.updateContractAssertion(assertion.id, { status: "failed" });
+      expect(failed.status).toBe("failed");
+
+      const blocked = store.updateContractAssertion(assertion.id, { status: "blocked" });
+      expect(blocked.status).toBe("blocked");
+    });
+
+    it("deletes an assertion", () => {
+      const assertion = store.addContractAssertion(milestone.id, {
+        title: "Delete Test",
+        assertion: "Test",
+      });
+
+      store.deleteContractAssertion(assertion.id);
+
+      const retrieved = store.getContractAssertion(assertion.id);
+      expect(retrieved).toBeUndefined();
+    });
+
+    it("reorders assertions", () => {
+      const a1 = store.addContractAssertion(milestone.id, { title: "A", assertion: "A" });
+      const a2 = store.addContractAssertion(milestone.id, { title: "B", assertion: "B" });
+      const a3 = store.addContractAssertion(milestone.id, { title: "C", assertion: "C" });
+
+      store.reorderContractAssertions(milestone.id, [a3.id, a1.id, a2.id]);
+
+      const assertions = store.listContractAssertions(milestone.id);
+      expect(assertions[0].id).toBe(a3.id);
+      expect(assertions[1].id).toBe(a1.id);
+      expect(assertions[2].id).toBe(a2.id);
+    });
+
+    it("throws when reordering with non-existent assertion", () => {
+      expect(() =>
+        store.reorderContractAssertions(milestone.id, ["CA-NONEXISTENT"])
+      ).toThrow("Assertion CA-NONEXISTENT not found");
+    });
+
+    it("throws when reordering assertion from different milestone", async () => {
+      const milestone2 = store.addMilestone(mission.id, { title: "Milestone 2" });
+      const a1 = store.addContractAssertion(milestone.id, { title: "A", assertion: "A" });
+      const a2 = store.addContractAssertion(milestone2.id, { title: "B", assertion: "B" });
+
+      expect(() =>
+        store.reorderContractAssertions(milestone.id, [a1.id, a2.id])
+      ).toThrow(`Assertion ${a2.id} does not belong to milestone ${milestone.id}`);
+    });
+
+    it("emits assertion:created event", () => {
+      const events: any[] = [];
+      store.on("assertion:created", (a) => events.push(a));
+
+      const assertion = store.addContractAssertion(milestone.id, {
+        title: "Event Test",
+        assertion: "Test",
+      });
+
+      expect(events).toHaveLength(1);
+      expect(events[0].id).toBe(assertion.id);
+    });
+
+    it("emits assertion:updated event", () => {
+      const events: any[] = [];
+      store.on("assertion:updated", (a) => events.push(a));
+
+      const assertion = store.addContractAssertion(milestone.id, {
+        title: "Event Test",
+        assertion: "Test",
+      });
+      store.updateContractAssertion(assertion.id, { status: "passed" });
+
+      expect(events).toHaveLength(1);
+      expect(events[0].status).toBe("passed");
+    });
+
+    it("emits assertion:deleted event", () => {
+      const events: any[] = [];
+      store.on("assertion:deleted", (id) => events.push(id));
+
+      const assertion = store.addContractAssertion(milestone.id, {
+        title: "Event Test",
+        assertion: "Test",
+      });
+      store.deleteContractAssertion(assertion.id);
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toBe(assertion.id);
+    });
+
+    it("throws when creating assertion for non-existent milestone", () => {
+      expect(() =>
+        store.addContractAssertion("MS-NONEXISTENT", {
+          title: "Test",
+          assertion: "Test",
+        })
+      ).toThrow("Milestone MS-NONEXISTENT not found");
+    });
+  });
+
+  // ── Feature-Assertion Link Tests ───────────────────────────────────
+
+  describe("Feature-Assertion Links", () => {
+    let mission: ReturnType<typeof store.createMission>;
+    let milestone: ReturnType<typeof store.addMilestone>;
+    let slice: ReturnType<typeof store.addSlice>;
+    let feature: ReturnType<typeof store.addFeature>;
+    let assertion: ReturnType<typeof store.addContractAssertion>;
+
+    beforeEach(() => {
+      mission = store.createMission({ title: "Test Mission" });
+      milestone = store.addMilestone(mission.id, { title: "Test Milestone" });
+      slice = store.addSlice(milestone.id, { title: "Test Slice" });
+      feature = store.addFeature(slice.id, { title: "Test Feature" });
+      assertion = store.addContractAssertion(milestone.id, {
+        title: "Test Assertion",
+        assertion: "Test assertion content",
+      });
+    });
+
+    it("links a feature to an assertion", () => {
+      store.linkFeatureToAssertion(feature.id, assertion.id);
+
+      const linkedAssertions = store.listAssertionsForFeature(feature.id);
+      expect(linkedAssertions).toHaveLength(1);
+      expect(linkedAssertions[0].id).toBe(assertion.id);
+    });
+
+    it("lists assertions for a feature", () => {
+      const a1 = store.addContractAssertion(milestone.id, { title: "A1", assertion: "A1" });
+      const a2 = store.addContractAssertion(milestone.id, { title: "A2", assertion: "A2" });
+
+      store.linkFeatureToAssertion(feature.id, a1.id);
+      store.linkFeatureToAssertion(feature.id, a2.id);
+
+      const linked = store.listAssertionsForFeature(feature.id);
+      expect(linked).toHaveLength(2);
+      expect(linked.map((a) => a.title).sort()).toEqual(["A1", "A2"]);
+    });
+
+    it("lists features for an assertion", () => {
+      const f2 = store.addFeature(slice.id, { title: "Feature 2" });
+      const f3 = store.addFeature(slice.id, { title: "Feature 3" });
+
+      store.linkFeatureToAssertion(feature.id, assertion.id);
+      store.linkFeatureToAssertion(f2.id, assertion.id);
+      store.linkFeatureToAssertion(f3.id, assertion.id);
+
+      const linked = store.listFeaturesForAssertion(assertion.id);
+      expect(linked).toHaveLength(3);
+    });
+
+    it("unlinks a feature from an assertion", () => {
+      store.linkFeatureToAssertion(feature.id, assertion.id);
+      store.unlinkFeatureFromAssertion(feature.id, assertion.id);
+
+      const linked = store.listAssertionsForFeature(feature.id);
+      expect(linked).toHaveLength(0);
+    });
+
+    it("throws when linking already-linked feature-assertion pair", () => {
+      store.linkFeatureToAssertion(feature.id, assertion.id);
+
+      expect(() =>
+        store.linkFeatureToAssertion(feature.id, assertion.id)
+      ).toThrow("Feature " + feature.id + " is already linked to assertion " + assertion.id);
+    });
+
+    it("throws when unlinking non-existent link", () => {
+      expect(() =>
+        store.unlinkFeatureFromAssertion(feature.id, assertion.id)
+      ).toThrow("Feature " + feature.id + " is not linked to assertion " + assertion.id);
+    });
+
+    it("throws when linking non-existent feature", () => {
+      expect(() =>
+        store.linkFeatureToAssertion("F-NONEXISTENT", assertion.id)
+      ).toThrow("Feature F-NONEXISTENT not found");
+    });
+
+    it("throws when linking to non-existent assertion", () => {
+      expect(() =>
+        store.linkFeatureToAssertion(feature.id, "CA-NONEXISTENT")
+      ).toThrow("Assertion CA-NONEXISTENT not found");
+    });
+
+    it("emits assertion:linked event", () => {
+      const events: any[] = [];
+      store.on("assertion:linked", (e) => events.push(e));
+
+      store.linkFeatureToAssertion(feature.id, assertion.id);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].featureId).toBe(feature.id);
+      expect(events[0].assertionId).toBe(assertion.id);
+    });
+
+    it("emits assertion:unlinked event", () => {
+      store.linkFeatureToAssertion(feature.id, assertion.id);
+
+      const events: any[] = [];
+      store.on("assertion:unlinked", (e) => events.push(e));
+
+      store.unlinkFeatureFromAssertion(feature.id, assertion.id);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].featureId).toBe(feature.id);
+      expect(events[0].assertionId).toBe(assertion.id);
+    });
+  });
+
+  // ── Validation Rollup Tests ─────────────────────────────────────────
+
+  describe("Validation Rollup", () => {
+    let mission: ReturnType<typeof store.createMission>;
+    let milestone: ReturnType<typeof store.addMilestone>;
+
+    beforeEach(() => {
+      mission = store.createMission({ title: "Test Mission" });
+      milestone = store.addMilestone(mission.id, { title: "Test Milestone" });
+    });
+
+    it("rolls up not_started when no assertions exist", () => {
+      const rollup = store.getMilestoneValidationRollup(milestone.id);
+
+      expect(rollup.milestoneId).toBe(milestone.id);
+      expect(rollup.totalAssertions).toBe(0);
+      expect(rollup.passedAssertions).toBe(0);
+      expect(rollup.failedAssertions).toBe(0);
+      expect(rollup.blockedAssertions).toBe(0);
+      expect(rollup.pendingAssertions).toBe(0);
+      expect(rollup.unlinkedAssertions).toBe(0);
+      expect(rollup.state).toBe("not_started");
+    });
+
+    it("rolls up needs_coverage when assertions are not linked", () => {
+      store.addContractAssertion(milestone.id, {
+        title: "A1",
+        assertion: "Test",
+      });
+      store.addContractAssertion(milestone.id, {
+        title: "A2",
+        assertion: "Test",
+      });
+
+      const rollup = store.getMilestoneValidationRollup(milestone.id);
+
+      expect(rollup.totalAssertions).toBe(2);
+      expect(rollup.unlinkedAssertions).toBe(2);
+      expect(rollup.state).toBe("needs_coverage");
+    });
+
+    it("rolls up ready when assertions are linked but not all passed", () => {
+      const slice = store.addSlice(milestone.id, { title: "Slice" });
+      const feature = store.addFeature(slice.id, { title: "Feature" });
+
+      const a1 = store.addContractAssertion(milestone.id, { title: "A1", assertion: "T" });
+      const a2 = store.addContractAssertion(milestone.id, { title: "A2", assertion: "T" });
+
+      store.linkFeatureToAssertion(feature.id, a1.id);
+      store.linkFeatureToAssertion(feature.id, a2.id);
+      store.updateContractAssertion(a1.id, { status: "passed" });
+
+      const rollup = store.getMilestoneValidationRollup(milestone.id);
+
+      expect(rollup.totalAssertions).toBe(2);
+      expect(rollup.passedAssertions).toBe(1);
+      expect(rollup.unlinkedAssertions).toBe(0);
+      expect(rollup.state).toBe("ready");
+    });
+
+    it("rolls up passed when all assertions are passed", () => {
+      const slice = store.addSlice(milestone.id, { title: "Slice" });
+      const feature = store.addFeature(slice.id, { title: "Feature" });
+
+      const a1 = store.addContractAssertion(milestone.id, { title: "A1", assertion: "T" });
+      const a2 = store.addContractAssertion(milestone.id, { title: "A2", assertion: "T" });
+
+      store.linkFeatureToAssertion(feature.id, a1.id);
+      store.linkFeatureToAssertion(feature.id, a2.id);
+      store.updateContractAssertion(a1.id, { status: "passed" });
+      store.updateContractAssertion(a2.id, { status: "passed" });
+
+      const rollup = store.getMilestoneValidationRollup(milestone.id);
+
+      expect(rollup.state).toBe("passed");
+    });
+
+    it("rolls up failed when any assertion has failed status", () => {
+      store.addContractAssertion(milestone.id, { title: "A1", assertion: "T" });
+      store.addContractAssertion(milestone.id, { title: "A2", assertion: "T" });
+
+      const [a1] = store.listContractAssertions(milestone.id);
+      store.updateContractAssertion(a1.id, { status: "failed" });
+
+      const rollup = store.getMilestoneValidationRollup(milestone.id);
+
+      expect(rollup.state).toBe("failed");
+      expect(rollup.failedAssertions).toBe(1);
+    });
+
+    it("rolls up blocked when any assertion is blocked (before failed)", () => {
+      const a1 = store.addContractAssertion(milestone.id, { title: "A1", assertion: "T" });
+      store.updateContractAssertion(a1.id, { status: "failed" });
+      const a2 = store.addContractAssertion(milestone.id, { title: "A2", assertion: "T" });
+      store.updateContractAssertion(a2.id, { status: "blocked" });
+
+      // Failed takes precedence over blocked in the precedence order
+      const rollup = store.getMilestoneValidationRollup(milestone.id);
+
+      expect(rollup.state).toBe("failed");
+    });
+
+    it("rolls up blocked when no failures but has blocked", () => {
+      store.addContractAssertion(milestone.id, { title: "A1", assertion: "T" });
+      store.addContractAssertion(milestone.id, { title: "A2", assertion: "T" });
+
+      const [a1] = store.listContractAssertions(milestone.id);
+      store.updateContractAssertion(a1.id, { status: "blocked" });
+
+      const rollup = store.getMilestoneValidationRollup(milestone.id);
+
+      expect(rollup.state).toBe("blocked");
+      expect(rollup.blockedAssertions).toBe(1);
+    });
+
+    it("persists validation state on milestone after assertion change", () => {
+      store.addContractAssertion(milestone.id, { title: "A1", assertion: "T" });
+      store.addContractAssertion(milestone.id, { title: "A2", assertion: "T" });
+
+      // Initial state should be needs_coverage
+      let m = store.getMilestone(milestone.id)!;
+      expect(m.validationState).toBe("needs_coverage");
+
+      // Link all assertions
+      const slice = store.addSlice(milestone.id, { title: "Slice" });
+      const feature = store.addFeature(slice.id, { title: "Feature" });
+      const assertions = store.listContractAssertions(milestone.id);
+      for (const a of assertions) {
+        store.linkFeatureToAssertion(feature.id, a.id);
+      }
+
+      // After linking, state should be ready
+      m = store.getMilestone(milestone.id)!;
+      expect(m.validationState).toBe("ready");
+    });
+
+    it("emits milestone:validation:updated when assertions change", () => {
+      const events: any[] = [];
+      store.on("milestone:validation:updated", (e) => events.push(e));
+
+      store.addContractAssertion(milestone.id, { title: "A1", assertion: "T" });
+
+      expect(events).toHaveLength(1);
+      expect(events[0].milestoneId).toBe(milestone.id);
+      expect(events[0].state).toBe("needs_coverage");
+      expect(events[0].rollup.totalAssertions).toBe(1);
+    });
+
+    it("emits milestone:validation:updated when links change", () => {
+      const slice = store.addSlice(milestone.id, { title: "Slice" });
+      const feature = store.addFeature(slice.id, { title: "Feature" });
+      const assertion = store.addContractAssertion(milestone.id, { title: "A1", assertion: "T" });
+
+      const events: any[] = [];
+      store.on("milestone:validation:updated", (e) => events.push(e));
+
+      store.linkFeatureToAssertion(feature.id, assertion.id);
+
+      // Should emit twice: once from assertion add, once from link
+      expect(events.length).toBeGreaterThanOrEqual(1);
+      expect(events[events.length - 1].state).toBe("ready"); // linked but not passed
+      expect(events[events.length - 1].rollup.unlinkedAssertions).toBe(0);
+    });
+  });
+
+  // ── buildEnrichedDescription with Assertions Tests ────────────────────
+
+  describe("buildEnrichedDescription with Assertions", () => {
+    it("includes linked assertions in enriched description", () => {
+      const mission = store.createMission({ title: "Auth Mission" });
+      const milestone = store.addMilestone(mission.id, { title: "Core Auth" });
+      const slice = store.addSlice(milestone.id, { title: "Login" });
+      const feature = store.addFeature(slice.id, {
+        title: "Login Form",
+        description: "The login form component",
+      });
+
+      const a1 = store.addContractAssertion(milestone.id, {
+        title: "Validates input",
+        assertion: "The form must validate email and password fields",
+      });
+      const a2 = store.addContractAssertion(milestone.id, {
+        title: "Shows errors",
+        assertion: "Invalid credentials must show an error message",
+      });
+
+      store.linkFeatureToAssertion(feature.id, a1.id);
+      store.linkFeatureToAssertion(feature.id, a2.id);
+
+      const description = store.buildEnrichedDescription(feature.id);
+
+      expect(description).toContain("## Mission: Auth Mission");
+      expect(description).toContain("## Milestone: Core Auth");
+      expect(description).toContain("## Slice: Login");
+      expect(description).toContain("## Feature: Login Form");
+      expect(description).toContain("The login form component");
+      expect(description).toContain("## Contract Assertions");
+      expect(description).toContain("Validates input");
+      expect(description).toContain("Shows errors");
+      expect(description).toContain("The form must validate email and password fields");
+    });
+
+    it("does not include Contract Assertions section when no assertions linked", () => {
+      const mission = store.createMission({ title: "Test Mission" });
+      const milestone = store.addMilestone(mission.id, { title: "Milestone" });
+      const slice = store.addSlice(milestone.id, { title: "Slice" });
+      const feature = store.addFeature(slice.id, { title: "Feature" });
+
+      // Create assertions but don't link them
+      store.addContractAssertion(milestone.id, { title: "A1", assertion: "T" });
+
+      const description = store.buildEnrichedDescription(feature.id);
+
+      expect(description).toContain("## Feature: Feature");
+      expect(description).not.toContain("## Contract Assertions");
+    });
+  });
 });
 
 // vi import for vitest mocking
