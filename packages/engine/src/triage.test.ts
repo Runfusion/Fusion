@@ -871,6 +871,48 @@ describe("approved triage recovery", () => {
     );
   });
 
+  it("materializes prompt steps before moving approved tasks to todo", async () => {
+    const parsedSteps = [
+      { name: "Update the card data path", status: "pending" as const },
+      { name: "Add regression coverage", status: "pending" as const },
+    ];
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        requirePlanApproval: false,
+      } as Settings),
+      parseStepsFromPrompt: vi.fn().mockResolvedValue(parsedSteps),
+    });
+
+    const processor = new TriageProcessor(store, rootDir);
+    const recovered = await processor.recoverApprovedTask({
+      id: "FN-001",
+      description: "Recovered triage task",
+      column: "triage",
+      status: "specifying",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [
+        { timestamp: "2026-01-01T00:00:00.000Z", action: "Spec review: APPROVE" },
+      ],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+    });
+
+    expect(recovered).toBe(true);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
+      status: null,
+      error: null,
+      steps: parsedSteps,
+    }));
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+  });
+
   it("moves approved specifying task to awaiting-approval when manual approval is required", async () => {
     const store = createMockStore({
       getSettings: vi.fn().mockResolvedValue({
