@@ -815,6 +815,105 @@ describe("QuickEntryBox", () => {
       });
     });
 
+    describe("dependency dropdown readability (FN-1480)", () => {
+      it("renders dependency dropdown with portal class for viewport escaping", () => {
+        renderQuickEntryBox({});
+        expandQuickEntry();
+        const textarea = screen.getByTestId("quick-entry-input");
+        fireEvent.change(textarea, { target: { value: "Task with deps" } });
+        openDepsMenu();
+
+        const dropdown = document.querySelector(".dep-dropdown");
+        expect(dropdown).toBeTruthy();
+        // Portal version should have the --portal modifier class
+        expect(dropdown?.classList.contains("dep-dropdown--portal")).toBe(true);
+      });
+
+      it("shows long task titles without aggressive truncation", () => {
+        const longTitleTask: Task = {
+          id: "FN-999",
+          title: "This is a very long task title that exceeds the previous truncation limit and should now be more readable",
+          description: "Task description",
+          column: "todo",
+          dependencies: [],
+          steps: [],
+          currentStep: 0,
+          log: [],
+          createdAt: "2026-04-10T00:00:00Z",
+          updatedAt: "2026-04-10T00:00:00Z",
+        };
+
+        renderQuickEntryBox({ tasks: [longTitleTask] });
+        expandQuickEntry();
+        const textarea = screen.getByTestId("quick-entry-input");
+        fireEvent.change(textarea, { target: { value: "Task with long dep" } });
+        openDepsMenu();
+
+        const titleSpan = document.querySelector(".dep-dropdown-title");
+        expect(titleSpan).toBeTruthy();
+        // The new truncation limit is 60 characters, so a long title should be truncated
+        // but with ellipsis, showing it's now readable (not cut off at 30)
+        const titleText = titleSpan?.textContent || "";
+        expect(titleText.length).toBe(60 + 1); // 60 chars + ellipsis
+        expect(titleText).toContain("…");
+        // Verify the content is from the title, not just the id
+        expect(titleText.startsWith("This is a very long task title")).toBe(true);
+      });
+
+      it("closes dependency dropdown on Escape key", () => {
+        renderQuickEntryBox({});
+        expandQuickEntry();
+        const textarea = screen.getByTestId("quick-entry-input");
+        fireEvent.change(textarea, { target: { value: "Task with deps" } });
+        openDepsMenu();
+
+        // Dropdown should be open
+        expect(document.querySelector(".dep-dropdown")).toBeTruthy();
+
+        // Press Escape
+        fireEvent.keyDown(textarea, { key: "Escape" });
+
+        // Dropdown should be closed
+        expect(document.querySelector(".dep-dropdown")).toBeNull();
+      });
+
+      it("does not close dependency dropdown when clicking inside the dropdown", () => {
+        renderQuickEntryBox({});
+        expandQuickEntry();
+        const textarea = screen.getByTestId("quick-entry-input");
+        fireEvent.change(textarea, { target: { value: "Task with deps" } });
+        openDepsMenu();
+
+        // Dropdown should be open
+        expect(document.querySelector(".dep-dropdown")).toBeTruthy();
+
+        // Click on the search input inside the dropdown
+        const searchInput = document.querySelector(".dep-dropdown-search") as HTMLInputElement;
+        expect(searchInput).toBeTruthy();
+        fireEvent.click(searchInput);
+
+        // Dropdown should still be open
+        expect(document.querySelector(".dep-dropdown")).toBeTruthy();
+      });
+
+      it("closes dependency dropdown when switching to other controls", () => {
+        renderQuickEntryBox({});
+        expandQuickEntry();
+        const textarea = screen.getByTestId("quick-entry-input");
+        fireEvent.change(textarea, { target: { value: "Task with deps" } });
+        openDepsMenu();
+
+        // Dropdown should be open
+        expect(document.querySelector(".dep-dropdown")).toBeTruthy();
+
+        // Click the models button
+        fireEvent.click(screen.getByTestId("quick-entry-models"));
+
+        // Dropdown should be closed
+        expect(document.querySelector(".dep-dropdown")).toBeNull();
+      });
+    });
+
     it("calls onPlanningMode and clears input when Plan clicked", async () => {
       const onPlanningMode = vi.fn();
       const { props } = renderQuickEntryBox({ onPlanningMode });

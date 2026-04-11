@@ -118,6 +118,10 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const modelMenuPortalRef = useRef<HTMLDivElement>(null);
   const agentPickerRef = useRef<HTMLDivElement>(null);
   const [modelMenuPosition, setModelMenuPosition] = useState<{ top: number; left: number; width: number; maxHeight?: number } | null>(null);
+  // Dependency dropdown portal refs and state
+  const depTriggerRef = useRef<HTMLButtonElement>(null);
+  const depDropdownPortalRef = useRef<HTMLDivElement>(null);
+  const [depDropdownPosition, setDepDropdownPosition] = useState<{ top: number; left: number; width: number; maxHeight?: number } | null>(null);
   const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
@@ -677,6 +681,66 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     });
   }, [getEffectiveViewport]);
 
+  const updateDepDropdownPosition = useCallback(() => {
+    const trigger = depTriggerRef.current;
+    if (!trigger) return;
+
+    const rect = trigger.getBoundingClientRect();
+    const { width: viewportWidth, height: viewportHeight, offsetTop, offsetLeft } = getEffectiveViewport();
+    const horizontalPadding = 16;
+    const verticalPadding = 16;
+    const gap = 4;
+    const isMobile = viewportWidth <= 768;
+
+    const preferredHeight = isMobile
+      ? Math.min(viewportHeight * 0.6, 320)
+      : Math.min(viewportHeight * 0.5, 320);
+
+    // Wider dropdown for dependency selection - easier to read task names
+    const preferredWidth = isMobile
+      ? Math.min(viewportWidth - horizontalPadding * 2, 360)
+      : Math.max(rect.width, 280);
+
+    const width = Math.min(
+      preferredWidth,
+      Math.max(viewportWidth - horizontalPadding * 2, 240),
+    );
+
+    const triggerTop = rect.top - offsetTop;
+    const triggerBottom = rect.bottom - offsetTop;
+    const triggerLeft = rect.left - offsetLeft;
+
+    const spaceBelow = viewportHeight - triggerBottom;
+    const spaceAbove = triggerTop;
+    const availableBelow = Math.max(spaceBelow - verticalPadding - gap, 200);
+    const availableAbove = Math.max(spaceAbove - verticalPadding - gap, 200);
+    const openUpward = spaceBelow < preferredHeight && spaceAbove > spaceBelow;
+
+    const maxHeight = Math.max(
+      Math.min(openUpward ? availableAbove : availableBelow, preferredHeight),
+      200,
+    );
+
+    const left = Math.min(
+      Math.max(triggerLeft, horizontalPadding),
+      viewportWidth - horizontalPadding - width,
+    ) + offsetLeft;
+
+    const top = openUpward
+      ? Math.max(verticalPadding + offsetTop, triggerTop - maxHeight - gap + offsetTop)
+      : Math.min(
+          triggerBottom + gap + offsetTop,
+          viewportHeight + offsetTop - verticalPadding - maxHeight,
+        );
+
+    setDepDropdownPosition({
+      top,
+      left,
+      width,
+      maxHeight,
+    });
+  }, [getEffectiveViewport]);
+
   // Keep model menu portal anchored during scroll/resize
   useEffect(() => {
     if (!isModelMenuOpen) return;
@@ -726,6 +790,31 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       }
     };
   }, [isRefineMenuOpen, updateRefineMenuPosition]);
+
+  // Keep dependency dropdown portal anchored during scroll/resize
+  useEffect(() => {
+    if (!showDeps) return;
+
+    const handleReposition = () => updateDepDropdownPosition();
+
+    window.addEventListener("resize", handleReposition);
+    window.addEventListener("scroll", handleReposition, true);
+
+    const vv = window.visualViewport;
+    if (vv) {
+      vv.addEventListener("resize", handleReposition);
+      vv.addEventListener("scroll", handleReposition);
+    }
+
+    return () => {
+      window.removeEventListener("resize", handleReposition);
+      window.removeEventListener("scroll", handleReposition, true);
+      if (vv) {
+        vv.removeEventListener("resize", handleReposition);
+        vv.removeEventListener("scroll", handleReposition);
+      }
+    };
+  }, [showDeps, updateDepDropdownPosition]);
 
   const handlePlanningModelChange = useCallback((value: string) => {
     const next = parseModelSelection(value);
@@ -1045,6 +1134,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
 
             <div className="dep-trigger-wrap">
               <button
+                ref={depTriggerRef}
                 type="button"
                 className="btn btn-sm dep-trigger"
                 data-testid="quick-entry-deps"
@@ -1056,6 +1146,10 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                       setModelMenuPosition(null);
                       setActiveModelSubmenu(null);
                       setShowAgentPicker(false);
+                      // Position the dropdown before rendering
+                      updateDepDropdownPosition();
+                    } else {
+                      setDepDropdownPosition(null);
                     }
                     return next;
                   });
@@ -1064,51 +1158,65 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                 <Link size={12} style={{ verticalAlign: "middle" }} />
                 {dependencies.length > 0 ? `${dependencies.length} deps` : "Deps"}
               </button>
-              {showDeps && (() => {
-                const term = depSearch.toLowerCase();
-                const filtered = (term
-                  ? tasks.filter((t) =>
-                      t.id.toLowerCase().includes(term) ||
-                      (t.title && t.title.toLowerCase().includes(term)) ||
-                      (t.description && t.description.toLowerCase().includes(term))
-                    )
-                  : [...tasks]
-                ).sort((a, b) => {
-                  const cmp = b.createdAt.localeCompare(a.createdAt);
-                  if (cmp !== 0) return cmp;
-                  const aNum = parseInt(a.id.slice(a.id.lastIndexOf("-") + 1), 10) || 0;
-                  const bNum = parseInt(b.id.slice(b.id.lastIndexOf("-") + 1), 10) || 0;
-                  return bNum - aNum;
-                });
-                return (
-                  <div className="dep-dropdown" onMouseDown={(e) => e.preventDefault()}>
-                    <input
-                      className="dep-dropdown-search"
-                      placeholder="Search tasks…"
-                      autoFocus
-                      value={depSearch}
-                      onChange={(e) => setDepSearch(e.target.value)}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                    {filtered.length === 0 ? (
-                      <div className="dep-dropdown-empty">No existing tasks</div>
-                    ) : (
-                      filtered.map((t) => (
-                        <div
-                          key={t.id}
-                          className={`dep-dropdown-item${dependencies.includes(t.id) ? " selected" : ""}`}
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => toggleDep(t.id)}
-                        >
-                          <span className="dep-dropdown-id">{t.id}</span>
-                          <span className="dep-dropdown-title">{truncate(t.title || t.description || t.id, 30)}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                );
-              })()}
             </div>
+            {/* Dependency dropdown rendered via portal for proper viewport positioning */}
+            {showDeps && portalRoot && depDropdownPosition && (() => {
+              const term = depSearch.toLowerCase();
+              const filtered = (term
+                ? tasks.filter((t) =>
+                    t.id.toLowerCase().includes(term) ||
+                    (t.title && t.title.toLowerCase().includes(term)) ||
+                    (t.description && t.description.toLowerCase().includes(term))
+                  )
+                : [...tasks]
+              ).sort((a, b) => {
+                const cmp = b.createdAt.localeCompare(a.createdAt);
+                if (cmp !== 0) return cmp;
+                const aNum = parseInt(a.id.slice(a.id.lastIndexOf("-") + 1), 10) || 0;
+                const bNum = parseInt(b.id.slice(b.id.lastIndexOf("-") + 1), 10) || 0;
+                return bNum - aNum;
+              });
+              return createPortal(
+                <div
+                  ref={depDropdownPortalRef}
+                  className="dep-dropdown dep-dropdown--portal"
+                  onMouseDown={(e) => e.preventDefault()}
+                  style={{
+                    position: "fixed",
+                    top: `${depDropdownPosition.top}px`,
+                    left: `${depDropdownPosition.left}px`,
+                    width: `${depDropdownPosition.width}px`,
+                    maxHeight: depDropdownPosition.maxHeight ? `${depDropdownPosition.maxHeight}px` : undefined,
+                    overflowY: depDropdownPosition.maxHeight ? "auto" : undefined,
+                  }}
+                >
+                  <input
+                    className="dep-dropdown-search"
+                    placeholder="Search tasks…"
+                    autoFocus
+                    value={depSearch}
+                    onChange={(e) => setDepSearch(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                  {filtered.length === 0 ? (
+                    <div className="dep-dropdown-empty">No existing tasks</div>
+                  ) : (
+                    filtered.map((t) => (
+                      <div
+                        key={t.id}
+                        className={`dep-dropdown-item${dependencies.includes(t.id) ? " selected" : ""}`}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => toggleDep(t.id)}
+                      >
+                        <span className="dep-dropdown-id">{t.id}</span>
+                        <span className="dep-dropdown-title">{truncate(t.title || t.description || t.id, 60)}</span>
+                      </div>
+                    ))
+                  )}
+                </div>,
+                portalRoot,
+              );
+            })()}
 
             <button
               type="button"

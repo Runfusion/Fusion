@@ -5754,12 +5754,20 @@ body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  min-width: 240px;
-  max-width: 320px;
-  max-height: 240px;
+  min-width: 280px;
+  max-width: 400px;
+  max-height: 320px;
   overflow-y: auto;
   z-index: 200;
   box-shadow: var(--shadow-lg);
+}
+
+/* Portal-rendered dependency dropdown - uses fixed positioning from JS */
+.dep-dropdown--portal {
+  position: fixed !important;
+  top: auto;
+  left: auto;
+  margin-top: 0;
 }
 
 .dep-dropdown-search-header {
@@ -25876,7 +25884,6 @@ html .column.drag-over * {
 
   .quick-entry-box .dep-dropdown {
     max-width: calc(100vw - 32px);
-    left: 8px;
   }
 }
 
