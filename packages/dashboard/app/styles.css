@@ -22013,43 +22013,83 @@ html .column.drag-over * {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20px 24px;
+  gap: var(--space-md);
+  padding: 12px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
 }
 
+/* Identity area: icon + name + badges */
+.agent-detail-identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.agent-detail-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: var(--todo);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  flex-shrink: 0;
+}
+
+.agent-detail-info {
+  min-width: 0;
+}
+
+.agent-detail-info h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-detail-badges {
+  display: flex;
+  gap: var(--space-xs);
+  margin-top: 2px;
+}
+
+/* Lifecycle controls: compact action buttons */
+.agent-detail-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Compact button variant for lifecycle controls */
+.btn--compact {
+  padding: 5px 10px;
+  font-size: 12px;
+  gap: 4px;
+}
+
+/* Utility actions: refresh + close */
+.agent-detail-utility-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+/* Legacy class for backward compatibility */
 .agent-detail-title {
   display: flex;
   align-items: center;
   gap: var(--space-lg);
 }
 
-.agent-detail-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: var(--radius-lg);
-  background: var(--todo);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: white;
-}
-
-.agent-detail-info {
-  flex: 1;
-}
-
-.agent-detail-info h2 {
-  font-size: 20px;
-  font-weight: 600;
-  margin: 0 0 6px 0;
-}
-
-.agent-detail-badges {
-  display: flex;
-  gap: var(--space-sm);
-}
-
+/* Legacy class for backward compatibility */
 .agent-detail-actions {
   display: flex;
   align-items: center;
@@ -22059,7 +22099,7 @@ html .column.drag-over * {
 .agent-detail-tabs {
   display: flex;
   gap: 4px;
-  padding: 0 24px;
+  padding: 0 20px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
 }
@@ -22067,13 +22107,13 @@ html .column.drag-over * {
 .agent-detail-tab {
   display: flex;
   align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-md) var(--space-lg);
+  gap: var(--space-xs);
+  padding: 10px 12px;
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: 13px;
   cursor: pointer;
   transition: all var(--transition-fast);
 }
@@ -22853,30 +22893,30 @@ html .column.drag-over * {
 
   .agent-detail-header {
     flex-wrap: wrap;
-    gap: var(--space-md);
-    padding: 16px;
-    padding-top: max(16px, env(safe-area-inset-top, 0));
+    gap: var(--space-sm);
+    padding: 12px;
+    padding-top: max(12px, env(safe-area-inset-top, 0));
   }
 
-  .agent-detail-title {
+  .agent-detail-identity {
     flex: 1 1 auto;
     min-width: 0;
-    gap: var(--space-md);
+    gap: var(--space-sm);
   }
 
   .agent-detail-icon {
-    width: 40px;
-    height: 40px;
+    width: 32px;
+    height: 32px;
     flex-shrink: 0;
   }
 
   .agent-detail-icon svg {
-    width: 20px;
-    height: 20px;
+    width: 16px;
+    height: 16px;
   }
 
   .agent-detail-info h2 {
-    font-size: 17px;
+    font-size: 15px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -22884,6 +22924,40 @@ html .column.drag-over * {
 
   .agent-detail-badges {
     flex-wrap: wrap;
+  }
+
+  .agent-detail-controls {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    gap: 6px;
+    order: 3;
+  }
+
+  .agent-detail-controls .btn--compact {
+    padding: 6px 10px;
+    font-size: 12px;
+    min-height: 36px;
+  }
+
+  .agent-detail-controls .btn--compact svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .agent-detail-utility-actions {
+    flex-shrink: 0;
+  }
+
+  .agent-detail-utility-actions .btn-icon {
+    min-height: 36px;
+    min-width: 36px;
+  }
+
+  /* Legacy selectors for backward compatibility */
+  .agent-detail-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: var(--space-md);
   }
 
   .agent-detail-actions {

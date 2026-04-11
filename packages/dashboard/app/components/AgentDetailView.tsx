@@ -254,9 +254,10 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
       <div className="agent-detail-modal">
         {/* Header */}
         <div className="agent-detail-header">
-          <div className="agent-detail-title">
+          {/* Identity area: icon + name + badges */}
+          <div className="agent-detail-identity">
             <div className="agent-detail-icon">
-              <Bot size={24} />
+              <Bot size={20} />
             </div>
             <div className="agent-detail-info">
               <h2>{agent.name}</h2>
@@ -274,82 +275,86 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
               </div>
             </div>
           </div>
-          
-          <div className="agent-detail-actions">
+
+          {/* Lifecycle controls: compact action buttons */}
+          <div className="agent-detail-controls">
             {/* State-dependent action buttons */}
             {agent.state === "idle" && (
               <>
-                <button className="btn btn--primary" onClick={() => void handleStateChange("active")}>
-                  <Play size={16} />
+                <button className="btn btn--primary btn--compact" onClick={() => void handleStateChange("active")}>
+                  <Play size={14} />
                   Start
                 </button>
-                <button className="btn btn--danger" onClick={handleDelete}>
-                  <Trash2 size={16} />
+                <button className="btn btn--danger btn--compact" onClick={handleDelete}>
+                  <Trash2 size={14} />
                   Delete
                 </button>
               </>
             )}
             {agent.state === "active" && (
               <>
-                <button className="btn" onClick={() => void handleStateChange("paused")}>
-                  <Pause size={16} />
+                <button className="btn btn--compact" onClick={() => void handleStateChange("paused")}>
+                  <Pause size={14} />
                   Pause
                 </button>
-                <button className="btn btn--danger" onClick={() => void handleStateChange("terminated")}>
-                  <Square size={16} />
+                <button className="btn btn--danger btn--compact" onClick={() => void handleStateChange("terminated")}>
+                  <Square size={14} />
                   Stop
                 </button>
               </>
             )}
             {agent.state === "paused" && (
               <>
-                <button className="btn btn--primary" onClick={() => void handleStateChange("active")}>
-                  <Play size={16} />
+                <button className="btn btn--primary btn--compact" onClick={() => void handleStateChange("active")}>
+                  <Play size={14} />
                   Resume
                 </button>
-                <button className="btn btn--danger" onClick={() => void handleStateChange("terminated")}>
-                  <Square size={16} />
+                <button className="btn btn--danger btn--compact" onClick={() => void handleStateChange("terminated")}>
+                  <Square size={14} />
                   Stop
                 </button>
               </>
             )}
             {agent.state === "running" && (
               <>
-                <button className="btn" onClick={() => void handleStateChange("paused")}>
-                  <Pause size={16} />
+                <button className="btn btn--compact" onClick={() => void handleStateChange("paused")}>
+                  <Pause size={14} />
                   Pause
                 </button>
-                <button className="btn btn--danger" onClick={() => void handleStateChange("terminated")}>
-                  <Square size={16} />
+                <button className="btn btn--danger btn--compact" onClick={() => void handleStateChange("terminated")}>
+                  <Square size={14} />
                   Stop
                 </button>
               </>
             )}
             {agent.state === "error" && (
               <>
-                <button className="btn btn--primary" onClick={() => void handleStateChange("active")}>
-                  <Play size={16} />
+                <button className="btn btn--primary btn--compact" onClick={() => void handleStateChange("active")}>
+                  <Play size={14} />
                   Retry
                 </button>
-                <button className="btn btn--danger" onClick={() => void handleStateChange("terminated")}>
-                  <Square size={16} />
+                <button className="btn btn--danger btn--compact" onClick={() => void handleStateChange("terminated")}>
+                  <Square size={14} />
                   Stop
                 </button>
               </>
             )}
             {agent.state === "terminated" && (
               <>
-                <button className="btn btn--primary" onClick={() => void handleStateChange("active")}>
-                  <Play size={16} />
+                <button className="btn btn--primary btn--compact" onClick={() => void handleStateChange("active")}>
+                  <Play size={14} />
                   Start
                 </button>
-                <button className="btn btn--danger" onClick={handleDelete}>
-                  <Trash2 size={16} />
+                <button className="btn btn--danger btn--compact" onClick={handleDelete}>
+                  <Trash2 size={14} />
                   Delete
                 </button>
               </>
             )}
+          </div>
 
+          {/* Utility actions: refresh + close */}
+          <div className="agent-detail-utility-actions">
             <button className="btn-icon" onClick={() => void loadAgent()} title="Refresh">
               <RefreshCw size={16} />
             </button>

@@ -41,6 +41,7 @@ describe("Agent CSS classes", () => {
     expect(hasClass(".btn--primary")).toBe(true);
     expect(hasClass(".btn--danger")).toBe(true);
     expect(hasClass(".btn--warning")).toBe(true);
+    expect(hasClass(".btn--compact")).toBe(true);
   });
 
   // Verify badge base class
@@ -109,6 +110,10 @@ describe("Agent CSS classes", () => {
     expect(hasClass(".agent-detail-info")).toBe(true);
     expect(hasClass(".agent-detail-badges")).toBe(true);
     expect(hasClass(".agent-detail-actions")).toBe(true);
+    // Redesigned compact header structure
+    expect(hasClass(".agent-detail-identity")).toBe(true);
+    expect(hasClass(".agent-detail-controls")).toBe(true);
+    expect(hasClass(".agent-detail-utility-actions")).toBe(true);
     expect(hasClass(".agent-detail-tabs")).toBe(true);
     expect(hasClass(".agent-detail-tab")).toBe(true);
     expect(hasClass(".agent-detail-content")).toBe(true);

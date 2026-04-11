@@ -231,7 +231,12 @@ Manage AI agents with a dedicated control surface accessible from the main dashb
 - **View Modes**: Board (compact grid) and list (detailed card) layouts, persisted to localStorage
 - **Agent CRUD**: Create agents with name and role (create form's text input and role/type select both use tokenized styling — `var(--surface)`, `var(--text)`, `var(--border)`, `var(--radius-sm)`, `var(--focus-ring)` — for consistent theme-aware rendering across all color themes and light/dark modes), change state, update roles inline, delete idle and terminated agents (active and paused agents must be stopped/terminated first)
 - **Health Monitoring**: Heartbeat-based health status (Healthy, Unresponsive, Starting, Paused, Terminated) using CSS variable references for theme consistency
-- **Agent Detail**: Click any agent card to open a detail modal with full agent information. The modal uses component-local token aliases (`--bg-primary`, `--accent`, `--text-primary`, `--bg-hover`) mapped to global tokens (`--surface`, `--todo`, `--text`, `--card-hover`) for theme consistency. The **Settings** tab now includes **editable advanced settings** (heartbeat interval, max retries, task timeout, log level) persisted through `agent.metadata`. Empty fields revert to system defaults, invalid values block save with inline error messages
+- **Agent Detail**: Click any agent card to open a detail modal with full agent information. The modal features a compact header with clear visual hierarchy:
+  - **Identity area** (left): Agent icon, name, and state/health badges
+  - **Lifecycle controls** (center): Compact action buttons for state transitions (Start, Pause, Resume, Retry, Stop, Delete)
+  - **Utility actions** (right): Refresh and Close buttons
+  - The compact layout reduces vertical footprint while maintaining all agent-state actions
+  - The **Settings** tab includes **editable advanced settings** (heartbeat interval, max retries, task timeout, log level) persisted through `agent.metadata`. Empty fields revert to system defaults, invalid values block save with inline error messages
 
 ### Interactive Terminal
 Access a fully functional PTY (pseudo-terminal) shell directly from the dashboard. Click the terminal icon in the header to open the interactive terminal modal.

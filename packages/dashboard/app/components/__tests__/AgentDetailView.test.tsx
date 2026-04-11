@@ -529,6 +529,76 @@ describe("AgentDetailView", () => {
     });
   });
 
+  it("shows Pause and Stop buttons for running agent", async () => {
+    mockFetchAgent.mockResolvedValue(createMockAgent({ state: "running" }));
+
+    render(
+      <AgentDetailView
+        agentId="agent-001"
+        onClose={vi.fn()}
+        addToast={vi.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Pause")).toBeInTheDocument();
+      expect(screen.getByText("Stop")).toBeInTheDocument();
+    });
+  });
+
+  it("shows Retry and Stop buttons for error agent", async () => {
+    mockFetchAgent.mockResolvedValue(createMockAgent({ state: "error" }));
+
+    render(
+      <AgentDetailView
+        agentId="agent-001"
+        onClose={vi.fn()}
+        addToast={vi.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Retry")).toBeInTheDocument();
+      expect(screen.getByText("Stop")).toBeInTheDocument();
+    });
+  });
+
+  it("renders lifecycle controls in compact layout with agent-detail-controls container", async () => {
+    render(
+      <AgentDetailView
+        agentId="agent-001"
+        onClose={vi.fn()}
+        addToast={vi.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      // Verify lifecycle controls are in the compact controls container
+      const controlsContainer = document.querySelector(".agent-detail-controls");
+      expect(controlsContainer).toBeTruthy();
+      expect(controlsContainer?.querySelector(".btn--compact")).toBeTruthy();
+    });
+  });
+
+  it("renders utility actions in separate container", async () => {
+    render(
+      <AgentDetailView
+        agentId="agent-001"
+        onClose={vi.fn()}
+        addToast={vi.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      // Verify utility actions are in the separate utility container
+      const utilityContainer = document.querySelector(".agent-detail-utility-actions");
+      expect(utilityContainer).toBeTruthy();
+      // Refresh and Close buttons should be in utility container
+      expect(utilityContainer?.querySelector('[title="Refresh"]')).toBeTruthy();
+      expect(utilityContainer?.querySelector('[title="Close"]')).toBeTruthy();
+    });
+  });
+
   it("shows statistics section on dashboard", async () => {
     render(
       <AgentDetailView
