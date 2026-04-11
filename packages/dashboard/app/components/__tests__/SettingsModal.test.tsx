@@ -1469,7 +1469,7 @@ describe("SettingsModal", () => {
     const sidebar = container.querySelector(".settings-sidebar");
     expect(sidebar).toBeTruthy();
     const navItems = sidebar!.querySelectorAll(".settings-nav-item");
-    expect(navItems.length).toBe(12);
+    expect(navItems.length).toBe(13);
 
     // Labels include scope icons (Globe for global, Folder for project)
     const labels = Array.from(navItems).map((el) => el.textContent?.trim());
@@ -1484,6 +1484,7 @@ describe("SettingsModal", () => {
       "Commands",
       "Merge",
       "Memory",
+      "Prompts",
       "Backups",
       "Plugins",
     ]);

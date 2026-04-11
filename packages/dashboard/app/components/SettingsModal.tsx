@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Globe, Folder } from "lucide-react";
-import { THINKING_LEVELS, GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS } from "@fusion/core";
+import { THINKING_LEVELS, GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS, PROMPT_KEY_CATALOG } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent } from "@fusion/core";
 import { fetchSettings, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemory, saveMemory } from "../api";
 import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData } from "../api";
@@ -58,6 +58,7 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "commands", label: "Commands", scope: "project" },
   { id: "merge", label: "Merge", scope: "project" },
   { id: "memory", label: "Memory", scope: "project" },
+  { id: "prompts", label: "Prompts", scope: "project" },
   { id: "backups", label: "Backups", scope: "project" },
   { id: "plugins", label: "Plugins", scope: "project" },
 ];
@@ -1913,6 +1914,79 @@ export function SettingsModal({
               </div>
               </>
             )}
+          </>
+        );
+      case "prompts":
+        return (
+          <>
+            {renderScopeBanner()}
+            <h4 className="settings-section-heading">Prompts</h4>
+            <p className="settings-note">
+              Customize specific segments of AI agent prompts. Edits override built-in defaults.
+              Use the Reset button to restore the original default for any prompt.
+            </p>
+            <div className="prompt-overrides-list">
+              {Object.values(PROMPT_KEY_CATALOG).map((promptMeta) => {
+                const key = promptMeta.key;
+                const currentOverride = form.promptOverrides?.[key] ?? "";
+                const hasOverride = currentOverride !== "";
+                return (
+                  <div key={key} className="prompt-override-item">
+                    <div className="prompt-override-header">
+                      <div className="prompt-override-info">
+                        <span className="prompt-override-name">{promptMeta.name}</span>
+                        <code className="prompt-override-key">{key}</code>
+                        {hasOverride && (
+                          <span className="prompt-override-badge">customized</span>
+                        )}
+                      </div>
+                      {hasOverride && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => {
+                            setForm((f) => ({
+                              ...f,
+                              promptOverrides: {
+                                ...f.promptOverrides,
+                                [key]: null as unknown as string,
+                              },
+                            }));
+                          }}
+                        >
+                          Reset
+                        </button>
+                      )}
+                    </div>
+                    <p className="prompt-override-description">{promptMeta.description}</p>
+                    <div className="prompt-override-editor">
+                      <textarea
+                        id={`prompt-${key}`}
+                        className="prompt-override-textarea"
+                        value={currentOverride}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setForm((f) => ({
+                            ...f,
+                            promptOverrides: {
+                              ...f.promptOverrides,
+                              [key]: value,
+                            },
+                          }));
+                        }}
+                        placeholder={`Default: ${promptMeta.defaultContent.slice(0, 100)}${promptMeta.defaultContent.length > 100 ? "..." : ""}`}
+                        rows={4}
+                      />
+                      <small className="prompt-override-hint">
+                        {hasOverride
+                          ? "Custom override active. Click Reset to restore default."
+                          : `No override set. Using built-in default (${promptMeta.defaultContent.length} chars).`}
+                      </small>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </>
         );
       case "plugins":
