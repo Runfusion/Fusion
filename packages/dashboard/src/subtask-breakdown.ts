@@ -1,4 +1,5 @@
 import type { TaskStore } from "@fusion/core";
+import { resolvePrompt, type PromptOverrideMap } from "@fusion/core";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { AiSessionStore, AiSessionRow } from "./ai-session-store.js";
@@ -326,7 +327,12 @@ export class SubtaskStreamManager extends EventEmitter {
 
 export const subtaskStreamManager = new SubtaskStreamManager();
 
-export async function createSubtaskSession(initialDescription: string, _store?: TaskStore, rootDir?: string): Promise<SubtaskSession> {
+export async function createSubtaskSession(
+  initialDescription: string,
+  _store?: TaskStore,
+  rootDir?: string,
+  promptOverrides?: PromptOverrideMap,
+): Promise<SubtaskSession> {
   const sessionId = randomUUID();
   const session = {
     sessionId,
@@ -341,7 +347,7 @@ export async function createSubtaskSession(initialDescription: string, _store?: 
   persistSubtaskSession(session, "generating");
 
   const cwd = rootDir ?? process.cwd();
-  void startSubtaskGeneration(sessionId, cwd);
+  void startSubtaskGeneration(sessionId, cwd, promptOverrides);
 
   return {
     sessionId,
@@ -352,9 +358,13 @@ export async function createSubtaskSession(initialDescription: string, _store?: 
   };
 }
 
-async function startSubtaskGeneration(sessionId: string, cwd: string): Promise<void> {
+async function startSubtaskGeneration(
+  sessionId: string,
+  cwd: string,
+  promptOverrides?: PromptOverrideMap,
+): Promise<void> {
   try {
-    await generateSubtasks(sessionId, cwd);
+    await generateSubtasks(sessionId, cwd, promptOverrides);
   } catch (err) {
     const existing = sessions.get(sessionId);
     if (!existing) return;
@@ -366,16 +376,23 @@ async function startSubtaskGeneration(sessionId: string, cwd: string): Promise<v
   }
 }
 
-async function generateSubtasks(sessionId: string, cwd: string): Promise<void> {
+async function generateSubtasks(
+  sessionId: string,
+  cwd: string,
+  promptOverrides?: PromptOverrideMap,
+): Promise<void> {
   const session = sessions.get(sessionId);
   if (!session) throw new SessionNotFoundError(`Subtask session ${sessionId} not found`);
 
   await engineReady;
 
+  // Resolve the effective system prompt (override or default)
+  const systemPrompt = resolvePrompt("subtask-breakdown-system", promptOverrides) || SUBTASK_BREAKDOWN_PROMPT;
+
   if (createKbAgent) {
     const agent = await createKbAgent({
       cwd,
-      systemPrompt: SUBTASK_BREAKDOWN_PROMPT,
+      systemPrompt,
       tools: "readonly",
       onThinking: (delta: string) => {
         const current = sessions.get(sessionId);
@@ -483,7 +500,11 @@ function disposeSubtaskAgentForRetry(session: SubtaskInternalSession): void {
   session.agent = undefined;
 }
 
-export async function retrySubtaskSession(sessionId: string, rootDir: string): Promise<void> {
+export async function retrySubtaskSession(
+  sessionId: string,
+  rootDir: string,
+  promptOverrides?: PromptOverrideMap,
+): Promise<void> {
   const visibleSession = getSubtaskSession(sessionId);
   if (!visibleSession) {
     throw new SessionNotFoundError(`Subtask session ${sessionId} not found or expired`);
@@ -513,7 +534,7 @@ export async function retrySubtaskSession(sessionId: string, rootDir: string): P
   session.updatedAt = new Date();
   persistSubtaskSession(session, "generating");
 
-  await startSubtaskGeneration(sessionId, rootDir);
+  await startSubtaskGeneration(sessionId, rootDir, promptOverrides);
 }
 
 export function getSubtaskSession(sessionId: string): SubtaskSession | undefined {

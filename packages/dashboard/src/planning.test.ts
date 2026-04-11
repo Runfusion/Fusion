@@ -419,6 +419,81 @@ describe("planning module", () => {
       expect(callArg?.defaultProvider).toBeUndefined();
       expect(callArg?.defaultModelId).toBeUndefined();
     });
+
+    it("uses custom prompt from promptOverrides when provided", async () => {
+      const createKbAgentSpy = vi.fn(async () => createMockAgent(STANDARD_QUESTION_RESPONSES));
+      __setCreateKbAgent(createKbAgentSpy as any);
+
+      const customPrompt = "Custom planning prompt with specific guidelines...";
+      const promptOverrides = { "planning-system": customPrompt };
+
+      const sessionId = await createSessionWithAgent(
+        getUniqueIp(),
+        "Build auth system",
+        TEST_ROOT_DIR,
+        undefined,
+        undefined,
+        promptOverrides,
+      );
+
+      expect(sessionId).toBeDefined();
+
+      await vi.waitFor(() => {
+        expect(createKbAgentSpy).toHaveBeenCalledTimes(1);
+      }, { timeout: 10000 });
+
+      const callArg = createKbAgentSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(callArg?.systemPrompt).toBe(customPrompt);
+    });
+
+    it("falls back to default prompt when promptOverrides is undefined", async () => {
+      const createKbAgentSpy = vi.fn(async () => createMockAgent(STANDARD_QUESTION_RESPONSES));
+      __setCreateKbAgent(createKbAgentSpy as any);
+
+      const sessionId = await createSessionWithAgent(
+        getUniqueIp(),
+        "Build auth system",
+        TEST_ROOT_DIR,
+        undefined,
+        undefined,
+        undefined,
+      );
+
+      expect(sessionId).toBeDefined();
+
+      await vi.waitFor(() => {
+        expect(createKbAgentSpy).toHaveBeenCalledTimes(1);
+      }, { timeout: 10000 });
+
+      const callArg = createKbAgentSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(callArg?.systemPrompt).toContain("planning assistant");
+    });
+
+    it("falls back to default prompt when promptOverrides does not contain planning key", async () => {
+      const createKbAgentSpy = vi.fn(async () => createMockAgent(STANDARD_QUESTION_RESPONSES));
+      __setCreateKbAgent(createKbAgentSpy as any);
+
+      // Provide an override for a different key
+      const promptOverrides = { "triage-welcome": "Some other prompt" };
+
+      const sessionId = await createSessionWithAgent(
+        getUniqueIp(),
+        "Build auth system",
+        TEST_ROOT_DIR,
+        undefined,
+        undefined,
+        promptOverrides,
+      );
+
+      expect(sessionId).toBeDefined();
+
+      await vi.waitFor(() => {
+        expect(createKbAgentSpy).toHaveBeenCalledTimes(1);
+      }, { timeout: 10000 });
+
+      const callArg = createKbAgentSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(callArg?.systemPrompt).toContain("planning assistant");
+    });
   });
 
   describe("submitResponse", () => {
@@ -715,6 +790,95 @@ describe("planning module", () => {
       setAiSessionStore(store as any);
 
       await expect(retrySession(row.id, TEST_ROOT_DIR)).rejects.toThrow(InvalidSessionStateError);
+    });
+
+    it("uses custom prompt from promptOverrides on retry", async () => {
+      const store = new MockAiSessionStore();
+      const row = buildPlanningRow({
+        id: "planning-retry-with-override",
+        status: "error",
+        error: "Transient failure",
+        conversationHistory: JSON.stringify([
+          {
+            question: { id: "q-1", type: "text", question: "What to build?", description: "scope" },
+            response: { "q-1": "Auth" },
+          },
+        ]),
+        currentQuestion: JSON.stringify({
+          id: "q-2",
+          type: "text",
+          question: "Any constraints?",
+          description: "details",
+        }),
+      });
+      store.rows.set(row.id, row);
+      setAiSessionStore(store as any);
+
+      const customPrompt = "Custom retry prompt...";
+      const promptOverrides = { "planning-system": customPrompt };
+
+      const resumedAgent = createMockAgent([
+        JSON.stringify({
+          type: "question",
+          data: {
+            id: "q-retry",
+            type: "text",
+            question: "Deadline?",
+            description: "timing",
+          },
+        }),
+      ]);
+      const createKbAgentSpy = vi.fn(async () => resumedAgent);
+      __setCreateKbAgent(createKbAgentSpy as any);
+
+      await retrySession(row.id, TEST_ROOT_DIR, promptOverrides);
+
+      expect(createKbAgentSpy).toHaveBeenCalledTimes(1);
+      const callArg = createKbAgentSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(callArg?.systemPrompt).toBe(customPrompt);
+    });
+
+    it("falls back to default prompt on retry when promptOverrides is undefined", async () => {
+      const store = new MockAiSessionStore();
+      const row = buildPlanningRow({
+        id: "planning-retry-no-override",
+        status: "error",
+        error: "Transient failure",
+        conversationHistory: JSON.stringify([
+          {
+            question: { id: "q-1", type: "text", question: "What to build?", description: "scope" },
+            response: { "q-1": "Auth" },
+          },
+        ]),
+        currentQuestion: JSON.stringify({
+          id: "q-2",
+          type: "text",
+          question: "Any constraints?",
+          description: "details",
+        }),
+      });
+      store.rows.set(row.id, row);
+      setAiSessionStore(store as any);
+
+      const resumedAgent = createMockAgent([
+        JSON.stringify({
+          type: "question",
+          data: {
+            id: "q-retry",
+            type: "text",
+            question: "Deadline?",
+            description: "timing",
+          },
+        }),
+      ]);
+      const createKbAgentSpy = vi.fn(async () => resumedAgent);
+      __setCreateKbAgent(createKbAgentSpy as any);
+
+      await retrySession(row.id, TEST_ROOT_DIR);
+
+      expect(createKbAgentSpy).toHaveBeenCalledTimes(1);
+      const callArg = createKbAgentSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(callArg?.systemPrompt).toContain("planning assistant");
     });
   });
 

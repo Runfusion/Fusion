@@ -460,6 +460,84 @@ describe("subtask session lifecycle", () => {
     expect(session).not.toHaveProperty("thinkingOutput");
   });
 
+  it("createSubtaskSession uses custom prompt from promptOverrides", async () => {
+    const description = "Build test coverage for new API";
+    const customPrompt = "Custom subtask prompt...";
+    const promptOverrides = { "subtask-breakdown-system": customPrompt };
+
+    const createKbAgentSpy = vi.fn().mockImplementation(async () => ({
+      session: {
+        state: { messages: [] },
+        prompt: vi.fn(),
+        dispose: vi.fn(),
+      },
+    }));
+    mockCreateKbAgent.mockImplementation(createKbAgentSpy);
+
+    const created = await createSubtaskSession(description, undefined, "/tmp/project", promptOverrides);
+
+    // Wait for the session generation to complete
+    await vi.waitFor(() => {
+      const session = getSubtaskSession(created.sessionId);
+      return session?.status === "complete";
+    }, { timeout: 5000 });
+
+    expect(createKbAgentSpy).toHaveBeenCalledTimes(1);
+    const callArg = createKbAgentSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(callArg?.systemPrompt).toBe(customPrompt);
+  });
+
+  it("createSubtaskSession falls back to default prompt when promptOverrides is undefined", async () => {
+    const description = "Build test coverage for new API";
+
+    const createKbAgentSpy = vi.fn().mockImplementation(async () => ({
+      session: {
+        state: { messages: [] },
+        prompt: vi.fn(),
+        dispose: vi.fn(),
+      },
+    }));
+    mockCreateKbAgent.mockImplementation(createKbAgentSpy);
+
+    const created = await createSubtaskSession(description, undefined, "/tmp/project");
+
+    // Wait for the session generation to complete
+    await vi.waitFor(() => {
+      const session = getSubtaskSession(created.sessionId);
+      return session?.status === "complete";
+    }, { timeout: 5000 });
+
+    expect(createKbAgentSpy).toHaveBeenCalledTimes(1);
+    const callArg = createKbAgentSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(callArg?.systemPrompt).toContain("task decomposition assistant");
+  });
+
+  it("createSubtaskSession falls back to default prompt when promptOverrides does not contain subtask key", async () => {
+    const description = "Build test coverage for new API";
+    const promptOverrides = { "planning-system": "Some other prompt" };
+
+    const createKbAgentSpy = vi.fn().mockImplementation(async () => ({
+      session: {
+        state: { messages: [] },
+        prompt: vi.fn(),
+        dispose: vi.fn(),
+      },
+    }));
+    mockCreateKbAgent.mockImplementation(createKbAgentSpy);
+
+    const created = await createSubtaskSession(description, undefined, "/tmp/project", promptOverrides);
+
+    // Wait for the session generation to complete
+    await vi.waitFor(() => {
+      const session = getSubtaskSession(created.sessionId);
+      return session?.status === "complete";
+    }, { timeout: 5000 });
+
+    expect(createKbAgentSpy).toHaveBeenCalledTimes(1);
+    const callArg = createKbAgentSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(callArg?.systemPrompt).toContain("task decomposition assistant");
+  });
+
   it("retrySubtaskSession retries errored sessions restored from SQLite", async () => {
     const store = new MockAiSessionStore();
     const row = buildSubtaskRow({
@@ -490,6 +568,67 @@ describe("subtask session lifecycle", () => {
     await expect(retrySubtaskSession(row.id, "/tmp/project")).rejects.toBeInstanceOf(
       InvalidSessionStateError,
     );
+  });
+
+  it("retrySubtaskSession uses custom prompt from promptOverrides", async () => {
+    const store = new MockAiSessionStore();
+    const row = buildSubtaskRow({
+      id: "subtask-retry-with-override",
+      status: "error",
+      error: "Transient failure",
+      result: null,
+    });
+    store.rows.set(row.id, row);
+    setAiSessionStore(store as any);
+
+    const customPrompt = "Custom subtask breakdown prompt...";
+    const promptOverrides = { "subtask-breakdown-system": customPrompt };
+
+    mockCreateKbAgent.mockReset();
+
+    const createKbAgentSpy = vi.fn().mockImplementation(async () => ({
+      session: {
+        state: { messages: [] },
+        prompt: vi.fn(),
+        dispose: vi.fn(),
+      },
+    }));
+    mockCreateKbAgent.mockImplementation(createKbAgentSpy);
+
+    await retrySubtaskSession(row.id, "/tmp/project", promptOverrides);
+
+    expect(createKbAgentSpy).toHaveBeenCalledTimes(1);
+    const callArg = createKbAgentSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(callArg?.systemPrompt).toBe(customPrompt);
+  });
+
+  it("retrySubtaskSession falls back to default prompt when promptOverrides is undefined", async () => {
+    const store = new MockAiSessionStore();
+    const row = buildSubtaskRow({
+      id: "subtask-retry-no-override",
+      status: "error",
+      error: "Transient failure",
+      result: null,
+    });
+    store.rows.set(row.id, row);
+    setAiSessionStore(store as any);
+
+    mockCreateKbAgent.mockReset();
+
+    const createKbAgentSpy = vi.fn().mockImplementation(async () => ({
+      session: {
+        state: { messages: [] },
+        prompt: vi.fn(),
+        dispose: vi.fn(),
+      },
+    }));
+    mockCreateKbAgent.mockImplementation(createKbAgentSpy);
+
+    await retrySubtaskSession(row.id, "/tmp/project");
+
+    expect(createKbAgentSpy).toHaveBeenCalledTimes(1);
+    const callArg = createKbAgentSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(callArg?.systemPrompt).toContain("task decomposition assistant");
   });
 
   it("cancelSubtaskSession throws SessionNotFoundError for unknown session", async () => {

@@ -95,6 +95,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const justResetRef = useRef(false);
+  const previousProjectIdRef = useRef(projectId);
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const pendingImagesRef = useRef<PendingImage[]>([]);
 
@@ -104,6 +105,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [depSearch, setDepSearch] = useState("");
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [agentsProjectId, setAgentsProjectId] = useState<string | undefined>(undefined);
   const [showAgentPicker, setShowAgentPicker] = useState(false);
   const [agentsLoading, setAgentsLoading] = useState(false);
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
@@ -122,7 +124,9 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const depTriggerRef = useRef<HTMLButtonElement>(null);
   const depDropdownPortalRef = useRef<HTMLDivElement>(null);
   const [depDropdownPosition, setDepDropdownPosition] = useState<{ top: number; left: number; width: number; maxHeight?: number } | null>(null);
-  const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
+  const [portalRoot] = useState<HTMLElement | null>(() =>
+    typeof document !== "undefined" ? document.body : null,
+  );
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [loadedModels, setLoadedModels] = useState<ModelInfo[]>(availableModels ?? []);
@@ -232,8 +236,14 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
 
   // Clear agents cache when projectId changes to prevent stale agents from leaking across projects
   useEffect(() => {
+    if (previousProjectIdRef.current === projectId) {
+      return;
+    }
+    previousProjectIdRef.current = projectId;
     setAgents([]);
+    setAgentsProjectId(undefined);
     setSelectedAgentId(null);
+    setShowAgentPicker(false);
   }, [projectId]);
 
   // Clean up legacy disclosure persistence key from previous versions
@@ -241,11 +251,6 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     if (typeof window !== "undefined") {
       localStorage.removeItem("kb-quick-entry-expanded");
     }
-  }, []);
-
-  // Set portal root for model menu rendering
-  useEffect(() => {
-    setPortalRoot(document.body);
   }, []);
 
   useEffect(() => {
@@ -961,7 +966,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   }, [availableModels, parentFavoriteProviders, parentFavoriteModels]);
 
   const loadAgents = useCallback(async () => {
-    if (agents.length > 0) {
+    if (agents.length > 0 && agentsProjectId === projectId) {
       setShowAgentPicker(true);
       return;
     }
@@ -970,6 +975,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     try {
       const result = await fetchAgents(undefined, projectId);
       setAgents(result);
+      setAgentsProjectId(projectId);
       setShowAgentPicker(true);
     } catch (err: any) {
       addToast(err?.message ? `Failed to load agents: ${err.message}` : "Failed to load agents", "error");
@@ -977,7 +983,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     } finally {
       setAgentsLoading(false);
     }
-  }, [agents.length, projectId, addToast]);
+  }, [agents.length, agentsProjectId, projectId, addToast]);
 
   const selectedAgent = selectedAgentId ? agents.find((agent) => agent.id === selectedAgentId) : undefined;
   const selectedAgentLabel = selectedAgent?.name ?? selectedAgentId;

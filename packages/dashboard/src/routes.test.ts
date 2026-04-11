@@ -841,7 +841,7 @@ describe("POST /subtasks/*", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ success: true, sessionId: "session-123" });
-    expect(retrySpy).toHaveBeenCalledWith("session-123", "/fake/root");
+    expect(retrySpy).toHaveBeenCalledWith("session-123", "/fake/root", undefined);
   });
 
   it("returns 404 when subtask retry session does not exist", async () => {
@@ -7366,7 +7366,7 @@ describe("Git Management endpoints", () => {
 
         expect(res.status).toBe(200);
         expect(res.body).toEqual({ success: true, sessionId: "session-123" });
-        expect(retrySpy).toHaveBeenCalledWith("session-123", expect.any(String));
+        expect(retrySpy).toHaveBeenCalledWith("session-123", expect.any(String), undefined);
       });
 
       it("returns 404 when planning retry session is missing", async () => {

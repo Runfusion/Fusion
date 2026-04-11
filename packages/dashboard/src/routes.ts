@@ -6324,8 +6324,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       const scopedStore = await getScopedStore(req);
+      const settings = await scopedStore.getSettings();
       const { createSubtaskSession } = await import("./subtask-breakdown.js");
-      const session = await createSubtaskSession(description, scopedStore, scopedStore.getRootDir());
+      const session = await createSubtaskSession(
+        description,
+        scopedStore,
+        scopedStore.getRootDir(),
+        settings.promptOverrides,
+      );
       res.status(201).json({ sessionId: session.sessionId });
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -6593,8 +6599,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       const scopedStore = await getScopedStore(req);
+      const settings = await scopedStore.getSettings();
       const { retrySubtaskSession } = await import("./subtask-breakdown.js");
-      await retrySubtaskSession(sessionId, scopedStore.getRootDir());
+      await retrySubtaskSession(sessionId, scopedStore.getRootDir(), settings.promptOverrides);
       res.json({ success: true, sessionId });
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -6629,11 +6636,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       const scopedStore = await getScopedStore(req);
+      const settings = await scopedStore.getSettings();
       const ip = req.ip || req.socket.remoteAddress || "unknown";
       const rootDir = scopedStore.getRootDir();
 
       const { createSession, RateLimitError } = await import("./planning.js");
-      const result = await createSession(ip, initialPlan, scopedStore, rootDir);
+      const result = await createSession(
+        ip,
+        initialPlan,
+        scopedStore,
+        rootDir,
+        settings.promptOverrides,
+      );
       res.status(201).json(result);
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -6677,6 +6691,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       const scopedStore = await getScopedStore(req);
+      const settings = await scopedStore.getSettings();
       const ip = req.ip || req.socket.remoteAddress || "unknown";
       const rootDir = scopedStore.getRootDir();
 
@@ -6687,6 +6702,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         rootDir,
         planningModelProvider,
         planningModelId,
+        settings.promptOverrides,
       );
       res.status(201).json({ sessionId });
     } catch (err: any) {
@@ -6729,8 +6745,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         return;
       }
 
+      const scopedStore = await getScopedStore(req);
+      const settings = await scopedStore.getSettings();
       const { submitResponse, SessionNotFoundError, InvalidSessionStateError } = await import("./planning.js");
-      const result = await submitResponse(sessionId, responses, store.getRootDir());
+      const result = await submitResponse(
+        sessionId,
+        responses,
+        scopedStore.getRootDir(),
+        settings.promptOverrides,
+      );
       res.json(result);
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -6766,8 +6789,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       const scopedStore = await getScopedStore(req);
+      const settings = await scopedStore.getSettings();
       const { retrySession } = await import("./planning.js");
-      await retrySession(sessionId, scopedStore.getRootDir());
+      await retrySession(sessionId, scopedStore.getRootDir(), settings.promptOverrides);
       res.json({ success: true, sessionId });
     } catch (err: any) {
       if (err instanceof ApiError) {

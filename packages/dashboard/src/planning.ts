@@ -1218,6 +1218,7 @@ export async function submitResponse(
   sessionId: string,
   responses: Record<string, unknown>,
   rootDir?: string,
+  promptOverrides?: PromptOverrideMap,
 ): Promise<PlanningResponse> {
   const session = getSession(sessionId);
   if (!session) {
@@ -1239,7 +1240,7 @@ export async function submitResponse(
 
   if (!session.agent) {
     const replayHistory = session.history.slice(0, -1);
-    await ensureSessionAgent(session, rootDir, replayHistory);
+    await ensureSessionAgent(session, rootDir, replayHistory, promptOverrides);
   }
 
   const message = formatResponseForAgent(session.currentQuestion, responses);
@@ -1257,7 +1258,11 @@ export async function submitResponse(
   throw new InvalidSessionStateError("AI agent did not return a question or summary");
 }
 
-export async function retrySession(sessionId: string, rootDir: string): Promise<void> {
+export async function retrySession(
+  sessionId: string,
+  rootDir: string,
+  promptOverrides?: PromptOverrideMap,
+): Promise<void> {
   const session = getSession(sessionId);
   if (!session) {
     throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
@@ -1281,7 +1286,7 @@ export async function retrySession(sessionId: string, rootDir: string): Promise<
   persistSession(session, "generating");
 
   if (session.history.length === 0) {
-    await ensureSessionAgent(session, rootDir, []);
+    await ensureSessionAgent(session, rootDir, [], promptOverrides);
     await continueAgentConversation(session, session.initialPlan);
     return;
   }
@@ -1289,7 +1294,7 @@ export async function retrySession(sessionId: string, rootDir: string): Promise<
   const replayHistory = session.history.slice(0, -1);
   const lastEntry = session.history[session.history.length - 1];
 
-  await ensureSessionAgent(session, rootDir, replayHistory);
+  await ensureSessionAgent(session, rootDir, replayHistory, promptOverrides);
   const replayMessage = formatResponseForAgent(
     lastEntry.question,
     coerceResponseRecord(lastEntry.question, lastEntry.response),
