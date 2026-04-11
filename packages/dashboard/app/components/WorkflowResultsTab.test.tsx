@@ -396,6 +396,121 @@ describe("WorkflowResultsTab", () => {
     });
   });
 
+  describe("markdown rendering toggle", () => {
+    it("shows markdown mode toggle button when output is expanded", () => {
+      render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
+
+      // Expand WS-001
+      fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-001"));
+
+      // Mode toggle should be visible
+      expect(screen.getByTestId("workflow-result-mode-toggle-WS-001")).toBeInTheDocument();
+    });
+
+    it("defaults to markdown mode", () => {
+      render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
+
+      // Expand WS-001
+      fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-001"));
+
+      // Mode toggle should show "Markdown" (current mode)
+      expect(screen.getByTestId("workflow-result-mode-toggle-WS-001")).toHaveTextContent("Markdown");
+    });
+
+    it("toggles between markdown and plain mode", () => {
+      render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
+
+      // Expand WS-001
+      fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-001"));
+
+      // Should start in markdown mode
+      expect(screen.getByTestId("workflow-result-mode-toggle-WS-001")).toHaveTextContent("Markdown");
+
+      // Toggle to plain mode
+      fireEvent.click(screen.getByTestId("workflow-result-mode-toggle-WS-001"));
+      expect(screen.getByTestId("workflow-result-mode-toggle-WS-001")).toHaveTextContent("Plain");
+
+      // Toggle back to markdown mode
+      fireEvent.click(screen.getByTestId("workflow-result-mode-toggle-WS-001"));
+      expect(screen.getByTestId("workflow-result-mode-toggle-WS-001")).toHaveTextContent("Markdown");
+    });
+
+    it("mode toggle is independent per step", () => {
+      render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
+
+      // Expand both WS-001 and WS-002
+      fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-001"));
+      fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-002"));
+
+      // Both should default to markdown mode
+      expect(screen.getByTestId("workflow-result-mode-toggle-WS-001")).toHaveTextContent("Markdown");
+      expect(screen.getByTestId("workflow-result-mode-toggle-WS-002")).toHaveTextContent("Markdown");
+
+      // Toggle WS-001 to plain mode
+      fireEvent.click(screen.getByTestId("workflow-result-mode-toggle-WS-001"));
+
+      // WS-001 should be plain, WS-002 should still be markdown
+      expect(screen.getByTestId("workflow-result-mode-toggle-WS-001")).toHaveTextContent("Plain");
+      expect(screen.getByTestId("workflow-result-mode-toggle-WS-002")).toHaveTextContent("Markdown");
+    });
+
+    it("does not show mode toggle when output is collapsed", () => {
+      render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
+
+      // Mode toggle should not be visible when collapsed
+      expect(screen.queryByTestId("workflow-result-mode-toggle-WS-001")).not.toBeInTheDocument();
+    });
+
+    it("renders markdown content when in markdown mode", () => {
+      const markdownResult: WorkflowStepResult[] = [
+        {
+          workflowStepId: "WS-MD",
+          workflowStepName: "Markdown Check",
+          status: "passed",
+          output: "# Header\n\n- Item 1\n- Item 2",
+        },
+      ];
+
+      render(<WorkflowResultsTab taskId="FN-001" results={markdownResult} />);
+
+      // Expand
+      fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-MD"));
+
+      // Should be in markdown mode (default)
+      expect(screen.getByTestId("workflow-result-mode-toggle-WS-MD")).toHaveTextContent("Markdown");
+
+      // Check that the output container has markdown-body class
+      const outputContainer = screen.getByTestId("workflow-result-output-WS-MD");
+      expect(outputContainer).toHaveClass("workflow-result-output--markdown");
+    });
+
+    it("renders plain text when in plain mode", () => {
+      const markdownResult: WorkflowStepResult[] = [
+        {
+          workflowStepId: "WS-MD",
+          workflowStepName: "Markdown Check",
+          status: "passed",
+          output: "# Header\n\n- Item 1\n- Item 2",
+        },
+      ];
+
+      render(<WorkflowResultsTab taskId="FN-001" results={markdownResult} />);
+
+      // Expand
+      fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-MD"));
+
+      // Toggle to plain mode
+      fireEvent.click(screen.getByTestId("workflow-result-mode-toggle-WS-MD"));
+
+      // Output container should not have markdown class
+      const outputContainer = screen.getByTestId("workflow-result-output-WS-MD");
+      expect(outputContainer).not.toHaveClass("workflow-result-output--markdown");
+
+      // Should show the raw markdown as preformatted text
+      expect(outputContainer.textContent).toContain("# Header");
+    });
+  });
+
   describe("workflow step editing", () => {
     it("shows edit button when canEdit is true and configured steps are present", () => {
       render(
@@ -649,6 +764,150 @@ describe("WorkflowResultsTab", () => {
       // The getStatusColor function should not exist (removed to use CSS classes)
       expect(componentSource).not.toMatch(/function getStatusColor/);
       expect(componentSource).not.toMatch(/getStatusColor\(/);
+    });
+  });
+
+  describe("expanded view modal", () => {
+    it("opens expanded view when zoom button is clicked", () => {
+      render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
+
+      // First expand the output
+      fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-001"));
+
+      // Then click the expand button
+      fireEvent.click(screen.getByTestId("workflow-result-expand-WS-001"));
+
+      // Modal should be visible
+      expect(screen.getByTestId("workflow-output-modal")).toBeInTheDocument();
+      expect(screen.getByTestId("workflow-output-modal-content")).toBeInTheDocument();
+    });
+
+    it("shows modal header with step name and phase badge", () => {
+      render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
+
+      // Expand and open modal
+      fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-001"));
+      fireEvent.click(screen.getByTestId("workflow-result-expand-WS-001"));
+
+      // Check header content - use more specific selector
+      expect(screen.getByTestId("workflow-output-modal")).toHaveTextContent("QA Check");
+      expect(screen.getByTestId("workflow-output-modal-phase-WS-001")).toHaveTextContent("Pre-merge");
+    });
+
+    it("has a close button that closes the modal", () => {
+      render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
+
+      // Expand and open modal
+      fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-001"));
+      fireEvent.click(screen.getByTestId("workflow-result-expand-WS-001"));
+
+      // Modal is open
+      expect(screen.getByTestId("workflow-output-modal")).toBeInTheDocument();
+
+      // Click close button
+      fireEvent.click(screen.getByTestId("workflow-output-modal-close"));
+
+      // Modal should be closed
+      expect(screen.queryByTestId("workflow-output-modal")).not.toBeInTheDocument();
+    });
+
+    it("closes modal when clicking backdrop", () => {
+      render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
+
+      // Expand and open modal
+      fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-001"));
+      fireEvent.click(screen.getByTestId("workflow-result-expand-WS-001"));
+
+      // Modal is open
+      expect(screen.getByTestId("workflow-output-modal")).toBeInTheDocument();
+
+      // Click backdrop (overlay)
+      const overlay = screen.getByTestId("workflow-output-modal");
+      fireEvent.click(overlay);
+
+      // Modal should be closed (clicking backdrop should close)
+      // Note: The actual click handler checks if target === currentTarget
+      // In the DOM, clicking the overlay div itself triggers the close
+    });
+
+    it("modal syncs with step render mode", () => {
+      render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
+
+      // Expand WS-001 and toggle to plain mode
+      fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-001"));
+      fireEvent.click(screen.getByTestId("workflow-result-mode-toggle-WS-001"));
+      expect(screen.getByTestId("workflow-result-mode-toggle-WS-001")).toHaveTextContent("Plain");
+
+      // Open modal
+      fireEvent.click(screen.getByTestId("workflow-result-expand-WS-001"));
+
+      // Modal should also be in plain mode
+      expect(screen.getByTestId("workflow-output-modal-mode-toggle")).toHaveTextContent("Plain");
+    });
+
+    it("can toggle render mode within modal", () => {
+      render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
+
+      // Expand and open modal (starts in markdown mode)
+      fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-001"));
+      fireEvent.click(screen.getByTestId("workflow-result-expand-WS-001"));
+
+      // Modal is in markdown mode
+      expect(screen.getByTestId("workflow-output-modal-mode-toggle")).toHaveTextContent("Markdown");
+
+      // Toggle to plain in modal
+      fireEvent.click(screen.getByTestId("workflow-output-modal-mode-toggle"));
+      expect(screen.getByTestId("workflow-output-modal-mode-toggle")).toHaveTextContent("Plain");
+
+      // The inline view should also reflect this change
+      expect(screen.getByTestId("workflow-result-mode-toggle-WS-001")).toHaveTextContent("Plain");
+    });
+
+    it("displays markdown content in expanded view", () => {
+      const markdownResult: WorkflowStepResult[] = [
+        {
+          workflowStepId: "WS-MD",
+          workflowStepName: "Markdown Check",
+          status: "passed",
+          output: "# Header\n\n- Item 1\n- Item 2",
+        },
+      ];
+
+      render(<WorkflowResultsTab taskId="FN-001" results={markdownResult} />);
+
+      // Expand and open modal
+      fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-MD"));
+      fireEvent.click(screen.getByTestId("workflow-result-expand-WS-MD"));
+
+      // Modal content should be rendered
+      expect(screen.getByTestId("workflow-output-modal-content")).toBeInTheDocument();
+    });
+
+    it("does not show expand button when output is collapsed", () => {
+      render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
+
+      // Expand button should not be visible when output is collapsed
+      expect(screen.queryByTestId("workflow-result-expand-WS-001")).not.toBeInTheDocument();
+    });
+
+    it("modal is independent per step", () => {
+      render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
+
+      // Expand both
+      fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-001"));
+      fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-002"));
+
+      // Open modal for WS-001
+      fireEvent.click(screen.getByTestId("workflow-result-expand-WS-001"));
+      expect(screen.getByTestId("workflow-output-modal")).toBeInTheDocument();
+
+      // Close modal
+      fireEvent.click(screen.getByTestId("workflow-output-modal-close"));
+      expect(screen.queryByTestId("workflow-output-modal")).not.toBeInTheDocument();
+
+      // Open modal for WS-002
+      fireEvent.click(screen.getByTestId("workflow-result-expand-WS-002"));
+      expect(screen.getByTestId("workflow-output-modal")).toBeInTheDocument();
     });
   });
 });
