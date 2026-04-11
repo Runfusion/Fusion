@@ -120,6 +120,43 @@ Nested data (arrays, objects) is stored as JSON text in SQLite columns:
 - Use `toJson()` for array columns, `toJsonNullable()` for nullable object columns
 - Use `fromJson<T>()` to parse JSON columns back to TypeScript types
 
+### `listTasks()` performance contract
+
+`store.listTasks()` returns full Task rows by default, including `log`,
+`comments`, `steps`, and `workflowStepResults`. On busy boards the `log`
+column alone can exceed 60 MB, so a naive call from a hot path will stall
+the dashboard. Always pass the narrowest option set the caller actually
+needs:
+
+- `{ slim: true }` — board-style listing; drops heavy fields and returns empty
+  arrays for them. Detail data must be fetched per-task via `getTask(id)`.
+- `{ column: "in-review" }` — column-scoped scans (e.g. the auto-merge sweep).
+  Filtering happens in SQL, not in JS, so a 1200-row board collapses to
+  whatever the column actually holds.
+- `{ includeArchived: false }` — exclude the archived column from the result
+  set. The board view uses this; archived tasks are loaded lazily when the
+  user expands that column.
+
+The board path is wired this way already: `GET /api/tasks` uses
+`{ slim: true, includeArchived: <query> }`, and `archiveStaleDoneTasks` /
+the auto-merge sweeps in `dashboard.ts` use `slim`/`column`. New callers in
+hot paths (engine maintenance, schedulers, SSE side-effects) MUST pick one
+of these options — full `listTasks()` is reserved for tooling and tests.
+
+### `TaskStore.watch()` polling
+
+`watch()` populates an in-memory cache from `listTasks()` and starts a 1s
+poll loop (`checkForChanges`) that emits `task:created`/`updated`/`moved`/
+`deleted` events to SSE subscribers. The poll filters on `updatedAt /
+columnMovedAt > lastPollTime` — and `lastPollTime` MUST be initialized to
+"now" inside `watch()` itself. If it is left null, the first poll cycle
+runs an unfiltered `SELECT *` and emits `task:updated` for every cached
+task, causing tens of MB of SSE traffic and a frontend setState storm at
+dashboard startup. Direct `UPDATE`s against `tasks` (e.g. bulk archive
+sweeps) will also be observed by the next poll cycle and re-emitted as
+events, which is fine in small numbers but should be batched if a sweep
+touches hundreds of rows at once.
+
 ## Testing
 
 ```bash

@@ -10286,6 +10286,7 @@ describe("Agent create/update routes", () => {
         permissions: { read: true },
         instructionsPath: "docs/reviewer.md",
         instructionsText: "Check test quality.",
+        soul: "Analytical and thorough.",
       }),
       { "Content-Type": "application/json" },
     );
@@ -10302,6 +10303,7 @@ describe("Agent create/update routes", () => {
       permissions: { read: true },
       instructionsPath: "docs/reviewer.md",
       instructionsText: "Check test quality.",
+      soul: "Analytical and thorough.",
     });
   });
 
@@ -10324,6 +10326,7 @@ describe("Agent create/update routes", () => {
         totalOutputTokens: 21,
         instructionsPath: "agents/infra.md",
         instructionsText: "Focus on reliability.",
+        soul: "Pragmatic and efficient.",
       }),
       { "Content-Type": "application/json" },
     );
@@ -10344,7 +10347,42 @@ describe("Agent create/update routes", () => {
       totalOutputTokens: 21,
       instructionsPath: "agents/infra.md",
       instructionsText: "Focus on reliability.",
+      soul: "Pragmatic and efficient.",
     });
+  });
+
+  it("POST /api/agents returns 400 when soul exceeds 10,000 characters", async () => {
+    const longSoul = "x".repeat(10001);
+    const res = await REQUEST(
+      buildAgentApp(),
+      "POST",
+      "/api/agents",
+      JSON.stringify({
+        name: "Soul Test Agent",
+        role: "executor",
+        soul: longSoul,
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("soul must be at most 10,000 characters");
+  });
+
+  it("PATCH /api/agents/:id returns 400 when soul exceeds 10,000 characters", async () => {
+    const longSoul = "x".repeat(10001);
+    const res = await REQUEST(
+      buildAgentApp(),
+      "PATCH",
+      `/api/agents/${agentId}`,
+      JSON.stringify({
+        soul: longSoul,
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("soul must be at most 10,000 characters");
   });
 
   it("POST /api/agents/:id/state returns 400 for invalid state transitions", async () => {

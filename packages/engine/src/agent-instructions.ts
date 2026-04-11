@@ -4,6 +4,7 @@ import type { Agent, AgentRatingSummary, AgentStore } from "@fusion/core";
 
 const MAX_INSTRUCTIONS_PATH_LENGTH = 500;
 const MAX_INSTRUCTIONS_TEXT_LENGTH = 50_000;
+const MAX_SOUL_LENGTH = 10_000;
 
 function trimAndClamp(value: string, maxLength: number, label: string, agentId: string): string {
   const trimmed = value.trim();
@@ -75,6 +76,14 @@ function getTrendLabel(trend: AgentRatingSummary["trend"]): string {
     default:
       return "❓ insufficient-data";
   }
+}
+
+function formatSoulSection(soul: string, agentId: string): string {
+  const trimmed = trimAndClamp(soul, MAX_SOUL_LENGTH, "soul", agentId);
+  if (!trimmed) {
+    return "";
+  }
+  return `## Soul\n\n${trimmed}`;
 }
 
 function formatPerformanceFeedbackSection(ratingSummary: AgentRatingSummary): string {
@@ -167,6 +176,14 @@ export async function resolveAgentInstructions(
           );
         }
       }
+    }
+  }
+
+  // Soul/personality section (after instructions, before performance feedback)
+  if (agent.soul?.trim()) {
+    const soulSection = formatSoulSection(agent.soul, agent.id);
+    if (soulSection) {
+      parts.push(soulSection);
     }
   }
 

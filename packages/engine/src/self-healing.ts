@@ -365,7 +365,10 @@ export class SelfHealingManager {
 
   async archiveStaleDoneTasks(): Promise<number> {
     try {
-      const tasks = await this.store.listTasks();
+      // Slim listing — we only need id/column/columnMovedAt/updatedAt to decide
+      // staleness. Pulling full task payloads (logs, comments, steps) here used
+      // to drag in tens of MB on busy boards and stalled the maintenance loop.
+      const tasks = await this.store.listTasks({ slim: true });
       const cutoff = Date.now() - SelfHealingManager.AUTO_ARCHIVE_AFTER_MS;
 
       const stale = tasks.filter((t) => {

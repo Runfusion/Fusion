@@ -1016,7 +1016,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               onBlur={handleBlur}
               disabled={isSubmitting || isDisabled}
               data-testid="quick-entry-input"
-              rows={1}
+              rows={2}
               aria-controls="quick-entry-controls"
               aria-expanded={isDisclosureExpanded}
             />

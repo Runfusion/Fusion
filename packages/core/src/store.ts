@@ -1316,10 +1316,22 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
      *  from each row to make list responses cheap for board-style consumers. Detail fields default
      *  to empty arrays in the returned Task objects; use `getTask(id)` to load full data. */
     slim?: boolean;
+    /** Restrict to a single column (e.g. 'in-review' for the auto-merge sweep). */
+    column?: Column;
   }): Promise<Task[]> {
     const includeArchived = options?.includeArchived ?? true;
     const slim = options?.slim ?? false;
+    const columnFilter = options?.column;
 
+    // Slim mode drops ONLY the agent log column. On busy boards `log` accounts
+    // for ~99% of the row payload (60+ MB across 1200 tasks); every other JSON
+    // column combined is under 500 KB and is needed by the board UI:
+    //   - `steps`            → step progress badge on TaskCard
+    //   - `comments`         → comment count badge on TaskCard
+    //   - `workflowStepResults` → workflow status indicators
+    //   - `steeringComments` → steering badge
+    // Use `getTask(id)` to load the full row (including `log`) for the
+    // TaskDetailModal's Activity tab and Agent Log subview.
     const slimColumns = `
       id, title, description, "column", status, size, reviewLevel, currentStep,
       worktree, blockedBy, paused, baseBranch, branch, baseCommitSha,
@@ -1329,17 +1341,25 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       mergeRetries, stuckKillCount, recoveryRetryCount, nextRecoveryAt,
       error, summary, thinkingLevel,
       createdAt, updatedAt, columnMovedAt,
-      dependencies,
+      dependencies, steps, comments, workflowStepResults, steeringComments,
       attachments, prInfo, issueInfo, mergeDetails,
       breakIntoSubtasks, enabledWorkflowSteps, modifiedFiles,
       missionId, sliceId, assignedAgentId, assigneeUserId,
       checkedOutBy, checkedOutAt
     `;
     const selectClause = slim ? slimColumns : '*';
-    const whereClause = includeArchived ? '' : ` WHERE "column" != 'archived'`;
+    const whereParts: string[] = [];
+    const params: string[] = [];
+    if (columnFilter) {
+      whereParts.push(`"column" = ?`);
+      params.push(columnFilter);
+    } else if (!includeArchived) {
+      whereParts.push(`"column" != 'archived'`);
+    }
+    const whereClause = whereParts.length > 0 ? ` WHERE ${whereParts.join(" AND ")}` : "";
     const sql = `SELECT ${selectClause} FROM tasks${whereClause} ORDER BY createdAt ASC`;
 
-    const rows = this.db.prepare(sql).all();
+    const rows = this.db.prepare(sql).all(...params);
     const tasks = (rows as any[]).map((row) => this.rowToTask(row));
 
     // Sort by createdAt, then by numeric ID suffix for tie-breaking
@@ -2699,6 +2719,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     // Store current lastModified
     this.lastKnownModified = this.db.getLastModified();
+    // Initialize lastPollTime so the first checkForChanges() cycle filters by
+    // "modified since now" instead of doing a full SELECT * + emitting an
+    // update event for every cached task. Without this, dashboard startup
+    // re-loaded the entire tasks table 1s after watch() began.
+    this.lastPollTime = new Date().toISOString();
 
     // Use a sentinel watcher object so existing code that checks `this.watcher` still works
     try {

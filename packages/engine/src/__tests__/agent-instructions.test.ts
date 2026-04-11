@@ -78,6 +78,12 @@ describe("resolveAgentInstructions", () => {
     expect(result).toBe("");
   });
 
+  it("returns soul-only agent with no instructions", async () => {
+    const agent = makeAgent({ soul: "Be thorough and analytical." });
+    const result = await resolveAgentInstructions(agent, testDir);
+    expect(result).toBe("## Soul\n\nBe thorough and analytical.");
+  });
+
   it("returns instructionsText when set", async () => {
     const agent = makeAgent({ instructionsText: "Always write tests." });
     const result = await resolveAgentInstructions(agent, testDir);
@@ -204,6 +210,36 @@ describe("resolveAgentInstructions", () => {
 
     expect(result.length).toBe(50000);
   });
+
+  it("truncates oversized soul", async () => {
+    const oversized = "s".repeat(10010);
+    const agent = makeAgent({ soul: oversized });
+
+    const result = await resolveAgentInstructions(agent, testDir);
+    expect(result.length).toBe(10000 + "## Soul\n\n".length);
+  });
+
+  it("places soul section after instructionsText and before performance feedback", async () => {
+    const filePath = join(testDir, "file-instructions.md");
+    await writeFile(filePath, "File-based instructions here.");
+
+    const agent = makeAgent({
+      instructionsText: "Inline instructions.",
+      instructionsPath: "file-instructions.md",
+      soul: "Be methodical and detailed.",
+    });
+
+    const result = await resolveAgentInstructions(agent, testDir);
+
+    // Verify section order
+    const soulIndex = result.indexOf("## Soul");
+    const instructionsTextIndex = result.indexOf("Inline instructions.");
+    const instructionsFileIndex = result.indexOf("File-based instructions here.");
+
+    expect(instructionsTextIndex).toBeLessThan(soulIndex);
+    expect(instructionsFileIndex).toBeLessThan(soulIndex);
+    expect(soulIndex).toBeLessThan(result.indexOf("## Soul") + 10); // Soul section is present
+  });
 });
 
 describe("resolveAgentInstructions with rating summary", () => {
@@ -241,6 +277,29 @@ describe("resolveAgentInstructions with rating summary", () => {
     expect(result).toContain("  - speed: 3.8");
     expect(result).toContain('  - "Great debugging discipline" (score: 5.0)');
     expect(result).toContain('  - "Could communicate blockers sooner" (score: 4.0)');
+  });
+
+  it("places soul section before performance feedback and after instructions", async () => {
+    const agent = makeAgent({
+      instructionsText: "Implement the feature.",
+      soul: "Be pragmatic and efficient.",
+    });
+    const summary = makeRatingSummary({
+      totalRatings: 3,
+      trend: "stable",
+    });
+
+    const result = await resolveAgentInstructions(agent, testDir, summary);
+
+    // Verify section order: instructionsText → soul → Performance Feedback
+    const instructionsIndex = result.indexOf("Implement the feature.");
+    const soulIndex = result.indexOf("## Soul");
+    const feedbackIndex = result.indexOf("## Performance Feedback");
+
+    expect(instructionsIndex).toBeLessThan(soulIndex);
+    expect(soulIndex).toBeLessThan(feedbackIndex);
+    expect(result).toContain("## Soul");
+    expect(result).toContain("## Performance Feedback");
   });
 
   it("shows the correct trend indicator for all trend states", async () => {

@@ -876,7 +876,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
 
     // ── Startup sweep: enqueue any tasks already in "in-review" ───────
     if (settings.autoMerge) {
-      const existing = await store.listTasks();
+      const existing = await store.listTasks({ column: "in-review" });
       const inReview = existing.filter((t) => canAutoMergeTask(t as any));
       if (inReview.length > 0) {
         console.log(
@@ -911,7 +911,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
 
         if (s.autoMerge) {
           try {
-            const tasks = await store.listTasks();
+            const tasks = await store.listTasks({ column: "in-review" });
             for (const t of tasks) {
               if (canAutoMergeTask(t as any)) {
                 enqueueMerge(t.id);
@@ -935,7 +935,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
 
         if (s.autoMerge) {
           try {
-            const tasks = await store.listTasks();
+            const tasks = await store.listTasks({ column: "in-review" });
             for (const t of tasks) {
               if (canAutoMergeTask(t as any)) {
                 enqueueMerge(t.id);
@@ -999,7 +999,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           // Refresh the cached limit so the semaphore picks up live changes
           cachedMaxConcurrent = s.maxConcurrent;
           if (!s.globalPause && !s.enginePaused && s.autoMerge) {
-            const tasks = await store.listTasks();
+            const tasks = await store.listTasks({ column: "in-review" });
             for (const t of tasks) {
               if (canAutoMergeTask(t as any)) {
                 enqueueMerge(t.id);

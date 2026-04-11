@@ -234,6 +234,13 @@ describe("QuickEntryBox", () => {
     expect((textarea as HTMLTextAreaElement).placeholder).toBe("Add a task...");
   });
 
+  it("renders textarea with baseline height of 2 rows (FN-1580)", () => {
+    renderQuickEntryBox({});
+    const textarea = screen.getByTestId("quick-entry-input");
+    expect(textarea).toBeTruthy();
+    expect((textarea as HTMLTextAreaElement).rows).toBe(2);
+  });
+
   it("does NOT expand on focus when autoExpand is false", () => {
     renderQuickEntryBox({ autoExpand: false });
     const textarea = screen.getByTestId("quick-entry-input");

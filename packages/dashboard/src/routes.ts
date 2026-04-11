@@ -8998,6 +8998,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         permissions,
         instructionsPath,
         instructionsText,
+        soul,
       } = req.body ?? {};
 
       if (!name || typeof name !== "string") {
@@ -9027,6 +9028,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       if (!validateAgentInstructionsPayload(res, instructionsPath, instructionsText)) {
         return;
       }
+      if (soul !== undefined && soul !== null && typeof soul !== "string") {
+        throw badRequest("soul must be a string");
+      }
+      if (typeof soul === "string" && soul.length > 10000) {
+        throw badRequest("soul must be at most 10,000 characters");
+      }
 
       const scopedStore = await getScopedStore(req);
       const { AgentStore } = await import("@fusion/core");
@@ -9044,6 +9051,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         permissions,
         instructionsPath: instructionsPath ?? undefined,
         instructionsText: instructionsText ?? undefined,
+        soul: soul ?? undefined,
       });
       res.status(201).json(agent);
     } catch (err: any) {
@@ -9471,6 +9479,16 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       if ("instructionsText" in body) {
         updates.instructionsText = body.instructionsText ?? undefined;
+      }
+
+      if ("soul" in body) {
+        if (body.soul !== null && typeof body.soul !== "string") {
+          throw badRequest("soul must be a string");
+        }
+        if (typeof body.soul === "string" && body.soul.length > 10000) {
+          throw badRequest("soul must be at most 10,000 characters");
+        }
+        updates.soul = body.soul ?? undefined;
       }
 
       const scopedStore = await getScopedStore(req);

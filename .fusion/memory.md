@@ -581,3 +581,52 @@ const isValid = timingSafeEqual(Buffer.from(signature), Buffer.from(req.headers[
 - RoutineScheduler initialized after HeartbeatMonitor/TriggerScheduler
 - Graceful degradation if RoutineStore not available (FN-1519 types incomplete)
 - `getRoutineScheduler()` and `getRoutineRunner()` getters for testing access
+
+## Dashboard Startup Perf — `listTasks` Hot Paths
+
+The dashboard CLI (`pnpm dev dashboard`) was extremely slow on boards with
+~1200 tasks. Three independent code paths were each pulling the entire
+`tasks` table (with the full `log`/`comments`/`steps` JSON, ~67 MB) at
+startup and on every maintenance/sweep cycle.
+
+**Bug 1 — `TaskStore.watch()` (`packages/core/src/store.ts`):** The 1-second
+poll loop in `checkForChanges()` filters on `updatedAt > lastPollTime`, but
+`lastPollTime` was left `null` after `watch()` populated the cache. The
+first poll cycle therefore ran an unfiltered `SELECT *` and emitted a
+`task:updated` SSE event for every cached task — ~60 MB of SSE traffic plus
+1199 React `setState` calls one second after dashboard startup. **Fix:** set
+`this.lastPollTime = new Date().toISOString()` at the end of `watch()` so
+the first poll only sees tasks that changed *after* the cache snapshot.
+
+**Bug 2 — Auto-merge sweeps (`packages/cli/src/commands/dashboard.ts`):**
+The startup sweep, the two unpause handlers, and the periodic
+`scheduleMergeRetry()` (every 15s by default) all called
+`store.listTasks()` and then JS-filtered for in-review tasks. On a 1200-row
+board with mostly done/archived tasks that's a constant 67 MB allocation
+just to find 0–5 candidates. **Fix:** added `column?: Column` option to
+`listTasks` so callers can scope the SQL `WHERE` directly, and changed
+those four call sites to `listTasks({ column: "in-review" })`.
+
+**Bug 3 — Engine maintenance (`packages/engine/src/self-healing.ts`):**
+`SelfHealingManager.archiveStaleDoneTasks()` runs every 15 min from
+`runMaintenance()`. It only needs `id`, `column`, and `columnMovedAt` to
+decide which done tasks are >48h old, but it called the full
+`listTasks()`. **Fix:** pass `{ slim: true }` — the slim row still includes
+those fields and excludes the heavy log/comments/steps payload.
+
+**General contract going forward:** `listTasks()` is heavy by default. Hot
+paths must pass `{ slim: true }`, `{ column: ... }`, or
+`{ includeArchived: false }`. The board endpoint
+(`GET /api/tasks` in `packages/dashboard/src/routes.ts`) already uses
+slim+includeArchived; the archived column is loaded lazily on expand via a
+sticky `includeArchived` flag in `useTasks.ts`.
+
+**Backlog cleanup:** `archiveStaleDoneTasks` walks tasks one at a time via
+`store.archiveTask(id)`, which is fine for the steady-state 5–20 tasks per
+cycle but would take minutes on the 866-task backlog after the
+auto-archive feature first lands. For one-off backlog cleanup, a direct
+SQL `UPDATE tasks SET column='archived', columnMovedAt=now,
+updatedAt=now WHERE column='done' AND columnMovedAt < cutoff` is safe and
+fast — subsequent watch() polls will pick up the changes and emit
+`task:moved` events. (Beware emitting hundreds of events in one cycle if a
+dashboard is connected.)

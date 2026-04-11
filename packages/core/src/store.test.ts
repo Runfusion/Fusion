@@ -1323,7 +1323,7 @@ describe("TaskStore", () => {
       expect(paged[0].id).toBe("FN-002");
     });
 
-    it("slim mode returns metadata but drops heavy fields (log/comments/steps)", async () => {
+    it("slim mode drops the agent log but keeps board-visible fields (steps/comments)", async () => {
       const task = await store.createTask({ description: "Slim test" });
       await store.logEntry(task.id, "heavy log entry that should not appear in slim list");
 
@@ -1333,13 +1333,22 @@ describe("TaskStore", () => {
       const full = fullList.find((t) => t.id === task.id)!;
       const slim = slimList.find((t) => t.id === task.id)!;
 
+      // Sanity: the full row really has the log we wrote.
       expect(full.log.length).toBeGreaterThan(0);
+
+      // Slim must drop the heavy log payload (the only field worth slimming).
       expect(slim.id).toBe(task.id);
       expect(slim.description).toBe("Slim test");
       expect(slim.column).toBe(full.column);
       expect(slim.log).toEqual([]);
-      expect(slim.steps).toEqual([]);
-      expect(slim.comments).toBeUndefined();
+
+      // Slim must STILL include the small JSON columns the board UI reads:
+      // step progress, comment counts, workflow status, steering badges.
+      // (Dropping them silently broke TaskCard progress bars and the comments tab.)
+      expect(slim.steps).toEqual(full.steps);
+      expect(slim.comments).toEqual(full.comments);
+      expect(slim.workflowStepResults).toEqual(full.workflowStepResults);
+      expect(slim.steeringComments).toEqual(full.steeringComments);
     });
 
     it("includeArchived=false excludes archived tasks; default includes them", async () => {

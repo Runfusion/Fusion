@@ -1083,9 +1083,9 @@ export function TaskDetailModal({
               ) : (
                 <div className="detail-activity">
                   <h4>Activity</h4>
-                  {task.log && task.log.length > 0 ? (
+                  {workingTask.log && workingTask.log.length > 0 ? (
                     <div className="detail-activity-list">
-                      {[...task.log].reverse().map((entry, i) => (
+                      {[...workingTask.log].reverse().map((entry, i) => (
                         <div key={i} className="detail-log-entry">
                           <div className="detail-log-header">
                             <span className="detail-log-timestamp">
@@ -1180,10 +1180,10 @@ export function TaskDetailModal({
           </div>
           <div className="detail-section detail-step-progress">
             <h4>Progress</h4>
-            {task.steps && task.steps.length > 0 ? (
+            {workingTask.steps && workingTask.steps.length > 0 ? (
               <div className="step-progress-wrapper">
                 <div className="step-progress-bar">
-                  {task.steps.map((step, index) => (
+                  {workingTask.steps.map((step, index) => (
                     <div
                       key={index}
                       className={`step-progress-segment step-progress-segment--${step.status}`}
@@ -1193,7 +1193,7 @@ export function TaskDetailModal({
                   ))}
                 </div>
                 <span className="step-progress-label">
-                  {task.steps.filter(s => s.status === "done").length}/{task.steps.length} steps
+                  {workingTask.steps.filter(s => s.status === "done").length}/{workingTask.steps.length} steps
                 </span>
               </div>
             ) : (
