@@ -446,18 +446,10 @@ The `@fusion/tui` package provides Ink-based React components for terminal UI.
 - Use `setTimeout(resolve, ms)` for async state updates in tests
 - Track captured handlers via module-level variables for test assertions
 
-## Kimi/Moonshot API Usage (FN-1578)
+## Kimi/Moonshot API Usage
 
-- **Primary endpoint**: `/v1/coding_plan/usage` (underscore) — Codexbar-validated working endpoint.
-- **Fallback endpoint**: `/v1/coding-plan/usage` (hyphen) — Legacy endpoint for older accounts/API versions.
-- **Fallback trigger**: ANY 404 response triggers fallback (regardless of body content).
-- **Auth errors (401/403)**: Short-circuit immediately — no fallback for authentication failures.
-- **Known 404 error shapes**:
-  - `{"code":5,"error":"url.not_found","message":"没找到对象",...}` — endpoint not available (no coding plan active).
-  - `{"error":"url_not_found"}` — alternative format.
-- **User-facing error**: When last endpoint returns `url.not_found`, show friendly message: "Usage endpoint unavailable — Kimi coding plan may not be active on this account".
-- **Auth**: Uses `Authorization: Bearer <api_key>` header with `kimi-coding` key from `~/.pi/agent/auth.json`.
-- **Response parsing**: Supports `data.windows[]` array and flat `data.used/total/remaining` shapes.
+- Kimi usage endpoint uses `/v1/coding_plan/usage` (underscore) as the primary endpoint — this is the Codexbar-validated working endpoint. The hyphen variant (`/v1/coding-plan/usage`) is a legacy fallback that may return 404 `url.not_found` for some accounts.
+- When implementing endpoint fallbacks for API providers, test the fallback logic with extra fields in the error payload (e.g., `{"code":5,"error":"url.not_found","message":"没找到对象",...}`) to ensure the fallback trigger remains robust.
 ## FN-1516: Periodic Auto-Merge Sweep
 
 - The `canAutoMergeTask()` function must be defined locally inside `runDashboard()` to work correctly with Vitest mocks. Module-level exports capture the real `getTaskMergeBlocker` at import time, before mocks are applied.
@@ -638,3 +630,21 @@ updatedAt=now WHERE column='done' AND columnMovedAt < cutoff` is safe and
 fast — subsequent watch() polls will pick up the changes and emit
 `task:moved` events. (Beware emitting hundreds of events in one cycle if a
 dashboard is connected.)
+
+## FN-1567: Mission Contract Assertions
+
+**Schema version bump pattern:** When adding a new schema migration:
+1. Increment `SCHEMA_VERSION` constant in `db.ts`
+2. Add `if (version < N)` block with `applyMigration(N, () => { ... })`
+3. Use `addColumnIfMissing()` for column additions (idempotent)
+4. Use `CREATE TABLE IF NOT EXISTS` for new tables (idempotent)
+5. Use `CREATE INDEX IF NOT EXISTS` for indexes (idempotent)
+6. Update all schema version assertions in test files (`db.test.ts`, `run-audit.test.ts`, `__tests__/task-documents.test.ts`)
+
+**Optional fields in interfaces:** When adding an optional field to an existing interface (like `validationState?: MilestoneValidationState`), TypeScript may infer `T | undefined` when the field is used in SQL prepared statements. Use type assertions (`as string`) or null coalescing (`?? "default"`) to satisfy SQLite type requirements.
+
+**Deterministic ordering:** Always use `ORDER BY orderIndex ASC, createdAt ASC, id ASC` for listing items within a parent. This ensures stable ordering even when items have identical timestamps.
+
+**Event emitter events:** Add new event types to `MissionStoreEvents` interface and emit them from the appropriate methods. The EventEmitter pattern follows the same conventions as `TaskStore`.
+
+**Many-to-many relationship pattern:** Use a composite primary key `(featureId, assertionId)` to prevent duplicate links. Check for existing links before inserting and throw meaningful errors. Use `hasTable()` guards before creating indexes on new tables.

@@ -213,6 +213,22 @@ export type {
   FeatureEventPayload,
   FeatureDeletedPayload,
   FeatureLinkedPayload,
+  // Contract assertion types
+  MISSION_ASSERTION_STATUSES,
+  MILESTONE_VALIDATION_STATES,
+  MissionAssertionStatus,
+  MilestoneValidationState,
+  MissionContractAssertion,
+  FeatureAssertionLink,
+  MilestoneValidationRollup,
+  ContractAssertionCreateInput,
+  ContractAssertionUpdateInput,
+  AssertionCreatedPayload,
+  AssertionUpdatedPayload,
+  AssertionDeletedPayload,
+  AssertionLinkedPayload,
+  AssertionUnlinkedPayload,
+  MilestoneValidationUpdatedPayload,
 } from "./mission-types.js";
 export { MissionStore } from "./mission-store.js";
 export type { MissionStoreEvents, MissionSummary } from "./mission-store.js";
