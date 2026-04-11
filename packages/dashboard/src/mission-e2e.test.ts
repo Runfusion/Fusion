@@ -1006,6 +1006,9 @@ describe("Mission API", () => {
       const slice = missionStore.addSlice(milestone.id, { title: "Test Slice" });
       const feature = missionStore.addFeature(slice.id, { title: "Test Feature" });
 
+      // Pre-link the feature to a task so the status transition is allowed
+      missionStore.getFeature.mockReturnValue({ ...feature, taskId: "FN-001" });
+
       const res = await request(
         app,
         "PATCH",
@@ -1046,6 +1049,134 @@ describe("Mission API", () => {
       expect(res.status).toBe(500);
       expect(res.body.error).toContain("Invalid status");
       expect(missionStore.updateFeature).not.toHaveBeenCalled();
+    });
+
+    it("should reject status transitions to execution states without taskId", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Test Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Test Milestone" });
+      const slice = missionStore.addSlice(milestone.id, { title: "Test Slice" });
+      const feature = missionStore.addFeature(slice.id, { title: "Test Feature" });
+      // Feature has no taskId (taskId is undefined by default)
+
+      const res = await request(
+        app,
+        "PATCH",
+        `/api/missions/features/${feature.id}`,
+        JSON.stringify({ status: "triaged" }),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Cannot set status to 'triaged' without a linked task");
+      expect(missionStore.updateFeature).not.toHaveBeenCalled();
+    });
+
+    it("should allow status transitions to execution states when taskId is present", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Test Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Test Milestone" });
+      const slice = missionStore.addSlice(milestone.id, { title: "Test Slice" });
+      const feature = missionStore.addFeature(slice.id, { title: "Test Feature" });
+      missionStore.getFeature.mockReturnValue({ ...feature, taskId: "FN-001" });
+
+      const res = await request(
+        app,
+        "PATCH",
+        `/api/missions/features/${feature.id}`,
+        JSON.stringify({ status: "in-progress" }),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(200);
+      expect(missionStore.updateFeature).toHaveBeenCalledWith(feature.id, {
+        status: "in-progress",
+      });
+    });
+
+    it("should reject 'done' status without taskId", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Test Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Test Milestone" });
+      const slice = missionStore.addSlice(milestone.id, { title: "Test Slice" });
+      const feature = missionStore.addFeature(slice.id, { title: "Test Feature" });
+
+      const res = await request(
+        app,
+        "PATCH",
+        `/api/missions/features/${feature.id}`,
+        JSON.stringify({ status: "done" }),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Cannot set status to 'done' without a linked task");
+      expect(missionStore.updateFeature).not.toHaveBeenCalled();
+    });
+
+    it("should reject 'blocked' status without taskId", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Test Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Test Milestone" });
+      const slice = missionStore.addSlice(milestone.id, { title: "Test Slice" });
+      const feature = missionStore.addFeature(slice.id, { title: "Test Feature" });
+
+      const res = await request(
+        app,
+        "PATCH",
+        `/api/missions/features/${feature.id}`,
+        JSON.stringify({ status: "blocked" }),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Cannot set status to 'blocked' without a linked task");
+      expect(missionStore.updateFeature).not.toHaveBeenCalled();
+    });
+
+    it("should allow 'defined' status without taskId", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Test Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Test Milestone" });
+      const slice = missionStore.addSlice(milestone.id, { title: "Test Slice" });
+      const feature = missionStore.addFeature(slice.id, { title: "Test Feature" });
+      // Feature has no taskId, but "defined" is always allowed
+
+      const res = await request(
+        app,
+        "PATCH",
+        `/api/missions/features/${feature.id}`,
+        JSON.stringify({ status: "defined" }),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(200);
+      expect(missionStore.updateFeature).toHaveBeenCalledWith(feature.id, {
+        status: "defined",
+      });
+    });
+
+    it("should allow non-status field updates without taskId", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Test Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Test Milestone" });
+      const slice = missionStore.addSlice(milestone.id, { title: "Test Slice" });
+      const feature = missionStore.addFeature(slice.id, { title: "Test Feature" });
+      // Updating title/description should be allowed without taskId
+
+      const res = await request(
+        app,
+        "PATCH",
+        `/api/missions/features/${feature.id}`,
+        JSON.stringify({ title: "Updated Title", description: "New description" }),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(200);
+      expect(missionStore.updateFeature).toHaveBeenCalledWith(feature.id, {
+        title: "Updated Title",
+        description: "New description",
+      });
     });
 
     it("should link feature to task", async () => {

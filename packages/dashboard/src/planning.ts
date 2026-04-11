@@ -18,6 +18,7 @@ import type {
   PlanningResponse,
   TaskStore,
 } from "@fusion/core";
+import { resolvePrompt, type PromptOverrideMap } from "@fusion/core";
 import type { SubtaskItem } from "./subtask-breakdown.js";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -537,7 +538,8 @@ export async function createSession(
   ip: string,
   initialPlan: string,
   _store?: TaskStore,
-  rootDir?: string
+  rootDir?: string,
+  promptOverrides?: PromptOverrideMap,
 ): Promise<{ sessionId: string; firstQuestion: PlanningQuestion }> {
   // Check rate limit
   if (!checkRateLimit(ip)) {
@@ -568,6 +570,9 @@ export async function createSession(
   sessions.set(sessionId, session);
   persistSession(session, "generating");
 
+  // Resolve the effective system prompt (override or default)
+  const systemPrompt = resolvePrompt("planning-system", promptOverrides) || PLANNING_SYSTEM_PROMPT;
+
   // Create AI agent and get the first question
   // Only await engineReady if createKbAgent hasn't been set externally (e.g., via __setCreateKbAgent)
   if (!createKbAgent) {
@@ -576,7 +581,7 @@ export async function createSession(
 
   const agentResult = await createKbAgent({
     cwd: rootDir,
-    systemPrompt: PLANNING_SYSTEM_PROMPT,
+    systemPrompt,
     tools: "readonly",
     onThinking: () => {
       // Non-streaming path ignores thinking output
@@ -709,6 +714,9 @@ async function getFirstQuestionFromAgent(
  * @param ip - Client IP for rate limiting
  * @param initialPlan - The user's initial plan description
  * @param rootDir - Project root directory for AI agent context
+ * @param modelProvider - Optional AI model provider override
+ * @param modelId - Optional AI model ID override
+ * @param promptOverrides - Optional prompt override map for system prompt customization
  * @returns Session ID (use with planningStreamManager to receive events)
  */
 export async function createSessionWithAgent(
@@ -717,6 +725,7 @@ export async function createSessionWithAgent(
   rootDir: string,
   modelProvider?: string,
   modelId?: string,
+  promptOverrides?: PromptOverrideMap,
 ): Promise<string> {
   // Check rate limit
   if (!checkRateLimit(ip)) {
@@ -744,7 +753,7 @@ export async function createSessionWithAgent(
   persistSession(session, "generating");
 
   // Initialize AI agent in background - it will stream via planningStreamManager
-  initializeAgent(session, rootDir, modelProvider, modelId).catch((err) => {
+  initializeAgent(session, rootDir, modelProvider, modelId, promptOverrides).catch((err) => {
     console.error(`[planning] Failed to initialize agent for session ${sessionId}:`, err);
     persistSession(session, "error", undefined, err.message || "Failed to initialize AI agent");
     planningStreamManager.broadcast(sessionId, {
@@ -764,9 +773,10 @@ async function initializeAgent(
   rootDir: string,
   modelProvider?: string,
   modelId?: string,
+  promptOverrides?: PromptOverrideMap,
 ): Promise<void> {
   try {
-    session.agent = await createPlanningAgent(session, rootDir, modelProvider, modelId);
+    session.agent = await createPlanningAgent(session, rootDir, modelProvider, modelId, promptOverrides);
     session.updatedAt = new Date();
 
     // Send initial message to get first question
@@ -789,13 +799,17 @@ async function createPlanningAgent(
   rootDir: string,
   modelProvider?: string,
   modelId?: string,
+  promptOverrides?: PromptOverrideMap,
 ): Promise<AgentResult> {
   // Ensure engine is loaded before using createKbAgent
   await engineReady;
 
+  // Resolve the effective system prompt (override or default)
+  const systemPrompt = resolvePrompt("planning-system", promptOverrides) || PLANNING_SYSTEM_PROMPT;
+
   return createKbAgent({
     cwd: rootDir,
-    systemPrompt: PLANNING_SYSTEM_PROMPT,
+    systemPrompt,
     tools: "readonly",
     ...(modelProvider && modelId
       ? {
@@ -837,6 +851,7 @@ async function ensureSessionAgent(
   session: Session,
   rootDir: string | undefined,
   historyForReplay: Array<{ question: PlanningQuestion; response: unknown }>,
+  promptOverrides?: PromptOverrideMap,
 ): Promise<void> {
   if (session.agent) {
     return;
@@ -848,7 +863,7 @@ async function ensureSessionAgent(
     );
   }
 
-  session.agent = await createPlanningAgent(session, rootDir);
+  session.agent = await createPlanningAgent(session, rootDir, undefined, undefined, promptOverrides);
 
   if (historyForReplay.length === 0) {
     return;

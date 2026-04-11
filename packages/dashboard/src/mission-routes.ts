@@ -1500,6 +1500,27 @@ export function createMissionRouter(
         throw badRequest("Invalid feature ID format");
       }
 
+      // Fetch existing feature to check invariants
+      const existing = missionStore.getFeature(featureId);
+      if (!existing) {
+        throw notFound("Feature not found");
+      }
+
+      // Guard: Reject status transitions to execution states without a linked task.
+      // Features in "triaged", "in-progress", "done", or "blocked" must have a taskId.
+      // "defined" status is allowed without a taskId (the initial state).
+      if (status !== undefined) {
+        const targetStatus = validateStatus(status, FEATURE_STATUSES) as FeatureStatus;
+        const EXECUTION_STATUSES: FeatureStatus[] = ["triaged", "in-progress", "done", "blocked"];
+        if (EXECUTION_STATUSES.includes(targetStatus) && !existing.taskId) {
+          throw badRequest(
+            `Cannot set status to '${targetStatus}' without a linked task. ` +
+            "Use the triage endpoint to create and link a task first, or link an existing task via " +
+            `POST /api/missions/features/${featureId}/link-task.`,
+          );
+        }
+      }
+
       const updates: Partial<MissionFeature> = {};
 
       if (title !== undefined) {
