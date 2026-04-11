@@ -698,7 +698,7 @@ Terminates and retries tasks with no agent activity for 10 minutes. Detects dead
   }
 }
 ```
-Get notified when tasks complete, merge, or fail. Includes dashboard deep links when `ntfyDashboardHost` is set.
+Get notified when tasks complete, merge, fail, need approval, or need human review. Includes dashboard deep links when `ntfyDashboardHost` is set.
 
 **Plan Approval:**
 ```json

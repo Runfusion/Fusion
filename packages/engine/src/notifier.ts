@@ -40,7 +40,7 @@ interface NtfyConfig {
 }
 
 /** Event types for notification deduplication */
-type NotificationEventType = "in-review" | "merged" | "failed" | "awaiting-approval";
+type NotificationEventType = "in-review" | "merged" | "failed" | "awaiting-approval" | "awaiting-user-review";
 
 /**
  * NtfyNotifier sends push notifications via ntfy.sh when tasks complete
@@ -54,7 +54,7 @@ type NotificationEventType = "in-review" | "merged" | "failed" | "awaiting-appro
  * - Configurable notification events (hardcoded defaults)
  */
 export class NtfyNotifier {
-  private config: NtfyConfig = { enabled: false, topic: undefined, dashboardHost: undefined, events: ["in-review", "merged", "failed", "awaiting-approval"] };
+  private config: NtfyConfig = { enabled: false, topic: undefined, dashboardHost: undefined, events: ["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review"] };
   private ntfyBaseUrl: string;
   /** Project identifier for deep links in notifications */
   private projectId?: string;
@@ -171,6 +171,20 @@ export class NtfyNotifier {
         ),
       );
     }
+
+    // Notify when task needs human review (agent handoff to user)
+    if (task.status === "awaiting-user-review" && this.isEventEnabled("awaiting-user-review")) {
+      const clickUrl = this.buildTaskUrl(task.id);
+      this.maybeNotify(task.id, "awaiting-user-review", () =>
+        this.sendNotification(
+          this.config.topic!,
+          `User review needed for ${task.id}`,
+          `Task "${formatTaskIdentifier(task)}" needs human review before it can proceed`,
+          "high",
+          clickUrl,
+        ),
+      );
+    }
   };
 
   private handleTaskMerged = (result: MergeResult): void => {
@@ -221,7 +235,7 @@ export class NtfyNotifier {
       enabled: settings.ntfyEnabled ?? false,
       topic: settings.ntfyTopic,
       dashboardHost: settings.ntfyDashboardHost,
-      events: settings.ntfyEvents ?? ["in-review", "merged", "failed", "awaiting-approval"],
+      events: settings.ntfyEvents ?? ["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review"],
     };
   }
 

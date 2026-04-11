@@ -23,7 +23,7 @@ const defaultSettings: Settings = {
   defaultPresetBySize: {},
   ntfyEnabled: false,
   ntfyTopic: undefined,
-  ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval"],
+  ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review"],
   taskStuckTimeoutMs: undefined,
   maxStuckKills: 6,
   runStepsInNewSessions: false,
@@ -1763,7 +1763,7 @@ describe("SettingsModal", () => {
       ...defaultSettings,
       ntfyEnabled: true,
       ntfyTopic: "my-topic",
-      ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval"],
+      ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review"],
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
@@ -1774,6 +1774,7 @@ describe("SettingsModal", () => {
     expect(screen.getByLabelText("Task merged")).toBeTruthy();
     expect(screen.getByLabelText("Task failed")).toBeTruthy();
     expect(screen.getByLabelText("Plan needs approval")).toBeTruthy();
+    expect(screen.getByLabelText("User review needed")).toBeTruthy();
   });
 
   it("shows awaiting-approval checkbox when ntfy is enabled", async () => {
@@ -1781,7 +1782,7 @@ describe("SettingsModal", () => {
       ...defaultSettings,
       ntfyEnabled: true,
       ntfyTopic: "my-topic",
-      ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval"],
+      ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review"],
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
@@ -1800,6 +1801,7 @@ describe("SettingsModal", () => {
     expect(screen.queryByLabelText("Task merged")).toBeNull();
     expect(screen.queryByLabelText("Task failed")).toBeNull();
     expect(screen.queryByLabelText("Plan needs approval")).toBeNull();
+    expect(screen.queryByLabelText("User review needed")).toBeNull();
   });
 
   it("ntfyEvents checkboxes are all checked by default", async () => {
@@ -1817,6 +1819,7 @@ describe("SettingsModal", () => {
     expect((screen.getByLabelText("Task merged") as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText("Task failed") as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText("Plan needs approval") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("User review needed") as HTMLInputElement).checked).toBe(true);
   });
 
   it("saves ntfyEvents correctly when checkboxes are toggled", async () => {
@@ -1824,7 +1827,7 @@ describe("SettingsModal", () => {
       ...defaultSettings,
       ntfyEnabled: true,
       ntfyTopic: "my-topic",
-      ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval"],
+      ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review"],
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
@@ -1848,7 +1851,7 @@ describe("SettingsModal", () => {
       ...defaultSettings,
       ntfyEnabled: true,
       ntfyTopic: "my-topic",
-      ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval"],
+      ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review"],
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
@@ -1856,11 +1859,12 @@ describe("SettingsModal", () => {
 
     fireEvent.click(screen.getByText("Notifications"));
 
-    // Uncheck all four
+    // Uncheck all five
     fireEvent.click(screen.getByLabelText("Task completed (in-review)"));
     fireEvent.click(screen.getByLabelText("Task merged"));
     fireEvent.click(screen.getByLabelText("Task failed"));
     fireEvent.click(screen.getByLabelText("Plan needs approval"));
+    fireEvent.click(screen.getByLabelText("User review needed"));
 
     fireEvent.click(screen.getByText("Save"));
     await waitFor(() => expect(updateGlobalSettings).toHaveBeenCalledTimes(1));

@@ -26,7 +26,7 @@ const defaultSettings = {
   defaultPresetBySize: {},
   ntfyEnabled: false,
   ntfyTopic: undefined,
-  ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval"],
+  ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review"],
   taskStuckTimeoutMs: undefined,
   maxStuckKills: 6,
   runStepsInNewSessions: false,

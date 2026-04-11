@@ -40,7 +40,7 @@ Defaults from `DEFAULT_GLOBAL_SETTINGS`; key scope from `GLOBAL_SETTINGS_KEYS`.
 | `defaultThinkingLevel` | `"off" \| "minimal" \| "low" \| "medium" \| "high"` | `undefined` | Default reasoning effort level. |
 | `ntfyEnabled` | `boolean` | `false` | Enable ntfy push notifications. |
 | `ntfyTopic` | `string` | `undefined` | ntfy topic name. |
-| `ntfyEvents` | `("in-review" \| "merged" \| "failed")[]` | `["in-review","merged","failed"]` | Event types that trigger ntfy notifications. |
+| `ntfyEvents` | `("in-review" \| "merged" \| "failed" \| "awaiting-approval" \| "awaiting-user-review")[]` | `["in-review","merged","failed","awaiting-approval","awaiting-user-review"]` | Event types that trigger ntfy notifications. |
 | `ntfyDashboardHost` | `string` | `undefined` | Dashboard host used for deep-link URLs in notifications. |
 | `defaultProjectId` | `string` | `undefined` | Default project for multi-project commands. |
 | `openrouterModelSync` | `boolean` | `true` | Sync OpenRouter model catalog into pickers. |
