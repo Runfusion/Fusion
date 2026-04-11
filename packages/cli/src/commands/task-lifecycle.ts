@@ -22,7 +22,7 @@ import type { Settings, TaskDetail, PrInfo } from "@fusion/core";
  * Defined locally to avoid importing from @fusion/dashboard.
  */
 interface GitHubOperations {
-  findPrForBranch(params: { head: string; state: string }): Promise<PrInfo | null>;
+  findPrForBranch(params: { head: string; state?: "open" | "closed" | "all" }): Promise<PrInfo | null>;
   createPr(params: { title: string; body: string; head: string }): Promise<PrInfo>;
   getPrMergeStatus(base?: string, head?: string, number?: number): Promise<{
     prInfo: PrInfo;
@@ -31,7 +31,7 @@ interface GitHubOperations {
     mergeReady: boolean;
     blockingReasons: string[];
   }>;
-  mergePr(params: { number: number; method: string }): Promise<PrInfo>;
+  mergePr(params: { number: number; method?: "merge" | "squash" | "rebase" }): Promise<PrInfo>;
 }
 
 /**

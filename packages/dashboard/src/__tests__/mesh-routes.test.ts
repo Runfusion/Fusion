@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "node:events";
-import type { Task } from "@fusion/core";
+import type { Task, TaskStore } from "@fusion/core";
 import { request } from "../test-request.js";
 import { createServer } from "../server.js";
 
@@ -137,7 +137,7 @@ describe("POST /api/mesh/sync", () => {
     });
 
     const store = new MockStore();
-    app = createServer(store);
+    app = createServer(store as unknown as TaskStore);
   });
 
   it("should merge peers and return sync response", async () => {

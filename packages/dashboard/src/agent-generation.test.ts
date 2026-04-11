@@ -45,7 +45,7 @@ describe("agent-generation module", () => {
       const mockIp = getUniqueIp();
       const session = await startAgentGeneration(mockIp, "Test role");
 
-      expect((session as Record<string, unknown>).ip).toBeUndefined();
+      expect((session as unknown as Record<string, unknown>).ip).toBeUndefined();
     });
 
     it("enforces rate limiting", async () => {
