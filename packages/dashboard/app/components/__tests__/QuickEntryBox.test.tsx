@@ -218,8 +218,10 @@ describe("QuickEntryBox", () => {
     });
   });
 
-  afterEach(() => {
-    vi.runOnlyPendingTimers();
+  afterEach(async () => {
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+    });
     vi.useRealTimers();
     localStorage.clear();
   });

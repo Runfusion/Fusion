@@ -1157,7 +1157,9 @@ describe("TaskCard inline editing", () => {
     await user.tab();
 
     // Wait for the blur handler to execute
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
 
     // Should have exited edit mode without saving
     expect(screen.queryByPlaceholderText(/Task description/i)).toBeNull();
@@ -1410,7 +1412,9 @@ describe("TaskCard inline editing", () => {
     await user.tab();
 
     // Wait for the blur handler to execute
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
 
     // Should exit edit mode without calling update
     expect(screen.queryByPlaceholderText(/Task description/i)).toBeNull();
@@ -3368,7 +3372,7 @@ describe("TaskCard mission badge", () => {
     ...overrides,
   } as Task);
 
-  it("renders mission badge when task has missionId", () => {
+  it("renders mission badge when task has missionId", async () => {
     const task = createTask({ missionId: "MSN-001" });
     render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} />);
 
@@ -3376,6 +3380,10 @@ describe("TaskCard mission badge", () => {
     expect(badge).toBeInTheDocument();
     expect(badge).toHaveClass("card-mission-badge");
     expect(badge).toHaveTextContent("MSN-001");
+
+    await act(async () => {
+      await Promise.resolve();
+    });
   });
 
   it("does not render mission badge when task has no missionId", () => {

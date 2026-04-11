@@ -208,6 +208,66 @@ describe("SettingsModal", () => {
     expect(screen.queryByLabelText("Max Concurrent Tasks")).toBeNull();
   });
 
+  it("invokes appearance callbacks when theme controls are used", async () => {
+    const handleThemeModeChange = vi.fn();
+    const handleColorThemeChange = vi.fn();
+
+    render(
+      <SettingsModal
+        onClose={onClose}
+        addToast={addToast}
+        themeMode="dark"
+        colorTheme="default"
+        onThemeModeChange={handleThemeModeChange}
+        onColorThemeChange={handleColorThemeChange}
+      />,
+    );
+
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByText("Appearance")[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Light mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Forest theme" }));
+
+    expect(handleThemeModeChange).toHaveBeenCalledWith("light");
+    expect(handleColorThemeChange).toHaveBeenCalledWith("forest");
+  });
+
+  it("reflects selected appearance values when parent updates controlled props", async () => {
+    function ControlledAppearanceModal() {
+      const [themeMode, setThemeMode] = useState<ThemeMode>("dark");
+      const [colorTheme, setColorTheme] = useState<ColorTheme>("default");
+
+      return (
+        <SettingsModal
+          onClose={onClose}
+          addToast={addToast}
+          themeMode={themeMode}
+          colorTheme={colorTheme}
+          onThemeModeChange={setThemeMode}
+          onColorThemeChange={setColorTheme}
+        />
+      );
+    }
+
+    render(<ControlledAppearanceModal />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByText("Appearance")[0]);
+
+    const lightModeButton = screen.getByRole("button", { name: "Light mode" });
+    const forestThemeButton = screen.getByRole("button", { name: "Forest theme" });
+
+    fireEvent.click(lightModeButton);
+    fireEvent.click(forestThemeButton);
+
+    await waitFor(() => {
+      expect(lightModeButton).toHaveAttribute("aria-pressed", "true");
+      expect(forestThemeButton).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByText("Light / Forest")).toBeTruthy();
+    });
+  });
+
   it("all settings fields are present across all sections", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());

@@ -193,6 +193,45 @@ describe("useTheme", () => {
     expect(localStorageMock[THEME_MODE_STORAGE_KEY]).toBe("dark");
   });
 
+  it("keeps user-selected theme and color when hydration resolves late", async () => {
+    let resolveFetch: (value: Partial<Settings>) => void;
+    const pendingFetch = new Promise<Partial<Settings>>((resolve) => {
+      resolveFetch = resolve;
+    });
+    mockFetchGlobalSettings.mockReturnValue(pendingFetch);
+
+    const { result } = renderHook(() => useTheme());
+
+    act(() => {
+      result.current.setThemeMode("light");
+      result.current.setColorTheme("forest");
+    });
+
+    expect(result.current.themeMode).toBe("light");
+    expect(result.current.colorTheme).toBe("forest");
+    expect(localStorageMock[THEME_MODE_STORAGE_KEY]).toBe("light");
+    expect(localStorageMock[COLOR_THEME_STORAGE_KEY]).toBe("forest");
+
+    resolveFetch!({
+      // Simulate stale backend values that would previously revert user changes.
+      themeMode: "dark",
+      colorTheme: "default",
+    });
+
+    await waitFor(() => {
+      expect(mockFetchGlobalSettings).toHaveBeenCalledTimes(1);
+    });
+
+    await waitFor(() => {
+      expect(result.current.themeMode).toBe("light");
+      expect(result.current.colorTheme).toBe("forest");
+    });
+
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(document.documentElement.getAttribute("data-color-theme")).toBe("forest");
+    expect(document.querySelectorAll('link[id="theme-data"]').length).toBe(1);
+  });
+
   it("write-through calls updateGlobalSettings on setThemeMode", () => {
     const { result } = renderHook(() => useTheme());
 
