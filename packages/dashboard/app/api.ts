@@ -104,12 +104,19 @@ async function api<T = unknown>(path: string, opts: RequestInit = {}): Promise<T
   return data as T;
 }
 
-export function fetchTasks(limit?: number, offset?: number, projectId?: string, q?: string): Promise<Task[]> {
+export function fetchTasks(
+  limit?: number,
+  offset?: number,
+  projectId?: string,
+  q?: string,
+  includeArchived?: boolean,
+): Promise<Task[]> {
   const search = new URLSearchParams();
   if (limit !== undefined) search.set("limit", String(limit));
   if (offset !== undefined) search.set("offset", String(offset));
   if (projectId) search.set("projectId", projectId);
   if (q) search.set("q", q);
+  if (includeArchived) search.set("includeArchived", "1");
   const suffix = search.size > 0 ? `?${search.toString()}` : "";
   return api<Task[]>(`/tasks${suffix}`);
 }

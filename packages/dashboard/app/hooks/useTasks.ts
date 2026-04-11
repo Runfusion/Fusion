@@ -46,6 +46,11 @@ export function useTasks(options?: UseTasksOptions) {
   const searchQuery = options?.searchQuery;
   const [tasks, setTasks] = useState<Task[]>([]);
   const [connectionNonce, setConnectionNonce] = useState(0);
+  // Once the user expands the archived column, we keep including archived tasks
+  // in subsequent refreshes for the lifetime of this hook instance.
+  const [includeArchived, setIncludeArchived] = useState(false);
+  const includeArchivedRef = useRef(includeArchived);
+  includeArchivedRef.current = includeArchived;
   const tasksRef = useRef(tasks);
   const fetchVersionRef = useRef(0);
   const lastVisibilityRefreshRef = useRef<number>(0);
@@ -56,12 +61,13 @@ export function useTasks(options?: UseTasksOptions) {
 
   const VISIBILITY_REFRESH_DEBOUNCE_MS = 1000;
 
-  const refreshTasks = useCallback(async (options?: { clearOnError?: boolean; searchQueryOverride?: string }) => {
+  const refreshTasks = useCallback(async (options?: { clearOnError?: boolean; searchQueryOverride?: string; includeArchivedOverride?: boolean }) => {
     const requestVersion = ++fetchVersionRef.current;
     const query = options?.searchQueryOverride ?? searchQuery;
+    const wantArchived = options?.includeArchivedOverride ?? includeArchivedRef.current;
 
     try {
-      const fetchedTasks = await api.fetchTasks(undefined, undefined, projectId, query);
+      const fetchedTasks = await api.fetchTasks(undefined, undefined, projectId, query, wantArchived);
       if (fetchVersionRef.current !== requestVersion) {
         return;
       }
@@ -78,6 +84,14 @@ export function useTasks(options?: UseTasksOptions) {
     }
   }, [projectId, searchQuery]);
   refreshTasksRef.current = refreshTasks;
+
+  /** Lazy-load archived tasks. Called by the Board when the archived column is first expanded. */
+  const loadArchivedTasks = useCallback(async () => {
+    if (includeArchivedRef.current) return;
+    setIncludeArchived(true);
+    includeArchivedRef.current = true;
+    await refreshTasksRef.current({ includeArchivedOverride: true });
+  }, []);
 
   // Debounced search effect - separate from refreshTasks to avoid dependency cycle
   useEffect(() => {
@@ -380,5 +394,5 @@ export function useTasks(options?: UseTasksOptions) {
     return normalized;
   }, [projectId]);
 
-  return { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, duplicateTask, updateTask, archiveTask, unarchiveTask, archiveAllDone };
+  return { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, duplicateTask, updateTask, archiveTask, unarchiveTask, archiveAllDone, loadArchivedTasks, includeArchived };
 }

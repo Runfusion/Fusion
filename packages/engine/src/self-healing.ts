@@ -344,11 +344,61 @@ export class SelfHealingManager {
       await this.recoverMisclassifiedFailures();
       await this.recoverOrphanedExecutions();
       await this.recoverApprovedTriageTasks();
+      await this.archiveStaleDoneTasks();
 
       const elapsedMs = Date.now() - startMs;
       log.log(`Maintenance cycle completed in ${elapsedMs}ms`);
     } catch (err: any) {
       log.error(`Maintenance cycle failed: ${err.message}`);
+    }
+  }
+
+  // ── Auto-archive of stale done tasks ──────────────────────────────
+
+  /**
+   * Auto-archive done tasks older than 48 hours so the dashboard board view
+   * stops accumulating thousands of completed tasks. Data remains in SQLite —
+   * the task is moved from `done` to `archived`, which the slim list endpoint
+   * excludes by default. Users can still expand the archived column or unarchive.
+   */
+  private static readonly AUTO_ARCHIVE_AFTER_MS = 48 * 60 * 60 * 1000;
+
+  async archiveStaleDoneTasks(): Promise<number> {
+    try {
+      const tasks = await this.store.listTasks();
+      const cutoff = Date.now() - SelfHealingManager.AUTO_ARCHIVE_AFTER_MS;
+
+      const stale = tasks.filter((t) => {
+        if (t.column !== "done") return false;
+        // Prefer columnMovedAt (when the task entered done); fall back to updatedAt
+        // for legacy tasks that lack the field.
+        const ts = t.columnMovedAt || t.updatedAt;
+        const movedAt = ts ? Date.parse(ts) : NaN;
+        if (!Number.isFinite(movedAt)) return false;
+        return movedAt < cutoff;
+      });
+
+      if (stale.length === 0) return 0;
+
+      log.log(`Auto-archiving ${stale.length} done task(s) older than 48h`);
+
+      let archived = 0;
+      for (const task of stale) {
+        try {
+          await this.store.archiveTask(task.id);
+          archived++;
+        } catch (err: any) {
+          log.error(`Failed to auto-archive ${task.id}: ${err.message}`);
+        }
+      }
+
+      if (archived > 0) {
+        log.log(`Auto-archived ${archived} stale done task(s)`);
+      }
+      return archived;
+    } catch (err: any) {
+      log.error(`Auto-archive sweep failed: ${err.message}`);
+      return 0;
     }
   }
 

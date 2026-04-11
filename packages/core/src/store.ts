@@ -1307,8 +1307,39 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return { ...task, prompt };
   }
 
-  async listTasks(options?: { limit?: number; offset?: number }): Promise<Task[]> {
-    const rows = this.db.prepare('SELECT * FROM tasks ORDER BY createdAt ASC').all();
+  async listTasks(options?: {
+    limit?: number;
+    offset?: number;
+    /** When false, exclude tasks in the `archived` column. Default: true (backward compatible). */
+    includeArchived?: boolean;
+    /** When true, omit heavy fields (log, comments, steps, workflowStepResults, steeringComments)
+     *  from each row to make list responses cheap for board-style consumers. Detail fields default
+     *  to empty arrays in the returned Task objects; use `getTask(id)` to load full data. */
+    slim?: boolean;
+  }): Promise<Task[]> {
+    const includeArchived = options?.includeArchived ?? true;
+    const slim = options?.slim ?? false;
+
+    const slimColumns = `
+      id, title, description, "column", status, size, reviewLevel, currentStep,
+      worktree, blockedBy, paused, baseBranch, branch, baseCommitSha,
+      modelPresetId, modelProvider, modelId,
+      validatorModelProvider, validatorModelId,
+      planningModelProvider, planningModelId,
+      mergeRetries, stuckKillCount, recoveryRetryCount, nextRecoveryAt,
+      error, summary, thinkingLevel,
+      createdAt, updatedAt, columnMovedAt,
+      dependencies,
+      attachments, prInfo, issueInfo, mergeDetails,
+      breakIntoSubtasks, enabledWorkflowSteps, modifiedFiles,
+      missionId, sliceId, assignedAgentId, assigneeUserId,
+      checkedOutBy, checkedOutAt
+    `;
+    const selectClause = slim ? slimColumns : '*';
+    const whereClause = includeArchived ? '' : ` WHERE "column" != 'archived'`;
+    const sql = `SELECT ${selectClause} FROM tasks${whereClause} ORDER BY createdAt ASC`;
+
+    const rows = this.db.prepare(sql).all();
     const tasks = (rows as any[]).map((row) => this.rowToTask(row));
 
     // Sort by createdAt, then by numeric ID suffix for tie-breaking

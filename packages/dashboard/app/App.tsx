@@ -71,7 +71,7 @@ function AppInner() {
   const effectiveTasks = isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : [];
   
   // Tasks hook with project context and search query
-  const { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, updateTask, duplicateTask, archiveTask, unarchiveTask, archiveAllDone } = useTasks(
+  const { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, updateTask, duplicateTask, archiveTask, unarchiveTask, archiveAllDone, loadArchivedTasks } = useTasks(
     currentProject ? { projectId: currentProject.id, searchQuery: searchQuery || undefined } : { searchQuery: searchQuery || undefined }
   );
 
@@ -360,6 +360,7 @@ function AppInner() {
             onArchiveTask={archiveTask}
             onUnarchiveTask={unarchiveTask}
             onArchiveAllDone={archiveAllDone}
+            onLoadArchivedTasks={loadArchivedTasks}
             searchQuery={searchQuery}
             availableModels={availableModels}
             onOpenDetailWithTab={handleOpenDetailWithTab}

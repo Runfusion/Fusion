@@ -401,7 +401,8 @@ describe("QuickEntryBox", () => {
   });
 
   it("prevents default on Enter key (without Shift)", () => {
-    renderQuickEntryBox({});
+    const onCreate = vi.fn(() => new Promise(() => undefined));
+    renderQuickEntryBox({ onCreate });
     const textarea = screen.getByTestId("quick-entry-input");
 
     fireEvent.change(textarea, { target: { value: "Task" } });
@@ -497,7 +498,9 @@ describe("QuickEntryBox", () => {
     fireEvent.keyDown(textarea, { key: "Enter" });
 
     // Wait a bit to ensure no async call happens
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
 
     expect(props.onCreate).not.toHaveBeenCalled();
   });
@@ -509,7 +512,9 @@ describe("QuickEntryBox", () => {
     fireEvent.change(textarea, { target: { value: "   " } });
     fireEvent.keyDown(textarea, { key: "Enter" });
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
 
     expect(props.onCreate).not.toHaveBeenCalled();
   });
@@ -1692,7 +1697,9 @@ describe("QuickEntryBox", () => {
     it("loading state disables button during refinement", async () => {
       const { refineText } = await import("../../api");
       // Slow down the promise to see loading state
-      vi.mocked(refineText).mockImplementation(() => new Promise((resolve) => setTimeout(resolve, 100)));
+      vi.mocked(refineText).mockImplementation(
+        () => new Promise((resolve) => setTimeout(() => resolve("Refined text"), 100)),
+      );
 
       renderQuickEntryBox({});
       expandQuickEntry();

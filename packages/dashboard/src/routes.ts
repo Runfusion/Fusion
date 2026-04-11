@@ -684,7 +684,7 @@ function getGitHubRemotes(cwd?: string): GitRemote[] {
  */
 function isGitRepo(cwd?: string): boolean {
   try {
-    const execOptions = { encoding: "utf-8" as const, timeout: 5000, cwd };
+    const execOptions = { encoding: "utf-8" as const, timeout: 5000, cwd, stdio: "pipe" as const };
     execSync("git rev-parse --git-dir", execOptions);
     return true;
   } catch {
@@ -810,7 +810,7 @@ function isValidGitRef(ref: string): boolean {
 function getGitCommitsForBranch(branch: string, limit: number = 10, cwd?: string): GitCommit[] {
   try {
     const format = "%H|%h|%s|%an|%aI|%P";
-    const execOptions = { encoding: "utf-8" as const, timeout: 10000, cwd };
+    const execOptions = { encoding: "utf-8" as const, timeout: 10000, cwd, stdio: "pipe" as const };
     const output = execSync(`git log --max-count=${limit} --pretty=format:"${format}" "${branch}"`, execOptions);
 
     const commits: GitCommit[] = [];
@@ -844,7 +844,7 @@ function getGitCommitsForBranch(branch: string, limit: number = 10, cwd?: string
  */
 function getAheadCommits(cwd?: string): GitCommit[] {
   try {
-    const execOptions = { encoding: "utf-8" as const, timeout: 10000, cwd };
+    const execOptions = { encoding: "utf-8" as const, timeout: 10000, cwd, stdio: "pipe" as const };
     // Check if an upstream is configured
     try {
       execSync("git rev-parse --abbrev-ref @{u}", execOptions);
@@ -893,7 +893,7 @@ function getRemoteCommits(remoteRef: string, limit: number = 10, cwd?: string): 
     }
 
     // Verify the ref exists
-    const execOptions = { encoding: "utf-8" as const, timeout: 5000, cwd };
+    const execOptions = { encoding: "utf-8" as const, timeout: 5000, cwd, stdio: "pipe" as const };
     try {
       execSync(`git rev-parse --verify "${remoteRef}"`, execOptions);
     } catch {
@@ -907,6 +907,7 @@ function getRemoteCommits(remoteRef: string, limit: number = 10, cwd?: string): 
       encoding: "utf-8",
       timeout: 10000,
       cwd,
+      stdio: "pipe",
     });
 
     const commits: GitCommit[] = [];
@@ -940,9 +941,9 @@ function getRemoteCommits(remoteRef: string, limit: number = 10, cwd?: string): 
  */
 function getCommitDiff(hash: string, cwd?: string): { stat: string; patch: string } | null {
   try {
-    const execOptions = { encoding: "utf-8" as const, timeout: 10000, cwd };
+    const execOptions = { encoding: "utf-8" as const, timeout: 10000, cwd, stdio: "pipe" as const };
     // Validate the hash is a valid git object
-    execSync(`git cat-file -t ${hash}`, { encoding: "utf-8", timeout: 5000, cwd });
+    execSync(`git cat-file -t ${hash}`, { encoding: "utf-8", timeout: 5000, cwd, stdio: "pipe" });
 
     // Get diff stat
     const stat = execSync(`git show --stat --format="" ${hash}`, execOptions).trim();
@@ -1122,7 +1123,7 @@ function createGitBranch(name: string, base?: string, cwd?: string): string {
   const cmd = base
     ? `git checkout -b ${name} ${base}`
     : `git checkout -b ${name}`;
-  execSync(cmd, { encoding: "utf-8", timeout: 10000, cwd });
+  execSync(cmd, { encoding: "utf-8", timeout: 10000, cwd, stdio: "pipe" });
   return name;
 }
 
@@ -1134,7 +1135,7 @@ function checkoutGitBranch(name: string, cwd?: string): void {
   if (!isValidBranchName(name)) {
     throw new Error("Invalid branch name");
   }
-  const execOptions = { encoding: "utf-8" as const, timeout: 5000, cwd };
+  const execOptions = { encoding: "utf-8" as const, timeout: 5000, cwd, stdio: "pipe" as const };
   // Check for uncommitted changes that would be lost
   try {
     execSync("git diff-index --quiet HEAD --", execOptions);
@@ -1145,7 +1146,7 @@ function checkoutGitBranch(name: string, cwd?: string): void {
       throw new Error("Uncommitted changes would be lost. Commit or stash changes first.");
     }
   }
-  execSync(`git checkout ${name}`, { encoding: "utf-8", timeout: 10000, cwd });
+  execSync(`git checkout ${name}`, { encoding: "utf-8", timeout: 10000, cwd, stdio: "pipe" });
 }
 
 /**
@@ -1157,7 +1158,7 @@ function deleteGitBranch(name: string, force: boolean = false, cwd?: string): vo
     throw new Error("Invalid branch name");
   }
   const flag = force ? "-D" : "-d";
-  execSync(`git branch ${flag} ${name}`, { encoding: "utf-8", timeout: 10000, cwd });
+  execSync(`git branch ${flag} ${name}`, { encoding: "utf-8", timeout: 10000, cwd, stdio: "pipe" });
 }
 
 /** Result of a fetch operation */
@@ -1174,7 +1175,7 @@ function fetchGitRemote(remote: string = "origin", cwd?: string): GitFetchResult
     throw new Error("Invalid remote name");
   }
   try {
-    const output = execSync(`git fetch ${remote}`, { encoding: "utf-8", timeout: 30000, cwd });
+    const output = execSync(`git fetch ${remote}`, { encoding: "utf-8", timeout: 30000, cwd, stdio: "pipe" });
     return { fetched: true, message: output.trim() || "Fetch completed" };
   } catch (err: any) {
       if (err instanceof ApiError) {
@@ -1201,7 +1202,7 @@ export interface GitPullResult {
  */
 function pullGitBranch(cwd?: string): GitPullResult {
   try {
-    const output = execSync("git pull", { encoding: "utf-8", timeout: 30000, cwd });
+    const output = execSync("git pull", { encoding: "utf-8", timeout: 30000, cwd, stdio: "pipe" });
     return { success: true, message: output.trim() };
   } catch (err: any) {
       if (err instanceof ApiError) {
@@ -1227,7 +1228,7 @@ export interface GitPushResult {
  */
 function pushGitBranch(cwd?: string): GitPushResult {
   try {
-    const output = execSync("git push", { encoding: "utf-8", timeout: 30000, cwd });
+    const output = execSync("git push", { encoding: "utf-8", timeout: 30000, cwd, stdio: "pipe" });
     return { success: true, message: output.trim() || "Push completed" };
   } catch (err: any) {
       if (err instanceof ApiError) {
@@ -1326,7 +1327,7 @@ function addGitRemote(name: string, url: string, cwd?: string): void {
     throw new Error("Invalid git URL format");
   }
   try {
-    execSync(`git remote add ${name} ${url}`, { encoding: "utf-8", timeout: 10000, cwd });
+    execSync(`git remote add ${name} ${url}`, { encoding: "utf-8", timeout: 10000, cwd, stdio: "pipe" });
   } catch (err: any) {
       if (err instanceof ApiError) {
         throw err;
@@ -1347,7 +1348,7 @@ function removeGitRemote(name: string, cwd?: string): void {
     throw new Error("Invalid remote name");
   }
   try {
-    execSync(`git remote remove ${name}`, { encoding: "utf-8", timeout: 10000, cwd });
+    execSync(`git remote remove ${name}`, { encoding: "utf-8", timeout: 10000, cwd, stdio: "pipe" });
   } catch (err: any) {
       if (err instanceof ApiError) {
         throw err;
@@ -1371,7 +1372,7 @@ function renameGitRemote(oldName: string, newName: string, cwd?: string): void {
     throw new Error("Invalid new remote name");
   }
   try {
-    execSync(`git remote rename ${oldName} ${newName}`, { encoding: "utf-8", timeout: 10000, cwd });
+    execSync(`git remote rename ${oldName} ${newName}`, { encoding: "utf-8", timeout: 10000, cwd, stdio: "pipe" });
   } catch (err: any) {
       if (err instanceof ApiError) {
         throw err;
@@ -1398,7 +1399,7 @@ function setGitRemoteUrl(name: string, url: string, cwd?: string): void {
     throw new Error("Invalid git URL format");
   }
   try {
-    execSync(`git remote set-url ${name} ${url}`, { encoding: "utf-8", timeout: 10000, cwd });
+    execSync(`git remote set-url ${name} ${url}`, { encoding: "utf-8", timeout: 10000, cwd, stdio: "pipe" });
   } catch (err: any) {
       if (err instanceof ApiError) {
         throw err;
@@ -2268,6 +2269,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const limit = typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : undefined;
       const offset = typeof req.query.offset === "string" ? Number.parseInt(req.query.offset, 10) : undefined;
       const q = typeof req.query.q === "string" ? req.query.q.trim() : undefined;
+      const includeArchived = req.query.includeArchived === "1" || req.query.includeArchived === "true";
 
       if (limit !== undefined && (!Number.isFinite(limit) || limit < 0)) {
         throw badRequest("limit must be a non-negative integer");
@@ -2281,7 +2283,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       if (q && q.length > 0) {
         tasks = await scopedStore.searchTasks(q, { limit, offset });
       } else {
-        tasks = await scopedStore.listTasks({ limit, offset });
+        // Board-view list: omit heavy fields (log/comments/steps/workflowStepResults) and
+        // exclude archived tasks unless explicitly requested. Full task detail still loads via
+        // GET /api/tasks/:id. Without this, every dashboard load shipped tens of MB of agent logs.
+        tasks = await scopedStore.listTasks({ limit, offset, slim: true, includeArchived });
       }
       res.json(tasks);
     } catch (err: any) {
@@ -2852,7 +2857,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       return nodeChildProcess.execSync(
         `git merge-base HEAD origin/${baseBranch} 2>/dev/null || git merge-base HEAD ${baseBranch}`,
-        { cwd, encoding: "utf-8", timeout: 5000 },
+        { cwd, encoding: "utf-8", timeout: 5000, stdio: "pipe" },
       ).trim() || undefined;
     } catch {
       // merge-base unavailable — fall through to HEAD~1
@@ -3894,6 +3899,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
             encoding: "utf-8",
             timeout: 5000,
             cwd: rootDir,
+            stdio: "pipe",
           }).trim();
           // symbolic-ref returns full ref like refs/remotes/origin/main
           remoteRef = headRef.replace(/^refs\/remotes\//, "");
@@ -3904,6 +3910,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
               encoding: "utf-8",
               timeout: 5000,
               cwd: rootDir,
+              stdio: "pipe",
             });
             remoteRef = `${name}/main`;
           } catch {
@@ -3912,6 +3919,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
                 encoding: "utf-8",
                 timeout: 5000,
                 cwd: rootDir,
+                stdio: "pipe",
               });
               remoteRef = `${name}/master`;
             } catch {
@@ -12916,7 +12924,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         try {
           mergeBase = nodeChildProcess.execSync(
             `git rev-parse ${sha}^`,
-            { cwd: rootDir, encoding: "utf-8", timeout: 5000 },
+            { cwd: rootDir, encoding: "utf-8", timeout: 5000, stdio: "pipe" },
           ).trim();
         } catch {
           // Last resort: no diff available
@@ -12926,7 +12934,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
         const nameStatus = nodeChildProcess.execSync(
           `git diff --name-status ${mergeBase}..${sha}`,
-          { cwd: rootDir, encoding: "utf-8", timeout: 10000 },
+          { cwd: rootDir, encoding: "utf-8", timeout: 10000, stdio: "pipe" },
         ).trim();
 
         const doneFiles: Array<{
@@ -13098,7 +13106,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         try {
           mergeBase = nodeChildProcess.execSync(
             `git rev-parse ${sha}^`,
-            { cwd: rootDir, encoding: "utf-8", timeout: 5000 },
+            { cwd: rootDir, encoding: "utf-8", timeout: 5000, stdio: "pipe" },
           ).trim();
         } catch {
           res.json([]);
@@ -13108,7 +13116,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         try {
           const nameStatus = nodeChildProcess.execSync(
             `git diff --name-status ${mergeBase}..${sha}`,
-            { cwd: rootDir, encoding: "utf-8", timeout: 5000 },
+            { cwd: rootDir, encoding: "utf-8", timeout: 5000, stdio: "pipe" },
           ).trim();
           const doneFiles = nameStatus.split("\n").filter(Boolean).map((line) => {
             const parts = line.split("\t");

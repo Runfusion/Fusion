@@ -1322,6 +1322,42 @@ describe("TaskStore", () => {
       expect(paged).toHaveLength(1);
       expect(paged[0].id).toBe("FN-002");
     });
+
+    it("slim mode returns metadata but drops heavy fields (log/comments/steps)", async () => {
+      const task = await store.createTask({ description: "Slim test" });
+      await store.logEntry(task.id, "heavy log entry that should not appear in slim list");
+
+      const fullList = await store.listTasks();
+      const slimList = await store.listTasks({ slim: true });
+
+      const full = fullList.find((t) => t.id === task.id)!;
+      const slim = slimList.find((t) => t.id === task.id)!;
+
+      expect(full.log.length).toBeGreaterThan(0);
+      expect(slim.id).toBe(task.id);
+      expect(slim.description).toBe("Slim test");
+      expect(slim.column).toBe(full.column);
+      expect(slim.log).toEqual([]);
+      expect(slim.steps).toEqual([]);
+      expect(slim.comments).toBeUndefined();
+    });
+
+    it("includeArchived=false excludes archived tasks; default includes them", async () => {
+      const keep = await store.createTask({ description: "Stays visible" });
+      const toArchive = await store.createTask({ description: "Will be archived" });
+      await store.moveTask(toArchive.id, "todo");
+      await store.moveTask(toArchive.id, "in-progress");
+      await store.moveTask(toArchive.id, "in-review");
+      await store.moveTask(toArchive.id, "done");
+      await store.archiveTask(toArchive.id);
+
+      const withArchived = await store.listTasks();
+      const withoutArchived = await store.listTasks({ includeArchived: false });
+
+      expect(withArchived.map((t) => t.id)).toEqual(expect.arrayContaining([keep.id, toArchive.id]));
+      expect(withoutArchived.map((t) => t.id)).toContain(keep.id);
+      expect(withoutArchived.map((t) => t.id)).not.toContain(toArchive.id);
+    });
   });
 
   describe("SQLite-first reads when task blobs are missing", () => {

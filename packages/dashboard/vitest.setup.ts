@@ -1,6 +1,55 @@
 import "@testing-library/jest-dom";
 import { vi } from "vitest";
 
+const noisyOutputMarkers = [
+  "Subagent result watcher failed",
+  "pi-async-subagent-results",
+  "[pi] createKbAgent called",
+  "[pi] Session created successfully",
+  "[pi-claude-cli] Claude CLI is not authenticated",
+  "Terminal WebSocket server mounted at /api/terminal/ws",
+  "[api:error]",
+  "[models] Failed to load models:",
+  "[routes] failed to trigger",
+];
+
+function isNoisyTestOutput(value: unknown): boolean {
+  const text = typeof value === "string" || value instanceof Buffer ? String(value) : "";
+  return noisyOutputMarkers.some((marker) => text.includes(marker));
+}
+
+const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+process.stdout.write = ((chunk: unknown, ...args: unknown[]) => {
+  if (isNoisyTestOutput(chunk)) {
+    return true;
+  }
+  return originalStdoutWrite(chunk as any, ...(args as any));
+}) as typeof process.stdout.write;
+
+const originalStderrWrite = process.stderr.write.bind(process.stderr);
+process.stderr.write = ((chunk: unknown, ...args: unknown[]) => {
+  if (isNoisyTestOutput(chunk)) {
+    return true;
+  }
+  return originalStderrWrite(chunk as any, ...(args as any));
+}) as typeof process.stderr.write;
+
+const originalConsoleLog = console.log.bind(console);
+console.log = (...args: unknown[]) => {
+  if (args.some(isNoisyTestOutput)) {
+    return;
+  }
+  originalConsoleLog(...args);
+};
+
+const originalConsoleError = console.error.bind(console);
+console.error = (...args: unknown[]) => {
+  if (args.some(isNoisyTestOutput)) {
+    return;
+  }
+  originalConsoleError(...args);
+};
+
 // Mock localStorage
 const localStorageMock: Record<string, string> = {};
 if (typeof window !== "undefined") {

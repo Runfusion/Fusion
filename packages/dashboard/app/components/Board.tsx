@@ -25,6 +25,8 @@ interface BoardProps {
   onArchiveTask?: (id: string) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
   onArchiveAllDone?: () => Promise<Task[]>;
+  /** Lazy-load archived tasks. Called the first time the user expands the archived column. */
+  onLoadArchivedTasks?: () => Promise<void>;
   searchQuery?: string;
   availableModels?: ModelInfo[];
   /**
@@ -62,8 +64,9 @@ function areTaskArraysEqual(previous: Task[], next: Task[]): boolean {
   return previous.every((task, index) => task === next[index]);
 }
 
-export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, taskStuckTimeoutMs, onOpenMission }: BoardProps) {
+export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, onLoadArchivedTasks, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, taskStuckTimeoutMs, onOpenMission }: BoardProps) {
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
+  const archivedLoadedRef = useRef(false);
   const { fetchBatch } = useBatchBadgeFetch(projectId);
   const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Normalized search-active signal: trimmed and non-empty
@@ -78,8 +81,15 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetai
   });
 
   const handleToggleArchivedCollapse = useCallback(() => {
-    setArchivedCollapsed((current) => !current);
-  }, []);
+    setArchivedCollapsed((current) => {
+      const next = !current;
+      if (!next && !archivedLoadedRef.current && onLoadArchivedTasks) {
+        archivedLoadedRef.current = true;
+        void onLoadArchivedTasks();
+      }
+      return next;
+    });
+  }, [onLoadArchivedTasks]);
 
   // Tasks are already server-filtered when searchQuery is active (via useTasks hook).
   // Client-side filtering is removed - tasks prop is used directly.
