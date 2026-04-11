@@ -159,6 +159,8 @@ export interface Milestone {
   planningNotes?: string;
   /** How to verify milestone completion */
   verification?: string;
+  /** Computed validation state from contract assertions (optional, always populated by MissionStore) */
+  validationState?: MilestoneValidationState;
   /** ISO-8601 timestamp of creation */
   createdAt: string;
   /** ISO-8601 timestamp of last update */
@@ -346,4 +348,166 @@ export interface FeatureLinkedPayload {
   feature: MissionFeature;
   /** ID of the task it was linked to */
   taskId: string;
+}
+
+// ── Contract Assertion Types ────────────────────────────────────────
+
+/**
+ * Status values for a contract assertion's validation state.
+ *
+ * Assertions represent explicit behavioral tests or requirements that can be
+ * validated. They are linked to milestones and optionally to features,
+ * enabling milestone validation rollup.
+ */
+export const MISSION_ASSERTION_STATUSES = ["pending", "passed", "failed", "blocked"] as const;
+export type MissionAssertionStatus = (typeof MISSION_ASSERTION_STATUSES)[number];
+
+/**
+ * Validation states for a milestone's contract coverage.
+ *
+ * The validation state is computed from the milestone's assertions and is
+ * persisted on the milestone for efficient querying without rollup recalculation.
+ *
+ * Precedence (evaluated in order):
+ * 1. `not_started` — milestone has no assertions
+ * 2. `failed` — any assertion has failed
+ * 3. `blocked` — any assertion is blocked
+ * 4. `needs_coverage` — assertions exist but some are not linked to features
+ * 5. `passed` — all assertions have passed
+ * 6. `ready` — assertions exist and are linked, but not all have passed
+ */
+export const MILESTONE_VALIDATION_STATES = [
+  "not_started",
+  "needs_coverage",
+  "ready",
+  "passed",
+  "failed",
+  "blocked",
+] as const;
+export type MilestoneValidationState = (typeof MILESTONE_VALIDATION_STATES)[number];
+
+/**
+ * A contract assertion represents an explicit behavioral test or requirement
+ * associated with a milestone. Assertions can be linked to features to track
+ * coverage and validation status.
+ */
+export interface MissionContractAssertion {
+  /** Unique identifier (e.g., "CA-A3B7CD-E9F2") */
+  id: string;
+  /** Parent milestone ID */
+  milestoneId: string;
+  /** Human-readable title describing the assertion */
+  title: string;
+  /** The behavioral specification or acceptance test content */
+  assertion: string;
+  /** Current validation status */
+  status: MissionAssertionStatus;
+  /** Order index for sorting within the milestone (0-based) */
+  orderIndex: number;
+  /** ISO-8601 timestamp of creation */
+  createdAt: string;
+  /** ISO-8601 timestamp of last update */
+  updatedAt: string;
+}
+
+/**
+ * A feature-assertion link represents the association between a feature
+ * and a contract assertion. This is a many-to-many relationship:
+ * - One feature can satisfy multiple assertions
+ * - One assertion can be covered by multiple features
+ */
+export interface FeatureAssertionLink {
+  /** The linked feature ID */
+  featureId: string;
+  /** The linked assertion ID */
+  assertionId: string;
+  /** ISO-8601 timestamp when the link was created */
+  createdAt: string;
+}
+
+/**
+ * Computed validation rollup for a milestone's contract assertions.
+ * This is a denormalized snapshot persisted on the milestone.
+ */
+export interface MilestoneValidationRollup {
+  /** The milestone this rollup belongs to */
+  milestoneId: string;
+  /** Total number of assertions */
+  totalAssertions: number;
+  /** Number of assertions in passed status */
+  passedAssertions: number;
+  /** Number of assertions in failed status */
+  failedAssertions: number;
+  /** Number of assertions in blocked status */
+  blockedAssertions: number;
+  /** Number of assertions in pending status */
+  pendingAssertions: number;
+  /** Number of assertions not linked to any feature */
+  unlinkedAssertions: number;
+  /** The computed validation state */
+  state: MilestoneValidationState;
+}
+
+/**
+ * Input for creating a new contract assertion.
+ */
+export interface ContractAssertionCreateInput {
+  /** Human-readable title (required) */
+  title: string;
+  /** The behavioral specification or acceptance test content (required) */
+  assertion: string;
+  /** Initial status, defaults to "pending" */
+  status?: MissionAssertionStatus;
+}
+
+/**
+ * Input for updating a contract assertion.
+ */
+export interface ContractAssertionUpdateInput {
+  /** Human-readable title */
+  title?: string;
+  /** The behavioral specification */
+  assertion?: string;
+  /** Validation status */
+  status?: MissionAssertionStatus;
+}
+
+/** Payload for assertion:created event */
+export type AssertionCreatedPayload = MissionContractAssertion;
+
+/** Payload for assertion:updated event */
+export type AssertionUpdatedPayload = MissionContractAssertion;
+
+/** Payload for assertion:deleted event */
+export interface AssertionDeletedPayload {
+  /** ID of the deleted assertion */
+  assertionId: string;
+  /** Parent milestone ID at time of deletion */
+  milestoneId: string;
+}
+
+/** Payload for assertion:linked event */
+export interface AssertionLinkedPayload {
+  /** The feature ID */
+  featureId: string;
+  /** The assertion ID */
+  assertionId: string;
+}
+
+/** Payload for assertion:unlinked event */
+export interface AssertionUnlinkedPayload {
+  /** The feature ID */
+  featureId: string;
+  /** The assertion ID */
+  assertionId: string;
+}
+
+/** Payload for milestone:validation:updated event */
+export interface MilestoneValidationUpdatedPayload {
+  /** The milestone ID */
+  milestoneId: string;
+  /** The new validation state */
+  state: MilestoneValidationState;
+  /** The full validation rollup snapshot */
+  rollup: MilestoneValidationRollup;
 }

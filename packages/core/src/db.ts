@@ -59,7 +59,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 28;
+const SCHEMA_VERSION = 29;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -1029,6 +1029,55 @@ export class Database {
         if (this.hasTable("agents")) {
           this.db.exec(`CREATE INDEX IF NOT EXISTS idxAgentsState ON agents(state)`);
         }
+      });
+    }
+
+    // Mission contract assertions (FN-1567)
+    // Adds explicit validation contract model for milestone behavioral assertions
+    // with feature linkage tracking and validation state rollup.
+    if (version < 29) {
+      this.applyMigration(29, () => {
+        // Add validationState column to milestones table
+        this.addColumnIfMissing("milestones", "validationState", "TEXT NOT NULL DEFAULT 'not_started'");
+
+        // Create mission_contract_assertions table for milestone validation contracts
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS mission_contract_assertions (
+            id TEXT PRIMARY KEY,
+            milestoneId TEXT NOT NULL,
+            title TEXT NOT NULL,
+            assertion TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            orderIndex INTEGER NOT NULL DEFAULT 0,
+            createdAt TEXT NOT NULL,
+            updatedAt TEXT NOT NULL,
+            FOREIGN KEY (milestoneId) REFERENCES milestones(id) ON DELETE CASCADE
+          )
+        `);
+
+        // Create mission_feature_assertions link table for many-to-many relationships
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS mission_feature_assertions (
+            featureId TEXT NOT NULL,
+            assertionId TEXT NOT NULL,
+            createdAt TEXT NOT NULL,
+            PRIMARY KEY (featureId, assertionId),
+            FOREIGN KEY (featureId) REFERENCES mission_features(id) ON DELETE CASCADE,
+            FOREIGN KEY (assertionId) REFERENCES mission_contract_assertions(id) ON DELETE CASCADE
+          )
+        `);
+
+        // Index for deterministic ordering when listing assertions for a milestone
+        // Covers: WHERE milestoneId = ? ORDER BY orderIndex ASC, createdAt ASC, id ASC
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxContractAssertionsMilestoneOrder ON mission_contract_assertions(milestoneId, orderIndex, createdAt, id)`);
+
+        // Index for finding all assertions linked to a feature
+        // Covers: WHERE featureId = ? (from mission_feature_assertions)
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxFeatureAssertionsFeatureId ON mission_feature_assertions(featureId)`);
+
+        // Index for finding all features linked to an assertion
+        // Covers: WHERE assertionId = ? (from mission_feature_assertions)
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxFeatureAssertionsAssertionId ON mission_feature_assertions(assertionId)`);
       });
     }
   }

@@ -34,6 +34,12 @@ import type {
   MissionEventType,
   MissionHealth,
   SlicePlanState,
+  MissionContractAssertion,
+  FeatureAssertionLink,
+  MilestoneValidationRollup,
+  ContractAssertionCreateInput,
+  ContractAssertionUpdateInput,
+  MilestoneValidationState,
 } from "./mission-types.js";
 
 // ── Mission Summary Type ─────────────────────────────────────────────
@@ -85,6 +91,18 @@ export interface MissionStoreEvents {
   "feature:linked": [{ feature: MissionFeature; taskId: string }];
   /** Emitted when a mission lifecycle event is persisted */
   "mission:event": [MissionEvent];
+  /** Emitted when a contract assertion is created */
+  "assertion:created": [MissionContractAssertion];
+  /** Emitted when a contract assertion is updated */
+  "assertion:updated": [MissionContractAssertion];
+  /** Emitted when a contract assertion is deleted */
+  "assertion:deleted": [string];
+  /** Emitted when a feature is linked to an assertion */
+  "assertion:linked": [{ featureId: string; assertionId: string }];
+  /** Emitted when a feature is unlinked from an assertion */
+  "assertion:unlinked": [{ featureId: string; assertionId: string }];
+  /** Emitted when a milestone's validation state is recomputed */
+  "milestone:validation:updated": [{ milestoneId: string; state: MilestoneValidationState; rollup: MilestoneValidationRollup }];
 }
 
 // ── MissionStore Class ──────────────────────────────────────────────
@@ -149,8 +167,36 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       dependencies: fromJson<string[]>(row.dependencies) || [],
       planningNotes: row.planningNotes || undefined,
       verification: row.verification || undefined,
+      validationState: (row.validationState as MilestoneValidationState) || "not_started",
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
+    };
+  }
+
+  /**
+   * Convert a database row to a MissionContractAssertion object.
+   */
+  private rowToAssertion(row: any): MissionContractAssertion {
+    return {
+      id: row.id,
+      milestoneId: row.milestoneId,
+      title: row.title,
+      assertion: row.assertion,
+      status: row.status as import("./mission-types.js").MissionAssertionStatus,
+      orderIndex: row.orderIndex,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  /**
+   * Convert a database row to a FeatureAssertionLink object.
+   */
+  private rowToFeatureAssertionLink(row: any): FeatureAssertionLink {
+    return {
+      featureId: row.featureId,
+      assertionId: row.assertionId,
+      createdAt: row.createdAt,
     };
   }
 
@@ -884,13 +930,14 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       dependencies: input.dependencies || [],
       planningNotes: input.planningNotes,
       verification: input.verification,
+      validationState: "not_started",
       createdAt: now,
       updatedAt: now,
     };
 
     this.db.prepare(`
-      INSERT INTO milestones (id, missionId, title, description, status, orderIndex, interviewState, dependencies, planningNotes, verification, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO milestones (id, missionId, title, description, status, orderIndex, interviewState, dependencies, planningNotes, verification, validationState, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       milestone.id,
       milestone.missionId,
@@ -902,6 +949,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       toJson(milestone.dependencies),
       milestone.planningNotes ?? null,
       milestone.verification ?? null,
+      milestone.validationState as string,
       milestone.createdAt,
       milestone.updatedAt,
     );
@@ -969,6 +1017,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
         dependencies = ?,
         planningNotes = ?,
         verification = ?,
+        validationState = ?,
         updatedAt = ?
       WHERE id = ?
     `).run(
@@ -980,6 +1029,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       toJson(updated.dependencies),
       updated.planningNotes ?? null,
       updated.verification ?? null,
+      updated.validationState || "not_started",
       updated.updatedAt,
       updated.id,
     );
@@ -1617,6 +1667,403 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     return this.rowToFeature(row);
   }
 
+  // ── Contract Assertion Operations ─────────────────────────────────
+
+  /**
+   * Add a contract assertion to a milestone.
+   * Automatically computes the orderIndex (max + 1).
+   *
+   * @param milestoneId - Parent milestone ID
+   * @param input - Assertion creation input
+   * @returns The created assertion
+   * @throws Error if milestone not found
+   */
+  addContractAssertion(milestoneId: string, input: ContractAssertionCreateInput): MissionContractAssertion {
+    const milestone = this.getMilestone(milestoneId);
+    if (!milestone) {
+      throw new Error(`Milestone ${milestoneId} not found`);
+    }
+
+    const now = new Date().toISOString();
+    const id = this.generateAssertionId();
+
+    // Compute next orderIndex
+    const existingAssertions = this.listContractAssertions(milestoneId);
+    const orderIndex = existingAssertions.length > 0
+      ? Math.max(...existingAssertions.map((a) => a.orderIndex)) + 1
+      : 0;
+
+    const assertion: MissionContractAssertion = {
+      id,
+      milestoneId,
+      title: input.title,
+      assertion: input.assertion,
+      status: input.status || "pending",
+      orderIndex,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.db.prepare(`
+      INSERT INTO mission_contract_assertions (id, milestoneId, title, assertion, status, orderIndex, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      assertion.id,
+      assertion.milestoneId,
+      assertion.title,
+      assertion.assertion,
+      assertion.status,
+      assertion.orderIndex,
+      assertion.createdAt,
+      assertion.updatedAt,
+    );
+
+    this.db.bumpLastModified();
+    this.emit("assertion:created", assertion);
+
+    // Recompute milestone validation state
+    this.recomputeMilestoneValidation(milestoneId);
+
+    return assertion;
+  }
+
+  /**
+   * Get a contract assertion by ID.
+   *
+   * @param id - Assertion ID
+   * @returns The assertion, or undefined if not found
+   */
+  getContractAssertion(id: string): MissionContractAssertion | undefined {
+    const row = this.db.prepare("SELECT * FROM mission_contract_assertions WHERE id = ?").get(id);
+    if (!row) return undefined;
+    return this.rowToAssertion(row);
+  }
+
+  /**
+   * List contract assertions for a milestone, ordered by orderIndex ASC, createdAt ASC, id ASC.
+   *
+   * This ordering is deterministic even when multiple assertions share the same
+   * orderIndex or createdAt timestamp.
+   *
+   * @param milestoneId - Milestone ID
+   * @returns Array of assertions
+   */
+  listContractAssertions(milestoneId: string): MissionContractAssertion[] {
+    const rows = this.db.prepare(
+      "SELECT * FROM mission_contract_assertions WHERE milestoneId = ? ORDER BY orderIndex ASC, createdAt ASC, id ASC"
+    ).all(milestoneId);
+    return (rows as any[]).map((row) => this.rowToAssertion(row));
+  }
+
+  /**
+   * Update a contract assertion.
+   *
+   * @param id - Assertion ID
+   * @param updates - Partial assertion updates
+   * @returns The updated assertion
+   * @throws Error if assertion not found
+   */
+  updateContractAssertion(id: string, updates: ContractAssertionUpdateInput): MissionContractAssertion {
+    const assertion = this.getContractAssertion(id);
+    if (!assertion) {
+      throw new Error(`Assertion ${id} not found`);
+    }
+
+    const now = new Date().toISOString();
+    const updated: MissionContractAssertion = {
+      ...assertion,
+      title: updates.title ?? assertion.title,
+      assertion: updates.assertion ?? assertion.assertion,
+      status: updates.status ?? assertion.status,
+      updatedAt: now,
+    };
+
+    this.db.prepare(`
+      UPDATE mission_contract_assertions SET
+        title = ?,
+        assertion = ?,
+        status = ?,
+        updatedAt = ?
+      WHERE id = ?
+    `).run(
+      updated.title,
+      updated.assertion,
+      updated.status,
+      updated.updatedAt,
+      updated.id,
+    );
+
+    this.db.bumpLastModified();
+    this.emit("assertion:updated", updated);
+
+    // Recompute milestone validation state
+    this.recomputeMilestoneValidation(updated.milestoneId);
+
+    return updated;
+  }
+
+  /**
+   * Delete a contract assertion.
+   *
+   * @param id - Assertion ID
+   * @throws Error if assertion not found
+   */
+  deleteContractAssertion(id: string): void {
+    const assertion = this.getContractAssertion(id);
+    if (!assertion) {
+      throw new Error(`Assertion ${id} not found`);
+    }
+
+    const milestoneId = assertion.milestoneId;
+
+    this.db.prepare("DELETE FROM mission_contract_assertions WHERE id = ?").run(id);
+    this.db.bumpLastModified();
+
+    this.emit("assertion:deleted", id);
+
+    // Recompute milestone validation state
+    this.recomputeMilestoneValidation(milestoneId);
+  }
+
+  /**
+   * Reorder contract assertions within a milestone.
+   *
+   * @param milestoneId - Milestone ID
+   * @param orderedIds - Assertion IDs in the desired order
+   * @throws Error if any assertion is not found or belongs to a different milestone
+   */
+  reorderContractAssertions(milestoneId: string, orderedIds: string[]): void {
+    this.db.transaction(() => {
+      for (let i = 0; i < orderedIds.length; i++) {
+        const id = orderedIds[i];
+        const assertion = this.getContractAssertion(id);
+
+        if (!assertion) {
+          throw new Error(`Assertion ${id} not found`);
+        }
+        if (assertion.milestoneId !== milestoneId) {
+          throw new Error(`Assertion ${id} does not belong to milestone ${milestoneId}`);
+        }
+
+        this.db.prepare(
+          "UPDATE mission_contract_assertions SET orderIndex = ?, updatedAt = ? WHERE id = ?"
+        ).run(i, new Date().toISOString(), id);
+      }
+    });
+
+    this.db.bumpLastModified();
+  }
+
+  // ── Feature-Assertion Link Operations ──────────────────────────────
+
+  /**
+   * Link a feature to a contract assertion.
+   *
+   * This is a many-to-many relationship: a feature can satisfy multiple assertions,
+   * and an assertion can be covered by multiple features.
+   *
+   * @param featureId - Feature ID
+   * @param assertionId - Assertion ID
+   * @throws Error if feature or assertion not found, or if link already exists
+   */
+  linkFeatureToAssertion(featureId: string, assertionId: string): void {
+    const feature = this.getFeature(featureId);
+    if (!feature) {
+      throw new Error(`Feature ${featureId} not found`);
+    }
+
+    const assertion = this.getContractAssertion(assertionId);
+    if (!assertion) {
+      throw new Error(`Assertion ${assertionId} not found`);
+    }
+
+    // Check if link already exists
+    const existing = this.db.prepare(
+      "SELECT 1 FROM mission_feature_assertions WHERE featureId = ? AND assertionId = ?"
+    ).get(featureId, assertionId);
+
+    if (existing) {
+      throw new Error(`Feature ${featureId} is already linked to assertion ${assertionId}`);
+    }
+
+    const now = new Date().toISOString();
+    this.db.prepare(
+      "INSERT INTO mission_feature_assertions (featureId, assertionId, createdAt) VALUES (?, ?, ?)"
+    ).run(featureId, assertionId, now);
+
+    this.db.bumpLastModified();
+    this.emit("assertion:linked", { featureId, assertionId });
+
+    // Recompute milestone validation state
+    this.recomputeMilestoneValidation(assertion.milestoneId);
+  }
+
+  /**
+   * Unlink a feature from a contract assertion.
+   *
+   * @param featureId - Feature ID
+   * @param assertionId - Assertion ID
+   * @throws Error if link not found
+   */
+  unlinkFeatureFromAssertion(featureId: string, assertionId: string): void {
+    const existing = this.db.prepare(
+      "SELECT 1 FROM mission_feature_assertions WHERE featureId = ? AND assertionId = ?"
+    ).get(featureId, assertionId);
+
+    if (!existing) {
+      throw new Error(`Feature ${featureId} is not linked to assertion ${assertionId}`);
+    }
+
+    this.db.prepare(
+      "DELETE FROM mission_feature_assertions WHERE featureId = ? AND assertionId = ?"
+    ).run(featureId, assertionId);
+
+    this.db.bumpLastModified();
+    this.emit("assertion:unlinked", { featureId, assertionId });
+
+    // Recompute milestone validation state for the assertion's milestone
+    const assertion = this.getContractAssertion(assertionId);
+    if (assertion) {
+      this.recomputeMilestoneValidation(assertion.milestoneId);
+    }
+  }
+
+  /**
+   * List all assertions linked to a feature.
+   *
+   * @param featureId - Feature ID
+   * @returns Array of linked assertions
+   */
+  listAssertionsForFeature(featureId: string): MissionContractAssertion[] {
+    const rows = this.db.prepare(`
+      SELECT ca.* FROM mission_contract_assertions ca
+      INNER JOIN mission_feature_assertions fa ON ca.id = fa.assertionId
+      WHERE fa.featureId = ?
+      ORDER BY ca.orderIndex ASC, ca.createdAt ASC, ca.id ASC
+    `).all(featureId);
+    return (rows as any[]).map((row) => this.rowToAssertion(row));
+  }
+
+  /**
+   * List all features linked to an assertion.
+   *
+   * @param assertionId - Assertion ID
+   * @returns Array of linked features
+   */
+  listFeaturesForAssertion(assertionId: string): MissionFeature[] {
+    const rows = this.db.prepare(`
+      SELECT mf.* FROM mission_features mf
+      INNER JOIN mission_feature_assertions fa ON mf.id = fa.featureId
+      WHERE fa.assertionId = ?
+      ORDER BY mf.createdAt ASC
+    `).all(assertionId);
+    return (rows as any[]).map((row) => this.rowToFeature(row));
+  }
+
+  // ── Validation Rollup Operations ───────────────────────────────────
+
+  /**
+   * Get the validation rollup for a milestone.
+   * This is a denormalized snapshot that includes counts and computed state.
+   *
+   * @param milestoneId - Milestone ID
+   * @returns The validation rollup
+   * @throws Error if milestone not found
+   */
+  getMilestoneValidationRollup(milestoneId: string): MilestoneValidationRollup {
+    const milestone = this.getMilestone(milestoneId);
+    if (!milestone) {
+      throw new Error(`Milestone ${milestoneId} not found`);
+    }
+
+    const assertions = this.listContractAssertions(milestoneId);
+    const totalAssertions = assertions.length;
+
+    // Count by status
+    let passedAssertions = 0;
+    let failedAssertions = 0;
+    let blockedAssertions = 0;
+    let pendingAssertions = 0;
+    let unlinkedAssertions = 0;
+
+    for (const assertion of assertions) {
+      switch (assertion.status) {
+        case "passed":
+          passedAssertions++;
+          break;
+        case "failed":
+          failedAssertions++;
+          break;
+        case "blocked":
+          blockedAssertions++;
+          break;
+        case "pending":
+          pendingAssertions++;
+          break;
+      }
+
+      // Check if assertion is linked to any feature
+      const linkedFeatures = this.listFeaturesForAssertion(assertion.id);
+      if (linkedFeatures.length === 0) {
+        unlinkedAssertions++;
+      }
+    }
+
+    // Compute validation state with exact precedence:
+    // 1. totalAssertions === 0 → not_started
+    // 2. failedAssertions > 0 → failed
+    // 3. blockedAssertions > 0 → blocked
+    // 4. unlinkedAssertions > 0 → needs_coverage
+    // 5. passedAssertions === totalAssertions → passed
+    // 6. otherwise → ready
+    let state: MilestoneValidationState;
+
+    if (totalAssertions === 0) {
+      state = "not_started";
+    } else if (failedAssertions > 0) {
+      state = "failed";
+    } else if (blockedAssertions > 0) {
+      state = "blocked";
+    } else if (unlinkedAssertions > 0) {
+      state = "needs_coverage";
+    } else if (passedAssertions === totalAssertions) {
+      state = "passed";
+    } else {
+      state = "ready";
+    }
+
+    return {
+      milestoneId,
+      totalAssertions,
+      passedAssertions,
+      failedAssertions,
+      blockedAssertions,
+      pendingAssertions,
+      unlinkedAssertions,
+      state,
+    };
+  }
+
+  /**
+   * Recompute and persist the milestone's validation state.
+   * This is called automatically after assertion or link changes.
+   */
+  private recomputeMilestoneValidation(milestoneId: string): void {
+    const rollup = this.getMilestoneValidationRollup(milestoneId);
+    const now = new Date().toISOString();
+
+    this.db.prepare(
+      "UPDATE milestones SET validationState = ?, updatedAt = ? WHERE id = ?"
+    ).run(rollup.state, now, milestoneId);
+
+    this.db.bumpLastModified();
+    this.emit("milestone:validation:updated", {
+      milestoneId,
+      state: rollup.state,
+      rollup,
+    });
+  }
+
   // ── Triage Operations ────────────────────────────────────────────────
 
   /**
@@ -1628,6 +2075,9 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
    * - Milestone: title, description, verification criteria, planning notes
    * - Slice: title, description, verification criteria, planning notes
    * - Feature: description and acceptance criteria
+   *
+   * When contract assertions are linked to the feature, they are also included
+   * in the output to provide explicit validation criteria for implementation.
    *
    * Only non-empty fields are included in the output. This provides AI agents
    * with full context for making informed decisions during task implementation.
@@ -1699,6 +2149,20 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       featureSections.push(`**Acceptance Criteria:**\n${feature.acceptanceCriteria}`);
     }
     sections.push(featureSections.join("\n"));
+
+    // Contract assertions context (only if linked to this feature)
+    const linkedAssertions = this.listAssertionsForFeature(featureId);
+    if (linkedAssertions.length > 0) {
+      const assertionSections: string[] = [`## Contract Assertions`];
+      for (const assertion of linkedAssertions) {
+        const statusIcon = assertion.status === "passed" ? "✅" :
+          assertion.status === "failed" ? "❌" :
+          assertion.status === "blocked" ? "🚫" : "⏳";
+        assertionSections.push(`### ${statusIcon} ${assertion.title}`);
+        assertionSections.push(assertion.assertion);
+      }
+      sections.push(assertionSections.join("\n\n"));
+    }
 
     return sections.join("\n\n");
   }
@@ -1978,5 +2442,11 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     const timestamp = Date.now();
     const random = Math.random().toString(36).substring(2, 6).toUpperCase();
     return `ME-${timestamp.toString(36).toUpperCase()}-${random}`;
+  }
+
+  private generateAssertionId(): string {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+    return `CA-${timestamp.toString(36).toUpperCase()}-${random}`;
   }
 }
