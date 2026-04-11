@@ -1673,6 +1673,17 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
    * Add a contract assertion to a milestone.
    * Automatically computes the orderIndex (max + 1).
    *
+   * ## Assertion Lifecycle
+   *
+   * Assertions transition through these statuses:
+   * - `pending` — Initial state, assertion has not been validated
+   * - `passed` — Assertion has been validated and passed
+   * - `failed` — Assertion has been validated and failed
+   * - `blocked` — Assertion cannot be validated due to external blockers
+   *
+   * Status transitions are managed by calling `updateContractAssertion()` with
+   * the appropriate status value.
+   *
    * @param milestoneId - Parent milestone ID
    * @param input - Assertion creation input
    * @returns The created assertion
@@ -1859,8 +1870,16 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
   /**
    * Link a feature to a contract assertion.
    *
-   * This is a many-to-many relationship: a feature can satisfy multiple assertions,
-   * and an assertion can be covered by multiple features.
+   * ## Linkage Cardinality
+   *
+   * The feature-assertion relationship is many-to-many:
+   * - One feature can satisfy multiple assertions (e.g., a login feature covers
+   *   "validates input", "shows errors", and "authenticates users")
+   * - One assertion can be covered by multiple features (e.g., "security check"
+   *   requires both the auth module and the session module)
+   *
+   * Links are stored in the `mission_feature_assertions` table with a composite
+   * primary key of (featureId, assertionId) to prevent duplicate links.
    *
    * @param featureId - Feature ID
    * @param assertionId - Assertion ID
@@ -1965,6 +1984,27 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
   /**
    * Get the validation rollup for a milestone.
    * This is a denormalized snapshot that includes counts and computed state.
+   *
+   * ## Rollup Precedence
+   *
+   * The validation state is computed with the following precedence order:
+   *
+   * 1. `not_started` — Milestone has no assertions
+   * 2. `failed` — Any assertion has `failed` status
+   * 3. `blocked` — Any assertion has `blocked` status (only checked if no failures)
+   * 4. `needs_coverage` — Assertions exist but some are not linked to features
+   * 5. `passed` — All assertions have `passed` status
+   * 6. `ready` — Assertions exist and are linked, but not all have passed
+   *
+   * This precedence ensures that:
+   * - A milestone with no assertions shows `not_started`
+   * - Failed assertions immediately mark the milestone as `failed`
+   * - Blocked assertions take precedence over `needs_coverage` but not `failed`
+   * - Unlinked assertions require attention before validation can complete
+   * - A milestone only shows `passed` when all assertions pass
+   *
+   * The rollup state is automatically persisted to the milestone when assertions
+   * or links change, via `recomputeMilestoneValidation()`.
    *
    * @param milestoneId - Milestone ID
    * @returns The validation rollup
