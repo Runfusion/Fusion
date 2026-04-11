@@ -863,3 +863,109 @@ await network.initialize();
 ### Error handling model
 
 All managers use defensive async APIs and silent fallback handling for unsupported environments (for example, browser development/test runs without native Capacitor bindings). This keeps startup resilient across web, simulator, and device contexts.
+
+## Run Audit
+
+The dashboard provides run-audit API clients for tracing agent runs across git, database, and filesystem mutations.
+
+### API Client Functions
+
+**`fetchAgentRunAudit(agentId, runId, filters?, projectId?)`** — Fetch audit events for a run
+
+```typescript
+import { fetchAgentRunAudit } from "./api";
+
+const response = await fetchAgentRunAudit("agent-001", "run-abc123", {
+  domain: "git",           // Optional: filter by domain
+  startTime: "2025-01-01T00:00:00Z",  // Optional: time range
+  limit: 100,              // Optional: max events
+}, "project-xyz");
+```
+
+**`fetchAgentRunTimeline(agentId, runId, options?, projectId?)`** — Fetch correlated timeline with logs
+
+```typescript
+import { fetchAgentRunTimeline } from "./api";
+
+const response = await fetchAgentRunTimeline("agent-001", "run-abc123", {
+  domain: "filesystem",     // Optional: filter by domain
+  includeLogs: true,        // Include agent log entries
+  limit: 50,               // Max audit events
+}, "project-xyz");
+```
+
+### Response Shapes
+
+**`RunAuditResponse`** — From `fetchAgentRunAudit`:
+```typescript
+interface RunAuditResponse {
+  runId: string;
+  events: NormalizedRunAuditEvent[];
+  filters: { taskId?, domain?, startTime?, endTime? };
+  totalCount: number;
+  hasMore: boolean;
+}
+```
+
+**`RunTimelineResponse`** — From `fetchAgentRunTimeline`:
+```typescript
+interface RunTimelineResponse {
+  run: { id, agentId, startedAt, endedAt?, status, taskId? };
+  auditByDomain: { database: [], git: [], filesystem: [] };
+  counts: { auditEvents: number; logEntries: number };
+  timeline: TimelineEntry[];
+}
+```
+
+### Debugging Recipe: Map Run ID to Mutations
+
+**Problem**: An agent run completed but you need to verify what changed.
+
+1. **Get the run ID** from the Runs tab in the agent detail modal
+
+2. **Fetch audit events** to see all mutations:
+   ```typescript
+   const audit = await fetchAgentRunAudit(agentId, runId);
+   console.log(audit.events.map(e => `${e.domain}:${e.mutationType} → ${e.target}`));
+   ```
+
+3. **Check git mutations** for code changes:
+   ```typescript
+   const timeline = await fetchAgentRunTimeline(agentId, runId, { domain: "git" });
+   timeline.auditByDomain.git.forEach(e => {
+     console.log(`${e.mutationType}: ${e.target}`, e.metadata);
+   });
+   ```
+
+4. **Verify database changes**:
+   ```typescript
+   const dbEvents = audit.events.filter(e => e.domain === "database");
+   dbEvents.forEach(e => {
+     // e.summary contains a human-readable description
+     console.log(`[${e.timestamp}] ${e.summary}`);
+   });
+   ```
+
+5. **Trace filesystem changes**:
+   ```typescript
+   const fsEvents = timeline.auditByDomain.filesystem;
+   fsEvents.forEach(e => {
+     if (e.mutationType === "file:write") {
+       // File was written at e.target
+       console.log(`Wrote: ${e.target} (${e.metadata?.size} bytes)`);
+     }
+   });
+   ```
+
+### TypeScript Types
+
+Import types from `api.ts`:
+```typescript
+import type {
+  RunAuditFilters,
+  RunAuditResponse,
+  RunTimelineResponse,
+  NormalizedRunAuditEvent,
+  TimelineEntry,
+} from "./api";
+```

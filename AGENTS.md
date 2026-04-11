@@ -2417,3 +2417,156 @@ When you add a template:
 1. The template data is copied to a new workflow step (templates themselves are immutable)
 2. The new step is enabled by default
 3. You can edit the step after creation to customize the prompt
+
+## Run Audit
+
+The run-audit system provides complete traceability for agent runs by recording every mutation performed by the engine across three domains: git operations, database changes, and filesystem writes. Each event is tied to a specific run ID, enabling operators to map one agent execution to concrete changes.
+
+### Data Model
+
+**`RunAuditEvent`** — A persisted audit record:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | UUID for the event |
+| `timestamp` | `string` | ISO-8601 when the event occurred |
+| `runId` | `string` | Heartbeat run ID (or synthetic ID for executor/merger) |
+| `agentId` | `string` | Agent that performed the mutation |
+| `taskId` | `string?` | Associated task (inferred from target when it looks like FN-*, KB-*) |
+| `domain` | `RunAuditDomain` | `"database"` \| `"git"` \| `"filesystem"` |
+| `mutationType` | `string` | What changed (e.g., `task:update`, `git:commit`, `file:write`) |
+| `target` | `string` | What was affected (task ID, branch name, file path) |
+| `metadata` | `Record<string, unknown>?` | Additional context (phase, source, mutation-specific details) |
+
+### Mutation Domains
+
+**Database mutations** — TaskStore operations:
+- `task:create`, `task:update`, `task:move`, `task:log-entry`
+- `task:comment:add`, `task:steering-comment:add`
+- `task:assign`, `task:checkout`, `task:release`, `task:pause`, `task:unpause`
+- `task:dependency:add`, `document:write`, `workflow-step:result`
+
+**Git mutations** — Repository operations:
+- `worktree:create`, `worktree:remove`, `worktree:reuse`
+- `branch:create`, `branch:delete`, `branch:checkout`
+- `commit:create`, `commit:amend`, `reset:hard`
+- `merge:start`, `merge:resolve`, `stash:push`, `stash:pop`
+
+**Filesystem mutations** — File system operations:
+- `file:write`, `file:delete`, `file:capture-modified`
+- `attachment:create`, `attachment:delete`
+- `prompt:write`, `prompt:update`, `session:write`, `session:delete`
+
+### Run Context
+
+Every active run has an `EngineRunContext` that enables correlation:
+
+```typescript
+interface EngineRunContext {
+  runId: string;       // Stable identifier (heartbeat run ID or synthetic)
+  agentId: string;      // Agent performing mutations
+  taskId?: string;      // Task being operated on
+  phase?: string;       // "heartbeat" | "execute" | "merge" | "merge-attempt-N"
+  source?: string;      // "timer" | "on_demand" | "assignment"
+}
+```
+
+The engine creates synthetic run IDs for executor and merger operations (e.g., `exec-FN-001-1712345678-a1b2`).
+
+### Ordering Semantics
+
+Events are ordered by `timestamp DESC, rowid DESC`. When multiple events share the same millisecond timestamp, the `rowid` (auto-increment) provides a stable tiebreaker. This ensures deterministic ordering across repeated queries.
+
+### API Endpoints
+
+**`GET /api/agents/:id/runs/:runId/audit`** — Fetch audit events for a run
+
+Query parameters:
+- `taskId` — Filter by task ID
+- `domain` — Filter by domain (`database`, `git`, `filesystem`)
+- `startTime` — Start of time range (ISO-8601, inclusive)
+- `endTime` — End of time range (ISO-8601, inclusive)
+- `limit` — Maximum events (default 100, max 1000)
+
+Response:
+```typescript
+interface RunAuditResponse {
+  runId: string;
+  events: NormalizedRunAuditEvent[];
+  filters: { taskId?, domain?, startTime?, endTime? };
+  totalCount: number;
+  hasMore: boolean;
+}
+```
+
+**`GET /api/agents/:id/runs/:runId/timeline`** — Correlated timeline with logs
+
+Combines audit events with agent logs into a unified chronological view. Query parameters same as `/audit`, plus:
+- `includeLogs` — Include agent logs (default true)
+
+Response:
+```typescript
+interface RunTimelineResponse {
+  run: { id, agentId, startedAt, endedAt, status, taskId? };
+  auditByDomain: { database: [], git: [], filesystem: [] };
+  counts: { auditEvents: number; logEntries: number };
+  timeline: TimelineEntry[];
+}
+```
+
+### Tracing a Run End-to-End
+
+**Step 1: Identify the run** — Get the run ID from:
+- Agent detail modal → Runs tab
+- Task activity log → `agent:run:started` event
+- Heartbeat log entries
+
+**Step 2: Fetch audit events** — Use the audit endpoint:
+```
+GET /api/agents/agent-001/runs/run-abc123/audit
+```
+
+**Step 3: Map mutations to evidence** — Each event type maps to concrete evidence:
+
+| Domain | Mutation | Evidence |
+|--------|----------|----------|
+| `git` | `worktree:create` | Directory `.worktrees/{task-id}` exists |
+| `git` | `commit:create` | `git log --oneline` shows the commit |
+| `git` | `merge:resolve` | PR merged in GitHub, commit in repo |
+| `database` | `task:update` | `task.json` reflects the changes |
+| `database` | `task:log-entry` | Activity log shows the entry |
+| `filesystem` | `file:write` | File exists at the target path |
+
+**Step 4: View full context** — For combined audit + logs:
+```
+GET /api/agents/agent-001/runs/run-abc123/timeline?includeLogs=true
+```
+
+### Troubleshooting
+
+**Missing `contextSnapshot.taskId`**: Legacy runs may not have task context in their snapshot. Use the `taskId` query parameter explicitly when querying audit events:
+```
+GET /api/agents/:id/runs/:runId/audit?taskId=FN-001
+```
+
+**Unknown run ID**: Verify the run exists first:
+```
+GET /api/agents/:id/runs/:runId  # Returns 404 if not found
+```
+
+**Empty audit results**: Possible causes:
+- Run predates run-audit feature (pre-schema-v29)
+- No mutations occurred during the run
+- Wrong domain filter — try without `domain` parameter
+
+**Timestamps appear out of order**: Check for millisecond-precision collisions. Events within the same millisecond are ordered by `rowid DESC` (most recently inserted first). Re-query with `?limit=10` to see the latest events first.
+
+**Executor/merger runs have synthetic IDs**: Look for patterns like `exec-{taskId}-{timestamp}-{random}` or `merge-{taskId}-{timestamp}`. These correlate to the original heartbeat run via the `runId` field in the agent's run records.
+
+### Backward Compatibility
+
+The auditor no-ops cleanly when:
+- No run context exists (manual/non-run operations)
+- TaskStore doesn't have `recordRunAuditEvent` method
+
+This ensures legacy code paths are unaffected. Database operations without an explicit `runContext` parameter skip audit recording but still succeed.
