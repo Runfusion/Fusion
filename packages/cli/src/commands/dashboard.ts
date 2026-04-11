@@ -479,6 +479,37 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           const task = await store.getTask(taskId).catch(() => null);
           const mergeStrategy = getMergeStrategy(settings);
 
+          // Deterministic verification failure: kick the task back to
+          // "in-progress" so the executor rebuilds it. Parking it in
+          // "in-review" with a fatal error would require manual
+          // intervention, but the failing test/build is exactly the kind
+          // of issue the agent can fix on its own if given another turn.
+          const isVerificationError = err?.name === "VerificationError"
+            || errorMsg.includes("Deterministic test verification failed")
+            || errorMsg.includes("Deterministic build verification failed");
+          if (task && isVerificationError) {
+            const failedKind = errorMsg.includes("build verification") ? "build" : "test";
+            try {
+              await store.addTaskComment(
+                taskId,
+                `Deterministic ${failedKind} verification failed during merge. `
+                + `See the prior [verification] log entry for the truncated command output. `
+                + `Please fix the failing ${failedKind} and push the update so the merge can retry.`,
+                "agent",
+              );
+              await store.updateTask(taskId, { status: null, mergeRetries: 0, error: null });
+              await store.moveTask(taskId, "in-progress");
+              await store.logEntry(
+                taskId,
+                `Deterministic ${failedKind} verification failed — moved back to in-progress for remediation`,
+              );
+              console.log(`[auto-merge] ↩ ${taskId}: deterministic ${failedKind} verification failed — moved to in-progress`);
+            } catch (moveErr) {
+              console.log(`[auto-merge] failed to return ${taskId} to in-progress after verification failure:`, moveErr);
+            }
+            continue;
+          }
+
           if (mergeStrategy === "direct") {
             // Check if this is a conflict error and if we should retry
             const isConflictError = errorMsg.includes("conflict") || errorMsg.includes("Conflict");

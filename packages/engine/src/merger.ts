@@ -254,7 +254,7 @@ async function runDeterministicVerification(
       result.failedCommand = "testCommand";
       await store.logEntry(
         taskId,
-        `Deterministic test verification failed (exit ${testResult.exitCode}): ${testResult.stderr || testResult.stdout}`.trim(),
+        `Deterministic test verification failed (exit ${testResult.exitCode}) — see prior [verification] entry for truncated output`,
         "VerificationError",
       );
       throw new VerificationError(
@@ -276,7 +276,7 @@ async function runDeterministicVerification(
       result.failedCommand = "buildCommand";
       await store.logEntry(
         taskId,
-        `Deterministic build verification failed (exit ${buildResult.exitCode}): ${buildResult.stderr || buildResult.stdout}`.trim(),
+        `Deterministic build verification failed (exit ${buildResult.exitCode}) — see prior [verification] entry for truncated output`,
         "VerificationError",
       );
       throw new VerificationError(
