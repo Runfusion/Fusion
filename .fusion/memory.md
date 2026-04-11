@@ -491,6 +491,16 @@ The `@fusion/tui` package provides Ink-based React components for terminal UI.
 - Error handling uses `err: unknown` type with `err instanceof Error ? err.message : String(err)` pattern for type safety
 - Log messages distinguish fresh-session start ("starting fresh merge agent session") from compaction recovery ("Context limit reached", "Compacted at X tokens")
 
+## FN-1588: Truncated-Prompt Retry Pattern
+
+When context-limit errors occur on fresh sessions (compaction returns null), the merger retries with a truncated prompt:
+- **Prompt truncation constants**: `MERGE_COMMIT_LOG_MAX_CHARS = 5000`, `MERGE_DIFF_STAT_MAX_CHARS = 3000`
+- **Helper function**: `truncateWithEllipsis(text, maxChars)` returns truncated text with `"\n... (truncated)"` suffix
+- **Truncated retry prompt**: Uses `"(see git log)"` for commit log, `""` for diff stat, and `simplifiedContext: true`
+- **Guard**: `truncatedRetryAttempted` flag prevents infinite loops when truncated prompt also fails
+- **Error propagation**: If truncated retry fails with context-limit error, original error is thrown
+- **Recovery flow**: Fresh session → compaction attempt (fails) → truncated retry → success or propagate
+
 ## FN-1532: SQLite Index Optimization
 
 When adding indexes to SQLite schema migrations:

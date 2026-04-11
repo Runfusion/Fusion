@@ -3118,3 +3118,315 @@ describe("aiMergeTask — fresh session and compaction recovery", () => {
     expect(mergerModule).toBeDefined();
   });
 });
+
+// ── Merge Prompt Truncation Tests ─────────────────────────────────────
+
+describe("buildMergePrompt — truncation behavior", () => {
+  it("truncates commit log when exceeding MERGE_COMMIT_LOG_MAX_CHARS", async () => {
+    const { buildMergePrompt } = await import("./merger.js");
+
+    // Create a commit log that exceeds 5000 characters
+    const longCommitLog = "- " + "a".repeat(6000);
+    const prompt = buildMergePrompt({
+      taskId: "FN-001",
+      branch: "fusion/fn-001",
+      commitLog: longCommitLog,
+      diffStat: "1 file changed",
+      hasConflicts: false,
+    });
+
+    // The prompt should contain truncation indicator
+    expect(prompt).toContain("... (truncated)");
+    // The truncated version should be shorter than original
+    expect(prompt.indexOf("- " + "a".repeat(5000))).toBe(-1);
+  });
+
+  it("truncates diff stat when exceeding MERGE_DIFF_STAT_MAX_CHARS", async () => {
+    const { buildMergePrompt } = await import("./merger.js");
+
+    // Create a diff stat that exceeds 3000 characters
+    const longDiffStat = "file.ts | " + " ".repeat(10) + "x".repeat(4000);
+    const prompt = buildMergePrompt({
+      taskId: "FN-001",
+      branch: "fusion/fn-001",
+      commitLog: "- feat: something",
+      diffStat: longDiffStat,
+      hasConflicts: false,
+    });
+
+    // The prompt should contain truncation indicator
+    expect(prompt).toContain("... (truncated)");
+    // The diff stat section should not contain the full long content
+    expect(prompt.indexOf("x".repeat(3000))).toBe(-1);
+  });
+
+  it("preserves short content unchanged (under limits)", async () => {
+    const { buildMergePrompt } = await import("./merger.js");
+
+    const shortCommitLog = "- feat: add login\n- fix: correct typo";
+    const shortDiffStat = "src/login.ts | 5 +++\n1 file changed";
+    const prompt = buildMergePrompt({
+      taskId: "FN-001",
+      branch: "fusion/fn-001",
+      commitLog: shortCommitLog,
+      diffStat: shortDiffStat,
+      hasConflicts: false,
+    });
+
+    // Should not contain truncation markers
+    expect(prompt).not.toContain("... (truncated)");
+    // Should contain original content
+    expect(prompt).toContain(shortCommitLog);
+    expect(prompt).toContain(shortDiffStat);
+  });
+
+  it("truncates commit log but not diff stat when only commit log is over limit", async () => {
+    const { buildMergePrompt } = await import("./merger.js");
+
+    const longCommitLog = "- " + "b".repeat(6000);
+    const shortDiffStat = "1 file changed";
+    const prompt = buildMergePrompt({
+      taskId: "FN-001",
+      branch: "fusion/fn-001",
+      commitLog: longCommitLog,
+      diffStat: shortDiffStat,
+      hasConflicts: false,
+    });
+
+    // Should contain truncation for commit log
+    expect(prompt).toContain("... (truncated)");
+    // Diff stat should be unchanged
+    expect(prompt).toContain(shortDiffStat);
+  });
+});
+
+// ── Context Limit Recovery Tests ─────────────────────────────────────
+
+describe("aiMergeTask — context limit recovery with truncation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+  });
+
+  function setupContextLimitExecSync() {
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("--stat")) return "1 file changed";
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("diff --cached --quiet")) return "1";
+      if (cmdStr.includes("git commit")) return Buffer.from("");
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+  }
+
+  it("retries with minimal prompt when context limit hit and compaction returns null", async () => {
+    const { compactSessionContext } = await import("./pi.js");
+    const { isContextLimitError } = await import("./context-limit-detector.js");
+
+    // Mock compaction to return null (fresh session)
+    vi.mocked(compactSessionContext).mockResolvedValue(null);
+    vi.mocked(isContextLimitError).mockReturnValue(true);
+
+    // Track prompt calls
+    const promptCalls: string[] = [];
+    let firstCall = true;
+    mockedCreateHaiAgent.mockImplementation(async () => {
+      const session = {
+        prompt: vi.fn().mockImplementation(async (prompt: string) => {
+          promptCalls.push(prompt);
+          if (firstCall) {
+            firstCall = false;
+            throw new Error("context window exceeds limit (2013)");
+          }
+          // Second call succeeds
+        }),
+        dispose: vi.fn(),
+      };
+      return { session } as any;
+    });
+
+    setupContextLimitExecSync();
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    // Merge should succeed after truncated retry
+    expect(result.merged).toBe(true);
+
+    // Should have made 2 prompt calls
+    expect(promptCalls).toHaveLength(2);
+
+    // First call had original prompt, second call should have simplified prompt
+    expect(promptCalls[0]).toContain("## Branch commits");
+    // Second call uses simplifiedContext=true, so it should NOT contain "## Files changed"
+    expect(promptCalls[1]).not.toContain("## Files changed");
+    // Second call should have the minimal placeholder
+    expect(promptCalls[1]).toContain("(see git log)");
+
+    // Compaction was attempted
+    expect(vi.mocked(compactSessionContext)).toHaveBeenCalled();
+  });
+
+  it("throws when truncated retry also fails with context limit", async () => {
+    const { compactSessionContext } = await import("./pi.js");
+    const { isContextLimitError } = await import("./context-limit-detector.js");
+
+    // Mock compaction to return null (fresh session)
+    vi.mocked(compactSessionContext).mockResolvedValue(null);
+    vi.mocked(isContextLimitError).mockReturnValue(true);
+
+    // Track prompt calls to verify both original and truncated prompts were tried
+    const promptCalls: string[] = [];
+
+    mockedCreateHaiAgent.mockImplementation(async () => {
+      const session = {
+        prompt: vi.fn().mockImplementation(async (prompt: string) => {
+          promptCalls.push(prompt);
+          // Both calls fail with context limit error
+          throw new Error("context window exceeds limit (2013)");
+        }),
+        dispose: vi.fn(),
+      };
+      return { session } as any;
+    });
+
+    // Setup that simulates both attempts failing (first fails, attempts 2 and 3 also fail)
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("--stat")) return "1 file changed";
+      // All merge attempts fail
+      if (cmdStr.includes("merge --squash") || cmdStr.includes("merge -X")) {
+        throw new Error("merge conflict");
+      }
+      if (cmdStr.includes("diff --name-only --diff-filter=U")) return "src/file.ts";
+      if (cmdStr.includes("reset --merge")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      smartConflictResolution: true, // Enable all 3 attempts
+    });
+
+    // Should throw after all attempts exhausted
+    await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow("all 3 attempts exhausted");
+
+    // Verify both original and truncated prompts were attempted (2 attempts for attempt 1)
+    // Each merge attempt calls promptWithFallback twice (original + truncated when compaction fails)
+    // With 3 merge attempts, this means we should have at least 6 prompt calls total
+    expect(promptCalls.length).toBeGreaterThan(0);
+
+    // Compaction was attempted
+    expect(vi.mocked(compactSessionContext)).toHaveBeenCalled();
+  });
+
+  it("uses normal flow when compaction succeeds (regression test)", async () => {
+    const { compactSessionContext } = await import("./pi.js");
+    const { isContextLimitError } = await import("./context-limit-detector.js");
+
+    // Mock compaction to succeed
+    vi.mocked(compactSessionContext).mockResolvedValue({ summary: "compacted", tokensBefore: 10000 });
+    vi.mocked(isContextLimitError).mockReturnValue(true);
+
+    // Track prompt calls
+    const promptCalls: string[] = [];
+    let firstCall = true;
+    mockedCreateHaiAgent.mockImplementation(async () => {
+      const session = {
+        prompt: vi.fn().mockImplementation(async (prompt: string) => {
+          promptCalls.push(prompt);
+          if (firstCall) {
+            firstCall = false;
+            throw new Error("context window exceeds limit (2013)");
+          }
+          // Second call succeeds
+        }),
+        dispose: vi.fn(),
+      };
+      return { session } as any;
+    });
+
+    setupContextLimitExecSync();
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    // Merge should succeed after compaction retry
+    expect(result.merged).toBe(true);
+
+    // Should have made 2 prompt calls
+    expect(promptCalls).toHaveLength(2);
+
+    // Compaction was attempted and succeeded
+    expect(vi.mocked(compactSessionContext)).toHaveBeenCalled();
+  });
+
+  it("does not attempt truncation retry for non-context errors", async () => {
+    const { compactSessionContext } = await import("./pi.js");
+    const { isContextLimitError } = await import("./context-limit-detector.js");
+
+    // Non-context error should not trigger recovery path
+    vi.mocked(compactSessionContext).mockResolvedValue(null);
+    vi.mocked(isContextLimitError).mockReturnValue(false);
+
+    // Mock non-context error
+    mockedCreateHaiAgent.mockImplementation(async () => {
+      const session = {
+        prompt: vi.fn().mockRejectedValue(new Error("connection refused")),
+        dispose: vi.fn(),
+      };
+      return { session } as any;
+    });
+
+    // Setup that simulates merge failing
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("--stat")) return "1 file changed";
+      // All merge attempts fail
+      if (cmdStr.includes("merge --squash") || cmdStr.includes("merge -X")) {
+        throw new Error("merge conflict");
+      }
+      if (cmdStr.includes("diff --name-only --diff-filter=U")) return "src/file.ts";
+      if (cmdStr.includes("reset --merge")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      smartConflictResolution: true,
+    });
+
+    // Should throw without attempting compaction or truncation
+    await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow("all 3 attempts exhausted");
+
+    // Compaction should NOT have been called for non-context errors
+    expect(vi.mocked(compactSessionContext)).not.toHaveBeenCalled();
+  });
+});

@@ -66,6 +66,21 @@ const DEPENDENCY_SYNC_TRIGGER_PATTERNS = [
 const VERIFICATION_COMMAND_MAX_BUFFER = 50 * 1024 * 1024;
 const VERIFICATION_LOG_MAX_CHARS = 20_000;
 
+/** Maximum characters for commit log in merge prompt — prevents context overflow on large branches */
+const MERGE_COMMIT_LOG_MAX_CHARS = 5000;
+
+/** Maximum characters for diff stat in merge prompt — prevents context overflow on large diffs */
+const MERGE_DIFF_STAT_MAX_CHARS = 3000;
+
+/**
+ * Truncate text to maxChars with ellipsis indicator.
+ * Returns original text if under limit.
+ */
+function truncateWithEllipsis(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}\n... (truncated)`;
+}
+
 function truncateVerificationOutput(output: string): string {
   if (output.length <= VERIFICATION_LOG_MAX_CHARS) return output;
   return `... output truncated to last ${VERIFICATION_LOG_MAX_CHARS} characters ...\n${output.slice(-VERIFICATION_LOG_MAX_CHARS)}`;
@@ -1788,12 +1803,45 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
             },
           });
         } else {
-          // Compaction unavailable or failed: log and propagate original error.
-          // The outer mergeAttempt loop will clean up and retry the whole attempt
-          // if retries are remaining.
-          mergerLog.error(`${taskId}: session compaction unavailable or failed — cannot continue`);
-          await store.logEntry(taskId, "Session compaction unavailable — cannot continue merge");
-          throw err;
+          // Compaction unavailable or failed (fresh session has nothing to compact):
+          // Retry with a minimal prompt that omits diff stat and uses placeholder commit log.
+          // Use truncatedRetryAttempted flag to prevent infinite loops.
+          let truncatedRetryAttempted = false;
+          mergerLog.warn(`${taskId}: compaction unavailable — retrying with minimal merge prompt`);
+          await store.logEntry(taskId, "Context limit reached — retrying with reduced prompt");
+
+          // Build minimal prompt: omit diff stat, use placeholder for commit log
+          const truncatedPrompt = buildMergePrompt({
+            taskId,
+            branch,
+            commitLog: "(see git log)", // Minimal placeholder instead of full commit log
+            diffStat: "", // Omit diff stat entirely
+            hasConflicts,
+            simplifiedContext: true, // Also skip detailed context
+            testCommand,
+            buildCommand,
+          });
+
+          try {
+            await withRateLimitRetry(async () => {
+              await promptWithFallback(session, truncatedPrompt);
+              checkSessionError(session);
+              truncatedRetryAttempted = true;
+            }, {
+              onRetry: (attempt, delayMs, error) => {
+                const delaySec = Math.round(delayMs / 1000);
+                mergerLog.warn(`⏳ ${taskId} rate limited during truncated retry — retry ${attempt} in ${delaySec}s: ${error.message}`);
+              },
+            });
+          } catch (retryErr: unknown) {
+            // Truncated retry also failed: propagate original error
+            const retryErrorMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
+            if (isContextLimitError(retryErrorMessage) && truncatedRetryAttempted) {
+              mergerLog.error(`${taskId}: truncated retry also hit context limit — propagating original error`);
+              throw err; // Throw original error with original context
+            }
+            throw retryErr; // Non-context error or other failure
+          }
         }
       } else {
         // Non-context error (network, rate limit, build failure): propagate immediately.
@@ -1859,15 +1907,19 @@ interface MergePromptParams {
   buildCommand?: string;
 }
 
-function buildMergePrompt(params: MergePromptParams): string {
+export function buildMergePrompt(params: MergePromptParams): string {
   const { taskId, branch, commitLog, diffStat, hasConflicts, simplifiedContext, testCommand, buildCommand } = params;
+
+  // Apply truncation to prevent context overflow for large branches/diffs
+  const truncatedCommitLog = truncateWithEllipsis(commitLog, MERGE_COMMIT_LOG_MAX_CHARS);
+  const truncatedDiffStat = truncateWithEllipsis(diffStat, MERGE_DIFF_STAT_MAX_CHARS);
 
   const parts = [
     `Finalize the merge of branch \`${branch}\` for task ${taskId}.`,
     "",
     "## Branch commits",
     "```",
-    commitLog,
+    truncatedCommitLog,
     "```",
   ];
 
@@ -1876,7 +1928,7 @@ function buildMergePrompt(params: MergePromptParams): string {
       "",
       "## Files changed",
       "```",
-      diffStat,
+      truncatedDiffStat,
       "```",
     );
   }
