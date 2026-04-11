@@ -21288,6 +21288,150 @@ html .column.drag-over * {
   font-style: italic;
 }
 
+.workflow-result-mode-toggle {
+  background: none;
+  border: 1px solid var(--border, #30363d);
+  color: var(--text-muted, #8b949e);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: inherit;
+  margin-left: auto;
+}
+
+.workflow-result-mode-toggle:hover {
+  background: var(--card-hover, #282e36);
+  color: var(--text, #e6edf3);
+}
+
+.workflow-result-output {
+  background: var(--surface-dimmed, #0d1117);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  padding: var(--space-sm, 8px) var(--space-md, 16px);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary, #e6edf3);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.workflow-result-output--markdown {
+  padding: var(--space-md, 12px) var(--space-lg, 16px);
+  font-family: var(--font-primary);
+  white-space: normal;
+}
+
+.workflow-result-output--markdown .workflow-result-output-text {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary, #e6edf3);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.workflow-result-output--markdown .markdown-body {
+  font-family: var(--font-primary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* ===== Expanded Workflow Output Modal ===== */
+.workflow-output-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: var(--space-lg, 16px);
+}
+
+.workflow-output-modal {
+  background: var(--surface, #161b22);
+  border: 1px solid var(--border, #30363d);
+  border-radius: var(--radius-lg, 12px);
+  width: 100%;
+  max-width: 900px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-lg);
+}
+
+.workflow-output-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md, 12px) var(--space-lg, 16px);
+  border-bottom: 1px solid var(--border, #30363d);
+  flex-shrink: 0;
+}
+
+.workflow-output-modal-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 8px);
+}
+
+.workflow-output-modal-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary, #e6edf3);
+}
+
+.workflow-output-modal-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 8px);
+}
+
+.workflow-output-modal-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: 1px solid var(--border, #30363d);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--text-muted, #8b949e);
+  cursor: pointer;
+  padding: 0;
+  transition: all var(--transition-fast);
+}
+
+.workflow-output-modal-close:hover {
+  background: var(--card-hover, #282e36);
+  color: var(--text, #e6edf3);
+}
+
+.workflow-output-modal-body {
+  flex: 1;
+  overflow: hidden;
+  padding: var(--space-md, 12px) var(--space-lg, 16px);
+}
+
+.workflow-result-output--expanded {
+  max-height: none;
+  height: 100%;
+  overflow-y: auto;
+}
+
 /* ===== Model Onboarding Modal ===== */
 
 .model-onboarding-modal {

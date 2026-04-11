@@ -1,7 +1,39 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Check, ChevronDown, ChevronUp, Pencil, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Maximize2, Pencil, X } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { WorkflowStep, WorkflowStepResult } from "@fusion/core";
 import { fetchWorkflowSteps } from "../api";
+import type { Components } from "react-markdown";
+
+// Markdown rendering components for workflow output
+const markdownComponents: Components = {
+  pre: ({ children, ...props }) => (
+    <pre
+      {...props}
+      style={{
+        overflowX: "auto",
+        maxWidth: "100%",
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+      }}
+    >
+      {children}
+    </pre>
+  ),
+  table: ({ children, ...props }) => (
+    <table
+      {...props}
+      style={{
+        display: "block",
+        overflowX: "auto",
+        maxWidth: "100%",
+      }}
+    >
+      {children}
+    </table>
+  ),
+};
 
 interface WorkflowResultsTabProps {
   taskId: string;
@@ -83,6 +115,8 @@ export function WorkflowResultsTab({
   onWorkflowStepsChange,
 }: WorkflowResultsTabProps) {
   const [expandedOutputs, setExpandedOutputs] = useState<Record<string, boolean>>({});
+  const [renderModes, setRenderModes] = useState<Record<string, "markdown" | "plain">>({});
+  const [expandedViewStepId, setExpandedViewStepId] = useState<string | null>(null);
   const [allWorkflowSteps, setAllWorkflowSteps] = useState<WorkflowStep[]>([]);
   const [isEditing, setIsEditing] = useState(false);
 
@@ -133,6 +167,38 @@ export function WorkflowResultsTab({
   const toggleOutput = (stepId: string) => {
     setExpandedOutputs((prev) => ({ ...prev, [stepId]: !prev[stepId] }));
   };
+
+  const toggleRenderMode = (stepId: string) => {
+    setRenderModes((prev) => {
+      const currentMode = prev[stepId] ?? "markdown";
+      return { ...prev, [stepId]: currentMode === "markdown" ? "plain" : "markdown" };
+    });
+  };
+
+  // Expanded view modal handlers
+  const openExpandedView = (stepId: string) => {
+    setExpandedViewStepId(stepId);
+  };
+
+  const closeExpandedView = () => {
+    setExpandedViewStepId(null);
+  };
+
+  // Escape key handler for closing expanded view
+  useEffect(() => {
+    if (!expandedViewStepId) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        closeExpandedView();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [expandedViewStepId]);
 
   const toggleStep = useCallback((stepId: string, checked: boolean) => {
     if (!onWorkflowStepsChange) return;
@@ -365,14 +431,44 @@ export function WorkflowResultsTab({
                         {getOutputPreview(result.output)}
                       </span>
                     )}
+                    {isExpanded && (
+                      <>
+                        <button
+                          className="workflow-result-mode-toggle"
+                          onClick={() => toggleRenderMode(result.workflowStepId)}
+                          data-testid={`workflow-result-mode-toggle-${result.workflowStepId}`}
+                          title={(renderModes[result.workflowStepId] ?? "markdown") === "markdown" ? "Switch to plain text" : "Switch to markdown"}
+                        >
+                          {(renderModes[result.workflowStepId] ?? "markdown") === "markdown" ? "Markdown" : "Plain"}
+                        </button>
+                        <button
+                          className="workflow-result-expand-toggle"
+                          onClick={() => openExpandedView(result.workflowStepId)}
+                          data-testid={`workflow-result-expand-${result.workflowStepId}`}
+                          title="Expand output"
+                        >
+                          <Maximize2 size={12} />
+                        </button>
+                      </>
+                    )}
                   </div>
                   {isExpanded && (
-                    <pre
-                      className="workflow-result-output"
+                    <div
+                      className={`workflow-result-output${(renderModes[result.workflowStepId] ?? "markdown") === "markdown" ? " workflow-result-output--markdown" : ""}`}
                       data-testid={`workflow-result-output-${result.workflowStepId}`}
                     >
-                      {result.output}
-                    </pre>
+                      {(renderModes[result.workflowStepId] ?? "markdown") === "markdown" ? (
+                        <div className="markdown-body">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                            {result.output}
+                          </ReactMarkdown>
+                        </div>
+                      ) : (
+                        <pre className="workflow-result-output-text">
+                          {result.output}
+                        </pre>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
@@ -457,6 +553,68 @@ export function WorkflowResultsTab({
           {renderEditor()}
         </>
       )}
+
+      {/* Expanded Output Modal */}
+      {expandedViewStepId && (() => {
+        const result = results.find((r) => r.workflowStepId === expandedViewStepId);
+        if (!result) return null;
+
+        const renderMode = renderModes[result.workflowStepId] ?? "markdown";
+        const phase = (result.phase || "pre-merge") as "pre-merge" | "post-merge";
+
+        return (
+          <div
+            className="workflow-output-modal-overlay"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) closeExpandedView();
+            }}
+            data-testid="workflow-output-modal"
+          >
+            <div className="workflow-output-modal" role="dialog" aria-modal="true">
+              <div className="workflow-output-modal-header">
+                <div className="workflow-output-modal-title">
+                  <span className="workflow-output-modal-name">{result.workflowStepName}</span>
+                  {phaseBadge(phase, result.workflowStepId, "workflow-output-modal-phase")}
+                </div>
+                <div className="workflow-output-modal-controls">
+                  <button
+                    className="workflow-result-mode-toggle"
+                    onClick={() => toggleRenderMode(result.workflowStepId)}
+                    data-testid="workflow-output-modal-mode-toggle"
+                    title={renderMode === "markdown" ? "Switch to plain text" : "Switch to markdown"}
+                  >
+                    {renderMode === "markdown" ? "Markdown" : "Plain"}
+                  </button>
+                  <button
+                    className="workflow-output-modal-close"
+                    onClick={closeExpandedView}
+                    data-testid="workflow-output-modal-close"
+                    aria-label="Close"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </div>
+              <div className="workflow-output-modal-body">
+                <div
+                  className={`workflow-result-output workflow-result-output--expanded${renderMode === "markdown" ? " workflow-result-output--markdown" : ""}`}
+                  data-testid="workflow-output-modal-content"
+                >
+                  {renderMode === "markdown" ? (
+                    <div className="markdown-body">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                        {result.output}
+                      </ReactMarkdown>
+                    </div>
+                  ) : (
+                    <pre className="workflow-result-output-text">{result.output}</pre>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

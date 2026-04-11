@@ -114,6 +114,26 @@ You can inspect:
 - outputs/findings
 - timing metadata
 
+### Output Rendering
+
+Workflow step outputs support both markdown rendering and plain text modes:
+
+- **Markdown mode** (default): Renders output with proper markdown formatting including tables, code blocks, lists, and GFM extensions (task lists, strikethrough, etc.)
+- **Plain mode**: Shows raw text without markdown interpretation
+
+Toggle between modes using the "Markdown"/"Plain" button that appears when an output is expanded.
+
+### Expanded Output Viewer
+
+For long outputs, click the expand icon (maximize) to open a larger viewer modal. The expanded view:
+
+- Displays the full output in a modal overlay
+- Supports the same markdown/plain toggle as the inline view
+- Closes via the X button, backdrop click, or Escape key
+- Syncs with the current render mode of the step
+
+This makes it easier to read structured markdown output and long logs.
+
 ## Workflow Step APIs
 
 | Endpoint | Purpose |
