@@ -87,6 +87,7 @@ const PROJECT_KEYS: (keyof ProjectSettings)[] = [
   "insightExtractionSchedule",
   "insightExtractionMinIntervalMs",
   "memoryEnabled",
+  "memoryBackendType",
   "tokenCap",
   "runStepsInNewSessions",
   "maxParallelSteps",

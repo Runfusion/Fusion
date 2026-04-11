@@ -1087,6 +1087,12 @@ export interface ProjectSettings {
    *  in their prompts and will not read or write to .fusion/memory.md.
    *  Default: true (enabled for backward compatibility). */
   memoryEnabled?: boolean;
+  /** Memory backend type for pluggable memory storage.
+   *  - "file": File-based backend storing memory in `.fusion/memory.md` (default)
+   *  - "readonly": Read-only backend that returns empty memory (for external management)
+   *  - Any registered custom backend type
+   *  Default: "file" */
+  memoryBackendType?: string;
   /** Maximum token count before auto-compact triggers. When undefined, compact
    *  only on overflow errors. When set, the engine monitors token usage after
    *  each prompt and proactively compacts context when the token count reaches
@@ -1163,6 +1169,8 @@ export interface Settings extends GlobalSettings, ProjectSettings {
   /** Whether GitHub token is configured for PR operations (read-only, set by server).
    *  When false, PR creation features are disabled in the UI. */
   githubTokenConfigured?: boolean;
+  /** Index signature for dynamic settings access */
+  [key: string]: unknown;
 }
 
 /** Default values for global (user-level) settings. */
@@ -1247,6 +1255,7 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   insightExtractionSchedule: "0 2 * * *",
   insightExtractionMinIntervalMs: 86_400_000,
   memoryEnabled: true,
+  memoryBackendType: "file",
   tokenCap: undefined,
   runStepsInNewSessions: false,
   maxParallelSteps: 2,
@@ -1352,6 +1361,7 @@ export const PROJECT_SETTINGS_KEYS: ReadonlyArray<keyof ProjectSettings> = [
   "insightExtractionSchedule",
   "insightExtractionMinIntervalMs",
   "memoryEnabled",
+  "memoryBackendType",
   "maxSpawnedAgentsPerParent",
   "maxSpawnedAgentsGlobal",
   "maintenanceIntervalMs",

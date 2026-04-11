@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import * as nodeFs from "node:fs";
 import * as nodeChildProcess from "node:child_process";
 import type { TaskStore, Column, MergeResult, ScheduleType, ActivityEventType, ModelPreset, AutomationStep, MessageType, ParticipantType, MessageCreateInput, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult, RoutineTriggerType } from "@fusion/core";
-import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, getCurrentRepo, isGhAuthenticated, AUTOMATION_PRESETS, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupAutomation, exportSettings, importSettings, validateImportData, MessageStore, MEMORY_FILE_PATH, RoutineStore, isWebhookTrigger } from "@fusion/core";
+import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, getCurrentRepo, isGhAuthenticated, AUTOMATION_PRESETS, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupAutomation, exportSettings, importSettings, validateImportData, MessageStore, MEMORY_FILE_PATH, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes, type MemoryBackendCapabilities } from "@fusion/core";
 import type { ChatStore, ChatSessionCreateInput, ChatSessionUpdateInput } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
 import { GitHubClient, parseBadgeUrl } from "./github.js";
@@ -1988,6 +1988,32 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw err;
       }
       rethrowAsApiError(err, "Failed to save memory");
+    }
+  });
+
+  // ── Memory Backend Routes ─────────────────────────────────────
+
+  /**
+   * GET /api/memory/backend
+   * Returns the current memory backend status and capabilities.
+   */
+  router.get("/memory/backend", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const settings = await scopedStore.getSettings();
+      const capabilities = getMemoryBackendCapabilities(settings);
+      const availableBackends = listMemoryBackendTypes();
+
+      res.json({
+        currentBackend: resolveMemoryBackend(settings).type,
+        capabilities,
+        availableBackends,
+      });
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to get memory backend status");
     }
   });
 

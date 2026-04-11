@@ -349,6 +349,30 @@ export {
   readProjectMemory,
 } from "./project-memory.js";
 
+// ── Memory Backend ───────────────────────────────────────
+
+export {
+  FileMemoryBackend,
+  ReadOnlyMemoryBackend,
+} from "./memory-backend.js";
+
+export {
+  registerMemoryBackend,
+  getMemoryBackend,
+  listMemoryBackendTypes,
+  resolveMemoryBackend,
+  getMemoryBackendCapabilities,
+  readMemory,
+  writeMemory,
+  memoryExists,
+  MEMORY_BACKEND_SETTINGS_KEYS,
+  DEFAULT_MEMORY_BACKEND,
+} from "./memory-backend.js";
+
+export { MemoryBackendError } from "./memory-backend.js";
+
+export type { MemoryBackendCapabilities } from "./memory-backend.js";
+
 // ── Agent Companies Types ──────────────────────────────────
 
 export type {

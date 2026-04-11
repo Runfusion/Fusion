@@ -1821,6 +1821,69 @@ Directory for backup files, relative to the project root. The directory is creat
 - Must be a relative path (no leading `/` or `\`)
 - Must not contain parent directory traversal (`..`)
 
+### `memoryEnabled` (default: `true`)
+
+When enabled, agents consult and update `.fusion/memory.md` with durable project learnings. When disabled, agents will not include memory instructions in their prompts and will not read or write to `.fusion/memory.md`.
+
+**Configuration:**
+```json
+{
+  "settings": {
+    "memoryEnabled": false
+  }
+}
+```
+
+**Notes:**
+- When toggled from `false` to `true`, the memory file is bootstrapped automatically
+- Existing memory content is never overwritten
+
+### `memoryBackendType` (default: `"file"`)
+
+Memory backend type for pluggable memory storage.
+
+**Available backends:**
+
+| Backend | Description | Capabilities |
+|---------|-------------|--------------|
+| `file` | File-based storage in `.fusion/memory.md` | Read/Write, Atomic writes, Persistent |
+| `readonly` | Read-only backend (for external memory management) | Read only, Non-persistent |
+
+**Configuration:**
+```json
+{
+  "settings": {
+    "memoryBackendType": "file"
+  }
+}
+```
+
+**Verifying active backend:**
+
+```bash
+curl http://localhost:4040/api/memory/backend
+```
+
+**Response:**
+```json
+{
+  "currentBackend": "file",
+  "capabilities": {
+    "readable": true,
+    "writable": true,
+    "supportsAtomicWrite": true,
+    "hasConflictResolution": false,
+    "persistent": true
+  },
+  "availableBackends": ["file", "readonly"]
+}
+```
+
+**Fallback behavior:**
+- If an unknown backend type is configured, Fusion falls back to `file` backend
+- Read failures return empty content instead of errors
+- Write failures to non-writable backends throw `MemoryBackendError` with code `READ_ONLY`
+
 ### `autoSummarizeTitles` (default: `false`)
 
 When enabled, tasks created without titles but with descriptions longer than 140 characters will automatically receive an AI-generated title (max 60 characters).

@@ -121,6 +121,7 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `insightExtractionSchedule` | `string` | `"0 2 * * *"` | Insight extraction cron schedule. |
 | `insightExtractionMinIntervalMs` | `number` | `86400000` | Minimum interval between insight extraction runs (24h). |
 | `memoryEnabled` | `boolean` | `true` | Enable project memory integration. |
+| `memoryBackendType` | `string` | `"file"` | Memory backend type: `file` or `readonly`. |
 | `runStepsInNewSessions` | `boolean` | `false` | Run each task step in a fresh agent session. |
 | `maxParallelSteps` | `number` | `2` | Max concurrent step sessions (1–4). |
 | `agentPrompts` | `object` | `undefined` | Custom agent prompt templates + role assignments. |

@@ -633,6 +633,43 @@ To disable project memory:
 }
 ```
 
+### Pluggable Memory Backends
+
+Fusion supports pluggable memory backends, allowing you to choose how project memory is stored and managed:
+
+```json
+{
+  "memoryBackendType": "file"
+}
+```
+
+**Available backends:**
+
+| Backend | Description | Capabilities |
+|---------|-------------|--------------|
+| `file` (default) | File-based storage in `.fusion/memory.md` | Read/Write, Atomic, Persistent |
+| `readonly` | Read-only access (external memory management) | Read only, Non-persistent |
+
+**Using the dashboard API:**
+
+```bash
+# Get current backend status
+curl http://localhost:4040/api/memory/backend
+
+# Response
+{
+  "currentBackend": "file",
+  "capabilities": {
+    "readable": true,
+    "writable": true,
+    "supportsAtomicWrite": true,
+    "hasConflictResolution": false,
+    "persistent": true
+  },
+  "availableBackends": ["file", "readonly"]
+}
+```
+
 ## Packages
 
 | Package | Description |
@@ -681,6 +718,8 @@ Project settings override global settings. Configure in the dashboard under **Se
 | `agentPrompts` | Project | - | Role-based prompt templates and assignments |
 | `promptOverrides` | Project | - | Fine-grained prompt segment overrides |
 | `autoSummarizeTitles` | Project | false | Auto-generate titles for untitled tasks |
+| `memoryEnabled` | Project | true | Enable/disable project memory |
+| `memoryBackendType` | Project | file | Memory backend: file/readonly |
 | `autoBackupEnabled` | Project | false | Enable automatic database backups |
 | `autoBackupSchedule` | Project | `0 2 * * *` | Cron expression for backup schedule |
 | `autoBackupRetention` | Project | 7 | Number of backups to retain (1–100) |

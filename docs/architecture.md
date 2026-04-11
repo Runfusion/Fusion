@@ -149,11 +149,34 @@ From `packages/core/src/index.ts` exports:
 
 Fusion includes a pluggable memory backend system for storing durable project learnings:
 
-- **Two-stage memory**: Working memory (`memory.md`) + distilled insights (`memory-insights.md`)
-- **Plugin architecture**: `MemoryBackend` interface enables alternative storage backends
-- **Settings integration**: `memoryEnabled` toggle controls agent prompt injection
-- **Insight extraction**: Scheduled AI-powered distillation of patterns, principles, pitfalls
-- **Memory pruning**: Daily extraction automatically prunes transient content from working memory
+**Two-stage memory:**
+- Working memory (`memory.md`) accumulates agent learnings during task execution
+- Distilled insights (`memory-insights.md`) preserve patterns, principles, pitfalls
+
+**Pluggable backends (`memory-backend.ts`):**
+
+| Backend | Type | Capabilities |
+|---------|------|-------------|
+| `FileMemoryBackend` | `file` | Read/Write, Atomic writes, Persistent |
+| `ReadOnlyMemoryBackend` | `readonly` | Read only, Non-persistent |
+
+**Backend registration:**
+```typescript
+import { registerMemoryBackend, resolveMemoryBackend } from "@fusion/core";
+
+// Register custom backend
+registerMemoryBackend(customBackend);
+
+// Resolve based on settings
+const backend = resolveMemoryBackend(settings);
+```
+
+**Settings integration:**
+- `memoryEnabled`: Toggle controls whether memory instructions are injected into prompts
+- `memoryBackendType`: Select which backend to use (`file` or `readonly`)
+
+**Dashboard API:**
+- `GET /api/memory/backend` — Returns current backend status and capabilities
 
 See [Memory Plugin Contract](./memory-plugin-contract.md) for the full specification.
 
