@@ -391,4 +391,182 @@ describe("MissionStore integration with TaskStore", () => {
     const refreshed = missionStore.getFeature(feature.id);
     expect(refreshed?.taskId).toBeUndefined();
   });
+
+  // ── Parity: Restart Fidelity Tests ──────────────────────────────────
+
+  describe("Parity: Restart Fidelity", () => {
+    it("persists mission status across store restart", async () => {
+      const missionStore = taskStore.getMissionStore();
+      const mission = missionStore.createMission({
+        title: "Restart Test Mission",
+        description: "Testing persistence",
+      });
+
+      // Verify initial status is planning
+      expect(mission.status).toBe("planning");
+
+      // Update to active
+      missionStore.updateMission(mission.id, { status: "active", autopilotEnabled: true });
+
+      // Restart store
+      taskStore.close();
+      const taskStore2 = new TaskStore(rootDir);
+      await taskStore2.init();
+      const missionStore2 = taskStore2.getMissionStore();
+
+      const retrieved = missionStore2.getMission(mission.id);
+      expect(retrieved).toBeDefined();
+      expect(retrieved!.title).toBe("Restart Test Mission");
+      expect(retrieved!.status).toBe("active");
+      expect(retrieved!.autopilotEnabled).toBe(true);
+    });
+
+    it("persists autopilot state across store restart", async () => {
+      const missionStore = taskStore.getMissionStore();
+      const mission = missionStore.createMission({
+        title: "Autopilot State Test",
+        autopilotEnabled: true,
+      });
+
+      // Update autopilot state
+      missionStore.updateMission(mission.id, { autopilotState: "watching" });
+
+      // Update to a different state
+      missionStore.updateMission(mission.id, { autopilotState: "inactive" });
+
+      // Restart store
+      taskStore.close();
+      const taskStore2 = new TaskStore(rootDir);
+      await taskStore2.init();
+      const missionStore2 = taskStore2.getMissionStore();
+
+      const retrieved = missionStore2.getMission(mission.id);
+      expect(retrieved!.autopilotState).toBe("inactive");
+    });
+
+    it("persists feature-to-task linkage across store restart", async () => {
+      const missionStore = taskStore.getMissionStore();
+      const mission = missionStore.createMission({ title: "Linkage Test" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "M1" });
+      const slice = missionStore.addSlice(milestone.id, { title: "S1" });
+      const feature = missionStore.addFeature(slice.id, { title: "F1" });
+
+      const task = await taskStore.createTask({
+        title: "Linked Task",
+        description: "Task linked to feature",
+        column: "todo",
+      });
+
+      missionStore.linkFeatureToTask(feature.id, task.id);
+
+      // Restart store
+      taskStore.close();
+      const taskStore2 = new TaskStore(rootDir);
+      await taskStore2.init();
+      const missionStore2 = taskStore2.getMissionStore();
+
+      const retrieved = missionStore2.getFeature(feature.id);
+      expect(retrieved!.taskId).toBe(task.id);
+      expect(retrieved!.status).toBe("triaged");
+    });
+
+    it("persists feature status across store restart", async () => {
+      const missionStore = taskStore.getMissionStore();
+      const mission = missionStore.createMission({ title: "Status Test" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "M1" });
+      const slice = missionStore.addSlice(milestone.id, { title: "S1" });
+      const feature = missionStore.addFeature(slice.id, { title: "F1" });
+
+      // Transition through states
+      missionStore.updateFeatureStatus(feature.id, "triaged");
+      missionStore.updateFeatureStatus(feature.id, "in-progress");
+      missionStore.updateFeatureStatus(feature.id, "blocked");
+
+      // Restart store
+      taskStore.close();
+      const taskStore2 = new TaskStore(rootDir);
+      await taskStore2.init();
+      const missionStore2 = taskStore2.getMissionStore();
+
+      const hierarchy = missionStore2.getMissionWithHierarchy(mission.id);
+      expect(hierarchy!.milestones[0].slices[0].features[0].status).toBe("blocked");
+    });
+
+    it("persists mission events across store restart", async () => {
+      const missionStore = taskStore.getMissionStore();
+      const mission = missionStore.createMission({ title: "Events Test" });
+
+      // Log multiple events
+      vi.advanceTimersByTime(1);
+      missionStore.logMissionEvent(mission.id, "mission_started", "Mission started");
+      vi.advanceTimersByTime(1);
+      missionStore.logMissionEvent(mission.id, "slice_activated", "Slice activated");
+      vi.advanceTimersByTime(1);
+      missionStore.logMissionEvent(mission.id, "feature_triaged", "Feature triaged");
+
+      // Restart store
+      taskStore.close();
+      const taskStore2 = new TaskStore(rootDir);
+      await taskStore2.init();
+      const missionStore2 = taskStore2.getMissionStore();
+
+      const events = missionStore2.getMissionEvents(mission.id);
+      expect(events.events.length).toBe(3);
+      // Events are ordered by timestamp DESC, so most recent first
+      expect(events.events[0].eventType).toBe("feature_triaged"); // Most recent
+      expect(events.events[1].eventType).toBe("slice_activated");
+      expect(events.events[2].eventType).toBe("mission_started"); // Oldest
+    });
+
+    it("persists hierarchy ordering across store restart", async () => {
+      const { missionStore, mission, milestones } = await createHierarchy(taskStore);
+
+      // Reorder milestones
+      missionStore.reorderMilestones(mission.id, [
+        milestones[2].id,
+        milestones[0].id,
+        milestones[1].id,
+      ]);
+
+      // Restart store
+      taskStore.close();
+      const taskStore2 = new TaskStore(rootDir);
+      await taskStore2.init();
+      const missionStore2 = taskStore2.getMissionStore();
+
+      const hierarchy = missionStore2.getMissionWithHierarchy(mission.id);
+      expect(hierarchy!.milestones[0].id).toBe(milestones[2].id);
+      expect(hierarchy!.milestones[1].id).toBe(milestones[0].id);
+      expect(hierarchy!.milestones[2].id).toBe(milestones[1].id);
+    });
+
+    it("persists planning notes and verification across store restart", async () => {
+      const missionStore = taskStore.getMissionStore();
+      const mission = missionStore.createMission({ title: "Planning Context Test" });
+      const milestone = missionStore.addMilestone(mission.id, {
+        title: "M1",
+        planningNotes: "Use JWT authentication",
+        verification: "Users can log in",
+      });
+      const slice = missionStore.addSlice(milestone.id, {
+        title: "S1",
+        planningNotes: "Build login form component",
+        verification: "Form validates input",
+      });
+
+      // Restart store
+      taskStore.close();
+      const taskStore2 = new TaskStore(rootDir);
+      await taskStore2.init();
+      const missionStore2 = taskStore2.getMissionStore();
+
+      const retrievedMilestone = missionStore2.getMilestone(milestone.id);
+      expect(retrievedMilestone!.planningNotes).toBe("Use JWT authentication");
+      expect(retrievedMilestone!.verification).toBe("Users can log in");
+
+      const retrievedSlice = missionStore2.getSlice(slice.id);
+      expect(retrievedSlice!.planningNotes).toBe("Build login form component");
+      expect(retrievedSlice!.verification).toBe("Form validates input");
+    });
+  });
 });
