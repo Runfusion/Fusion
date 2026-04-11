@@ -42,6 +42,10 @@ class MockStore extends EventEmitter {
     return this.rootDir;
   }
 
+  getFusionDir(): string {
+    return this.rootDir + "/.fusion";
+  }
+
   getDatabase() {
     return {
       exec: vi.fn(),

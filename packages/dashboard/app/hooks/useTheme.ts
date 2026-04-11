@@ -189,6 +189,8 @@ export function useTheme(): UseThemeReturn {
 
   const themeModeRef = useRef(themeMode);
   const colorThemeRef = useRef(colorTheme);
+  const userSetThemeModeRef = useRef(false);
+  const userSetColorThemeRef = useRef(false);
 
   useEffect(() => {
     themeModeRef.current = themeMode;
@@ -208,8 +210,11 @@ export function useTheme(): UseThemeReturn {
       .then((globalSettings) => {
         if (cancelled) return;
 
-        if (isValidThemeMode(globalSettings.themeMode)) {
+        // Hydration should not override user-initiated writes that happened while
+        // fetchGlobalSettings() was in flight. User selections are authoritative.
+        if (isValidThemeMode(globalSettings.themeMode) && !userSetThemeModeRef.current) {
           if (themeModeRef.current !== globalSettings.themeMode) {
+            themeModeRef.current = globalSettings.themeMode;
             setThemeModeState(globalSettings.themeMode);
           }
           if (readCachedThemeMode() !== globalSettings.themeMode) {
@@ -217,8 +222,13 @@ export function useTheme(): UseThemeReturn {
           }
         }
 
-        if (globalSettings.colorTheme && VALID_COLOR_THEMES.includes(globalSettings.colorTheme)) {
+        if (
+          globalSettings.colorTheme
+          && VALID_COLOR_THEMES.includes(globalSettings.colorTheme)
+          && !userSetColorThemeRef.current
+        ) {
           if (colorThemeRef.current !== globalSettings.colorTheme) {
+            colorThemeRef.current = globalSettings.colorTheme;
             setColorThemeState(globalSettings.colorTheme);
           }
           if (readCachedColorTheme() !== globalSettings.colorTheme) {
@@ -271,6 +281,9 @@ export function useTheme(): UseThemeReturn {
 
   // Wrapper setters with write-through persistence.
   const setThemeMode = useCallback((mode: ThemeMode) => {
+    // Mark user intent immediately so in-flight hydration cannot overwrite it.
+    userSetThemeModeRef.current = true;
+    themeModeRef.current = mode;
     setThemeModeState(mode);
     writeCachedThemeMode(mode);
 
@@ -280,6 +293,9 @@ export function useTheme(): UseThemeReturn {
   }, []);
 
   const setColorTheme = useCallback((theme: ColorTheme) => {
+    // Mark user intent immediately so in-flight hydration cannot overwrite it.
+    userSetColorThemeRef.current = true;
+    colorThemeRef.current = theme;
     setColorThemeState(theme);
     writeCachedColorTheme(theme);
 

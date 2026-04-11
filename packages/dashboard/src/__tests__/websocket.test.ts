@@ -48,6 +48,10 @@ class MockStore extends EventEmitter {
     return process.cwd();
   }
 
+  getFusionDir(): string {
+    return process.cwd() + "/.fusion";
+  }
+
   getDatabase() {
     return {
       exec: vi.fn(),

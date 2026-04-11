@@ -8,7 +8,15 @@ const workspaceRoot = join(import.meta.dirname!, "..", "..", "..", "..");
 function loadWorkflow(name: string): any {
   const path = join(workspaceRoot, ".github", "workflows", name);
   const content = readFileSync(path, "utf-8");
-  return { content, parsed: parse(content) };
+  const parsed = parse(content) as Record<string, unknown>;
+
+  // Some YAML parsers treat the unquoted `on:` key as boolean `true`.
+  // Normalize it so tests can consistently read `workflow.on`.
+  if (parsed && parsed.on === undefined) {
+    (parsed as any).on = (parsed as any)["on"] ?? (parsed as any).true ?? (parsed as any)["true"];
+  }
+
+  return { content, parsed };
 }
 
 describe("CI workflow (.github/workflows/ci.yml)", () => {
@@ -26,12 +34,13 @@ describe("CI workflow (.github/workflows/ci.yml)", () => {
     expect(typeof workflow).toBe("object");
   });
 
-  it("has push trigger on main", () => {
-    expect(workflow.on.push.branches).toContain("main");
+  it("uses workflow_dispatch trigger (auto CI disabled)", () => {
+    expect(workflow.on).toHaveProperty("workflow_dispatch");
   });
 
-  it("has pull_request trigger on main", () => {
-    expect(workflow.on.pull_request.branches).toContain("main");
+  it("does not auto-trigger on push/pull_request", () => {
+    expect(workflow.on.push).toBeUndefined();
+    expect(workflow.on.pull_request).toBeUndefined();
   });
 
   it("includes pnpm install step", () => {

@@ -8085,9 +8085,6 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       if (!name?.trim()) {
         throw badRequest("Name is required");
       }
-      if (!agentId?.trim()) {
-        throw badRequest("agentId is required");
-      }
       if (!trigger) {
         throw badRequest("Trigger is required");
       }
@@ -8248,6 +8245,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       // Execute via RoutineRunner
       const result = await routineRunner.triggerManual(id);
+      await routineStore.recordRun(id, result);
       const updated = await routineStore.getRoutine(id);
       res.json({ routine: updated, result });
     } catch (err: any) {
@@ -8324,6 +8322,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Execute via RoutineRunner
       const payload = req.body;
       const result = await routineRunner.triggerWebhook(id, payload, signatureHeader);
+      await routineStore.recordRun(id, result);
       const updated = await routineStore.getRoutine(id);
       res.json({ routine: updated, result });
     } catch (err: any) {

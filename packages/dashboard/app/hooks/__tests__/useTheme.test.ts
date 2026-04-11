@@ -141,6 +141,42 @@ describe("useTheme", () => {
     expect(localStorageMock[THEME_MODE_STORAGE_KEY]).toBe("dark");
   });
 
+  it("keeps user-selected theme changes when hydration resolves with stale backend values", async () => {
+    let resolveHydration: (value: Settings) => void;
+    const hydrationPromise = new Promise<Settings>((resolve) => {
+      resolveHydration = resolve;
+    });
+    mockFetchGlobalSettings.mockReturnValue(hydrationPromise);
+
+    const { result } = renderHook(() => useTheme());
+
+    // User changes both fields before initial backend hydration resolves.
+    act(() => {
+      result.current.setThemeMode("light");
+      result.current.setColorTheme("ocean");
+    });
+
+    expect(result.current.themeMode).toBe("light");
+    expect(result.current.colorTheme).toBe("ocean");
+
+    // Hydration resolves with stale values from backend cache.
+    resolveHydration!({ themeMode: "dark", colorTheme: "forest" } as Settings);
+
+    await waitFor(() => {
+      expect(mockFetchGlobalSettings).toHaveBeenCalledTimes(1);
+    });
+
+    // Regression expectation: user selections remain authoritative.
+    expect(result.current.themeMode).toBe("light");
+    expect(result.current.colorTheme).toBe("ocean");
+    expect(localStorageMock[THEME_MODE_STORAGE_KEY]).toBe("light");
+    expect(localStorageMock[COLOR_THEME_STORAGE_KEY]).toBe("ocean");
+
+    // Ensure stale hydration values did not leak through.
+    expect(localStorageMock[THEME_MODE_STORAGE_KEY]).not.toBe("dark");
+    expect(localStorageMock[COLOR_THEME_STORAGE_KEY]).not.toBe("forest");
+  });
+
   it("keeps localStorage value when backend matches", async () => {
     localStorageMock[THEME_MODE_STORAGE_KEY] = "dark";
     mockFetchGlobalSettings.mockResolvedValue({ themeMode: "dark" });

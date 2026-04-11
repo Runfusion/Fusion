@@ -458,6 +458,10 @@ class MockStoreForRoutes extends EventEmitter {
     return "/tmp/fn-944";
   }
 
+  getFusionDir(): string {
+    return "/tmp/fn-944/.fusion";
+  }
+
   getDatabase() {
     return {
       exec: vi.fn(),

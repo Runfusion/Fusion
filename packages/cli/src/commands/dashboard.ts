@@ -392,9 +392,27 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   let mergeRunning = false;
   const maxAutoMergeRetries = 3;
 
-  function canAutoMergeTask(task: { mergeRetries?: number | null; column: string; paused?: boolean; status?: string | null; error?: string | null; steps?: Array<{ status: string }>; workflowStepResults?: Array<{ status: string }> }): boolean {
+  function hasAutoHealableVerificationBufferFailure(task: {
+    mergeRetries?: number | null;
+    column: string;
+    error?: string | null;
+    log?: Array<{ action?: string }>;
+  }): boolean {
+    if (task.column !== "in-review") return false;
+    if ((task.mergeRetries ?? 0) < maxAutoMergeRetries) return false;
+    if (!task.error?.includes("Deterministic test verification failed")) return false;
+
+    return task.log?.some((entry) =>
+      entry.action?.includes("[verification] test command failed (exit 0)")
+      || entry.action?.includes("[verification] build command failed (exit 0)")
+      || entry.action?.includes("output exceeded buffer"),
+    ) ?? false;
+  }
+
+  function canAutoMergeTask(task: { mergeRetries?: number | null; column: string; paused?: boolean; status?: string | null; error?: string | null; steps?: Array<{ status: string }>; workflowStepResults?: Array<{ status: string }>; log?: Array<{ action?: string }> }): boolean {
     if (getTaskMergeBlocker(task as any)) return false;
-    return (task.mergeRetries ?? 0) < maxAutoMergeRetries;
+    return (task.mergeRetries ?? 0) < maxAutoMergeRetries
+      || hasAutoHealableVerificationBufferFailure(task);
   }
 
   /** Enqueue a task for auto-merge if not already queued/active. */
@@ -427,6 +445,13 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           const task = await store.getTask(taskId);
           if (!canAutoMergeTask(task as any)) {
             continue;
+          }
+          if (hasAutoHealableVerificationBufferFailure(task as any)) {
+            await store.logEntry(
+              taskId,
+              "Auto-healing stale deterministic verification buffer failure; retrying merge verification",
+            );
+            await store.updateTask(taskId, { mergeRetries: 0, error: null, status: null });
           }
           const mergeStrategy = getMergeStrategy(settings);
           if (mergeStrategy === "pull-request") {
@@ -852,7 +877,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     // ── Startup sweep: enqueue any tasks already in "in-review" ───────
     if (settings.autoMerge) {
       const existing = await store.listTasks();
-      const inReview = existing.filter((t) => !getTaskMergeBlocker(t));
+      const inReview = existing.filter((t) => canAutoMergeTask(t as any));
       if (inReview.length > 0) {
         console.log(
           `[auto-merge] Startup sweep: enqueueing ${inReview.length} in-review task(s)`,
@@ -888,7 +913,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           try {
             const tasks = await store.listTasks();
             for (const t of tasks) {
-              if (!getTaskMergeBlocker(t)) {
+              if (canAutoMergeTask(t as any)) {
                 enqueueMerge(t.id);
               }
             }
@@ -912,7 +937,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           try {
             const tasks = await store.listTasks();
             for (const t of tasks) {
-              if (!getTaskMergeBlocker(t)) {
+              if (canAutoMergeTask(t as any)) {
                 enqueueMerge(t.id);
               }
             }
@@ -961,8 +986,8 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     // ── Periodic retry: catch failed merges on each poll cycle ────────
     // Uses a setTimeout chain so the interval dynamically follows
     // settings.pollIntervalMs without requiring an engine restart.
-    // The readiness predicate uses getTaskMergeBlocker() to detect tasks that
-    // have become unblocked (e.g., awaiting-user-review cleared by user).
+    // The readiness predicate uses canAutoMergeTask() to detect tasks that
+    // have become unblocked while respecting retry limits.
     async function scheduleMergeRetry(): Promise<void> {
       if (disposed) return;
       const currentSettings = await store.getSettings().catch(() => settings);
@@ -976,7 +1001,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           if (!s.globalPause && !s.enginePaused && s.autoMerge) {
             const tasks = await store.listTasks();
             for (const t of tasks) {
-              if (!getTaskMergeBlocker(t)) {
+              if (canAutoMergeTask(t as any)) {
                 enqueueMerge(t.id);
               }
             }

@@ -63,6 +63,14 @@ const DEPENDENCY_SYNC_TRIGGER_PATTERNS = [
   "packages/*/package.json",
 ];
 
+const VERIFICATION_COMMAND_MAX_BUFFER = 50 * 1024 * 1024;
+const VERIFICATION_LOG_MAX_CHARS = 20_000;
+
+function truncateVerificationOutput(output: string): string {
+  if (output.length <= VERIFICATION_LOG_MAX_CHARS) return output;
+  return `... output truncated to last ${VERIFICATION_LOG_MAX_CHARS} characters ...\n${output.slice(-VERIFICATION_LOG_MAX_CHARS)}`;
+}
+
 /** Check if a path matches a glob pattern (simple glob support: * and **) */
 function matchGlob(path: string, pattern: string): boolean {
   // Handle ** which matches across directory boundaries (must do before single *)
@@ -306,6 +314,7 @@ async function runVerificationCommand(
     const output = execSync(command, {
       cwd: rootDir,
       encoding: "utf-8",
+      maxBuffer: VERIFICATION_COMMAND_MAX_BUFFER,
       timeout: 300_000, // 5 minute timeout for verification commands
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -318,10 +327,22 @@ async function runVerificationCommand(
     result.stdout = error.stdout?.toString() || "";
     result.stderr = error.stderr?.toString() || "";
     result.exitCode = error.status ?? null;
-    result.success = false;
+    const maxBufferExceeded = error.code === "ENOBUFS"
+      || error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+      || error.message?.includes("maxBuffer");
+    result.success = maxBufferExceeded && result.exitCode === 0;
+
+    if (result.success) {
+      mergerLog.log(`${taskId}: ${type} command succeeded (exit 0, output exceeded buffer)`);
+      await store.logEntry(
+        taskId,
+        `[verification] ${type} command succeeded (exit 0, output exceeded buffer)`,
+      );
+      return result;
+    }
 
     // Build a useful error summary
-    const summary = result.stderr || result.stdout || error.message || "Unknown error";
+    const summary = truncateVerificationOutput(result.stderr || result.stdout || error.message || "Unknown error");
     mergerLog.error(`${taskId}: ${type} command failed (exit ${result.exitCode}): ${summary.trim()}`);
     await store.logEntry(
       taskId,

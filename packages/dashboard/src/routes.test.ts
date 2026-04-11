@@ -8276,13 +8276,33 @@ describe("Routine routes", () => {
     };
   }
 
+  function createMockRoutineRunner() {
+    return {
+      triggerManual: vi.fn().mockResolvedValue({
+        routineId: "routine-001",
+        success: true,
+        triggerType: "cron" as const,
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+      } satisfies RoutineExecutionResult),
+      triggerWebhook: vi.fn().mockResolvedValue({
+        routineId: "routine-001",
+        success: true,
+        triggerType: "webhook" as const,
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+      } satisfies RoutineExecutionResult),
+    };
+  }
+
   function buildRoutineApp(routineStoreOverride?: ReturnType<typeof createMockRoutineStore>) {
     const store = createMockStore();
     const routineStore = routineStoreOverride ?? createMockRoutineStore();
+    const routineRunner = createMockRoutineRunner();
     const app = express();
     app.use(express.json());
-    app.use("/api", createApiRoutes(store, { routineStore: routineStore as any }));
-    return { app, routineStore };
+    app.use("/api", createApiRoutes(store, { routineStore: routineStore as any, routineRunner }));
+    return { app, routineStore, routineRunner };
   }
 
   describe("GET /routines", () => {
@@ -8602,10 +8622,11 @@ describe("Routine routes", () => {
     function buildRoutineApp(routineStoreOverride?: ReturnType<typeof createMockRoutineStore>) {
       const store = createMockStore();
       const routineStore = routineStoreOverride ?? createMockRoutineStore();
+      const routineRunner = createMockRoutineRunner();
       const app = express();
       app.use(express.json());
-      app.use("/api", createApiRoutes(store, { routineStore: routineStore as any }));
-      return { app, routineStore };
+      app.use("/api", createApiRoutes(store, { routineStore: routineStore as any, routineRunner }));
+      return { app, routineStore, routineRunner };
     }
 
     it("triggers a webhook routine without secret", async () => {

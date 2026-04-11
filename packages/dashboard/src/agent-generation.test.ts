@@ -346,10 +346,16 @@ describe("agent-generation module", () => {
       vi.doMock("@fusion/engine", () => ({
         createKbAgent: vi.fn(async (options: { cwd: string; systemPrompt: string; tools: string }) => {
           capturedSystemPrompt = options.systemPrompt;
+          const messages: Array<{ role: string; content: string }> = [];
           return {
             session: {
-              state: { messages: [] },
-              prompt: vi.fn(async () => {}),
+              state: { messages },
+              prompt: vi.fn(async () => {
+                messages.push({
+                  role: "assistant",
+                  content: JSON.stringify({ title: "Test Agent", description: "A test agent", systemPrompt: "Test prompt", tools: [], maxTurns: 10, tags: [] }),
+                });
+              }),
               dispose: vi.fn(),
             },
           };

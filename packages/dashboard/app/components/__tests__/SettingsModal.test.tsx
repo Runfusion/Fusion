@@ -1,8 +1,9 @@
+import { useState } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SettingsModal } from "../SettingsModal";
-import type { Settings } from "@fusion/core";
+import type { Settings, ThemeMode, ColorTheme } from "@fusion/core";
 
 const defaultSettings: Settings = {
   maxConcurrent: 2,
@@ -83,6 +84,112 @@ describe("SettingsModal", () => {
     // Fields from other sections should not be visible
     expect(screen.queryByLabelText("Max Concurrent Tasks")).toBeNull();
     expect(screen.queryByLabelText("Max Worktrees")).toBeNull();
+  });
+
+  it("invokes appearance callbacks when theme controls are used", async () => {
+    const handleThemeModeChange = vi.fn();
+    const handleColorThemeChange = vi.fn();
+
+    render(
+      <SettingsModal
+        onClose={onClose}
+        addToast={addToast}
+        themeMode="dark"
+        colorTheme="default"
+        onThemeModeChange={handleThemeModeChange}
+        onColorThemeChange={handleColorThemeChange}
+      />,
+    );
+
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByText("Appearance")[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Light mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Forest theme" }));
+
+    expect(handleThemeModeChange).toHaveBeenCalledWith("light");
+    expect(handleColorThemeChange).toHaveBeenCalledWith("forest");
+  });
+
+  it("reflects selected appearance values when parent updates controlled props", async () => {
+    function ControlledAppearanceModal() {
+      const [themeMode, setThemeMode] = useState<ThemeMode>("dark");
+      const [colorTheme, setColorTheme] = useState<ColorTheme>("default");
+
+      return (
+        <SettingsModal
+          onClose={onClose}
+          addToast={addToast}
+          themeMode={themeMode}
+          colorTheme={colorTheme}
+          onThemeModeChange={setThemeMode}
+          onColorThemeChange={setColorTheme}
+        />
+      );
+    }
+
+    render(<ControlledAppearanceModal />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByText("Appearance")[0]);
+
+    const lightModeButton = screen.getByRole("button", { name: "Light mode" });
+    const forestThemeButton = screen.getByRole("button", { name: "Forest theme" });
+
+    fireEvent.click(lightModeButton);
+    fireEvent.click(forestThemeButton);
+
+    await waitFor(() => {
+      expect(lightModeButton).toHaveAttribute("aria-pressed", "true");
+      expect(forestThemeButton).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByText("Light / Forest")).toBeTruthy();
+    });
+  });
+
+  it("Appearance controls invoke theme callbacks and keep UI state in sync", async () => {
+    const user = userEvent.setup();
+    const themeModeSpy = vi.fn();
+    const colorThemeSpy = vi.fn();
+
+    function ThemeHarness() {
+      const [themeMode, setThemeMode] = useState<ThemeMode>("dark");
+      const [colorTheme, setColorTheme] = useState<ColorTheme>("default");
+
+      return (
+        <SettingsModal
+          onClose={onClose}
+          addToast={addToast}
+          initialSection="appearance"
+          themeMode={themeMode}
+          colorTheme={colorTheme}
+          onThemeModeChange={(mode) => {
+            themeModeSpy(mode);
+            setThemeMode(mode);
+          }}
+          onColorThemeChange={(theme) => {
+            colorThemeSpy(theme);
+            setColorTheme(theme);
+          }}
+        />
+      );
+    }
+
+    render(<ThemeHarness />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    expect(screen.getByText(/Dark \/ Default/)).toBeTruthy();
+
+    await user.click(screen.getByLabelText("Light mode"));
+    await user.click(screen.getByLabelText("Ocean theme"));
+
+    expect(themeModeSpy).toHaveBeenCalledWith("light");
+    expect(colorThemeSpy).toHaveBeenCalledWith("ocean");
+    expect(screen.getByText(/Light \/ Ocean/)).toBeTruthy();
+
+    const lightButton = screen.getByLabelText("Light mode");
+    const oceanButton = screen.getByLabelText("Ocean theme");
+    expect(lightButton.getAttribute("aria-pressed")).toBe("true");
+    expect(oceanButton.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("switches section when clicking sidebar item", async () => {

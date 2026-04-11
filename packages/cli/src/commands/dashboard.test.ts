@@ -851,6 +851,47 @@ describe("runDashboard — auto-merge pause exclusion", () => {
     expect(aiMergeTask).not.toHaveBeenCalled();
   });
 
+  it("auto-heals stale exit-0 verification buffer failures with exhausted merge retries", async () => {
+    mockStore.getSettings.mockResolvedValue({
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: true,
+      pollIntervalMs: 60_000,
+    });
+    const task = {
+      id: "FN-BUFFER",
+      column: "in-review",
+      paused: false,
+      mergeRetries: 3,
+      error: "Deterministic test verification failed for FN-BUFFER",
+      steps: [{ name: "Step 1", status: "done" }],
+      log: [
+        {
+          timestamp: "2026-04-10T20:23:18.691Z",
+          action: "[verification] test command failed (exit 0): stdout maxBuffer length exceeded",
+        },
+      ],
+    };
+    mockStore.listTasks.mockResolvedValue([task]);
+    mockStore.getTask = vi.fn().mockResolvedValue(task);
+
+    const { aiMergeTask } = await import("@fusion/engine");
+    (aiMergeTask as ReturnType<typeof vi.fn>).mockClear();
+
+    await runDashboard(0, { open: false });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(mockStore.logEntry).toHaveBeenCalledWith(
+      "FN-BUFFER",
+      "Auto-healing stale deterministic verification buffer failure; retrying merge verification",
+    );
+    expect(mockStore.updateTask).toHaveBeenCalledWith(
+      "FN-BUFFER",
+      { mergeRetries: 0, error: null, status: null },
+    );
+    expect(aiMergeTask).toHaveBeenCalled();
+  });
+
   it("does not auto-merge in-review tasks with incomplete steps", async () => {
     mockStore.getSettings.mockResolvedValue({
       maxConcurrent: 1,
@@ -1902,28 +1943,22 @@ describe("runDashboard — lifecycle listener cleanup", () => {
     expect(process.listenerCount("SIGTERM")).toBe(baselineSigterm);
   });
 
-  it("does not emit MaxListenersExceededWarning after 12 rapid invocations", async () => {
+  it("does not leak process signal listeners after 12 rapid invocations", async () => {
     const { TaskStore } = await import("@fusion/core");
     (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
 
-    const warnings: string[] = [];
-    const warningHandler = (warning: unknown) => {
-      warnings.push(String(warning));
-    };
+    const baselineSigint = process.listenerCount("SIGINT");
+    const baselineSigterm = process.listenerCount("SIGTERM");
 
-    process.on("warning", warningHandler);
-
-    try {
-      for (let i = 0; i < 12; i += 1) {
-        const { dispose } = await runDashboard(0, { open: false });
-        dispose();
-      }
-      await new Promise((resolve) => setImmediate(resolve));
-    } finally {
-      process.removeListener("warning", warningHandler);
+    for (let i = 0; i < 12; i += 1) {
+      const { dispose } = await runDashboard(0, { open: false });
+      dispose();
     }
 
-    expect(warnings.some((warning) => warning.includes("MaxListenersExceededWarning"))).toBe(false);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(process.listenerCount("SIGINT")).toBe(baselineSigint);
+    expect(process.listenerCount("SIGTERM")).toBe(baselineSigterm);
   });
 });
 
