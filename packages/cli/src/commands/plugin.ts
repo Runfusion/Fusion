@@ -55,7 +55,7 @@ async function createPluginLoader(
     getFusionDir: () => projectPath + "/.fusion",
     on: () => {},
     off: () => {},
-  } as unknown as Parameters<typeof PluginLoader>[0]["taskStore"];
+  } as unknown as ConstructorParameters<typeof PluginLoader>[0]["taskStore"];
 
   const loader = new PluginLoader({
     pluginStore,

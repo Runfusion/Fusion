@@ -1843,7 +1843,7 @@ describe("SettingsModal", () => {
     await waitFor(() => expect(updateGlobalSettings).toHaveBeenCalledTimes(1));
 
     const payload = (updateGlobalSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(payload.ntfyEvents).toEqual(["in-review", "failed", "awaiting-approval"]);
+    expect(payload.ntfyEvents).toEqual(["in-review", "failed", "awaiting-approval", "awaiting-user-review"]);
   });
 
   it("sets ntfyEvents to undefined when all checkboxes are unchecked", async () => {
