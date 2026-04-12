@@ -4206,6 +4206,21 @@ ${stepsSection}`;
     return this.db;
   }
 
+  /**
+   * Perform a simple database health check.
+   * Returns true if the database responds correctly, false otherwise.
+   * Used for periodic health diagnostics.
+   */
+  healthCheck(): boolean {
+    try {
+      // Simple query to verify database responsiveness
+      this.db.prepare("SELECT 1").get();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   private generateSpecifiedPrompt(task: Task): string {
     const deps =
       task.dependencies.length > 0

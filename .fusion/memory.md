@@ -798,3 +798,57 @@ When adding plugin API wrappers:
 - Use `mockResolvedValueOnce()` for deterministic test sequences
 - Verify URL construction with query string parameters
 
+
+## FN-1607: Process Shutdown Investigation & Diagnostic Instrumentation
+
+Added comprehensive diagnostic instrumentation to identify long-running process stability issues.
+
+### Diagnostic Logging
+
+**Periodic Diagnostics (every 30 minutes):**
+```
+[dashboard] diagnostics: uptime=30m rss=XXXmb heap=XXXmb/XXXmb external=XXXmb arrayBuffers=XXXmb handles=XX requests=XX db=ok listeners=task:created:N, task:moved:N, ...
+```
+
+**Key diagnostics to monitor:**
+- `rss` / `heap` — memory usage trends (growing heap over time suggests a leak)
+- `handles` — active handle count (growing handles suggests resource accumulation)
+- `db` — database health (db=failed indicates connection issues)
+- `listeners` — SSE/EventEmitter listener counts (growing counts suggest listener leaks)
+
+**Shutdown diagnostics:**
+```
+[dashboard] active handles at shutdown: TCPServer:1, Timer:5, ... 
+[dashboard] shutdown requested reason=SIGINT uptime=2h15m30s tasks=42 active=2 columns=triage:20,todo:15,in-progress:2,done:3,in-review:2
+```
+
+### Files Modified
+- `packages/cli/src/commands/dashboard.ts` — process diagnostics, beforeExit handler, handle type logging
+- `packages/cli/src/commands/serve.ts` — same diagnostics for headless node mode
+- `packages/dashboard/src/sse.ts` — SSE high water mark tracking, res.on("close") safety net
+- `packages/core/src/store.ts` — `healthCheck()` method for database diagnostics
+
+### Verified Timer Cleanup
+All major timers/intervals properly cleared on shutdown:
+- `TaskStore.watch()` pollInterval → cleared in `stopWatching()`
+- `Scheduler.pollInterval` → cleared in `stop()`
+- `HeartbeatMonitor.pollInterval` → cleared in `stop()`
+- `HeartbeatTriggerScheduler.timers` → cleared in `stop()`
+- `StuckTaskDetector.interval` → cleared in `stop()`
+- `SelfHealingManager.maintenanceInterval`, `unpauseTimer` → cleared in `stop()`
+- `MissionAutopilot.pollTimer`, `healthCheckTimer` → cleared in `stop()`
+- `CronRunner.pollInterval` → cleared in `stop()`
+- `PrMonitor.intervals` → cleared in `stopMonitoring()`/`stopAll()`
+- `scheduleMergeRetry()` → guarded by `disposed`/`shuttingDown` flags
+
+### SSE Connection Safety
+- `res.on("close", cleanup)` added as safety net alongside `_req.on("close")`
+- High water mark tracking logs when new connection highs are reached
+- Heartbeat 30s interval properly cleared on cleanup
+
+### Recommendations for Monitoring
+1. Watch for `rss` growth over 24h — linear growth suggests memory leak
+2. Watch for `handles` growth — growing handles suggest resource accumulation
+3. Watch for listener count growth — especially `task:created`, `task:updated` (SSE subscriptions)
+4. Watch for `beforeExit code=0` without preceding shutdown log (unexpected exit)
+5. `db=failed` indicates database connectivity issues

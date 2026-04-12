@@ -3,10 +3,16 @@ import type { TaskStore, MissionStore, PluginStore, PluginInstallation, PluginSt
 import type { AiSessionStore } from "./ai-session-store.js";
 
 let activeConnections = 0;
+let highWaterMark = 0;
 
 /** Returns the current number of active SSE connections. */
 export function getActiveSSEConnections(): number {
   return activeConnections;
+}
+
+/** Returns the high water mark of SSE connections. */
+export function getSSEHighWaterMark(): number {
+  return highWaterMark;
 }
 
 /**
@@ -177,6 +183,11 @@ export function createSSE(
     res.flushHeaders();
 
     activeConnections++;
+    // Track high water mark and log when new highs are reached
+    if (activeConnections > highWaterMark) {
+      highWaterMark = activeConnections;
+      console.log(`[sse] active connections: ${activeConnections} (high water mark: ${highWaterMark})`);
+    }
 
     // Send initial heartbeat
     res.write(": connected\n\n");
@@ -415,6 +426,15 @@ export function createSSE(
       send("event: heartbeat\ndata: \n\n");
     }, 30_000);
 
+    // Register cleanup on request close (primary path for HTTP/1.1)
     _req.on("close", cleanup);
+
+    // Also register on response close as a safety net for edge cases
+    // (e.g., proxy timeouts, HTTP/2 stream resets). This ensures cleanup
+    // fires even if the request object doesn't emit "close".
+    // Guard with typeof check for test mocks that may not have on method.
+    if (typeof res.on === "function") {
+      res.on("close", cleanup);
+    }
   };
 }

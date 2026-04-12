@@ -63,10 +63,160 @@ import {
 } from "./task-lifecycle.js";
 import { promptForPort } from "./port-prompt.js";
 
+const DIAGNOSTIC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+let diagnosticIntervalHandle: ReturnType<typeof setInterval> | null = null;
+let serveStartTime = 0;
+let serveDbHealthCheck: (() => boolean) | null = null;
+
+/**
+ * Format bytes to human-readable string
+ */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))}MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}GB`;
+}
+
+/**
+ * Format milliseconds to human-readable uptime string
+ */
+function formatUptime(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  if (days > 0) return `${days}d${hours % 24}h`;
+  if (hours > 0) return `${hours}h${minutes % 60}m`;
+  if (minutes > 0) return `${minutes}m${seconds % 60}s`;
+  return `${seconds}s`;
+}
+
+/**
+ * Get and log current process diagnostics (memory, handles, requests)
+ * @param prefix - Log prefix (e.g., "dashboard", "serve")
+ * @param dbHealthCheck - Optional function to check database health
+ */
+function logDiagnostics(prefix: string, dbHealthCheck?: () => boolean): void {
+  const mem = process.memoryUsage();
+  const uptime = Date.now() - serveStartTime;
+
+  // Get active handles/requests if available (Node.js internal)
+  let handleCount = -1;
+  let requestCount = -1;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    handleCount = (process as any)._getActiveHandles?.()?.length ?? -1;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    requestCount = (process as any)._getActiveRequests?.()?.length ?? -1;
+  } catch {
+    // Ignore errors if these internal APIs are not available
+  }
+
+  // Check database health if provided
+  let dbHealth = "unknown";
+  if (dbHealthCheck) {
+    try {
+      dbHealth = dbHealthCheck() ? "ok" : "failed";
+    } catch {
+      dbHealth = "error";
+    }
+  }
+
+  // Get listener counts if provided
+  let listenerInfo = "";
+  if (serveDbHealthCheck) {
+    try {
+      // This would be for store listener counts - not applicable in serve without store
+      listenerInfo = "";
+    } catch {
+      // Ignore errors getting listener counts
+    }
+  }
+
+  const logLine = `[${prefix}] diagnostics: uptime=${formatUptime(uptime)} ` +
+    `rss=${formatBytes(mem.rss)} heap=${formatBytes(mem.heapUsed)}/${formatBytes(mem.heapTotal)} ` +
+    `external=${formatBytes(mem.external)} arrayBuffers=${formatBytes(mem.arrayBuffers)} ` +
+    `handles=${handleCount} requests=${requestCount} db=${dbHealth}${listenerInfo}`;
+
+  console.log(logLine);
+}
+
+/**
+ * Stop the diagnostic interval timer. Call during shutdown.
+ */
+function stopDiagnosticInterval(): void {
+  if (diagnosticIntervalHandle) {
+    clearInterval(diagnosticIntervalHandle);
+    diagnosticIntervalHandle = null;
+  }
+}
+
+/**
+ * Set the database health check function for diagnostics.
+ * Call this after the TaskStore is created.
+ */
+function setServeDbHealthCheck(check: () => boolean): void {
+  serveDbHealthCheck = check;
+}
+
+/**
+ * Register process lifecycle diagnostics for long-running process monitoring.
+ * Logs memory usage, handle counts, and uptime at startup and every 30 minutes.
+ * Also logs beforeExit and exit events for shutdown analysis.
+ */
+function ensureProcessDiagnostics(): void {
+  // Log initial diagnostics at startup (before store is created)
+  logDiagnostics("serve");
+
+  // Register periodic diagnostics every 30 minutes
+  diagnosticIntervalHandle = setInterval(() => {
+    logDiagnostics("serve", serveDbHealthCheck ?? undefined);
+  }, DIAGNOSTIC_INTERVAL_MS);
+  diagnosticIntervalHandle.unref?.(); // Don't prevent process exit
+
+  // Log beforeExit when event loop drains naturally
+  process.on("beforeExit", (code: number) => {
+    const uptime = Date.now() - serveStartTime;
+    let handleCount = -1;
+    let requestCount = -1;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      handleCount = (process as any)._getActiveHandles?.()?.length ?? -1;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      requestCount = (process as any)._getActiveRequests?.()?.length ?? -1;
+    } catch {
+      // Ignore
+    }
+    console.log(`[serve] beforeExit code=${code} uptime=${formatUptime(uptime)} handles=${handleCount} requests=${requestCount}`);
+  });
+
+  // Log exit event with exit code and uptime
+  process.on("exit", (code: number) => {
+    const uptime = Date.now() - serveStartTime;
+    console.log(`[serve] exit code=${code} uptime=${formatUptime(uptime)}`);
+  });
+
+  // Log uncaught exceptions
+  process.on("uncaughtExceptionMonitor", (error: Error) => {
+    console.error(`[serve] uncaught exception pid=${process.pid}: ${error.stack || error.message}`);
+  });
+
+  // Log unhandled rejections
+  process.on("unhandledRejection", (reason: unknown) => {
+    const message = reason instanceof Error ? reason.stack || reason.message : String(reason);
+    console.error(`[serve] unhandled rejection pid=${process.pid}: ${message}`);
+  });
+}
+
 export async function runServe(
   port: number,
   opts: { interactive?: boolean; paused?: boolean; host?: string } = {},
 ) {
+  serveStartTime = Date.now();
+  ensureProcessDiagnostics();
+
   let selectedPort = port;
   if (opts.interactive) {
     try {
@@ -86,6 +236,9 @@ export async function runServe(
   const store = new TaskStore(cwd);
   await store.init();
   await store.watch();
+
+  // Set up database health check for diagnostics
+  setServeDbHealthCheck(() => store.healthCheck());
 
   const automationStore = new AutomationStore(cwd);
   await automationStore.init();
@@ -907,11 +1060,14 @@ export async function runServe(
     }
   });
 
+  let shuttingDown = false;
   let mergeRetryTimer: ReturnType<typeof setTimeout> | null = null;
   async function scheduleMergeRetry(): Promise<void> {
+    if (shuttingDown) return;
     const currentSettings = await store.getSettings().catch(() => settings);
     const interval = currentSettings.pollIntervalMs ?? 15_000;
     mergeRetryTimer = setTimeout(async () => {
+      if (shuttingDown) return;
       try {
         const s = await store.getSettings();
         cachedMaxConcurrent = s.maxConcurrent;
@@ -926,7 +1082,9 @@ export async function runServe(
       } catch {
         // ignore errors in periodic sweep
       }
-      void scheduleMergeRetry();
+      if (!shuttingDown) {
+        void scheduleMergeRetry();
+      }
     }, interval);
   }
   void scheduleMergeRetry();
@@ -968,10 +1126,27 @@ export async function runServe(
   console.log(`  Press Ctrl+C to stop`);
   console.log();
 
-  let shuttingDown = false;
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
+
+    // Log active handles at shutdown for diagnostics
+    const handleTypes: Record<string, number> = {};
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const handles = (process as any)._getActiveHandles?.() ?? [];
+      for (const handle of handles) {
+        const type = handle.constructor?.name ?? "unknown";
+        handleTypes[type] = (handleTypes[type] ?? 0) + 1;
+      }
+      const handleSummary = Object.entries(handleTypes)
+        .sort((a, b) => b[1] - a[1])
+        .map(([type, count]) => `${type}:${count}`)
+        .join(", ");
+      console.log(`[serve] active handles at shutdown: ${handleSummary}`);
+    } catch {
+      // Ignore errors getting handle types
+    }
 
     // Stop heartbeat components first (they reference agentStore)
     if (triggerScheduler) triggerScheduler.stop();
@@ -1013,6 +1188,7 @@ export async function runServe(
       // best-effort
     }
 
+    stopDiagnosticInterval();
     store.close();
     process.exit(0);
   };

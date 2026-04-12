@@ -16,20 +16,171 @@ export { promptForPort };
 type LoginCallbacks = Parameters<AuthStorage["login"]>[1];
 
 let processDiagnosticsRegistered = false;
+let diagnosticIntervalHandle: ReturnType<typeof setInterval> | null = null;
+const DIAGNOSTIC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+let diagnosticStartTime = 0;
+let diagnosticDbHealthCheck: (() => boolean) | null = null;
+let diagnosticStoreListenerCheck: (() => Record<string, number>) | null = null;
 
+/**
+ * Format bytes to human-readable string
+ */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))}MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}GB`;
+}
+
+/**
+ * Format milliseconds to human-readable uptime string
+ */
+function formatUptime(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  if (days > 0) return `${days}d${hours % 24}h`;
+  if (hours > 0) return `${hours}h${minutes % 60}m`;
+  if (minutes > 0) return `${minutes}m${seconds % 60}s`;
+  return `${seconds}s`;
+}
+
+/**
+ * Get and log current process diagnostics (memory, handles, requests)
+ * @param prefix - Log prefix (e.g., "dashboard", "serve")
+ * @param startTime - Process start timestamp
+ * @param dbHealthCheck - Optional function to check database health
+ */
+function logDiagnostics(prefix: string, startTime: number, dbHealthCheck?: () => boolean): void {
+  const mem = process.memoryUsage();
+  const uptime = Date.now() - startTime;
+
+  // Get active handles/requests if available (Node.js internal)
+  let handleCount = -1;
+  let requestCount = -1;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    handleCount = (process as any)._getActiveHandles?.()?.length ?? -1;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    requestCount = (process as any)._getActiveRequests?.()?.length ?? -1;
+  } catch {
+    // Ignore errors if these internal APIs are not available
+  }
+
+  // Check database health if provided
+  let dbHealth = "unknown";
+  if (dbHealthCheck) {
+    try {
+      dbHealth = dbHealthCheck() ? "ok" : "failed";
+    } catch {
+      dbHealth = "error";
+    }
+  }
+
+  // Get listener counts if provided
+  let listenerInfo = "";
+  if (diagnosticStoreListenerCheck) {
+    try {
+      const counts = diagnosticStoreListenerCheck();
+      const listenerEntries = Object.entries(counts)
+        .map(([event, count]) => `${event}:${count}`)
+        .join(",");
+      listenerInfo = ` listeners=${listenerEntries}`;
+    } catch {
+      // Ignore errors getting listener counts
+    }
+  }
+
+  const logLine = `[${prefix}] diagnostics: uptime=${formatUptime(uptime)} ` +
+    `rss=${formatBytes(mem.rss)} heap=${formatBytes(mem.heapUsed)}/${formatBytes(mem.heapTotal)} ` +
+    `external=${formatBytes(mem.external)} arrayBuffers=${formatBytes(mem.arrayBuffers)} ` +
+    `handles=${handleCount} requests=${requestCount} db=${dbHealth}${listenerInfo}`;
+
+  console.log(logLine);
+}
+
+/**
+ * Register process lifecycle diagnostics for long-running process monitoring.
+ * Logs memory usage, handle counts, and uptime at startup and every 30 minutes.
+ * Also logs beforeExit and exit events for shutdown analysis.
+ */
 function ensureProcessDiagnostics(): void {
   if (processDiagnosticsRegistered) {
     return;
   }
   processDiagnosticsRegistered = true;
 
+  diagnosticStartTime = Date.now();
+
+  // Log initial diagnostics at startup (before store is created)
+  logDiagnostics("dashboard", diagnosticStartTime);
+
+  // Register periodic diagnostics every 30 minutes
+  diagnosticIntervalHandle = setInterval(() => {
+    logDiagnostics("dashboard", diagnosticStartTime, diagnosticDbHealthCheck ?? undefined);
+  }, DIAGNOSTIC_INTERVAL_MS);
+  diagnosticIntervalHandle.unref?.(); // Don't prevent process exit
+
+  // Log beforeExit when event loop drains naturally
+  process.on("beforeExit", (code: number) => {
+    const uptime = Date.now() - diagnosticStartTime;
+    let handleCount = -1;
+    let requestCount = -1;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      handleCount = (process as any)._getActiveHandles?.()?.length ?? -1;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      requestCount = (process as any)._getActiveRequests?.()?.length ?? -1;
+    } catch {
+      // Ignore
+    }
+    console.log(`[dashboard] beforeExit code=${code} uptime=${formatUptime(uptime)} handles=${handleCount} requests=${requestCount}`);
+  });
+
+  // Log exit event with exit code and uptime
+  process.on("exit", (code: number) => {
+    const uptime = Date.now() - diagnosticStartTime;
+    console.log(`[dashboard] exit code=${code} uptime=${formatUptime(uptime)}`);
+  });
+
+  // Log uncaught exceptions
   process.on("uncaughtExceptionMonitor", (error: Error) => {
     console.error(`[dashboard] uncaught exception pid=${process.pid}: ${error.stack || error.message}`);
   });
+
+  // Log unhandled rejections
   process.on("unhandledRejection", (reason: unknown) => {
     const message = reason instanceof Error ? reason.stack || reason.message : String(reason);
     console.error(`[dashboard] unhandled rejection pid=${process.pid}: ${message}`);
   });
+}
+
+/**
+ * Stop the diagnostic interval timer. Call during shutdown.
+ */
+function stopDiagnosticInterval(): void {
+  if (diagnosticIntervalHandle) {
+    clearInterval(diagnosticIntervalHandle);
+    diagnosticIntervalHandle = null;
+  }
+}
+
+/**
+ * Set the database health check function for diagnostics.
+ * Call this after the TaskStore is created.
+ */
+function setDiagnosticDbHealthCheck(check: () => boolean): void {
+  diagnosticDbHealthCheck = check;
+}
+
+/**
+ * Set the store listener count check function for diagnostics.
+ * Call this after the TaskStore is created.
+ */
+function setDiagnosticStoreListenerCheck(check: () => Record<string, number>): void {
+  diagnosticStoreListenerCheck = check;
 }
 
 interface DashboardAuthStorage {
@@ -126,6 +277,19 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   const store = new TaskStore(cwd);
   await store.init();
   await store.watch();
+
+  // Set up database health check for diagnostics
+  setDiagnosticDbHealthCheck(() => store.healthCheck());
+
+  // Set up store listener count check for diagnostics
+  setDiagnosticStoreListenerCheck(() => ({
+    "task:created": store.listenerCount("task:created"),
+    "task:moved": store.listenerCount("task:moved"),
+    "task:updated": store.listenerCount("task:updated"),
+    "task:deleted": store.listenerCount("task:deleted"),
+    "settings:updated": store.listenerCount("settings:updated"),
+    "agent:log": store.listenerCount("agent:log"),
+  }));
 
   const handlers: Array<{
     target: NodeJS.EventEmitter;
@@ -1155,8 +1319,29 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     const shutdown = async (signal: NodeJS.Signals) => {
       if (shutdownInProgress) return;
       shutdownInProgress = true;
+
+      // Log active handles at shutdown for diagnostics
+      const handleTypes: Record<string, number> = {};
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const handles = (process as any)._getActiveHandles?.() ?? [];
+        for (const handle of handles) {
+          const type = handle.constructor?.name ?? "unknown";
+          handleTypes[type] = (handleTypes[type] ?? 0) + 1;
+        }
+        const handleSummary = Object.entries(handleTypes)
+          .sort((a, b) => b[1] - a[1])
+          .map(([type, count]) => `${type}:${count}`)
+          .join(", ");
+        console.log(`[dashboard] active handles at shutdown: ${handleSummary}`);
+      } catch {
+        // Ignore errors getting handle types
+      }
+
       await logShutdownDiagnostics(signal);
       dispose();
+      stopDiagnosticInterval();
+
       // Stop heartbeat components first (they reference agentStore)
       if (triggerScheduler) triggerScheduler.stop();
       if (heartbeatMonitor) heartbeatMonitor.stop();
@@ -1180,8 +1365,28 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     const devShutdown = async (signal: NodeJS.Signals) => {
       if (shutdownInProgress) return;
       shutdownInProgress = true;
+
+      // Log active handles at shutdown for diagnostics
+      const handleTypes: Record<string, number> = {};
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const handles = (process as any)._getActiveHandles?.() ?? [];
+        for (const handle of handles) {
+          const type = handle.constructor?.name ?? "unknown";
+          handleTypes[type] = (handleTypes[type] ?? 0) + 1;
+        }
+        const handleSummary = Object.entries(handleTypes)
+          .sort((a, b) => b[1] - a[1])
+          .map(([type, count]) => `${type}:${count}`)
+          .join(", ");
+        console.log(`[dashboard] active handles at shutdown: ${handleSummary}`);
+      } catch {
+        // Ignore errors getting handle types
+      }
+
       await logShutdownDiagnostics(signal);
       dispose();
+      stopDiagnosticInterval();
       if (triggerScheduler) triggerScheduler.stop();
       if (heartbeatMonitor) heartbeatMonitor.stop();
       notifier.stop();
