@@ -284,14 +284,9 @@ export async function parseCompanyArchive(archivePath: string): Promise<AgentCom
 export function agentManifestToAgentCreateInput(agent: AgentManifest): AgentCreateInput {
   const metadata: Record<string, unknown> = {};
 
-  if (typeof agent.instructionBody === "string") {
-    metadata.instructions = agent.instructionBody;
-  }
+  // Store skills and metadata sources in metadata (skills is not a first-class field)
   if (Array.isArray(agent.skills) && agent.skills.length > 0) {
     metadata.skills = agent.skills;
-  }
-  if (agent.reportsTo !== undefined) {
-    metadata.reportsTo = agent.reportsTo;
   }
   if (Array.isArray(agent.metadata?.sources) && agent.metadata.sources.length > 0) {
     metadata.sources = agent.metadata.sources;
@@ -299,9 +294,18 @@ export function agentManifestToAgentCreateInput(agent: AgentManifest): AgentCrea
 
   return {
     name: agent.name,
-    role: mapRoleToCapability("custom"),
+    role: agent.role ? mapRoleToCapability(agent.role) : mapRoleToCapability("custom"),
     ...(typeof agent.title === "string" && agent.title.trim().length > 0
       ? { title: agent.title }
+      : {}),
+    ...(typeof agent.icon === "string" && agent.icon.trim().length > 0
+      ? { icon: agent.icon.trim() }
+      : {}),
+    ...(typeof agent.reportsTo === "string" && agent.reportsTo.trim().length > 0
+      ? { reportsTo: agent.reportsTo.trim() }
+      : {}),
+    ...(typeof agent.instructionBody === "string" && agent.instructionBody.trim().length > 0
+      ? { instructionsText: agent.instructionBody.trim() }
       : {}),
     ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
   };

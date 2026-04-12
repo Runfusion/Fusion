@@ -13,6 +13,9 @@ interface AgentPreview {
   name: string;
   role: string;
   title?: string;
+  icon?: string;
+  reportsTo?: string;
+  instructionsText?: string;
   skills?: string[];
 }
 
@@ -28,6 +31,9 @@ interface ImportResult {
 interface DirectoryAgentInput {
   name: string;
   title?: string;
+  icon?: string;
+  role?: string;
+  reportsTo?: string;
   skills?: string[];
   instructionBody?: string;
 }
@@ -75,6 +81,9 @@ function parseDirectoryAgentManifest(content: string): DirectoryAgentInput {
 
     if (key === "name") result.name = normalizedValue;
     if (key === "title") result.title = normalizedValue;
+    if (key === "icon") result.icon = normalizedValue;
+    if (key === "role") result.role = normalizedValue;
+    if (key === "reportsTo") result.reportsTo = normalizedValue;
   }
 
   if (!result.name) {
@@ -391,16 +400,24 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
                 <div className="agent-import-agent-list">
                   {agents.map((agent, idx) => (
                     <div key={idx} className="agent-import-agent-item">
-                      <span className="agent-import-agent-icon">🤖</span>
+                      <span className="agent-import-agent-icon">{agent.icon || "🤖"}</span>
                       <div className="agent-import-agent-details">
                         <span className="agent-import-agent-name">{agent.name}</span>
                         <span className="agent-import-agent-meta">
                           {agent.title && <span className="agent-import-agent-title">{agent.title} · </span>}
                           <span className="agent-import-agent-role">{agent.role}</span>
+                          {agent.reportsTo && (
+                            <span className="agent-import-agent-reports"> · reports to {agent.reportsTo}</span>
+                          )}
                           {agent.skills && agent.skills.length > 0 && (
-                            <span className="agent-import-agent-model"> · {agent.skills.join(", ")}</span>
+                            <span className="agent-import-agent-model"> · skills: {agent.skills.join(", ")}</span>
                           )}
                         </span>
+                        {agent.instructionsText && (
+                          <span className="agent-import-agent-instructions">
+                            {agent.instructionsText.slice(0, 100)}{agent.instructionsText.length > 100 ? "..." : ""}
+                          </span>
+                        )}
                       </div>
                     </div>
                   ))}

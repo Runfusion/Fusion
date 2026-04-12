@@ -344,6 +344,12 @@ vi.mock("@fusion/engine", () => ({
   StuckTaskDetector: mocks.stuckDetectorCtor,
   SelfHealingManager: mocks.selfHealingCtor,
   MissionAutopilot: mocks.missionAutopilotCtor,
+  MissionExecutionLoop: vi.fn().mockImplementation(() => ({
+    start: vi.fn(),
+    stop: vi.fn(),
+    tick: vi.fn().mockResolvedValue(undefined),
+    recoverActiveMissions: vi.fn().mockResolvedValue(undefined),
+  })),
   createAiPromptExecutor: vi.fn().mockResolvedValue(vi.fn().mockResolvedValue("ok")),
   HeartbeatMonitor: vi.fn().mockImplementation(() => ({
     start: vi.fn(),

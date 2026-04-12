@@ -9034,6 +9034,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         instructionsPath,
         instructionsText,
         soul,
+        memory,
+        bundleConfig,
       } = req.body ?? {};
 
       if (!name || typeof name !== "string") {
@@ -9069,6 +9071,29 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       if (typeof soul === "string" && soul.length > 10000) {
         throw badRequest("soul must be at most 10,000 characters");
       }
+      if (memory !== undefined && memory !== null && typeof memory !== "string") {
+        throw badRequest("memory must be a string");
+      }
+      if (typeof memory === "string" && memory.length > 50000) {
+        throw badRequest("memory must be at most 50,000 characters");
+      }
+      if (bundleConfig !== undefined && bundleConfig !== null) {
+        if (typeof bundleConfig !== "object" || Array.isArray(bundleConfig)) {
+          throw badRequest("bundleConfig must be an object");
+        }
+        if (typeof bundleConfig.mode !== "string" || !["managed", "external"].includes(bundleConfig.mode)) {
+          throw badRequest("bundleConfig.mode must be 'managed' or 'external'");
+        }
+        if (typeof bundleConfig.entryFile !== "string") {
+          throw badRequest("bundleConfig.entryFile must be a string");
+        }
+        if (!Array.isArray(bundleConfig.files)) {
+          throw badRequest("bundleConfig.files must be an array");
+        }
+        if (bundleConfig.externalPath !== undefined && typeof bundleConfig.externalPath !== "string") {
+          throw badRequest("bundleConfig.externalPath must be a string");
+        }
+      }
 
       const scopedStore = await getScopedStore(req);
       const { AgentStore } = await import("@fusion/core");
@@ -9087,6 +9112,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         instructionsPath: instructionsPath ?? undefined,
         instructionsText: instructionsText ?? undefined,
         soul: soul ?? undefined,
+        memory: memory ?? undefined,
+        bundleConfig: bundleConfig ?? undefined,
       });
       res.status(201).json(agent);
     } catch (err: any) {
@@ -9258,6 +9285,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           name: input.name,
           role: input.role,
           title: typeof input.title === "string" ? input.title : undefined,
+          icon: typeof input.icon === "string" ? input.icon : undefined,
+          reportsTo: typeof input.reportsTo === "string" ? input.reportsTo : undefined,
+          instructionsText: typeof input.instructionsText === "string"
+            ? input.instructionsText.slice(0, 200) + (input.instructionsText.length > 200 ? "..." : "")
+            : undefined,
           skills: Array.isArray(input.metadata?.skills)
             ? input.metadata.skills.filter((skill: unknown): skill is string => typeof skill === "string")
             : undefined,
@@ -9524,6 +9556,37 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           throw badRequest("soul must be at most 10,000 characters");
         }
         updates.soul = body.soul ?? undefined;
+      }
+
+      if ("memory" in body) {
+        if (body.memory !== null && typeof body.memory !== "string") {
+          throw badRequest("memory must be a string");
+        }
+        if (typeof body.memory === "string" && body.memory.length > 50000) {
+          throw badRequest("memory must be at most 50,000 characters");
+        }
+        updates.memory = body.memory ?? undefined;
+      }
+
+      if ("bundleConfig" in body) {
+        if (body.bundleConfig !== null) {
+          if (typeof body.bundleConfig !== "object" || Array.isArray(body.bundleConfig)) {
+            throw badRequest("bundleConfig must be an object");
+          }
+          if (typeof body.bundleConfig.mode !== "string" || !["managed", "external"].includes(body.bundleConfig.mode)) {
+            throw badRequest("bundleConfig.mode must be 'managed' or 'external'");
+          }
+          if (typeof body.bundleConfig.entryFile !== "string") {
+            throw badRequest("bundleConfig.entryFile must be a string");
+          }
+          if (!Array.isArray(body.bundleConfig.files)) {
+            throw badRequest("bundleConfig.files must be an array");
+          }
+          if (body.bundleConfig.externalPath !== undefined && typeof body.bundleConfig.externalPath !== "string") {
+            throw badRequest("bundleConfig.externalPath must be a string");
+          }
+        }
+        updates.bundleConfig = body.bundleConfig ?? undefined;
       }
 
       const scopedStore = await getScopedStore(req);

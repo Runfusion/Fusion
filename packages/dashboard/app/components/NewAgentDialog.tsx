@@ -44,6 +44,7 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
   const [instructionsPath, setInstructionsPath] = useState("");
   const [instructionsText, setInstructionsText] = useState("");
   const [soul, setSoul] = useState("");
+  const [memory, setMemory] = useState("");
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig>({
     model: "",
     thinkingLevel: "off",
@@ -90,6 +91,8 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
     setTitle(spec.description);
     setIcon(spec.icon);
     setRole(mappedRole);
+    // Map generated systemPrompt to instructionsText
+    setInstructionsText(spec.systemPrompt);
     setRuntimeConfig(c => ({
       ...c,
       thinkingLevel: spec.thinkingLevel,
@@ -147,6 +150,7 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
     setInstructionsPath("");
     setInstructionsText("");
     setSoul("");
+    setMemory("");
     setRuntimeConfig({ model: "", thinkingLevel: "off", maxTurns: 10 });
     setSelectedPresetId(null);
     setError(null);
@@ -172,6 +176,7 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
         ...(instructionsPath.trim() ? { instructionsPath: instructionsPath.trim() } : {}),
         ...(instructionsText.trim() ? { instructionsText: instructionsText.trim() } : {}),
         ...(soul.trim() ? { soul: soul.trim() } : {}),
+        ...(memory.trim() ? { memory: memory.trim() } : {}),
         ...(Object.keys(runtimeCfg).length > 0 ? { runtimeConfig: runtimeCfg } : {}),
       }, projectId);
       handleClose();
@@ -298,6 +303,17 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
                   placeholder="Describe the agent's personality and communication style..."
                   value={soul}
                   onChange={e => setSoul(e.target.value)}
+                />
+              </div>
+              <div className="agent-dialog-field">
+                <label htmlFor="agent-memory">Memory <span className="agent-dialog-optional">(optional)</span></label>
+                <textarea
+                  id="agent-memory"
+                  className="input"
+                  rows={2}
+                  placeholder="Per-agent memory — stores learnings and context the agent has gathered..."
+                  value={memory}
+                  onChange={e => setMemory(e.target.value)}
                 />
               </div>
               <div className="agent-dialog-field">

@@ -357,10 +357,9 @@ name: Zip CEO
         name: "CEO",
         role: "custom",
         title: "Chief Executive Officer",
+        instructionsText: "Lead strategy",
         metadata: {
-          instructions: "Lead strategy",
           skills: ["review"],
-          reportsTo: null,
           sources: [{ kind: "git", repo: "acme/repo" }],
         },
       });
@@ -390,6 +389,45 @@ name: Zip CEO
     it("defaults to custom role when no skills are present", () => {
       const input = agentManifestToAgentCreateInput({ name: "Generalist" });
       expect(input.role).toBe("custom");
+    });
+
+    it("maps manifest icon to first-class field", () => {
+      const input = agentManifestToAgentCreateInput({
+        name: "Bot",
+        icon: "🤖",
+        role: "executor",
+      });
+
+      expect(input).toEqual({
+        name: "Bot",
+        role: "executor",
+        icon: "🤖",
+      });
+    });
+
+    it("maps manifest reportsTo to first-class field", () => {
+      const input = agentManifestToAgentCreateInput({
+        name: "Worker",
+        reportsTo: "manager-001",
+      });
+
+      expect(input).toEqual({
+        name: "Worker",
+        role: "custom",
+        reportsTo: "manager-001",
+      });
+    });
+
+    it("maps manifest role to first-class field", () => {
+      const input = agentManifestToAgentCreateInput({
+        name: "Reviewer",
+        role: "reviewer",
+      });
+
+      expect(input).toEqual({
+        name: "Reviewer",
+        role: "reviewer",
+      });
     });
   });
 
