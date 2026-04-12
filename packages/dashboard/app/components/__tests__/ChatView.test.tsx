@@ -3,7 +3,7 @@
  * new chat dialog, and input handling.
  */
 
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { userEvent } from "@testing-library/user-event";
 import { ChatView } from "../ChatView";
@@ -11,15 +11,11 @@ import { ChatView } from "../ChatView";
 // Mock scrollIntoView for JSDOM
 Element.prototype.scrollIntoView = vi.fn();
 import * as useChatModule from "../../hooks/useChat";
-import * as useAgentsModule from "../../hooks/useAgents";
-import type { Agent } from "../../api";
 
 // Mock the hooks
 vi.mock("../../hooks/useChat");
-vi.mock("../../hooks/useAgents");
 
 const mockUseChat = vi.mocked(useChatModule.useChat);
-const mockUseAgents = vi.mocked(useAgentsModule.useAgents);
 
 // Mock lucide-react icons - spread actual module and override specific icons
 vi.mock("lucide-react", async (importOriginal) => {
@@ -39,26 +35,41 @@ vi.mock("lucide-react", async (importOriginal) => {
   };
 });
 
-const mockAgents: Agent[] = [
-  {
-    id: "agent-001",
-    name: "Agent One",
-    role: "executor",
-    state: "active",
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    metadata: {},
-  },
-  {
-    id: "agent-002",
-    name: "Agent Two",
-    role: "reviewer",
-    state: "active",
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    metadata: {},
-  },
-];
+// Mock CustomModelDropdown as a simple test double
+vi.mock("../CustomModelDropdown", () => ({
+  CustomModelDropdown: ({
+    value,
+    onChange,
+    label,
+  }: {
+    value: string;
+    onChange: (value: string) => void;
+    label: string;
+  }) => (
+    <select
+      data-testid="mock-model-dropdown"
+      aria-label={label}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      <option value="">Use default</option>
+      <option value="anthropic/claude-sonnet-4-5">Claude Sonnet 4.5</option>
+      <option value="openai/gpt-4o">GPT-4o</option>
+    </select>
+  ),
+}));
+
+// Mock fetchModels
+vi.mock("../../api", () => ({
+  fetchModels: vi.fn().mockResolvedValue({
+    models: [
+      { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 },
+      { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
+    ],
+    favoriteProviders: [],
+    favoriteModels: [],
+  }),
+}));
 
 const defaultChatState = {
   sessions: [],
@@ -70,7 +81,7 @@ const defaultChatState = {
   streamingText: "",
   streamingThinking: "",
   selectSession: vi.fn(),
-  createSession: vi.fn().mockResolvedValue({ id: "session-new", agentId: "agent-001" }),
+  createSession: vi.fn().mockResolvedValue({ id: "session-new", agentId: "__kb_agent__" }),
   archiveSession: vi.fn(),
   deleteSession: vi.fn(),
   sendMessage: vi.fn(),
@@ -87,21 +98,9 @@ function setupMockChat(overrides: Partial<typeof defaultChatState> = {}) {
   mockUseChat.mockReturnValue(state as any);
 }
 
-function setupMockAgents() {
-  mockUseAgents.mockReturnValue({
-    agents: mockAgents,
-    activeAgents: mockAgents,
-    stats: null,
-    isLoading: false,
-    loadAgents: vi.fn(),
-    loadStats: vi.fn(),
-  } as any);
-}
-
 describe("ChatView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    setupMockAgents();
   });
 
   afterEach(() => {
@@ -174,11 +173,12 @@ describe("ChatView", () => {
     // Dialog should be open - check for dialog content
     const dialog = document.querySelector(".chat-new-dialog");
     expect(dialog).toBeInTheDocument();
-    expect(within(dialog!).getByText("Agent")).toBeInTheDocument();
+    // Should show Model label (not Agent)
+    expect(within(dialog!).getByText("Model")).toBeInTheDocument();
   });
 
-  it("creates session and closes dialog", async () => {
-    const createSession = vi.fn().mockResolvedValue({ id: "session-new", agentId: "agent-001" });
+  it("creates session without model selection (uses default)", async () => {
+    const createSession = vi.fn().mockResolvedValue({ id: "session-new", agentId: "__kb_agent__" });
     setupMockChat({ sessions: [], filteredSessions: [], createSession });
 
     render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
@@ -186,17 +186,41 @@ describe("ChatView", () => {
     await userEvent.click(screen.getByTestId("chat-new-btn"));
 
     const dialog = document.querySelector(".chat-new-dialog");
-    const select = within(dialog!).getByRole("combobox") as HTMLSelectElement;
-    await userEvent.selectOptions(select, "agent-001");
+
+    // Select "Use default" (the first option)
+    const select = within(dialog!).getByTestId("mock-model-dropdown") as HTMLSelectElement;
+    expect(select.value).toBe("");
 
     await userEvent.click(within(dialog!).getByText("Create"));
 
     await waitFor(() => {
       expect(createSession).toHaveBeenCalledWith({
-        agentId: "agent-001",
-        title: undefined,
+        agentId: "__kb_agent__",
         modelProvider: undefined,
         modelId: undefined,
+      });
+    });
+  });
+
+  it("creates session with model selection", async () => {
+    const createSession = vi.fn().mockResolvedValue({ id: "session-new", agentId: "__kb_agent__" });
+    setupMockChat({ sessions: [], filteredSessions: [], createSession });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    await userEvent.click(screen.getByTestId("chat-new-btn"));
+
+    const dialog = document.querySelector(".chat-new-dialog");
+    const select = within(dialog!).getByTestId("mock-model-dropdown") as HTMLSelectElement;
+    await userEvent.selectOptions(select, "anthropic/claude-sonnet-4-5");
+
+    await userEvent.click(within(dialog!).getByText("Create"));
+
+    await waitFor(() => {
+      expect(createSession).toHaveBeenCalledWith({
+        agentId: "__kb_agent__",
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
       });
     });
   });
@@ -325,7 +349,7 @@ describe("ChatView", () => {
     expect(screen.queryByText("Backend API")).not.toBeInTheDocument();
   });
 
-  it("shows empty state agent selector and Start Chat button", () => {
+  it("shows empty state with Start Chat button (no inline agent selector)", () => {
     setupMockChat({ sessions: [], filteredSessions: [] });
 
     render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
@@ -334,6 +358,8 @@ describe("ChatView", () => {
     // Find the New Chat button in the empty state section
     const emptyState = document.querySelector(".chat-empty-state");
     expect(within(emptyState!).getByRole("button", { name: /new chat/i })).toBeInTheDocument();
+    // Should NOT have an agent selector in empty state
+    expect(emptyState?.querySelector("select")).toBeNull();
   });
 
   it("shows context menu on right-click", async () => {
@@ -387,5 +413,31 @@ describe("ChatView", () => {
     const dialog = document.querySelector(".chat-new-dialog");
     expect(dialog).toBeInTheDocument();
     expect(within(dialog!).getByText("Delete Conversation?")).toBeInTheDocument();
+  });
+
+  it("shows AI Assistant label for kb agent sessions in sidebar", () => {
+    setupMockChat({
+      sessions: [{ id: "session-001", agentId: "__kb_agent__", status: "active", title: "My Chat", updatedAt: "2026-04-08T00:00:00.000Z" }],
+      filteredSessions: [{ id: "session-001", agentId: "__kb_agent__", status: "active", title: "My Chat", updatedAt: "2026-04-08T00:00:00.000Z" }],
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const sessionItem = screen.getByTestId("chat-session-session-001");
+    // Should show "AI Assistant" instead of "__kb_agent__"
+    expect(within(sessionItem).getByText("AI Assistant")).toBeInTheDocument();
+  });
+
+  it("shows agent ID for non-kb agent sessions in sidebar", () => {
+    setupMockChat({
+      sessions: [{ id: "session-001", agentId: "my-custom-agent", status: "active", title: "Custom Chat", updatedAt: "2026-04-08T00:00:00.000Z" }],
+      filteredSessions: [{ id: "session-001", agentId: "my-custom-agent", status: "active", title: "Custom Chat", updatedAt: "2026-04-08T00:00:00.000Z" }],
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const sessionItem = screen.getByTestId("chat-session-session-001");
+    // Should show the agent ID (truncated to 30 chars)
+    expect(within(sessionItem).getByText("my-custom-agent")).toBeInTheDocument();
   });
 });

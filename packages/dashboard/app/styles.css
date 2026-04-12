@@ -25873,6 +25873,18 @@ html .column.drag-over * {
   gap: 8px;
 }
 
+/* New Chat dialog model selector */
+.chat-new-dialog-model-label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Ensure dropdown portal renders above dialog */
+.chat-new-dialog {
+  overflow: visible;
+}
+
 @media (max-width: 768px) {
   .quick-chat-fab {
     right: 16px;
