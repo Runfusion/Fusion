@@ -18,7 +18,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --silent=passed-only --reporter=dot",
     "test:executor": "vitest run src/executor.test.ts",
     "test:watch": "vitest src/executor.test.ts --watch"
   },

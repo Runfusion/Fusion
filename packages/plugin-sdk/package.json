@@ -10,7 +10,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit --skipLibCheck",
-    "test": "vitest run"
+    "test": "vitest run --silent=passed-only --reporter=dot"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

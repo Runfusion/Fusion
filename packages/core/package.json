@@ -22,7 +22,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --silent=passed-only --reporter=dot"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

@@ -15,7 +15,7 @@
   "private": true,
   "scripts": {
     "build": "tsc",
-    "test": "vitest run"
+    "test": "vitest run --silent=passed-only --reporter=dot"
   },
   "dependencies": {
     "@fusion/plugin-sdk": "workspace:*"

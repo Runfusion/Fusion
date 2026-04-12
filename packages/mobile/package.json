@@ -8,7 +8,7 @@
     "dev:ios": "tsx scripts/live-reload.ts --platform ios",
     "dev:android": "tsx scripts/live-reload.ts --platform android",
     "build:mobile": "pnpm --filter @fusion/dashboard build && npx cap sync",
-    "test": "vitest run",
+    "test": "vitest run --silent=passed-only --reporter=dot",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

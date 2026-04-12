@@ -16,7 +16,7 @@
     "dev": "tsx src/index.tsx",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --silent=passed-only --reporter=dot"
   },
   "dependencies": {
     "@fusion/core": "workspace:*",

@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import { resolve } from "node:path";
 import { availableParallelism } from "node:os";
 
-const defaultMaxWorkers = Math.max(1, Math.min(4, Math.ceil(availableParallelism() / 8)));
+const defaultMaxWorkers = Math.max(1, Math.min(2, Math.ceil(availableParallelism() / 8)));
 const maxWorkers = Number.parseInt(process.env.VITEST_MAX_WORKERS ?? String(defaultMaxWorkers), 10);
 
 export default defineConfig({

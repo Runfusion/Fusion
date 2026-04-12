@@ -35,7 +35,7 @@
     "build:exe": "bun run build.ts",
     "build:exe:all": "bun run build.ts --all",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --silent=passed-only --reporter=dot"
   },
   "dependencies": {
     "@mariozechner/pi-ai": "^0.62.0",

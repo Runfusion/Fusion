@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "tsx scripts/dev.ts",
     "build": "tsx scripts/build.ts",
-    "test": "vitest run",
+    "test": "vitest run --silent=passed-only --reporter=dot",
     "typecheck": "tsc --noEmit",
     "generate:icons": "tsx scripts/generate-icons.ts",
     "pack": "electron-builder --dir",
