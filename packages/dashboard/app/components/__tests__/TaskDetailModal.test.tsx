@@ -1055,21 +1055,22 @@ describe("TaskDetailModal", () => {
       );
 
       // For an in-progress task (no workflow steps, no merge commit),
-      // the top-level tabs are: Definition, Logs, Changes, Comments, Model, Workflow
-      const tabTexts = ["Definition", "Logs", "Changes", "Comments", "Model", "Workflow"];
+      // the top-level tabs are: Definition, Logs, Changes, Comments, Documents, Model, Workflow
+      const tabTexts = ["Definition", "Logs", "Changes", "Comments", "Documents", "Model", "Workflow"];
       const tabs = screen.getAllByRole("button").filter((b) =>
         tabTexts.includes(b.textContent || "")
       );
-      expect(tabs.length).toBe(6);
+      expect(tabs.length).toBe(7);
       expect(tabs[0].textContent).toBe("Definition");
       expect(tabs[1].textContent).toBe("Logs");
       expect(tabs[2].textContent).toBe("Changes");
       expect(tabs[3].textContent).toBe("Comments");
-      expect(tabs[4].textContent).toBe("Model");
-      expect(tabs[5].textContent).toBe("Workflow");
+      expect(tabs[4].textContent).toBe("Documents");
+      expect(tabs[5].textContent).toBe("Model");
+      expect(tabs[6].textContent).toBe("Workflow");
 
       // Activity and Agent Log are NOT top-level tabs (they are subviews inside Logs)
-      expect(container.querySelectorAll(".detail-tab").length).toBe(6);
+      expect(container.querySelectorAll(".detail-tab").length).toBe(7);
       // Workflow tab should always appear even when no workflow steps are configured
       expect(screen.getByText("Workflow")).toBeInTheDocument();
       // Commits tab should NOT appear for non-done tasks
@@ -1968,7 +1969,7 @@ describe("TaskDetailModal", () => {
       );
 
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(6); // Definition, Logs, Changes, Comments, Model, Workflow
+      expect(tabs.length).toBe(7); // Definition, Logs, Changes, Comments, Documents, Model, Workflow
       // Tabs should use class-based styling, not inline styles
       expect(tabs[0].classList.contains("detail-tab")).toBe(true);
       expect(tabs[0].classList.contains("detail-tab-active")).toBe(true); // Definition is default active
@@ -1977,6 +1978,7 @@ describe("TaskDetailModal", () => {
       expect(tabs[3].classList.contains("detail-tab-active")).toBe(false);
       expect(tabs[4].classList.contains("detail-tab-active")).toBe(false);
       expect(tabs[5].classList.contains("detail-tab-active")).toBe(false);
+      expect(tabs[6].classList.contains("detail-tab-active")).toBe(false);
       // Verify no inline padding/fontSize (responsive CSS controls this)
       expect((tabs[0] as HTMLElement).style.padding).toBe("");
       expect((tabs[0] as HTMLElement).style.fontSize).toBe("");
@@ -2587,16 +2589,17 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // In-progress tasks show exactly 6 tabs:
-      // Definition, Logs, Changes, Comments, Model, Workflow
+      // In-progress tasks show exactly 7 tabs:
+      // Definition, Logs, Changes, Comments, Documents, Model, Workflow
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(6);
+      expect(tabs.length).toBe(7);
       expect(tabs[0].textContent).toBe("Definition");
       expect(tabs[1].textContent).toBe("Logs");
       expect(tabs[2].textContent).toBe("Changes");
       expect(tabs[3].textContent).toBe("Comments");
-      expect(tabs[4].textContent).toBe("Model");
-      expect(tabs[5].textContent).toBe("Workflow");
+      expect(tabs[4].textContent).toBe("Documents");
+      expect(tabs[5].textContent).toBe("Model");
+      expect(tabs[6].textContent).toBe("Workflow");
       // Commits tab should NOT be present for non-done tasks
       expect(screen.queryByText("Commits")).toBeNull();
     });
@@ -2614,15 +2617,16 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // In-progress task with workflow steps: 6 tabs (Workflow after Model)
+      // In-progress task with workflow steps: 7 tabs (Workflow after Model)
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(6);
+      expect(tabs.length).toBe(7);
       expect(tabs[0].textContent).toBe("Definition");
       expect(tabs[1].textContent).toBe("Logs");
       expect(tabs[2].textContent).toBe("Changes");
       expect(tabs[3].textContent).toBe("Comments");
-      expect(tabs[4].textContent).toBe("Model");
-      expect(tabs[5].textContent).toBe("Workflow");
+      expect(tabs[4].textContent).toBe("Documents");
+      expect(tabs[5].textContent).toBe("Model");
+      expect(tabs[6].textContent).toBe("Workflow");
     });
 
     it("does NOT show Commits tab for done task with mergeDetails.commitSha (changes merged into Changes tab)", () => {
@@ -2641,15 +2645,16 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Done task with commit SHA: Definition, Logs, Changes, Comments, Model, Workflow (6 tabs, no Commits)
+      // Done task with commit SHA: Definition, Logs, Changes, Comments, Documents, Model, Workflow (7 tabs, no Commits)
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(6);
+      expect(tabs.length).toBe(7);
       expect(tabs[0].textContent).toBe("Definition");
       expect(tabs[1].textContent).toBe("Logs");
       expect(tabs[2].textContent).toBe("Changes");
       expect(tabs[3].textContent).toBe("Comments");
-      expect(tabs[4].textContent).toBe("Model");
-      expect(tabs[5].textContent).toBe("Workflow");
+      expect(tabs[4].textContent).toBe("Documents");
+      expect(tabs[5].textContent).toBe("Model");
+      expect(tabs[6].textContent).toBe("Workflow");
       // Commits tab should NOT be present
       expect(screen.queryByText("Commits")).toBeNull();
     });
@@ -2671,15 +2676,16 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Done task with workflow steps and commit SHA: 6 tabs (no Commits)
+      // Done task with workflow steps and commit SHA: 7 tabs (no Commits)
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(6);
+      expect(tabs.length).toBe(7);
       expect(tabs[0].textContent).toBe("Definition");
       expect(tabs[1].textContent).toBe("Logs");
       expect(tabs[2].textContent).toBe("Changes");
       expect(tabs[3].textContent).toBe("Comments");
-      expect(tabs[4].textContent).toBe("Model");
-      expect(tabs[5].textContent).toBe("Workflow");
+      expect(tabs[4].textContent).toBe("Documents");
+      expect(tabs[5].textContent).toBe("Model");
+      expect(tabs[6].textContent).toBe("Workflow");
       // Commits tab should NOT be present
       expect(screen.queryByText("Commits")).toBeNull();
     });
@@ -2698,9 +2704,9 @@ describe("TaskDetailModal", () => {
       );
 
       const triageTabs = triageContainer.querySelectorAll(".detail-tab");
-      expect(triageTabs.length).toBe(5); // Definition, Logs, Comments, Model, Workflow
+      expect(triageTabs.length).toBe(6); // Definition, Logs, Comments, Documents, Model, Workflow
       expect(Array.from(triageTabs).map(t => t.textContent)).toEqual([
-        "Definition", "Logs", "Comments", "Model", "Workflow",
+        "Definition", "Logs", "Comments", "Documents", "Model", "Workflow",
       ]);
 
       const { container: todoContainer } = render(
@@ -2716,9 +2722,9 @@ describe("TaskDetailModal", () => {
       );
 
       const todoTabs = todoContainer.querySelectorAll(".detail-tab");
-      expect(todoTabs.length).toBe(5); // Definition, Logs, Comments, Model, Workflow
+      expect(todoTabs.length).toBe(6); // Definition, Logs, Comments, Documents, Model, Workflow
       expect(Array.from(todoTabs).map(t => t.textContent)).toEqual([
-        "Definition", "Logs", "Comments", "Model", "Workflow",
+        "Definition", "Logs", "Comments", "Documents", "Model", "Workflow",
       ]);
     });
 
@@ -4257,7 +4263,7 @@ describe("TaskDetailModal", () => {
 
       // Changes tab should exist and be available
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(6); // Definition, Logs, Changes, Comments, Model, Workflow
+      expect(tabs.length).toBe(7); // Definition, Logs, Changes, Comments, Documents, Model, Workflow
       const tabTexts = Array.from(tabs).map((t) => t.textContent);
       expect(tabTexts).toContain("Changes");
     });

@@ -121,6 +121,11 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     addTaskComment: vi.fn(),
     updateTaskComment: vi.fn(),
     deleteTaskComment: vi.fn(),
+    getTaskDocuments: vi.fn().mockResolvedValue([]),
+    getTaskDocument: vi.fn().mockResolvedValue(null),
+    getTaskDocumentRevisions: vi.fn().mockResolvedValue([]),
+    upsertTaskDocument: vi.fn(),
+    deleteTaskDocument: vi.fn().mockResolvedValue(undefined),
     updatePrInfo: vi.fn().mockResolvedValue(undefined),
     updateIssueInfo: vi.fn().mockResolvedValue(undefined),
     getRootDir: vi.fn().mockReturnValue("/fake/root"),
@@ -3920,6 +3925,181 @@ describe("Pause/Unpause endpoints", () => {
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe("Database error");
+    });
+  });
+
+  // --- Task Document route tests ---
+
+  describe("task document routes", () => {
+    function buildApp() {
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createApiRoutes(store));
+      return app;
+    }
+
+    describe("GET /tasks/:id/documents", () => {
+      it("returns empty array when no documents", async () => {
+        (store.getTaskDocuments as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+        const res = await GET(buildApp(), "/api/tasks/KB-001/documents");
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual([]);
+      });
+
+      it("returns documents list", async () => {
+        const docs = [
+          { id: "d1", taskId: "KB-001", key: "plan", content: "My plan", revision: 1, author: "user", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+        ];
+        (store.getTaskDocuments as ReturnType<typeof vi.fn>).mockResolvedValue(docs);
+        const res = await GET(buildApp(), "/api/tasks/KB-001/documents");
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual(docs);
+      });
+    });
+
+    describe("GET /tasks/:id/documents/:key", () => {
+      it("returns document when found", async () => {
+        const doc = { id: "d1", taskId: "KB-001", key: "plan", content: "My plan", revision: 1, author: "user", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
+        (store.getTaskDocument as ReturnType<typeof vi.fn>).mockResolvedValue(doc);
+        const res = await GET(buildApp(), "/api/tasks/KB-001/documents/plan");
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual(doc);
+      });
+
+      it("returns 404 when document not found", async () => {
+        (store.getTaskDocument as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+        const res = await GET(buildApp(), "/api/tasks/KB-001/documents/missing");
+        expect(res.status).toBe(404);
+        expect(res.body.error).toBe("Document not found");
+      });
+    });
+
+    describe("GET /tasks/:id/documents/:key/revisions", () => {
+      it("returns revisions list", async () => {
+        const revisions = [
+          { id: "r1", taskId: "KB-001", key: "plan", revision: 2, content: "Updated plan", author: "user", createdAt: "2026-01-02T00:00:00.000Z" },
+          { id: "r2", taskId: "KB-001", key: "plan", revision: 1, content: "Original plan", author: "user", createdAt: "2026-01-01T00:00:00.000Z" },
+        ];
+        (store.getTaskDocumentRevisions as ReturnType<typeof vi.fn>).mockResolvedValue(revisions);
+        const res = await GET(buildApp(), "/api/tasks/KB-001/documents/plan/revisions");
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual(revisions);
+      });
+
+      it("returns empty array for nonexistent document", async () => {
+        (store.getTaskDocumentRevisions as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("not found"));
+        const res = await GET(buildApp(), "/api/tasks/KB-001/documents/missing/revisions");
+        // Per spec: "Return empty array if document doesn't exist (not an error)"
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual([]);
+      });
+    });
+
+    describe("PUT /tasks/:id/documents/:key", () => {
+      it("creates new document with 201", async () => {
+        const newDoc = { id: "d1", taskId: "KB-001", key: "plan", content: "My plan", revision: 1, author: "user", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
+        (store.upsertTaskDocument as ReturnType<typeof vi.fn>).mockResolvedValue(newDoc);
+        const res = await REQUEST(
+          buildApp(),
+          "PUT",
+          "/api/tasks/KB-001/documents/plan",
+          JSON.stringify({ content: "My plan" }),
+          { "Content-Type": "application/json" }
+        );
+        expect(res.status).toBe(201);
+        expect(store.upsertTaskDocument).toHaveBeenCalledWith("KB-001", { key: "plan", content: "My plan", author: "user", metadata: undefined });
+      });
+
+      it("updates existing document with 200", async () => {
+        const updatedDoc = { id: "d1", taskId: "KB-001", key: "plan", content: "Updated plan", revision: 2, author: "user", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" };
+        (store.upsertTaskDocument as ReturnType<typeof vi.fn>).mockResolvedValue(updatedDoc);
+        const res = await REQUEST(
+          buildApp(),
+          "PUT",
+          "/api/tasks/KB-001/documents/plan",
+          JSON.stringify({ content: "Updated plan" }),
+          { "Content-Type": "application/json" }
+        );
+        expect(res.status).toBe(200);
+      });
+
+      it("returns 400 for missing content", async () => {
+        const res = await REQUEST(
+          buildApp(),
+          "PUT",
+          "/api/tasks/KB-001/documents/plan",
+          JSON.stringify({}),
+          { "Content-Type": "application/json" }
+        );
+        expect(res.status).toBe(400);
+        expect(res.body.error).toBe("content is required");
+      });
+
+      it("returns 400 for invalid key format (spaces)", async () => {
+        const res = await REQUEST(
+          buildApp(),
+          "PUT",
+          "/api/tasks/KB-001/documents/my%20plan",
+          JSON.stringify({ content: "My plan" }),
+          { "Content-Type": "application/json" }
+        );
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain("Invalid document key");
+      });
+
+      it("returns 400 for invalid key format (special chars)", async () => {
+        const res = await REQUEST(
+          buildApp(),
+          "PUT",
+          "/api/tasks/KB-001/documents/plan@test",
+          JSON.stringify({ content: "My plan" }),
+          { "Content-Type": "application/json" }
+        );
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain("Invalid document key");
+      });
+
+      it("returns 400 for content exceeding 100000 chars", async () => {
+        const longContent = "a".repeat(100001);
+        const res = await REQUEST(
+          buildApp(),
+          "PUT",
+          "/api/tasks/KB-001/documents/plan",
+          JSON.stringify({ content: longContent }),
+          { "Content-Type": "application/json" }
+        );
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain("content must be between 1 and 100000 characters");
+      });
+
+      it("accepts optional author and metadata", async () => {
+        const newDoc = { id: "d1", taskId: "KB-001", key: "notes", content: "My notes", revision: 1, author: "agent", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
+        (store.upsertTaskDocument as ReturnType<typeof vi.fn>).mockResolvedValue(newDoc);
+        const res = await REQUEST(
+          buildApp(),
+          "PUT",
+          "/api/tasks/KB-001/documents/notes",
+          JSON.stringify({ content: "My notes", author: "agent", metadata: { priority: "high" } }),
+          { "Content-Type": "application/json" }
+        );
+        expect(res.status).toBe(201);
+        expect(store.upsertTaskDocument).toHaveBeenCalledWith("KB-001", { key: "notes", content: "My notes", author: "agent", metadata: { priority: "high" } });
+      });
+    });
+
+    describe("DELETE /tasks/:id/documents/:key", () => {
+      it("returns 204 on success", async () => {
+        (store.deleteTaskDocument as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+        const res = await REQUEST(buildApp(), "DELETE", "/api/tasks/KB-001/documents/plan");
+        expect(res.status).toBe(204);
+        expect(store.deleteTaskDocument).toHaveBeenCalledWith("KB-001", "plan");
+      });
+
+      it("returns 404 when document not found", async () => {
+        (store.deleteTaskDocument as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Document not found"));
+        const res = await REQUEST(buildApp(), "DELETE", "/api/tasks/KB-001/documents/missing");
+        expect(res.status).toBe(404);
+      });
     });
   });
 

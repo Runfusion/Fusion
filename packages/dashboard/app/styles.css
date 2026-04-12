@@ -28061,3 +28061,234 @@ html .column.drag-over * {
     padding: 8px 12px;
   }
 }
+
+/* === Task Documents === */
+.task-documents-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  margin-top: var(--space-md);
+}
+
+.task-document-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: var(--space-md);
+  background: var(--bg-secondary);
+  transition: border-color 0.15s ease;
+}
+
+.task-document-card:hover {
+  border-color: var(--border-hover);
+}
+
+.task-document-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+.task-document-card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.task-document-key {
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+
+.task-document-revision-badge {
+  font-size: 0.75rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.task-document-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.task-document-author {
+  font-weight: 500;
+}
+
+.task-document-content {
+  margin: var(--space-md) 0;
+  padding: var(--space-md);
+  background: var(--bg-primary);
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.task-document-content-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  font-family: inherit;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.task-document-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin: var(--space-md) 0;
+}
+
+.task-document-edit-form textarea {
+  min-height: 200px;
+  font-family: inherit;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.task-document-actions {
+  display: flex;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.task-document-revisions {
+  margin: var(--space-md) 0;
+  padding: var(--space-md);
+  background: var(--bg-primary);
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.task-document-revisions h5 {
+  margin: 0 0 var(--space-sm) 0;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.task-document-revision-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.task-document-revision-item {
+  padding: var(--space-sm);
+  background: var(--bg-secondary);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.task-document-revision-item:hover {
+  background: var(--bg-hover);
+}
+
+.revision-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: 4px;
+}
+
+.revision-badge {
+  font-size: 0.75rem;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.revision-author {
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.revision-timestamp {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.revision-preview {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.task-document-create-form {
+  margin: var(--space-md) 0;
+  padding: var(--space-md);
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.task-document-create-form h5 {
+  margin: 0 0 var(--space-md) 0;
+}
+
+.task-document-create-form .form-group {
+  margin-bottom: var(--space-md);
+}
+
+.task-document-create-form .form-group:last-of-type {
+  margin-bottom: var(--space-sm);
+}
+
+.task-document-key-input {
+  width: 100%;
+  max-width: 300px;
+}
+
+.form-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.form-actions {
+  display: flex;
+  gap: var(--space-sm);
+  justify-content: flex-end;
+}
+
+.task-document-new-btn {
+  margin-top: var(--space-md);
+}
+
+.confirm-delete-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.875rem;
+  color: var(--color-error);
+}
+
+@media (max-width: 768px) {
+  .task-document-card-header {
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .task-document-meta {
+    align-items: flex-start;
+  }
+
+  .task-document-content {
+    max-height: 300px;
+  }
+}

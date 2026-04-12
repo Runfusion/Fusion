@@ -3188,6 +3188,126 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  // ── Task Document Routes ──────────────────────────────────────────────────
+
+  // Key validation regex: alphanumeric, hyphens, underscores, 1-64 chars
+  const DOCUMENT_KEY_REGEX = /^[a-zA-Z0-9_-]{1,64}$/;
+
+  // GET /tasks/:id/documents — List all documents for a task
+  router.get("/tasks/:id/documents", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const documents = await scopedStore.getTaskDocuments(req.params.id);
+      res.json(documents);
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      const status = err.code === "ENOENT" ? 404 : 500;
+      throw new ApiError(status, err.message);
+    }
+  });
+
+  // GET /tasks/:id/documents/:key — Get latest revision of a specific document
+  router.get("/tasks/:id/documents/:key", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const document = await scopedStore.getTaskDocument(req.params.id, req.params.key);
+      if (!document) {
+        throw new ApiError(404, "Document not found");
+      }
+      res.json(document);
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      const status = err.code === "ENOENT" ? 404 : 500;
+      throw new ApiError(status, err.message);
+    }
+  });
+
+  // GET /tasks/:id/documents/:key/revisions — List all revisions for a document
+  router.get("/tasks/:id/documents/:key/revisions", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const revisions = await scopedStore.getTaskDocumentRevisions(req.params.id, req.params.key);
+      res.json(revisions);
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      // Return empty array if document doesn't exist (not an error)
+      res.json([]);
+    }
+  });
+
+  // PUT /tasks/:id/documents/:key — Create or update a document (optimistic revision)
+  router.put("/tasks/:id/documents/:key", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+
+      // Validate key format
+      if (!DOCUMENT_KEY_REGEX.test(req.params.key)) {
+        throw badRequest("Invalid document key. Must be 1-64 alphanumeric characters, hyphens, or underscores.");
+      }
+
+      const { content, author, metadata } = req.body;
+
+      // Validate content
+      if (content === undefined || content === null) {
+        throw badRequest("content is required");
+      }
+      if (typeof content !== "string") {
+        throw badRequest("content must be a string");
+      }
+      if (content.length < 1 || content.length > 100000) {
+        throw badRequest("content must be between 1 and 100000 characters");
+      }
+
+      // Validate author (optional, defaults to "user")
+      if (author !== undefined && typeof author !== "string") {
+        throw badRequest("author must be a string");
+      }
+
+      // Validate metadata (optional)
+      if (metadata !== undefined && (typeof metadata !== "object" || metadata === null || Array.isArray(metadata))) {
+        throw badRequest("metadata must be an object");
+      }
+
+      const document = await scopedStore.upsertTaskDocument(req.params.id, {
+        key: req.params.key,
+        content,
+        author: author?.trim() || "user",
+        metadata: metadata as Record<string, unknown> | undefined,
+      });
+
+      // Return 201 for new documents (revision === 1), 200 for updates
+      const status = document.revision === 1 ? 201 : 200;
+      res.status(status).json(document);
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      const status = err.code === "ENOENT" ? 404 : 500;
+      throw new ApiError(status, err.message);
+    }
+  });
+
+  // DELETE /tasks/:id/documents/:key — Delete a document and all its revisions
+  router.delete("/tasks/:id/documents/:key", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      await scopedStore.deleteTaskDocument(req.params.id, req.params.key);
+      res.status(204).send();
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      const status = err.message?.includes("not found") ? 404 : 500;
+      throw new ApiError(status, err.message);
+    }
+  });
+
   // Add steering comment to task
   router.post("/tasks/:id/steer", async (req, res) => {
     try {

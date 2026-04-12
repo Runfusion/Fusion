@@ -20,6 +20,8 @@ import type {
   WorkflowStepResult,
   PluginInstallation,
   PluginState,
+  TaskDocument,
+  TaskDocumentRevision,
 
   Message,
   MessageType,
@@ -369,6 +371,43 @@ export function updateTaskComment(id: string, commentId: string, text: string, p
 
 export function deleteTaskComment(id: string, commentId: string, projectId?: string): Promise<Task> {
   return api<Task>(withProjectId(`/tasks/${id}/comments/${commentId}`, projectId), {
+    method: "DELETE",
+  });
+}
+
+// ── Task Document API Functions ──────────────────────────────────────────────
+
+export function fetchTaskDocuments(taskId: string, projectId?: string): Promise<TaskDocument[]> {
+  return api<TaskDocument[]>(withProjectId(`/tasks/${taskId}/documents`, projectId));
+}
+
+export function fetchTaskDocument(taskId: string, key: string, projectId?: string): Promise<TaskDocument> {
+  return api<TaskDocument>(withProjectId(`/tasks/${taskId}/documents/${key}`, projectId));
+}
+
+export function fetchTaskDocumentRevisions(taskId: string, key: string, projectId?: string): Promise<TaskDocumentRevision[]> {
+  return api<TaskDocumentRevision[]>(withProjectId(`/tasks/${taskId}/documents/${key}/revisions`, projectId));
+}
+
+export function putTaskDocument(
+  taskId: string,
+  key: string,
+  content: string,
+  opts?: { author?: string; metadata?: Record<string, unknown> },
+  projectId?: string,
+): Promise<TaskDocument> {
+  return api<TaskDocument>(withProjectId(`/tasks/${taskId}/documents/${key}`, projectId), {
+    method: "PUT",
+    body: JSON.stringify({
+      content,
+      author: opts?.author,
+      metadata: opts?.metadata,
+    }),
+  });
+}
+
+export function deleteTaskDocument(taskId: string, key: string, projectId?: string): Promise<void> {
+  return api<void>(withProjectId(`/tasks/${taskId}/documents/${key}`, projectId), {
     method: "DELETE",
   });
 }

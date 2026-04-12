@@ -16,6 +16,7 @@ import { MergeDetails } from "./MergeDetails";
 import { TaskChangesTab } from "./TaskChangesTab";
 import { TaskForm, type PendingImage } from "./TaskForm";
 import { WorkflowResultsTab } from "./WorkflowResultsTab";
+import { TaskDocumentsTab } from "./TaskDocumentsTab";
 
 interface ModelSelection {
   provider?: string;
@@ -166,7 +167,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-type TabId = "definition" | "logs" | "changes" | "comments" | "model" | "workflow";
+type TabId = "definition" | "logs" | "changes" | "comments" | "model" | "workflow" | "documents";
 
 interface TaskDetailModalProps {
   task: Task | TaskDetail;
@@ -1095,6 +1096,12 @@ export function TaskDetailModal({
               Comments
             </button>
             <button
+              className={`detail-tab${activeTab === "documents" ? " detail-tab-active" : ""}`}
+              onClick={() => setActiveTab("documents")}
+            >
+              Documents
+            </button>
+            <button
               className={`detail-tab${activeTab === "model" ? " detail-tab-active" : ""}`}
               onClick={() => setActiveTab("model")}
             >
@@ -1176,6 +1183,14 @@ export function TaskDetailModal({
             <TaskChangesTab taskId={task.id} worktree={task.worktree} projectId={projectId} column={task.column} mergeDetails={task.mergeDetails} />
           ) : activeTab === "comments" ? (
             <TaskComments task={task} addToast={addToast} projectId={projectId} onTaskUpdated={onTaskUpdated} />
+          ) : activeTab === "documents" ? (
+            <TaskDocumentsTab
+              taskId={task.id}
+              addToast={addToast}
+              projectId={projectId}
+              onTaskUpdated={onTaskUpdated}
+              canEdit={canEdit}
+            />
           ) : (
           <>
           {/* Summary section - only for done tasks with summary */}
