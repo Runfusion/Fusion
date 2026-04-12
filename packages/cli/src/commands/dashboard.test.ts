@@ -35,6 +35,10 @@ const {
 // Minimal mock store backed by EventEmitter so `store.on` works
 function makeMockStore() {
   const emitter = new EventEmitter();
+  // runDashboard registers several independent settings listeners by design;
+  // keep the test mock above Node's low default threshold while still asserting
+  // disposal behavior in the lifecycle cleanup tests below.
+  emitter.setMaxListeners(20);
   const mockMissionStore = {
     listMissions: vi.fn().mockReturnValue([]),
     getMission: vi.fn(),
@@ -164,12 +168,19 @@ const {
   mockMergePr,
 } = vi.hoisted(() => ({
   mockExec: vi.fn((_command: string, _options?: any, callback?: (err: null, stdout: string, stderr: string) => void) => {
-    // Handle both callback-style (original exec) and promise-style (promisified execAsync)
     if (typeof callback === "function") {
       callback(null, "", "");
     }
-    // Return resolved promise for promisified usage
-    return Promise.resolve({ stdout: "", stderr: "" });
+    // Match child_process.exec's callback-style contract. Returning a Promise
+    // makes util.promisify(exec) emit DEP0174 in tests.
+    return {
+      pid: 12345,
+      stdout: null,
+      stderr: null,
+      on: vi.fn(),
+      once: vi.fn(),
+      kill: vi.fn(),
+    };
   }),
   mockExecSync: vi.fn(() => ""),
   mockFindPrForBranch: vi.fn(),
@@ -329,8 +340,22 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
 
 // ── Import module under test (after mocks) ──────────────────────────
 
-const { runDashboard } = await import("./dashboard.js");
+const { runDashboard: runDashboardImpl } = await import("./dashboard.js");
 const { processPullRequestMergeTask, getMergeStrategy, getTaskBranchName } = await import("./task-lifecycle.js");
+const dashboardDisposables: Array<() => void> = [];
+
+function disposeTrackedDashboards(): void {
+  for (const dispose of dashboardDisposables.splice(0)) {
+    dispose();
+  }
+}
+
+async function runDashboard(...args: Parameters<typeof runDashboardImpl>): ReturnType<typeof runDashboardImpl> {
+  disposeTrackedDashboards();
+  const result = await runDashboardImpl(...args);
+  dashboardDisposables.push(result.dispose);
+  return result;
+}
 
 // ── Tests ───────────────────────────────────────────────────────────
 
@@ -383,6 +408,10 @@ beforeEach(() => {
   mockExec.mockClear();
   mockStuckCheckNow.mockReset();
   mockStuckCheckNow.mockResolvedValue(undefined);
+});
+
+afterEach(() => {
+  disposeTrackedDashboards();
 });
 
 describe("PR merge helpers", () => {

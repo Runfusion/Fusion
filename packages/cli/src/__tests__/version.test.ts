@@ -40,7 +40,7 @@ describe("Changeset configuration", () => {
 
     const content = readFileSync(workflowPath, "utf-8");
     expect(content).toContain("changesets/action");
-    expect(content).toContain("push");
-    expect(content).toContain("main");
+    expect(content).toContain("workflow_dispatch");
+    expect(content).toContain("Auto-trigger disabled");
   });
 });

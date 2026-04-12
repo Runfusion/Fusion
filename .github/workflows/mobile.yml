@@ -1,14 +1,8 @@
 name: Mobile Builds
 
+# Auto-trigger disabled; workflow preserved for manual use via workflow_dispatch.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - "packages/mobile/**"
-      - "packages/dashboard/**"
-      - ".github/workflows/mobile.yml"
 
 jobs:
   build-web:

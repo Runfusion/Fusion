@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
 
 // ── Capture arguments ───────────────────────────────────────────────
@@ -6,6 +6,10 @@ import { EventEmitter } from "node:events";
 // Minimal mock store backed by EventEmitter so `store.on` works
 function makeMockStore() {
   const emitter = new EventEmitter();
+  // runDashboard registers several independent settings listeners by design;
+  // keep the test mock above Node's low default threshold while still checking
+  // startup wiring behavior.
+  emitter.setMaxListeners(20);
   const mockMissionStore = {
     listMissions: vi.fn().mockReturnValue([]),
     getMission: vi.fn(),
@@ -214,9 +218,27 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
 
 // ── Import module under test (after mocks) ──────────────────────────
 
-const { runDashboard } = await import("../dashboard.js");
+const { runDashboard: runDashboardImpl } = await import("../dashboard.js");
+const dashboardDisposables: Array<() => void> = [];
+
+function disposeTrackedDashboards(): void {
+  for (const dispose of dashboardDisposables.splice(0)) {
+    dispose();
+  }
+}
+
+async function runDashboard(...args: Parameters<typeof runDashboardImpl>): ReturnType<typeof runDashboardImpl> {
+  disposeTrackedDashboards();
+  const result = await runDashboardImpl(...args);
+  dashboardDisposables.push(result.dispose);
+  return result;
+}
 
 // ── Tests ───────────────────────────────────────────────────────────
+
+afterEach(() => {
+  disposeTrackedDashboards();
+});
 
 describe("runDashboard — AuthStorage & ModelRegistry wiring", () => {
   beforeEach(async () => {

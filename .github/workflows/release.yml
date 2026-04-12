@@ -10,10 +10,9 @@
 
 name: Binary Release
 
+# Auto-trigger disabled; workflow preserved for manual use via workflow_dispatch.
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write

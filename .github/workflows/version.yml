@@ -5,10 +5,9 @@
 
 name: Version & Release
 
+# Auto-trigger disabled; workflow preserved for manual use via workflow_dispatch.
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 permissions:
   contents: write

@@ -83,8 +83,12 @@ describe("Version & Release workflow (.github/workflows/version.yml)", () => {
     expect(typeof workflow).toBe("object");
   });
 
-  it("has push trigger on main", () => {
-    expect(workflow.on.push.branches).toContain("main");
+  it("uses workflow_dispatch trigger (auto release disabled)", () => {
+    expect(workflow.on).toHaveProperty("workflow_dispatch");
+  });
+
+  it("does not auto-trigger on push", () => {
+    expect(workflow.on.push).toBeUndefined();
   });
 
   it("includes pnpm install step", () => {
@@ -143,9 +147,12 @@ describe("Binary release workflow (.github/workflows/release.yml)", () => {
     expect(typeof workflow).toBe("object");
   });
 
-  it("triggers on version tags", () => {
-    expect(workflow.on.push.tags).toBeDefined();
-    expect(workflow.on.push.tags.some((t: string) => t.includes("v"))).toBe(true);
+  it("uses workflow_dispatch trigger (auto binary release disabled)", () => {
+    expect(workflow.on).toHaveProperty("workflow_dispatch");
+  });
+
+  it("does not auto-trigger on version tags", () => {
+    expect(workflow.on.push).toBeUndefined();
   });
 
   it("has build-binaries job with 4-target matrix", () => {

@@ -147,11 +147,7 @@ function cleanupExpiredRateLimits(): void {
 
 // Start cleanup interval
 const cleanupInterval = setInterval(cleanupExpiredRateLimits, CLEANUP_INTERVAL_MS);
-
-// Handle graceful shutdown
-process.on("beforeExit", () => {
-  clearInterval(cleanupInterval);
-});
+cleanupInterval.unref?.();
 
 // ── Custom Errors ───────────────────────────────────────────────────────────
 
