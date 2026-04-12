@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { PathLike } from "node:fs";
 
 const createAgentSessionMock = vi.fn();
 const createCodingToolsMock = vi.fn(() => []);
@@ -18,7 +19,7 @@ const settingsManagerInMemoryMock = vi.fn(() => ({ kind: "settings-manager" }));
 const setFallbackResolverMock = vi.fn();
 const reloadMock = vi.fn(async () => {});
 const execSyncMock = vi.fn(() => "");
-const existsSyncMock = vi.fn(() => false);
+const existsSyncMock = vi.fn((_path: PathLike) => false);
 const readFileSyncMock = vi.fn(() => "{}");
 
 vi.mock("node:child_process", () => ({
