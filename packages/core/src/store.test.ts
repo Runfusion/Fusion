@@ -6504,6 +6504,37 @@ describe("searchTasks", () => {
     expect(results[0].description).toContain("homepage");
   });
 
+  it("supports slim search results without loading task logs", async () => {
+    const uniqueTerm = `slimsearchpayload${Date.now()}`;
+    const task = await store.createTask({ description: `Slim search payload ${uniqueTerm}` });
+    await store.logEntry(task.id, "heavy log entry that should not appear in slim search");
+
+    const fullResults = await store.searchTasks(uniqueTerm);
+    const slimResults = await store.searchTasks(uniqueTerm, { slim: true });
+    const full = fullResults.find((result) => result.id === task.id)!;
+    const slim = slimResults.find((result) => result.id === task.id)!;
+
+    expect(full.log.length).toBeGreaterThan(0);
+    expect(slim.id).toBe(task.id);
+    expect(slim.log).toEqual([]);
+  });
+
+  it("can exclude archived tasks from search results", async () => {
+    const uniqueTerm = `archivedsearchpayload${Date.now()}`;
+    const task = await store.createTask({ description: `Archived search payload ${uniqueTerm}` });
+    await store.moveTask(task.id, "todo");
+    await store.moveTask(task.id, "in-progress");
+    await store.moveTask(task.id, "in-review");
+    await store.moveTask(task.id, "done");
+    await store.archiveTask(task.id);
+
+    const withArchived = await store.searchTasks(uniqueTerm);
+    const withoutArchived = await store.searchTasks(uniqueTerm, { includeArchived: false });
+
+    expect(withArchived.some((result) => result.id === task.id)).toBe(true);
+    expect(withoutArchived.some((result) => result.id === task.id)).toBe(false);
+  });
+
   it("searches tasks by comment text", async () => {
     const task = await store.createTask({ description: "A task" });
     // Add a comment containing a unique word

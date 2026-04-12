@@ -277,6 +277,29 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     };
   }
 
+  private getTaskSelectClause(slim: boolean, tableAlias?: string): string {
+    if (!slim) {
+      return tableAlias ? `${tableAlias}.*` : "*";
+    }
+
+    const prefix = tableAlias ? `${tableAlias}.` : "";
+    return [
+      "id", "title", "description", "\"column\"", "status", "size", "reviewLevel", "currentStep",
+      "worktree", "blockedBy", "paused", "baseBranch", "branch", "baseCommitSha",
+      "modelPresetId", "modelProvider", "modelId",
+      "validatorModelProvider", "validatorModelId",
+      "planningModelProvider", "planningModelId",
+      "mergeRetries", "stuckKillCount", "recoveryRetryCount", "nextRecoveryAt",
+      "error", "summary", "thinkingLevel",
+      "createdAt", "updatedAt", "columnMovedAt",
+      "dependencies", "steps", "comments", "workflowStepResults", "steeringComments",
+      "attachments", "prInfo", "issueInfo", "mergeDetails",
+      "breakIntoSubtasks", "enabledWorkflowSteps", "modifiedFiles",
+      "missionId", "sliceId", "assignedAgentId", "assigneeUserId",
+      "checkedOutBy", "checkedOutAt",
+    ].map((column) => `${prefix}${column}`).join(", ");
+  }
+
   /**
    * Upsert a task to the database. Used by create and update operations.
    */
@@ -1334,22 +1357,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     //   - `steeringComments` → steering badge
     // Use `getTask(id)` to load the full row (including `log`) for the
     // TaskDetailModal's Activity tab and Agent Log subview.
-    const slimColumns = `
-      id, title, description, "column", status, size, reviewLevel, currentStep,
-      worktree, blockedBy, paused, baseBranch, branch, baseCommitSha,
-      modelPresetId, modelProvider, modelId,
-      validatorModelProvider, validatorModelId,
-      planningModelProvider, planningModelId,
-      mergeRetries, stuckKillCount, recoveryRetryCount, nextRecoveryAt,
-      error, summary, thinkingLevel,
-      createdAt, updatedAt, columnMovedAt,
-      dependencies, steps, comments, workflowStepResults, steeringComments,
-      attachments, prInfo, issueInfo, mergeDetails,
-      breakIntoSubtasks, enabledWorkflowSteps, modifiedFiles,
-      missionId, sliceId, assignedAgentId, assigneeUserId,
-      checkedOutBy, checkedOutAt
-    `;
-    const selectClause = slim ? slimColumns : '*';
+    const selectClause = this.getTaskSelectClause(slim);
     const whereParts: string[] = [];
     const params: string[] = [];
     if (columnFilter) {
@@ -1399,7 +1407,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    * @param query - The search query string
    * @param options - Optional limit and offset for pagination
    */
-  async searchTasks(query: string, options?: { limit?: number; offset?: number }): Promise<Task[]> {
+  async searchTasks(query: string, options?: { limit?: number; offset?: number; slim?: boolean; includeArchived?: boolean }): Promise<Task[]> {
     // Fall back to listTasks for empty/whitespace-only queries
     const trimmedQuery = query?.trim();
     if (!trimmedQuery) {
@@ -1433,11 +1441,15 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const limit = options?.limit ?? -1;
     const offset = options?.offset ?? 0;
     const offsetClause = offset > 0 ? ` OFFSET ${offset}` : "";
+    const includeArchived = options?.includeArchived ?? true;
+    const whereClause = includeArchived ? "" : ` AND t."column" != 'archived'`;
+    const selectClause = this.getTaskSelectClause(options?.slim ?? false, "t");
 
     const rows = this.db.prepare(`
-      SELECT t.* FROM tasks t
+      SELECT ${selectClause} FROM tasks t
       JOIN tasks_fts fts ON t.rowid = fts.rowid
       WHERE tasks_fts MATCH ?
+      ${whereClause}
       ORDER BY rank
       LIMIT ${limit >= 0 ? limit : -1}${offsetClause}
     `).all(ftsQuery) as any[];

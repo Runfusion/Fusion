@@ -125,6 +125,34 @@ describe("createSSE", () => {
     expect(sseMsg).toBeDefined();
   });
 
+  it("strips heavy task logs from task event payloads", () => {
+    const req = createMockRequest();
+    const { res, chunks } = createMockResponse();
+    createSSE(store)(req, res);
+
+    store.emit("task:updated", {
+      id: "FN-001",
+      title: "Updated",
+      log: [{ action: "very large log entry", timestamp: new Date().toISOString() }],
+    });
+    store.emit("task:moved", {
+      task: {
+        id: "FN-001",
+        log: [{ action: "another large log entry", timestamp: new Date().toISOString() }],
+      },
+      from: "todo",
+      to: "in-progress",
+    });
+
+    const updatedMsg = chunks.find((c) => c.includes("task:updated"))!;
+    const movedMsg = chunks.find((c) => c.includes("task:moved"))!;
+
+    expect(extractSSEPayload(updatedMsg).log).toEqual([]);
+    expect(extractSSEPayload(movedMsg).task.log).toEqual([]);
+    expect(updatedMsg).not.toContain("very large log entry");
+    expect(movedMsg).not.toContain("another large log entry");
+  });
+
   it("relays task:deleted events as SSE messages", () => {
     const req = createMockRequest();
     const { res, chunks } = createMockResponse();

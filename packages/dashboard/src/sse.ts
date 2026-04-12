@@ -24,6 +24,34 @@ function safeWrite(res: Response, data: string): boolean {
   }
 }
 
+function stripTaskListHeavyFields<T>(task: T): T {
+  if (!task || typeof task !== "object" || Array.isArray(task)) {
+    return task;
+  }
+
+  if (!("log" in task)) {
+    return task;
+  }
+
+  return { ...task, log: [] } as T;
+}
+
+function stripTaskEventHeavyFields<T>(payload: T): T {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return payload;
+  }
+
+  const candidate = payload as Record<string, unknown>;
+  if ("task" in candidate) {
+    return {
+      ...candidate,
+      task: stripTaskListHeavyFields(candidate.task),
+    } as T;
+  }
+
+  return stripTaskListHeavyFields(payload);
+}
+
 /**
  * Normalized plugin lifecycle transition types.
  * These are the unified set of transitions that the SSE stream emits.
@@ -161,19 +189,19 @@ export function createSSE(
     // --- Event handler definitions ---
 
     const onCreated = (task: any) => {
-      send(`event: task:created\ndata: ${JSON.stringify(task)}\n\n`);
+      send(`event: task:created\ndata: ${JSON.stringify(stripTaskListHeavyFields(task))}\n\n`);
     };
     const onMoved = (data: any) => {
-      send(`event: task:moved\ndata: ${JSON.stringify(data)}\n\n`);
+      send(`event: task:moved\ndata: ${JSON.stringify(stripTaskEventHeavyFields(data))}\n\n`);
     };
     const onUpdated = (task: any) => {
-      send(`event: task:updated\ndata: ${JSON.stringify(task)}\n\n`);
+      send(`event: task:updated\ndata: ${JSON.stringify(stripTaskListHeavyFields(task))}\n\n`);
     };
     const onDeleted = (task: any) => {
-      send(`event: task:deleted\ndata: ${JSON.stringify(task)}\n\n`);
+      send(`event: task:deleted\ndata: ${JSON.stringify(stripTaskListHeavyFields(task))}\n\n`);
     };
     const onMerged = (result: any) => {
-      send(`event: task:merged\ndata: ${JSON.stringify(result)}\n\n`);
+      send(`event: task:merged\ndata: ${JSON.stringify(stripTaskEventHeavyFields(result))}\n\n`);
     };
 
     const onMissionCreated = (data: any) => {

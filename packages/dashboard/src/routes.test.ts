@@ -220,7 +220,12 @@ describe("GET /tasks", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(1);
-    expect(store.searchTasks).toHaveBeenCalledWith("FN-001", { limit: undefined, offset: undefined });
+    expect(store.searchTasks).toHaveBeenCalledWith("FN-001", {
+      limit: undefined,
+      offset: undefined,
+      slim: true,
+      includeArchived: false,
+    });
   });
 
   it("returns tasks for search query with limit", async () => {
@@ -230,7 +235,12 @@ describe("GET /tasks", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(1);
-    expect(store.searchTasks).toHaveBeenCalledWith("something", { limit: 5, offset: undefined });
+    expect(store.searchTasks).toHaveBeenCalledWith("something", {
+      limit: 5,
+      offset: undefined,
+      slim: true,
+      includeArchived: false,
+    });
   });
 
   it("returns empty array for non-existent search query", async () => {

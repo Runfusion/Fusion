@@ -2302,10 +2302,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       let tasks;
       if (q && q.length > 0) {
-        tasks = await scopedStore.searchTasks(q, { limit, offset });
+        tasks = await scopedStore.searchTasks(q, { limit, offset, slim: true, includeArchived });
       } else {
-        // Board-view list: omit heavy fields (log/comments/steps/workflowStepResults) and
-        // exclude archived tasks unless explicitly requested. Full task detail still loads via
+        // Board-view list: omit the heavy agent log payload and exclude
+        // archived tasks unless explicitly requested. Full task detail still loads via
         // GET /api/tasks/:id. Without this, every dashboard load shipped tens of MB of agent logs.
         tasks = await scopedStore.listTasks({ limit, offset, slim: true, includeArchived });
       }
