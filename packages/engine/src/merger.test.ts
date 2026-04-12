@@ -2130,6 +2130,7 @@ describe("aiMergeTask — deterministic merge verification", () => {
   });
 
   it("fails merge when testCommand fails and does not move task to done", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mockedExecSync.mockImplementation((cmd: any) => {
       const cmdStr = String(cmd);
       if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
@@ -2169,9 +2170,15 @@ describe("aiMergeTask — deterministic merge verification", () => {
       testCommand: "vitest run",
     });
 
-    await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(
-      "Deterministic test verification failed",
-    );
+    try {
+      await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(
+        "Deterministic test verification failed",
+      );
+      const consoleErrors = errorSpy.mock.calls.flat().join("\n");
+      expect(consoleErrors).not.toContain("FAIL: some test failed");
+    } finally {
+      errorSpy.mockRestore();
+    }
 
     // Verify task was NOT moved to done
     expect(store.moveTask).not.toHaveBeenCalled();
@@ -2235,6 +2242,7 @@ describe("aiMergeTask — deterministic merge verification", () => {
   });
 
   it("fails merge when buildCommand fails and does not move task to done", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     // Setup exec mock that will be updated after agent commits
     mockedExecSync.mockImplementation((cmd: any) => {
       const cmdStr = String(cmd);
@@ -2293,9 +2301,15 @@ describe("aiMergeTask — deterministic merge verification", () => {
       buildCommand: "pnpm build",
     });
 
-    await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(
-      "Deterministic build verification failed",
-    );
+    try {
+      await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(
+        "Deterministic build verification failed",
+      );
+      const consoleErrors = errorSpy.mock.calls.flat().join("\n");
+      expect(consoleErrors).not.toContain("Type error in src/utils.ts");
+    } finally {
+      errorSpy.mockRestore();
+    }
 
     // Verify task was NOT moved to done
     expect(store.moveTask).not.toHaveBeenCalled();

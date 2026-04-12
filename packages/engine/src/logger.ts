@@ -5,7 +5,7 @@
  * ```ts
  * import { createLogger } from "./logger.js";
  * const log = createLogger("my-module");
- * log.log("hello");   // → console.log("[my-module] hello")
+ * log.log("hello");   // → console.error("[my-module] hello")
  * log.warn("oops");   // → console.warn("[my-module] oops")
  * log.error("fail");  // → console.error("[my-module] fail")
  * ```
@@ -26,14 +26,15 @@ export interface Logger {
  * Create a structured logger that prefixes every message with `[prefix]`.
  *
  * @param prefix - Short subsystem name, e.g. `"scheduler"` or `"executor"`.
- * @returns A `Logger` whose `log`, `warn`, and `error` methods delegate to
- *          the corresponding `console` method with the prefix prepended.
+ * @returns A `Logger` whose output is prefixed and sent to stderr. Keeping
+ *          engine logs off stdout prevents command/test output consumers from
+ *          receiving Fusion execution chatter.
  */
 export function createLogger(prefix: string): Logger {
   const tag = `[${prefix}]`;
   return {
     log(message: string, ...args: unknown[]) {
-      console.log(`${tag} ${message}`, ...args);
+      console.error(`${tag} ${message}`, ...args);
     },
     warn(message: string, ...args: unknown[]) {
       console.warn(`${tag} ${message}`, ...args);

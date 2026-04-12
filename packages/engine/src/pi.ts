@@ -38,19 +38,19 @@ export interface PromptableSession extends AgentSession {
 export async function promptWithFallback(session: AgentSession, prompt: string, options?: unknown): Promise<void> {
   const maybePromptable = session as Partial<PromptableSession>;
   if (typeof maybePromptable.promptWithFallback === "function") {
-    console.log(`[pi] promptWithFallback: delegating to session.promptWithFallback (prompt length=${prompt.length})`);
+    console.error(`[pi] promptWithFallback: delegating to session.promptWithFallback (prompt length=${prompt.length})`);
     await maybePromptable.promptWithFallback(prompt, options);
-    console.log(`[pi] promptWithFallback: completed`);
+    console.error(`[pi] promptWithFallback: completed`);
     return;
   }
 
-  console.log(`[pi] promptWithFallback: calling session.prompt (prompt length=${prompt.length})`);
+  console.error(`[pi] promptWithFallback: calling session.prompt (prompt length=${prompt.length})`);
   if (options === undefined) {
     await session.prompt(prompt);
   } else {
     await (session.prompt as any)(prompt, options);
   }
-  console.log(`[pi] promptWithFallback: prompt completed`);
+  console.error(`[pi] promptWithFallback: prompt completed`);
 }
 
 /**
@@ -162,7 +162,7 @@ function resolveConfiguredModel(
   const providerModels = modelRegistry.getAll().filter((m) => m.provider === provider);
   if (providerModels.length > 0) {
     const baseModel = providerModels[0]!;
-    console.log(`[pi] ${kind} model ${provider}/${modelId} not in registry; using provider base model as template`);
+    console.error(`[pi] ${kind} model ${provider}/${modelId} not in registry; using provider base model as template`);
     return { ...baseModel, id: modelId, name: modelId };
   }
 
@@ -232,7 +232,7 @@ async function registerExtensionProviders(cwd: string, modelRegistry: ModelRegis
     const extensionsResult = await discoverAndLoadExtensions(packageExtensionPaths, cwd, undefined);
 
     for (const { path, error } of extensionsResult.errors) {
-      console.log(`[extensions] Failed to load ${path}: ${error}`);
+      console.error(`[extensions] Failed to load ${path}: ${error}`);
     }
 
     for (const { name, config, extensionPath } of extensionsResult.runtime.pendingProviderRegistrations) {
@@ -240,7 +240,7 @@ async function registerExtensionProviders(cwd: string, modelRegistry: ModelRegis
         modelRegistry.registerProvider(name, config);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.log(`[extensions] Failed to register provider from ${extensionPath}: ${message}`);
+        console.error(`[extensions] Failed to register provider from ${extensionPath}: ${message}`);
       }
     }
 
@@ -248,7 +248,7 @@ async function registerExtensionProviders(cwd: string, modelRegistry: ModelRegis
     modelRegistry.refresh();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.log(`[extensions] Failed to discover extensions: ${message}`);
+    console.error(`[extensions] Failed to discover extensions: ${message}`);
     createExtensionRuntime();
     modelRegistry.refresh();
   }
@@ -414,7 +414,7 @@ export function wrapToolsWithBoundary(
  * Reuses the user's existing pi auth and model configuration.
  */
 export async function createKbAgent(options: AgentOptions): Promise<AgentResult> {
-  console.log(`[pi] createKbAgent called (cwd=${options.cwd}, tools=${options.tools}, provider=${options.defaultProvider}, model=${options.defaultModelId})`);
+  console.error(`[pi] createKbAgent called (cwd=${options.cwd}, tools=${options.tools}, provider=${options.defaultProvider}, model=${options.defaultModelId})`);
   const authStorage = AuthStorage.create();
   const modelRegistry = new ModelRegistry(authStorage, join(getAgentDir(), "models.json"));
   await registerExtensionProviders(options.cwd, modelRegistry);
@@ -485,16 +485,16 @@ export async function createKbAgent(options: AgentOptions): Promise<AgentResult>
   let usingFallback = false;
   try {
     sessionResult = await createSessionWithModel(selectedModel);
-    console.log(`[pi] Session created successfully (model=${selectedModel ? `${selectedModel.provider}/${selectedModel.id}` : "default"})`);
+    console.error(`[pi] Session created successfully (model=${selectedModel ? `${selectedModel.provider}/${selectedModel.id}` : "default"})`);
   } catch (err: any) {
     if (!fallbackModel || !selectedModel || !isRetryableModelSelectionError(err?.message || "")) {
       console.error(`[pi] Session creation failed: ${err.message}`);
       throw err;
     }
-    console.log(`[pi] Primary model failed (${err.message}), trying fallback`);
+    console.error(`[pi] Primary model failed (${err.message}), trying fallback`);
     usingFallback = true;
     sessionResult = await createSessionWithModel(fallbackModel);
-    console.log(`[pi] Fallback session created successfully`);
+    console.error(`[pi] Fallback session created successfully`);
   }
 
   const { session } = sessionResult;

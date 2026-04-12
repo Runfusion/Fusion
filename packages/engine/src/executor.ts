@@ -55,6 +55,12 @@ const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"
 
 /** Maximum retry attempts for workflow step hard failures before giving up */
 const MAX_WORKFLOW_STEP_RETRIES = 3;
+const WORKFLOW_SCRIPT_OUTPUT_MAX_CHARS = 4_000;
+
+function truncateWorkflowScriptOutput(output: string): string {
+  if (output.length <= WORKFLOW_SCRIPT_OUTPUT_MAX_CHARS) return output;
+  return `... output truncated to last ${WORKFLOW_SCRIPT_OUTPUT_MAX_CHARS} characters ...\n${output.slice(-WORKFLOW_SCRIPT_OUTPUT_MAX_CHARS)}`;
+}
 
 // ── Tool parameter schemas (module-level for reuse in ToolDefinition generics) ──
 
@@ -2804,7 +2810,7 @@ ${failureFeedback}
             `[pre-merge] Workflow step failed: ${ws.name}`,
             result.error || "Unknown error",
           );
-          executorLog.error(`${task.id} — [pre-merge] workflow step failed: ${ws.name} — ${result.error}`);
+          executorLog.error(`${task.id} — [pre-merge] workflow step failed: ${ws.name}; output captured in task log`);
           results.push({
             workflowStepId: ws.id,
             workflowStepName: ws.name,
@@ -2878,20 +2884,19 @@ ${failureFeedback}
     try {
       // Non-blocking: async exec so the executor event loop keeps running
       // while the user-configured workflow script executes.
-      const { stdout: out } = await execAsync(scriptCommand, {
+      await execAsync(scriptCommand, {
         cwd: worktreePath,
         timeout: 120_000,
       });
-      const stdout = out.toString().trim();
-      return { success: true, output: stdout || `Script '${scriptName}' completed successfully` };
+      return { success: true, output: `Script '${scriptName}' completed successfully` };
     } catch (err: any) {
       const stderr = err.stderr?.toString()?.trim() || "";
       const stdout = err.stdout?.toString()?.trim() || "";
       const exitCode = err.code ?? err.status;
       const parts: string[] = [];
       if (exitCode !== undefined) parts.push(`Exit code: ${exitCode}`);
-      if (stdout) parts.push(`stdout: ${stdout}`);
-      if (stderr) parts.push(`stderr: ${stderr}`);
+      if (stdout) parts.push(`stdout: ${truncateWorkflowScriptOutput(stdout)}`);
+      if (stderr) parts.push(`stderr: ${truncateWorkflowScriptOutput(stderr)}`);
       if (!parts.length) parts.push(err.message || "Unknown error");
       const errorOutput = parts.join("\n");
       return { success: false, error: errorOutput };

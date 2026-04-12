@@ -68,6 +68,7 @@ const DEPENDENCY_SYNC_TRIGGER_PATTERNS = [
 
 const VERIFICATION_COMMAND_MAX_BUFFER = 50 * 1024 * 1024;
 const VERIFICATION_LOG_MAX_CHARS = 20_000;
+const WORKFLOW_SCRIPT_OUTPUT_MAX_CHARS = 4_000;
 
 /** Maximum characters for commit log in merge prompt — prevents context overflow on large branches */
 const MERGE_COMMIT_LOG_MAX_CHARS = 5000;
@@ -87,6 +88,11 @@ function truncateWithEllipsis(text: string, maxChars: number): string {
 function truncateVerificationOutput(output: string): string {
   if (output.length <= VERIFICATION_LOG_MAX_CHARS) return output;
   return `... output truncated to last ${VERIFICATION_LOG_MAX_CHARS} characters ...\n${output.slice(-VERIFICATION_LOG_MAX_CHARS)}`;
+}
+
+function truncateWorkflowScriptOutput(output: string): string {
+  if (output.length <= WORKFLOW_SCRIPT_OUTPUT_MAX_CHARS) return output;
+  return `... output truncated to last ${WORKFLOW_SCRIPT_OUTPUT_MAX_CHARS} characters ...\n${output.slice(-WORKFLOW_SCRIPT_OUTPUT_MAX_CHARS)}`;
 }
 
 /** Check if a path matches a glob pattern (simple glob support: * and **) */
@@ -360,9 +366,10 @@ async function runVerificationCommand(
       return result;
     }
 
-    // Build a useful error summary
+    // Keep command output out of process logs. The bounded excerpt is stored on
+    // the task for diagnostics without dumping test output to the engine stdout.
     const summary = truncateVerificationOutput(result.stderr || result.stdout || error.message || "Unknown error");
-    mergerLog.error(`${taskId}: ${type} command failed (exit ${result.exitCode}): ${summary.trim()}`);
+    mergerLog.error(`${taskId}: ${type} command failed (exit ${result.exitCode}); output captured in task log`);
     await store.logEntry(
       taskId,
       `[verification] ${type} command failed (exit ${result.exitCode}): ${summary.trim()}`,
@@ -2072,7 +2079,7 @@ async function runPostMergeWorkflowSteps(
       } else {
         // Post-merge failures are logged but do NOT block task completion
         await store.logEntry(taskId, `[post-merge] Workflow step failed: ${ws.name}`, result.error || "Unknown error");
-        mergerLog.error(`${taskId}: [post-merge] workflow step failed: ${ws.name} — ${result.error}`);
+        mergerLog.error(`${taskId}: [post-merge] workflow step failed: ${ws.name}; output captured in task log`);
         existingResults.push({
           workflowStepId: ws.id,
           workflowStepName: ws.name,
@@ -2120,21 +2127,21 @@ async function executePostMergeScriptStep(
   }
 
   try {
-    const output = execSync(scriptCommand, {
+    await execAsync(scriptCommand, {
       cwd: rootDir,
       encoding: "utf-8",
       timeout: 120_000,
-      stdio: ["pipe", "pipe", "pipe"],
+      maxBuffer: 10 * 1024 * 1024,
     });
-    return { success: true, output: output.trim() };
+    return { success: true, output: `Script '${scriptName}' completed successfully` };
   } catch (err: any) {
     const stderr = err.stderr?.toString()?.trim() || "";
     const stdout = err.stdout?.toString()?.trim() || "";
-    const exitCode = err.status;
+    const exitCode = err.code ?? err.status;
     const parts: string[] = [];
     if (exitCode !== undefined) parts.push(`Exit code: ${exitCode}`);
-    if (stdout) parts.push(`stdout: ${stdout}`);
-    if (stderr) parts.push(`stderr: ${stderr}`);
+    if (stdout) parts.push(`stdout: ${truncateWorkflowScriptOutput(stdout)}`);
+    if (stderr) parts.push(`stderr: ${truncateWorkflowScriptOutput(stderr)}`);
     if (!parts.length) parts.push(err.message || "Unknown error");
     return { success: false, error: parts.join("\n") };
   }

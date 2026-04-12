@@ -23,13 +23,13 @@ describe("NodeHealthMonitor", () => {
   let checkNodeHealthMock: ReturnType<typeof vi.fn>;
   let monitor: NodeHealthMonitor;
   let warnSpy: ReturnType<typeof vi.spyOn>;
-  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.useFakeTimers();
 
     warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     listNodesMock = vi.fn().mockResolvedValue([
       createNode({ id: "node-local", name: "Local Node", type: "local", status: "online" }),
@@ -49,7 +49,7 @@ describe("NodeHealthMonitor", () => {
     await monitor.stop();
     vi.useRealTimers();
     warnSpy.mockRestore();
-    logSpy.mockRestore();
+    errorSpy.mockRestore();
     vi.clearAllMocks();
   });
 
@@ -111,7 +111,7 @@ describe("NodeHealthMonitor", () => {
     await monitor.checkAllNodes();
     await monitor.checkAllNodes();
 
-    expect(logSpy).toHaveBeenCalledWith(
+    expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("[node-health-monitor] Remote node Remote Node (node-remote) recovered")
     );
     expect(monitor.getNodeHealth("node-remote")).toBe("online");

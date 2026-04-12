@@ -6627,10 +6627,13 @@ describe("Workflow Steps Execution", () => {
             workflowStepId: "WS-001",
             workflowStepName: "Run Tests",
             status: "passed",
+            output: "Script 'test' completed successfully",
           }),
         ]),
       }),
     );
+    const updatePayloads = store.updateTask.mock.calls.map((call: any[]) => call[1]);
+    expect(JSON.stringify(updatePayloads)).not.toContain("all tests passed");
   });
 
   it("fails task when script-mode workflow step exits non-zero", async () => {
