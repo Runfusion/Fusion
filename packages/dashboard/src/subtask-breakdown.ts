@@ -69,7 +69,7 @@ export function setAiSessionStore(store: AiSessionStore): void {
   _aiSessionStore.on("ai_session:deleted", _aiSessionDeletedListener);
 }
 
-type SubtaskInternalSession = SubtaskSession & { updatedAt: Date; agent?: any; thinkingOutput: string };
+type SubtaskInternalSession = SubtaskSession & { updatedAt: Date; agent?: any; thinkingOutput: string; projectId?: string };
 
 function safeParseJson<T>(
   text: string | null,
@@ -194,7 +194,7 @@ function persistSubtaskSession(session: SubtaskInternalSession, status: "generat
     result: session.subtasks.length > 0 ? JSON.stringify(session.subtasks) : null,
     thinkingOutput: session.thinkingOutput,
     error: error ?? session.error ?? null,
-    projectId: null,
+    projectId: session.projectId ?? null,
     createdAt: session.createdAt.toISOString(),
     updatedAt: new Date().toISOString(),
     lockedByTab: null,
@@ -332,10 +332,12 @@ export async function createSubtaskSession(
   _store?: TaskStore,
   rootDir?: string,
   promptOverrides?: PromptOverrideMap,
+  projectId?: string,
 ): Promise<SubtaskSession> {
   const sessionId = randomUUID();
   const session = {
     sessionId,
+    projectId,
     initialDescription,
     subtasks: [],
     status: "generating" as const,

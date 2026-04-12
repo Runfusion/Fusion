@@ -6359,12 +6359,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const scopedStore = await getScopedStore(req);
       const settings = await scopedStore.getSettings();
+      const projectId = getProjectIdFromRequest(req);
       const { createSubtaskSession } = await import("./subtask-breakdown.js");
       const session = await createSubtaskSession(
         description,
         scopedStore,
         scopedStore.getRootDir(),
         settings.promptOverrides,
+        projectId,
       );
       res.status(201).json({ sessionId: session.sessionId });
     } catch (err: any) {
