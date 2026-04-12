@@ -2638,6 +2638,201 @@ describe("MissionStore", () => {
       expect(indexNames).toContain("idxFixLineageSourceFeatureId");
     });
   });
+
+  describe("validator run methods", () => {
+    it("startValidatorRun creates run with status running (VAL-DM-015)", () => {
+      const mission = store.createMission({ title: "Validator Run Test" });
+      const milestone = store.addMilestone(mission.id, { title: "MS" });
+      const slice = store.addSlice(milestone.id, { title: "SL" });
+      const feature = store.addFeature(slice.id, { title: "Test Feature" });
+
+      const run = store.startValidatorRun(feature.id, "task_completion");
+
+      expect(run).toBeDefined();
+      expect(run.status).toBe("running");
+      expect(run.featureId).toBe(feature.id);
+      expect(run.milestoneId).toBe(milestone.id);
+      expect(run.sliceId).toBe(slice.id);
+      expect(run.triggerType).toBe("task_completion");
+      expect(run.startedAt).toBeDefined();
+      expect(run.completedAt).toBeUndefined();
+
+      // Verify feature was updated
+      const updatedFeature = store.getFeature(feature.id);
+      expect(updatedFeature!.validatorAttemptCount).toBe(1);
+      expect(updatedFeature!.lastValidatorRunId).toBe(run.id);
+      expect(updatedFeature!.loopState).toBe("validating");
+    });
+
+    it("startValidatorRun increments validatorAttemptCount (VAL-DM-015)", () => {
+      const mission = store.createMission({ title: "Validator Run Test" });
+      const milestone = store.addMilestone(mission.id, { title: "MS" });
+      const slice = store.addSlice(milestone.id, { title: "SL" });
+      const feature = store.addFeature(slice.id, { title: "Test Feature" });
+
+      // Start first run
+      const run1 = store.startValidatorRun(feature.id);
+      expect(run1.validatorAttempt).toBe(1);
+
+      // Start second run
+      const run2 = store.startValidatorRun(feature.id);
+      expect(run2.validatorAttempt).toBe(2);
+
+      // Verify feature has correct count
+      const updatedFeature = store.getFeature(feature.id);
+      expect(updatedFeature!.validatorAttemptCount).toBe(2);
+      expect(updatedFeature!.lastValidatorRunId).toBe(run2.id);
+    });
+
+    it("completeValidatorRun transitions to passed (VAL-DM-016)", () => {
+      const mission = store.createMission({ title: "Complete Test" });
+      const milestone = store.addMilestone(mission.id, { title: "MS" });
+      const slice = store.addSlice(milestone.id, { title: "SL" });
+      const feature = store.addFeature(slice.id, { title: "Test Feature" });
+
+      const run = store.startValidatorRun(feature.id);
+
+      const completedRun = store.completeValidatorRun(run.id, "passed", "All assertions passed");
+
+      expect(completedRun.status).toBe("passed");
+      expect(completedRun.completedAt).toBeDefined();
+      expect(completedRun.summary).toBe("All assertions passed");
+
+      // Verify feature state
+      const updatedFeature = store.getFeature(feature.id);
+      expect(updatedFeature!.loopState).toBe("passed");
+      expect(updatedFeature!.lastValidatorStatus).toBe("passed");
+    });
+
+    it("completeValidatorRun transitions to failed (VAL-DM-017)", () => {
+      const mission = store.createMission({ title: "Complete Test" });
+      const milestone = store.addMilestone(mission.id, { title: "MS" });
+      const slice = store.addSlice(milestone.id, { title: "SL" });
+      const feature = store.addFeature(slice.id, { title: "Test Feature" });
+
+      const run = store.startValidatorRun(feature.id);
+
+      const completedRun = store.completeValidatorRun(run.id, "failed", "Assertions failed");
+
+      expect(completedRun.status).toBe("failed");
+
+      // Verify feature state
+      const updatedFeature = store.getFeature(feature.id);
+      expect(updatedFeature!.loopState).toBe("needs_fix");
+      expect(updatedFeature!.lastValidatorStatus).toBe("failed");
+    });
+
+    it("completeValidatorRun transitions to blocked (VAL-DM-018)", () => {
+      const mission = store.createMission({ title: "Complete Test" });
+      const milestone = store.addMilestone(mission.id, { title: "MS" });
+      const slice = store.addSlice(milestone.id, { title: "SL" });
+      const feature = store.addFeature(slice.id, { title: "Test Feature" });
+
+      const run = store.startValidatorRun(feature.id);
+
+      const completedRun = store.completeValidatorRun(run.id, "blocked", undefined, "External dependency unavailable");
+
+      expect(completedRun.status).toBe("blocked");
+      expect(completedRun.blockedReason).toBe("External dependency unavailable");
+
+      // Verify feature state
+      const updatedFeature = store.getFeature(feature.id);
+      expect(updatedFeature!.loopState).toBe("blocked");
+      expect(updatedFeature!.lastValidatorStatus).toBe("blocked");
+    });
+
+    it("completeValidatorRun transitions to error (VAL-DM-019)", () => {
+      const mission = store.createMission({ title: "Complete Test" });
+      const milestone = store.addMilestone(mission.id, { title: "MS" });
+      const slice = store.addSlice(milestone.id, { title: "SL" });
+      const feature = store.addFeature(slice.id, { title: "Test Feature" });
+
+      const run = store.startValidatorRun(feature.id);
+
+      const completedRun = store.completeValidatorRun(run.id, "error", "AI session failed");
+
+      expect(completedRun.status).toBe("error");
+
+      // Verify feature stays in validating state on error
+      const updatedFeature = store.getFeature(feature.id);
+      expect(updatedFeature!.loopState).toBe("validating");
+      expect(updatedFeature!.lastValidatorStatus).toBe("error");
+    });
+
+    it("completeValidatorRun computes durationMs (VAL-DM-020)", () => {
+      const mission = store.createMission({ title: "Duration Test" });
+      const milestone = store.addMilestone(mission.id, { title: "MS" });
+      const slice = store.addSlice(milestone.id, { title: "SL" });
+      const feature = store.addFeature(slice.id, { title: "Test Feature" });
+
+      const run = store.startValidatorRun(feature.id);
+
+      // Use vi.useFakeTimers to control time
+      const startTime = new Date(run.startedAt).getTime();
+      const expectedDuration = 5000; // 5 seconds
+
+      // Advance timers
+      vi.useFakeTimers();
+      vi.setSystemTime(startTime + expectedDuration);
+
+      const completedRun = store.completeValidatorRun(run.id, "passed");
+
+      vi.useRealTimers();
+
+      // durationMs should be computed correctly
+      const completedTime = new Date(completedRun.completedAt!).getTime();
+      const actualDuration = completedTime - startTime;
+      expect(actualDuration).toBe(expectedDuration);
+    });
+
+    it("getValidatorRun returns run by id", () => {
+      const mission = store.createMission({ title: "Get Run Test" });
+      const milestone = store.addMilestone(mission.id, { title: "MS" });
+      const slice = store.addSlice(milestone.id, { title: "SL" });
+      const feature = store.addFeature(slice.id, { title: "Test Feature" });
+
+      const run = store.startValidatorRun(feature.id);
+
+      const retrieved = store.getValidatorRun(run.id);
+      expect(retrieved).toBeDefined();
+      expect(retrieved!.id).toBe(run.id);
+      expect(retrieved!.status).toBe("running");
+    });
+
+    it("startValidatorRun emits validator-run:started event", () => {
+      const mission = store.createMission({ title: "Event Test" });
+      const milestone = store.addMilestone(mission.id, { title: "MS" });
+      const slice = store.addSlice(milestone.id, { title: "SL" });
+      const feature = store.addFeature(slice.id, { title: "Test Feature" });
+
+      const eventListener = vi.fn();
+      store.on("validator-run:started", eventListener);
+
+      const run = store.startValidatorRun(feature.id);
+
+      expect(eventListener).toHaveBeenCalledWith(run);
+
+      store.off("validator-run:started", eventListener);
+    });
+
+    it("completeValidatorRun emits validator-run:completed event", () => {
+      const mission = store.createMission({ title: "Event Test" });
+      const milestone = store.addMilestone(mission.id, { title: "MS" });
+      const slice = store.addSlice(milestone.id, { title: "SL" });
+      const feature = store.addFeature(slice.id, { title: "Test Feature" });
+
+      const run = store.startValidatorRun(feature.id);
+
+      const eventListener = vi.fn();
+      store.on("validator-run:completed", eventListener);
+
+      const completedRun = store.completeValidatorRun(run.id, "passed", "Success");
+
+      expect(eventListener).toHaveBeenCalledWith(completedRun, "passed", expect.any(Number));
+
+      store.off("validator-run:completed", eventListener);
+    });
+  });
 });
 
 // vi import for vitest mocking

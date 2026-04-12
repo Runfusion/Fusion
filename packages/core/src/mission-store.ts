@@ -19,6 +19,7 @@ import type {
   Milestone,
   Slice,
   MissionFeature,
+  MissionValidatorRun,
   MissionCreateInput,
   MilestoneCreateInput,
   SliceCreateInput,
@@ -40,6 +41,8 @@ import type {
   ContractAssertionCreateInput,
   ContractAssertionUpdateInput,
   MilestoneValidationState,
+  ValidatorRunStatus,
+  FeatureLoopState,
 } from "./mission-types.js";
 
 // ── Mission Summary Type ─────────────────────────────────────────────
@@ -103,6 +106,10 @@ export interface MissionStoreEvents {
   "assertion:unlinked": [{ featureId: string; assertionId: string }];
   /** Emitted when a milestone's validation state is recomputed */
   "milestone:validation:updated": [{ milestoneId: string; state: MilestoneValidationState; rollup: MilestoneValidationRollup }];
+  /** Emitted when a validator run is started */
+  "validator-run:started": [MissionValidatorRun];
+  /** Emitted when a validator run is completed (run, final status, durationMs) */
+  "validator-run:completed": [MissionValidatorRun, ValidatorRunStatus, number];
 }
 
 // ── MissionStore Class ──────────────────────────────────────────────
@@ -256,6 +263,28 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       metadata: fromJson<Record<string, unknown>>(row.metadata) ?? null,
       timestamp: row.timestamp,
       seq: row.seq ?? 0,
+    };
+  }
+
+  /**
+   * Convert a database row to a MissionValidatorRun object.
+   */
+  private rowToValidatorRun(row: any): MissionValidatorRun {
+    return {
+      id: row.id,
+      featureId: row.featureId,
+      milestoneId: row.milestoneId,
+      sliceId: row.sliceId,
+      status: row.status as ValidatorRunStatus,
+      triggerType: row.triggerType || undefined,
+      implementationAttempt: row.implementationAttempt ?? 0,
+      validatorAttempt: row.validatorAttempt ?? 0,
+      summary: row.summary || undefined,
+      blockedReason: row.blockedReason || undefined,
+      startedAt: row.startedAt,
+      completedAt: row.completedAt || undefined,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
     };
   }
 
@@ -1694,6 +1723,199 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     return this.rowToFeature(row);
   }
 
+  // ── Validator Run Operations ────────────────────────────────────────
+
+  /**
+   * Start a new validator run for a feature.
+   * Creates a run with status='running', sets startedAt, increments the feature's
+   * validatorAttemptCount, updates lastValidatorRunId, and emits validator-run:started event.
+   *
+   * @param featureId - Feature ID to start validation for
+   * @param triggerType - What triggered this run (e.g., 'task_completion', 'manual', 'scheduled')
+   * @returns The created validator run
+   * @throws Error if feature not found
+   */
+  startValidatorRun(featureId: string, triggerType?: string): MissionValidatorRun {
+    const feature = this.getFeature(featureId);
+    if (!feature) {
+      throw new Error(`Feature ${featureId} not found`);
+    }
+
+    // Resolve the hierarchy to get milestoneId and sliceId
+    const slice = this.getSlice(feature.sliceId);
+    if (!slice) {
+      throw new Error(`Slice ${feature.sliceId} not found`);
+    }
+
+    const milestone = this.getMilestone(slice.milestoneId);
+    if (!milestone) {
+      throw new Error(`Milestone ${slice.milestoneId} not found`);
+    }
+
+    const now = new Date().toISOString();
+    const id = this.generateValidatorRunId();
+
+    // Increment validatorAttemptCount on the feature
+    const newValidatorAttemptCount = (feature.validatorAttemptCount ?? 0) + 1;
+
+    const run: MissionValidatorRun = {
+      id,
+      featureId,
+      milestoneId: milestone.id,
+      sliceId: slice.id,
+      status: "running",
+      triggerType,
+      implementationAttempt: feature.implementationAttemptCount ?? 0,
+      validatorAttempt: newValidatorAttemptCount,
+      startedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.db.transaction(() => {
+      // Insert the validator run
+      this.db.prepare(`
+        INSERT INTO mission_validator_runs (id, featureId, milestoneId, sliceId, status, triggerType, implementationAttempt, validatorAttempt, startedAt, createdAt, updatedAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        run.id,
+        run.featureId,
+        run.milestoneId,
+        run.sliceId,
+        run.status,
+        run.triggerType ?? null,
+        run.implementationAttempt,
+        run.validatorAttempt,
+        run.startedAt,
+        run.createdAt,
+        run.updatedAt,
+      );
+
+      // Update the feature: increment validatorAttemptCount and set lastValidatorRunId
+      this.updateFeature(featureId, {
+        validatorAttemptCount: newValidatorAttemptCount,
+        lastValidatorRunId: run.id,
+        loopState: "validating",
+      });
+    });
+
+    this.db.bumpLastModified();
+    this.emit("validator-run:started", run);
+
+    return run;
+  }
+
+  /**
+   * Complete a validator run with the given result.
+   * Sets run status, completedAt, durationMs and updates feature loop state based on result.
+   *
+   * Result transitions:
+   * - 'passed': run status='passed', feature loopState='passed', lastValidatorStatus='passed'
+   * - 'failed': run status='failed', feature loopState='needs_fix', lastValidatorStatus='failed'
+   * - 'blocked': run status='blocked', feature loopState='blocked', lastValidatorStatus='blocked'
+   * - 'error': run status='error', feature loopState stays 'validating', lastValidatorStatus='error'
+   *
+   * @param runId - Validator run ID to complete
+   * @param result - The completion result status
+   * @param summary - Optional summary of the validation run
+   * @param blockedReason - Optional reason if result is 'blocked'
+   * @returns The completed validator run
+   * @throws Error if run not found
+   */
+  completeValidatorRun(
+    runId: string,
+    result: "passed" | "failed" | "blocked" | "error",
+    summary?: string,
+    blockedReason?: string,
+  ): MissionValidatorRun {
+    const run = this.getValidatorRun(runId);
+    if (!run) {
+      throw new Error(`Validator run ${runId} not found`);
+    }
+
+    if (run.status !== "running") {
+      throw new Error(`Validator run ${runId} is not in 'running' status`);
+    }
+
+    const now = new Date().toISOString();
+    const completedAt = now;
+
+    // Compute durationMs as non-negative integer
+    const startedAtMs = new Date(run.startedAt).getTime();
+    const completedAtMs = new Date(completedAt).getTime();
+    const durationMs = Math.max(0, completedAtMs - startedAtMs);
+
+    // Determine feature loop state and lastValidatorStatus based on result
+    let featureLoopState: FeatureLoopState;
+    let featureLastValidatorStatus: ValidatorRunStatus;
+
+    switch (result) {
+      case "passed":
+        featureLoopState = "passed";
+        featureLastValidatorStatus = "passed";
+        break;
+      case "failed":
+        featureLoopState = "needs_fix";
+        featureLastValidatorStatus = "failed";
+        break;
+      case "blocked":
+        featureLoopState = "blocked";
+        featureLastValidatorStatus = "blocked";
+        break;
+      case "error":
+        featureLoopState = "validating"; // stays validating on error
+        featureLastValidatorStatus = "error";
+        break;
+    }
+
+    this.db.transaction(() => {
+      // Update the validator run
+      this.db.prepare(`
+        UPDATE mission_validator_runs SET
+          status = ?,
+          summary = ?,
+          blockedReason = ?,
+          completedAt = ?,
+          updatedAt = ?
+        WHERE id = ?
+      `).run(
+        result,
+        summary ?? null,
+        blockedReason ?? null,
+        completedAt,
+        now,
+        runId,
+      );
+
+      // Update the feature's loop state and lastValidatorStatus
+      this.updateFeature(run.featureId, {
+        loopState: featureLoopState,
+        lastValidatorStatus: featureLastValidatorStatus,
+      });
+    });
+
+    this.db.bumpLastModified();
+
+    // Re-read the run to get the updated state
+    const updatedRun = this.getValidatorRun(runId)!;
+
+    this.emit("validator-run:completed", updatedRun, result, durationMs);
+
+    return updatedRun;
+  }
+
+  /**
+   * Get a validator run by ID.
+   *
+   * @param id - Validator run ID
+   * @returns The validator run, or undefined if not found
+   */
+  getValidatorRun(id: string): MissionValidatorRun | undefined {
+    const row = this.db.prepare("SELECT * FROM mission_validator_runs WHERE id = ?").get(id);
+    if (!row) return undefined;
+    return this.rowToValidatorRun(row);
+  }
+
   // ── Contract Assertion Operations ─────────────────────────────────
 
   /**
@@ -2515,5 +2737,11 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     const timestamp = Date.now();
     const random = Math.random().toString(36).substring(2, 6).toUpperCase();
     return `CA-${timestamp.toString(36).toUpperCase()}-${random}`;
+  }
+
+  private generateValidatorRunId(): string {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+    return `VR-${timestamp.toString(36).toUpperCase()}-${random}`;
   }
 }
