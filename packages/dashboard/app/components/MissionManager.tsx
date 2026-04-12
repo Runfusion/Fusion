@@ -576,7 +576,23 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       setSelectedMission(data);
       // Auto-expand first milestone and slice
       if (data.milestones.length > 0) {
-        setExpandedMilestones(new Set([data.milestones[0].id]));
+        const firstMilestoneId = data.milestones[0].id;
+        setExpandedMilestones(new Set([firstMilestoneId]));
+        // Load assertions and validation rollup for the first milestone (inline to avoid forward ref)
+        fetchAssertions(firstMilestoneId, projectId).then((assertions) => {
+          setAssertionsByMilestone((prev) => {
+            const next = new Map(prev);
+            next.set(firstMilestoneId, assertions);
+            return next;
+          });
+        }).catch(() => { /* silently fail */ });
+        fetchMilestoneValidation(firstMilestoneId, projectId).then((rollup) => {
+          setValidationRollupByMilestone((prev) => {
+            const next = new Map(prev);
+            next.set(firstMilestoneId, rollup);
+            return next;
+          });
+        }).catch(() => { /* silently fail */ });
         if (data.milestones[0].slices.length > 0) {
           setExpandedSlices(new Set([data.milestones[0].slices[0].id]));
         }
@@ -1054,14 +1070,26 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       if (isExpanding) {
         next.add(milestoneId);
         // Load assertions and validation rollup when expanding milestone
-        void loadAssertionsForMilestone(milestoneId);
-        void loadValidationRollup(milestoneId);
+        fetchAssertions(milestoneId, projectId).then((assertions) => {
+          setAssertionsByMilestone((prev) => {
+            const next = new Map(prev);
+            next.set(milestoneId, assertions);
+            return next;
+          });
+        }).catch(() => { /* silently fail */ });
+        fetchMilestoneValidation(milestoneId, projectId).then((rollup) => {
+          setValidationRollupByMilestone((prev) => {
+            const next = new Map(prev);
+            next.set(milestoneId, rollup);
+            return next;
+          });
+        }).catch(() => { /* silently fail */ });
       } else {
         next.delete(milestoneId);
       }
       return next;
     });
-  }, []);
+  }, [projectId]);
 
   // Slice handlers
   const handleCreateSlice = useCallback((milestoneId: string) => {
@@ -2244,14 +2272,40 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                               {feature.loopState === "blocked" && "🚫"}
                                             </span>
                                           )}
-                                          {/* Lineage indicator for fix features */}
+                                          {/* Lineage indicator for fix features - click to navigate to source feature */}
                                           {feature.generatedFromFeatureId && (
-                                            <span
+                                            <button
                                               className="mission-feature__lineage"
-                                              title={`Generated from fix for assertion failure`}
+                                              onClick={() => {
+                                                // Navigate to source feature: find its milestone/slice and expand to it
+                                                // Find the source feature in the mission hierarchy
+                                                for (const m of selectedMission?.milestones ?? []) {
+                                                  for (const s of m.slices) {
+                                                    const sourceFeature = s.features.find((f) => f.id === feature.generatedFromFeatureId);
+                                                    if (sourceFeature) {
+                                                      setExpandedMilestones((prev) => {
+                                                        const next = new Set(prev);
+                                                        next.add(m.id);
+                                                        return next;
+                                                      });
+                                                      setExpandedSlices((prev) => {
+                                                        const next = new Set(prev);
+                                                        next.add(s.id);
+                                                        return next;
+                                                      });
+                                                      setExpandedFeatureId(sourceFeature.id);
+                                                      // Load loop state for source feature
+                                                      void loadFeatureLoopState(sourceFeature.id);
+                                                      void loadValidationRuns(sourceFeature.id);
+                                                      return;
+                                                    }
+                                                  }
+                                                }
+                                              }}
+                                              title={`Generated from feature: ${feature.generatedFromFeatureId}`}
                                             >
                                               🔗 Fix
-                                            </span>
+                                            </button>
                                           )}
                                           {/* Retry budget display */}
                                           {feature.loopState && feature.loopState !== "idle" && featureLoopStates.get(feature.id) && (
@@ -2423,7 +2477,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                             <div className="mission-feature__run-history-header">
                                               <span className="mission-feature__run-history-title">Validation Runs</span>
                                             </div>
-                                            {validationRunsByFeature.get(feature.id)?.map((run) => (
+                                            {(validationRunsByFeature.get(feature.id) ?? []).map((run) => (
                                               <div key={run.id} className="mission-run">
                                                 <div
                                                   className="mission-run__header"
@@ -2536,6 +2590,14 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                         </div>
                                       </div>
                                     )}
+
+                                    {/* Empty state when no features exist and not creating */}
+                                    {!isCreatingFeature && (!slice.features || slice.features.length === 0) && (
+                                      <div className="mission-manager__empty mission-features__empty">
+                                        <Box size={16} />
+                                        <span>No fix features generated.</span>
+                                      </div>
+                                    )}
                                   </div>
                                 </div>
                               )}
@@ -2638,7 +2700,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
                             {/* Assertions list */}
                             <div className="mission-assertions__list">
-                              {assertionsByMilestone.get(milestone.id)?.map((assertion) => (
+                              {(Array.isArray(assertionsByMilestone.get(milestone.id)) ? assertionsByMilestone.get(milestone.id)! : [] as MissionContractAssertion[]).map((assertion) => (
                                 <div key={assertion.id} className="mission-assertion">
                                   <div className="mission-assertion__header">
                                     {editingAssertionId === assertion.id ? (
@@ -2680,8 +2742,8 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                         <span
                                           className="mission-status-badge mission-status-badge--sm"
                                           style={{
-                                            backgroundColor: assertionStatusColors[assertion.status].bg,
-                                            color: assertionStatusColors[assertion.status].text,
+                                            backgroundColor: (assertionStatusColors[assertion.status] ?? assertionStatusColors.pending).bg,
+                                            color: (assertionStatusColors[assertion.status] ?? assertionStatusColors.pending).text,
                                           }}
                                         >
                                           {assertion.status}

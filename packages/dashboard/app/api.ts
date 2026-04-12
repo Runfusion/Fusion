@@ -3652,13 +3652,22 @@ export function fetchValidationLoopState(featureId: string, projectId?: string):
   return api<MissionFeatureLoopSnapshot>(withProjectId(`/missions/features/${encodeURIComponent(featureId)}/validation-loop`, projectId));
 }
 
+/** Paginated response wrapper for validation runs */
+export interface ValidationRunsResponse {
+  runs: MissionValidatorRun[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 /** List validation runs for a feature */
 export function fetchValidationRuns(featureId: string, options?: { limit?: number; offset?: number }, projectId?: string): Promise<MissionValidatorRun[]> {
   const params = new URLSearchParams();
   if (options?.limit !== undefined) params.set("limit", String(options.limit));
   if (options?.offset !== undefined) params.set("offset", String(options.offset));
   const suffix = params.size > 0 ? `?${params.toString()}` : "";
-  return api<MissionValidatorRun[]>(withProjectId(`/missions/features/${encodeURIComponent(featureId)}/validation-runs${suffix}`, projectId));
+  return api<ValidationRunsResponse>(withProjectId(`/missions/features/${encodeURIComponent(featureId)}/validation-runs${suffix}`, projectId))
+    .then((response) => response.runs);
 }
 
 /** Get a single validator run */
