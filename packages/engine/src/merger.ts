@@ -354,6 +354,79 @@ async function syncDependenciesForMerge(
   }
 }
 
+// ── Default test command inference ────────────────────────────────────
+
+/** Result of inferring a default test command */
+interface InferredTestCommand {
+  command: string;
+  /** Source indicates whether this was explicitly configured or inferred from project files */
+  testSource: "explicit" | "inferred";
+  buildSource?: "explicit" | "inferred";
+}
+
+/**
+ * Infer a default test command based on project files.
+ * Returns the command and whether it was explicitly configured or inferred.
+ *
+ * Inference rules:
+ * - pnpm-lock.yaml → "pnpm test"
+ * - yarn.lock → "yarn test"
+ * - bun.lock/bun.lockb → "bun test"
+ * - package-lock.json → "npm test"
+ *
+ * Returns null if no test command can be inferred.
+ */
+export function inferDefaultTestCommand(
+  rootDir: string,
+  explicitTestCommand?: string,
+  explicitBuildCommand?: string,
+): InferredTestCommand | null {
+  // If explicit test command is set, use it (no inference needed)
+  if (explicitTestCommand?.trim()) {
+    return {
+      command: explicitTestCommand.trim(),
+      testSource: "explicit",
+      buildSource: explicitBuildCommand?.trim() ? "explicit" : undefined,
+    };
+  }
+
+  // Infer test command from lock files
+  if (existsSync(join(rootDir, "pnpm-lock.yaml"))) {
+    return {
+      command: "pnpm test",
+      testSource: "inferred",
+      buildSource: explicitBuildCommand?.trim() ? "explicit" : undefined,
+    };
+  }
+
+  if (existsSync(join(rootDir, "yarn.lock"))) {
+    return {
+      command: "yarn test",
+      testSource: "inferred",
+      buildSource: explicitBuildCommand?.trim() ? "explicit" : undefined,
+    };
+  }
+
+  if (existsSync(join(rootDir, "bun.lock")) || existsSync(join(rootDir, "bun.lockb"))) {
+    return {
+      command: "bun test",
+      testSource: "inferred",
+      buildSource: explicitBuildCommand?.trim() ? "explicit" : undefined,
+    };
+  }
+
+  if (existsSync(join(rootDir, "package-lock.json"))) {
+    return {
+      command: "npm test",
+      testSource: "inferred",
+      buildSource: explicitBuildCommand?.trim() ? "explicit" : undefined,
+    };
+  }
+
+  // No inference possible — return null, letting the caller decide what to do
+  return null;
+}
+
 // ── Deterministic merge verification ──────────────────────────────────
 
 /** Result of running a single verification command */
@@ -395,6 +468,8 @@ async function runDeterministicVerification(
   taskId: string,
   testCommand?: string,
   buildCommand?: string,
+  testSource?: "explicit" | "inferred",
+  buildSource?: "explicit" | "inferred",
 ): Promise<VerificationResult> {
   const result: VerificationResult = { allPassed: true };
 
@@ -409,16 +484,20 @@ async function runDeterministicVerification(
   const hasTestCommand = !!normalizedTestCommand;
   const hasBuildCommand = !!normalizedBuildCommand;
 
+  // Build source indicator for logging
+  const testSourceLabel = testSource === "inferred" ? " [inferred]" : "";
+  const buildSourceLabel = buildSource === "inferred" ? " [inferred]" : "";
+
   mergerLog.log(
     `${taskId}: running deterministic verification` +
-    (hasTestCommand ? ` [test: ${normalizedTestCommand}]` : "") +
-    (hasBuildCommand ? ` [build: ${normalizedBuildCommand}]` : ""),
+    (hasTestCommand ? ` [test:${testSourceLabel} ${normalizedTestCommand}]` : "") +
+    (hasBuildCommand ? ` [build:${buildSourceLabel} ${normalizedBuildCommand}]` : ""),
   );
   await store.logEntry(
     taskId,
     "Running deterministic merge verification" +
-    (hasTestCommand ? ` (testCommand: ${normalizedTestCommand})` : "") +
-    (hasBuildCommand ? ` (buildCommand: ${normalizedBuildCommand})` : ""),
+    (hasTestCommand ? ` (test${testSource === "inferred" ? " [inferred]" : ""}: ${normalizedTestCommand})` : "") +
+    (hasBuildCommand ? ` (build${buildSource === "inferred" ? " [inferred]" : ""}: ${normalizedBuildCommand})` : ""),
   );
 
   // Run test command first if configured
@@ -1221,12 +1300,29 @@ export async function aiMergeTask(
   // 5. Execute merge with retry logic
   await store.updateTask(taskId, { status: "merging" });
 
+  // Normalize explicit verification commands from settings
+  const explicitTestCommand = settings.testCommand?.trim() || undefined;
+  const explicitBuildCommand = settings.buildCommand?.trim() || undefined;
+
+  // Infer default test command if explicit testCommand is not set
+  // This ensures merge verification runs even when settings.testCommand is not configured
+  const inferredTest = inferDefaultTestCommand(rootDir, explicitTestCommand, explicitBuildCommand);
+  const effectiveTestCommand = inferredTest?.command || explicitTestCommand;
+  const effectiveTestSource = inferredTest?.testSource;
+  const effectiveBuildCommand = explicitBuildCommand;
+  const effectiveBuildSource = inferredTest?.buildSource;
+
+  // Log what verification commands will be used
+  if (effectiveTestCommand || effectiveBuildCommand) {
+    mergerLog.log(
+      `${taskId}: merge verification commands` +
+      (effectiveTestCommand ? ` [test: ${effectiveTestCommand} (${effectiveTestSource || "explicit"})]` : "") +
+      (effectiveBuildCommand ? ` [build: ${effectiveBuildCommand} (${effectiveBuildSource || "explicit"})]` : ""),
+    );
+  }
+
   const mergeAttempt = async (attemptNum: 1 | 2 | 3): Promise<boolean> => {
     mergerLog.log(`${taskId}: merge attempt ${attemptNum}/3...`);
-
-    // Normalize verification commands: treat empty string as undefined
-    const testCommand = settings.testCommand?.trim() || undefined;
-    const buildCommand = settings.buildCommand?.trim() || undefined;
 
     try {
       // Try the merge with appropriate strategy for this attempt
@@ -1242,8 +1338,10 @@ export async function aiMergeTask(
         attemptNum,
         options,
         result,
-        testCommand,
-        buildCommand,
+        testCommand: effectiveTestCommand,
+        buildCommand: effectiveBuildCommand,
+        testSource: effectiveTestSource,
+        buildSource: effectiveBuildSource,
       }, aiTracker);
 
       if (success) {
@@ -1487,6 +1585,10 @@ interface MergeAttemptParams {
   result: MergeResult;
   testCommand?: string;
   buildCommand?: string;
+  /** Source of the test command: 'explicit' from settings or 'inferred' from project files */
+  testSource?: "explicit" | "inferred";
+  /** Source of the build command: 'explicit' from settings or 'inferred' (future use) */
+  buildSource?: "explicit" | "inferred";
 }
 
 /** Mutable flag to track AI agent invocation */
@@ -1517,6 +1619,8 @@ async function executeMergeAttempt(
     result,
     testCommand,
     buildCommand,
+    testSource,
+    buildSource,
   } = params;
 
   // Attempt 3: Use -X theirs strategy
@@ -1601,7 +1705,7 @@ async function executeMergeAttempt(
           }
           // Run deterministic verification before completing the merge
           if (testCommand || buildCommand) {
-            await runDeterministicVerification(store, rootDir, taskId, testCommand, buildCommand);
+            await runDeterministicVerification(store, rootDir, taskId, testCommand, buildCommand, testSource, buildSource);
           }
           return true;
         }
@@ -1619,7 +1723,7 @@ async function executeMergeAttempt(
           mergerLog.log(`${taskId}: squash merge staged nothing — already merged`);
           // Run deterministic verification (nothing staged but still verify)
           if (testCommand || buildCommand) {
-            await runDeterministicVerification(store, rootDir, taskId, testCommand, buildCommand);
+            await runDeterministicVerification(store, rootDir, taskId, testCommand, buildCommand, testSource, buildSource);
           }
           return true;
         }
@@ -1641,7 +1745,7 @@ async function executeMergeAttempt(
         mergerLog.log(`${taskId}: squash merge staged nothing — already merged`);
         // Run deterministic verification (nothing staged but still verify)
         if (testCommand || buildCommand) {
-          await runDeterministicVerification(store, rootDir, taskId, testCommand, buildCommand);
+          await runDeterministicVerification(store, rootDir, taskId, testCommand, buildCommand, testSource, buildSource);
         }
         return true;
       }
@@ -1709,7 +1813,7 @@ async function executeMergeAttempt(
 
     // Run deterministic verification after AI agent commits
     if (testCommand || buildCommand) {
-      await runDeterministicVerification(store, rootDir, taskId, testCommand, buildCommand);
+      await runDeterministicVerification(store, rootDir, taskId, testCommand, buildCommand, testSource, buildSource);
     }
 
     return true;
@@ -1738,7 +1842,7 @@ async function executeMergeAttempt(
  * Attempt 3: Use git merge -X theirs --squash strategy
  */
 async function attemptWithTheirsStrategy(params: MergeAttemptParams): Promise<boolean> {
-  const { rootDir, branch, commitLog, includeTaskId, taskId, store, testCommand, buildCommand } = params;
+  const { rootDir, branch, commitLog, includeTaskId, taskId, store, testCommand, buildCommand, testSource, buildSource } = params;
 
   mergerLog.log(`${taskId}: attempting merge with -X theirs strategy`);
 
@@ -1769,7 +1873,7 @@ async function attemptWithTheirsStrategy(params: MergeAttemptParams): Promise<bo
       // Nothing staged - already merged
       // Run deterministic verification even when nothing is staged
       if (testCommand || buildCommand) {
-        await runDeterministicVerification(store, rootDir, taskId, testCommand, buildCommand);
+        await runDeterministicVerification(store, rootDir, taskId, testCommand, buildCommand, testSource, buildSource);
       }
       return true;
     }
@@ -1785,7 +1889,7 @@ async function attemptWithTheirsStrategy(params: MergeAttemptParams): Promise<bo
 
     // Run deterministic verification after committing
     if (testCommand || buildCommand) {
-      await runDeterministicVerification(store, rootDir, taskId, testCommand, buildCommand);
+      await runDeterministicVerification(store, rootDir, taskId, testCommand, buildCommand, testSource, buildSource);
     }
 
     return true;

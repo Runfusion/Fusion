@@ -80,6 +80,7 @@ import {
   validateDiffScope,
   shouldSyncDependenciesForMerge,
   summarizeVerificationOutput,
+  inferDefaultTestCommand,
   type ConflictCategory,
 } from "./merger.js";
 import { createKbAgent } from "./pi.js";
@@ -3632,5 +3633,362 @@ describe("summarizeVerificationOutput", () => {
     // Should contain only unique names (src/a.test.ts once, src/b.test.ts)
     const bulletMatches = result.match(/• /g);
     expect(bulletMatches?.length).toBe(2);
+  });
+});
+
+// ── Default Test Command Inference Tests ──────────────────────────────────
+
+describe("inferDefaultTestCommand", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Default: no lock files present
+    mockedExistsSync.mockReturnValue(false);
+  });
+
+  it("returns null when no package manager lock files exist", () => {
+    mockedExistsSync.mockReturnValue(false);
+    const result = inferDefaultTestCommand("/tmp/root");
+    expect(result).toBeNull();
+  });
+
+  it("returns pnpm test for pnpm-lock.yaml", () => {
+    mockedExistsSync.mockImplementation((path: any) => {
+      return String(path).includes("pnpm-lock.yaml");
+    });
+    const result = inferDefaultTestCommand("/tmp/root");
+    expect(result).toEqual({
+      command: "pnpm test",
+      testSource: "inferred",
+    });
+  });
+
+  it("returns npm test for package-lock.json", () => {
+    mockedExistsSync.mockImplementation((path: any) => {
+      return String(path).includes("package-lock.json");
+    });
+    const result = inferDefaultTestCommand("/tmp/root");
+    expect(result).toEqual({
+      command: "npm test",
+      testSource: "inferred",
+    });
+  });
+
+  it("returns yarn test for yarn.lock", () => {
+    mockedExistsSync.mockImplementation((path: any) => {
+      return String(path).includes("yarn.lock");
+    });
+    const result = inferDefaultTestCommand("/tmp/root");
+    expect(result).toEqual({
+      command: "yarn test",
+      testSource: "inferred",
+    });
+  });
+
+  it("returns bun test for bun.lock", () => {
+    mockedExistsSync.mockImplementation((path: any) => {
+      return String(path).includes("bun.lock");
+    });
+    const result = inferDefaultTestCommand("/tmp/root");
+    expect(result).toEqual({
+      command: "bun test",
+      testSource: "inferred",
+    });
+  });
+
+  it("returns bun test for bun.lockb", () => {
+    mockedExistsSync.mockImplementation((path: any) => {
+      return String(path).includes("bun.lockb");
+    });
+    const result = inferDefaultTestCommand("/tmp/root");
+    expect(result).toEqual({
+      command: "bun test",
+      testSource: "inferred",
+    });
+  });
+
+  it("prefers pnpm over npm when both exist", () => {
+    mockedExistsSync.mockImplementation((path: any) => {
+      const pathStr = String(path);
+      return pathStr.includes("pnpm-lock.yaml") || pathStr.includes("package-lock.json");
+    });
+    const result = inferDefaultTestCommand("/tmp/root");
+    expect(result?.command).toBe("pnpm test");
+  });
+
+  it("uses explicit testCommand when provided", () => {
+    mockedExistsSync.mockImplementation((path: any) => {
+      return String(path).includes("pnpm-lock.yaml");
+    });
+    const result = inferDefaultTestCommand("/tmp/root", "vitest run", "pnpm build");
+    expect(result).toEqual({
+      command: "vitest run",
+      testSource: "explicit",
+      buildSource: "explicit",
+    });
+  });
+
+  it("ignores empty string explicit testCommand", () => {
+    mockedExistsSync.mockImplementation((path: any) => {
+      return String(path).includes("pnpm-lock.yaml");
+    });
+    const result = inferDefaultTestCommand("/tmp/root", "", "pnpm build");
+    expect(result?.command).toBe("pnpm test");
+    expect(result?.testSource).toBe("inferred");
+    expect(result?.buildSource).toBe("explicit");
+  });
+
+  it("ignores whitespace-only explicit testCommand", () => {
+    mockedExistsSync.mockImplementation((path: any) => {
+      return String(path).includes("pnpm-lock.yaml");
+    });
+    const result = inferDefaultTestCommand("/tmp/root", "   ", "pnpm build");
+    expect(result?.command).toBe("pnpm test");
+    expect(result?.testSource).toBe("inferred");
+  });
+
+  it("returns build source even when test is inferred", () => {
+    mockedExistsSync.mockImplementation((path: any) => {
+      return String(path).includes("pnpm-lock.yaml");
+    });
+    const result = inferDefaultTestCommand("/tmp/root", undefined, "pnpm build");
+    expect(result).toEqual({
+      command: "pnpm test",
+      testSource: "inferred",
+      buildSource: "explicit",
+    });
+  });
+});
+
+// ── Inferred Test Command Merge Behavior ─────────────────────────────────
+
+describe("aiMergeTask — inferred test command execution", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+    setupHappyPathExecSync();
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+  });
+
+  it("runs inferred test command when settings.testCommand is not configured", async () => {
+    // pnpm-lock.yaml exists, testCommand is not set
+    mockedExistsSync.mockImplementation((path: any) => {
+      const pathStr = String(path);
+      if (pathStr.includes("pnpm-lock.yaml")) return true;
+      return true; // other files exist for worktree check
+    });
+
+    const verificationCalls: string[] = [];
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("pnpm test")) {
+        verificationCalls.push("pnpm test");
+        return Buffer.from("");
+      }
+      // Handle all other git commands - matching setupHappyPathExecSync
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr === "git rev-parse HEAD" || cmdStr.startsWith("git rev-parse HEAD ")) return "mergedcommit123";
+      if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("diff --cached --quiet")) return "1" as any;
+      if (cmdStr.includes("diff --cached") && !cmdStr.includes("--quiet")) return "0" as any;
+      if (cmdStr.includes("show --shortstat")) return "3 files changed, 10 insertions(+), 2 deletions(-)" as any;
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    // testCommand is not set (undefined in DEFAULT_SETTINGS)
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+    });
+
+    await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(verificationCalls).toContain("pnpm test");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+  });
+
+  it("logs that test command was inferred from project files", async () => {
+    mockedExistsSync.mockImplementation((path: any) => {
+      return String(path).includes("pnpm-lock.yaml");
+    });
+
+    // Setup happy path
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("pnpm test")) return Buffer.from("");
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("diff --cached --quiet")) return "1" as any;
+      if (cmdStr.includes("diff --cached") && !cmdStr.includes("--quiet")) return "" as any;
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+    });
+
+    await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    // Verify log entries include verification with test command mentioned
+    const logCalls = (store.logEntry as ReturnType<typeof vi.fn>).mock.calls;
+    const verificationLogCall = logCalls.find((call: any[]) =>
+      typeof call[1] === "string" && call[1].includes("pnpm test")
+    );
+    expect(verificationLogCall).toBeTruthy();
+  });
+
+  it("failing inferred test command blocks merge and keeps task out of done", async () => {
+    mockedExistsSync.mockImplementation((path: any) => {
+      return String(path).includes("pnpm-lock.yaml");
+    });
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("pnpm test")) {
+        // Simulate test failure
+        const error = new Error("Test failed") as any;
+        error.status = 1;
+        error.stdout = "FAIL: test failed";
+        error.stderr = "";
+        throw error;
+      }
+      // Handle other commands normally
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("diff --cached --quiet")) return "1" as any;
+      if (cmdStr.includes("diff --cached") && !cmdStr.includes("--quiet")) return "" as any;
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+    });
+
+    await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(
+      "Deterministic test verification failed",
+    );
+
+    // Task should NOT be moved to done
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-050", "done");
+    // Log entry should indicate failure
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-050",
+      expect.stringContaining("test verification failed"),
+      "VerificationError",
+    );
+  });
+
+  it("explicit settings.testCommand takes precedence over inferred command", async () => {
+    mockedExistsSync.mockImplementation((path: any) => {
+      return String(path).includes("pnpm-lock.yaml");
+    });
+
+    const verificationCalls: string[] = [];
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("vitest run")) {
+        verificationCalls.push("vitest run");
+        return Buffer.from("");
+      }
+      if (cmdStr.includes("pnpm test")) {
+        verificationCalls.push("pnpm test - SHOULD NOT BE CALLED");
+        return Buffer.from("");
+      }
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("diff --cached --quiet")) return "1" as any;
+      if (cmdStr.includes("diff --cached") && !cmdStr.includes("--quiet")) return "" as any;
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    // Explicit testCommand is set
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      testCommand: "vitest run",
+    });
+
+    await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    // Explicit command should be used, not inferred
+    expect(verificationCalls).toContain("vitest run");
+    expect(verificationCalls).not.toContain("pnpm test - SHOULD NOT BE CALLED");
+  });
+
+  it("skips verification when no lock files exist and no explicit testCommand is set", async () => {
+    // No lock files exist
+    mockedExistsSync.mockReturnValue(false);
+
+    const verificationCalls: string[] = [];
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("pnpm test") || cmdStr.includes("npm test") || cmdStr.includes("yarn test") || cmdStr.includes("bun test")) {
+        verificationCalls.push(cmdStr);
+      }
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("diff --cached --quiet")) return "1" as any;
+      if (cmdStr.includes("diff --cached") && !cmdStr.includes("--quiet")) return "" as any;
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+    });
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    // No test verification should have run
+    expect(verificationCalls).toHaveLength(0);
+    // Merge should still succeed
+    expect(result.merged).toBe(true);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
   });
 });

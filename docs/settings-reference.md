@@ -73,8 +73,8 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `autoMerge` | `boolean` | `true` | Auto-finalize tasks from `in-review`. |
 | `mergeStrategy` | `"direct" \| "pull-request"` | `"direct"` | Completion mode (local direct merge or PR-first). |
 | `worktreeInitCommand` | `string` | `undefined` | Shell command run after worktree creation. |
-| `testCommand` | `string` | `undefined` | Test command run deterministically at merge time (before `buildCommand`). Fails the merge if the command exits non-zero. |
-| `buildCommand` | `string` | `undefined` | Build command run deterministically at merge time (after `testCommand`). Fails the merge if the command exits non-zero. |
+| `testCommand` | `string` | `undefined` | Test command run at merge time (before `buildCommand`). When set, runs as a hard gate — non-zero exit blocks the merge. When not set, Fusion automatically infers a default command from the package manager lock file (`pnpm test`, `yarn test`, `bun test`, or `npm test`). |
+| `buildCommand` | `string` | `undefined` | Build command run at merge time (after `testCommand`). When set, runs as a hard gate — non-zero exit blocks the merge. |
 | `recycleWorktrees` | `boolean` | `false` | Reuse worktrees from a pool for faster startup. |
 | `worktreeNaming` | `"random" \| "task-id" \| "task-title"` | `"random"` | Naming mode for fresh worktree directories. |
 | `taskPrefix` | `string` | `"FN"` | Prefix for generated task IDs. |

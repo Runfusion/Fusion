@@ -166,7 +166,8 @@ When a task reaches **In Review**, Fusion handles merge with rich metadata:
 - Merge commit SHA, files changed, insertions/deletions, timestamps
 - Smart conflict resolution: lock files ("ours"), generated files ("theirs"), whitespace conflicts
 - 3-attempt retry logic with escalating strategies (AI resolve → auto-resolve patterns → `git merge -X theirs`)
-- **Deterministic merge verification** — When `testCommand` or `buildCommand` are configured, these run as hard gates before final merge completion. If either command exits non-zero, the merge is aborted and the task stays out of `done`, ensuring repository health. Commands run in order: `testCommand` first, then `buildCommand`.
+- **Deterministic merge verification** — Test and build commands run as hard gates before final merge completion. If any command exits non-zero, the merge is aborted and the task stays out of `done`, ensuring repository health. Commands run in order: `testCommand` first, then `buildCommand`.
+- **Automatic test gate** — When `testCommand` is not explicitly configured but a package manager lock file is detected (`pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `package-lock.json`), Fusion automatically infers a default test command (`pnpm test`, `yarn test`, `bun test`, or `npm test`). This ensures merges are blocked when tests fail even without manual configuration. Explicit `testCommand` always takes precedence over inferred defaults.
 - **Changes tab** — View file-level diffs from the merge commit, even after worktree cleanup. Done tasks without a recorded commit SHA show a safe summary fallback instead of inflated repository-wide diffs.
 
 ## Multi-Project Support
