@@ -20,6 +20,9 @@ import type {
   Slice,
   MissionFeature,
   MissionValidatorRun,
+  MissionAssertionFailureRecord,
+  MissionFixFeatureLineage,
+  MissionFeatureLoopSnapshot,
   MissionCreateInput,
   MilestoneCreateInput,
   SliceCreateInput,
@@ -44,6 +47,15 @@ import type {
   ValidatorRunStatus,
   FeatureLoopState,
 } from "./mission-types.js";
+
+// ── Constants ────────────────────────────────────────────────────────
+
+/**
+ * Default retry budget for implementation attempts.
+ * When implementationAttemptCount reaches this limit, the feature enters
+ * 'blocked' state instead of transitioning to 'implementing'.
+ */
+const DEFAULT_IMPLEMENTATION_RETRY_BUDGET = 3;
 
 // ── Mission Summary Type ─────────────────────────────────────────────
 
@@ -285,6 +297,36 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       completedAt: row.completedAt || undefined,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
+    };
+  }
+
+  /**
+   * Convert a database row to a MissionAssertionFailureRecord object.
+   */
+  private rowToFailure(row: any): MissionAssertionFailureRecord {
+    return {
+      id: row.id,
+      runId: row.runId,
+      featureId: row.featureId,
+      assertionId: row.assertionId,
+      message: row.message || undefined,
+      expected: row.expected || undefined,
+      actual: row.actual || undefined,
+      createdAt: row.createdAt,
+    };
+  }
+
+  /**
+   * Convert a database row to a MissionFixFeatureLineage object.
+   */
+  private rowToLineage(row: any): MissionFixFeatureLineage {
+    return {
+      id: row.id,
+      sourceFeatureId: row.sourceFeatureId,
+      fixFeatureId: row.fixFeatureId,
+      runId: row.runId,
+      failedAssertionIds: fromJson<string[]>(row.failedAssertionIds) || [],
+      createdAt: row.createdAt,
     };
   }
 
@@ -1916,6 +1958,352 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     return this.rowToValidatorRun(row);
   }
 
+  // ── Validator Failure & Fix Feature Operations ─────────────────────────
+
+  /**
+   * Record assertion failures for a validator run.
+   * Inserts one row per failure with a generated ID and createdAt timestamp.
+   *
+   * @param runId - The validator run ID these failures belong to
+   * @param failures - Array of failure records to insert
+   * @returns The created failure records
+   */
+  recordValidatorFailures(
+    runId: string,
+    failures: Array<{
+      featureId: string;
+      assertionId: string;
+      message?: string;
+      expected?: string;
+      actual?: string;
+    }>,
+  ): MissionAssertionFailureRecord[] {
+    const run = this.getValidatorRun(runId);
+    if (!run) {
+      throw new Error(`Validator run ${runId} not found`);
+    }
+
+    const createdRecords: MissionAssertionFailureRecord[] = [];
+
+    this.db.transaction(() => {
+      for (const failure of failures) {
+        const now = new Date().toISOString();
+        const id = this.generateFailureId();
+
+        const record: MissionAssertionFailureRecord = {
+          id,
+          runId,
+          featureId: failure.featureId,
+          assertionId: failure.assertionId,
+          message: failure.message,
+          expected: failure.expected,
+          actual: failure.actual,
+          createdAt: now,
+        };
+
+        this.db.prepare(`
+          INSERT INTO mission_validator_failures (id, runId, featureId, assertionId, message, expected, actual, createdAt)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          record.id,
+          record.runId,
+          record.featureId,
+          record.assertionId,
+          record.message ?? null,
+          record.expected ?? null,
+          record.actual ?? null,
+          record.createdAt,
+        );
+
+        createdRecords.push(record);
+      }
+    });
+
+    this.db.bumpLastModified();
+
+    return createdRecords;
+  }
+
+  /**
+   * Get all failures for a validator run, ordered by createdAt ASC.
+   *
+   * @param runId - Validator run ID
+   * @returns Array of failure records
+   */
+  getFailuresForRun(runId: string): MissionAssertionFailureRecord[] {
+    const rows = this.db.prepare(
+      "SELECT * FROM mission_validator_failures WHERE runId = ? ORDER BY createdAt ASC"
+    ).all(runId);
+    return (rows as any[]).map((row) => this.rowToFailure(row));
+  }
+
+  /**
+   * Get all validator runs for a feature, ordered by startedAt DESC.
+   *
+   * @param featureId - Feature ID
+   * @returns Array of validator runs
+   */
+  getValidatorRunsByFeature(featureId: string): MissionValidatorRun[] {
+    const rows = this.db.prepare(
+      "SELECT * FROM mission_validator_runs WHERE featureId = ? ORDER BY startedAt DESC"
+    ).all(featureId);
+    return (rows as any[]).map((row) => this.rowToValidatorRun(row));
+  }
+
+  /**
+   * Create a generated fix feature for a failed validation.
+   *
+   * Creates a new MissionFeature in the same slice as the source feature,
+   * sets the lineage tracking fields (generatedFromFeatureId, generatedFromRunId),
+   * creates a lineage entry, and increments the original feature's implementationAttemptCount.
+   *
+   * If the source feature has exhausted its retry budget (implementationAttemptCount >= max),
+   * the source feature is transitioned to 'blocked' state instead of having its count incremented.
+   *
+   * @param sourceFeatureId - The feature that failed validation
+   * @param runId - The validator run that failed
+   * @param failedAssertionIds - IDs of assertions that failed
+   * @param title - Optional title for the fix feature (defaults to "Fix: {sourceTitle}")
+   * @returns The created fix feature, or throws if retry budget is exhausted
+   * @throws Error if source feature not found
+   */
+  createGeneratedFixFeature(
+    sourceFeatureId: string,
+    runId: string,
+    failedAssertionIds: string[],
+    title?: string,
+  ): MissionFeature {
+    const sourceFeature = this.getFeature(sourceFeatureId);
+    if (!sourceFeature) {
+      throw new Error(`Feature ${sourceFeatureId} not found`);
+    }
+
+    const run = this.getValidatorRun(runId);
+    if (!run) {
+      throw new Error(`Validator run ${runId} not found`);
+    }
+
+    const now = new Date().toISOString();
+    const fixFeatureId = this.generateFeatureId();
+
+    // Check if source feature has exhausted its retry budget
+    const retryBudget = DEFAULT_IMPLEMENTATION_RETRY_BUDGET;
+    const attemptsRemaining = retryBudget - (sourceFeature.implementationAttemptCount ?? 0);
+
+    if (attemptsRemaining <= 0) {
+      // Exhausted retry budget - transition source to blocked
+      this.updateFeature(sourceFeatureId, {
+        loopState: "blocked",
+      });
+      this.db.bumpLastModified();
+      throw new Error(
+        `Feature ${sourceFeatureId} has exhausted its retry budget (${retryBudget} attempts). ` +
+        "Transitioning to 'blocked' state."
+      );
+    }
+
+    const fixFeature: MissionFeature = {
+      id: fixFeatureId,
+      sliceId: sourceFeature.sliceId,
+      title: title ?? `Fix: ${sourceFeature.title}`,
+      description: sourceFeature.description,
+      acceptanceCriteria: sourceFeature.acceptanceCriteria,
+      status: "defined",
+      createdAt: now,
+      updatedAt: now,
+      loopState: "idle",
+      implementationAttemptCount: 0,
+      validatorAttemptCount: 0,
+      generatedFromFeatureId: sourceFeatureId,
+      generatedFromRunId: runId,
+    };
+
+    // Lineage ID
+    const lineageId = this.generateLineageId();
+
+    this.db.transaction(() => {
+      // Create the fix feature
+      this.db.prepare(`
+        INSERT INTO mission_features (
+          id, sliceId, title, description, acceptanceCriteria, status,
+          loopState, implementationAttemptCount, validatorAttemptCount,
+          generatedFromFeatureId, generatedFromRunId, createdAt, updatedAt
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        fixFeature.id,
+        fixFeature.sliceId,
+        fixFeature.title,
+        fixFeature.description ?? null,
+        fixFeature.acceptanceCriteria ?? null,
+        fixFeature.status,
+        fixFeature.loopState ?? "idle",
+        fixFeature.implementationAttemptCount ?? 0,
+        fixFeature.validatorAttemptCount ?? 0,
+        fixFeature.generatedFromFeatureId ?? null,
+        fixFeature.generatedFromRunId ?? null,
+        fixFeature.createdAt,
+        fixFeature.updatedAt,
+      );
+
+      // Create lineage entry
+      this.db.prepare(`
+        INSERT INTO mission_fix_feature_lineage (id, sourceFeatureId, fixFeatureId, runId, failedAssertionIds, createdAt)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        lineageId,
+        sourceFeatureId,
+        fixFeatureId,
+        runId,
+        toJson(failedAssertionIds),
+        now,
+      );
+
+      // Increment the source feature's implementationAttemptCount
+      const newAttemptCount = (sourceFeature.implementationAttemptCount ?? 0) + 1;
+      this.updateFeature(sourceFeatureId, {
+        implementationAttemptCount: newAttemptCount,
+        loopState: "implementing",
+      });
+    });
+
+    this.db.bumpLastModified();
+    this.emit("feature:created", fixFeature);
+
+    return fixFeature;
+  }
+
+  /**
+   * Get a complete loop state snapshot for a feature.
+   *
+   * Returns the feature's current loop state fields, all validator runs,
+   * all assertion failures, all lineage entries (as source or fix), and
+   * the computed retryBudgetRemaining.
+   *
+   * @param featureId - Feature ID
+   * @returns The feature loop snapshot
+   * @throws Error if feature not found
+   */
+  getFeatureLoopSnapshot(featureId: string): MissionFeatureLoopSnapshot {
+    const feature = this.getFeature(featureId);
+    if (!feature) {
+      throw new Error(`Feature ${featureId} not found`);
+    }
+
+    const validatorRuns = this.getValidatorRunsByFeature(featureId);
+
+    // Collect all failures across all runs
+    const failures: MissionAssertionFailureRecord[] = [];
+    for (const run of validatorRuns) {
+      const runFailures = this.getFailuresForRun(run.id);
+      failures.push(...runFailures);
+    }
+
+    // Get lineage entries where this feature is the source or the fix
+    const sourceLineageRows = this.db.prepare(
+      "SELECT * FROM mission_fix_feature_lineage WHERE sourceFeatureId = ?"
+    ).all(featureId) as any[];
+    const fixLineageRows = this.db.prepare(
+      "SELECT * FROM mission_fix_feature_lineage WHERE fixFeatureId = ?"
+    ).all(featureId) as any[];
+
+    const lineage = [
+      ...sourceLineageRows.map((row) => this.rowToLineage(row)),
+      ...fixLineageRows.map((row) => this.rowToLineage(row)),
+    ];
+
+    // Compute retry budget remaining
+    const retryBudget = DEFAULT_IMPLEMENTATION_RETRY_BUDGET;
+    const retryBudgetRemaining = Math.max(0, retryBudget - (feature.implementationAttemptCount ?? 0));
+
+    return {
+      featureId: feature.id,
+      feature,
+      loopState: feature.loopState ?? "idle",
+      implementationAttemptCount: feature.implementationAttemptCount ?? 0,
+      validatorAttemptCount: feature.validatorAttemptCount ?? 0,
+      lastValidatorRunId: feature.lastValidatorRunId,
+      lastValidatorStatus: feature.lastValidatorStatus,
+      generatedFromFeatureId: feature.generatedFromFeatureId,
+      generatedFromRunId: feature.generatedFromRunId,
+      validatorRuns,
+      failures,
+      lineage,
+      retryBudgetRemaining,
+    };
+  }
+
+  /**
+   * Transition a feature's loop state.
+   *
+   * Valid transitions:
+   * - idle → implementing
+   * - implementing → validating
+   * - validating → needs_fix
+   * - validating → passed
+   * - validating → blocked
+   * - needs_fix → implementing
+   *
+   * If the transition would exceed the retry budget (attempting to go to 'implementing'
+   * when implementationAttemptCount >= max), the feature is transitioned to 'blocked'
+   * instead and an error is thrown.
+   *
+   * @param featureId - Feature ID
+   * @param newState - The target loop state
+   * @throws Error if feature not found or transition is invalid
+   */
+  transitionLoopState(featureId: string, newState: FeatureLoopState): MissionFeature {
+    const feature = this.getFeature(featureId);
+    if (!feature) {
+      throw new Error(`Feature ${featureId} not found`);
+    }
+
+    const currentState = feature.loopState ?? "idle";
+
+    // Validate the transition
+    const validTransitions: Record<FeatureLoopState, FeatureLoopState[]> = {
+      idle: ["implementing"],
+      implementing: ["validating"],
+      validating: ["needs_fix", "passed", "blocked"],
+      needs_fix: ["implementing"],
+      passed: [],
+      blocked: [],
+    };
+
+    const allowedNextStates = validTransitions[currentState] || [];
+    if (!allowedNextStates.includes(newState)) {
+      throw new Error(
+        `Invalid loop state transition from '${currentState}' to '${newState}'. ` +
+        `Allowed transitions from '${currentState}': ${allowedNextStates.join(", ") || "none"}`
+      );
+    }
+
+    // Check retry budget when transitioning to 'implementing'
+    if (newState === "implementing") {
+      const retryBudget = DEFAULT_IMPLEMENTATION_RETRY_BUDGET;
+      const retryBudgetRemaining = retryBudget - (feature.implementationAttemptCount ?? 0);
+
+      if (retryBudgetRemaining <= 0) {
+        // Exhausted retry budget - transition to blocked instead
+        this.updateFeature(featureId, {
+          loopState: "blocked",
+        });
+        this.db.bumpLastModified();
+        throw new Error(
+          `Feature ${featureId} has exhausted its retry budget (${retryBudget} attempts). ` +
+          "Transitioning to 'blocked' state."
+        );
+      }
+    }
+
+    const updated = this.updateFeature(featureId, {
+      loopState: newState,
+    });
+
+    this.db.bumpLastModified();
+
+    return updated;
+  }
+
   // ── Contract Assertion Operations ─────────────────────────────────
 
   /**
@@ -2743,5 +3131,17 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     const timestamp = Date.now();
     const random = Math.random().toString(36).substring(2, 6).toUpperCase();
     return `VR-${timestamp.toString(36).toUpperCase()}-${random}`;
+  }
+
+  private generateFailureId(): string {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+    return `VF-${timestamp.toString(36).toUpperCase()}-${random}`;
+  }
+
+  private generateLineageId(): string {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+    return `FL-${timestamp.toString(36).toUpperCase()}-${random}`;
   }
 }

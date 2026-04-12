@@ -353,6 +353,8 @@ export interface MissionFeatureLoopSnapshot {
   failures: MissionAssertionFailureRecord[];
   /** All lineage entries for this feature (as source or fix) */
   lineage: MissionFixFeatureLineage[];
+  /** Remaining retry budget (max attempts - current attempts) */
+  retryBudgetRemaining: number;
 }
 
 // ── Input Types (for creation) ──────────────────────────────────────
