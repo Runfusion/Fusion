@@ -1,0 +1,155 @@
+{
+  "groupId": "ui-empty-responsive",
+  "testedAt": "2026-04-12T14:15:00.000Z",
+  "isolation": {
+    "dashboardUrl": "http://localhost:4040",
+    "testMission": "M-MNVT98HS-I8OG",
+    "temporaryMission": "M-MNVTWXY8-DK6N (created for empty state testing, could not clean up - server went down)",
+    "sessionName": "5e22e2b9c6cd__ui-resp"
+  },
+  "toolsUsed": ["agent-browser", "curl"],
+  "assertions": [
+    {
+      "id": "VAL-UI-010",
+      "title": "Empty states are helpful",
+      "status": "partial",
+      "steps": [
+        {
+          "action": "Created temporary mission 'Empty State Test - Temporary' (M-MNVTWXY8-DK6N) with empty milestone via API",
+          "expected": "Mission created with no assertions, no features, no runs",
+          "observed": "Mission created successfully with milestone MS-MNVTXA1S-3WYJ"
+        },
+        {
+          "action": "Navigated to empty mission in dashboard Missions view",
+          "expected": "Empty state messages visible for assertions, runs, lineage",
+          "observed": "Assertions section shows: 'No assertions defined. Add one to define completion criteria.' with an 'Add assertion' button"
+        },
+        {
+          "action": "Expanded run history for 'Assertion Linking Test' feature (F-MNVTCGT6-Z6PM, idle, no runs) in Integration Test Mission",
+          "expected": "Empty state message: 'No validation runs yet.'",
+          "observed": "Feature expansion shows 'Validation Runs No validation runs yet.' correctly"
+        },
+        {
+          "action": "Searched for 'No fix features generated.' empty state message in codebase",
+          "expected": "Empty state message for lineage should be present in MissionManager.tsx",
+          "observed": "NOT FOUND. The lineage empty state message 'No fix features generated.' does not exist in the codebase. Lineage is only shown as an inline '🔗 Fix' badge on features with generatedFromFeatureId. No empty state message for features without lineage."
+        },
+        {
+          "action": "Observed assertions panel on Integration Test Mission (milestone has 3 assertions via API)",
+          "expected": "Assertions should display or at minimum not show empty state when data exists",
+          "observed": "BUG: Assertions panel shows 'No assertions defined. Add one to define completion criteria.' even though the milestone MS-MNVT9VEC-70GM has 3 assertions confirmed via API. Console error: 'TypeError: nt.get(...)?.map is not a function' - indicates the assertions data structure is not properly initialized as a Map, causing the assertions loading/display to fail."
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "integration/ui-empty-responsive/VAL-UI-010-empty-assertions.png",
+          "integration/ui-empty-responsive/VAL-UI-010-empty-validation-runs.png"
+        ],
+        "consoleErrors": "TypeError: nt.get(...)?.map is not a function (recurring, triggers ErrorBoundary on feature expansion)",
+        "network": "GET /api/missions/milestones/MS-MNVT9VEC-70GM/assertions -> 200 (returns 3 assertions correctly)"
+      },
+      "issues": "Partial pass. Two of three empty states confirmed ('No assertions defined...' and 'No validation runs yet.'). The 'No fix features generated.' empty state message is NOT implemented in the codebase. Additionally, the assertions panel has a bug where it shows empty state even for milestones with assertions (TypeError in Map access)."
+    },
+    {
+      "id": "VAL-UI-011",
+      "title": "Responsive on mobile",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Set viewport to 375x812 (iPhone X dimensions) and navigated to Missions view",
+          "expected": "Layout adapts to mobile width without horizontal overflow",
+          "observed": "Layout switches to mobile mode: sidebar collapses, bottom tab navigation appears ('Board', 'List', 'Agents', 'Missions', 'Chat', 'More'). Mission list renders correctly with all buttons accessible."
+        },
+        {
+          "action": "Navigated to Integration Test Mission detail at 375px",
+          "expected": "Assertions panel, validation controls, and feature cards usable on mobile",
+          "observed": "Mission detail renders correctly: milestone header, slice sections, feature cards all visible and scrollable. All interactive elements present: 'Plan milestone', 'Add slice', 'Edit milestone', 'Delete milestone', 'Plan slice', 'Activate slice', 'Add feature', 'Triage/Link to task/Validate feature buttons', 'Edit/Delete feature', 'Expand to show run history', 'Add assertion'."
+        },
+        {
+          "action": "Scrolled to assertions panel at 375px",
+          "expected": "Assertions panel accessible at mobile width",
+          "observed": "Assertions section with 'Add assertion' button and empty state message visible. No horizontal overflow. Content fits within 375px viewport."
+        },
+        {
+          "action": "Checked validation controls at 375px",
+          "expected": "Validate feature button accessible on mobile",
+          "observed": "'Validate feature' button visible on 'Implementing State Feature' at mobile width. Loop state indicators (⏳, 🔄, 🔧, ✅, 🚫) visible on feature cards."
+        },
+        {
+          "action": "Attempted to expand run history at 375px",
+          "expected": "Run history expandable on mobile viewport",
+          "observed": "Clicking 'Expand to show run history' triggers ErrorBoundary crash (same TypeError as desktop). This is not a responsive-specific issue - it's the same JS bug that occurs at all viewport sizes."
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "integration/ui-empty-responsive/VAL-UI-011-responsive-375px-missions-list.png",
+          "integration/ui-empty-responsive/VAL-UI-011-responsive-375px-mission-detail.png",
+          "integration/ui-empty-responsive/VAL-UI-011-responsive-375px-assertions-panel.png",
+          "integration/ui-empty-responsive/VAL-UI-011-responsive-375px-error-state.png"
+        ],
+        "consoleErrors": "TypeError: nt.get(...)?.map is not a function (same as desktop - not responsive-specific)",
+        "network": "N/A - responsive layout test"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-UI-012",
+      "title": "Auto-refresh via SSE",
+      "status": "blocked",
+      "steps": [
+        {
+          "action": "Verified SSE connections are active in the browser",
+          "expected": "EventSource connections to /api/events endpoints",
+          "observed": "Three SSE connections confirmed via performance.getEntriesByType('resource'): /api/events (2 connections), /api/events?projectId=proj_56848c10a63e4350 (1 connection). SSE infrastructure is wired and active."
+        },
+        {
+          "action": "Verified SSE event listeners in MissionManager component code",
+          "expected": "Listeners for validation loop state changes, assertion mutations, and feature updates",
+          "observed": "MissionManager subscribes to: validator-run:started, validator-run:completed, milestone:validation:updated, assertion:created/updated/deleted/linked/unlinked, fix-feature:created. Each handler calls appropriate data refresh functions."
+        },
+        {
+          "action": "Attempted to trigger SSE update by creating assertion via API",
+          "expected": "UI auto-updates without manual refresh",
+          "observed": "BLOCKED: Dashboard server (localhost:4040) went down during testing. Could not complete the live SSE test. Server process was not running when checked with lsof -i :4040."
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "integration/ui-empty-responsive/VAL-UI-012-sse-before.png"
+        ],
+        "consoleErrors": "none (SSE infrastructure verified via code review)",
+        "network": "Performance entries confirm 3 active SSE connections to /api/events endpoints"
+      },
+      "issues": "Blocked by server crash. SSE infrastructure is confirmed present and wired (code review + performance entries show active connections), but live auto-refresh test could not be completed. The server went down (connection refused on port 4040) before the assertion creation could be tested."
+    }
+  ],
+  "frictions": [
+    {
+      "description": "Consistent ErrorBoundary crash when expanding feature run history - 'TypeError: nt.get(...)?.map is not a function'. This blocks testing of run history display at any viewport size.",
+      "resolved": false,
+      "resolution": "Could not resolve - appears to be a bug in assertions/validation data loading where a Map.get() call returns undefined instead of an empty array",
+      "affectedAssertions": ["VAL-UI-010", "VAL-UI-011"]
+    },
+    {
+      "description": "Assertions panel shows empty state for milestones that have assertions via API - suggests data loading race condition or type mismatch",
+      "resolved": false,
+      "resolution": "Not resolved - the assertions API returns data correctly but the UI Map-based lookup fails",
+      "affectedAssertions": ["VAL-UI-010"]
+    },
+    {
+      "description": "Dashboard server crashed during testing (port 4040 became unreachable). Could not complete SSE live test or clean up temporary mission.",
+      "resolved": false,
+      "resolution": "Server needs restart. Temporary mission M-MNVTWXY8-DK6N and its milestone still exist.",
+      "affectedAssertions": ["VAL-UI-012"]
+    }
+  ],
+  "blockers": [
+    {
+      "description": "Dashboard server (localhost:4040) went down during testing. Could not complete VAL-UI-012 live SSE auto-refresh verification or clean up temporary test data.",
+      "affectedAssertions": ["VAL-UI-012"],
+      "quickFixAttempted": "Checked with lsof -i :4040 - no process listening. Server crash appears unrecoverable without restart."
+    }
+  ],
+  "summary": "Tested 3 assertions: VAL-UI-010 partial pass (2 of 3 empty states found; 'No fix features generated.' not implemented; assertions panel bug), VAL-UI-011 pass (responsive layout works at 375px with mobile navigation), VAL-UI-012 blocked (server crashed before live SSE test; SSE infrastructure confirmed present via code review). Key bug: TypeError in Map access causes assertions panel to always show empty state and crashes on feature run history expansion."
+}

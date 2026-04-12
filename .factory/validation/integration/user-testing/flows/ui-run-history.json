@@ -1,0 +1,103 @@
+{
+  "groupId": "ui-run-history",
+  "testedAt": "2026-04-12T14:30:00.000Z",
+  "isolation": {
+    "dashboardUrl": "http://localhost:4040",
+    "missionId": "M-MNVT98HS-I8OG",
+    "missionName": "Integration Test Mission",
+    "mode": "read-only"
+  },
+  "toolsUsed": ["agent-browser", "curl"],
+  "assertions": [
+    {
+      "id": "VAL-UI-007",
+      "title": "Validator run history visible",
+      "status": "fail",
+      "steps": [
+        {
+          "action": "Navigate to http://localhost:4040 → Missions view → Click 'Integration Test Mission'",
+          "expected": "Mission detail page with milestones, slices, and features visible",
+          "observed": "Mission detail page loaded with 2 slices, 9 features. Slice 2 contains 'Fix Feature from Lineage' and 'Run History Feature'."
+        },
+        {
+          "action": "Expand Slice 2 to reveal 'Run History Feature' (F-MNVTDH2E-YYZD)",
+          "expected": "Feature card visible with 'done ✅' status",
+          "observed": "Feature card visible showing 'Run History Feature done ✅' with an 'Expand to show run history' button"
+        },
+        {
+          "action": "Click 'Expand to show run history' button for Run History Feature",
+          "expected": "Past validation runs displayed with status, timestamp, duration, and assertion-level pass/fail results (3 runs: 2 failed, 1 passed)",
+          "observed": "UI crashed with error: 'TypeError: nt.get(...)?.map is not a function'. Error boundary displayed 'Something went wrong' with Retry and Reload page buttons."
+        },
+        {
+          "action": "Verify API returns correct run history data via GET /api/missions/features/F-MNVTDH2E-YYZD/validation-runs",
+          "expected": "3 runs returned with correct status, timestamps",
+          "observed": "API returns 3 runs correctly: VR-TEST-005 (passed, 10:20-10:23), VR-TEST-004 (failed, 10:10-10:13), VR-TEST-003 (failed, 10:00-10:04). Also 2 failure records with assertionId, message, expected, and actual fields. Data is correct — the bug is in the frontend rendering only."
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "integration/ui-run-history/00-dashboard-initial.png",
+          "integration/ui-run-history/01-missions-view.png",
+          "integration/ui-run-history/02-mission-expanded.png",
+          "integration/ui-run-history/03-slice2-features-visible.png",
+          "integration/ui-run-history/VAL-UI-007-run-history-expanded.png"
+        ],
+        "consoleErrors": "TypeError: nt.get(...)?.map is not a function at index-D73cJS2D.js:1416:106042 — crash in component tM (run history renderer) when mapping over data returned by nt.get(). The optional chaining ?.map suggests the API response shape may have changed or the frontend is accessing a property that returns undefined instead of an array.",
+        "network": "GET /api/missions/features/F-MNVTDH2E-YYZD/validation-runs -> 200 (correct data). GET /api/missions/features/F-MNVTDH2E-YYZD/validation-loop -> 200 (correct data with runs, failures, lineage)."
+      },
+      "issues": "UI crashes when expanding run history on any feature. The error 'nt.get(...)?.map is not a function' indicates the frontend run history component tries to .map() over a value that is not an array. The API returns correct data structure (arrays for runs, failures, lineage), so this appears to be a frontend data mapping bug. The same crash occurs when expanding run history for both 'Run History Feature' and 'Fix Feature from Lineage'."
+    },
+    {
+      "id": "VAL-UI-008",
+      "title": "Fix feature tracking visible",
+      "status": "fail",
+      "steps": [
+        {
+          "action": "Navigate to Integration Test Mission → Slice 2 → Find 'Fix Feature from Lineage' (F-MNVTDGXO-EU7E)",
+          "expected": "Fix feature visible in feature list",
+          "observed": "Feature card visible showing 'Fix Feature from Lineage done ✅ 🔗 Fix'"
+        },
+        {
+          "action": "Check for lineage indicator linking to original feature",
+          "expected": "Lineage indicator present and linking to 'Needs Fix Feature' (F-MNVTDGC0-J3W3)",
+          "observed": "Lineage badge '🔗 Fix' is present as a span element with class 'mission-feature__lineage' and title 'Generated from fix for assertion failure'. However, it is a <span> element (not a link/anchor) — it is NOT clickable and does NOT link to the original source feature (F-MNVTDGC0-J3W3)."
+        },
+        {
+          "action": "Check for retry budget display 'Attempt X of Y'",
+          "expected": "Retry budget displayed as 'Attempt X of Y' on features",
+          "observed": "No retry budget display visible on any feature card. Checked both 'Fix Feature from Lineage' (implementationAttemptCount=1, validatorAttemptCount=2) and 'Blocked Feature' (implementationAttemptCount=3, validatorAttemptCount=2, retryBudgetRemaining=0). Neither shows 'Attempt X of Y' text. No elements with budget/attempt/retry CSS classes found."
+        },
+        {
+          "action": "Verify API returns lineage data",
+          "expected": "Lineage record exists linking fix to source feature",
+          "observed": "API GET /api/missions/features/F-MNVTDGXO-EU7E/validation-loop returns lineage: [{id: FL-TEST-001, sourceFeatureId: F-MNVTDGC0-J3W3, fixFeatureId: F-MNVTDGXO-EU7E, runId: VR-TEST-002, failedAssertionIds: [CA-MNVTGDRD-QNBH]}]. Data is correct — the lineage info is available but not fully rendered in UI."
+        },
+        {
+          "action": "Attempt to expand run history on Fix Feature",
+          "expected": "Run history panel expands showing runs",
+          "observed": "Same crash as VAL-UI-007: 'TypeError: nt.get(...)?.map is not a function' — error boundary displayed."
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "integration/ui-run-history/VAL-UI-008-fix-feature-lineage-indicator.png",
+          "integration/ui-run-history/03-slice2-features-visible.png"
+        ],
+        "consoleErrors": "TypeError: nt.get(...)?.map is not a function — same crash as VAL-UI-007 when expanding run history.",
+        "network": "GET /api/missions/features/F-MNVTDGXO-EU7E/validation-loop -> 200 (correct lineage data). GET /api/missions/features/F-MNVTDGLC-G6TD/validation-loop -> 200 (blocked feature with retryBudgetRemaining=0)."
+      },
+      "issues": "Two issues: (1) Lineage indicator badge '🔗 Fix' is visible but is a non-interactive span — it does NOT link to or reference the original source feature 'Needs Fix Feature' (F-MNVTDGC0-J3W3). The assertion requires 'lineage indicator linking to original feature'. (2) No retry budget display in format 'Attempt X of Y' visible on any feature card, including the Blocked Feature which has exhausted its budget (implementationAttemptCount=3, validatorAttemptCount=2)."
+    }
+  ],
+  "frictions": [
+    {
+      "description": "The run history expansion causes a JavaScript crash (TypeError: nt.get(...)?.map is not a function) which requires a full page reload to recover. This blocks detailed inspection of run history UI.",
+      "resolved": false,
+      "resolution": "Used curl API calls to verify backend data is correct. Used JS eval to inspect DOM elements for lineage indicator details.",
+      "affectedAssertions": ["VAL-UI-007", "VAL-UI-008"]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 2 assertions: 0 passed, 2 failed. VAL-UI-007 FAIL: Run history expansion crashes the UI with 'nt.get(...)?.map is not a function' TypeError. API returns correct data (3 runs, 2 failures). VAL-UI-008 FAIL: (1) Lineage badge '🔗 Fix' is visible but is a non-clickable span that does not link to the original source feature. (2) No 'Attempt X of Y' retry budget display visible on any feature card."
+}

@@ -1,0 +1,110 @@
+{
+  "groupId": "api-round-trip",
+  "testedAt": "2026-04-12T14:30:00.000Z",
+  "isolation": {
+    "dashboardUrl": "http://localhost:4040",
+    "missionId": "M-MNVT98HS-I8OG",
+    "milestoneId": "MS-MNVT9VEC-70GM",
+    "accessMode": "read-only"
+  },
+  "toolsUsed": ["curl", "agent-browser"],
+  "assertions": [
+    {
+      "id": "VAL-CROSS-003",
+      "title": "API round-trips match store state",
+      "status": "fail",
+      "steps": [
+        {
+          "action": "GET /api/missions/milestones/MS-MNVT9VEC-70GM/assertions",
+          "expected": "200 with 3 assertions ordered by orderIndex",
+          "observed": "200 with 3 assertions returned: CA-MNVTGDE4-YEGX (Feature links correctly, pending, orderIndex 0), CA-MNVTGDHD-8ZAJ (Validation passes on success, pending, orderIndex 1), CA-MNVTGDRD-QNBH (Fix feature created on failure, pending, orderIndex 2)"
+        },
+        {
+          "action": "GET /api/missions/features/F-MNVTDH2E-YYZD/validation-runs",
+          "expected": "200 with 3 validation runs ordered DESC by startedAt",
+          "observed": "200 with 3 runs: VR-TEST-005 (passed, attempt 3), VR-TEST-004 (failed, attempt 2), VR-TEST-003 (failed, attempt 1). Total=3, ordered correctly"
+        },
+        {
+          "action": "GET /api/missions/validation-runs/VR-TEST-003",
+          "expected": "200 with run detail including failures",
+          "observed": "200 with run detail: status=failed, summary='Initial validation failed', includes 1 failure (VF-TEST-002): assertionId=CA-MNVTGDE4-YEGX, message='Feature link not found', expected='2 linked features', actual='0 linked features'"
+        },
+        {
+          "action": "GET /api/missions/features/F-MNVTDFNW-NXSW/validation-loop",
+          "expected": "200 with loop state snapshot for idle feature",
+          "observed": "200 with snapshot: loopState=idle, implementationAttemptCount=0, validatorAttemptCount=0, validatorRuns=[], failures=[], lineage=[], retryBudgetRemaining=3"
+        },
+        {
+          "action": "GET /api/missions/milestones/MS-MNVT9VEC-70GM/validation",
+          "expected": "200 with milestone validation rollup",
+          "observed": "200 with rollup: totalAssertions=3, passedAssertions=0, failedAssertions=0, blockedAssertions=0, pendingAssertions=3, unlinkedAssertions=0, state=ready"
+        },
+        {
+          "action": "Open dashboard, navigate to Integration Test Mission, check assertions panel",
+          "expected": "Assertions panel shows 3 assertions matching API data",
+          "observed": "Assertions panel shows 'No assertions defined. Add one to define completion criteria.' — MISMATCH with API data"
+        },
+        {
+          "action": "Expand 'Run History Feature' (F-MNVTDH2E-YYZD) run history in dashboard",
+          "expected": "Run history shows 3 validation runs matching API response",
+          "observed": "Dashboard crashed with TypeError: 'nt.get(...)?.map is not a function' — cannot verify run history display"
+        },
+        {
+          "action": "GET /api/missions/features/F-MNVTDH2E-YYZD/assertions",
+          "expected": "200 with linked assertions for the run history feature",
+          "observed": "200 with 3 linked assertions (all 3 milestone assertions)"
+        },
+        {
+          "action": "GET /api/missions/features/F-MNVTDFNW-NXSW/assertions",
+          "expected": "200 with linked assertions",
+          "observed": "200 with 2 linked assertions: CA-MNVTGDE4-YEGX and CA-MNVTGDHD-8ZAJ"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "integration/api-round-trip/01-dashboard-home.png",
+          "integration/api-round-trip/02-missions-view.png",
+          "integration/api-round-trip/03-mission-expanded.png",
+          "integration/api-round-trip/04-scrolled-assertions.png",
+          "integration/api-round-trip/05-slice2-expanded.png",
+          "integration/api-round-trip/06-run-history-expanded.png",
+          "integration/api-round-trip/07-mission-detail-reloaded.png",
+          "integration/api-round-trip/08-needs-fix-runs.png"
+        ],
+        "consoleErrors": "TypeError: nt.get(...)?.map is not a function — occurs when expanding any feature's run history. Minified stack trace at index-D73cJS2D.js:1416:94471 (tM component). ErrorBoundary catches and shows 'Something went wrong' with retry button.",
+        "network": {
+          "GET /api/missions/milestones/MS-MNVT9VEC-70GM/assertions": "200",
+          "GET /api/missions/features/F-MNVTDH2E-YYZD/validation-runs": "200",
+          "GET /api/missions/validation-runs/VR-TEST-003": "200",
+          "GET /api/missions/features/F-MNVTDFNW-NXSW/validation-loop": "200",
+          "GET /api/missions/milestones/MS-MNVT9VEC-70GM/validation": "200",
+          "GET /api/missions/features/F-MNVTDH2E-YYZD/assertions": "200",
+          "GET /api/missions/features/F-MNVTDFNW-NXSW/assertions": "200"
+        }
+      },
+      "issues": "Two critical discrepancies found: (1) Assertions panel shows empty state despite API returning 3 assertions — the dashboard is not rendering assertion data from the store. (2) Expanding any feature's run history causes a React crash (TypeError: nt.get(...)?.map is not a function) — likely a null-safety issue in the run history component where the API returns data in a shape the component doesn't handle. Both issues prevent verifying API-to-dashboard round-trip consistency."
+    }
+  ],
+  "frictions": [
+    {
+      "description": "Dashboard assertions panel shows empty state ('No assertions defined') even though the API endpoint returns 3 assertions for the same milestone. The API-to-store-to-dashboard pipeline is broken for assertions display.",
+      "resolved": false,
+      "resolution": null,
+      "affectedAssertions": ["VAL-CROSS-003"]
+    },
+    {
+      "description": "Expanding feature run history in the dashboard crashes the entire Mission detail view with 'nt.get(...)?.map is not a function'. The ErrorBoundary catches it but the entire page must be reloaded. This blocks verification of validation run display matching API data.",
+      "resolved": false,
+      "resolution": null,
+      "affectedAssertions": ["VAL-CROSS-003"]
+    },
+    {
+      "description": "The networkidle wait event times out on the Fusion dashboard (25s timeout). Had to rely on fixed waits instead.",
+      "resolved": true,
+      "resolution": "Used agent-browser wait 2000ms instead of wait --load networkidle",
+      "affectedAssertions": ["VAL-CROSS-003"]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested VAL-CROSS-003: API round-trips match store state. Result: FAIL. All 7 API endpoints return correct, consistent data matching the store state. However, the dashboard has two critical bugs: (1) the assertions panel shows 'No assertions defined' despite the API returning 3 assertions — the data exists in the store but is not rendered, and (2) expanding any feature's run history crashes the React app with TypeError: nt.get(...)?.map is not a function. These prevent verifying the API-to-dashboard round-trip consistency."
+}

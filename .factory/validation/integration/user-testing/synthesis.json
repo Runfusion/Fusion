@@ -1,0 +1,80 @@
+{
+  "milestone": "integration",
+  "round": 1,
+  "status": "fail",
+  "assertionsSummary": {
+    "total": 12,
+    "passed": 5,
+    "failed": 7,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-CROSS-001",
+    "VAL-CROSS-002",
+    "VAL-UI-005",
+    "VAL-UI-006",
+    "VAL-UI-011"
+  ],
+  "failedAssertions": [
+    {
+      "id": "VAL-CROSS-003",
+      "reason": "API returns correct data but dashboard assertions panel shows empty and run history crashes with TypeError: nt.get(...)?.map is not a function"
+    },
+    {
+      "id": "VAL-UI-004",
+      "reason": "Assertions panel shows 'No assertions defined' despite API returning 3 assertions. UI rendering bug — data exists in store but panel renders empty."
+    },
+    {
+      "id": "VAL-UI-007",
+      "reason": "TypeError: nt.get(...)?.map is not a function — expanding any feature's run history crashes the UI. API returns correct run data but frontend component has null-safety bug."
+    },
+    {
+      "id": "VAL-UI-008",
+      "reason": "Lineage indicator is present but non-interactive (does not link to source feature). No 'Attempt X of Y' retry budget display visible on any feature."
+    },
+    {
+      "id": "VAL-UI-009",
+      "reason": "Milestone header lacks validation state badge and assertion coverage bar. API returns correct rollup but UI component not rendered."
+    },
+    {
+      "id": "VAL-UI-010",
+      "reason": "Only 2 of 3 empty states implemented ('No assertions defined', 'No validation runs yet'). 'No fix features generated' not implemented. Assertions panel also incorrectly shows empty for milestones with data."
+    },
+    {
+      "id": "VAL-UI-012",
+      "reason": "SSE infrastructure present (3 active EventSource connections) but could not verify live auto-refresh because dashboard server crashed during testing."
+    }
+  ],
+  "blockedAssertions": [],
+  "systemicIssues": [
+    {
+      "id": "SYS-001",
+      "severity": "blocking",
+      "description": "TypeError: nt.get(...)?.map is not a function in run history component (tM). Affects VAL-UI-007, VAL-CROSS-003. The frontend calls .map() on an undefined value when rendering validation run history.",
+      "suggestedFix": "Add null/undefined guard in MissionManager.tsx run history rendering code. Check the API response shape matches what the frontend expects (the runs endpoint wraps results in {runs, total, offset}).",
+      "affectedAssertions": ["VAL-UI-007", "VAL-CROSS-003"]
+    },
+    {
+      "id": "SYS-002",
+      "severity": "blocking",
+      "description": "Assertions panel renders 'No assertions defined' despite API returning correct assertion data. The loadAssertionsForMilestone call or rendering logic has a bug.",
+      "suggestedFix": "Debug the assertions loading flow in MissionManager.tsx. The API returns data correctly (GET /api/missions/milestones/:id/assertions returns 200 with assertions array). Check if the component correctly maps API response to state.",
+      "affectedAssertions": ["VAL-UI-004", "VAL-CROSS-003", "VAL-UI-010"]
+    },
+    {
+      "id": "SYS-003",
+      "severity": "non-blocking",
+      "description": "Missing UI components: no validation rollup badge in milestone header, no retry budget 'Attempt X of Y' display, no 'No fix features generated' empty state, lineage indicator non-interactive.",
+      "suggestedFix": "Add validation rollup badge to milestone header rendering. Add retry budget display to feature cards. Add 'No fix features generated' empty state. Make lineage indicator clickable to navigate to source feature.",
+      "affectedAssertions": ["VAL-UI-008", "VAL-UI-009", "VAL-UI-010"]
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added test data context section with all mission/milestone/slice/feature IDs and loop states, plus Flow Validator Guidance sections for Dashboard UI and REST API surfaces",
+      "source": "setup"
+    }
+  ],
+  "previousRound": null
+}
