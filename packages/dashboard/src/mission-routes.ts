@@ -30,6 +30,10 @@ import type {
   SliceStatus,
   FeatureStatus,
   InterviewState,
+  MissionContractAssertion,
+  ContractAssertionCreateInput,
+  ContractAssertionUpdateInput,
+  MilestoneValidationRollup,
 } from "@fusion/core";
 import type { MissionSummary } from "@fusion/core";
 import {
@@ -38,6 +42,7 @@ import {
   SLICE_STATUSES,
   FEATURE_STATUSES,
   INTERVIEW_STATES,
+  MISSION_ASSERTION_STATUSES,
 } from "@fusion/core";
 import { writeSSEEvent } from "./sse-buffer.js";
 import {
@@ -73,6 +78,12 @@ function validateSliceId(id: string): boolean {
 
 function validateFeatureId(id: string): boolean {
   return /^F-[A-Z0-9]+(?:-[A-Z0-9]+)*$/i.test(id);
+}
+
+function validateAssertionId(id: string): boolean {
+  // Assertion IDs follow format: CA-{base36timestamp}-{random}
+  // e.g., CA-A3B7CD-E9F2
+  return /^CA-[A-Z0-9]+-[A-Z0-9]+$/i.test(id);
 }
 
 function validateTitle(title: unknown): string {
@@ -1428,6 +1439,359 @@ export function createMissionRouter(
         }
         throw err;
       }
+    })
+  );
+
+  // ── Assertion Endpoints ────────────────────────────────────────────────────
+
+  /**
+   * GET /api/missions/milestones/:milestoneId/assertions
+   * List assertions for a milestone, ordered by orderIndex
+   */
+  router.get(
+    "/milestones/:milestoneId/assertions",
+    catchTypedHandler(async (req, res) => {
+      const { milestoneId } = req.params;
+
+      if (!validateMilestoneId(milestoneId)) {
+        throw badRequest("Invalid milestone ID format");
+      }
+
+      const milestone = missionStore.getMilestone(milestoneId);
+      if (!milestone) {
+        throw notFound("Milestone not found");
+      }
+
+      const assertions = missionStore.listContractAssertions(milestoneId);
+      res.json(assertions);
+    })
+  );
+
+  /**
+   * POST /api/missions/milestones/:milestoneId/assertions
+   * Create a new assertion for a milestone
+   */
+  router.post(
+    "/milestones/:milestoneId/assertions",
+    catchTypedHandler(async (req, res) => {
+      const { milestoneId } = req.params;
+      const { title, assertion: assertionText, status } = req.body;
+
+      if (!validateMilestoneId(milestoneId)) {
+        throw badRequest("Invalid milestone ID format");
+      }
+
+      const milestone = missionStore.getMilestone(milestoneId);
+      if (!milestone) {
+        throw notFound("Milestone not found");
+      }
+
+      // Validate title
+      if (!title || typeof title !== "string" || title.trim().length === 0) {
+        throw badRequest("Title is required and must be a non-empty string");
+      }
+      if (title.length > 200) {
+        throw badRequest("Title must not exceed 200 characters");
+      }
+
+      // Validate assertion text
+      if (!assertionText || typeof assertionText !== "string" || assertionText.trim().length === 0) {
+        throw badRequest("Assertion text is required and must be a non-empty string");
+      }
+
+      // Validate status if provided
+      if (status !== undefined) {
+        if (typeof status !== "string" || !MISSION_ASSERTION_STATUSES.includes(status as any)) {
+          throw badRequest(`Invalid status. Must be one of: ${MISSION_ASSERTION_STATUSES.join(", ")}`);
+        }
+      }
+
+      const input: ContractAssertionCreateInput = {
+        title: title.trim(),
+        assertion: assertionText.trim(),
+        status: status as any,
+      };
+
+      const created = missionStore.addContractAssertion(milestoneId, input);
+      res.status(201).json(created);
+    })
+  );
+
+  /**
+   * POST /api/missions/milestones/:milestoneId/assertions/reorder
+   * Reorder assertions within a milestone
+   */
+  router.post(
+    "/milestones/:milestoneId/assertions/reorder",
+    catchTypedHandler(async (req, res) => {
+      const { milestoneId } = req.params;
+
+      if (!validateMilestoneId(milestoneId)) {
+        throw badRequest("Invalid milestone ID format");
+      }
+
+      const milestone = missionStore.getMilestone(milestoneId);
+      if (!milestone) {
+        throw notFound("Milestone not found");
+      }
+
+      const orderedIds = validateOrderedIds(req.body);
+
+      // Validate all IDs belong to this milestone
+      const existingAssertions = missionStore.listContractAssertions(milestoneId);
+      const existingIds = new Set(existingAssertions.map((a) => a.id));
+
+      if (orderedIds.length !== existingIds.size) {
+        throw badRequest("orderedIds must include all assertions");
+      }
+
+      for (const id of orderedIds) {
+        if (!existingIds.has(id)) {
+          throw badRequest(`Assertion ${id} does not belong to milestone ${milestoneId}`);
+        }
+      }
+
+      missionStore.reorderContractAssertions(milestoneId, orderedIds);
+      res.status(204).send();
+    })
+  );
+
+  /**
+   * GET /api/missions/assertions/:assertionId
+   * Get a single assertion by ID
+   */
+  router.get(
+    "/assertions/:assertionId",
+    catchTypedHandler(async (req, res) => {
+      const { assertionId } = req.params;
+
+      if (!validateAssertionId(assertionId)) {
+        throw badRequest("Invalid assertion ID format");
+      }
+
+      const assertion = missionStore.getContractAssertion(assertionId);
+      if (!assertion) {
+        throw notFound("Assertion not found");
+      }
+
+      res.json(assertion);
+    })
+  );
+
+  /**
+   * PATCH /api/missions/assertions/:assertionId
+   * Update an assertion
+   */
+  router.patch(
+    "/assertions/:assertionId",
+    catchTypedHandler(async (req, res) => {
+      const { assertionId } = req.params;
+      const { title, assertion: assertionText, status } = req.body;
+
+      if (!validateAssertionId(assertionId)) {
+        throw badRequest("Invalid assertion ID format");
+      }
+
+      const existing = missionStore.getContractAssertion(assertionId);
+      if (!existing) {
+        throw notFound("Assertion not found");
+      }
+
+      // If body is empty object, reject
+      if (Object.keys(req.body).length === 0) {
+        throw badRequest("No valid fields to update");
+      }
+
+      const updates: ContractAssertionUpdateInput = {};
+
+      if (title !== undefined) {
+        if (typeof title !== "string" || title.trim().length === 0) {
+          throw badRequest("Title must be a non-empty string");
+        }
+        if (title.length > 200) {
+          throw badRequest("Title must not exceed 200 characters");
+        }
+        updates.title = title.trim();
+      }
+
+      if (assertionText !== undefined) {
+        if (typeof assertionText !== "string" || assertionText.trim().length === 0) {
+          throw badRequest("Assertion text must be a non-empty string");
+        }
+        updates.assertion = assertionText.trim();
+      }
+
+      if (status !== undefined) {
+        if (typeof status !== "string" || !MISSION_ASSERTION_STATUSES.includes(status as any)) {
+          throw badRequest(`Invalid status. Must be one of: ${MISSION_ASSERTION_STATUSES.join(", ")}`);
+        }
+        updates.status = status as any;
+      }
+
+      const updated = missionStore.updateContractAssertion(assertionId, updates);
+      res.json(updated);
+    })
+  );
+
+  /**
+   * DELETE /api/missions/assertions/:assertionId
+   * Delete an assertion
+   */
+  router.delete(
+    "/assertions/:assertionId",
+    catchTypedHandler(async (req, res) => {
+      const { assertionId } = req.params;
+
+      if (!validateAssertionId(assertionId)) {
+        throw badRequest("Invalid assertion ID format");
+      }
+
+      const existing = missionStore.getContractAssertion(assertionId);
+      if (!existing) {
+        throw notFound("Assertion not found");
+      }
+
+      missionStore.deleteContractAssertion(assertionId);
+      res.status(204).send();
+    })
+  );
+
+  /**
+   * POST /api/missions/features/:featureId/assertions/:assertionId/link
+   * Link a feature to an assertion
+   */
+  router.post(
+    "/features/:featureId/assertions/:assertionId/link",
+    catchTypedHandler(async (req, res) => {
+      const { featureId, assertionId } = req.params;
+
+      if (!validateFeatureId(featureId)) {
+        throw badRequest("Invalid feature ID format");
+      }
+
+      if (!validateAssertionId(assertionId)) {
+        throw badRequest("Invalid assertion ID format");
+      }
+
+      try {
+        missionStore.linkFeatureToAssertion(featureId, assertionId);
+        res.json({ success: true });
+      } catch (err: any) {
+        if (err.message?.includes("not found")) {
+          if (err.message?.includes(`Feature ${featureId}`)) {
+            throw notFound("Feature not found");
+          }
+          throw notFound("Assertion not found");
+        }
+        if (err.message?.includes("already linked")) {
+          throw conflict(`Feature ${featureId} is already linked to assertion ${assertionId}`);
+        }
+        throw err;
+      }
+    })
+  );
+
+  /**
+   * POST /api/missions/features/:featureId/assertions/:assertionId/unlink
+   * Unlink a feature from an assertion
+   */
+  router.post(
+    "/features/:featureId/assertions/:assertionId/unlink",
+    catchTypedHandler(async (req, res) => {
+      const { featureId, assertionId } = req.params;
+
+      if (!validateFeatureId(featureId)) {
+        throw badRequest("Invalid feature ID format");
+      }
+
+      if (!validateAssertionId(assertionId)) {
+        throw badRequest("Invalid assertion ID format");
+      }
+
+      try {
+        missionStore.unlinkFeatureFromAssertion(featureId, assertionId);
+        res.json({ success: true });
+      } catch (err: any) {
+        if (err.message?.includes("not found")) {
+          if (err.message?.includes(`Feature ${featureId}`)) {
+            throw notFound("Feature not found");
+          }
+          throw notFound("Assertion not found");
+        }
+        if (err.message?.includes("not linked")) {
+          throw badRequest(`Feature ${featureId} is not linked to assertion ${assertionId}`);
+        }
+        throw err;
+      }
+    })
+  );
+
+  /**
+   * GET /api/missions/features/:featureId/assertions
+   * List assertions linked to a feature
+   */
+  router.get(
+    "/features/:featureId/assertions",
+    catchTypedHandler(async (req, res) => {
+      const { featureId } = req.params;
+
+      if (!validateFeatureId(featureId)) {
+        throw badRequest("Invalid feature ID format");
+      }
+
+      const feature = missionStore.getFeature(featureId);
+      if (!feature) {
+        throw notFound("Feature not found");
+      }
+
+      const assertions = missionStore.listAssertionsForFeature(featureId);
+      res.json(assertions);
+    })
+  );
+
+  /**
+   * GET /api/missions/assertions/:assertionId/features
+   * List features linked to an assertion
+   */
+  router.get(
+    "/assertions/:assertionId/features",
+    catchTypedHandler(async (req, res) => {
+      const { assertionId } = req.params;
+
+      if (!validateAssertionId(assertionId)) {
+        throw badRequest("Invalid assertion ID format");
+      }
+
+      const assertion = missionStore.getContractAssertion(assertionId);
+      if (!assertion) {
+        throw notFound("Assertion not found");
+      }
+
+      const features = missionStore.listFeaturesForAssertion(assertionId);
+      res.json(features);
+    })
+  );
+
+  /**
+   * GET /api/missions/milestones/:milestoneId/validation
+   * Get milestone validation rollup
+   */
+  router.get(
+    "/milestones/:milestoneId/validation",
+    catchTypedHandler(async (req, res) => {
+      const { milestoneId } = req.params;
+
+      if (!validateMilestoneId(milestoneId)) {
+        throw badRequest("Invalid milestone ID format");
+      }
+
+      const milestone = missionStore.getMilestone(milestoneId);
+      if (!milestone) {
+        throw notFound("Milestone not found");
+      }
+
+      const rollup = missionStore.getMilestoneValidationRollup(milestoneId);
+      res.json(rollup);
     })
   );
 

@@ -181,6 +181,8 @@ export {
   SLICE_PLAN_STATES,
   FEATURE_LOOP_STATES,
   VALIDATOR_RUN_STATUSES,
+  MISSION_ASSERTION_STATUSES,
+  MILESTONE_VALIDATION_STATES,
 } from "./mission-types.js";
 export type {
   MissionStatus,
@@ -223,8 +225,6 @@ export type {
   MissionFixFeatureLineage,
   MissionFeatureLoopSnapshot,
   // Contract assertion types
-  MISSION_ASSERTION_STATUSES,
-  MILESTONE_VALIDATION_STATES,
   MissionAssertionStatus,
   MilestoneValidationState,
   MissionContractAssertion,
