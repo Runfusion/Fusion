@@ -2,7 +2,7 @@ import type { AddressInfo } from "node:net";
 import { TaskStore, AutomationStore, CentralCore, AgentStore, PluginStore, PluginLoader, getTaskMergeBlocker, syncInsightExtractionAutomation, INSIGHT_EXTRACTION_SCHEDULE_NAME, processAndAuditInsightExtraction } from "@fusion/core";
 import type { Settings, ScheduledTask, AutomationRunResult } from "@fusion/core";
 import { createServer, GitHubClient } from "@fusion/dashboard";
-import { TriageProcessor, TaskExecutor, Scheduler, AgentSemaphore, WorktreePool, aiMergeTask, UsageLimitPauser, PRIORITY_MERGE, scanIdleWorktrees, cleanupOrphanedWorktrees, NtfyNotifier, PrMonitor, PrCommentHandler, CronRunner, StuckTaskDetector, SelfHealingManager, MissionAutopilot, createAiPromptExecutor, HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "@fusion/engine";
+import { TriageProcessor, TaskExecutor, Scheduler, AgentSemaphore, WorktreePool, aiMergeTask, UsageLimitPauser, PRIORITY_MERGE, scanIdleWorktrees, cleanupOrphanedWorktrees, NtfyNotifier, PrMonitor, PrCommentHandler, CronRunner, StuckTaskDetector, SelfHealingManager, MissionAutopilot, MissionExecutionLoop, createAiPromptExecutor, HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "@fusion/engine";
 import { AuthStorage, DefaultPackageManager, ModelRegistry, SettingsManager, discoverAndLoadExtensions, getAgentDir, createExtensionRuntime } from "@mariozechner/pi-coding-agent";
 import {
   getMergeStrategy,
@@ -711,6 +711,26 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   //
   const missionAutopilot = new MissionAutopilot(store, store.getMissionStore());
 
+  // ── MissionExecutionLoop: validation cycle orchestration ───────────
+  //
+  // Created alongside MissionAutopilot to handle the validation cycle
+  // (implement → validate → fix → pass). In dev mode the loop is created
+  // but not started.
+  //
+  const missionExecutionLoop = new MissionExecutionLoop({
+    taskStore: store,
+    missionStore: store.getMissionStore(),
+    missionAutopilot: {
+      notifyValidationComplete: async (featureId: string, status: "passed" | "failed" | "blocked" | "error") => {
+        // Delegate to autopilot after validation completes
+        if (missionAutopilot) {
+          await missionAutopilot.handleTaskCompletion(featureId);
+        }
+      },
+    },
+    rootDir: cwd,
+  });
+
   const dashboardAuthStorage = wrapAuthStorageWithApiKeyProviders(authStorage, modelRegistry);
 
   // Start the web server with AI merge, auth, model registry, and plugin wiring
@@ -829,6 +849,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       prMonitor,
       missionStore: store.getMissionStore(),
       missionAutopilot,
+      missionExecutionLoop,
       onSchedule: (t) => console.log(`[engine] Scheduled ${t.id}`),
       onBlocked: (t, deps) => console.log(`[engine] ${t.id} blocked by ${deps.join(", ")}`),
       onClosedPrFeedback: async (taskId, prInfo, comments) => {
@@ -922,8 +943,16 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     triage.start();
     scheduler.start();
     missionAutopilot.start();
+    missionExecutionLoop.start();
     stuckTaskDetector.start();
     selfHealing.start();
+
+    // ── Startup: recover active missions for validation loop ─────────────
+    // Re-enqueue pending validations from any missions that were interrupted
+    // before the engine was stopped (e.g., features in validating/needs_fix state).
+    void missionExecutionLoop.recoverActiveMissions().catch((err) => {
+      console.error("[engine] Failed to recover active missions:", err);
+    });
 
     // ── Startup sweep: resume orphaned in-progress tasks ──────────────
     executor.resumeOrphaned().catch((err) =>
@@ -1079,6 +1108,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       selfHealing.stop();
       stuckTaskDetector.stop();
       missionAutopilot.stop();
+      missionExecutionLoop.stop();
       triage.stop();
       scheduler.stop();
       cronRunner.stop();

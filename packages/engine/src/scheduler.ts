@@ -77,6 +77,8 @@ export interface SchedulerOptions {
     prInfo: PrInfo,
     comments: PrComment[]
   ) => void | Promise<void>;
+  /** Optional MissionExecutionLoop for validation cycle handling */
+  missionExecutionLoop?: import("./mission-execution-loop.js").MissionExecutionLoop;
 }
 
 /**
@@ -759,6 +761,15 @@ export class Scheduler {
       if (feature.status !== "done") {
         missionStore.updateFeatureStatus(feature.id, "done");
         schedulerLog.log(`Feature ${feature.id} marked done (task ${taskId} completed)`);
+      }
+
+      // Trigger the mission execution loop to run validation
+      // This is called regardless of whether the slice is complete - the loop
+      // handles the validation cycle independently
+      if (this.options.missionExecutionLoop) {
+        void this.options.missionExecutionLoop.processTaskOutcome(taskId).catch((err) => {
+          schedulerLog.error(`Error in missionExecutionLoop.processTaskOutcome for ${taskId}:`, err);
+        });
       }
 
       // Check if the slice became complete after the feature update

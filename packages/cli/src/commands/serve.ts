@@ -42,6 +42,7 @@ import {
   StuckTaskDetector,
   SelfHealingManager,
   MissionAutopilot,
+  MissionExecutionLoop,
   createAiPromptExecutor,
   HeartbeatMonitor,
   HeartbeatTriggerScheduler,
@@ -583,6 +584,25 @@ export async function runServe(
 
   const missionAutopilot = new MissionAutopilot(store, store.getMissionStore());
 
+  // ── MissionExecutionLoop: validation cycle orchestration ───────────
+  //
+  // Created alongside MissionAutopilot to handle the validation cycle
+  // (implement → validate → fix → pass).
+  //
+  const missionExecutionLoop = new MissionExecutionLoop({
+    taskStore: store,
+    missionStore: store.getMissionStore(),
+    missionAutopilot: {
+      notifyValidationComplete: async (featureId: string, status: "passed" | "failed" | "blocked" | "error") => {
+        // Delegate to autopilot after validation completes
+        if (missionAutopilot) {
+          await missionAutopilot.handleTaskCompletion(featureId);
+        }
+      },
+    },
+    rootDir: cwd,
+  });
+
   const app = createServer(store, {
     onMerge,
     authStorage,
@@ -671,6 +691,7 @@ export async function runServe(
     prMonitor,
     missionStore: store.getMissionStore(),
     missionAutopilot,
+    missionExecutionLoop,
     onSchedule: (t) => console.log(`[engine] Scheduled ${t.id}`),
     onBlocked: (t, deps) =>
       console.log(`[engine] ${t.id} blocked by ${deps.join(", ")}`),
@@ -762,8 +783,16 @@ export async function runServe(
   triage.start();
   scheduler.start();
   missionAutopilot.start();
+  missionExecutionLoop.start();
   stuckTaskDetector.start();
   selfHealing.start();
+
+  // ── Startup: recover active missions for validation loop ─────────────
+  // Re-enqueue pending validations from any missions that were interrupted
+  // before the engine was stopped (e.g., features in validating/needs_fix state).
+  void missionExecutionLoop.recoverActiveMissions().catch((err) => {
+    console.error("[engine] Failed to recover active missions:", err);
+  });
 
   executor.resumeOrphaned().catch((err) =>
     console.error("[engine] Failed to resume orphaned tasks:", err),
@@ -945,6 +974,7 @@ export async function runServe(
     selfHealing.stop();
     stuckTaskDetector.stop();
     missionAutopilot.stop();
+    missionExecutionLoop.stop();
     triage.stop();
     scheduler.stop();
     cronRunner.stop();

@@ -29,6 +29,7 @@ import type { UsageLimitPauser } from "../usage-limit-detector.js";
 import { SelfHealingManager } from "../self-healing.js";
 import { PluginRunner } from "../plugin-runner.js";
 import { MissionAutopilot } from "../mission-autopilot.js";
+import { MissionExecutionLoop } from "../mission-execution-loop.js";
 
 /**
  * InProcessRuntime runs a project within the main process.
@@ -86,6 +87,7 @@ export class InProcessRuntime
   private pluginLoader?: PluginLoader;
   private routineRunner?: RoutineRunner;
   private routineScheduler?: RoutineScheduler;
+  private missionExecutionLoop?: MissionExecutionLoop;
 
   /**
    * @param config - Runtime configuration
@@ -170,12 +172,29 @@ export class InProcessRuntime
         ? new MissionAutopilot(this.taskStore, missionStore)
         : undefined;
 
+      // Initialize MissionExecutionLoop for validation cycle handling
+      const missionExecutionLoop = missionStore
+        ? new MissionExecutionLoop({
+            taskStore: this.taskStore,
+            missionStore,
+            missionAutopilot: missionAutopilot
+              ? {
+                  notifyValidationComplete: async (featureId: string, status: "passed" | "failed" | "blocked" | "error") => {
+                    await missionAutopilot.handleTaskCompletion(featureId);
+                  },
+                }
+              : undefined,
+            rootDir: this.config.workingDirectory,
+          })
+        : undefined;
+
       this.scheduler = new Scheduler(this.taskStore, {
         maxConcurrent: this.config.maxConcurrent,
         maxWorktrees: this.config.maxWorktrees,
         semaphore: this.globalSemaphore,
         missionStore,
         missionAutopilot,
+        missionExecutionLoop,
         onTaskFailed: (taskId) => {
           if (missionAutopilot) {
             void missionAutopilot.handleTaskFailure(taskId);
@@ -406,6 +425,16 @@ export class InProcessRuntime
       // 10. Start scheduler
       this.scheduler.start();
 
+      // 11. Start MissionExecutionLoop for validation cycle handling
+      this.missionExecutionLoop = missionExecutionLoop;
+      if (missionExecutionLoop) {
+        missionExecutionLoop.start();
+        // Recover active missions to re-enqueue pending validations
+        void missionExecutionLoop.recoverActiveMissions().catch((err) => {
+          runtimeLog.error("Failed to recover active missions:", err);
+        });
+      }
+
       // Mission crash recovery: restore autopilot state for missions that were active before crash
       const activeMissionStore = this.taskStore.getMissionStore();
       const activeMissionAutopilot = this.scheduler.getMissionAutopilot?.();
@@ -413,7 +442,7 @@ export class InProcessRuntime
         void activeMissionAutopilot.recoverMissions(activeMissionStore);
       }
 
-      // 11. Reconcile feature status for all active missions (not just autopilot)
+      // 12. Reconcile feature status for all active missions (not just autopilot)
       if (activeMissionStore) {
         void this.scheduler.reconcileAllMissionFeatures();
       }
@@ -434,11 +463,17 @@ export class InProcessRuntime
    *
    * Shutdown sequence:
    * 1. Set status to "stopping"
-   * 2. Stop scheduler (no new tasks)
-   * 3. Wait for executor to finish active tasks (with timeout)
-   * 4. Shutdown plugin runner
-   * 5. Drain and cleanup worktree pool
-   * 6. Set status to "stopped"
+   * 2. Stop self-healing manager
+   * 3. Stop routine scheduler
+   * 4. Stop trigger scheduler
+   * 5. Stop stuck task detector
+   * 6. Stop heartbeat monitor
+   * 7. Stop scheduler
+   * 8. Stop mission execution loop
+   * 9. Wait for executor to finish active tasks (with timeout)
+   * 10. Shutdown plugin runner
+   * 11. Drain and cleanup worktree pool
+   * 12. Set status to "stopped"
    *
    * @throws Error if shutdown timeout is exceeded
    */
@@ -487,7 +522,13 @@ export class InProcessRuntime
         runtimeLog.log("Scheduler stopped");
       }
 
-      // 7. Wait for active tasks to complete (30 second timeout)
+      // 7. Stop mission execution loop
+      if (this.missionExecutionLoop) {
+        this.missionExecutionLoop.stop();
+        runtimeLog.log("MissionExecutionLoop stopped");
+      }
+
+      // 8. Wait for active tasks to complete (30 second timeout)
       const shutdownTimeout = 30000;
       const startTime = Date.now();
 
