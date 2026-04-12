@@ -15,6 +15,23 @@ export { promptForPort };
 
 type LoginCallbacks = Parameters<AuthStorage["login"]>[1];
 
+let processDiagnosticsRegistered = false;
+
+function ensureProcessDiagnostics(): void {
+  if (processDiagnosticsRegistered) {
+    return;
+  }
+  processDiagnosticsRegistered = true;
+
+  process.on("uncaughtExceptionMonitor", (error: Error) => {
+    console.error(`[dashboard] uncaught exception pid=${process.pid}: ${error.stack || error.message}`);
+  });
+  process.on("unhandledRejection", (reason: unknown) => {
+    const message = reason instanceof Error ? reason.stack || reason.message : String(reason);
+    console.error(`[dashboard] unhandled rejection pid=${process.pid}: ${message}`);
+  });
+}
+
 interface DashboardAuthStorage {
   reload(): void;
   getOAuthProviders(): Array<{ id: string; name: string }>;
@@ -90,6 +107,8 @@ function wrapAuthStorageWithApiKeyProviders(
 }
 
 export async function runDashboard(port: number, opts: { paused?: boolean; dev?: boolean; interactive?: boolean; open?: boolean } = {}) {
+  ensureProcessDiagnostics();
+
   // Handle interactive port selection
   let selectedPort = port;
   if (opts.interactive) {
@@ -114,7 +133,34 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     handler: (...args: any[]) => void;
   }> = [];
   let disposed = false;
+  let shutdownInProgress = false;
   let mergeRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  const dashboardStartedAt = Date.now();
+
+  async function logShutdownDiagnostics(reason: string): Promise<void> {
+    const uptimeSeconds = Math.round((Date.now() - dashboardStartedAt) / 1000);
+    let taskSummary = "tasks=unknown";
+    try {
+      const tasks = await store.listTasks({ slim: true, includeArchived: false });
+      const counts = new Map<string, number>();
+      for (const task of tasks) {
+        counts.set(task.column, (counts.get(task.column) ?? 0) + 1);
+      }
+      const active = tasks.filter((task) =>
+        task.column === "in-progress" || task.column === "in-review"
+      ).length;
+      taskSummary = `tasks=${tasks.length} active=${active} columns=${Array.from(counts.entries())
+        .map(([column, count]) => `${column}:${count}`)
+        .join(",")}`;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      taskSummary = `tasks=unavailable (${message})`;
+    }
+
+    console.log(
+      `[dashboard] shutdown requested reason=${reason} pid=${process.pid} ppid=${process.ppid} uptime=${uptimeSeconds}s ${taskSummary}`,
+    );
+  }
 
   function registerHandler(
     target: NodeJS.EventEmitter,
@@ -1105,7 +1151,10 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     // Kick off the first retry after the current poll interval
     scheduleMergeRetry();
 
-    const shutdown = () => {
+    const shutdown = async (signal: NodeJS.Signals) => {
+      if (shutdownInProgress) return;
+      shutdownInProgress = true;
+      await logShutdownDiagnostics(signal);
       dispose();
       // Stop heartbeat components first (they reference agentStore)
       if (triggerScheduler) triggerScheduler.stop();
@@ -1121,13 +1170,16 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       store.close();
       process.exit(0);
     };
-    registerHandler(process, "SIGINT", shutdown);
-    registerHandler(process, "SIGTERM", shutdown);
+    registerHandler(process, "SIGINT", () => void shutdown("SIGINT"));
+    registerHandler(process, "SIGTERM", () => void shutdown("SIGTERM"));
   }
 
   // Dev mode: simplified shutdown handlers (no engine components)
   if (opts.dev) {
-    const devShutdown = () => {
+    const devShutdown = async (signal: NodeJS.Signals) => {
+      if (shutdownInProgress) return;
+      shutdownInProgress = true;
+      await logShutdownDiagnostics(signal);
       dispose();
       if (triggerScheduler) triggerScheduler.stop();
       if (heartbeatMonitor) heartbeatMonitor.stop();
@@ -1135,8 +1187,8 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       store.close();
       process.exit(0);
     };
-    registerHandler(process, "SIGINT", devShutdown);
-    registerHandler(process, "SIGTERM", devShutdown);
+    registerHandler(process, "SIGINT", () => void devShutdown("SIGINT"));
+    registerHandler(process, "SIGTERM", () => void devShutdown("SIGTERM"));
   }
 
   const server = app.listen(selectedPort);

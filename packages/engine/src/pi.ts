@@ -6,6 +6,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { join, relative, isAbsolute, resolve } from "node:path";
 import {
   AuthStorage,
@@ -273,6 +274,34 @@ function getProjectRootFromWorktree(cwd: string): string | null {
   return null;
 }
 
+function isRegisteredGitWorktree(projectRoot: string, worktreePath: string): boolean {
+  try {
+    const output = String(execSync("git worktree list --porcelain", {
+      cwd: projectRoot,
+      encoding: "utf-8",
+      stdio: "pipe",
+    }));
+    const resolvedWorktree = resolve(worktreePath);
+    return output.split("\n").some((line) =>
+      line.startsWith("worktree ") && resolve(line.slice("worktree ".length)) === resolvedWorktree
+    );
+  } catch {
+    return false;
+  }
+}
+
+function assertValidWorktreeSession(cwd: string, projectRoot: string): void {
+  if (!existsSync(cwd)) {
+    throw new Error(`Refusing to start coding agent in missing worktree: ${cwd}`);
+  }
+  if (!existsSync(join(cwd, ".git")) || !existsSync(join(cwd, "package.json"))) {
+    throw new Error(`Refusing to start coding agent in incomplete worktree: ${cwd}`);
+  }
+  if (!isRegisteredGitWorktree(projectRoot, cwd)) {
+    throw new Error(`Refusing to start coding agent in unregistered git worktree: ${cwd}`);
+  }
+}
+
 /**
  * Check if a path is allowed to be accessed from a worktree session.
  * Rules:
@@ -398,6 +427,9 @@ export async function createKbAgent(options: AgentOptions): Promise<AgentResult>
   // Detect if this is a worktree session and apply path boundaries
   const worktreePath = options.cwd;
   const projectRoot = getProjectRootFromWorktree(worktreePath);
+  if (projectRoot) {
+    assertValidWorktreeSession(worktreePath, projectRoot);
+  }
   const wrappedTools = wrapToolsWithBoundary(tools, worktreePath, projectRoot);
 
   // Compaction is explicitly enabled to prevent context-window overflow during

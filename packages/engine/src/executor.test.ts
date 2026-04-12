@@ -543,6 +543,21 @@ describe("TaskExecutor worktree naming", () => {
   it("reuses stored worktree path for resumed tasks", async () => {
     const existingPath = "/tmp/test/.worktrees/calm-river";
     mockedExistsSync.mockReturnValue(true);
+    mockedExecSync.mockImplementation((cmd: any) => {
+      if (String(cmd) === "git worktree list --porcelain") {
+        return [
+          "worktree /tmp/test",
+          "HEAD abc123",
+          "branch refs/heads/main",
+          "",
+          `worktree ${existingPath}`,
+          "HEAD def456",
+          "branch refs/heads/fusion/fn-031",
+          "",
+        ].join("\n") as any;
+      }
+      return Buffer.from("");
+    });
 
     const store = createMockStore();
     const executor = new TaskExecutor(store, "/tmp/test");
@@ -551,6 +566,29 @@ describe("TaskExecutor worktree naming", () => {
 
     // Should NOT generate a new name — reuse the stored path
     expect(mockedGenerateWorktreeName).not.toHaveBeenCalled();
+  });
+
+  it("does not reuse a stored worktree path that is not registered", async () => {
+    const stalePath = "/tmp/test/.worktrees/broken-wt";
+    mockedExistsSync.mockImplementation((path) => String(path).startsWith(stalePath));
+    mockedExecSync.mockImplementation((cmd: any) => {
+      if (String(cmd) === "git worktree list --porcelain") {
+        return "worktree /tmp/test\nHEAD abc123\nbranch refs/heads/main\n" as any;
+      }
+      return Buffer.from("");
+    });
+
+    const store = createMockStore();
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    await executor.execute(makeTask("FN-032", stalePath));
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-032", { worktree: null, branch: null });
+    expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test");
+    const worktreeAddCalls = mockedExecSync.mock.calls.filter(
+      (call) => typeof call[0] === "string" && call[0].includes("git worktree add"),
+    );
+    expect(worktreeAddCalls.length).toBeGreaterThan(0);
   });
 
   describe("worktreeNaming setting", () => {

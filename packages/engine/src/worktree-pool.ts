@@ -1,8 +1,49 @@
 import { execSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, rmSync } from "node:fs";
+import { join, relative, resolve, isAbsolute } from "node:path";
 import type { Column, TaskStore } from "@fusion/core";
 import { worktreePoolLog } from "./logger.js";
+
+export function getRegisteredWorktreePaths(rootDir: string): Set<string> {
+  try {
+    const output = String(execSync("git worktree list --porcelain", {
+      cwd: rootDir,
+      encoding: "utf-8",
+      stdio: "pipe",
+    }));
+
+    const paths = new Set<string>();
+    for (const line of output.split("\n")) {
+      if (line.startsWith("worktree ")) {
+        paths.add(resolve(line.slice("worktree ".length)));
+      }
+    }
+    return paths;
+  } catch {
+    return new Set();
+  }
+}
+
+export function isRegisteredGitWorktree(rootDir: string, worktreePath: string): boolean {
+  return getRegisteredWorktreePaths(rootDir).has(resolve(worktreePath));
+}
+
+export function hasRequiredWorktreeFiles(worktreePath: string): boolean {
+  return existsSync(join(worktreePath, ".git")) && existsSync(join(worktreePath, "package.json"));
+}
+
+export function isUsableTaskWorktree(rootDir: string, worktreePath: string): boolean {
+  return existsSync(worktreePath) &&
+    isRegisteredGitWorktree(rootDir, worktreePath) &&
+    hasRequiredWorktreeFiles(worktreePath);
+}
+
+function isInsideWorktreesDir(rootDir: string, worktreePath: string): boolean {
+  const worktreesDir = resolve(rootDir, ".worktrees");
+  const target = resolve(worktreePath);
+  const rel = relative(worktreesDir, target);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
 
 /**
  * A pool of idle git worktrees that can be recycled across tasks.
@@ -220,17 +261,24 @@ export async function scanIdleWorktrees(rootDir: string, store: TaskStore): Prom
     return [];
   }
 
+  const registeredWorktrees = getRegisteredWorktreePaths(rootDir);
+  const registeredDirs = dirs.filter((dir) => registeredWorktrees.has(resolve(dir)));
+
   // Find worktree paths assigned to non-done tasks (active worktrees)
-  const tasks = await store.listTasks();
+  const tasks = await store.listTasks({ slim: true, includeArchived: false });
   const activeWorktrees = new Set<string>();
   for (const task of tasks) {
-    if (task.worktree && task.column !== "done") {
-      activeWorktrees.add(task.worktree);
+    if (task.worktree && task.column !== "done" && registeredWorktrees.has(resolve(task.worktree))) {
+      activeWorktrees.add(resolve(task.worktree));
+    } else if (task.worktree && task.column !== "done") {
+      worktreePoolLog.log(`Ignoring task ${task.id} worktree metadata because it is not a registered git worktree: ${task.worktree}`);
     }
   }
 
-  // Return worktrees on disk that are NOT active
-  return dirs.filter((dir) => !activeWorktrees.has(dir));
+  // Return registered worktrees on disk that are NOT active. Unregistered
+  // directories are intentionally excluded here so recycle mode never adds a
+  // broken directory to the warm pool; cleanup handles those separately.
+  return registeredDirs.filter((dir) => !activeWorktrees.has(resolve(dir)));
 }
 
 /**
@@ -247,15 +295,42 @@ export async function scanIdleWorktrees(rootDir: string, store: TaskStore): Prom
  * @returns Number of worktrees cleaned up
  */
 export async function cleanupOrphanedWorktrees(rootDir: string, store: TaskStore): Promise<number> {
+  const worktreesDir = join(rootDir, ".worktrees");
+  if (!existsSync(worktreesDir)) {
+    return 0;
+  }
+
   const orphaned = await scanIdleWorktrees(rootDir, store);
+  const registeredWorktrees = getRegisteredWorktreePaths(rootDir);
+
+  let dirs: string[] = [];
+  if (existsSync(worktreesDir)) {
+    try {
+      dirs = readdirSync(worktreesDir, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => join(worktreesDir, e.name));
+    } catch {
+      dirs = [];
+    }
+  }
+
+  const unregistered = dirs.filter((dir) => !registeredWorktrees.has(resolve(dir)));
+  const candidates = [...orphaned, ...unregistered];
   let cleaned = 0;
 
-  for (const worktreePath of orphaned) {
+  for (const worktreePath of candidates) {
     try {
-      execSync(`git worktree remove "${worktreePath}" --force`, {
-        cwd: rootDir,
-        stdio: "pipe",
-      });
+      if (registeredWorktrees.has(resolve(worktreePath))) {
+        execSync(`git worktree remove "${worktreePath}" --force`, {
+          cwd: rootDir,
+          stdio: "pipe",
+        });
+      } else {
+        if (!isInsideWorktreesDir(rootDir, worktreePath)) {
+          throw new Error(`Refusing to remove path outside .worktrees: ${worktreePath}`);
+        }
+        rmSync(worktreePath, { recursive: true, force: true });
+      }
       worktreePoolLog.log(`Cleaned up orphaned worktree: ${worktreePath}`);
       cleaned++;
     } catch (err: any) {

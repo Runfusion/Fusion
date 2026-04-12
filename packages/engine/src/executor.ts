@@ -15,7 +15,7 @@ import { createKbAgent, describeModel, promptWithFallback, compactSessionContext
 import { reviewStep, type ReviewVerdict } from "./reviewer.js";
 import { AuthStorage, ModelRegistry, SessionManager, getAgentDir, type ToolDefinition, type AgentSession } from "@mariozechner/pi-coding-agent";
 import { PRIORITY_EXECUTE, type AgentSemaphore } from "./concurrency.js";
-import type { WorktreePool } from "./worktree-pool.js";
+import { isRegisteredGitWorktree, isUsableTaskWorktree, type WorktreePool } from "./worktree-pool.js";
 import { AgentLogger } from "./agent-logger.js";
 import { executorLog, reviewerLog } from "./logger.js";
 import { TokenCapDetector } from "./token-cap-detector.js";
@@ -902,6 +902,20 @@ export class TaskExecutor {
 
       // Resolve the base branch — set by the scheduler when a dep is in-review
       const baseBranch = task.baseBranch || null;
+
+      if (task.worktree && isResume && !isUsableTaskWorktree(this.rootDir, worktreePath)) {
+        const invalidWorktreePath = worktreePath;
+        executorLog.log(`${task.id}: assigned worktree is not usable; creating a fresh worktree instead: ${invalidWorktreePath}`);
+        await this.store.logEntry(
+          task.id,
+          `Assigned worktree is not a registered, usable git worktree; creating a fresh worktree instead`,
+          invalidWorktreePath,
+          this.currentRunContext,
+        );
+        await this.store.updateTask(task.id, { worktree: null, branch: null });
+        worktreePath = join(this.rootDir, ".worktrees", generateWorktreeName(this.rootDir));
+        isResume = existsSync(worktreePath);
+      }
 
       if (!isResume) {
 
@@ -3258,16 +3272,7 @@ and show an appropriate message to the user.\`
    * Check if a path is registered as a git worktree.
    */
   private isRegisteredWorktree(path: string): boolean {
-    try {
-      const output = execSync("git worktree list --porcelain", {
-        cwd: this.rootDir,
-        encoding: "utf-8",
-        stdio: "pipe",
-      });
-      return output.includes(path);
-    } catch {
-      return false;
-    }
+    return isRegisteredGitWorktree(this.rootDir, path);
   }
 
   /**

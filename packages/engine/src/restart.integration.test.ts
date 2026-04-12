@@ -204,7 +204,37 @@ function createAgentWithTaskDone() {
 beforeEach(() => {
   vi.clearAllMocks();
   mockedExistsSync.mockReturnValue(true); // Default: worktrees exist (resume scenario)
-  mockedExecSync.mockReturnValue(Buffer.from(""));
+  mockedExecSync.mockImplementation((cmd: any) => {
+    if (String(cmd) === "git worktree list --porcelain") {
+      return [
+        "worktree /tmp/test",
+        "HEAD abc123",
+        "branch refs/heads/main",
+        "",
+        "worktree /tmp/wt/KB-010",
+        "HEAD def456",
+        "branch refs/heads/fusion/fn-010",
+        "",
+        "worktree /tmp/wt/FN-963",
+        "HEAD def456",
+        "branch refs/heads/fusion/fn-963",
+        "",
+        "worktree /root/.worktrees/active-wt",
+        "HEAD def456",
+        "branch refs/heads/fusion/active-wt",
+        "",
+        "worktree /root/.worktrees/review-wt",
+        "HEAD def456",
+        "branch refs/heads/fusion/review-wt",
+        "",
+        "worktree /root/.worktrees/idle-wt",
+        "HEAD def456",
+        "branch refs/heads/fusion/idle-wt",
+        "",
+      ].join("\n") as any;
+    }
+    return Buffer.from("");
+  });
 });
 
 // ── Step 2: In-progress task resume tests ─────────────────────────────────
@@ -874,6 +904,26 @@ function makeDirEntry(name: string) {
   return { name, isDirectory: () => true } as any;
 }
 
+function mockRegisteredWorktrees(rootDir: string, names: string[]) {
+  mockedExecSync.mockImplementation((cmd: any) => {
+    if (String(cmd) === "git worktree list --porcelain") {
+      return [
+        `worktree ${rootDir}`,
+        "HEAD abc123",
+        "branch refs/heads/main",
+        "",
+        ...names.flatMap((name) => [
+          `worktree ${rootDir}/.worktrees/${name}`,
+          "HEAD def456",
+          `branch refs/heads/fusion/${name}`,
+          "",
+        ]),
+      ].join("\n") as any;
+    }
+    return Buffer.from("");
+  });
+}
+
 describe("Worktree pool restart with recycleWorktrees=true", () => {
   it("pool is rehydrated with idle worktrees from disk", async () => {
     mockedReaddirSync.mockReturnValue([
@@ -882,6 +932,7 @@ describe("Worktree pool restart with recycleWorktrees=true", () => {
       makeDirEntry("bold-eagle"),
     ] as any);
     mockedExistsSync.mockReturnValue(true);
+    mockRegisteredWorktrees("/root", ["swift-falcon", "calm-river", "bold-eagle"]);
 
     const store = createMockStore();
     store.listTasks.mockResolvedValue([
@@ -908,6 +959,7 @@ describe("Worktree pool restart with recycleWorktrees=true", () => {
     mockedReaddirSync.mockReturnValue([
       makeDirEntry("idle-wt"),
     ] as any);
+    mockRegisteredWorktrees("/root", ["idle-wt"]);
 
     const store = createMockStore();
     store.listTasks.mockResolvedValue([]);
@@ -958,6 +1010,7 @@ describe("Worktree pool restart with recycleWorktrees=true", () => {
       makeDirEntry("idle-wt"),
     ] as any);
     mockedExistsSync.mockReturnValue(true);
+    mockRegisteredWorktrees("/root", ["active-wt", "idle-wt"]);
 
     const store = createMockStore();
     store.listTasks.mockResolvedValue([
@@ -979,6 +1032,7 @@ describe("Worktree pool restart with recycleWorktrees=true", () => {
       makeDirEntry("review-wt"),
     ] as any);
     mockedExistsSync.mockReturnValue(true);
+    mockRegisteredWorktrees("/root", ["review-wt"]);
 
     const store = createMockStore();
     store.listTasks.mockResolvedValue([
@@ -1001,7 +1055,7 @@ describe("Worktree cleanup on restart with recycleWorktrees=false", () => {
       makeDirEntry("orphan-2"),
     ] as any);
     mockedExistsSync.mockReturnValue(true);
-    mockedExecSync.mockReturnValue(Buffer.from(""));
+    mockRegisteredWorktrees("/root", ["orphan-1", "orphan-2"]);
 
     const store = createMockStore();
     store.listTasks.mockResolvedValue([]);
@@ -1021,7 +1075,7 @@ describe("Worktree cleanup on restart with recycleWorktrees=false", () => {
       makeDirEntry("orphan-wt"),
     ] as any);
     mockedExistsSync.mockReturnValue(true);
-    mockedExecSync.mockReturnValue(Buffer.from(""));
+    mockRegisteredWorktrees("/root", ["active-wt", "orphan-wt"]);
 
     const store = createMockStore();
     store.listTasks.mockResolvedValue([
@@ -1044,6 +1098,7 @@ describe("Worktree cleanup on restart with recycleWorktrees=false", () => {
       makeDirEntry("review-wt"),
     ] as any);
     mockedExistsSync.mockReturnValue(true);
+    mockRegisteredWorktrees("/root", ["review-wt"]);
 
     const store = createMockStore();
     store.listTasks.mockResolvedValue([

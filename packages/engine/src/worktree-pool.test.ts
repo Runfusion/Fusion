@@ -7,16 +7,18 @@ vi.mock("node:child_process", () => ({
 vi.mock("node:fs", () => ({
   existsSync: vi.fn().mockReturnValue(true),
   readdirSync: vi.fn().mockReturnValue([]),
+  rmSync: vi.fn(),
 }));
 
 import { WorktreePool, scanIdleWorktrees, cleanupOrphanedWorktrees, scanOrphanedBranches } from "./worktree-pool.js";
 import { execSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import type { Task, Column } from "@fusion/core";
 
 const mockedExecSync = vi.mocked(execSync);
 const mockedExistsSync = vi.mocked(existsSync);
 const mockedReaddirSync = vi.mocked(readdirSync);
+const mockedRmSync = vi.mocked(rmSync);
 
 describe("WorktreePool", () => {
   let pool: WorktreePool;
@@ -367,12 +369,33 @@ function makeDirEntry(name: string) {
   return { name, isDirectory: () => true } as any;
 }
 
+function mockRegisteredWorktrees(rootDir: string, names: string[]) {
+  mockedExecSync.mockImplementation((cmd: any) => {
+    if (String(cmd) === "git worktree list --porcelain") {
+      return [
+        `worktree ${rootDir}`,
+        "HEAD abc123",
+        "branch refs/heads/main",
+        "",
+        ...names.flatMap((name) => [
+          `worktree ${rootDir}/.worktrees/${name}`,
+          "HEAD def456",
+          `branch refs/heads/fusion/${name}`,
+          "",
+        ]),
+      ].join("\n") as any;
+    }
+    return Buffer.from("");
+  });
+}
+
 // ── scanIdleWorktrees tests ───────────────────────────────────────────
 
 describe("scanIdleWorktrees", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedExistsSync.mockReturnValue(true);
+    mockRegisteredWorktrees("/root", []);
   });
 
   it("correctly identifies idle vs active worktrees", async () => {
@@ -381,6 +404,7 @@ describe("scanIdleWorktrees", () => {
       makeDirEntry("calm-river"),
       makeDirEntry("bold-eagle"),
     ] as any);
+    mockRegisteredWorktrees("/root", ["swift-falcon", "calm-river", "bold-eagle"]);
 
     const store = createMockStore([
       makeTask("FN-001", "in-progress", "/root/.worktrees/swift-falcon"),
@@ -417,6 +441,7 @@ describe("scanIdleWorktrees", () => {
     mockedReaddirSync.mockReturnValue([
       makeDirEntry("review-wt"),
     ] as any);
+    mockRegisteredWorktrees("/root", ["review-wt"]);
 
     const store = createMockStore([
       makeTask("FN-010", "in-review", "/root/.worktrees/review-wt"),
@@ -431,6 +456,7 @@ describe("scanIdleWorktrees", () => {
       makeDirEntry("wt-1"),
       makeDirEntry("wt-2"),
     ] as any);
+    mockRegisteredWorktrees("/root", ["wt-1", "wt-2"]);
 
     const store = createMockStore([]);
 
@@ -449,6 +475,21 @@ describe("scanIdleWorktrees", () => {
     const idle = await scanIdleWorktrees("/root", store);
     expect(idle).toEqual([]);
   });
+
+  it("does not return unregistered directories for pool rehydration", async () => {
+    mockedReaddirSync.mockReturnValue([
+      makeDirEntry("registered-wt"),
+      makeDirEntry("broken-wt"),
+    ] as any);
+    mockRegisteredWorktrees("/root", ["registered-wt"]);
+
+    const store = createMockStore([
+      makeTask("FN-001", "in-progress", "/root/.worktrees/broken-wt"),
+    ]);
+
+    const idle = await scanIdleWorktrees("/root", store);
+    expect(idle).toEqual(["/root/.worktrees/registered-wt"]);
+  });
 });
 
 // ── cleanupOrphanedWorktrees tests ────────────────────────────────────
@@ -457,7 +498,7 @@ describe("cleanupOrphanedWorktrees", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedExistsSync.mockReturnValue(true);
-    mockedExecSync.mockReturnValue(Buffer.from(""));
+    mockRegisteredWorktrees("/root", []);
   });
 
   it("removes worktrees not assigned to any active task", async () => {
@@ -465,6 +506,7 @@ describe("cleanupOrphanedWorktrees", () => {
       makeDirEntry("orphan-1"),
       makeDirEntry("orphan-2"),
     ] as any);
+    mockRegisteredWorktrees("/root", ["orphan-1", "orphan-2"]);
 
     const store = createMockStore([]);
 
@@ -484,6 +526,7 @@ describe("cleanupOrphanedWorktrees", () => {
       makeDirEntry("active-wt"),
       makeDirEntry("orphan-wt"),
     ] as any);
+    mockRegisteredWorktrees("/root", ["active-wt", "orphan-wt"]);
 
     const store = createMockStore([
       makeTask("FN-001", "in-progress", "/root/.worktrees/active-wt"),
@@ -507,6 +550,22 @@ describe("cleanupOrphanedWorktrees", () => {
     ] as any);
 
     mockedExecSync.mockImplementation((cmd: any) => {
+      if (String(cmd) === "git worktree list --porcelain") {
+        return [
+          "worktree /root",
+          "HEAD abc123",
+          "branch refs/heads/main",
+          "",
+          "worktree /root/.worktrees/fail-wt",
+          "HEAD def456",
+          "branch refs/heads/fusion/fail-wt",
+          "",
+          "worktree /root/.worktrees/ok-wt",
+          "HEAD def456",
+          "branch refs/heads/fusion/ok-wt",
+          "",
+        ].join("\n") as any;
+      }
       if (typeof cmd === "string" && cmd.includes("fail-wt")) {
         throw new Error("worktree locked");
       }
@@ -527,7 +586,10 @@ describe("cleanupOrphanedWorktrees", () => {
 
     const cleaned = await cleanupOrphanedWorktrees("/root", store);
     expect(cleaned).toBe(0);
-    expect(mockedExecSync).not.toHaveBeenCalled();
+    const removeCalls = mockedExecSync.mock.calls.filter(
+      (c) => typeof c[0] === "string" && (c[0] as string).includes("worktree remove"),
+    );
+    expect(removeCalls).toHaveLength(0);
   });
 
   it("returns 0 when all worktrees are assigned to active tasks", async () => {
@@ -535,6 +597,7 @@ describe("cleanupOrphanedWorktrees", () => {
       makeDirEntry("active-1"),
       makeDirEntry("active-2"),
     ] as any);
+    mockRegisteredWorktrees("/root", ["active-1", "active-2"]);
 
     const store = createMockStore([
       makeTask("FN-001", "in-progress", "/root/.worktrees/active-1"),
@@ -543,7 +606,29 @@ describe("cleanupOrphanedWorktrees", () => {
 
     const cleaned = await cleanupOrphanedWorktrees("/root", store);
     expect(cleaned).toBe(0);
-    expect(mockedExecSync).not.toHaveBeenCalled();
+    const removeCalls = mockedExecSync.mock.calls.filter(
+      (c) => typeof c[0] === "string" && (c[0] as string).includes("worktree remove"),
+    );
+    expect(removeCalls).toHaveLength(0);
+  });
+
+  it("removes unregistered directories even when stale active task metadata references them", async () => {
+    mockedReaddirSync.mockReturnValue([
+      makeDirEntry("broken-wt"),
+    ] as any);
+    mockRegisteredWorktrees("/root", []);
+
+    const store = createMockStore([
+      makeTask("FN-001", "in-progress", "/root/.worktrees/broken-wt"),
+    ]);
+
+    const cleaned = await cleanupOrphanedWorktrees("/root", store);
+
+    expect(cleaned).toBe(1);
+    expect(mockedRmSync).toHaveBeenCalledWith("/root/.worktrees/broken-wt", {
+      recursive: true,
+      force: true,
+    });
   });
 });
 

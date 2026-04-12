@@ -17,6 +17,22 @@ const settingsManagerCreateMock = vi.fn(() => ({ kind: "settings-manager-create"
 const settingsManagerInMemoryMock = vi.fn(() => ({ kind: "settings-manager" }));
 const setFallbackResolverMock = vi.fn();
 const reloadMock = vi.fn(async () => {});
+const execSyncMock = vi.fn(() => "");
+const existsSyncMock = vi.fn(() => false);
+const readFileSyncMock = vi.fn(() => "{}");
+
+vi.mock("node:child_process", () => ({
+  execSync: execSyncMock,
+}));
+
+vi.mock("node:fs", async () => {
+  const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+  return {
+    ...actual,
+    existsSync: existsSyncMock,
+    readFileSync: readFileSyncMock,
+  };
+});
 
 vi.mock("@mariozechner/pi-coding-agent", () => ({
   AuthStorage: {
@@ -279,6 +295,9 @@ describe("worktree path boundary helpers", () => {
 describe("createKbAgent", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    execSyncMock.mockReturnValue("");
+    existsSyncMock.mockReturnValue(false);
+    readFileSyncMock.mockReturnValue("{}");
     findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));
     createAgentSessionMock.mockResolvedValue({
       session: {
@@ -288,6 +307,53 @@ describe("createKbAgent", () => {
         setThinkingLevel: vi.fn(),
       },
     });
+  });
+
+  it("refuses to start a coding agent in an unregistered worktree", async () => {
+    existsSyncMock.mockImplementation((path) => {
+      const value = String(path);
+      return value === "/project/.worktrees/fn-001" ||
+        value === "/project/.worktrees/fn-001/.git" ||
+        value === "/project/.worktrees/fn-001/package.json";
+    });
+    execSyncMock.mockReturnValue("worktree /project\nHEAD abc123\nbranch refs/heads/main\n");
+
+    const { createKbAgent } = await import("./pi.js");
+
+    await expect(createKbAgent({
+      cwd: "/project/.worktrees/fn-001",
+      systemPrompt: "test",
+      tools: "coding",
+      defaultProvider: "openai-codex",
+      defaultModelId: "gpt-5.4",
+    })).rejects.toThrow("Refusing to start coding agent in unregistered git worktree");
+
+    expect(createAgentSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("allows a coding agent in a registered complete worktree", async () => {
+    existsSyncMock.mockImplementation((path) => {
+      const value = String(path);
+      return value === "/project/.worktrees/fn-001" ||
+        value === "/project/.worktrees/fn-001/.git" ||
+        value === "/project/.worktrees/fn-001/package.json";
+    });
+    execSyncMock.mockReturnValue(
+      "worktree /project\nHEAD abc123\nbranch refs/heads/main\n\n" +
+      "worktree /project/.worktrees/fn-001\nHEAD def456\nbranch refs/heads/fusion/fn-001\n",
+    );
+
+    const { createKbAgent } = await import("./pi.js");
+
+    await createKbAgent({
+      cwd: "/project/.worktrees/fn-001",
+      systemPrompt: "test",
+      tools: "coding",
+      defaultProvider: "openai-codex",
+      defaultModelId: "gpt-5.4",
+    });
+
+    expect(createAgentSessionMock).toHaveBeenCalledTimes(1);
   });
 
   it("registers extension providers before resolving configured models", async () => {
