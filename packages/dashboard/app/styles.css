@@ -6619,6 +6619,10 @@ body {
     border-bottom-color: var(--todo);
   }
 
+  .settings-scope-icon {
+    margin-right: 0;
+  }
+
   .settings-content {
     flex: 1;
     min-height: 0;
