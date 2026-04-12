@@ -1,8 +1,43 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("node:child_process", () => ({
-  execSync: vi.fn(),
-}));
+// Store for mock results - shared between callback and promisified paths
+let mockResults: (string | Error)[] = [];
+let resultIndex = 0;
+const execCalls: [string, object | undefined][] = [];
+
+vi.mock("node:child_process", async () => {
+  const { promisify } = await import("node:util");
+  const execFn: typeof vi.fn = vi.fn((cmd: string, opts: object | undefined, cb: (err: Error | null, stdout: string, stderr: string) => void) => {
+    // Track the call for assertion purposes
+    execCalls.push([cmd, opts]);
+    const callback = typeof opts === "function" ? opts : cb;
+    // promisify path - callback is undefined
+    if (callback === undefined) {
+      return; // promisify.custom handles the Promise
+    }
+    try {
+      const result = mockResults[resultIndex++] || "";
+      const stdout = result instanceof Error ? "" : result.toString();
+      callback(null, stdout, "");
+    } catch (err) {
+      callback(err as Error, "", "");
+    }
+  });
+  // Mirror real child_process.exec: promisify resolves to { stdout, stderr }.
+  execFn[promisify.custom] = (cmd: string, opts?: object) => {
+    // Track the call for assertion purposes
+    execCalls.push([cmd, opts]);
+    return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+      const result = mockResults[resultIndex++] || "";
+      if (result instanceof Error) {
+        reject(result);
+      } else {
+        resolve({ stdout: result.toString(), stderr: "" });
+      }
+    });
+  };
+  return { exec: execFn, execSync: vi.fn() };
+});
 
 vi.mock("node:readline/promises", () => ({
   createInterface: vi.fn(() => ({
@@ -15,25 +50,33 @@ vi.mock("../project-context.js", () => ({
   resolveProject: vi.fn(),
 }));
 
-import { execSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { resolveProject } from "../project-context.js";
 import {
   isGitRepo,
-  getGitStatus,
-  getDirtyFileCount,
   isValidBranchName,
-  fetchGitRemote,
-  pullGitBranch,
-  pushGitBranch,
   runGitStatus,
   runGitFetch,
   runGitPull,
   runGitPush,
 } from "./git.js";
 
-const mockExecSync = vi.mocked(execSync);
 const mockCreateInterface = vi.mocked(createInterface);
+
+// Helper to set up sequential mock results
+function mockNextResult(result: string) {
+  mockResults.push(result);
+}
+
+// Helper to check if exec was called with specific command
+function wasExecCalled(cmd: string): boolean {
+  return execCalls.some(([c]) => c === cmd);
+}
+
+// Helper to get last exec call
+function getLastExecCall(): [string, object | undefined] | undefined {
+  return execCalls[execCalls.length - 1];
+}
 
 describe("git commands", () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
@@ -42,6 +85,9 @@ describe("git commands", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockResults = [];
+    resultIndex = 0;
+    execCalls.length = 0;
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: string | number | null) => {
@@ -52,7 +98,7 @@ describe("git commands", () => {
       projectName: "demo-project",
       projectPath: "/projects/demo",
       isRegistered: true,
-      store: {} as any,
+      store: {} as ReturnType<typeof vi.fn>,
     });
   });
 
@@ -62,67 +108,76 @@ describe("git commands", () => {
     exitSpy.mockRestore();
   });
 
-  it("core helpers work", () => {
-    mockExecSync.mockReturnValueOnce(".git");
-    expect(isGitRepo()).toBe(true);
+  it("core helpers work", async () => {
+    mockNextResult(".git");
+    expect(await isGitRepo()).toBe(true);
     expect(isValidBranchName("main")).toBe(true);
     expect(isValidBranchName("--bad")).toBe(false);
   });
 
   it("runGitStatus uses resolved project path", async () => {
-    mockExecSync
-      .mockReturnValueOnce(".git")
-      .mockReturnValueOnce("main\n")
-      .mockReturnValueOnce("a1b2c3d\n")
-      .mockReturnValueOnce(" M file.ts\n")
-      .mockReturnValueOnce("0\t0\n")
-      .mockReturnValueOnce(" M file.ts\n");
+    // isGitRepo, branch, commit, status, rev-list, dirty count
+    mockNextResult(".git");
+    mockNextResult("main\n");
+    mockNextResult("a1b2c3d\n");
+    mockNextResult(" M file.ts\n");
+    mockNextResult("0\t0\n");
+    mockNextResult(" M file.ts\n");
 
     await runGitStatus("demo-project");
 
     expect(resolveProject).toHaveBeenCalledWith("demo-project");
-    expect(mockExecSync).toHaveBeenCalledWith("git status --porcelain", expect.objectContaining({ cwd: "/projects/demo" }));
+    expect(wasExecCalled("git status --porcelain")).toBe(true);
+    const lastCall = getLastExecCall();
+    expect(lastCall).toBeDefined();
+    expect(lastCall![1]).toMatchObject({ cwd: "/projects/demo" });
   });
 
   it("runGitStatus without project uses shared resolution flow", async () => {
-    mockExecSync
-      .mockReturnValueOnce(".git")
-      .mockReturnValueOnce("main\n")
-      .mockReturnValueOnce("a1b2c3d\n")
-      .mockReturnValueOnce("")
-      .mockReturnValueOnce("0\t0\n");
+    mockNextResult(".git");
+    mockNextResult("main\n");
+    mockNextResult("a1b2c3d\n");
+    mockNextResult("");
+    mockNextResult("0\t0\n");
 
     await runGitStatus();
 
     expect(resolveProject).toHaveBeenCalledWith(undefined);
-    expect(mockExecSync).toHaveBeenCalledWith("git rev-parse --git-dir", expect.objectContaining({ cwd: "/projects/demo" }));
+    expect(wasExecCalled("git rev-parse --git-dir")).toBe(true);
+    const lastCall = getLastExecCall();
+    expect(lastCall).toBeDefined();
+    expect(lastCall![1]).toMatchObject({ cwd: "/projects/demo" });
   });
 
   it("runGitStatus without project falls back to current working directory when resolution fails", async () => {
     const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue("/local/project");
     vi.mocked(resolveProject).mockRejectedValueOnce(new Error("No fusion project found"));
-    mockExecSync
-      .mockReturnValueOnce(".git")
-      .mockReturnValueOnce("main\n")
-      .mockReturnValueOnce("a1b2c3d\n")
-      .mockReturnValueOnce("")
-      .mockReturnValueOnce("0\t0\n");
+    mockNextResult(".git");
+    mockNextResult("main\n");
+    mockNextResult("a1b2c3d\n");
+    mockNextResult("");
+    mockNextResult("0\t0\n");
 
     await runGitStatus();
 
     expect(resolveProject).toHaveBeenCalledWith(undefined);
-    expect(mockExecSync).toHaveBeenCalledWith("git rev-parse --git-dir", expect.objectContaining({ cwd: "/local/project" }));
+    expect(wasExecCalled("git rev-parse --git-dir")).toBe(true);
+    const lastCall = getLastExecCall();
+    expect(lastCall).toBeDefined();
+    expect(lastCall![1]).toMatchObject({ cwd: "/local/project" });
     cwdSpy.mockRestore();
   });
 
   it("runGitFetch uses resolved project path", async () => {
-    mockExecSync
-      .mockReturnValueOnce(".git")
-      .mockReturnValueOnce("Fetch completed");
+    mockNextResult(".git");
+    mockNextResult("Fetch completed");
 
     await runGitFetch("origin", "demo-project");
 
-    expect(mockExecSync).toHaveBeenCalledWith("git fetch origin", expect.objectContaining({ cwd: "/projects/demo" }));
+    expect(wasExecCalled("git fetch origin")).toBe(true);
+    const lastCall = getLastExecCall();
+    expect(lastCall).toBeDefined();
+    expect(lastCall![1]).toMatchObject({ cwd: "/projects/demo" });
   });
 
   it("propagates project resolution errors for git commands", async () => {
@@ -133,35 +188,39 @@ describe("git commands", () => {
 
   it("runGitPull uses resolved project path", async () => {
     const question = vi.fn().mockResolvedValue("y");
-    mockCreateInterface.mockReturnValue({ question, close: vi.fn() } as any);
-    mockExecSync
-      .mockReturnValueOnce(".git")
-      .mockReturnValueOnce("main\n")
-      .mockReturnValueOnce("a1b2c3d\n")
-      .mockReturnValueOnce("")
-      .mockReturnValueOnce("0\t0\n")
-      .mockReturnValueOnce("Already up to date.")
-      .mockReturnValueOnce("Already up to date.");
+    mockCreateInterface.mockReturnValue({ question, close: vi.fn() } as ReturnType<typeof createInterface>);
+    mockNextResult(".git");
+    mockNextResult("main\n");
+    mockNextResult("a1b2c3d\n");
+    mockNextResult("");
+    mockNextResult("0\t0\n");
+    mockNextResult("Already up to date.");
+    mockNextResult("Already up to date.");
 
     await runGitPull({ projectName: "demo-project" });
 
-    expect(mockExecSync).toHaveBeenCalledWith("git pull", expect.objectContaining({ cwd: "/projects/demo" }));
+    expect(wasExecCalled("git pull")).toBe(true);
+    const lastCall = getLastExecCall();
+    expect(lastCall).toBeDefined();
+    expect(lastCall![1]).toMatchObject({ cwd: "/projects/demo" });
   });
 
   it("runGitPush uses resolved project path", async () => {
     const question = vi.fn().mockResolvedValue("y");
-    mockCreateInterface.mockReturnValue({ question, close: vi.fn() } as any);
-    mockExecSync
-      .mockReturnValueOnce(".git")
-      .mockReturnValueOnce("main\n")
-      .mockReturnValueOnce("a1b2c3d\n")
-      .mockReturnValueOnce("")
-      .mockReturnValueOnce("0\t0\n")
-      .mockReturnValueOnce("")
-      .mockReturnValueOnce("");
+    mockCreateInterface.mockReturnValue({ question, close: vi.fn() } as ReturnType<typeof createInterface>);
+    mockNextResult(".git");
+    mockNextResult("main\n");
+    mockNextResult("a1b2c3d\n");
+    mockNextResult("");
+    mockNextResult("0\t0\n");
+    mockNextResult("");
+    mockNextResult("");
 
     await runGitPush({ projectName: "demo-project" });
 
-    expect(mockExecSync).toHaveBeenCalledWith("git push", expect.objectContaining({ cwd: "/projects/demo" }));
+    expect(wasExecCalled("git push")).toBe(true);
+    const lastCall = getLastExecCall();
+    expect(lastCall).toBeDefined();
+    expect(lastCall![1]).toMatchObject({ cwd: "/projects/demo" });
   });
 });

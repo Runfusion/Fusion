@@ -1,4 +1,7 @@
-import { execSync } from "node:child_process";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
+
+const execAsync = promisify(exec);
 import { createInterface } from "node:readline/promises";
 import { resolveProject } from "../project-context.js";
 
@@ -49,9 +52,9 @@ export type GitPushResult = {
 /**
  * Check if a directory is a git repository.
  */
-export function isGitRepo(cwd: string = process.cwd()): boolean {
+export async function isGitRepo(cwd: string = process.cwd()): Promise<boolean> {
   try {
-    execSync("git rev-parse --git-dir", { encoding: "utf-8", timeout: 5000, cwd });
+    await execAsync("git rev-parse --git-dir", { encoding: "utf-8", timeout: 5000, cwd });
     return true;
   } catch {
     return false;
@@ -85,25 +88,26 @@ export function isValidBranchName(name: string): boolean {
  * Get the current git status including branch, commit hash, and dirty state.
  * Returns structured data for CLI display.
  */
-export function getGitStatus(cwd: string = process.cwd()): GitStatus | null {
+export async function getGitStatus(cwd: string = process.cwd()): Promise<GitStatus | null> {
   try {
     // Get current branch (empty string means detached HEAD)
-    const branchOutput = execSync("git branch --show-current", { encoding: "utf-8", timeout: 5000, cwd }).trim();
-    const branch = branchOutput || "HEAD detached";
+    const { stdout: branchOutput } = await execAsync("git branch --show-current", { encoding: "utf-8", timeout: 5000, cwd });
+    const branch = branchOutput.trim() || "HEAD detached";
 
     // Get current commit hash (short)
-    const commit = execSync("git rev-parse --short HEAD", { encoding: "utf-8", timeout: 5000, cwd }).trim();
+    const { stdout: commitOut } = await execAsync("git rev-parse --short HEAD", { encoding: "utf-8", timeout: 5000, cwd });
+    const commit = commitOut.trim();
 
     // Check if working directory is dirty
-    const statusOutput = execSync("git status --porcelain", { encoding: "utf-8", timeout: 5000, cwd }).trim();
-    const isDirty = statusOutput.length > 0;
+    const { stdout: statusOutput } = await execAsync("git status --porcelain", { encoding: "utf-8", timeout: 5000, cwd });
+    const isDirty = statusOutput.trim().length > 0;
 
     // Get ahead/behind counts from upstream
     let ahead = 0;
     let behind = 0;
     try {
-      const revListOutput = execSync("git rev-list --left-right --count HEAD...@{u}", { encoding: "utf-8", timeout: 5000, cwd }).trim();
-      const match = revListOutput.match(/(\d+)\s+(\d+)/);
+      const { stdout: revListOutput } = await execAsync("git rev-list --left-right --count HEAD...@{u}", { encoding: "utf-8", timeout: 5000, cwd });
+      const match = revListOutput.trim().match(/(\d+)\s+(\d+)/);
       if (match) {
         ahead = parseInt(match[1], 10);
         behind = parseInt(match[2], 10);
@@ -121,9 +125,10 @@ export function getGitStatus(cwd: string = process.cwd()): GitStatus | null {
 /**
  * Count dirty files by parsing git status output.
  */
-export function getDirtyFileCount(cwd: string = process.cwd()): { added: number; modified: number; deleted: number } {
+export async function getDirtyFileCount(cwd: string = process.cwd()): Promise<{ added: number; modified: number; deleted: number }> {
   try {
-    const output = execSync("git status --porcelain", { encoding: "utf-8", timeout: 5000, cwd }).trim();
+    const { stdout } = await execAsync("git status --porcelain", { encoding: "utf-8", timeout: 5000, cwd });
+    const output = stdout.trim();
     if (!output) return { added: 0, modified: 0, deleted: 0 };
 
     const lines = output.split("\n").filter(Boolean);
@@ -148,13 +153,13 @@ export function getDirtyFileCount(cwd: string = process.cwd()): { added: number;
 /**
  * Fetch from origin or specified remote.
  */
-export function fetchGitRemote(remote: string = "origin", cwd: string = process.cwd()): GitFetchResult {
+export async function fetchGitRemote(remote: string = "origin", cwd: string = process.cwd()): Promise<GitFetchResult> {
   if (!isValidBranchName(remote)) {
     throw new Error("Invalid remote name");
   }
   try {
-    const output = execSync(`git fetch ${remote}`, { encoding: "utf-8", timeout: 30000, cwd });
-    return { fetched: true, message: output.trim() || "Fetch completed" };
+    const { stdout } = await execAsync(`git fetch ${remote}`, { encoding: "utf-8", timeout: 30000, cwd });
+    return { fetched: true, message: stdout.trim() || "Fetch completed" };
   } catch (err: any) {
     const message = err.message || String(err);
     if (message.includes("Could not resolve host") || message.includes("Connection refused")) {
@@ -168,10 +173,10 @@ export function fetchGitRemote(remote: string = "origin", cwd: string = process.
 /**
  * Pull the current branch.
  */
-export function pullGitBranch(cwd: string = process.cwd()): GitPullResult {
+export async function pullGitBranch(cwd: string = process.cwd()): Promise<GitPullResult> {
   try {
-    const output = execSync("git pull", { encoding: "utf-8", timeout: 30000, cwd });
-    return { success: true, message: output.trim() };
+    const { stdout } = await execAsync("git pull", { encoding: "utf-8", timeout: 30000, cwd });
+    return { success: true, message: stdout.trim() };
   } catch (err: any) {
     const message = err.message || String(err);
     if (message.includes("CONFLICT") || message.includes("Merge conflict")) {
@@ -184,10 +189,10 @@ export function pullGitBranch(cwd: string = process.cwd()): GitPullResult {
 /**
  * Push the current branch.
  */
-export function pushGitBranch(cwd: string = process.cwd()): GitPushResult {
+export async function pushGitBranch(cwd: string = process.cwd()): Promise<GitPushResult> {
   try {
-    const output = execSync("git push", { encoding: "utf-8", timeout: 30000, cwd });
-    return { success: true, message: output.trim() || "Push completed" };
+    const { stdout } = await execAsync("git push", { encoding: "utf-8", timeout: 30000, cwd });
+    return { success: true, message: stdout.trim() || "Push completed" };
   } catch (err: any) {
     const message = err.message || String(err);
     if (message.includes("rejected") || message.includes("non-fast-forward")) {
@@ -209,12 +214,12 @@ export async function runGitStatus(projectName?: string): Promise<void> {
   const projectPath = await resolveGitCwd(projectName);
 
   // Validate directory is a git repo
-  if (!isGitRepo(projectPath)) {
+  if (!(await isGitRepo(projectPath))) {
     console.error("Error: Not a git repository");
     process.exit(1);
   }
 
-  const status = getGitStatus(projectPath);
+  const status = await getGitStatus(projectPath);
   if (!status) {
     console.error("Error: Failed to get git status");
     process.exit(1);
@@ -226,7 +231,7 @@ export async function runGitStatus(projectName?: string): Promise<void> {
 
   // Status line
   if (status.isDirty) {
-    const counts = getDirtyFileCount(projectPath);
+    const counts = await getDirtyFileCount(projectPath);
     const parts: string[] = [];
     if (counts.added) parts.push(`+${counts.added}`);
     if (counts.modified) parts.push(`~${counts.modified}`);
@@ -260,7 +265,7 @@ export async function runGitFetch(remote?: string, projectName?: string): Promis
   const projectPath = await resolveGitCwd(projectName);
 
   // Validate directory is a git repo
-  if (!isGitRepo(projectPath)) {
+  if (!(await isGitRepo(projectPath))) {
     console.error("Error: Not a git repository");
     process.exit(1);
   }
@@ -272,7 +277,7 @@ export async function runGitFetch(remote?: string, projectName?: string): Promis
   }
 
   try {
-    execSync(`git fetch ${targetRemote}`, { encoding: "utf-8", timeout: 30000, cwd: projectPath });
+    await execAsync(`git fetch ${targetRemote}`, { encoding: "utf-8", timeout: 30000, cwd: projectPath });
     console.log();
     console.log(`  ✓ Fetched from ${targetRemote}`);
     console.log();
@@ -291,13 +296,13 @@ export async function runGitPull(options: { skipConfirm?: boolean; projectName?:
   const projectPath = await resolveGitCwd(options.projectName);
 
   // Validate directory is a git repo
-  if (!isGitRepo(projectPath)) {
+  if (!(await isGitRepo(projectPath))) {
     console.error("Error: Not a git repository");
     process.exit(1);
   }
 
   // Check for dirty state
-  const status = getGitStatus(projectPath);
+  const status = await getGitStatus(projectPath);
   if (!status) {
     console.error("Error: Failed to get git status");
     process.exit(1);
@@ -308,7 +313,7 @@ export async function runGitPull(options: { skipConfirm?: boolean; projectName?:
     console.log();
     console.log("  ⚠ Warning: You have uncommitted changes.");
     console.log(`  Branch: ${status.branch}`);
-    
+
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     const answer = await rl.question("  Continue with pull? [y/N] ");
     rl.close();
@@ -321,11 +326,11 @@ export async function runGitPull(options: { skipConfirm?: boolean; projectName?:
   }
 
   try {
-    const output = execSync("git pull", { encoding: "utf-8", timeout: 30000, cwd: projectPath });
+    const { stdout } = await execAsync("git pull", { encoding: "utf-8", timeout: 30000, cwd: projectPath });
     console.log();
     console.log(`  ✓ Pulled latest changes for ${status.branch}`);
-    if (output.trim() && output.trim() !== "Already up to date.") {
-      console.log(`    ${output.trim()}`);
+    if (stdout.trim() && stdout.trim() !== "Already up to date.") {
+      console.log(`    ${stdout.trim()}`);
     }
     console.log();
   } catch (err: any) {
@@ -348,13 +353,13 @@ export async function runGitPush(options: { skipConfirm?: boolean; projectName?:
   const projectPath = await resolveGitCwd(options.projectName);
 
   // Validate directory is a git repo
-  if (!isGitRepo(projectPath)) {
+  if (!(await isGitRepo(projectPath))) {
     console.error("Error: Not a git repository");
     process.exit(1);
   }
 
   // Get current branch
-  const status = getGitStatus(projectPath);
+  const status = await getGitStatus(projectPath);
   if (!status) {
     console.error("Error: Failed to get git status");
     process.exit(1);
@@ -367,7 +372,7 @@ export async function runGitPush(options: { skipConfirm?: boolean; projectName?:
 
   // Check for upstream
   try {
-    execSync("git rev-parse --abbrev-ref --symbolic-full-name @{u}", { encoding: "utf-8", timeout: 5000, cwd: projectPath });
+    await execAsync("git rev-parse --abbrev-ref --symbolic-full-name @{u}", { encoding: "utf-8", timeout: 5000, cwd: projectPath });
   } catch {
     console.error("Error: No upstream configured for current branch");
     console.error(`  Run: git push -u origin ${status.branch}`);
@@ -389,11 +394,11 @@ export async function runGitPush(options: { skipConfirm?: boolean; projectName?:
   }
 
   try {
-    const output = execSync("git push", { encoding: "utf-8", timeout: 30000, cwd: projectPath });
+    const { stdout } = await execAsync("git push", { encoding: "utf-8", timeout: 30000, cwd: projectPath });
     console.log();
     console.log(`  ✓ Pushed ${status.branch} to origin`);
-    if (output.trim()) {
-      console.log(`    ${output.trim()}`);
+    if (stdout.trim()) {
+      console.log(`    ${stdout.trim()}`);
     }
     console.log();
   } catch (err: any) {
