@@ -590,92 +590,114 @@ describe("TerminalModal", () => {
 
   // --- initialCommand / script launch behavior ---
   describe("initialCommand execution", () => {
+    async function flushInitialCommandDelay() {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+    }
+
     it("sends initialCommand to terminal when connected", async () => {
+      vi.useFakeTimers();
       mockUseTerminal.mockReturnValue(
         createMockTerminalState({ connectionStatus: "connected" })
       );
 
-      render(<TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="npm run build" />);
+      try {
+        render(<TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="npm run build" />);
 
-      await waitFor(() => {
+        await flushInitialCommandDelay();
         expect(mockSendInput).toHaveBeenCalledWith("npm run build\n");
-      });
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("does not send the same initialCommand twice on re-renders", async () => {
+      vi.useFakeTimers();
       mockUseTerminal.mockReturnValue(
         createMockTerminalState({ connectionStatus: "connected" })
       );
 
-      const { rerender } = render(
-        <TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="npm run build" />
-      );
+      try {
+        const { rerender } = render(
+          <TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="npm run build" />
+        );
 
-      await waitFor(() => {
+        await flushInitialCommandDelay();
         expect(mockSendInput).toHaveBeenCalledWith("npm run build\n");
-      });
 
-      const callCount = mockSendInput.mock.calls.length;
+        const callCount = mockSendInput.mock.calls.length;
 
-      // Re-render with same props
-      rerender(
-        <TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="npm run build" />
-      );
+        // Re-render with same props
+        rerender(
+          <TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="npm run build" />
+        );
 
-      // Should not send the command again
-      expect(mockSendInput).toHaveBeenCalledTimes(callCount);
+        await flushInitialCommandDelay();
+
+        // Should not send the command again
+        expect(mockSendInput).toHaveBeenCalledTimes(callCount);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("sends a new initialCommand when it changes while terminal is open", async () => {
+      vi.useFakeTimers();
       mockUseTerminal.mockReturnValue(
         createMockTerminalState({ connectionStatus: "connected" })
       );
 
-      const { rerender } = render(
-        <TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="npm run build" />
-      );
+      try {
+        const { rerender } = render(
+          <TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="npm run build" />
+        );
 
-      await waitFor(() => {
+        await flushInitialCommandDelay();
         expect(mockSendInput).toHaveBeenCalledWith("npm run build\n");
-      });
 
-      // Change the command (e.g., user runs a different script)
-      rerender(
-        <TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="pnpm test" />
-      );
+        // Change the command (e.g., user runs a different script)
+        rerender(
+          <TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="pnpm test" />
+        );
 
-      await waitFor(() => {
+        await flushInitialCommandDelay();
         expect(mockSendInput).toHaveBeenCalledWith("pnpm test\n");
-      });
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("resends command after modal close and reopen", async () => {
+      vi.useFakeTimers();
       mockUseTerminal.mockReturnValue(
         createMockTerminalState({ connectionStatus: "connected" })
       );
 
-      const { rerender } = render(
-        <TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="npm run build" />
-      );
+      try {
+        const { rerender } = render(
+          <TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="npm run build" />
+        );
 
-      await waitFor(() => {
+        await flushInitialCommandDelay();
         expect(mockSendInput).toHaveBeenCalledWith("npm run build\n");
-      });
 
-      // Close the modal
-      rerender(
-        <TerminalModal isOpen={false} onClose={mockOnClose} initialCommand="npm run build" />
-      );
+        // Close the modal
+        rerender(
+          <TerminalModal isOpen={false} onClose={mockOnClose} initialCommand="npm run build" />
+        );
 
-      // Reopen with the same command
-      mockSendInput.mockClear();
-      rerender(
-        <TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="npm run build" />
-      );
+        // Reopen with the same command
+        mockSendInput.mockClear();
+        rerender(
+          <TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="npm run build" />
+        );
 
-      await waitFor(() => {
+        await flushInitialCommandDelay();
         expect(mockSendInput).toHaveBeenCalledWith("npm run build\n");
-      });
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

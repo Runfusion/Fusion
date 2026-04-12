@@ -19,6 +19,7 @@ describe("useBatchBadgeFetch", () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.useRealTimers();
   });
 
   it("calls API with correct task IDs", async () => {
@@ -60,8 +61,12 @@ describe("useBatchBadgeFetch", () => {
     const hook2 = renderHook(() => useBatchBadgeFetch());
 
     // Start both fetches concurrently (but don't await yet)
-    const fetchPromise1 = hook1.result.current.fetchBatch(["FN-001"]);
-    const fetchPromise2 = hook2.result.current.fetchBatch(["FN-001"]);
+    let fetchPromise1!: Promise<void>;
+    let fetchPromise2!: Promise<void>;
+    act(() => {
+      fetchPromise1 = hook1.result.current.fetchBatch(["FN-001"]);
+      fetchPromise2 = hook2.result.current.fetchBatch(["FN-001"]);
+    });
 
     // Resolve the shared promise
     resolvePromise!(mockResult);
@@ -108,33 +113,42 @@ describe("useBatchBadgeFetch", () => {
   });
 
   it("makes new API call after 5 second cache expires", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
     const mockResult: BatchStatusResult = {
       "FN-001": { issueInfo: undefined, prInfo: undefined, stale: true },
     };
     mockFetchBatchStatus.mockResolvedValue(mockResult);
 
-    const { result } = renderHook(() => useBatchBadgeFetch());
+    try {
+      const { result } = renderHook(() => useBatchBadgeFetch());
 
-    // First fetch
-    await act(async () => {
-      await result.current.fetchBatch(["FN-001"]);
-    });
+      // First fetch
+      await act(async () => {
+        await result.current.fetchBatch(["FN-001"]);
+      });
 
-    expect(mockFetchBatchStatus).toHaveBeenCalledTimes(1);
+      expect(mockFetchBatchStatus).toHaveBeenCalledTimes(1);
 
-    // Wait for cache to expire (5 seconds + 1ms buffer)
-    await new Promise((resolve) => setTimeout(resolve, 5100));
+      // Move past the cache expiration window without waiting in real time.
+      vi.setSystemTime(new Date("2026-01-01T00:00:05.001Z"));
 
-    // Second fetch after cache expired
-    await act(async () => {
-      await result.current.fetchBatch(["FN-001"]);
-    });
+      // Second fetch after cache expired
+      await act(async () => {
+        await result.current.fetchBatch(["FN-001"]);
+      });
 
-    // Should make a new API call
-    expect(mockFetchBatchStatus).toHaveBeenCalledTimes(2);
-  }, 10000);
+      // Should make a new API call
+      expect(mockFetchBatchStatus).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("retries 429 errors with exponential backoff", async () => {
+    vi.useFakeTimers();
+
     const rateLimitError = new Error("429 Rate limit exceeded");
     const mockResult: BatchStatusResult = {
       "FN-001": { issueInfo: undefined, prInfo: undefined, stale: true },
@@ -146,19 +160,29 @@ describe("useBatchBadgeFetch", () => {
       .mockRejectedValueOnce(rateLimitError)
       .mockResolvedValueOnce(mockResult);
 
-    const { result } = renderHook(() => useBatchBadgeFetch());
+    try {
+      const { result } = renderHook(() => useBatchBadgeFetch());
 
-    // Start the fetch
-    await act(async () => {
-      await result.current.fetchBatch(["FN-001"]);
-    });
+      // Start the fetch, then advance through the retry backoff immediately.
+      let fetchPromise: Promise<void>;
+      act(() => {
+        fetchPromise = result.current.fetchBatch(["FN-001"]);
+      });
 
-    // Wait for retries (exponential backoff: 1s + 2s = 3s total)
-    await new Promise((resolve) => setTimeout(resolve, 4000));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      await act(async () => {
+        await fetchPromise;
+      });
 
-    // Should have made multiple calls due to retries
-    expect(mockFetchBatchStatus).toHaveBeenCalledTimes(3);
-  }, 10000);
+      // Should have made multiple calls due to retries
+      expect(mockFetchBatchStatus).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("does not retry non-429 errors", async () => {
     const otherError = new Error("Network error");

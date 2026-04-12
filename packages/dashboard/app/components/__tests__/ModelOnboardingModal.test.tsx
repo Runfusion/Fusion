@@ -47,6 +47,18 @@ const defaultModels = [
   { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
 ];
 
+async function clickContinueToModelStep() {
+  await waitFor(() => {
+    expect(screen.getByText("Continue →")).toBeTruthy();
+  });
+
+  fireEvent.click(screen.getByText("Continue →"));
+
+  await waitFor(() => {
+    expect(screen.getByText("Choose Default Model")).toBeTruthy();
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockFetchAuthStatus.mockResolvedValue({ providers: defaultAuthProviders });
@@ -205,7 +217,7 @@ describe("ModelOnboardingModal", () => {
 
       await waitFor(() => {
         expect(screen.getByText("Choose Default Model")).toBeTruthy();
-      }, { timeout: 3000 });
+      });
     });
 
     it("shows Save button as disabled when API key input is empty", async () => {
@@ -264,15 +276,7 @@ describe("ModelOnboardingModal", () => {
 
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
 
-      await waitFor(() => {
-        expect(screen.getByText("Continue →")).toBeTruthy();
-      });
-
-      // Wait for auto-advance or click Continue
-      // The auto-advance happens after 600ms, but we can also click
-      await waitFor(() => {
-        expect(screen.getByText("Choose Default Model")).toBeTruthy();
-      }, { timeout: 3000 });
+      await clickContinueToModelStep();
     });
 
     it("shows model dropdown on the model step", async () => {
@@ -284,9 +288,7 @@ describe("ModelOnboardingModal", () => {
 
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
 
-      await waitFor(() => {
-        expect(screen.getByText("Choose Default Model")).toBeTruthy();
-      }, { timeout: 3000 });
+      await clickContinueToModelStep();
 
       expect(screen.getByTestId("mock-model-dropdown")).toBeTruthy();
     });
@@ -300,9 +302,7 @@ describe("ModelOnboardingModal", () => {
 
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
 
-      await waitFor(() => {
-        expect(screen.getByText("Choose Default Model")).toBeTruthy();
-      }, { timeout: 3000 });
+      await clickContinueToModelStep();
 
       const dropdown = screen.getByTestId("mock-model-dropdown");
       fireEvent.change(dropdown, { target: { value: "anthropic/claude-sonnet-4-5" } });
@@ -321,9 +321,7 @@ describe("ModelOnboardingModal", () => {
 
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
 
-      await waitFor(() => {
-        expect(screen.getByText("Choose Default Model")).toBeTruthy();
-      }, { timeout: 3000 });
+      await clickContinueToModelStep();
 
       fireEvent.click(screen.getByText("← Back"));
 
@@ -344,10 +342,7 @@ describe("ModelOnboardingModal", () => {
 
       render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} />);
 
-      // Wait for auto-advance to model step
-      await waitFor(() => {
-        expect(screen.getByText("Choose Default Model")).toBeTruthy();
-      }, { timeout: 3000 });
+      await clickContinueToModelStep();
 
       // Select a model
       const dropdown = screen.getByTestId("mock-model-dropdown");
@@ -390,10 +385,7 @@ describe("ModelOnboardingModal", () => {
 
       render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} />);
 
-      // Wait for auto-advance
-      await waitFor(() => {
-        expect(screen.getByText("Choose Default Model")).toBeTruthy();
-      }, { timeout: 3000 });
+      await clickContinueToModelStep();
 
       // Click Complete Setup without selecting a model
       fireEvent.click(screen.getByText("Complete Setup"));
@@ -486,13 +478,11 @@ describe("ModelOnboardingModal", () => {
           { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
         ],
       });
-      mockFetchModels.mockResolvedValueOnce({ models: [], favoriteProviders: [], favoriteModels: [] });
+      mockFetchModels.mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] });
 
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
 
-      await waitFor(() => {
-        expect(screen.getByText("Choose Default Model")).toBeTruthy();
-      }, { timeout: 3000 });
+      await clickContinueToModelStep();
 
       expect(screen.getByText(/No models available/)).toBeTruthy();
     });

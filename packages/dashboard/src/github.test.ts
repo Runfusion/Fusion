@@ -1110,8 +1110,9 @@ describe("GitHubClient", () => {
     });
 
     it("respects Retry-After header on 429", async () => {
+      vi.useFakeTimers();
       const headers = new Headers();
-      headers.set("Retry-After", "1"); // Use 1 second for test speed
+      headers.set("Retry-After", "1");
 
       fetchSpy
         .mockResolvedValueOnce({
@@ -1127,22 +1128,26 @@ describe("GitHubClient", () => {
           json: () => Promise.resolve({ id: 1 }),
         } as Response);
 
-      const startTime = Date.now();
-      const result = await client.fetchThrottled(
+      const resultPromise = client.fetchThrottled(
         "https://api.github.com/repos/owner/repo/issues/1",
         {},
         { delayMs: 100, maxRetries: 3 }
       );
-      const elapsed = Date.now() - startTime;
+
+      await vi.advanceTimersByTimeAsync(999);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      const result = await resultPromise;
 
       expect(result.success).toBe(true);
-      // Should wait at least 1 second (Retry-After value), not just the exponential backoff
-      expect(elapsed).toBeGreaterThanOrEqual(900); // Allow some tolerance
-    }, 10000); // Increase timeout for this test
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
 
     it("returns error with retryAfter after max retries exceeded", async () => {
+      vi.useFakeTimers();
       const headers = new Headers();
-      headers.set("Retry-After", "1"); // Use 1 second for test speed
+      headers.set("Retry-After", "1");
 
       // All attempts return 429
       fetchSpy.mockResolvedValue({
@@ -1153,17 +1158,20 @@ describe("GitHubClient", () => {
         json: () => Promise.resolve({ message: "Rate limited" }),
       } as Response);
 
-      const result = await client.fetchThrottled(
+      const resultPromise = client.fetchThrottled(
         "https://api.github.com/repos/owner/repo/issues/1",
         {},
         { delayMs: 1, maxRetries: 2 }
       );
 
+      await vi.advanceTimersByTimeAsync(2000);
+      const result = await resultPromise;
+
       expect(result.success).toBe(false);
       expect(result.error).toContain("rate limit exceeded");
       expect(result.retryAfter).toBe(1);
       expect(fetchSpy).toHaveBeenCalledTimes(3); // initial + 2 retries
-    }, 10000); // Increase timeout for this test
+    });
 
     it("retries on network errors with exponential backoff", async () => {
       fetchSpy
@@ -1200,6 +1208,9 @@ describe("GitHubClient", () => {
     });
 
     it("enforces delay between sequential requests", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
+
       fetchSpy.mockResolvedValue({
         ok: true,
         status: 200,
@@ -1213,17 +1224,19 @@ describe("GitHubClient", () => {
         { delayMs: 100 }
       );
 
-      const startTime = Date.now();
       // Second request should be delayed
-      await client.fetchThrottled(
+      const resultPromise = client.fetchThrottled(
         "https://api.github.com/repos/owner/repo/issues/2",
         {},
         { delayMs: 100 }
       );
-      const elapsed = Date.now() - startTime;
 
-      // Should have waited at least 100ms between requests
-      expect(elapsed).toBeGreaterThanOrEqual(90); // Allow some tolerance
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(99);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await resultPromise;
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
     });
 
     it("uses custom delayMs option", async () => {

@@ -171,6 +171,8 @@ describe("RemoteNodeClient", () => {
   });
 
   it("retries on network errors", async () => {
+    vi.useFakeTimers();
+
     const fetchMock = vi
       .fn()
       .mockRejectedValueOnce(new TypeError("network down"))
@@ -184,11 +186,14 @@ describe("RemoteNodeClient", () => {
 
     const client = new RemoteNodeClient({ baseUrl: BASE_URL, apiKey: API_KEY });
 
-    await expect(client.health()).resolves.toEqual({
+    const request = client.health();
+    const expectation = expect(request).resolves.toEqual({
       status: "ok",
       version: "1.0.0",
       uptime: 123,
     });
+    await vi.advanceTimersByTimeAsync(1000);
+    await expectation;
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -209,6 +214,8 @@ describe("RemoteNodeClient", () => {
   });
 
   it("retries on 5xx responses", async () => {
+    vi.useFakeTimers();
+
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -227,11 +234,15 @@ describe("RemoteNodeClient", () => {
 
     const client = new RemoteNodeClient({ baseUrl: BASE_URL, apiKey: API_KEY });
 
-    await expect(client.health()).resolves.toEqual({
+    const request = client.health();
+    const expectation = expect(request).resolves.toEqual({
       status: "ok",
       version: "1.0.0",
       uptime: 999,
     });
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(2000);
+    await expectation;
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
