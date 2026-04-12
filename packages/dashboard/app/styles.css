@@ -12407,6 +12407,7 @@ html .column.drag-over * {
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
 .planning-question-scroll {
@@ -12561,6 +12562,7 @@ html .column.drag-over * {
   gap: 20px;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
 .planning-summary-header {
@@ -19780,6 +19782,22 @@ html .column.drag-over * {
   color: var(--text);
   border-color: var(--text-muted);
   background: var(--card);
+}
+
+.mission-resume-prompt {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--todo);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.mission-resume-prompt .mission-add-btn {
+  width: auto;
 }
 
 /* ── Inline Form Card ── */

@@ -15,6 +15,7 @@ vi.mock("../../api", async () => {
   return {
     ...actual,
     fetchAiSession: (...args: any[]) => mockFetchAiSession(...args),
+    fetchAiSessions: () => Promise.resolve([]),
     cancelMissionInterview: (...args: any[]) => mockCancelMissionInterview(...args),
     connectMissionInterviewStream: (...args: any[]) => mockConnectMissionInterviewStream(...args),
     previewEnrichedDescription: (...args: any[]) => mockPreviewEnrichedDescription(...args),

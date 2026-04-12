@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { AiSessionSummary } from "../api";
-import { SessionNotificationBanner } from "./SessionNotificationBanner";
+import { SessionNotificationBanner, dismissedIds } from "./SessionNotificationBanner";
 
 function buildSession(overrides: Partial<AiSessionSummary>): AiSessionSummary {
   return {
@@ -15,6 +15,10 @@ function buildSession(overrides: Partial<AiSessionSummary>): AiSessionSummary {
 }
 
 describe("SessionNotificationBanner", () => {
+  beforeEach(() => {
+    dismissedIds.clear();
+  });
+
   it("renders nothing when no sessions need input", () => {
     const { container } = render(
       <SessionNotificationBanner

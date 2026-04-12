@@ -22,6 +22,7 @@ import {
   Activity,
   FileText,
   RefreshCw,
+  AlertCircle,
 } from "lucide-react";
 import type { ToastType } from "../hooks/useToast";
 import { MissionInterviewModal } from "./MissionInterviewModal";
@@ -94,6 +95,8 @@ import {
   fetchValidationRuns,
   fetchValidationRun,
   fetchAssertion,
+  fetchAiSessions,
+  type AiSessionSummary,
 } from "../api";
 import type { AutopilotStatus as AutopilotStatusType, AutopilotState } from "./mission-types";
 
@@ -441,6 +444,11 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   // AI Interview modal
   const [showInterviewModal, setShowInterviewModal] = useState(false);
 
+  // Pending mission interview sessions (for resume prompt after page reload)
+  const [pendingInterviewSessions, setPendingInterviewSessions] = useState<AiSessionSummary[]>([]);
+  const [localResumeSessionId, setLocalResumeSessionId] = useState<string | undefined>(undefined);
+  const effectiveResumeSessionId = localResumeSessionId ?? resumeSessionId;
+
   // Milestone/Slice interview modal
   const [interviewTarget, setInterviewTarget] = useState<{
     type: "milestone" | "slice";
@@ -457,10 +465,24 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
   // Auto-open interview modal when resuming a session
   useEffect(() => {
-    if (isActive && resumeSessionId) {
+    if (isActive && effectiveResumeSessionId) {
       setShowInterviewModal(true);
     }
-  }, [isActive, resumeSessionId]);
+  }, [isActive, effectiveResumeSessionId]);
+
+  // Detect pending mission interview sessions for resume prompt
+  useEffect(() => {
+    if (!isActive || effectiveResumeSessionId) return;
+    let cancelled = false;
+    fetchAiSessions(projectId).then((sessions) => {
+      if (cancelled) return;
+      const pending = sessions.filter(
+        (s) => s.type === "mission_interview" && (s.status === "awaiting_input" || s.status === "error"),
+      );
+      setPendingInterviewSessions(pending);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [isActive, projectId, effectiveResumeSessionId]);
 
   // Delete confirmation
   const [deleteConfirmId, setDeleteConfirmId] = useState<{ type: string; id: string } | null>(null);
@@ -3243,15 +3265,43 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
               )}
 
               {!isCreatingMission && (
-                <div style={{ display: "flex", gap: "8px" }}>
-                  <button className="mission-add-btn" onClick={() => setShowInterviewModal(true)}>
-                    <Sparkles size={16} />
-                    Plan with AI
-                  </button>
-                  <button className="mission-add-btn" onClick={handleCreateMission}>
-                    <Plus size={16} />
-                    New Mission
-                  </button>
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  {pendingInterviewSessions.length > 0 && (
+                    <div className="mission-resume-prompt">
+                      <AlertCircle size={16} />
+                      <span>
+                        {pendingInterviewSessions.length === 1
+                          ? `Resume "${pendingInterviewSessions[0].title}"?`
+                          : `${pendingInterviewSessions.length} interview sessions pending`}
+                      </span>
+                      <div style={{ display: "flex", gap: "4px", marginLeft: "auto" }}>
+                        {pendingInterviewSessions.map((s) => (
+                          <button
+                            key={s.id}
+                            className="mission-add-btn"
+                            onClick={() => {
+                              setLocalResumeSessionId(s.id);
+                              setShowInterviewModal(true);
+                              setPendingInterviewSessions([]);
+                            }}
+                          >
+                            {s.status === "error" ? <RefreshCw size={14} /> : <Sparkles size={14} />}
+                            {s.status === "error" ? "Retry" : "Resume"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <button className="mission-add-btn" onClick={() => setShowInterviewModal(true)}>
+                      <Sparkles size={16} />
+                      Plan with AI
+                    </button>
+                    <button className="mission-add-btn" onClick={handleCreateMission}>
+                      <Plus size={16} />
+                      New Mission
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -3341,7 +3391,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         addToast("Mission created from AI interview", "success");
       }}
       projectId={projectId}
-      resumeSessionId={resumeSessionId}
+      resumeSessionId={effectiveResumeSessionId}
     />
   );
 

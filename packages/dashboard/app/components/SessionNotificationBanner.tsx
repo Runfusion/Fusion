@@ -25,36 +25,34 @@ const TYPE_LABELS = {
   slice_interview: "Slice Interview",
 } as const;
 
+export const dismissedIds = new Set<string>();
+
 export function SessionNotificationBanner({
   sessions,
   onResumeSession,
   onDismissSession,
   onDismissAll,
 }: SessionNotificationBannerProps) {
-  const [dismissedSessionIds, setDismissedSessionIds] = useState<Set<string>>(() => new Set());
+  // Bump counter to trigger useMemo recomputation when dismissedIds mutates
+  const [dismissRevision, setDismissRevision] = useState(0);
+  const bump = () => setDismissRevision((n) => n + 1);
 
+  // Prune dismissed IDs for sessions that are no longer awaiting_input/error
   useEffect(() => {
-    setDismissedSessionIds((previous) => {
-      if (previous.size === 0) {
-        return previous;
+    if (dismissedIds.size === 0) return;
+
+    const sessionById = new Map(sessions.map((session) => [session.id, session]));
+    let pruned = false;
+
+    for (const id of dismissedIds) {
+      const session = sessionById.get(id);
+      if (session && session.status !== "awaiting_input" && session.status !== "error") {
+        dismissedIds.delete(id);
+        pruned = true;
       }
+    }
 
-      const sessionById = new Map(sessions.map((session) => [session.id, session]));
-      const next = new Set<string>();
-      let changed = false;
-
-      for (const id of previous) {
-        const session = sessionById.get(id);
-        // Preserve dismissed IDs for awaiting_input and error sessions
-        if (session && (session.status === "awaiting_input" || session.status === "error")) {
-          next.add(id);
-        } else {
-          changed = true;
-        }
-      }
-
-      return changed ? next : previous;
-    });
+    if (pruned) bump();
   }, [sessions]);
 
   const sessionsNeedingInput = useMemo(
@@ -62,9 +60,11 @@ export function SessionNotificationBanner({
       sessions.filter(
         (session) =>
           (session.status === "awaiting_input" || session.status === "error") &&
-          !dismissedSessionIds.has(session.id),
+          !dismissedIds.has(session.id),
       ),
-    [dismissedSessionIds, sessions],
+    // dismissRevision is a stable counter that bumps whenever dismissedIds changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sessions, dismissRevision],
   );
 
   if (sessionsNeedingInput.length === 0) {
@@ -84,33 +84,21 @@ export function SessionNotificationBanner({
   }
 
   const dismissLocally = (id: string) => {
-    setDismissedSessionIds((previous) => {
-      const next = new Set(previous);
-      next.add(id);
-      return next;
-    });
+    dismissedIds.add(id);
+    bump();
   };
 
   const handleResume = (session: AiSessionSummary) => {
-    setDismissedSessionIds((previous) => {
-      if (!previous.has(session.id)) {
-        return previous;
-      }
-      const next = new Set(previous);
-      next.delete(session.id);
-      return next;
-    });
+    dismissedIds.delete(session.id);
+    bump();
     onResumeSession(session);
   };
 
   const handleDismissAll = () => {
-    setDismissedSessionIds((previous) => {
-      const next = new Set(previous);
-      for (const session of sessionsNeedingInput) {
-        next.add(session.id);
-      }
-      return next;
-    });
+    for (const session of sessionsNeedingInput) {
+      dismissedIds.add(session.id);
+    }
+    bump();
     onDismissAll();
   };
 

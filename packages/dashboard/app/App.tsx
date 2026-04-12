@@ -465,7 +465,7 @@ function AppInner() {
         }}
         isRemote={isRemote}
       />
-      {viewMode === "project" && currentProject && !nodesOpen && (
+      {viewMode === "project" && currentProject && !nodesOpen && taskView !== "missions" && !modalManager.isPlanningOpen && (
         <SessionNotificationBanner
           sessions={sessionsNeedingInput}
           onResumeSession={handleOpenBackgroundSession}
