@@ -164,6 +164,7 @@ function createMockStore() {
     getWorkflowStep: vi.fn().mockResolvedValue(undefined),
     listWorkflowSteps: vi.fn().mockResolvedValue([]),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
+    getFusionDir: vi.fn().mockReturnValue("/tmp/test/.fusion"),
   };
   return store as any;
 }
@@ -6581,6 +6582,7 @@ describe("Workflow Steps Execution", () => {
       currentStep: 0,
       log: [],
       enabledWorkflowSteps: ["WS-001"],
+      workflowStepRetries: 3, // Exhaust retries so task fails immediately
       prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -6625,6 +6627,7 @@ describe("Workflow Steps Execution", () => {
       currentStep: 0,
       log: [],
       enabledWorkflowSteps: ["WS-001"],
+      workflowStepRetries: 3, // Exhaust retries so task fails immediately
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
@@ -6671,6 +6674,7 @@ describe("Workflow Steps Execution", () => {
       currentStep: 0,
       log: [],
       enabledWorkflowSteps: ["WS-001"],
+      workflowStepRetries: 3, // Exhaust retries so task fails immediately
       prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -6703,6 +6707,7 @@ describe("Workflow Steps Execution", () => {
       currentStep: 0,
       log: [],
       enabledWorkflowSteps: ["WS-001"],
+      workflowStepRetries: 3, // Exhaust retries so task fails immediately
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
@@ -9560,6 +9565,7 @@ describe("StepSessionExecutor integration", () => {
       updatedAt: new Date().toISOString(),
     });
 
+    // Steps succeed, but workflow step will fail
     mockExecuteAll.mockResolvedValue([
       { stepIndex: 0, success: true, retries: 0 },
     ]);
@@ -9567,7 +9573,8 @@ describe("StepSessionExecutor integration", () => {
     const onError = vi.fn();
     const executor = new TaskExecutor(store, "/tmp/test", { onError });
 
-    await executor.execute(createTaskWithSteps({ steps: [{ name: "Step 0", status: "pending" }] }));
+    // Exhaust retries so workflow step failure is immediate
+    await executor.execute(createTaskWithSteps({ steps: [{ name: "Step 0", status: "pending" }], workflowStepRetries: 3, enabledWorkflowSteps: ["WS-001"] }));
 
     // Should have called getWorkflowStep to look up the workflow step
     expect(store.getWorkflowStep).toHaveBeenCalledWith("WS-001");

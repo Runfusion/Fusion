@@ -234,6 +234,13 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       status: row.status as FeatureStatus,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
+      loopState: (row.loopState as import("./mission-types.js").FeatureLoopState) || "idle",
+      implementationAttemptCount: row.implementationAttemptCount ?? 0,
+      validatorAttemptCount: row.validatorAttemptCount ?? 0,
+      lastValidatorRunId: row.lastValidatorRunId || undefined,
+      lastValidatorStatus: row.lastValidatorStatus as import("./mission-types.js").ValidatorRunStatus || undefined,
+      generatedFromFeatureId: row.generatedFromFeatureId || undefined,
+      generatedFromRunId: row.generatedFromRunId || undefined,
     };
   }
 
@@ -1401,11 +1408,14 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       status: "defined",
       createdAt: now,
       updatedAt: now,
+      loopState: "idle",
+      implementationAttemptCount: 0,
+      validatorAttemptCount: 0,
     };
 
     this.db.prepare(`
-      INSERT INTO mission_features (id, sliceId, title, description, acceptanceCriteria, status, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO mission_features (id, sliceId, title, description, acceptanceCriteria, status, loopState, implementationAttemptCount, validatorAttemptCount, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       feature.id,
       feature.sliceId,
@@ -1413,6 +1423,9 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       feature.description ?? null,
       feature.acceptanceCriteria ?? null,
       feature.status,
+      feature.loopState ?? "idle",
+      feature.implementationAttemptCount ?? 0,
+      feature.validatorAttemptCount ?? 0,
       feature.createdAt,
       feature.updatedAt,
     );
@@ -1477,6 +1490,13 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
         acceptanceCriteria = ?,
         status = ?,
         taskId = ?,
+        loopState = ?,
+        implementationAttemptCount = ?,
+        validatorAttemptCount = ?,
+        lastValidatorRunId = ?,
+        lastValidatorStatus = ?,
+        generatedFromFeatureId = ?,
+        generatedFromRunId = ?,
         updatedAt = ?
       WHERE id = ?
     `).run(
@@ -1485,6 +1505,13 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       updated.acceptanceCriteria ?? null,
       updated.status,
       updated.taskId ?? null,
+      updated.loopState ?? "idle",
+      updated.implementationAttemptCount ?? 0,
+      updated.validatorAttemptCount ?? 0,
+      updated.lastValidatorRunId ?? null,
+      updated.lastValidatorStatus ?? null,
+      updated.generatedFromFeatureId ?? null,
+      updated.generatedFromRunId ?? null,
       updated.updatedAt,
       updated.id,
     );

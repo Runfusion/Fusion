@@ -673,6 +673,10 @@ export interface Task {
   workflowStepResults?: WorkflowStepResult[];
   /** Number of merge retry attempts made for this task (auto-merge conflict recovery) */
   mergeRetries?: number;
+  /** Number of workflow step failure retry attempts made for this task.
+   *  When pre-merge workflow steps fail, the executor retries up to MAX_WORKFLOW_STEP_RETRIES
+   *  times before marking the task as failed. Cleared on successful workflow step completion. */
+  workflowStepRetries?: number;
   /** Number of times the stuck-task detector has killed this task's agent session.
    *  Incremented by the self-healing manager on each stuck kill. When this reaches
    *  `maxStuckKills`, the task is marked as permanently failed instead of re-queued. */

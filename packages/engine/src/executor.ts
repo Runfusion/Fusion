@@ -50,6 +50,9 @@ export {
 
 const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"];
 
+/** Maximum retry attempts for workflow step hard failures before giving up */
+const MAX_WORKFLOW_STEP_RETRIES = 3;
+
 // ── Tool parameter schemas (module-level for reuse in ToolDefinition generics) ──
 
 const taskUpdateParams = Type.Object({
@@ -107,7 +110,7 @@ export interface WorkflowStepOutcome {
  */
 export type WorkflowStepResult =
   | { allPassed: true }
-  | { allPassed: false; revisionRequested: false }
+  | { allPassed: false; revisionRequested: false; feedback: string; stepName: string }
   | { allPassed: false; revisionRequested: true; feedback: string; stepName: string };
 
 
@@ -1112,7 +1115,12 @@ export class TaskExecutor {
                 await this.handleWorkflowRevisionRequest(task, worktreePath, workflowResult.feedback, workflowResult.stepName);
                 return;
               }
-              // Hard failure - move to in-review
+              // Try to fix workflow step failures with retries
+              const retried = await this.handleWorkflowStepFailure(task, worktreePath, workflowResult.feedback, workflowResult.stepName || "Unknown");
+              if (retried) {
+                return; // Retry scheduled
+              }
+              // Retries exhausted - hard failure
               await this.store.updateTask(task.id, { status: "failed", error: "Workflow step failed" });
               await this.store.moveTask(task.id, "in-review");
               // Audit trail: record task move (FN-1404)
@@ -1121,6 +1129,9 @@ export class TaskExecutor {
               this.options.onError?.(task, new Error("Workflow step failed"));
               return;
             }
+
+            // Reset workflowStepRetries counter on success
+            await this.store.updateTask(task.id, { workflowStepRetries: undefined });
 
             await this.store.moveTask(task.id, "in-review");
             // Audit trail: record task move (FN-1404)
@@ -1529,13 +1540,21 @@ export class TaskExecutor {
                 await this.handleWorkflowRevisionRequest(task, worktreePath, workflowResult.feedback, workflowResult.stepName);
                 return;
               }
-              // Hard failure - move to in-review so users can see the failure
+              // Try to fix workflow step failures with retries
+              const retried = await this.handleWorkflowStepFailure(task, worktreePath, workflowResult.feedback, workflowResult.stepName || "Unknown");
+              if (retried) {
+                return; // Retry scheduled
+              }
+              // Retries exhausted - hard failure
               await this.store.updateTask(task.id, { status: "failed", error: "Workflow step failed" });
               await this.store.moveTask(task.id, "in-review");
               executorLog.log(`✗ ${task.id} workflow step failed → in-review`);
               this.options.onError?.(task, new Error("Workflow step failed"));
               return;
             }
+
+            // Reset workflowStepRetries counter on success
+            await this.store.updateTask(task.id, { workflowStepRetries: undefined });
 
             await this.store.moveTask(task.id, "in-review");
             executorLog.log(`✓ ${task.id} completed → in-review`);
@@ -2432,6 +2451,155 @@ ${feedback}
   }
 
   /**
+   * Handle workflow step hard failures by retrying execution up to MAX_WORKFLOW_STEP_RETRIES times.
+   * This gives the executor a chance to fix workflow step failures automatically before
+   * moving the task to in-review with failed status.
+   *
+   * @returns true if a retry was scheduled, false if retries are exhausted
+   */
+  private async handleWorkflowStepFailure(
+    task: Task,
+    worktreePath: string,
+    failureFeedback: string,
+    stepName: string,
+  ): Promise<boolean> {
+    const currentRetries = task.workflowStepRetries ?? 0;
+
+    if (currentRetries >= MAX_WORKFLOW_STEP_RETRIES) {
+      // Retries exhausted — caller should fall through to hard failure
+      executorLog.warn(`${task.id}: workflow step "${stepName}" failed — retries exhausted (${MAX_WORKFLOW_STEP_RETRIES}/${MAX_WORKFLOW_STEP_RETRIES})`);
+      return false;
+    }
+
+    const retryCount = currentRetries + 1;
+    executorLog.log(`${task.id}: workflow step "${stepName}" failed — retry ${retryCount}/${MAX_WORKFLOW_STEP_RETRIES} (executor will attempt to fix)`);
+
+    // 1. Update the workflowStepRetries counter on the task
+    await this.store.updateTask(task.id, {
+      workflowStepRetries: retryCount,
+    });
+
+    // 2. Inject failure feedback into PROMPT.md
+    await this.injectWorkflowStepFailureInstructions(task, failureFeedback, stepName, retryCount);
+
+    // 3. Reset all steps to pending for fresh execution
+    const updatedTask = await this.store.getTask(task.id);
+    for (let i = 0; i < updatedTask.steps.length; i++) {
+      if (updatedTask.steps[i].status !== "pending") {
+        await this.store.updateStep(task.id, i, "pending");
+      }
+    }
+
+    // 4. Clear any session file so we get a fresh session
+    await this.store.updateTask(task.id, {
+      status: null,
+      sessionFile: null,
+    });
+
+    // 5. Schedule fresh execution after guard unwinds
+    executorLog.log(`${task.id}: scheduling fresh execution after workflow step failure (retry ${retryCount}/${MAX_WORKFLOW_STEP_RETRIES})`);
+    setTimeout(async () => {
+      try {
+        // Move task to todo briefly, then back to in-progress to trigger fresh execution
+        await this.store.moveTask(task.id, "todo");
+        await this.store.moveTask(task.id, "in-progress");
+        executorLog.log(`${task.id}: workflow step retry scheduled — moved to todo then in-progress`);
+      } catch (err: any) {
+        executorLog.error(`${task.id}: failed to schedule workflow step retry: ${err.message}`);
+        // Fallback: log entry and let scheduler pick it up on next tick
+        await this.store.logEntry(
+          task.id,
+          "Workflow step failed — executor ready for fresh execution",
+        );
+      }
+    }, 0);
+
+    return true;
+  }
+
+  /**
+   * Inject or update the "Workflow Step Failure" section in PROMPT.md.
+   * This section contains failure feedback from workflow steps that hard-failed.
+   * The section is replaced entirely to avoid accumulation of old feedback.
+   */
+  private async injectWorkflowStepFailureInstructions(
+    task: Task,
+    failureFeedback: string,
+    stepName: string,
+    retryCount: number,
+  ): Promise<void> {
+    const promptPath = join(this.store.getFusionDir(), "tasks", task.id, "PROMPT.md");
+
+    // Read existing PROMPT.md
+    let content: string;
+    try {
+      content = await readFile(promptPath, "utf-8");
+    } catch {
+      executorLog.warn(`${task.id}: PROMPT.md not found at ${promptPath}, skipping workflow failure injection`);
+      return;
+    }
+
+    const remainingRetries = MAX_WORKFLOW_STEP_RETRIES - retryCount;
+    const failureSectionHeader = "## Workflow Step Failure";
+    const failureSectionContent = `${failureSectionHeader}
+
+The following workflow step failed and requires implementation fixes:
+
+**Step:** ${stepName}
+
+**Failure Feedback:**
+${failureFeedback}
+
+**Retry:** ${retryCount}/${MAX_WORKFLOW_STEP_RETRIES} (${remainingRetries} remaining)
+
+**Important:** This is a workflow step failure — fix the issues above by making the necessary code changes. The task will be retried automatically. If all ${MAX_WORKFLOW_STEP_RETRIES} retries are exhausted, the task will be moved to in-review for manual inspection.
+
+`;
+
+    let newContent: string;
+    if (content.includes(failureSectionHeader)) {
+      // Replace existing section
+      const sectionRegex = new RegExp(
+        `${failureSectionHeader}[\\s\\S]*?(?=\\n## |\\n# |$)`,
+        "i"
+      );
+      if (sectionRegex.test(content)) {
+        newContent = content.replace(sectionRegex, failureSectionContent);
+      } else {
+        // Fallback: append at end
+        newContent = content + "\n" + failureSectionContent;
+      }
+    } else {
+      // Remove any existing Workflow Revision Instructions section first (conflicting state)
+      const revisionSectionHeader = "## Workflow Revision Instructions";
+      if (content.includes(revisionSectionHeader)) {
+        const revisionRegex = new RegExp(
+          `${revisionSectionHeader}[\\s\\S]*?(?=\\n## |\\n# |$)`,
+          "i"
+        );
+        content = content.replace(revisionRegex, "");
+      }
+
+      // Append new section before any closing markers or at end
+      const acceptanceCriteriaMatch = content.match(/\n##\s+Acceptance Criteria\n/);
+      if (acceptanceCriteriaMatch) {
+        const insertIdx = acceptanceCriteriaMatch.index!;
+        newContent = content.slice(0, insertIdx) + "\n" + failureSectionContent + content.slice(insertIdx);
+      } else {
+        newContent = content + "\n" + failureSectionContent;
+      }
+    }
+
+    // Write updated content
+    try {
+      await writeFile(promptPath, newContent);
+      executorLog.log(`${task.id}: injected workflow step failure instructions into PROMPT.md (retry ${retryCount}/${MAX_WORKFLOW_STEP_RETRIES})`);
+    } catch (err: any) {
+      executorLog.error(`${task.id}: failed to inject workflow step failure instructions: ${err.message}`);
+    }
+  }
+
+  /**
    * Capture the list of files modified during agent execution.
    * Uses git diff against the stored baseCommitSha to determine what changed.
    * Returns an empty array if no changes or if git commands fail.
@@ -2630,7 +2798,12 @@ ${feedback}
             completedAt,
           });
           await this.store.updateTask(task.id, { workflowStepResults: results });
-          return { allPassed: false, revisionRequested: false };
+          return {
+            allPassed: false,
+            revisionRequested: false,
+            feedback: result.error || "Workflow step failed",
+            stepName: ws.name,
+          };
         }
       } catch (err: any) {
         const completedAt = new Date().toISOString();
@@ -2650,7 +2823,12 @@ ${feedback}
           completedAt,
         });
         await this.store.updateTask(task.id, { workflowStepResults: results });
-        return { allPassed: false, revisionRequested: false };
+        return {
+          allPassed: false,
+          revisionRequested: false,
+          feedback: err.message || "Workflow step error",
+          stepName: ws.name,
+        };
       }
     }
 

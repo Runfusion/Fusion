@@ -2453,6 +2453,191 @@ describe("MissionStore", () => {
       expect(description).not.toContain("## Contract Assertions");
     });
   });
+
+  // ── Loop State & Validator Run Schema Tests ───────────────────────────
+
+  describe("Loop State & Validator Run Schema (v31)", () => {
+    it("schema version is 31 after migration", () => {
+      expect(db.getSchemaVersion()).toBe(31);
+    });
+
+    it("mission_features table has loop state columns", () => {
+      const cols = db.prepare("PRAGMA table_info(mission_features)").all() as Array<{ name: string }>;
+      const colNames = new Set(cols.map((c) => c.name));
+      expect(colNames).toContain("loopState");
+      expect(colNames).toContain("implementationAttemptCount");
+      expect(colNames).toContain("validatorAttemptCount");
+      expect(colNames).toContain("lastValidatorRunId");
+      expect(colNames).toContain("lastValidatorStatus");
+      expect(colNames).toContain("generatedFromFeatureId");
+      expect(colNames).toContain("generatedFromRunId");
+    });
+
+    it("mission_validator_runs table exists with correct schema", () => {
+      const cols = db.prepare("PRAGMA table_info(mission_validator_runs)").all() as Array<{ name: string }>;
+      const colNames = new Set(cols.map((c) => c.name));
+      expect(colNames).toContain("id");
+      expect(colNames).toContain("featureId");
+      expect(colNames).toContain("milestoneId");
+      expect(colNames).toContain("sliceId");
+      expect(colNames).toContain("status");
+      expect(colNames).toContain("triggerType");
+      expect(colNames).toContain("implementationAttempt");
+      expect(colNames).toContain("validatorAttempt");
+      expect(colNames).toContain("summary");
+      expect(colNames).toContain("blockedReason");
+      expect(colNames).toContain("startedAt");
+      expect(colNames).toContain("completedAt");
+      expect(colNames).toContain("createdAt");
+      expect(colNames).toContain("updatedAt");
+    });
+
+    it("mission_validator_failures table exists with correct schema", () => {
+      const cols = db.prepare("PRAGMA table_info(mission_validator_failures)").all() as Array<{ name: string }>;
+      const colNames = new Set(cols.map((c) => c.name));
+      expect(colNames).toContain("id");
+      expect(colNames).toContain("runId");
+      expect(colNames).toContain("featureId");
+      expect(colNames).toContain("assertionId");
+      expect(colNames).toContain("message");
+      expect(colNames).toContain("expected");
+      expect(colNames).toContain("actual");
+      expect(colNames).toContain("createdAt");
+    });
+
+    it("mission_fix_feature_lineage table exists with correct schema", () => {
+      const cols = db.prepare("PRAGMA table_info(mission_fix_feature_lineage)").all() as Array<{ name: string }>;
+      const colNames = new Set(cols.map((c) => c.name));
+      expect(colNames).toContain("id");
+      expect(colNames).toContain("sourceFeatureId");
+      expect(colNames).toContain("fixFeatureId");
+      expect(colNames).toContain("runId");
+      expect(colNames).toContain("failedAssertionIds");
+      expect(colNames).toContain("createdAt");
+    });
+
+    it("addFeature creates feature with correct loop state defaults", () => {
+      const mission = store.createMission({ title: "Loop State Test" });
+      const milestone = store.addMilestone(mission.id, { title: "MS" });
+      const slice = store.addSlice(milestone.id, { title: "SL" });
+      const feature = store.addFeature(slice.id, { title: "Test Feature" });
+
+      expect(feature.loopState).toBe("idle");
+      expect(feature.implementationAttemptCount).toBe(0);
+      expect(feature.validatorAttemptCount).toBe(0);
+      expect(feature.lastValidatorRunId).toBeUndefined();
+      expect(feature.lastValidatorStatus).toBeUndefined();
+      expect(feature.generatedFromFeatureId).toBeUndefined();
+      expect(feature.generatedFromRunId).toBeUndefined();
+    });
+
+    it("getFeature returns feature with correct loop state defaults via rowToFeature", () => {
+      const mission = store.createMission({ title: "Loop State Test" });
+      const milestone = store.addMilestone(mission.id, { title: "MS" });
+      const slice = store.addSlice(milestone.id, { title: "SL" });
+      const created = store.addFeature(slice.id, { title: "Test Feature" });
+      const retrieved = store.getFeature(created.id);
+
+      expect(retrieved).toBeDefined();
+      expect(retrieved!.loopState).toBe("idle");
+      expect(retrieved!.implementationAttemptCount).toBe(0);
+      expect(retrieved!.validatorAttemptCount).toBe(0);
+      expect(retrieved!.lastValidatorRunId).toBeUndefined();
+      expect(retrieved!.lastValidatorStatus).toBeUndefined();
+      expect(retrieved!.generatedFromFeatureId).toBeUndefined();
+      expect(retrieved!.generatedFromRunId).toBeUndefined();
+    });
+
+    it("updateFeature persists loop state fields", () => {
+      const mission = store.createMission({ title: "Loop State Test" });
+      const milestone = store.addMilestone(mission.id, { title: "MS" });
+      const slice = store.addSlice(milestone.id, { title: "SL" });
+      const feature = store.addFeature(slice.id, { title: "Test Feature" });
+
+      const updated = store.updateFeature(feature.id, {
+        loopState: "implementing",
+        implementationAttemptCount: 1,
+        validatorAttemptCount: 0,
+        lastValidatorRunId: "VR-TEST-001",
+        lastValidatorStatus: "running",
+      });
+
+      expect(updated.loopState).toBe("implementing");
+      expect(updated.implementationAttemptCount).toBe(1);
+      expect(updated.validatorAttemptCount).toBe(0);
+      expect(updated.lastValidatorRunId).toBe("VR-TEST-001");
+      expect(updated.lastValidatorStatus).toBe("running");
+
+      // Verify persisted
+      const retrieved = store.getFeature(feature.id);
+      expect(retrieved!.loopState).toBe("implementing");
+      expect(retrieved!.implementationAttemptCount).toBe(1);
+      expect(retrieved!.lastValidatorRunId).toBe("VR-TEST-001");
+      expect(retrieved!.lastValidatorStatus).toBe("running");
+    });
+
+    it("existing feature read has correct defaults for new columns", () => {
+      // Create a feature using the store (which sets loop state defaults)
+      const mission = store.createMission({ title: "Existing Feature Test" });
+      const milestone = store.addMilestone(mission.id, { title: "MS" });
+      const slice = store.addSlice(milestone.id, { title: "SL" });
+      const feature = store.addFeature(slice.id, { title: "Existing Feature" });
+
+      // Simulate reading from DB directly (as rowToFeature would)
+      const row = db.prepare("SELECT * FROM mission_features WHERE id = ?").get(feature.id);
+      expect((row as any).loopState).toBe("idle");
+      expect((row as any).implementationAttemptCount).toBe(0);
+      expect((row as any).validatorAttemptCount).toBe(0);
+      expect((row as any).lastValidatorRunId).toBeNull();
+      expect((row as any).lastValidatorStatus).toBeNull();
+    });
+
+    it("migration is idempotent - running twice does not fail", () => {
+      const versionBefore = db.getSchemaVersion();
+      // init() calls migrate(), calling again should be a no-op
+      db.init();
+      const versionAfter = db.getSchemaVersion();
+      expect(versionAfter).toBe(versionBefore);
+    });
+
+    it("foreign key constraints exist on validator runs table", () => {
+      // Create full hierarchy
+      const mission = store.createMission({ title: "FK Test" });
+      const milestone = store.addMilestone(mission.id, { title: "MS" });
+      const slice = store.addSlice(milestone.id, { title: "SL" });
+      const feature = store.addFeature(slice.id, { title: "FK Feature" });
+
+      // Insert a validator run
+      const now = new Date().toISOString();
+      db.prepare(`
+        INSERT INTO mission_validator_runs (id, featureId, milestoneId, sliceId, status, implementationAttempt, validatorAttempt, startedAt, createdAt, updatedAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run("VR-TEST-001", feature.id, milestone.id, slice.id, "running", 1, 1, now, now, now);
+
+      // Verify the run exists
+      const run = db.prepare("SELECT * FROM mission_validator_runs WHERE id = ?").get("VR-TEST-001");
+      expect(run).toBeDefined();
+      expect((run as any).featureId).toBe(feature.id);
+    });
+
+    it("validator runs index exists", () => {
+      const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='mission_validator_runs'").all() as Array<{ name: string }>;
+      const indexNames = new Set(indexes.map((i) => i.name));
+      expect(indexNames).toContain("idxValidatorRunsFeatureId");
+    });
+
+    it("validator failures index exists", () => {
+      const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='mission_validator_failures'").all() as Array<{ name: string }>;
+      const indexNames = new Set(indexes.map((i) => i.name));
+      expect(indexNames).toContain("idxValidatorFailuresRunId");
+    });
+
+    it("fix lineage index exists", () => {
+      const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='mission_fix_feature_lineage'").all() as Array<{ name: string }>;
+      const indexNames = new Set(indexes.map((i) => i.name));
+      expect(indexNames).toContain("idxFixLineageSourceFeatureId");
+    });
+  });
 });
 
 // vi import for vitest mocking

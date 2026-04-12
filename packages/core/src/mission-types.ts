@@ -31,6 +31,14 @@ export type SlicePlanState = (typeof SLICE_PLAN_STATES)[number];
 export const FEATURE_STATUSES = ["defined", "triaged", "in-progress", "done", "blocked"] as const;
 export type FeatureStatus = (typeof FEATURE_STATUSES)[number];
 
+/** Loop state values for a feature's execution loop lifecycle */
+export const FEATURE_LOOP_STATES = ["idle", "implementing", "validating", "needs_fix", "passed", "blocked"] as const;
+export type FeatureLoopState = (typeof FEATURE_LOOP_STATES)[number];
+
+/** Status values for a validator run */
+export const VALIDATOR_RUN_STATUSES = ["running", "passed", "failed", "blocked", "error"] as const;
+export type ValidatorRunStatus = (typeof VALIDATOR_RUN_STATUSES)[number];
+
 /** Interview state for AI-assisted specification */
 export const INTERVIEW_STATES = ["not_started", "in_progress", "completed", "needs_update"] as const;
 export type InterviewState = (typeof INTERVIEW_STATES)[number];
@@ -221,6 +229,130 @@ export interface MissionFeature {
   createdAt: string;
   /** ISO-8601 timestamp of last update */
   updatedAt: string;
+  /** Current loop state for the execution loop (idle, implementing, validating, needs_fix, passed, blocked) */
+  loopState?: FeatureLoopState;
+  /** Number of implementation attempts made for this feature */
+  implementationAttemptCount?: number;
+  /** Number of validation attempts made for this feature */
+  validatorAttemptCount?: number;
+  /** ID of the last validator run for this feature */
+  lastValidatorRunId?: string;
+  /** Status of the last validator run (passed, failed, blocked, error) */
+  lastValidatorStatus?: ValidatorRunStatus;
+  /** Feature ID that generated this feature as a fix (for lineage tracking) */
+  generatedFromFeatureId?: string;
+  /** Validator run ID that generated this feature as a fix (for lineage tracking) */
+  generatedFromRunId?: string;
+}
+
+// ── Validator Run & Loop Types ──────────────────────────────────────
+
+/**
+ * A validator run represents a single execution of the validation phase
+ * for a feature within the mission execution loop.
+ */
+export interface MissionValidatorRun {
+  /** Unique identifier (e.g., "VR-XXXXXXXX-XXXX") */
+  id: string;
+  /** Parent feature ID */
+  featureId: string;
+  /** Parent milestone ID */
+  milestoneId: string;
+  /** Parent slice ID */
+  sliceId: string;
+  /** Current status of the run */
+  status: ValidatorRunStatus;
+  /** What triggered this run (e.g., "task_completion", "manual", "scheduled") */
+  triggerType?: string;
+  /** Which implementation attempt this run corresponds to */
+  implementationAttempt: number;
+  /** Which validation attempt this run corresponds to */
+  validatorAttempt: number;
+  /** Summary of the validation run results */
+  summary?: string;
+  /** Reason for blocked status if applicable */
+  blockedReason?: string;
+  /** ISO-8601 timestamp when the run started */
+  startedAt: string;
+  /** ISO-8601 timestamp when the run completed (if completed) */
+  completedAt?: string;
+  /** ISO-8601 timestamp of creation */
+  createdAt: string;
+  /** ISO-8601 timestamp of last update */
+  updatedAt: string;
+}
+
+/**
+ * An assertion failure record represents a single assertion failure
+ * within a validator run.
+ */
+export interface MissionAssertionFailureRecord {
+  /** Unique identifier (e.g., "VAF-XXXXXXXX-XXXX") */
+  id: string;
+  /** Parent validator run ID */
+  runId: string;
+  /** Feature ID this failure belongs to */
+  featureId: string;
+  /** Assertion ID that failed */
+  assertionId: string;
+  /** Human-readable failure message */
+  message?: string;
+  /** Expected value or behavior */
+  expected?: string;
+  /** Actual value or behavior */
+  actual?: string;
+  /** ISO-8601 timestamp of creation */
+  createdAt: string;
+}
+
+/**
+ * A fix feature lineage record tracks the relationship between a source
+ * feature and a generated fix feature within the execution loop.
+ */
+export interface MissionFixFeatureLineage {
+  /** Unique identifier (e.g., "FFL-XXXXXXXX-XXXX") */
+  id: string;
+  /** Source feature ID that failed validation */
+  sourceFeatureId: string;
+  /** Generated fix feature ID */
+  fixFeatureId: string;
+  /** Validator run ID that triggered the fix generation */
+  runId: string;
+  /** JSON array of assertion IDs that failed and triggered the fix */
+  failedAssertionIds: string[];
+  /** ISO-8601 timestamp of creation */
+  createdAt: string;
+}
+
+/**
+ * A complete loop state snapshot for a feature, including all validator
+ * runs, failures, and lineage information.
+ */
+export interface MissionFeatureLoopSnapshot {
+  /** Feature ID */
+  featureId: string;
+  /** The feature object */
+  feature: MissionFeature;
+  /** Current loop state */
+  loopState: FeatureLoopState;
+  /** Number of implementation attempts */
+  implementationAttemptCount: number;
+  /** Number of validation attempts */
+  validatorAttemptCount: number;
+  /** ID of the last validator run */
+  lastValidatorRunId?: string;
+  /** Status of the last validator run */
+  lastValidatorStatus?: ValidatorRunStatus;
+  /** Feature ID that generated this feature (if applicable) */
+  generatedFromFeatureId?: string;
+  /** Validator run ID that generated this feature (if applicable) */
+  generatedFromRunId?: string;
+  /** All validator runs for this feature, newest first */
+  validatorRuns: MissionValidatorRun[];
+  /** All assertion failures across all runs */
+  failures: MissionAssertionFailureRecord[];
+  /** All lineage entries for this feature (as source or fix) */
+  lineage: MissionFixFeatureLineage[];
 }
 
 // ── Input Types (for creation) ──────────────────────────────────────

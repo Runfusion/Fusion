@@ -179,6 +179,8 @@ export {
   AUTOPILOT_STATES,
   MISSION_EVENT_TYPES,
   SLICE_PLAN_STATES,
+  FEATURE_LOOP_STATES,
+  VALIDATOR_RUN_STATUSES,
 } from "./mission-types.js";
 export type {
   MissionStatus,
@@ -188,6 +190,8 @@ export type {
   InterviewState,
   AutopilotState,
   SlicePlanState,
+  FeatureLoopState,
+  ValidatorRunStatus,
   MissionEventType,
   AutopilotStatus,
   Mission,
@@ -213,6 +217,11 @@ export type {
   FeatureEventPayload,
   FeatureDeletedPayload,
   FeatureLinkedPayload,
+  // Validator run types
+  MissionValidatorRun,
+  MissionAssertionFailureRecord,
+  MissionFixFeatureLineage,
+  MissionFeatureLoopSnapshot,
   // Contract assertion types
   MISSION_ASSERTION_STATUSES,
   MILESTONE_VALIDATION_STATES,

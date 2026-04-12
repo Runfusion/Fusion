@@ -59,7 +59,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 29;
+const SCHEMA_VERSION = 31;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -144,6 +144,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   planningModelProvider TEXT,
   planningModelId TEXT,
   mergeRetries INTEGER,
+  workflowStepRetries INTEGER,
   recoveryRetryCount INTEGER,
   nextRecoveryAt TEXT,
   error TEXT,
@@ -1078,6 +1079,95 @@ export class Database {
         // Index for finding all features linked to an assertion
         // Covers: WHERE assertionId = ? (from mission_feature_assertions)
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxFeatureAssertionsAssertionId ON mission_feature_assertions(assertionId)`);
+      });
+    }
+
+    // Workflow step failure retry support (FN-1586)
+    // Adds workflowStepRetries column to track retry attempts for workflow step hard failures
+    if (version < 30) {
+      this.applyMigration(30, () => {
+        this.addColumnIfMissing("tasks", "workflowStepRetries", "INTEGER");
+      });
+    }
+
+    // Loop state and validator run tables (FEAT-001)
+    // Adds loop state tracking columns to mission_features for the execution loop:
+    // implementationAttemptCount, validatorAttemptCount, lastValidatorRunId, lastValidatorStatus,
+    // generatedFromFeatureId, generatedFromRunId, loopState
+    if (version < 31) {
+      this.applyMigration(31, () => {
+        // Add loop state columns to mission_features
+        this.addColumnIfMissing("mission_features", "loopState", "TEXT NOT NULL DEFAULT 'idle'");
+        this.addColumnIfMissing("mission_features", "implementationAttemptCount", "INTEGER NOT NULL DEFAULT 0");
+        this.addColumnIfMissing("mission_features", "validatorAttemptCount", "INTEGER NOT NULL DEFAULT 0");
+        this.addColumnIfMissing("mission_features", "lastValidatorRunId", "TEXT");
+        this.addColumnIfMissing("mission_features", "lastValidatorStatus", "TEXT");
+        this.addColumnIfMissing("mission_features", "generatedFromFeatureId", "TEXT");
+        this.addColumnIfMissing("mission_features", "generatedFromRunId", "TEXT");
+
+        // Create mission_validator_runs table for tracking validation runs
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS mission_validator_runs (
+            id TEXT PRIMARY KEY,
+            featureId TEXT NOT NULL,
+            milestoneId TEXT NOT NULL,
+            sliceId TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'running',
+            triggerType TEXT,
+            implementationAttempt INTEGER NOT NULL DEFAULT 0,
+            validatorAttempt INTEGER NOT NULL DEFAULT 0,
+            summary TEXT,
+            blockedReason TEXT,
+            startedAt TEXT NOT NULL,
+            completedAt TEXT,
+            createdAt TEXT NOT NULL,
+            updatedAt TEXT NOT NULL,
+            FOREIGN KEY (featureId) REFERENCES mission_features(id) ON DELETE CASCADE,
+            FOREIGN KEY (milestoneId) REFERENCES milestones(id) ON DELETE CASCADE,
+            FOREIGN KEY (sliceId) REFERENCES slices(id) ON DELETE CASCADE
+          )
+        `);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxValidatorRunsFeatureId ON mission_validator_runs(featureId)`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxValidatorRunsMilestoneId ON mission_validator_runs(milestoneId)`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxValidatorRunsSliceId ON mission_validator_runs(sliceId)`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxValidatorRunsStatus ON mission_validator_runs(status)`);
+
+        // Create mission_validator_failures table for assertion failure records
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS mission_validator_failures (
+            id TEXT PRIMARY KEY,
+            runId TEXT NOT NULL,
+            featureId TEXT NOT NULL,
+            assertionId TEXT NOT NULL,
+            message TEXT,
+            expected TEXT,
+            actual TEXT,
+            createdAt TEXT NOT NULL,
+            FOREIGN KEY (runId) REFERENCES mission_validator_runs(id) ON DELETE CASCADE,
+            FOREIGN KEY (featureId) REFERENCES mission_features(id) ON DELETE CASCADE
+          )
+        `);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxValidatorFailuresRunId ON mission_validator_failures(runId)`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxValidatorFailuresFeatureId ON mission_validator_failures(featureId)`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxValidatorFailuresAssertionId ON mission_validator_failures(assertionId)`);
+
+        // Create mission_fix_feature_lineage table for tracking fix feature relationships
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS mission_fix_feature_lineage (
+            id TEXT PRIMARY KEY,
+            sourceFeatureId TEXT NOT NULL,
+            fixFeatureId TEXT NOT NULL,
+            runId TEXT NOT NULL,
+            failedAssertionIds TEXT NOT NULL DEFAULT '[]',
+            createdAt TEXT NOT NULL,
+            FOREIGN KEY (sourceFeatureId) REFERENCES mission_features(id) ON DELETE CASCADE,
+            FOREIGN KEY (fixFeatureId) REFERENCES mission_features(id) ON DELETE CASCADE,
+            FOREIGN KEY (runId) REFERENCES mission_validator_runs(id) ON DELETE CASCADE
+          )
+        `);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxFixLineageSourceFeatureId ON mission_fix_feature_lineage(sourceFeatureId)`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxFixLineageFixFeatureId ON mission_fix_feature_lineage(fixFeatureId)`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxFixLineageRunId ON mission_fix_feature_lineage(runId)`);
       });
     }
   }
