@@ -3646,15 +3646,21 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.post("/git/remotes", async (req, res) => {
     try {
       const rootDir = store.getRootDir();
-      if (!isGitRepo(rootDir)) {
-        throw badRequest("Not a git repository");
-      }
       const { name, url } = req.body;
       if (!name || typeof name !== "string") {
         throw badRequest("name is required");
       }
       if (!url || typeof url !== "string") {
         throw badRequest("url is required");
+      }
+      if (!isValidBranchName(name)) {
+        throw badRequest("Invalid remote name");
+      }
+      if (!isValidGitUrl(url)) {
+        throw badRequest("Invalid git URL format");
+      }
+      if (!isGitRepo(rootDir)) {
+        throw badRequest("Not a git repository");
       }
       await addGitRemote(name, url, rootDir);
       res.status(201).json({ name, added: true });
@@ -3993,7 +3999,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw badRequest("Not a git repository");
       }
       // Get tasks to correlate with worktrees
-      const tasks = await store.listTasks();
+      const tasks = await store.listTasks({ slim: true, includeArchived: false });
       const worktrees = getGitWorktrees(tasks, rootDir);
       res.json(worktrees);
     } catch (err: any) {
@@ -4530,7 +4536,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       // Check if already imported
-      const existingTasks = await scopedStore.listTasks();
+      const existingTasks = await scopedStore.listTasks({ slim: true, includeArchived: false });
       const sourceUrl = issue.html_url;
       for (const existingTask of existingTasks) {
         if (existingTask.description.includes(sourceUrl)) {
@@ -4640,7 +4646,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const scopedStore = await getScopedStore(req);
 
       // Get existing tasks to check for duplicates
-      const existingTasks = await scopedStore.listTasks();
+      const existingTasks = await scopedStore.listTasks({ slim: true, includeArchived: false });
 
       // Process issues sequentially with throttling
       const results: Array<{
@@ -4856,7 +4862,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       // Check if already imported
-      const existingTasks = await scopedStore.listTasks();
+      const existingTasks = await scopedStore.listTasks({ slim: true, includeArchived: false });
       const sourceUrl = pr.html_url;
       for (const existingTask of existingTasks) {
         if (existingTask.description.includes(sourceUrl)) {
@@ -5089,7 +5095,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
 
     // Find all matching tasks by badge URL
-    const tasks = await store.listTasks();
+    const tasks = await store.listTasks({ slim: true, includeArchived: false });
     const matchingTasks: Array<{ id: string; resourceType: "pr" | "issue"; current: unknown }> = [];
 
     for (const task of tasks) {
@@ -5973,7 +5979,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.get("/workspaces", async (_req, res) => {
     try {
-      const tasks = await store.listTasks();
+      const tasks = await store.listTasks({ slim: true, includeArchived: false });
       res.json({
         project: store.getRootDir(),
         tasks: tasks
@@ -10115,7 +10121,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw notFound("Agent not found");
       }
 
-      const tasks = await scopedStore.listTasks();
+      const tasks = await scopedStore.listTasks({ slim: true, includeArchived: false });
       res.json(tasks.filter((task) => task.assignedAgentId === req.params.id));
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -12169,7 +12175,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         const projectPath = await realpath(project.path);
 
         if (storePath === projectPath) {
-          const tasks = await store.listTasks();
+          const tasks = await store.listTasks({ slim: true });
           const activeCols = new Set(["triage", "todo", "in-progress", "in-review"]);
           const activeTaskCount = tasks.filter((t) => activeCols.has(t.column)).length;
           const inFlightAgentCount = tasks.filter((t) => t.column === "in-progress").length;

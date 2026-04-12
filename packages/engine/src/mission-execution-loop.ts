@@ -126,7 +126,7 @@ export class MissionExecutionLoop extends EventEmitter {
    * This handles the case where the engine was shut down mid-validation
    * or mid-fix, ensuring those features continue their loop progression.
    */
-  async recoverActiveMissions(): Promise<void> {
+  async recoverActiveMissions(): Promise<{ recoveredCount: number }> {
     loopLog.log("Starting active mission recovery...");
 
     try {
@@ -188,8 +188,10 @@ export class MissionExecutionLoop extends EventEmitter {
       }
 
       loopLog.log(`Active mission recovery complete: recovered ${recoveredCount} features`);
+      return { recoveredCount };
     } catch (err) {
       loopLog.error("Error during active mission recovery:", err);
+      return { recoveredCount: 0 };
     }
   }
 

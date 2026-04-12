@@ -32,6 +32,15 @@ vi.mock("node:fs", () => ({
 const mockExecFileSync = vi.fn();
 vi.mock("node:child_process", () => ({
   execFileSync: (...args: any[]) => mockExecFileSync(...args),
+  execFile: (cmd: string, args: string[], options: any, callback: any) => {
+    const cb = typeof options === "function" ? options : callback;
+    try {
+      const stdout = mockExecFileSync(cmd, args, options);
+      cb(null, stdout, "");
+    } catch (error) {
+      cb(error, "", "");
+    }
+  },
 }));
 
 // Mock node-pty for CLI fallback — default: not available (simulates test env)

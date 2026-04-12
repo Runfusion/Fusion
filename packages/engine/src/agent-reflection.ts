@@ -172,7 +172,7 @@ export class AgentReflectionService {
     const effectiveLimit = Math.max(1, limit);
 
     const [tasks, recentRuns, agent] = await Promise.all([
-      this.taskStore.listTasks(),
+      this.taskStore.listTasks({ slim: true, includeArchived: false }),
       this.agentStore.getRecentRuns(agentId, effectiveLimit * 4),
       this.agentStore.getAgent(agentId),
     ]);

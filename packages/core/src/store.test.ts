@@ -10,8 +10,18 @@ vi.mock("node:child_process", async (importOriginal) => {
   };
 });
 
+vi.mock("./run-command.js", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("./run-command.js")>();
+  return {
+    ...mod,
+    runCommandAsync: vi.fn((...args: Parameters<typeof mod.runCommandAsync>) => mod.runCommandAsync(...args)),
+  };
+});
+
 import { execSync } from "node:child_process";
 const mockedExecSync = vi.mocked(execSync);
+import { runCommandAsync } from "./run-command.js";
+const mockedRunCommandAsync = vi.mocked(runCommandAsync);
 
 import { TaskStore } from "./store.js";
 import { readFile, writeFile, mkdir, rm, readdir, unlink } from "node:fs/promises";
@@ -6171,6 +6181,7 @@ Task with acceptance criteria
   describe("branch cleanup on delete and archive", () => {
     beforeEach(() => {
       mockedExecSync.mockClear();
+      mockedRunCommandAsync.mockClear();
     });
 
     afterEach(() => {
@@ -6181,21 +6192,27 @@ Task with acceptance criteria
           return realExecSync(...args);
         },
       );
+      mockedRunCommandAsync.mockImplementation((...args: Parameters<typeof runCommandAsync>) =>
+        vi.importActual<typeof import("./run-command.js")>("./run-command.js").then((mod) =>
+          mod.runCommandAsync(...args),
+        ),
+      );
     });
 
     it("deleteTask attempts branch cleanup via cleanupBranchForTask", async () => {
       const task = await createTestTask();
 
       // Mock: verify succeeds, delete succeeds
-      mockedExecSync.mockImplementation((cmd: string) => {
-        if (typeof cmd === "string" && cmd.includes("git rev-parse --verify")) return Buffer.from("");
-        if (typeof cmd === "string" && cmd.includes("git branch -D")) return Buffer.from("");
-        throw new Error(`unexpected execSync call: ${cmd}`);
+      mockedRunCommandAsync.mockImplementation(async (cmd: string) => {
+        if (cmd.includes("git rev-parse --verify") || cmd.includes("git branch -D")) {
+          return { stdout: "", stderr: "", exitCode: 0, signal: null, bufferExceeded: false, timedOut: false };
+        }
+        throw new Error(`unexpected runCommandAsync call: ${cmd}`);
       });
 
       await store.deleteTask(task.id);
 
-      const calls = mockedExecSync.mock.calls.map((c) => c[0] as string);
+      const calls = mockedRunCommandAsync.mock.calls.map((c) => c[0] as string);
       const verifyCalls = calls.filter((c) => c.includes("git rev-parse --verify") && c.includes(`fusion/${task.id.toLowerCase()}`));
       const deleteCalls = calls.filter((c) => c.includes("git branch -D") && c.includes(`fusion/${task.id.toLowerCase()}`));
       expect(verifyCalls.length).toBeGreaterThanOrEqual(1);
@@ -6206,15 +6223,16 @@ Task with acceptance criteria
       const task = await store.createTask({ description: "Branch test" });
       await store.updateTask(task.id, { branch: "fusion/my-custom-branch" });
 
-      mockedExecSync.mockImplementation((cmd: string) => {
-        if (typeof cmd === "string" && cmd.includes("git rev-parse --verify")) return Buffer.from("");
-        if (typeof cmd === "string" && cmd.includes("git branch -D")) return Buffer.from("");
-        throw new Error(`unexpected execSync call: ${cmd}`);
+      mockedRunCommandAsync.mockImplementation(async (cmd: string) => {
+        if (cmd.includes("git rev-parse --verify") || cmd.includes("git branch -D")) {
+          return { stdout: "", stderr: "", exitCode: 0, signal: null, bufferExceeded: false, timedOut: false };
+        }
+        throw new Error(`unexpected runCommandAsync call: ${cmd}`);
       });
 
       await store.deleteTask(task.id);
 
-      const calls = mockedExecSync.mock.calls.map((c) => c[0] as string);
+      const calls = mockedRunCommandAsync.mock.calls.map((c) => c[0] as string);
 
       // Should verify and delete both stored and derived branches
       const customBranchVerify = calls.filter((c) => c.includes(`git rev-parse --verify "fusion/my-custom-branch"`));
@@ -6230,8 +6248,13 @@ Task with acceptance criteria
     it("deleteTask succeeds even when branch cleanup fails", async () => {
       const task = await createTestTask();
 
-      mockedExecSync.mockImplementation(() => {
-        throw new Error("not a git repo");
+      mockedRunCommandAsync.mockResolvedValue({
+        stdout: "",
+        stderr: "not a git repo",
+        exitCode: 128,
+        signal: null,
+        bufferExceeded: false,
+        timedOut: false,
       });
 
       const deleted = await store.deleteTask(task.id);
@@ -6245,15 +6268,16 @@ Task with acceptance criteria
       await store.moveTask(task.id, "in-review");
       await store.moveTask(task.id, "done");
 
-      mockedExecSync.mockImplementation((cmd: string) => {
-        if (typeof cmd === "string" && cmd.includes("git rev-parse --verify")) return Buffer.from("");
-        if (typeof cmd === "string" && cmd.includes("git branch -D")) return Buffer.from("");
-        throw new Error(`unexpected execSync call: ${cmd}`);
+      mockedRunCommandAsync.mockImplementation(async (cmd: string) => {
+        if (cmd.includes("git rev-parse --verify") || cmd.includes("git branch -D")) {
+          return { stdout: "", stderr: "", exitCode: 0, signal: null, bufferExceeded: false, timedOut: false };
+        }
+        throw new Error(`unexpected runCommandAsync call: ${cmd}`);
       });
 
       await store.archiveTask(task.id, true);
 
-      const calls = mockedExecSync.mock.calls.map((c) => c[0] as string);
+      const calls = mockedRunCommandAsync.mock.calls.map((c) => c[0] as string);
       const verifyCalls = calls.filter((c) => c.includes("git rev-parse --verify") && c.includes(`fusion/${task.id.toLowerCase()}`));
       const deleteCalls = calls.filter((c) => c.includes("git branch -D") && c.includes(`fusion/${task.id.toLowerCase()}`));
       expect(verifyCalls.length).toBeGreaterThanOrEqual(1);
@@ -6267,13 +6291,11 @@ Task with acceptance criteria
       await store.moveTask(task.id, "in-review");
       await store.moveTask(task.id, "done");
 
-      mockedExecSync.mockImplementation(() => {
-        throw new Error("mocked: no git repo");
-      });
+      mockedRunCommandAsync.mockClear();
 
       await store.archiveTask(task.id, false);
 
-      const calls = mockedExecSync.mock.calls.map((c) => c[0] as string);
+      const calls = mockedRunCommandAsync.mock.calls.map((c) => c[0] as string);
       const branchCommands = calls.filter((c) => c.includes("git branch -D") || c.includes("git rev-parse --verify"));
       expect(branchCommands).toHaveLength(0);
     });

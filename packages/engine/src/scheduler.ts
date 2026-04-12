@@ -452,7 +452,7 @@ export class Scheduler {
     this.scheduling = true;
 
     try {
-      const tasks = await this.store.listTasks();
+      const tasks = await this.store.listTasks({ slim: true, includeArchived: false });
       const settings = await this.store.getSettings();
       const maxConcurrent = settings.maxConcurrent ?? this.options.maxConcurrent ?? 2;
       const maxWorktrees = settings.maxWorktrees ?? this.options.maxWorktrees ?? 4;

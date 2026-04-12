@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { execSync, spawnSync } from "node:child_process";
+import { execSync, spawnSync, type ChildProcess } from "node:child_process";
 import { cpSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -32,6 +32,33 @@ function createIsolatedDir(): { dir: string; binary: string; cleanup: () => void
 
 function hasKnownBunSqliteLimitation(result: { stderr: string | null }): boolean {
   return result.stderr?.includes("No such built-in module: node:sqlite") ?? false;
+}
+
+async function stopChildProcess(child: ChildProcess | null): Promise<void> {
+  if (!child || child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(sigtermTimeout);
+      clearTimeout(sigkillTimeout);
+      resolve();
+    };
+
+    const sigtermTimeout = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+      }
+    }, 1_000);
+    const sigkillTimeout = setTimeout(finish, 2_000);
+
+    child.once("close", finish);
+    child.kill("SIGTERM");
+  });
 }
 
 describe("build-exe", () => {
@@ -101,12 +128,13 @@ describe("build-exe", () => {
   it("binary starts dashboard and can create PTY terminal sessions", async () => {
     const { spawn } = await import("node:child_process");
     const { binary, dir, cleanup } = createIsolatedDir();
-    const port = 15040 + Math.floor(Math.random() * 1000);
     let child: ReturnType<typeof spawn> | null = null;
+    let port: number | undefined;
     
     try {
-      // Start the dashboard
-      child = spawn(binary, ["dashboard", "-p", String(port)], {
+      // Ask the OS for an ephemeral port so this smoke test never collides
+      // with a developer's running dashboard or dev server.
+      child = spawn(binary, ["dashboard", "-p", "0"], {
         cwd: dir,
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -160,10 +188,9 @@ describe("build-exe", () => {
 
           child!.stdout!.on("data", (d: Buffer) => {
             startupOutput += d.toString();
-            if (
-              startupOutput.includes("fn board") &&
-              startupOutput.includes(`→ http://localhost:${port}`)
-            ) {
+            const portMatch = startupOutput.match(/http:\/\/localhost:(\d+)/);
+            if (startupOutput.includes("fn board") && portMatch) {
+              port = Number(portMatch[1]);
               settle("ready");
             }
           });
@@ -202,6 +229,10 @@ describe("build-exe", () => {
       // Known Bun limitation: skip the rest of the test
       if (outcome === "sqlite-unsupported") {
         return;
+      }
+
+      if (port === undefined) {
+        throw new Error(`Dashboard reported ready without a port\nOutput:\n${startupOutput}`);
       }
       
       // outcome === "ready" — verify PTY session creation endpoint
@@ -255,11 +286,7 @@ describe("build-exe", () => {
         expect(data.shell).toBeDefined();
       }
     } finally {
-      if (child) {
-        child.kill("SIGTERM");
-        // Give it time to clean up
-        await new Promise((r) => setTimeout(r, 500));
-      }
+      await stopChildProcess(child);
       cleanup();
     }
   }, 20_000);

@@ -188,10 +188,11 @@ async function syncDependenciesForMerge(
   mergerLog.log(`${taskId}: syncing dependencies before merge build verification`);
   await store.logEntry(taskId, `Syncing dependencies before merge build verification: ${installCommand}`);
   try {
-    execSync(installCommand, {
+    await execAsync(installCommand, {
       cwd: rootDir,
       encoding: "utf-8",
-      stdio: "pipe",
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: 300_000,
     });
   } catch (error: any) {
     const details = error?.stderr || error?.stdout || error?.message || String(error);
@@ -859,7 +860,7 @@ export async function findWorktreeUser(
   worktreePath: string,
   excludeTaskId: string,
 ): Promise<string | null> {
-  const tasks = await store.listTasks();
+  const tasks = await store.listTasks({ slim: true, includeArchived: false });
   for (const t of tasks) {
     if (t.id === excludeTaskId) continue;
     if (t.worktree === worktreePath && t.column !== "done") {

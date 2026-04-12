@@ -378,7 +378,7 @@ export async function scanOrphanedBranches(rootDir: string, store: TaskStore): P
   if (allBranches.length === 0) return [];
 
   // Build set of branches associated with active (non-archived, non-merger-managed) tasks
-  const tasks = await store.listTasks();
+  const tasks = await store.listTasks({ slim: true, includeArchived: false });
   const activeBranches = new Set<string>();
   for (const task of tasks) {
     // Skip tasks in columns where the merger handles branch cleanup

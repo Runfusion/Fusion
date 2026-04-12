@@ -3,6 +3,21 @@ import * as path from "node:path";
 import * as https from "node:https";
 import * as child_process from "node:child_process";
 
+function execFileAsync(
+  file: string,
+  args: string[],
+  options: child_process.ExecFileOptionsWithStringEncoding,
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    child_process.execFile(file, args, options, (error, stdout, stderr) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve({ stdout: String(stdout), stderr: String(stderr) });
+    });
+  });
+}
 
 /**
  * Pace information for weekly usage windows
@@ -234,14 +249,14 @@ function readPiAuthKey(provider: string): string | null {
  * Read Claude credentials from macOS keychain.
  * Returns the parsed credentials object or null if not found/error.
  */
-function readClaudeKeychainCredentials(): any | null {
+async function readClaudeKeychainCredentials(): Promise<any | null> {
   try {
-    const result = child_process.execFileSync(
+    const { stdout } = await execFileAsync(
       "security",
       ["find-generic-password", "-s", "Claude Code-credentials", "-w"],
       { encoding: "utf-8", timeout: 5000 }
     );
-    return JSON.parse(result.trim());
+    return JSON.parse(stdout.trim());
   } catch {
     return null;
   }
@@ -764,7 +779,7 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
 
   // Fallback to macOS keychain if file credentials not found
   if (!creds) {
-    creds = readClaudeKeychainCredentials();
+    creds = await readClaudeKeychainCredentials();
   }
 
   const oauthCreds = creds?.claudeAiOauth || creds;

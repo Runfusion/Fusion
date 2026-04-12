@@ -719,7 +719,7 @@ export class TaskExecutor {
    * directly to in-review without spawning a new agent session.
    */
   async resumeOrphaned(): Promise<void> {
-    const tasks = await this.store.listTasks();
+    const tasks = await this.store.listTasks({ slim: true, column: "in-progress" });
     const inProgress = tasks.filter(
       (t) => t.column === "in-progress" && !this.executing.has(t.id) && !t.paused,
     );
@@ -888,7 +888,7 @@ export class TaskExecutor {
 
     try {
       // Check dependencies
-      const allTasks = await this.store.listTasks();
+      const allTasks = await this.store.listTasks({ slim: true, includeArchived: false });
       const unmetDeps = task.dependencies.filter((depId) => {
         const dep = allTasks.find((t) => t.id === depId);
         return dep && dep.column !== "done" && dep.column !== "in-review" && dep.column !== "archived";

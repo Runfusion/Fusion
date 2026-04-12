@@ -464,7 +464,7 @@ export class TriageProcessor {
       }
       this.wasEnginePaused = false;
 
-      const tasks = await this.store.listTasks();
+      const tasks = await this.store.listTasks({ slim: true, column: "triage" });
       const now = Date.now();
       const triageTasks = tasks.filter(
         (t) => t.column === "triage" && !this.processing.has(t.id) && !t.paused
@@ -868,7 +868,7 @@ export class TriageProcessor {
         "and dependencies for each. Use to check for duplicates before specifying.",
       parameters: Type.Object({}),
       execute: async () => {
-        const tasks = await store.listTasks();
+        const tasks = await store.listTasks({ slim: true, includeArchived: false });
         const active = tasks.filter((t) => t.column !== "done");
         if (active.length === 0) {
           return {

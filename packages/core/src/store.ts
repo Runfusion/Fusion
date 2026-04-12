@@ -1,5 +1,4 @@
 import { EventEmitter } from "node:events";
-import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -15,6 +14,7 @@ import { BackwardCompat, ProjectRequiredError } from "./migration.js";
 import { CentralCore } from "./central-core.js";
 import { getTaskMergeBlocker } from "./task-merge.js";
 import { ensureMemoryFile } from "./project-memory.js";
+import { runCommandAsync } from "./run-command.js";
 
 export interface TaskStoreEvents {
   "task:created": [task: Task];
@@ -2252,7 +2252,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
 
       // Clean up the task's branch before deleting from DB
-      const cleanedBranches = this.cleanupBranchForTask(task);
+      const cleanedBranches = await this.cleanupBranchForTask(task);
       if (cleanedBranches.length > 0) {
         if (!task.log) task.log = [];
         task.log.push({
@@ -2292,7 +2292,15 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    *
    * @returns Array of branch names that were successfully deleted
    */
-  private cleanupBranchForTask(task: Task): string[] {
+  private async runGitCommand(command: string, timeoutMs = 10_000) {
+    return runCommandAsync(command, {
+      cwd: this.rootDir,
+      timeoutMs,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+  }
+
+  private async cleanupBranchForTask(task: Task): Promise<string[]> {
     const branches = new Set<string>();
     if (task.branch) {
       branches.add(task.branch);
@@ -2301,49 +2309,36 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     const deleted: string[] = [];
     for (const branch of branches) {
-      try {
-        // Verify branch exists before trying to delete
-        execSync(`git rev-parse --verify "${branch}"`, {
-          cwd: this.rootDir,
-          stdio: "pipe",
-          timeout: 10_000,
-        });
-        execSync(`git branch -D "${branch}"`, {
-          cwd: this.rootDir,
-          stdio: "pipe",
-          timeout: 10_000,
-        });
+      const verify = await this.runGitCommand(`git rev-parse --verify "${branch}"`);
+      if (verify.exitCode !== 0) {
+        continue;
+      }
+
+      const remove = await this.runGitCommand(`git branch -D "${branch}"`);
+      if (remove.exitCode === 0) {
         deleted.push(branch);
-      } catch {
-        // Branch doesn't exist or deletion failed — silently skip
       }
     }
     return deleted;
   }
 
-  private collectMergeDetails(_id: string, _branch: string, task: Task, commitMessage: string): import("./types.js").MergeDetails {
+  private async collectMergeDetails(_id: string, _branch: string, task: Task, commitMessage: string): Promise<import("./types.js").MergeDetails> {
     const mergedAt = new Date().toISOString();
     let commitSha: string | undefined;
     let filesChanged: number | undefined;
     let insertions: number | undefined;
     let deletions: number | undefined;
 
-    try {
-      commitSha = execSync("git rev-parse HEAD", {
-        cwd: this.rootDir,
-        stdio: "pipe",
-        encoding: "utf-8",
-      }).trim() || undefined;
-    } catch {
+    const headResult = await this.runGitCommand("git rev-parse HEAD");
+    if (headResult.exitCode === 0) {
+      commitSha = headResult.stdout.trim() || undefined;
+    } else {
       commitSha = undefined;
     }
 
-    try {
-      const statsOutput = execSync("git show --shortstat --format= HEAD", {
-        cwd: this.rootDir,
-        stdio: "pipe",
-        encoding: "utf-8",
-      }).trim();
+    const statsResult = await this.runGitCommand("git show --shortstat --format= HEAD");
+    if (statsResult.exitCode === 0) {
+      const statsOutput = statsResult.stdout.trim();
       const normalized = statsOutput.replace(/\n/g, " ");
       const filesMatch = normalized.match(/(\d+) files? changed/);
       const insertionsMatch = normalized.match(/(\d+) insertions?\(\+\)/);
@@ -2351,7 +2346,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       filesChanged = filesMatch ? Number.parseInt(filesMatch[1], 10) : 0;
       insertions = insertionsMatch ? Number.parseInt(insertionsMatch[1], 10) : 0;
       deletions = deletionsMatch ? Number.parseInt(deletionsMatch[1], 10) : 0;
-    } catch {
+    } else {
       filesChanged = undefined;
       insertions = undefined;
       deletions = undefined;
@@ -2398,12 +2393,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       };
 
       // 1. Check the branch exists
-      try {
-        execSync(`git rev-parse --verify "${branch}"`, {
-          cwd: this.rootDir,
-          stdio: "pipe",
-        });
-      } catch {
+      const verifyBranch = await this.runGitCommand(`git rev-parse --verify "${branch}"`);
+      if (verifyBranch.exitCode !== 0) {
         // No branch — might have been manually merged. Just move to done.
         result.error = `Branch '${branch}' not found — moving to done without merge`;
         task.mergeDetails = {
@@ -2419,26 +2410,19 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
       // 2. Merge the branch
       const mergeCommitMessage = `feat(${id}): merge ${branch}`;
-      try {
-        execSync(`git merge --squash "${branch}"`, {
-          cwd: this.rootDir,
-          stdio: "pipe",
-        });
-        execSync(`git commit --no-edit -m "${mergeCommitMessage}"`, {
-          cwd: this.rootDir,
-          stdio: "pipe",
-        });
+      const merge = await this.runGitCommand(`git merge --squash "${branch}"`, 120_000);
+      const commit = merge.exitCode === 0
+        ? await this.runGitCommand(`git commit --no-edit -m "${mergeCommitMessage}"`, 120_000)
+        : merge;
+
+      if (merge.exitCode === 0 && commit.exitCode === 0) {
         result.merged = true;
-        const mergeDetails = this.collectMergeDetails(id, branch, task, mergeCommitMessage);
+        const mergeDetails = await this.collectMergeDetails(id, branch, task, mergeCommitMessage);
         task.mergeDetails = mergeDetails;
         Object.assign(result, mergeDetails);
-      } catch (err: any) {
+      } else {
         // Squash conflict — reset and report
-        try {
-          execSync("git reset --merge", { cwd: this.rootDir, stdio: "pipe" });
-        } catch {
-          // already clean
-        }
+        await this.runGitCommand("git reset --merge");
         throw new Error(
           `Merge conflict merging '${branch}'. Resolve manually:\n` +
             `  cd ${this.rootDir}\n` +
@@ -2449,34 +2433,21 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
       // 3. Remove worktree
       if (worktreePath && existsSync(worktreePath)) {
-        try {
-          execSync(`git worktree remove "${worktreePath}" --force`, {
-            cwd: this.rootDir,
-            stdio: "pipe",
-          });
+        const removeWorktree = await this.runGitCommand(`git worktree remove "${worktreePath}" --force`, 120_000);
+        if (removeWorktree.exitCode === 0) {
           result.worktreeRemoved = true;
-        } catch {
-          // Non-fatal — worktree may already be gone
         }
       }
 
       // 4. Delete the branch
-      try {
-        execSync(`git branch -d "${branch}"`, {
-          cwd: this.rootDir,
-          stdio: "pipe",
-        });
+      const deleteBranch = await this.runGitCommand(`git branch -d "${branch}"`);
+      if (deleteBranch.exitCode === 0) {
         result.branchDeleted = true;
-      } catch {
+      } else {
         // Branch might not be fully merged in some edge cases; try force
-        try {
-          execSync(`git branch -D "${branch}"`, {
-            cwd: this.rootDir,
-            stdio: "pipe",
-          });
+        const forceDeleteBranch = await this.runGitCommand(`git branch -D "${branch}"`);
+        if (forceDeleteBranch.exitCode === 0) {
           result.branchDeleted = true;
-        } catch {
-          // Non-fatal
         }
       }
 
@@ -2543,7 +2514,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       // If cleanup requested, write archive entry BEFORE removing directory
       if (cleanup) {
         // Clean up the task's branch before removing from DB
-        const cleanedBranches = this.cleanupBranchForTask(task);
+        const cleanedBranches = await this.cleanupBranchForTask(task);
         if (cleanedBranches.length > 0) {
           task.log.push({
             timestamp: new Date().toISOString(),

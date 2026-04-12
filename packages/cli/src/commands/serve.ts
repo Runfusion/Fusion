@@ -805,7 +805,7 @@ export async function runServe(
   );
 
   if (settings.autoMerge) {
-    const existing = await store.listTasks();
+    const existing = await store.listTasks({ column: "in-review" });
     const inReview = existing.filter((t) => !getTaskMergeBlocker(t));
     if (inReview.length > 0) {
       console.log(
@@ -836,7 +836,7 @@ export async function runServe(
 
       if (s.autoMerge) {
         try {
-          const tasks = await store.listTasks();
+          const tasks = await store.listTasks({ column: "in-review" });
           for (const t of tasks) {
             if (!getTaskMergeBlocker(t)) {
               enqueueMerge(t.id);
@@ -862,7 +862,7 @@ export async function runServe(
 
       if (s.autoMerge) {
         try {
-          const tasks = await store.listTasks();
+          const tasks = await store.listTasks({ column: "in-review" });
           for (const t of tasks) {
             if (!getTaskMergeBlocker(t)) {
               enqueueMerge(t.id);
@@ -916,7 +916,7 @@ export async function runServe(
         const s = await store.getSettings();
         cachedMaxConcurrent = s.maxConcurrent;
         if (!s.globalPause && !s.enginePaused && s.autoMerge) {
-          const tasks = await store.listTasks();
+          const tasks = await store.listTasks({ column: "in-review" });
           for (const t of tasks) {
             if (!getTaskMergeBlocker(t)) {
               enqueueMerge(t.id);
