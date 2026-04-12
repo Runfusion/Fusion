@@ -4,6 +4,7 @@ import {
   deleteAiSession,
   cancelPlanning,
   cancelSubtaskBreakdown,
+  cancelMissionInterview,
   type AiSessionSummary,
 } from "../api";
 import { useAiSessionSync } from "./useAiSessionSync";
@@ -241,8 +242,17 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
           console.warn(`[useBackgroundSessions] Cannot dismiss subtask session ${id}: locked by another tab`);
         }
       }
+    } else if (sessionType === "mission_interview") {
+      try {
+        await cancelMissionInterview(id, projectId, sessionTabId);
+      } catch (err: unknown) {
+        cancelFailed = true;
+        if (err instanceof Error && err.message.includes("locked")) {
+          lockConflict = true;
+          console.warn(`[useBackgroundSessions] Cannot dismiss mission interview session ${id}: locked by another tab`);
+        }
+      }
     }
-    // For other session types (mission_interview, etc.), just delete without cancellation
 
     // Only proceed with deletion if cancellation succeeded or wasn't needed
     if (cancelFailed && !lockConflict) {

@@ -45,7 +45,8 @@ export function SessionNotificationBanner({
 
       for (const id of previous) {
         const session = sessionById.get(id);
-        if (session && session.status === "awaiting_input") {
+        // Preserve dismissed IDs for awaiting_input and error sessions
+        if (session && (session.status === "awaiting_input" || session.status === "error")) {
           next.add(id);
         } else {
           changed = true;
@@ -57,7 +58,12 @@ export function SessionNotificationBanner({
   }, [sessions]);
 
   const sessionsNeedingInput = useMemo(
-    () => sessions.filter((session) => session.status === "awaiting_input" && !dismissedSessionIds.has(session.id)),
+    () =>
+      sessions.filter(
+        (session) =>
+          (session.status === "awaiting_input" || session.status === "error") &&
+          !dismissedSessionIds.has(session.id),
+      ),
     [dismissedSessionIds, sessions],
   );
 
@@ -65,8 +71,17 @@ export function SessionNotificationBanner({
     return null;
   }
 
-  const count = sessionsNeedingInput.length;
-  const headerText = `${count} AI session${count === 1 ? "" : "s"} need${count === 1 ? "s" : ""} your input`;
+  const awaitingInputCount = sessionsNeedingInput.filter((s) => s.status === "awaiting_input").length;
+  const errorCount = sessionsNeedingInput.filter((s) => s.status === "error").length;
+
+  let headerText = "";
+  if (awaitingInputCount > 0 && errorCount > 0) {
+    headerText = `${awaitingInputCount} AI session${awaitingInputCount === 1 ? "" : "s"} need${awaitingInputCount === 1 ? "s" : ""} your input, ${errorCount} failed`;
+  } else if (awaitingInputCount > 0) {
+    headerText = `${awaitingInputCount} AI session${awaitingInputCount === 1 ? "" : "s"} need${awaitingInputCount === 1 ? "s" : ""} your input`;
+  } else if (errorCount > 0) {
+    headerText = `${errorCount} AI session${errorCount === 1 ? "" : "s"} failed`;
+  }
 
   const dismissLocally = (id: string) => {
     setDismissedSessionIds((previous) => {
@@ -100,7 +115,7 @@ export function SessionNotificationBanner({
   };
 
   return (
-    <section className="session-notification-banner" role="region" aria-live="polite" aria-label="AI sessions needing input">
+    <section className="session-notification-banner" role="region" aria-live="polite" aria-label="AI sessions needing input or failed">
       <div className="session-notification-banner__header">
         <div className="session-notification-banner__headline">
           <AlertCircle size={16} aria-hidden="true" />
@@ -115,20 +130,32 @@ export function SessionNotificationBanner({
       <div className="session-notification-banner__list">
         {sessionsNeedingInput.map((session) => {
           const Icon = TYPE_ICONS[session.type];
+          const isError = session.status === "error";
 
           return (
-            <article className="session-notification-banner__item" key={session.id} data-session-type={session.type}>
+            <article
+              className={`session-notification-banner__item${isError ? " session-notification-banner__item--error" : ""}`}
+              key={session.id}
+              data-session-type={session.type}
+              data-session-status={session.status}
+            >
               <div className="session-notification-banner__item-main">
-                <Icon size={16} className="session-notification-banner__type-icon" aria-hidden="true" />
+                {isError ? (
+                  <AlertCircle size={16} className="session-notification-banner__type-icon session-notification-banner__type-icon--error" aria-hidden="true" />
+                ) : (
+                  <Icon size={16} className="session-notification-banner__type-icon" aria-hidden="true" />
+                )}
                 <div className="session-notification-banner__text">
                   <p className="session-notification-banner__title" title={session.title}>{session.title}</p>
-                  <p className="session-notification-banner__meta">{TYPE_LABELS[session.type]}</p>
+                  <p className="session-notification-banner__meta">
+                    {isError ? "Failed" : TYPE_LABELS[session.type]}
+                  </p>
                 </div>
               </div>
 
               <div className="session-notification-banner__actions">
                 <button className="session-notification-banner__resume" onClick={() => handleResume(session)}>
-                  Resume
+                  {isError ? "Retry" : "Resume"}
                 </button>
                 <button
                   className="session-notification-banner__dismiss"

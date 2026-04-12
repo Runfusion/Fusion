@@ -18,12 +18,14 @@ vi.mock("../../api", () => ({
   deleteAiSession: vi.fn(),
   cancelPlanning: vi.fn(),
   cancelSubtaskBreakdown: vi.fn(),
+  cancelMissionInterview: vi.fn(),
 }));
 
 const mockFetchAiSessions = vi.mocked(apiModule.fetchAiSessions);
 const mockDeleteAiSession = vi.mocked(apiModule.deleteAiSession);
 const mockCancelPlanning = vi.mocked(apiModule.cancelPlanning);
 const mockCancelSubtaskBreakdown = vi.mocked(apiModule.cancelSubtaskBreakdown);
+const mockCancelMissionInterview = vi.mocked(apiModule.cancelMissionInterview);
 
 function makeSession(overrides: Partial<apiModule.AiSessionSummary> & Pick<apiModule.AiSessionSummary, "id">): apiModule.AiSessionSummary {
   return {
@@ -46,6 +48,7 @@ describe("useBackgroundSessions", () => {
     mockDeleteAiSession.mockResolvedValue(undefined);
     mockCancelPlanning.mockResolvedValue(undefined);
     mockCancelSubtaskBreakdown.mockResolvedValue(undefined);
+    mockCancelMissionInterview.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -206,7 +209,7 @@ describe("useBackgroundSessions", () => {
     expect(mockDeleteAiSession).toHaveBeenCalledWith("subtask-session");
   });
 
-  it("dismissSession does not call cancel for mission_interview sessions", async () => {
+  it("dismissSession calls cancelMissionInterview for mission_interview sessions", async () => {
     mockFetchAiSessions.mockResolvedValueOnce([
       makeSession({ id: "interview-session", status: "generating", type: "mission_interview" }),
     ]);
@@ -221,8 +224,7 @@ describe("useBackgroundSessions", () => {
       await result.current.dismissSession("interview-session");
     });
 
-    expect(mockCancelPlanning).not.toHaveBeenCalled();
-    expect(mockCancelSubtaskBreakdown).not.toHaveBeenCalled();
+    expect(mockCancelMissionInterview).toHaveBeenCalledWith("interview-session", undefined, expect.any(String));
     expect(mockDeleteAiSession).toHaveBeenCalledWith("interview-session");
   });
 

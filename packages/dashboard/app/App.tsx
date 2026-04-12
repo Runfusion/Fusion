@@ -106,7 +106,9 @@ function AppInner() {
 
   // Background AI sessions
   const { sessions: bgSessions, generating: bgGenerating, needsInput: bgNeedsInput, planningSessions: bgPlanningSessions, dismissSession: bgDismiss } = useBackgroundSessions(currentProject?.id);
-  const sessionsNeedingInput = bgSessions.filter((session) => session.status === "awaiting_input");
+  const sessionsNeedingInput = bgSessions.filter(
+    (session) => session.status === "awaiting_input" || session.status === "error"
+  );
 
   const viewportMode = useViewportMode();
   const isMobile = viewportMode === "mobile";
