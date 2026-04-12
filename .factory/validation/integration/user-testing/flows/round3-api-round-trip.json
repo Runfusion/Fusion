@@ -1,0 +1,90 @@
+{
+  "groupId": "round3-api-round-trip",
+  "testedAt": "2026-04-12T14:30:00.000Z",
+  "isolation": {
+    "dashboardUrl": "http://localhost:4040",
+    "missionId": "M-MNVT98HS-I8OG",
+    "milestoneId": "MS-MNVT9VEC-70GM",
+    "featureId": "F-MNVTDH2E-YYZD",
+    "mode": "read-only"
+  },
+  "toolsUsed": ["curl", "agent-browser"],
+  "assertions": [
+    {
+      "id": "VAL-CROSS-003",
+      "title": "API round-trips match store state",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "GET /api/missions/features/F-MNVTDH2E-YYZD/validation-runs",
+          "expected": "3 validation runs returned (2 failed, 1 passed)",
+          "observed": "3 runs returned: VR-TEST-005 (passed), VR-TEST-004 (failed), VR-TEST-003 (failed). Matches expected data."
+        },
+        {
+          "action": "GET /api/missions/milestones/MS-MNVT9VEC-70GM/validation",
+          "expected": "Rollup with totalAssertions=3, passedAssertions=0, pendingAssertions=3",
+          "observed": "totalAssertions=3, passedAssertions=0, failedAssertions=0, blockedAssertions=0, pendingAssertions=3, unlinkedAssertions=0, state=ready. Matches expected."
+        },
+        {
+          "action": "GET /api/missions/milestones/MS-MNVT9VEC-70GM/assertions",
+          "expected": "3 assertions returned",
+          "observed": "3 assertions: CA-MNVTGDE4-YEGX ('Feature links correctly'), CA-MNVTGDHD-8ZAJ ('Validation passes on success'), CA-MNVTGDRD-QNBH ('Fix feature created on failure'). All pending status."
+        },
+        {
+          "action": "Navigate to dashboard Missions view and expand 'Integration Test Mission'",
+          "expected": "Mission detail with milestones, slices, features, and assertions visible",
+          "observed": "Mission detail loaded. Validation Test Milestone visible with 2 slices. Assertions section shows 3 pending assertions."
+        },
+        {
+          "action": "Expand Slice 2 to find 'Run History Feature' (F-MNVTDH2E-YYZD)",
+          "expected": "Feature visible in Slice 2 with run history expand button",
+          "observed": "Run History Feature found in Slice 2 - Advanced Features, shown as 'done ✅'"
+        },
+        {
+          "action": "Check 1: Expand run history for Run History Feature",
+          "expected": "All 3 validation runs visible (2 failed + 1 passed), not just the latest",
+          "observed": "All 3 runs displayed: (1) passed 4/12/2026 3:20 AM 180s auto, (2) failed 4/12/2026 3:10 AM 180s auto, (3) failed 4/12/2026 3:00 AM 240s auto. FIX VERIFIED: Previously only 1 of 3 runs was rendered; now all 3 are shown."
+        },
+        {
+          "action": "Check 2: Inspect milestone coverage bar tooltip",
+          "expected": "Tooltip shows '0 of 3 assertions passing' (no 'undefined')",
+          "observed": "Coverage bar (.mission-milestone__coverage-bar) has title='0 of 3 assertions passing'. Also assertions section coverage bar shows same text. FIX VERIFIED: Previously showed 'undefined of 3 assertions passing'; now correctly shows '0 of 3'."
+        },
+        {
+          "action": "Check 3: Verify assertions panel shows all 3 assertions",
+          "expected": "3 assertions displayed with status badges",
+          "observed": "3 assertions shown: 'Feature links correctly' (pending), 'Validation passes on success' (pending), 'Fix feature created on failure' (pending). Assertions section header shows 'ready' status badge."
+        },
+        {
+          "action": "Cross-verify: Compare API run data with dashboard display",
+          "expected": "API runs match dashboard display",
+          "observed": "API returns VR-TEST-005 (passed, 10:20), VR-TEST-004 (failed, 10:10), VR-TEST-003 (failed, 10:00). Dashboard shows passed 3:20 AM, failed 3:10 AM, failed 3:00 AM (times match after timezone conversion). All 3 statuses, timestamps, and durations match."
+        },
+        {
+          "action": "Cross-verify: Compare API rollup with dashboard display",
+          "expected": "API rollup matches dashboard coverage bar and assertion badges",
+          "observed": "API: totalAssertions=3, passedAssertions=0, state=ready. Dashboard: coverage bar shows '0 of 3 assertions passing', assertions section shows 'ready' badge, all 3 assertions shown as 'pending'. Data is consistent."
+        },
+        {
+          "action": "Check console errors",
+          "expected": "No console errors",
+          "observed": "No console errors detected"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "integration/round3-api-round-trip/missions-list.png",
+          "integration/round3-api-round-trip/VAL-CROSS-003-coverage-bar-and-assertions.png",
+          "integration/round3-api-round-trip/VAL-CROSS-003-run-history-all-3-runs.png",
+          "integration/round3-api-round-trip/VAL-CROSS-003-milestone-coverage-bar.png"
+        ],
+        "consoleErrors": "none",
+        "network": "GET /api/missions/features/F-MNVTDH2E-YYZD/validation-runs -> 200 (3 runs), GET /api/missions/milestones/MS-MNVT9VEC-70GM/validation -> 200 (rollup), GET /api/missions/milestones/MS-MNVT9VEC-70GM/assertions -> 200 (3 assertions)"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 1 assertion: VAL-CROSS-003 PASSED. Both Round 2 fixes verified: (1) Run history now renders all 3 validation runs (2 failed + 1 passed) instead of only the latest, and (2) coverage bar tooltip shows '0 of 3 assertions passing' instead of 'undefined of 3 assertions passing'. API data fully consistent with dashboard display across all 3 endpoints checked."
+}

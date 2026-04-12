@@ -1,16 +1,17 @@
 {
   "milestone": "integration",
-  "round": 2,
-  "status": "fail",
+  "round": 3,
+  "status": "pass",
   "assertionsSummary": {
     "total": 12,
-    "passed": 11,
-    "failed": 1,
+    "passed": 12,
+    "failed": 0,
     "blocked": 0
   },
   "passedAssertions": [
     "VAL-CROSS-001",
     "VAL-CROSS-002",
+    "VAL-CROSS-003",
     "VAL-UI-004",
     "VAL-UI-005",
     "VAL-UI-006",
@@ -21,34 +22,30 @@
     "VAL-UI-011",
     "VAL-UI-012"
   ],
-  "failedAssertions": [
-    {
-      "id": "VAL-CROSS-003",
-      "reason": "Dashboard shows only 1 of 3 validation runs for F-MNVTDH2E-YYZD (API returns 3 runs but UI renders only latest 'passed' run, missing 2 earlier 'failed' runs). Coverage bar tooltip shows 'undefined of 3' instead of '0 of 3'. Assertions panel and TypeError crash are fixed."
-    }
-  ],
+  "failedAssertions": [],
   "blockedAssertions": [],
-  "systemicIssues": [
-    {
-      "id": "SYS-004",
-      "severity": "non-blocking",
-      "description": "Run history component only renders the latest run instead of all runs from the API. The API returns 3 runs (VR-TEST-003, VR-TEST-004, VR-TEST-005) but the UI only shows VR-TEST-005. Likely a frontend rendering issue where the component iterates only over a subset of the data or the paginated response isn't being fully consumed.",
-      "suggestedFix": "Debug the run history rendering in MissionManager.tsx — check if the component is reading the correct property from the paginated API response ({runs, total, offset}). It may be rendering runs[0] instead of iterating over all runs.",
-      "affectedAssertions": ["VAL-CROSS-003"]
-    },
-    {
-      "id": "SYS-005",
-      "severity": "non-blocking",
-      "description": "Coverage bar tooltip shows 'undefined of 3 assertions passing' instead of '0 of 3 assertions passing'. Text interpolation bug in the milestone validation rollup display.",
-      "suggestedFix": "Fix the string template in MissionManager.tsx that builds the coverage bar tooltip — the passedAssertions count may be undefined/null and needs a fallback to 0.",
-      "affectedAssertions": ["VAL-CROSS-003", "VAL-UI-009"]
-    }
-  ],
   "appliedUpdates": [],
   "previousRound": ".factory/validation/integration/user-testing/synthesis.json",
   "roundOverRound": {
     "round1": { "passed": 5, "failed": 7, "blocked": 0 },
     "round2": { "passed": 11, "failed": 1, "blocked": 0 },
-    "delta": { "newlyPassed": 6, "stillFailing": 1, "newlyFailed": 0 }
+    "round3": { "passed": 12, "failed": 0, "blocked": 0 },
+    "delta": { "newlyPassed": 1, "stillFailing": 0, "newlyFailed": 0 }
+  },
+  "reTestDetails": {
+    "reTestedAssertion": "VAL-CROSS-003",
+    "fixFeature": "FEAT-009-FIX-002",
+    "fixesVerified": [
+      {
+        "issue": "Run history showed only 1 of 3 validation runs",
+        "fix": "Component now iterates over all runs from paginated API response",
+        "verified": true
+      },
+      {
+        "issue": "Coverage bar tooltip showed 'undefined of 3' instead of '0 of 3'",
+        "fix": "String interpolation fixed to use null coalescing for passedAssertions count",
+        "verified": true
+      }
+    ]
   }
 }
