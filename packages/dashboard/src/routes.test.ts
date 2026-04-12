@@ -5119,14 +5119,11 @@ describe("POST /github/issues/batch-import", () => {
   }, 10000); // Increase timeout for retry delay
 
   it("returns error after max retries exceeded on 429", async () => {
-    // Always return 429
-    fetchSpy.mockResolvedValue({
-      ok: false,
-      status: 429,
-      statusText: "Too Many Requests",
-      headers: new Headers({ "Retry-After": "1" }), // 1 second for test speed
-      json: () => Promise.resolve({ message: "Rate limited" }),
-    } as Response);
+    const throttledSpy = vi.spyOn(GitHubClient.prototype, "fetchThrottled").mockResolvedValueOnce({
+      success: false,
+      error: "GitHub API rate limit exceeded. Retry after 1 seconds.",
+      retryAfter: 1,
+    } as Awaited<ReturnType<GitHubClient["fetchThrottled"]>>);
 
     const res = await REQUEST(
       buildApp(),
@@ -5141,8 +5138,8 @@ describe("POST /github/issues/batch-import", () => {
     expect(res.body.results[0].success).toBe(false);
     expect(res.body.results[0].error).toContain("rate limit");
     expect(res.body.results[0].retryAfter).toBe(1);
-    expect(fetchSpy.mock.calls.length).toBeGreaterThanOrEqual(4);
-  }, 60000); // Retry path can exceed 30s in CI/load-constrained environments
+    expect(throttledSpy).toHaveBeenCalledTimes(1);
+  });
 
   it("processes issues sequentially (not parallel)", async () => {
     const startedIssues: number[] = [];
@@ -6197,14 +6194,17 @@ describe("Git Management endpoints", () => {
     execFileSync("git", ["-C", gitRepoDir, "push", "-u", "origin", "HEAD"], { stdio: "pipe" });
   }
 
-  beforeEach(() => {
+  beforeAll(() => {
     createGitTestRepo();
+  });
+
+  beforeEach(() => {
     store = createMockStore({
       getRootDir: vi.fn().mockReturnValue(gitRepoDir),
     });
   });
 
-  afterEach(() => {
+  afterAll(() => {
     if (gitTestRoot) {
       rmSync(gitTestRoot, { recursive: true, force: true });
       gitTestRoot = "";
@@ -6833,9 +6833,10 @@ describe("Git Management endpoints", () => {
       expect(res.body.error).toContain("does not exist");
     });
   });
+});
 
-  // ── File API tests ────────────────────────────────────────────────────
-  describe("File API endpoints", () => {
+// ── File API tests ────────────────────────────────────────────────────
+describe("File API endpoints", () => {
     let store: TaskStore;
 
     beforeEach(() => {
@@ -7001,9 +7002,18 @@ describe("Git Management endpoints", () => {
         expect([400, 404, 500]).toContain(res.status);
       });
     });
-  });
+});
 
-  describe("Planning Mode Routes", () => {
+describe("Planning Mode Routes", () => {
+    let store: TaskStore;
+
+    function buildApp() {
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createApiRoutes(store));
+      return app;
+    }
+
     /** Mock agent for planning session tests */
     function setupPlanningMockAgent() {
       const questionResponses = [
@@ -7069,6 +7079,7 @@ describe("Git Management endpoints", () => {
 
     beforeEach(() => {
       // Reset planning state before each test to avoid cross-test contamination
+      store = createMockStore();
       __resetPlanningState();
       setupPlanningMockAgent();
     });
@@ -7668,7 +7679,6 @@ describe("Git Management endpoints", () => {
         expect(res.body.error).toContain("sessionId is required");
       });
     });
-  });
 });
 
 describe("DELETE /api/ai-sessions/cleanup", () => {

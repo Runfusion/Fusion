@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React from "react";
+import { Writable } from "node:stream";
 import { computeColumnLayout, MIN_TERMINAL_COLUMNS, MIN_TERMINAL_ROWS, type ColumnDefinition } from "../utils/terminal";
 import { truncateText, truncateWithOptions, padText, fitText } from "../utils/truncate";
 
@@ -13,6 +14,27 @@ const mockStdout = {
   rows: 24,
   write: vi.fn(),
 };
+
+function createSinkStream(): NodeJS.WriteStream {
+  const stream = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  }) as NodeJS.WriteStream;
+  stream.columns = 80;
+  stream.rows = 24;
+  return stream;
+}
+
+function renderTest(node: React.ReactNode) {
+  return render(node, {
+    stdout: createSinkStream(),
+    stderr: createSinkStream(),
+    patchConsole: false,
+    exitOnCtrlC: false,
+    maxFps: 1000,
+  });
+}
 
 // Mock Ink's useStdout for terminal dimension tests
 // The mock returns a function that reads from the mutable mockStdout object
@@ -52,7 +74,7 @@ describe("terminal.ts", () => {
         return null;
       }
 
-      const instance = render(<TestComponent />);
+      const instance = renderTest(<TestComponent />);
       instance.unmount();
 
       expect(dimensions).not.toBeNull();
@@ -69,7 +91,7 @@ describe("terminal.ts", () => {
         return null;
       }
 
-      const instance = render(<TestComponent />);
+      const instance = renderTest(<TestComponent />);
       expect(() => instance.unmount()).not.toThrow();
     });
   });

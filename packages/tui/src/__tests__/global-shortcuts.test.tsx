@@ -5,12 +5,34 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React from "react";
 import { render, Box, Text } from "ink";
+import { Writable } from "node:stream";
 import { useGlobalShortcuts, HelpOverlay, FocusGuardRef, type ScreenId } from "../hooks/use-global-shortcuts";
 import type { Key } from "ink";
 
 // Track captured handlers for test assertions
 let capturedUseInputHandlers: ((input: string, key: Key) => void)[] = [];
 let capturedExitFn: (() => void) | undefined;
+
+function createSinkStream(): NodeJS.WriteStream {
+  const stream = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  }) as NodeJS.WriteStream;
+  stream.columns = 80;
+  stream.rows = 24;
+  return stream;
+}
+
+function renderTest(node: React.ReactNode) {
+  return render(node, {
+    stdout: createSinkStream(),
+    stderr: createSinkStream(),
+    patchConsole: false,
+    exitOnCtrlC: false,
+    maxFps: 1000,
+  });
+}
 
 // Mock ink hooks to avoid raw mode errors in tests
 vi.mock("ink", async (importOriginal) => {
@@ -51,7 +73,7 @@ describe("useGlobalShortcuts", () => {
         return <Text>Test</Text>;
       }
 
-      const instance = render(<TestComponent />);
+      const instance = renderTest(<TestComponent />);
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       expect(capturedHelpVisible).toBe(false);
@@ -67,7 +89,7 @@ describe("useGlobalShortcuts", () => {
         return <Text>Test</Text>;
       }
 
-      const instance = render(<TestComponent />);
+      const instance = renderTest(<TestComponent />);
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       expect(toggleHelpFn).toBeDefined();
@@ -84,7 +106,7 @@ describe("useGlobalShortcuts", () => {
         return <Text>Test</Text>;
       }
 
-      const instance = render(<TestComponent />);
+      const instance = renderTest(<TestComponent />);
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       expect(hideHelpFn).toBeDefined();
@@ -105,7 +127,7 @@ describe("useGlobalShortcuts", () => {
         return <Text>Test</Text>;
       }
 
-      const instance = render(<TestComponent />);
+      const instance = renderTest(<TestComponent />);
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       // Initial state should be false
@@ -133,7 +155,7 @@ describe("useGlobalShortcuts", () => {
         return <Text>Test</Text>;
       }
 
-      const instance = render(<TestComponent />);
+      const instance = renderTest(<TestComponent />);
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       // First toggle
@@ -160,7 +182,7 @@ describe("useGlobalShortcuts", () => {
         return <Text>Test</Text>;
       }
 
-      const instance = render(<TestComponent />);
+      const instance = renderTest(<TestComponent />);
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       expect(onScreenChange).toBeDefined();
@@ -175,7 +197,7 @@ describe("useGlobalShortcuts", () => {
         return <Text>Test</Text>;
       }
 
-      const instance = render(<TestComponent />);
+      const instance = renderTest(<TestComponent />);
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       // Get the registered input handler
@@ -199,7 +221,7 @@ describe("useGlobalShortcuts", () => {
         return <Text>Test</Text>;
       }
 
-      const instance = render(<TestComponent />);
+      const instance = renderTest(<TestComponent />);
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       const expectedScreens: ScreenId[] = ["board", "detail", "activity", "agents", "settings"];
@@ -230,7 +252,7 @@ describe("useGlobalShortcuts", () => {
         return <Text>Test</Text>;
       }
 
-      const instance = render(<TestComponent />);
+      const instance = renderTest(<TestComponent />);
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       const handler = capturedUseInputHandlers[0];
@@ -256,7 +278,7 @@ describe("useGlobalShortcuts", () => {
         return <Text>Test</Text>;
       }
 
-      const instance = render(<TestComponent />);
+      const instance = renderTest(<TestComponent />);
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       const handler = capturedUseInputHandlers[0];
@@ -285,7 +307,7 @@ describe("useGlobalShortcuts", () => {
         return <Text>Test</Text>;
       }
 
-      const instance = render(<TestComponent />);
+      const instance = renderTest(<TestComponent />);
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       const handler = capturedUseInputHandlers[0];
@@ -313,7 +335,7 @@ describe("useGlobalShortcuts", () => {
         return <Text>Test</Text>;
       }
 
-      const instance = render(<TestComponent />);
+      const instance = renderTest(<TestComponent />);
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       const handler = capturedUseInputHandlers[0];
@@ -339,7 +361,7 @@ describe("useGlobalShortcuts", () => {
         return <Text>Test</Text>;
       }
 
-      const instance = render(<TestComponent />);
+      const instance = renderTest(<TestComponent />);
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       const handler = capturedUseInputHandlers[0];
@@ -364,7 +386,7 @@ describe("useGlobalShortcuts", () => {
         return <Text>Test</Text>;
       }
 
-      const instance = render(<TestComponent />);
+      const instance = renderTest(<TestComponent />);
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       const handler = capturedUseInputHandlers[0];
@@ -390,7 +412,7 @@ describe("useGlobalShortcuts", () => {
         return <Text>Test</Text>;
       }
 
-      const instance = render(<TestComponent />);
+      const instance = renderTest(<TestComponent />);
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       const handler = capturedUseInputHandlers[0];
@@ -417,7 +439,7 @@ describe("useGlobalShortcuts", () => {
         return <Text>Test</Text>;
       }
 
-      const instance = render(<TestComponent />);
+      const instance = renderTest(<TestComponent />);
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       const handler = capturedUseInputHandlers[0];
@@ -439,7 +461,7 @@ describe("HelpOverlay", () => {
   it("renders without crashing", async () => {
     const onClose = vi.fn();
 
-    const instance = render(<HelpOverlay onClose={onClose} />);
+    const instance = renderTest(<HelpOverlay onClose={onClose} />);
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(() => instance.unmount()).not.toThrow();
@@ -452,7 +474,7 @@ describe("HelpOverlay", () => {
       return <HelpOverlay onClose={onClose} />;
     }
 
-    const instance = render(<TestComponent />);
+    const instance = renderTest(<TestComponent />);
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     const handler = capturedUseInputHandlers[capturedUseInputHandlers.length - 1];
@@ -472,7 +494,7 @@ describe("HelpOverlay", () => {
       return <HelpOverlay onClose={onClose} />;
     }
 
-    const instance = render(<TestComponent />);
+    const instance = renderTest(<TestComponent />);
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     const handler = capturedUseInputHandlers[capturedUseInputHandlers.length - 1];
@@ -488,7 +510,7 @@ describe("HelpOverlay", () => {
   it("displays keyboard shortcuts", async () => {
     const onClose = vi.fn();
 
-    const instance = render(<HelpOverlay onClose={onClose} />);
+    const instance = renderTest(<HelpOverlay onClose={onClose} />);
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     // The component should render without error

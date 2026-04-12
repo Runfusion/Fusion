@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React from "react";
 import { render } from "ink";
+import { Writable } from "node:stream";
 import { detectProjectDir } from "../project-detect";
 import { FusionProvider, useFusion, FusionContext } from "../fusion-context";
 import { TaskStore } from "@fusion/core";
@@ -13,6 +14,27 @@ import { join } from "node:path";
 
 // Track temp directories for cleanup
 const tempDirs: string[] = [];
+
+function createSinkStream(): NodeJS.WriteStream {
+  const stream = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  }) as NodeJS.WriteStream;
+  stream.columns = 80;
+  stream.rows = 24;
+  return stream;
+}
+
+function renderTest(node: React.ReactNode) {
+  return render(node, {
+    stdout: createSinkStream(),
+    stderr: createSinkStream(),
+    patchConsole: false,
+    exitOnCtrlC: false,
+    maxFps: 1000,
+  });
+}
 
 afterEach(async () => {
   // Clean up temp directories
@@ -132,7 +154,7 @@ describe("FusionProvider", () => {
       return null;
     }
 
-    const instance = render(
+    const instance = renderTest(
       <FusionProvider projectDir={projectDir}>
         <TestComponent />
       </FusionProvider>
@@ -156,7 +178,7 @@ describe("FusionProvider", () => {
       return null;
     }
 
-    const instance = render(
+    const instance = renderTest(
       <FusionProvider projectDir={nonExistentDir}>
         <TestComponent />
       </FusionProvider>
@@ -196,7 +218,7 @@ describe("FusionProvider", () => {
       return null;
     }
 
-    const instance = render(
+    const instance = renderTest(
       <FusionProvider projectDir={projectDir}>
         <TestComponent />
       </FusionProvider>
@@ -228,7 +250,7 @@ describe("FusionProvider", () => {
       return null;
     }
 
-    const instance = render(
+    const instance = renderTest(
       <FusionProvider projectDir={explicitDir}>
         <TestComponent />
       </FusionProvider>
@@ -281,7 +303,7 @@ describe("useFusion hook", () => {
       return null;
     }
 
-    const instance = render(
+    const instance = renderTest(
       <FusionProvider projectDir={projectDir}>
         <GoodComponent />
       </FusionProvider>
