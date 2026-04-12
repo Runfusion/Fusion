@@ -11,7 +11,9 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve, basename } from "node:path";
 import { homedir } from "node:os";
-import { execSync } from "node:child_process";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
+const execAsync = promisify(exec);
 import { CentralCore } from "@fusion/core";
 import { resolveGlobalDir } from "@fusion/core";
 
@@ -53,7 +55,7 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
     }
 
     // Has .fusion/ but not registered - offer to register
-    const projectName = options.name ?? detectProjectName(cwd);
+    const projectName = options.name ?? await detectProjectName(cwd);
     console.log(`⚠ Project directory exists but not registered.`);
     console.log(`  Run: fn project add ${projectName} ${cwd}`);
     console.log(`  Or: rm -rf ${fusionDir} && fn init`);
@@ -62,7 +64,7 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
   }
 
   // Get or generate project name
-  const projectName = options.name ?? detectProjectName(cwd);
+  const projectName = options.name ?? await detectProjectName(cwd);
 
   console.log(`Initializing fn project: "${projectName}"`);
   console.log(`  Path: ${cwd}`);
@@ -133,18 +135,19 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
 /**
  * Detect a project name from git remote or directory name.
  */
-function detectProjectName(dir: string): string {
+async function detectProjectName(dir: string): Promise<string> {
   // Try git remote first
   try {
-    const remoteUrl = execSync("git remote get-url origin 2>/dev/null", {
+    const { stdout: remoteUrl } = await execAsync("git remote get-url origin", {
       cwd: dir,
-      encoding: "utf-8",
-    }).trim();
+      timeout: 10_000,
+    });
 
-    if (remoteUrl) {
+    const trimmed = remoteUrl.trim();
+    if (trimmed) {
       // Extract repo name from URL
       // Handles: https://github.com/user/repo.git, git@github.com:user/repo.git
-      const match = remoteUrl.match(/[:/]([^/]+)\/([^/.]+?)(?:\.git)?$/);
+      const match = trimmed.match(/[:/]([^/]+)\/([^/.]+?)(?:\.git)?$/);
       if (match) {
         return match[2];
       }

@@ -163,7 +163,14 @@ const {
   mockGetPrMergeStatus,
   mockMergePr,
 } = vi.hoisted(() => ({
-  mockExec: vi.fn((_command: string, callback?: () => void) => callback?.()),
+  mockExec: vi.fn((_command: string, _options?: any, callback?: (err: null, stdout: string, stderr: string) => void) => {
+    // Handle both callback-style (original exec) and promise-style (promisified execAsync)
+    if (typeof callback === "function") {
+      callback(null, "", "");
+    }
+    // Return resolved promise for promisified usage
+    return Promise.resolve({ stdout: "", stderr: "" });
+  }),
   mockExecSync: vi.fn(() => ""),
   mockFindPrForBranch: vi.fn(),
   mockCreatePr: vi.fn(),
@@ -547,8 +554,9 @@ describe("processPullRequestMergeTask", () => {
     expect(result).toBe("merged");
     expect(mockMergePr).toHaveBeenCalledWith({ number: 42, method: "squash" });
     expect(store.moveTask).toHaveBeenCalledWith("FN-093", "done");
-    expect(mockExecSync).toHaveBeenCalledWith('git worktree remove "/tmp/kb-093" --force', expect.any(Object));
-    expect(mockExecSync).toHaveBeenCalledWith('git branch -d "fusion/fn-093"', expect.any(Object));
+    // Check that exec was called with the expected commands (options object and callback may follow)
+    expect(mockExec.mock.calls.some((call) => call[0] === 'git worktree remove "/tmp/kb-093" --force')).toBe(true);
+    expect(mockExec.mock.calls.some((call) => call[0] === 'git branch -d "fusion/fn-093"')).toBe(true);
   });
 
   it("does not merge when required checks or reviews are blocking", async () => {

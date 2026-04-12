@@ -13,7 +13,9 @@
  * - Full PR lifecycle orchestration (create → status check → merge)
  */
 
-import { execSync } from "node:child_process";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
+const execAsync = promisify(exec);
 import type { TaskStore } from "@fusion/core";
 import type { Settings, TaskDetail, PrInfo } from "@fusion/core";
 
@@ -75,14 +77,14 @@ function buildPullRequestBody(task: Pick<TaskDetail, "id" | "description">): str
  * Clean up worktree and branch artifacts after a successful merge.
  * Both operations are best-effort; errors are logged but don't propagate.
  */
-export function cleanupMergedTaskArtifacts(cwd: string, task: Pick<TaskDetail, "id" | "worktree">): void {
+export async function cleanupMergedTaskArtifacts(cwd: string, task: Pick<TaskDetail, "id" | "worktree">): Promise<void> {
   const branch = getTaskBranchName(task.id);
 
   if (task.worktree) {
     try {
-      execSync(`git worktree remove "${task.worktree}" --force`, {
+      await execAsync(`git worktree remove "${task.worktree}" --force`, {
         cwd,
-        stdio: "pipe",
+        timeout: 30_000,
       });
     } catch {
       // Best-effort cleanup — worktree may already be gone.
@@ -90,15 +92,15 @@ export function cleanupMergedTaskArtifacts(cwd: string, task: Pick<TaskDetail, "
   }
 
   try {
-    execSync(`git branch -d "${branch}"`, {
+    await execAsync(`git branch -d "${branch}"`, {
       cwd,
-      stdio: "pipe",
+      timeout: 30_000,
     });
   } catch {
     try {
-      execSync(`git branch -D "${branch}"`, {
+      await execAsync(`git branch -D "${branch}"`, {
         cwd,
-        stdio: "pipe",
+        timeout: 30_000,
       });
     } catch {
       // Best-effort cleanup — branch may already be gone.
@@ -186,7 +188,7 @@ export async function processPullRequestMergeTask(
   await store.updatePrInfo(task.id, refreshedPrInfo);
 
   if (mergeStatus.prInfo.status === "merged") {
-    cleanupMergedTaskArtifacts(cwd, task);
+    await cleanupMergedTaskArtifacts(cwd, task);
     await store.moveTask(task.id, "done");
     await store.updateTask(task.id, { status: null, mergeRetries: 0 });
     await store.logEntry(task.id, "Pull request merged", `PR #${prInfo.number}: ${prInfo.url}`);
@@ -205,7 +207,7 @@ export async function processPullRequestMergeTask(
   await store.updateTask(task.id, { status: "merging-pr" });
   const mergedPr = await github.mergePr({ number: prInfo.number, method: "squash" });
   await store.updatePrInfo(task.id, { ...mergedPr, lastCheckedAt: new Date().toISOString() });
-  cleanupMergedTaskArtifacts(cwd, task);
+  await cleanupMergedTaskArtifacts(cwd, task);
   await store.moveTask(task.id, "done");
   await store.updateTask(task.id, { status: null, mergeRetries: 0 });
   await store.logEntry(task.id, "Pull request merged", `PR #${mergedPr.number}: ${mergedPr.url}`);
