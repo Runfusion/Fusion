@@ -2165,6 +2165,13 @@ function ConfigTab({
   addToast: (message: string, type?: "success" | "error") => void;
   onSaved: () => Promise<void>;
 }) {
+  // Identity field state
+  const [nameValue, setNameValue] = useState(agent.name);
+  const [roleValue, setRoleValue] = useState(agent.role);
+  const [titleValue, setTitleValue] = useState(agent.title ?? "");
+  const [iconValue, setIconValue] = useState(agent.icon ?? "");
+  const [reportsToValue, setReportsToValue] = useState(agent.reportsTo ?? "");
+
   // Local form state initialised from agent.metadata
   const [formValues, setFormValues] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {};
@@ -2218,6 +2225,12 @@ function ConfigTab({
     return initial;
   });
 
+  // Bundle config state
+  const [bundleMode, setBundleMode] = useState<string>(agent.bundleConfig?.mode ?? "");
+  const [bundleEntryFile, setBundleEntryFile] = useState(agent.bundleConfig?.entryFile ?? "AGENTS.md");
+  const [bundleExternalPath, setBundleExternalPath] = useState(agent.bundleConfig?.externalPath ?? "");
+  const [bundleFiles, setBundleFiles] = useState<string[]>(agent.bundleConfig?.files ?? []);
+
   // Budget status for progress bar display
   const [budgetStatus, setBudgetStatus] = useState<AgentBudgetStatus | null>(null);
   const [isResettingBudget, setIsResettingBudget] = useState(false);
@@ -2250,6 +2263,19 @@ function ConfigTab({
 
   /** Detect whether any local value differs from the persisted metadata */
   const hasChanges = (() => {
+    // Check identity fields
+    if (nameValue !== agent.name) return true;
+    if (roleValue !== agent.role) return true;
+    if (titleValue !== (agent.title ?? "")) return true;
+    if (iconValue !== (agent.icon ?? "")) return true;
+    if (reportsToValue !== (agent.reportsTo ?? "")) return true;
+
+    // Check bundle config
+    if (bundleMode !== (agent.bundleConfig?.mode ?? "")) return true;
+    if (bundleEntryFile !== (agent.bundleConfig?.entryFile ?? "AGENTS.md")) return true;
+    if (bundleExternalPath !== (agent.bundleConfig?.externalPath ?? "")) return true;
+    if (JSON.stringify(bundleFiles) !== JSON.stringify(agent.bundleConfig?.files ?? [])) return true;
+
     for (const field of ADVANCED_SETTINGS) {
       const current = formValues[field.key]?.trim() ?? "";
       const persisted = agent.metadata[field.key] !== undefined && agent.metadata[field.key] !== null
@@ -2454,9 +2480,31 @@ function ConfigTab({
       delete newRuntimeConfig.budgetConfig;
     }
 
+    // Build bundleConfig payload — only include if mode is set
+    let newBundleConfig: { mode: "managed" | "external"; entryFile: string; files: string[]; externalPath?: string } | undefined;
+    if (bundleMode) {
+      newBundleConfig = {
+        mode: bundleMode as "managed" | "external",
+        entryFile: bundleEntryFile || "AGENTS.md",
+        files: bundleFiles.length > 0 ? bundleFiles : ["AGENTS.md"],
+      };
+      if (bundleMode === "external" && bundleExternalPath.trim()) {
+        newBundleConfig.externalPath = bundleExternalPath.trim();
+      }
+    }
+
     setIsSaving(true);
     try {
-      await updateAgent(agent.id, { metadata: newMetadata, runtimeConfig: newRuntimeConfig }, projectId);
+      await updateAgent(agent.id, {
+        name: nameValue.trim() || undefined,
+        role: roleValue as any,
+        title: titleValue.trim() || undefined,
+        icon: iconValue.trim() || undefined,
+        reportsTo: reportsToValue.trim() || undefined,
+        metadata: newMetadata,
+        runtimeConfig: newRuntimeConfig,
+        bundleConfig: newBundleConfig,
+      }, projectId);
       addToast("Settings saved", "success");
       setJustSaved(true);
       // Auto-hide the saved indicator after 3 seconds
@@ -2479,19 +2527,24 @@ function ConfigTab({
         
         <div className="config-fields">
           <div className="config-field">
-            <label>Name</label>
+            <label htmlFor="agent-name">Name</label>
             <input 
+              id="agent-name"
               type="text" 
               className="input" 
-              defaultValue={agent.name}
-              disabled
+              value={nameValue}
+              onChange={(e) => setNameValue(e.target.value)}
             />
-            <span className="config-hint">Name changes coming soon</span>
           </div>
           
           <div className="config-field">
-            <label>Role</label>
-            <select className="select" defaultValue={agent.role} disabled>
+            <label htmlFor="agent-role">Role</label>
+            <select
+              id="agent-role"
+              className="select"
+              value={roleValue}
+              onChange={(e) => setRoleValue(e.target.value as any)}
+            >
               <option value="triage">Triage</option>
               <option value="executor">Executor</option>
               <option value="reviewer">Reviewer</option>
@@ -2499,7 +2552,42 @@ function ConfigTab({
               <option value="scheduler">Scheduler</option>
               <option value="custom">Custom</option>
             </select>
-            <span className="config-hint">Role changes coming soon</span>
+          </div>
+
+          <div className="config-field">
+            <label htmlFor="agent-title">Title</label>
+            <input
+              id="agent-title"
+              type="text"
+              className="input"
+              placeholder="e.g. Senior Code Reviewer"
+              value={titleValue}
+              onChange={(e) => setTitleValue(e.target.value)}
+            />
+          </div>
+
+          <div className="config-field">
+            <label htmlFor="agent-icon">Icon</label>
+            <input
+              id="agent-icon"
+              type="text"
+              className="input"
+              placeholder="e.g. 🤖"
+              value={iconValue}
+              onChange={(e) => setIconValue(e.target.value)}
+            />
+          </div>
+
+          <div className="config-field">
+            <label htmlFor="agent-reports-to">Reports To</label>
+            <input
+              id="agent-reports-to"
+              type="text"
+              className="input"
+              placeholder="e.g. agent-001"
+              value={reportsToValue}
+              onChange={(e) => setReportsToValue(e.target.value)}
+            />
           </div>
         </div>
       </div>
@@ -2719,6 +2807,81 @@ function ConfigTab({
                 )}
               </button>
             </div>
+          )}
+        </div>
+      </div>
+
+      <div className="config-section">
+        <h3>Instruction Bundle</h3>
+        <p className="config-description">
+          Configure the agent's instruction bundle. Leave empty to use inline instructions only.
+        </p>
+
+        <div className="config-fields">
+          <div className="config-field">
+            <label htmlFor="bundle-mode">Bundle Mode</label>
+            <select
+              id="bundle-mode"
+              className="select"
+              value={bundleMode}
+              onChange={(e) => setBundleMode(e.target.value)}
+            >
+              <option value="">None (use inline instructions)</option>
+              <option value="managed">Managed (system-managed directory)</option>
+              <option value="external">External (user-specified path)</option>
+            </select>
+            <span className="config-hint">
+              {bundleMode === "managed" && "Files will be stored in a system-managed directory within .fusion/agents/"}
+              {bundleMode === "external" && "Specify an external directory path for the instruction files"}
+              {!bundleMode && "Select a mode to enable instruction bundling"}
+            </span>
+          </div>
+
+          {bundleMode && (
+            <>
+              <div className="config-field">
+                <label htmlFor="bundle-entry-file">Entry File</label>
+                <input
+                  id="bundle-entry-file"
+                  type="text"
+                  className="input"
+                  placeholder="AGENTS.md"
+                  value={bundleEntryFile}
+                  onChange={(e) => setBundleEntryFile(e.target.value)}
+                />
+                <span className="config-hint">Primary instructions file name (default: AGENTS.md)</span>
+              </div>
+
+              {bundleMode === "external" && (
+                <div className="config-field">
+                  <label htmlFor="bundle-external-path">External Path</label>
+                  <input
+                    id="bundle-external-path"
+                    type="text"
+                    className="input"
+                    placeholder="e.g. .fusion/agents/my-agent"
+                    value={bundleExternalPath}
+                    onChange={(e) => setBundleExternalPath(e.target.value)}
+                  />
+                  <span className="config-hint">Absolute or relative path to the external directory</span>
+                </div>
+              )}
+
+              <div className="config-field">
+                <label htmlFor="bundle-files">Files (comma-separated)</label>
+                <input
+                  id="bundle-files"
+                  type="text"
+                  className="input"
+                  placeholder="AGENTS.md, PROMPTS.md"
+                  value={bundleFiles.join(", ")}
+                  onChange={(e) => setBundleFiles(
+                    e.target.value.split(",").map(f => f.trim()).filter(Boolean)
+                  )}
+                />
+                <span className="config-hint">List of file names in the bundle directory</span>
+              </div>
+            </>
           )}
         </div>
       </div>

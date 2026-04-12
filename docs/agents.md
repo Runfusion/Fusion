@@ -4,6 +4,51 @@
 
 Fusion uses multiple agent roles for triage, execution, review, and merge workflows.
 
+## Agent Field Parity Matrix
+
+Every first-class editable agent field has a defined create/edit/import/template behavior. This ensures consistent round-tripping across all surfaces.
+
+### Agent Model Fields
+
+| Field | Create | Edit | Import | Notes |
+|-------|--------|------|--------|-------|
+| `name` | ✓ | ✓ | ✓ (from manifest) | Unique identifier |
+| `role` | ✓ | ✓ | ✓ (mapped from manifest) | Agent capability |
+| `metadata` | ✓ | ✓ | ✓ | Arbitrary key-value data |
+| `title` | ✓ | ✓ | ✓ (from manifest) | Job title/description |
+| `icon` | ✓ | ✓ | ✓ (from manifest) | Emoji or icon identifier |
+| `reportsTo` | ✓ | ✓ | ✓ (from manifest) | Parent agent ID |
+| `runtimeConfig` | ✓ | ✓ | ✗ | Heartbeat/budget config |
+| `permissions` | ✓ | ✓ | ✗ | Capability flags |
+| `instructionsPath` | ✓ | ✓ | ✗ | File-backed instructions path |
+| `instructionsText` | ✓ | ✓ | ✓ (from manifest `instructionBody`) | Inline instructions |
+| `soul` | ✓ | ✓ | ✗ | Personality/identity description |
+| `memory` | ✓ | ✓ | ✗ | Per-agent accumulated knowledge |
+| `bundleConfig` | ✓ | ✓ | ✗ | Structured instruction bundle |
+
+### Agent Companies Manifest Fields
+
+| Manifest Field | First-Class Agent Field | Fallback |
+|---------------|------------------------|----------|
+| `name` | `name` | — (required) |
+| `title` | `title` | — |
+| `icon` | `icon` | — |
+| `role` | `role` (mapped to AgentCapability) | `custom` |
+| `reportsTo` | `reportsTo` | — |
+| `instructionBody` | `instructionsText` | — |
+| `skills` | `metadata.skills` | — |
+
+### System-Managed Fields (Not User-Editable)
+
+These fields are managed by the engine and cannot be directly edited:
+
+- `id` — Auto-generated unique identifier
+- `state` — Agent lifecycle state (managed by engine)
+- `taskId` — Current working task (managed by scheduler)
+- `totalInputTokens` / `totalOutputTokens` — Token usage totals (managed by engine)
+- `createdAt` / `updatedAt` / `lastHeartbeatAt` — Timestamps (managed by system)
+- `lastError` — Last error message (managed by engine)
+
 ## Agents View (Dashboard)
 
 The agents surface provides:
