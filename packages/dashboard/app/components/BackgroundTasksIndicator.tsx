@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from "react";
-import { Lightbulb, Layers, Target, Loader2, HelpCircle, X, Lock } from "lucide-react";
+import { Lightbulb, Layers, Target, Loader2, HelpCircle, X, Lock, AlertCircle } from "lucide-react";
 import type { AiSessionSummary } from "../api";
 import { useAiSessionSync } from "../hooks/useAiSessionSync";
 import { getSessionTabId } from "../utils/getSessionTabId";
@@ -132,6 +132,7 @@ export function BackgroundTasksIndicator({
               const Icon = TYPE_ICONS[session.type];
               const isGenerating = session.status === "generating";
               const isAwaiting = session.status === "awaiting_input";
+              const isError = session.status === "error";
               const activeTab = activeTabMap.get(session.id);
               const owningTabId = activeTab?.tabId ?? session.lockedByTab ?? null;
               const activeElsewhere = Boolean(
@@ -162,13 +163,17 @@ export function BackgroundTasksIndicator({
                     setPopoverOpen(false);
                   }}
                 >
-                  <Icon size={14} className="background-tasks-indicator__session-icon" />
+                  {isError ? (
+                    <AlertCircle size={14} className="background-tasks-indicator__session-icon" style={{ color: "var(--color-error)" }} />
+                  ) : (
+                    <Icon size={14} className="background-tasks-indicator__session-icon" />
+                  )}
                   <div className="background-tasks-indicator__session-content">
                     <div className="background-tasks-indicator__session-title">
                       {session.title}
                     </div>
                     <div className="background-tasks-indicator__session-meta">
-                      {TYPE_LABELS[session.type]}
+                      {isError ? "Failed" : TYPE_LABELS[session.type]}
                       {isGenerating && " — generating..."}
                       {isAwaiting && !activeElsewhere && " — needs input"}
                       {isAwaiting && activeElsewhere && " — active in another tab"}

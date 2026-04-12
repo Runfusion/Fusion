@@ -168,4 +168,145 @@ describe("SessionNotificationBanner", () => {
     expect(screen.queryByText("First Session")).not.toBeInTheDocument();
     expect(screen.getByText("Second Session")).toBeInTheDocument();
   });
+
+  it("renders error sessions in the banner", () => {
+    render(
+      <SessionNotificationBanner
+        sessions={[
+          buildSession({ id: "error-session", type: "mission_interview", title: "Failed Mission", status: "error" }),
+        ]}
+        onResumeSession={vi.fn()}
+        onDismissSession={vi.fn()}
+        onDismissAll={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Failed Mission")).toBeInTheDocument();
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+  });
+
+  it("shows 'Retry' button for error sessions instead of 'Resume'", () => {
+    const errorSession = buildSession({
+      id: "error-1",
+      type: "mission_interview",
+      status: "error",
+      title: "Error Session",
+    });
+
+    render(
+      <SessionNotificationBanner
+        sessions={[errorSession]}
+        onResumeSession={vi.fn()}
+        onDismissSession={vi.fn()}
+        onDismissAll={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
+  });
+
+  it("calls onResumeSession when clicking Retry on error session", () => {
+    const onResumeSession = vi.fn();
+    const errorSession = buildSession({
+      id: "error-retry",
+      type: "mission_interview",
+      status: "error",
+      title: "Error to Retry",
+    });
+
+    render(
+      <SessionNotificationBanner
+        sessions={[errorSession]}
+        onResumeSession={onResumeSession}
+        onDismissSession={vi.fn()}
+        onDismissAll={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onResumeSession).toHaveBeenCalledWith(errorSession);
+  });
+
+  it("shows combined header text for both awaiting_input and error sessions", () => {
+    render(
+      <SessionNotificationBanner
+        sessions={[
+          buildSession({ id: "awaiting", status: "awaiting_input", title: "Awaiting Input" }),
+          buildSession({ id: "error", status: "error", title: "Error Session" }),
+        ]}
+        onResumeSession={vi.fn()}
+        onDismissSession={vi.fn()}
+        onDismissAll={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("1 AI session needs your input, 1 failed")).toBeInTheDocument();
+  });
+
+  it("shows error count only when no awaiting_input sessions", () => {
+    render(
+      <SessionNotificationBanner
+        sessions={[
+          buildSession({ id: "error1", status: "error", title: "Error 1" }),
+          buildSession({ id: "error2", status: "error", title: "Error 2" }),
+        ]}
+        onResumeSession={vi.fn()}
+        onDismissSession={vi.fn()}
+        onDismissAll={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("2 AI sessions failed")).toBeInTheDocument();
+  });
+
+  it("dismisses error sessions from the banner", () => {
+    const onDismissSession = vi.fn();
+
+    render(
+      <SessionNotificationBanner
+        sessions={[
+          buildSession({ id: "error-dismiss", status: "error", title: "Error to Dismiss" }),
+        ]}
+        onResumeSession={vi.fn()}
+        onDismissSession={onDismissSession}
+        onDismissAll={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss Error to Dismiss" }));
+    expect(onDismissSession).toHaveBeenCalledWith("error-dismiss");
+  });
+
+  it("preserves dismissed error sessions when session status changes", () => {
+    const { rerender } = render(
+      <SessionNotificationBanner
+        sessions={[
+          buildSession({ id: "session-1", status: "error", title: "Error Session" }),
+        ]}
+        onResumeSession={vi.fn()}
+        onDismissSession={vi.fn()}
+        onDismissAll={vi.fn()}
+      />,
+    );
+
+    // Dismiss the error session
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss Error Session" }));
+    expect(screen.queryByText("Error Session")).not.toBeInTheDocument();
+
+    // Simulate session status changing to complete (should NOT reappear)
+    rerender(
+      <SessionNotificationBanner
+        sessions={[
+          buildSession({ id: "session-1", status: "complete", title: "Error Session" }),
+        ]}
+        onResumeSession={vi.fn()}
+        onDismissSession={vi.fn()}
+        onDismissAll={vi.fn()}
+      />,
+    );
+
+    // Dismissed session should still be hidden even though status changed
+    expect(screen.queryByText("Error Session")).not.toBeInTheDocument();
+  });
 });
