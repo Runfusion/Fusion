@@ -569,14 +569,17 @@ export function MissionInterviewModal({
       setStreamingOutput("");
 
       try {
+        connectToMissionInterviewStream(sessionId);
         await respondToMissionInterview(sessionId, responses, projectId, sessionTabId);
         setHasProgress(true);
       } catch (err: any) {
+        streamConnectionRef.current?.close();
+        streamConnectionRef.current = null;
         setError(err.message || "Failed to submit response");
         setView({ type: "question", sessionId, question: view.question });
       }
     },
-    [view, projectId, sessionTabId]
+    [view, projectId, sessionTabId, connectToMissionInterviewStream]
   );
 
   const handleRetryFromError = useCallback(async () => {
