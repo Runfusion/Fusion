@@ -313,8 +313,10 @@ export function buildStepPrompt(
   stepIndex: number,
   rootDir?: string,
   settings?: Settings,
+  worktreePath?: string,
 ): string {
-  const { prompt, id, title, attachments } = taskDetail;
+  const { id, title, attachments } = taskDetail;
+  const prompt = scopePromptToWorktree(taskDetail.prompt, rootDir, worktreePath);
 
   // Extract step-specific section
   const stepSection = extractStepSection(prompt, stepIndex);
@@ -400,6 +402,16 @@ export function buildStepPrompt(
   parts.push("After completing this step, commit your changes and call task_done(). Do NOT proceed to subsequent steps.");
 
   return parts.join("\n");
+}
+
+function scopePromptToWorktree(prompt: string, rootDir?: string, worktreePath?: string): string {
+  if (!rootDir || !worktreePath || rootDir === worktreePath || !prompt.includes(rootDir)) {
+    return prompt;
+  }
+
+  return prompt
+    .replaceAll(`${rootDir}/`, `${worktreePath}/`)
+    .replaceAll(`${worktreePath}/.fusion/`, `${rootDir}/.fusion/`);
 }
 
 /**
@@ -711,7 +723,7 @@ export class StepSessionExecutor {
     this.options.onStepStart?.(stepIndex);
 
     // Build step prompt
-    const stepPrompt = buildStepPrompt(taskDetail, stepIndex, this.options.rootDir, settings);
+    const stepPrompt = buildStepPrompt(taskDetail, stepIndex, this.options.rootDir, settings, worktreePath);
 
     // Build reduced step prompt for context-limit recovery (simpler, shorter)
     const reducedStepPrompt = buildReducedStepPrompt(taskDetail, stepIndex);

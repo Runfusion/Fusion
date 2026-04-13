@@ -377,6 +377,13 @@ describe("REVIEWER_SYSTEM_PROMPT", () => {
     expect(REVIEWER_SYSTEM_PROMPT).toContain("User comment coverage");
     expect(REVIEWER_SYSTEM_PROMPT).toContain("missing coverage is a blocking REVISE");
   });
+
+  it("includes worktree boundary guidance for code reviews", () => {
+    expect(REVIEWER_SYSTEM_PROMPT).toContain("Worktree Boundary Review");
+    expect(REVIEWER_SYSTEM_PROMPT).toContain("assigned task worktree");
+    expect(REVIEWER_SYSTEM_PROMPT).toContain("blocking REVISE");
+    expect(REVIEWER_SYSTEM_PROMPT).toContain(".fusion/memory.md");
+  });
 });
 
 describe("reviewStep — user comments in spec review", () => {
@@ -497,5 +504,34 @@ describe("reviewStep — user comments in spec review", () => {
 
     // Code reviews should not have user comment coverage checks
     expect(capturedPrompt).not.toContain("User Comment Coverage");
+  });
+
+  it("includes assigned worktree boundary instructions for code reviews", async () => {
+    let capturedPrompt = "";
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockImplementation(async (prompt: string) => {
+          capturedPrompt = prompt;
+        }),
+        subscribe: vi.fn().mockImplementation((cb: any) => {
+          cb({
+            type: "message_update",
+            assistantMessageEvent: { type: "text_delta", delta: "### Verdict: APPROVE\n### Summary\nOK" },
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    await reviewStep(
+      "/tmp/project/.worktrees/happy-robin", "FN-050", 1, "Implementation", "code",
+      "# Task: FN-050\n\n## Mission\nDo something",
+      "abc123",
+    );
+
+    expect(capturedPrompt).toContain("## Worktree Boundary");
+    expect(capturedPrompt).toContain("Assigned task worktree: `/tmp/project/.worktrees/happy-robin`");
+    expect(capturedPrompt).toContain("primary project checkout");
+    expect(capturedPrompt).toContain(".fusion/memory.md");
   });
 });

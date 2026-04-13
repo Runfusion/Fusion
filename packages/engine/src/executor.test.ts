@@ -2006,6 +2006,32 @@ describe("buildExecutionPrompt", () => {
     expect(result).toContain("**config.json** (application/json)");
   });
 
+  it("rewrites project-root absolute paths to the active worktree", () => {
+    const task = createMockTaskDetail({
+      prompt: [
+        "# test",
+        "## Context to Read First",
+        "- `/home/user/project/web/app/page.tsx`",
+        "- `/home/user/project/.fusion/memory.md`",
+        "## Steps",
+        "### Step 0: Preflight",
+        "- [ ] inspect `/home/user/project/web/app/layout.tsx`",
+      ].join("\n"),
+    });
+
+    const result = buildExecutionPrompt(
+      task,
+      "/home/user/project",
+      undefined,
+      "/home/user/project/.worktrees/happy-robin",
+    );
+
+    expect(result).toContain("/home/user/project/.worktrees/happy-robin/web/app/page.tsx");
+    expect(result).toContain("/home/user/project/.worktrees/happy-robin/web/app/layout.tsx");
+    expect(result).toContain("/home/user/project/.fusion/memory.md");
+    expect(result).not.toContain("/home/user/project/.worktrees/happy-robin/.fusion/memory.md");
+  });
+
   it("omits attachment section when no attachments", () => {
     const task = createMockTaskDetail({ attachments: [] });
     const result = buildExecutionPrompt(task, "/home/user/project");

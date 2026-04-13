@@ -1481,7 +1481,7 @@ export class TaskExecutor {
               "Review the current state of your worktree and proceed with the next pending step.",
             ].join("\n"));
           } else {
-            const agentPrompt = buildExecutionPrompt(detail, this.rootDir, settings);
+            const agentPrompt = buildExecutionPrompt(detail, this.rootDir, settings, worktreePath);
             await promptWithFallback(session, agentPrompt);
           }
 
@@ -1682,7 +1682,7 @@ export class TaskExecutor {
               "2. If there is remaining work, finish it and then call task_done.",
               "",
               "Original task:",
-              buildExecutionPrompt(detail, this.rootDir, settings),
+              buildExecutionPrompt(detail, this.rootDir, settings, worktreePath),
             ].join("\n");
 
             stuckDetector?.recordActivity(task.id);
@@ -3972,8 +3972,19 @@ function formatTimestamp(iso: string): string {
 // Project commands are injected here (for reliability) and also in the PROMPT.md (by triage).
 // This ensures the executor agent always sees the authoritative commands from settings,
 // even if the PROMPT.md was written manually or before commands were configured.
-export function buildExecutionPrompt(task: TaskDetail, rootDir?: string, settings?: Settings): string {
-  const reviewMatch = task.prompt.match(/##\s*Review Level[:\s]*(\d)/);
+function scopePromptToWorktree(prompt: string, rootDir?: string, worktreePath?: string): string {
+  if (!rootDir || !worktreePath || rootDir === worktreePath || !prompt.includes(rootDir)) {
+    return prompt;
+  }
+
+  return prompt
+    .replaceAll(`${rootDir}/`, `${worktreePath}/`)
+    .replaceAll(`${worktreePath}/.fusion/`, `${rootDir}/.fusion/`);
+}
+
+export function buildExecutionPrompt(task: TaskDetail, rootDir?: string, settings?: Settings, worktreePath?: string): string {
+  const prompt = scopePromptToWorktree(task.prompt, rootDir, worktreePath);
+  const reviewMatch = prompt.match(/##\s*Review Level[:\s]*(\d)/);
   const reviewLevel = reviewMatch ? parseInt(reviewMatch[1], 10) : 0;
 
   // Build step progress for resume
@@ -4065,7 +4076,7 @@ ${task.dependencies.length > 0 ? `Dependencies: ${task.dependencies.join(", ")}`
 
 ## PROMPT.md
 
-${task.prompt}
+${prompt}
 ${attachmentsSection}${commandsSection}${memorySection}${progressSection}${steeringSection}
 ## Review level: ${reviewLevel}
 

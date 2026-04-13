@@ -453,6 +453,28 @@ Do important work.
     expect(result).toContain("Delete existing files");
   });
 
+  it("rewrites project-root absolute paths to the active worktree", () => {
+    const prompt = fullPrompt.replace(
+      "`packages/engine/src/new-module.ts`",
+      "`/repo/project/packages/engine/src/new-module.ts`",
+    ).replace(
+      "- `src/types.ts`",
+      "- `/repo/project/.fusion/memory.md`",
+    );
+    const task = makeTaskDetail({ prompt });
+    const result = buildStepPrompt(
+      task,
+      1,
+      "/repo/project",
+      undefined,
+      "/repo/project/.worktrees/happy-robin",
+    );
+
+    expect(result).toContain("/repo/project/.worktrees/happy-robin/packages/engine/src/new-module.ts");
+    expect(result).toContain("/repo/project/.fusion/memory.md");
+    expect(result).not.toContain("/repo/project/.worktrees/happy-robin/.fusion/memory.md");
+  });
+
   it("handles step 0 (preflight) correctly", () => {
     const task = makeTaskDetail({ prompt: fullPrompt });
     const result = buildStepPrompt(task, 0);

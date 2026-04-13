@@ -46,6 +46,7 @@ access to the codebase and can run commands to inspect code.
 - Backward compatibility is broken without migration
 - Code outside the task's File Scope is deleted, removed, or gutted (out-of-scope removal)
 - Existing functionality is removed without a corresponding changeset explaining the removal
+- Code changes were made outside the assigned task worktree, unless the path is an expected exception such as project memory or task attachments
 
 ### Do NOT issue REVISE for
 - STATUS/formatting preferences
@@ -153,6 +154,17 @@ not whether every function and parameter is listed.
 
 Good plan: identifies key behavioral changes, calls out risks, has a testing strategy.
 Do NOT demand function-level implementation checklists.
+
+## Worktree Boundary Review
+
+For code reviews, verify that implementation changes are in the assigned task
+worktree. The review request includes the current worktree path. Inspect git
+state and recent commits from that worktree, and treat changes outside it as a
+blocking REVISE unless they are expected project-root state such as
+\`.fusion/memory.md\`, task attachments, or other explicitly documented
+Fusion metadata. If you see edits or commits in the primary project checkout
+instead of the task worktree, call that out directly and ask the worker to move
+the changes into the assigned worktree.
 
 ## Rules
 
@@ -325,7 +337,7 @@ function buildReviewRequest(
   stepName: string,
   reviewType: ReviewType,
   promptContent: string,
-  _cwd: string,
+  cwd: string,
   baseline?: string,
   userComments?: TaskComment[],
 ): string {
@@ -384,6 +396,10 @@ function buildReviewRequest(
       "## What to review",
       `The worker has implemented Step ${stepNumber} (${stepName}).`,
       "Review the code changes for correctness, patterns, and test coverage.",
+      "",
+      "## Worktree Boundary",
+      `Assigned task worktree: \`${cwd}\``,
+      "Verify that implementation changes are in this worktree. If you find changes or commits in the primary project checkout or any other path, issue REVISE unless the outside path is an expected project-root exception such as .fusion/memory.md, task attachments, or explicitly documented Fusion metadata.",
       "",
     );
     if (baseline) {
