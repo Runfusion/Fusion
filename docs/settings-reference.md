@@ -99,6 +99,8 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `reviewHandoffPolicy` | `"disabled" \| "comment-triggered" \| "always"` | `"disabled"` | Policy for agent-to-user review handoff. |
 | `showQuickChatFAB` | `boolean` | `false` | Show floating quick-chat button. Chat accessible from More menu when hidden. |
 | `taskStuckTimeoutMs` | `number` | `undefined` | Inactivity timeout for stuck-task recovery. |
+| `specStalenessEnabled` | `boolean` | `false` | Enable automatic re-triaging of tasks with stale specifications. |
+| `specStalenessMaxAgeMs` | `number` | `21600000` | Maximum age in ms before a specification (PROMPT.md) is considered stale and requires re-specification. Default: 6 hours. |
 | `autoUnpauseEnabled` | `boolean` | `true` | Auto-unpause after rate-limit-triggered pauses. |
 | `autoUnpauseBaseDelayMs` | `number` | `300000` | Base unpause retry delay in ms (5 min). |
 | `autoUnpauseMaxDelayMs` | `number` | `3600000` | Max unpause delay cap in ms (1 hour). |

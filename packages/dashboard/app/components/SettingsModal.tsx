@@ -1318,6 +1318,37 @@ export function SettingsModal({
               <small>Timeout in minutes for detecting stuck tasks. When a task&apos;s agent session shows no activity for longer than this duration, the task is terminated and retried. Leave empty to disable. Suggested: 10.</small>
             </div>
             <div className="form-group">
+              <label htmlFor="specStalenessEnabled" className="checkbox-label">
+                <input
+                  id="specStalenessEnabled"
+                  type="checkbox"
+                  checked={form.specStalenessEnabled || false}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, specStalenessEnabled: e.target.checked }))
+                  }
+                />
+                Enable specification staleness enforcement
+              </label>
+              <small>When enabled, tasks with stale specifications (PROMPT.md older than the threshold) are automatically sent back to triage for re-specification</small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="specStalenessMaxAgeMs">Stale Spec Threshold (hours)</label>
+              <input
+                id="specStalenessMaxAgeMs"
+                type="number"
+                min={0}
+                step={1}
+                value={form.specStalenessMaxAgeMs !== undefined ? Math.round(form.specStalenessMaxAgeMs / 3600000) : ""}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  const num = Number(val);
+                  setForm((f) => ({ ...f, specStalenessMaxAgeMs: val !== "" ? num * 3600000 : undefined }));
+                }}
+                disabled={!form.specStalenessEnabled}
+              />
+              <small>Maximum age in hours before a specification is considered stale. Default: 6 (21600000 ms). Stored as milliseconds internally.</small>
+            </div>
+            <div className="form-group">
               <label htmlFor="maxStuckKills">Max Stuck Retries</label>
               <input
                 id="maxStuckKills"

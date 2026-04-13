@@ -26,6 +26,8 @@ const defaultSettings: Settings = {
   ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review"],
   taskStuckTimeoutMs: undefined,
   maxStuckKills: 6,
+  specStalenessEnabled: false,
+  specStalenessMaxAgeMs: 6 * 60 * 60 * 1000,
   runStepsInNewSessions: false,
   maxParallelSteps: 2,
   showQuickChatFAB: false,
@@ -70,7 +72,7 @@ vi.mock("../PluginManager", () => ({
   )),
 }));
 
-import { fetchSettings, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchPlugins } from "../../api";
+import { fetchSettings, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification } from "../../api";
 
 const onClose = vi.fn();
 const addToast = vi.fn();
@@ -2314,6 +2316,162 @@ describe("SettingsModal", () => {
 
     const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(payload.maxStuckKills).toBeUndefined();
+  });
+
+  // --- Specification Staleness field tests ---
+
+  it("shows Specification Staleness fields in Scheduling section", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Scheduling"));
+    const checkbox = screen.getByLabelText("Enable specification staleness enforcement");
+    expect(checkbox).toBeTruthy();
+    expect(checkbox.getAttribute("type")).toBe("checkbox");
+
+    const thresholdInput = screen.getByLabelText("Stale Spec Threshold (hours)");
+    expect(thresholdInput).toBeTruthy();
+    expect(thresholdInput.getAttribute("type")).toBe("number");
+    expect(thresholdInput.getAttribute("min")).toBe("0");
+  });
+
+  it("Specification Staleness threshold input is disabled when toggle is off", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Scheduling"));
+    const thresholdInput = screen.getByLabelText("Stale Spec Threshold (hours)") as HTMLInputElement;
+    expect(thresholdInput).toBeDisabled();
+  });
+
+  it("Specification Staleness threshold input is enabled when toggle is on", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Scheduling"));
+    const checkbox = screen.getByLabelText("Enable specification staleness enforcement") as HTMLInputElement;
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(true);
+
+    const thresholdInput = screen.getByLabelText("Stale Spec Threshold (hours)") as HTMLInputElement;
+    expect(thresholdInput).not.toBeDisabled();
+  });
+
+  it("Specification Staleness threshold displays rounded hours from milliseconds", async () => {
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...defaultSettings,
+      specStalenessEnabled: true,
+      specStalenessMaxAgeMs: 6 * 60 * 60 * 1000,
+    });
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Scheduling"));
+    const thresholdInput = screen.getByLabelText("Stale Spec Threshold (hours)") as HTMLInputElement;
+    expect(thresholdInput.value).toBe("6");
+  });
+
+  it("Specification Staleness threshold converts hours to milliseconds on save", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Scheduling"));
+    const checkbox = screen.getByLabelText("Enable specification staleness enforcement") as HTMLInputElement;
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(true);
+
+    const thresholdInput = screen.getByLabelText("Stale Spec Threshold (hours)") as HTMLInputElement;
+    fireEvent.change(thresholdInput, { target: { value: "12" } });
+    expect(thresholdInput.value).toBe("12");
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.specStalenessEnabled).toBe(true);
+    expect(payload.specStalenessMaxAgeMs).toBe(12 * 60 * 60 * 1000);
+  });
+
+  it("Specification Staleness threshold of 0 hours persists 0 milliseconds", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Scheduling"));
+    const checkbox = screen.getByLabelText("Enable specification staleness enforcement") as HTMLInputElement;
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(true);
+
+    const thresholdInput = screen.getByLabelText("Stale Spec Threshold (hours)") as HTMLInputElement;
+    fireEvent.change(thresholdInput, { target: { value: "0" } });
+    expect(thresholdInput.value).toBe("0");
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.specStalenessEnabled).toBe(true);
+    expect(payload.specStalenessMaxAgeMs).toBe(0);
+  });
+
+  it("Specification Staleness enabled with empty threshold submits without invalid numeric payload", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Scheduling"));
+    const checkbox = screen.getByLabelText("Enable specification staleness enforcement") as HTMLInputElement;
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(true);
+
+    const thresholdInput = screen.getByLabelText("Stale Spec Threshold (hours)") as HTMLInputElement;
+    fireEvent.change(thresholdInput, { target: { value: "" } });
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.specStalenessEnabled).toBe(true);
+    expect(payload.specStalenessMaxAgeMs).toBeUndefined();
+  });
+
+  it("Disabling Specification Staleness retains configured max age", async () => {
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...defaultSettings,
+      specStalenessEnabled: true,
+      specStalenessMaxAgeMs: 8 * 60 * 60 * 1000,
+    });
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Scheduling"));
+    const checkbox = screen.getByLabelText("Enable specification staleness enforcement") as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+
+    const thresholdInput = screen.getByLabelText("Stale Spec Threshold (hours)") as HTMLInputElement;
+    expect(thresholdInput.value).toBe("8");
+    expect(thresholdInput).not.toBeDisabled();
+
+    // Disable the toggle
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(false);
+    expect(thresholdInput).toBeDisabled();
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.specStalenessEnabled).toBe(false);
+    expect(payload.specStalenessMaxAgeMs).toBe(8 * 60 * 60 * 1000);
+  });
+
+  it("Specification Staleness helper text is visible", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Scheduling"));
+    expect(screen.getByText(/Maximum age in hours before a specification is considered stale/)).toBeTruthy();
+    expect(screen.getByText(/When enabled, tasks with stale specifications/)).toBeTruthy();
   });
 
   it("scope banners render for global and project sections with theme-aware icons", async () => {

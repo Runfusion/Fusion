@@ -603,6 +603,7 @@ The engine automatically recovers from transient failures using bounded exponent
 - **Recoverable failures** — Transient errors trigger retry with increasing delay (60s → 120s → 240s, capped at 5 minutes). Up to 3 retries before permanent failure.
 - **Stale worktree/branch references** — Automatic pruning, branch deletion, and force-ref cleanup.
 - **Stuck task detection** — When `taskStuckTimeoutMs` is set, tasks with no agent activity are terminated and re-queued. Detects both dead sessions (no heartbeats) and loops (active but no step progress). Loop recovery attempts compact-and-resume before kill/requeue.
+- **Specification staleness** — When `specStalenessEnabled` is `true`, tasks with specifications older than `specStalenessMaxAgeMs` are automatically sent back to triage for re-specification. Default: 6 hours (21600000 ms).
 - **Context-limit recovery** — When an LLM returns context-window overflow, the executor compacts the session and resumes with a fresh prompt.
 
 ### Project Memory
@@ -716,6 +717,8 @@ Project settings override global settings. Configure in the dashboard under **Se
 | `smartConflictResolution` | Project | true | Auto-resolve lock/generated files |
 | `requirePlanApproval` | Project | false | Manual approval for AI specs |
 | `taskStuckTimeoutMs` | Project | - | Stuck task detection timeout (ms) |
+| `specStalenessEnabled` | Project | false | Enable specification staleness enforcement |
+| `specStalenessMaxAgeMs` | Project | 21600000 | Max spec age before re-triaging (ms, default 6h) |
 | `runStepsInNewSessions` | Project | false | Run each task step in its own agent session |
 | `maxParallelSteps` | Project | 2 | Max concurrent steps when per-step sessions are enabled |
 | `worktreeNaming` | Project | random | Worktree naming: random/task-id/task-title |
@@ -752,6 +755,17 @@ Automatically resolves lock files ("ours"), generated files ("theirs"), and triv
 }
 ```
 Terminates and retries tasks with no agent activity for 10 minutes. Detects dead sessions and loops separately, with compact-and-resume recovery for loops.
+
+**Specification Staleness:**
+```json
+{
+  "settings": {
+    "specStalenessEnabled": true,
+    "specStalenessMaxAgeMs": 21600000
+  }
+}
+```
+When enabled, tasks with specifications (PROMPT.md) older than the configured threshold are automatically sent back to triage for re-specification. Default: 6 hours (21600000 ms). Stored in milliseconds; dashboard UI accepts hours and converts automatically.
 
 **Push Notifications:**
 ```json
