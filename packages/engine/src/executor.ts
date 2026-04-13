@@ -896,16 +896,23 @@ export class TaskExecutor {
     // execute() to prevent stale tasks from entering worktree creation or agent sessions.
     // If timestamp evaluation is skipped (missing/unreadable file), continue with execution
     // so existing filesystem validation paths remain authoritative.
-    const tasksDir = join(this.store.getFusionDir(), "tasks");
-    const promptPath = getPromptPath(tasksDir, task.id);
-    const staleness = await evaluateSpecStaleness({ settings, promptPath });
-    if (staleness.isStale) {
-      executorLog.warn(`Task ${task.id} specification is stale — ${staleness.reason}`);
-      // Move to triage first, then set status so the task enters triage with needs-respecify
-      await this.store.moveTask(task.id, "triage");
-      await this.store.updateTask(task.id, { status: "needs-respecify" });
-      await this.store.logEntry(task.id, staleness.reason, undefined, this.currentRunContext);
-      return;
+    // Skip for tasks that are already in-progress, in-review, merging, or done —
+    // these should not be interrupted and sent back to triage for respecification.
+    const activeColumns = new Set(["in-progress", "in-review", "done"]);
+    const activeMergeStatuses = new Set(["merging", "merging-pr"]);
+    const isActiveTask = activeColumns.has(task.column) || activeMergeStatuses.has(task.status ?? "");
+    if (!isActiveTask) {
+      const tasksDir = join(this.store.getFusionDir(), "tasks");
+      const promptPath = getPromptPath(tasksDir, task.id);
+      const staleness = await evaluateSpecStaleness({ settings, promptPath });
+      if (staleness.isStale) {
+        executorLog.warn(`Task ${task.id} specification is stale — ${staleness.reason}`);
+        // Move to triage first, then set status so the task enters triage with needs-respecify
+        await this.store.moveTask(task.id, "triage");
+        await this.store.updateTask(task.id, { status: "needs-respecify" });
+        await this.store.logEntry(task.id, staleness.reason, undefined, this.currentRunContext);
+        return;
+      }
     }
 
     // Hoist worktreePath so it's accessible in the catch block for dep-abort cleanup
