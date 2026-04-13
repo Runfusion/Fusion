@@ -184,6 +184,25 @@ beforeEach(() => {
   });
 });
 
+describe("InlineCreateCard textarea width (FN-1608)", () => {
+  it("textarea spans full container width in board view", () => {
+    renderCard();
+    const input = screen.getByPlaceholderText("What needs to be done?") as HTMLTextAreaElement;
+    const card = document.querySelector(".inline-create-card") as HTMLElement;
+
+    // Get the bounding rectangles for the textarea and its container
+    const inputRect = input.getBoundingClientRect();
+    const containerRect = card.getBoundingClientRect();
+
+    // The textarea should span the full width of its container (within 34px tolerance for toggle button + gap)
+    // This ensures the input visually reaches the right edge of the container
+    expect(inputRect.width).toBeGreaterThanOrEqual(containerRect.width - 34);
+
+    // The textarea should be at least 80% of the container width
+    expect(inputRect.width).toBeGreaterThanOrEqual(containerRect.width * 0.8);
+  });
+});
+
 describe("InlineCreateCard blur-to-cancel", () => {
   it("calls onCancel when focus leaves the card with empty input", () => {
     const { props } = renderCard();

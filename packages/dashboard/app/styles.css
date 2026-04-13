@@ -5659,6 +5659,7 @@ body {
   position: relative;
   flex: 1;
   min-width: 0;
+  width: 100%;
 }
 
 /* Inline Create Card expand button - bottom-right of textarea */

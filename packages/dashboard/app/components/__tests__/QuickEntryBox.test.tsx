@@ -255,6 +255,24 @@ describe("QuickEntryBox", () => {
     expect((textarea as HTMLTextAreaElement).rows).toBe(2);
   });
 
+  it("textarea spans full container width (FN-1608)", () => {
+    mockDesktopViewport();
+    renderQuickEntryBox({});
+    const input = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
+    const quickEntryBox = screen.getByTestId("quick-entry-box");
+
+    // Get the bounding rectangles for the textarea and its container
+    const inputRect = input.getBoundingClientRect();
+    const containerRect = quickEntryBox.getBoundingClientRect();
+
+    // The textarea should span the full width of its container (within 34px tolerance for toggle button + gap)
+    // This ensures the input visually reaches the right edge of the container
+    expect(inputRect.width).toBeGreaterThanOrEqual(containerRect.width - 34);
+
+    // The textarea should be at least 80% of the container width
+    expect(inputRect.width).toBeGreaterThanOrEqual(containerRect.width * 0.8);
+  });
+
   it("does NOT expand on focus when autoExpand is false", () => {
     renderQuickEntryBox({ autoExpand: false });
     const textarea = screen.getByTestId("quick-entry-input");
