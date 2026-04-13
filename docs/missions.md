@@ -4,6 +4,8 @@
 
 Missions provide structured planning across multiple related tasks.
 
+> Roadmaps are a separate lightweight planning model (`Roadmap → RoadmapMilestone → RoadmapFeature`) used for standalone planning. Missions remain the richer execution-oriented hierarchy when you need slice activation, autopilot, and feature-to-task delivery tracking.
+
 ## Mission Hierarchy
 
 Fusion models delivery as:

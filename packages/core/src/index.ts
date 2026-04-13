@@ -168,6 +168,38 @@ export {
   __resetSummarizeState,
 } from "./ai-summarize.js";
 
+// ── Standalone Roadmap Model ───────────────────────────────────────────
+
+export type {
+  Roadmap,
+  RoadmapMilestone,
+  RoadmapFeature,
+  RoadmapCreateInput,
+  RoadmapUpdateInput,
+  RoadmapMilestoneCreateInput,
+  RoadmapMilestoneUpdateInput,
+  RoadmapFeatureCreateInput,
+  RoadmapFeatureUpdateInput,
+  RoadmapMilestoneReorderInput,
+  RoadmapFeatureReorderInput,
+  RoadmapFeatureMoveInput,
+  RoadmapFeatureMoveResult,
+  RoadmapMilestoneWithFeatures,
+  RoadmapWithHierarchy,
+  RoadmapExportBundle,
+  RoadmapFeatureSourceRef,
+  RoadmapFeatureTaskPlanningHandoff,
+  RoadmapMissionPlanningMilestoneHandoff,
+  RoadmapMissionPlanningHandoff,
+} from "./roadmap-types.js";
+export {
+  normalizeRoadmapMilestoneOrder,
+  applyRoadmapMilestoneReorder,
+  normalizeRoadmapFeatureOrder,
+  applyRoadmapFeatureReorder,
+  moveRoadmapFeature,
+} from "./roadmap-ordering.js";
+
 // ── Mission Hierarchy Types ────────────────────────────────────────────
 
 export {
