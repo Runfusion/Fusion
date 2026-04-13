@@ -29,6 +29,19 @@ describe("PWA configuration", () => {
     expect(indexHtml).toContain("apple-mobile-web-app-capable");
   });
 
+  it("viewport meta includes viewport-fit=cover for safe-area support", () => {
+    const indexHtml = readFileSync(resolve(__dirname, "../index.html"), "utf8");
+
+    expect(indexHtml).toMatch(/<meta\s+name="viewport"[^>]*content="[^"]*viewport-fit=cover[^"]*"/i);
+  });
+
+  it("CSS includes display-mode: standalone rule with safe-area-inset-bottom for PWA home bar spacing", () => {
+    const cssContent = readFileSync(resolve(__dirname, "../styles.css"), "utf8");
+
+    expect(cssContent).toMatch(/@media\s*\(\s*display-mode:\s*standalone\s*\)/);
+    expect(cssContent).toMatch(/@media\s*\(\s*display-mode:\s*standalone\s*\)\s*\{[^}]*#root\s*\{[^}]*env\(safe-area-inset-bottom,\s*0px\)/);
+  });
+
   it("service worker contains lifecycle handlers and versioned cache name", () => {
     const swSource = readFileSync(resolve(__dirname, "../public/sw.js"), "utf8");
 

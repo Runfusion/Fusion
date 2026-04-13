@@ -1,6 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import multer from "multer";
-import { randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { Readable } from "node:stream";
@@ -10,26 +9,23 @@ import { execSync } from "node:child_process";
 import { resolve, sep, join } from "node:path";
 import { tmpdir } from "node:os";
 import * as nodeFs from "node:fs";
-import * as nodeChildProcess from "node:child_process";
+
 import { promisify } from "node:util";
-import type { TaskStore, Column, MergeResult, ScheduleType, ActivityEventType, ModelPreset, AutomationStep, MessageType, ParticipantType, MessageCreateInput, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult, RoutineTriggerType } from "@fusion/core";
-import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, getCurrentRepo, isGhAuthenticated, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupAutomation, exportSettings, importSettings, validateImportData, MessageStore, MEMORY_FILE_PATH, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes, type MemoryBackendCapabilities } from "@fusion/core";
-import type { ChatStore, ChatSessionCreateInput, ChatSessionUpdateInput } from "@fusion/core";
+import type { TaskStore, Column, ScheduleType, ActivityEventType, ModelPreset, MessageType, ParticipantType, RoutineTriggerType } from "@fusion/core";
+import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, getCurrentRepo, isGhAuthenticated, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupAutomation, exportSettings, importSettings, validateImportData, MessageStore, MEMORY_FILE_PATH, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
 import { GitHubClient, parseBadgeUrl } from "./github.js";
 import { githubRateLimiter } from "./github-poll.js";
 import { terminalSessionManager } from "./terminal.js";
 import { getTerminalService } from "./terminal-service.js";
-import { listFiles, readFile, writeFile, listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, copyWorkspaceFile, moveWorkspaceFile, deleteWorkspaceFile, renameWorkspaceFile, getWorkspaceFileForDownload, getWorkspaceFolderForZip, readProjectFile, writeProjectFile, FileServiceError, type FileListResponse, type FileContentResponse, type SaveFileResponse, type FileOperationResponse } from "./file-service.js";
+import { listFiles, readFile, writeFile, listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, copyWorkspaceFile, moveWorkspaceFile, deleteWorkspaceFile, renameWorkspaceFile, getWorkspaceFileForDownload, getWorkspaceFolderForZip, readProjectFile, writeProjectFile, FileServiceError } from "./file-service.js";
 import { clearUsageCache, fetchAllProviderUsage } from "./usage.js";
 import {
   getGitHubAppConfig,
   verifyWebhookSignature,
   classifyWebhookEvent,
-  isSameResource,
   hasPrBadgeFieldsChanged,
   hasIssueBadgeFieldsChanged,
-  type BadgeUrlComponents,
 } from "./github-webhooks.js";
 import { createMissionRouter } from "./mission-routes.js";
 import { getOrCreateProjectStore } from "./project-store-resolver.js";
@@ -249,7 +245,7 @@ function slugifyPresetName(name: string): string {
  * Extract RunMutationContext from the X-Run-Context header.
  * Used to correlate dashboard mutations with agent runs for audit trails.
  */
-function extractRunContext(req: { headers: { [key: string]: string | string[] | undefined } }): import("@fusion/core").RunMutationContext | undefined {
+function _extractRunContext(req: { headers: { [key: string]: string | string[] | undefined } }): import("@fusion/core").RunMutationContext | undefined {
   const header = req.headers['x-run-context'];
   if (typeof header !== 'string') return undefined;
   try {
@@ -511,7 +507,7 @@ function parseRunAuditFilters(query: Record<string, unknown>): RunAuditQueryFilt
  */
 function normalizeRunAuditEvent(event: import("@fusion/core").RunAuditEvent): NormalizedRunAuditEvent {
   // Generate a human-readable summary based on domain and mutation type
-  let summary = generateAuditSummary(event.domain, event.mutationType, event.target, event.metadata);
+  const summary = generateAuditSummary(event.domain, event.mutationType, event.target, event.metadata);
 
   return {
     id: event.id,
@@ -532,7 +528,7 @@ function generateAuditSummary(
   domain: string,
   mutationType: string,
   target: string,
-  metadata?: Record<string, unknown>,
+  _metadata?: Record<string, unknown>,
 ): string {
   const parts: string[] = [];
 
@@ -6870,7 +6866,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const ip = req.ip || req.socket.remoteAddress || "unknown";
       const rootDir = scopedStore.getRootDir();
 
-      const { createSession, RateLimitError } = await import("./planning.js");
+      const { createSession, RateLimitError: _RateLimitError } = await import("./planning.js");
       const result = await createSession(
         ip,
         initialPlan,
@@ -6925,7 +6921,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const ip = req.ip || req.socket.remoteAddress || "unknown";
       const rootDir = scopedStore.getRootDir();
 
-      const { createSessionWithAgent, RateLimitError } = await import("./planning.js");
+      const { createSessionWithAgent, RateLimitError: _RateLimitError2 } = await import("./planning.js");
       const sessionId = await createSessionWithAgent(
         ip,
         initialPlan,
@@ -6977,7 +6973,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const scopedStore = await getScopedStore(req);
       const settings = await scopedStore.getSettings();
-      const { submitResponse, SessionNotFoundError, InvalidSessionStateError } = await import("./planning.js");
+      const { submitResponse, SessionNotFoundError: _SessionNotFoundError, InvalidSessionStateError: _InvalidSessionStateError } = await import("./planning.js");
       const result = await submitResponse(
         sessionId,
         responses,
@@ -7060,7 +7056,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         return;
       }
 
-      const { cancelSession, SessionNotFoundError } = await import("./planning.js");
+      const { cancelSession, SessionNotFoundError: _SessionNotFoundError2 } = await import("./planning.js");
       await cancelSession(sessionId);
       res.json({ success: true });
     } catch (err: any) {
@@ -7917,10 +7913,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         checkRateLimit,
         getRateLimitResetTime,
         refineText,
-        RateLimitError,
+        RateLimitError: _RateLimitError3,
         ValidationError,
         InvalidTypeError,
-        AiServiceError,
+        AiServiceError: _AiServiceError,
       } = await import("./ai-refine.js");
 
       // Check rate limit first
@@ -7988,10 +7984,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         summarizeTitle,
         validateDescription,
         MIN_DESCRIPTION_LENGTH,
-        MAX_DESCRIPTION_LENGTH,
-        RateLimitError,
-        ValidationError,
-        AiServiceError,
+        MAX_DESCRIPTION_LENGTH: _MAX_DESCRIPTION_LENGTH,
+        RateLimitError: _RateLimitError4,
+        ValidationError: _ValidationError2,
+        AiServiceError: _AiServiceError2,
       } = await import("@fusion/core");
 
       // Debug logging
@@ -8984,7 +8980,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         session.dispose();
 
         refinedPrompt = output.trim();
-      } catch (agentErr: any) {
+      } catch (_agentErr: any) {
         // Fallback: return the description as-is if AI is unavailable
         refinedPrompt = step.description;
       }
@@ -9561,7 +9557,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         parseCompanyArchive,
         parseSingleAgentManifest,
         convertAgentCompanies,
-        AgentCompaniesParseError,
+        AgentCompaniesParseError: _AgentCompaniesParseError,
       } = await import("@fusion/core");
 
       const scopedStore = await getScopedStore(req);

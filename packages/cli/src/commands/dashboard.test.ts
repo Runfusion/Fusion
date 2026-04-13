@@ -2232,15 +2232,19 @@ describe("runDashboard — lifecycle listener cleanup", () => {
     expect(() => dispose()).not.toThrow();
   });
 
-  it("dispose removes all registered store listeners", async () => {
+  it("dispose does not try to remove engine-owned listeners from the dashboard task store", async () => {
     const { dispose } = await runDashboard(0, { open: false });
+    await new Promise((resolve) => setTimeout(resolve, 0));
     const offCallsBefore = mockStore.off.mock.calls.length;
 
     dispose();
 
     const offCalls = mockStore.off.mock.calls.slice(offCallsBefore);
-    expect(offCalls.filter(([event]) => event === "settings:updated")).toHaveLength(6);
-    expect(offCalls.filter(([event]) => event === "task:moved")).toHaveLength(1);
+    // Listener cleanup is handled inside ProjectEngine-owned task stores.
+    // The dashboard's top-level TaskStore should not receive synthetic off()
+    // calls during dispose.
+    expect(offCalls.filter(([event]) => event === "settings:updated")).toHaveLength(0);
+    expect(offCalls.filter(([event]) => event === "task:moved")).toHaveLength(0);
   });
 
   it("dispose is idempotent — calling twice does not throw", async () => {

@@ -6369,6 +6369,12 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
+@media (display-mode: standalone) {
+  #root {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
+
 /* === Mobile Responsive Overrides ===
    On narrow viewports (≤768px) the board switches from a 5-column grid to a
    horizontally-scrollable flex layout so only one scrollbar appears.  Each

@@ -18,6 +18,16 @@ export default tseslint.config(
         sourceType: "module",
       },
     },
+    rules: {
+      "@typescript-eslint/no-unused-vars": ["error", {
+        vars: "all",
+        args: "after-used",
+        ignoreRestSiblings: true,
+        varsIgnorePattern: "^_",
+        argsIgnorePattern: "^_",
+        caughtErrorsIgnorePattern: "^_",
+      }],
+    },
     ignores: [
       // Test files
       "**/*.test.ts",

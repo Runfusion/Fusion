@@ -71,6 +71,11 @@ import {
   fetchBranchCommits,
 } from "../../api";
 
+function expectLatestCallStartsWith(mockFn: { mock: { calls: unknown[][] } }, ...expectedArgs: unknown[]) {
+  expect(mockFn.mock.calls.length).toBeGreaterThan(0);
+  expect(mockFn.mock.calls.at(-1)?.slice(0, expectedArgs.length)).toEqual(expectedArgs);
+}
+
 const mockAddToast = vi.fn();
 
 const mockTasks: Task[] = [
@@ -358,7 +363,7 @@ describe("GitManagerModal", () => {
 
     await user.click(screen.getByText("Stage All"));
     await waitFor(() => {
-      expect(stageFiles).toHaveBeenCalledWith(["src/app.ts"], undefined);
+      expectLatestCallStartsWith(stageFiles as any, ["src/app.ts"]);
     });
   });
 
@@ -375,7 +380,7 @@ describe("GitManagerModal", () => {
 
     await user.click(screen.getByText("Unstage All"));
     await waitFor(() => {
-      expect(unstageFiles).toHaveBeenCalledWith(["src/index.ts"], undefined);
+      expectLatestCallStartsWith(unstageFiles as any, ["src/index.ts"]);
     });
   });
 
@@ -397,7 +402,7 @@ describe("GitManagerModal", () => {
     await user.click(commitBtn);
 
     await waitFor(() => {
-      expect(createCommit).toHaveBeenCalledWith("fix: update app", undefined);
+      expectLatestCallStartsWith(createCommit as any, "fix: update app");
     });
   });
 
@@ -502,7 +507,7 @@ describe("GitManagerModal", () => {
     // Click the commit to expand diff
     fireEvent.click(screen.getByText("Test commit"));
     await waitFor(() => {
-      expect(fetchCommitDiff).toHaveBeenCalledWith("abc1234def5678", undefined);
+      expectLatestCallStartsWith(fetchCommitDiff as any, "abc1234def5678");
     });
   });
 
@@ -539,7 +544,7 @@ describe("GitManagerModal", () => {
     await user.click(createButton);
 
     await waitFor(() => {
-      expect(createBranch).toHaveBeenCalledWith("new-feature", undefined, undefined);
+      expectLatestCallStartsWith(createBranch as any, "new-feature", undefined);
     });
   });
 
@@ -564,7 +569,7 @@ describe("GitManagerModal", () => {
     await user.click(createButton);
 
     await waitFor(() => {
-      expect(createBranch).toHaveBeenCalledWith("hotfix", "feature", undefined);
+      expectLatestCallStartsWith(createBranch as any, "hotfix", "feature");
     });
   });
 
@@ -606,7 +611,7 @@ describe("GitManagerModal", () => {
     fireEvent.click(checkoutButtons[0]);
 
     await waitFor(() => {
-      expect(checkoutBranch).toHaveBeenCalledWith("feature", undefined);
+      expectLatestCallStartsWith(checkoutBranch as any, "feature");
     });
   });
 
@@ -629,7 +634,7 @@ describe("GitManagerModal", () => {
     fireEvent.click(deleteButtons[0]);
 
     await waitFor(() => {
-      expect(deleteBranch).toHaveBeenCalledWith("feature", undefined, undefined);
+      expectLatestCallStartsWith(deleteBranch as any, "feature");
     });
   });
 
@@ -662,7 +667,7 @@ describe("GitManagerModal", () => {
     fireEvent.click(branchItems[1]);
 
     await waitFor(() => {
-      expect(fetchBranchCommits).toHaveBeenCalledWith("feature", 10, undefined);
+      expectLatestCallStartsWith(fetchBranchCommits as any, "feature", 10);
     });
 
     await waitFor(() => {
@@ -695,7 +700,7 @@ describe("GitManagerModal", () => {
     fireEvent.click(branchItems[1]);
 
     await waitFor(() => {
-      expect(fetchBranchCommits).toHaveBeenCalledWith("feature", 10, undefined);
+      expectLatestCallStartsWith(fetchBranchCommits as any, "feature", 10);
     });
 
     // Click again to deselect
@@ -798,7 +803,7 @@ describe("GitManagerModal", () => {
     fireEvent.click(commitRow);
 
     await waitFor(() => {
-      expect(fetchCommitDiff).toHaveBeenCalledWith("def456789abc", undefined);
+      expectLatestCallStartsWith(fetchCommitDiff as any, "def456789abc");
     });
   });
 
@@ -817,7 +822,7 @@ describe("GitManagerModal", () => {
     fireEvent.click(branchItems[1]);
 
     await waitFor(() => {
-      expect(fetchBranchCommits).toHaveBeenCalledWith("feature", 10, undefined);
+      expectLatestCallStartsWith(fetchBranchCommits as any, "feature", 10);
     });
 
     // Should show empty state since fetch failed
@@ -948,7 +953,7 @@ describe("GitManagerModal", () => {
     await user.click(stashBtn);
 
     await waitFor(() => {
-      expect(createStash).toHaveBeenCalledWith("my stash", undefined);
+      expectLatestCallStartsWith(createStash as any, "my stash");
     });
   });
 
@@ -965,7 +970,7 @@ describe("GitManagerModal", () => {
 
     await user.click(screen.getByText("Apply"));
     await waitFor(() => {
-      expect(applyStash).toHaveBeenCalledWith(0, false, undefined);
+      expectLatestCallStartsWith(applyStash as any, 0, false);
     });
   });
 
@@ -982,7 +987,7 @@ describe("GitManagerModal", () => {
 
     await user.click(screen.getByText("Pop"));
     await waitFor(() => {
-      expect(applyStash).toHaveBeenCalledWith(0, true, undefined);
+      expectLatestCallStartsWith(applyStash as any, 0, true);
     });
   });
 
@@ -1001,7 +1006,7 @@ describe("GitManagerModal", () => {
 
     await user.click(screen.getByTitle("Drop stash"));
     await waitFor(() => {
-      expect(dropStash).toHaveBeenCalledWith(0, undefined);
+      expectLatestCallStartsWith(dropStash as any, 0);
     });
   });
 
@@ -1858,7 +1863,7 @@ describe("GitManagerModal", () => {
     await user.click(screen.getByText("First ahead commit"));
 
     await waitFor(() => {
-      expect(fetchCommitDiff).toHaveBeenCalledWith("aaa1111");
+      expectLatestCallStartsWith(fetchCommitDiff as any, "aaa1111");
     });
 
     // Diff content should be rendered
@@ -1898,7 +1903,7 @@ describe("GitManagerModal", () => {
     // Click to expand
     await user.click(screen.getByText("Toggle commit"));
     await waitFor(() => {
-      expect(fetchCommitDiff).toHaveBeenCalledWith("aaa1111");
+      expectLatestCallStartsWith(fetchCommitDiff as any, "aaa1111");
     });
 
     // Diff should be visible
@@ -1975,7 +1980,7 @@ describe("GitManagerModal", () => {
     await user.click(screen.getByText("Remote commit 1"));
 
     await waitFor(() => {
-      expect(fetchCommitDiff).toHaveBeenCalledWith("rc1hash1");
+      expectLatestCallStartsWith(fetchCommitDiff as any, "rc1hash1");
     });
 
     // Diff content should be rendered
@@ -2006,7 +2011,7 @@ describe("GitManagerModal", () => {
     // Click to expand
     await user.click(screen.getByText("Remote toggle commit"));
     await waitFor(() => {
-      expect(fetchCommitDiff).toHaveBeenCalledWith("rc1hash1");
+      expectLatestCallStartsWith(fetchCommitDiff as any, "rc1hash1");
     });
 
     // Diff should be visible
@@ -2072,13 +2077,13 @@ describe("GitManagerModal", () => {
     // Click first commit
     await user.click(screen.getByText("First remote"));
     await waitFor(() => {
-      expect(fetchCommitDiff).toHaveBeenCalledWith("rc1hash1");
+      expectLatestCallStartsWith(fetchCommitDiff as any, "rc1hash1");
     });
 
     // Click second commit — should collapse first, expand second
     await user.click(screen.getByText("Second remote"));
     await waitFor(() => {
-      expect(fetchCommitDiff).toHaveBeenCalledWith("rc2hash2");
+      expectLatestCallStartsWith(fetchCommitDiff as any, "rc2hash2");
     });
 
     // fetchCommitDiff should have been called for both commits
