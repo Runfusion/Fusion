@@ -42,6 +42,7 @@ import {
   fetchExecutorStats,
   fetchAgentRunAudit,
   fetchAgentRunTimeline,
+  streamChatResponse,
   type ProjectInfo,
   type ProjectHealth,
   type ActivityFeedEntry,
@@ -3131,5 +3132,137 @@ describe("fetchAgentRunTimeline", () => {
 
     // Verify fetch was never called for blank runId
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("streamChatResponse", () => {
+  const originalFetch = globalThis.fetch;
+
+  const createStreamResponse = (chunks: string[]) => {
+    const encoder = new TextEncoder();
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: {
+        get: (name: string) =>
+          name.toLowerCase() === "content-type" ? "text/event-stream" : null,
+      },
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const chunk of chunks) {
+            controller.enqueue(encoder.encode(chunk));
+          }
+          controller.close();
+        },
+      }),
+      text: () => Promise.resolve(chunks.join("")),
+    } as unknown as Response);
+  };
+
+  const withStreamResult = async (
+    chunks: string[],
+    assertCallbacks: (callbacks: {
+      thinking: string[];
+      text: string[];
+      done: Array<{ messageId: string }>;
+      error: string[];
+      connectionStates: string[];
+    }) => void,
+  ) => {
+    const callbacks = {
+      thinking: [] as string[],
+      text: [] as string[],
+      done: [] as Array<{ messageId: string }>,
+      error: [] as string[],
+      connectionStates: [] as string[],
+    };
+
+    globalThis.fetch = vi.fn().mockImplementation(() => createStreamResponse(chunks));
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Timed out waiting for chat stream")), 1000);
+      const stream = streamChatResponse("chat-1", "hello", {
+        onThinking: (data) => callbacks.thinking.push(data),
+        onText: (data) => callbacks.text.push(data),
+        onDone: (data) => {
+          callbacks.done.push(data);
+          clearTimeout(timeout);
+          stream.close();
+          resolve();
+        },
+        onError: (data) => {
+          callbacks.error.push(data);
+          clearTimeout(timeout);
+          stream.close();
+          resolve();
+        },
+        onConnectionStateChange: (state) => callbacks.connectionStates.push(state),
+      });
+    });
+
+    assertCallbacks(callbacks);
+  };
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("delivers chunk-split text and done events in order", async () => {
+    await withStreamResult(
+      [
+        "event: te",
+        "xt\ndata: \"Hel",
+        "lo\"\n\nevent: do",
+        "ne\ndata: {\"messageId\":\"msg-1\"}\n\n",
+      ],
+      (callbacks) => {
+        expect(callbacks.connectionStates).toEqual(["connected"]);
+        expect(callbacks.text).toEqual(["Hello"]);
+        expect(callbacks.done).toEqual([{ messageId: "msg-1" }]);
+        expect(callbacks.error).toEqual([]);
+      },
+    );
+  });
+
+  it("surfaces chunk-split error events through onError", async () => {
+    await withStreamResult(
+      [
+        "event: err",
+        "or\ndata: {\"message\":\"boom\"}\n\n",
+      ],
+      (callbacks) => {
+        expect(callbacks.text).toEqual([]);
+        expect(callbacks.done).toEqual([]);
+        expect(callbacks.error).toEqual(["boom"]);
+      },
+    );
+  });
+
+  it("does not duplicate callbacks when multiple events arrive in one chunk", async () => {
+    await withStreamResult(
+      [
+        "event: text\ndata: \"Hello\"\n\nevent: text\ndata: \" world\"\n\nevent: done\ndata: {\"messageId\":\"msg-2\"}\n\n",
+      ],
+      (callbacks) => {
+        expect(callbacks.text).toEqual(["Hello", " world"]);
+        expect(callbacks.done).toEqual([{ messageId: "msg-2" }]);
+        expect(callbacks.text).toHaveLength(2);
+        expect(callbacks.done).toHaveLength(1);
+      },
+    );
+  });
+
+  it("flushes a final complete event when the stream ends without a trailing blank line", async () => {
+    await withStreamResult(
+      [
+        "event: text\ndata: \"tail\"\n\nevent: done\ndata: {\"messageId\":\"msg-tail\"}",
+      ],
+      (callbacks) => {
+        expect(callbacks.text).toEqual(["tail"]);
+        expect(callbacks.done).toEqual([{ messageId: "msg-tail" }]);
+        expect(callbacks.error).toEqual([]);
+      },
+    );
   });
 });
