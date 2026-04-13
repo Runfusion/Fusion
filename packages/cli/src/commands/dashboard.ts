@@ -1,7 +1,7 @@
 import type { AddressInfo } from "node:net";
 import { TaskStore, AutomationStore, CentralCore, AgentStore, PluginStore, PluginLoader, getTaskMergeBlocker } from "@fusion/core";
 import { createServer, GitHubClient } from "@fusion/dashboard";
-import { aiMergeTask, MissionAutopilot, MissionExecutionLoop, HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext, ProjectEngine, type ProjectEngineOptions, ProjectManager } from "@fusion/engine";
+import { aiMergeTask, MissionAutopilot, MissionExecutionLoop, HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext, ProjectEngine, type ProjectEngineOptions } from "@fusion/engine";
 import type { ProjectRuntimeConfig } from "@fusion/engine";
 import { AuthStorage, DefaultPackageManager, ModelRegistry, discoverAndLoadExtensions, getAgentDir, createExtensionRuntime } from "@mariozechner/pi-coding-agent";
 import {
@@ -539,14 +539,17 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     // execute tasks. All projects — including the primary — start their
     // engine lazily on first access, reusing the same CentralCore.
     //
-    // Primary project: started via ProjectEngine (full subsystem set).
-    // Other projects:  started via ProjectManager (InProcessRuntime).
+    // All projects use ProjectEngine (full subsystem set including
+    // auto-merge, PR monitor, settings listeners, etc.).
     //
-    const perProjectManager = new ProjectManager(centralCoreForEngine);
-    disposeCallbacks.push(() => {
-      void perProjectManager.stopAll().catch(() => {});
-      void engine.stop().catch(() => {});
-      void centralCoreForEngine.close().catch(() => {});
+    const secondaryEngines = new Map<string, ProjectEngine>();
+    disposeCallbacks.push(async () => {
+      const stops = Array.from(secondaryEngines.values()).map((e) =>
+        e.stop().catch(() => {}),
+      );
+      await Promise.all(stops);
+      await engine.stop().catch(() => {});
+      await centralCoreForEngine.close().catch(() => {});
     });
 
     const onProjectFirstAccessed = (projectId: string): void => {
@@ -560,17 +563,34 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           triggerScheduler = engine.getHeartbeatTriggerScheduler();
           console.log(`[dashboard] Started engine for primary project (${projectId})`);
         } else {
-          // Non-primary projects: start via ProjectManager
+          // Non-primary projects: also use ProjectEngine for full subsystem
+          // support (auto-merge, PR monitor, settings listeners, etc.)
+          if (secondaryEngines.has(projectId)) return; // already running
           const project = await centralCoreForEngine.getProject(projectId);
           if (!project) return;
-          if (perProjectManager.getRuntime(projectId)) return; // already running
-          await perProjectManager.addProject({
+
+          const secondaryConfig: ProjectRuntimeConfig = {
             projectId: project.id,
             workingDirectory: project.path,
             isolationMode: (project.isolationMode as "in-process" | "child-process") ?? "in-process",
             maxConcurrent: (project.settings as Record<string, unknown> | undefined)?.maxConcurrent as number ?? 4,
             maxWorktrees: (project.settings as Record<string, unknown> | undefined)?.maxWorktrees as number ?? 10,
-          });
+          };
+
+          const secondaryOptions: ProjectEngineOptions = {
+            getMergeStrategy,
+            processPullRequestMerge: (s, wd, taskId) =>
+              processPullRequestMergeTask(s, wd, taskId, githubClient, getTaskMergeBlocker),
+            getTaskMergeBlocker,
+          };
+
+          const secondaryEngine = new ProjectEngine(
+            secondaryConfig,
+            centralCoreForEngine,
+            secondaryOptions,
+          );
+          secondaryEngines.set(projectId, secondaryEngine);
+          await secondaryEngine.start();
           console.log(`[dashboard] Started engine for project ${project.name} (${projectId})`);
         }
       })().catch((err: unknown) => {
@@ -618,11 +638,13 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       dispose();
       stopDiagnosticInterval();
 
-      // Stop all per-project engines
-      await perProjectManager.stopAll().catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        console.warn(`[dashboard] Per-project manager stop error: ${message}`);
-      });
+      // Stop all secondary project engines
+      for (const [id, secondaryEngine] of secondaryEngines) {
+        await secondaryEngine.stop().catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[dashboard] Secondary engine ${id} stop error: ${message}`);
+        });
+      }
 
       // Stop engine (stops all subsystems: InProcessRuntime + ProjectEngine auxiliaries,
       // including HeartbeatMonitor, TriggerScheduler, NtfyNotifier, MissionAutopilot, etc.)
