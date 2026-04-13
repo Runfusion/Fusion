@@ -193,7 +193,7 @@ export class InProcessRuntime
             missionStore,
             missionAutopilot: missionAutopilot
               ? {
-                  notifyValidationComplete: async (featureId: string, _status: "passed" | "failed" | "blocked" | "error") => {
+                  notifyValidationComplete: async (featureId: string) => {
                     // Pass the feature's linked taskId to handleTaskCompletion, not the featureId
                     const feature = missionStore.getFeature(featureId);
                     if (feature?.taskId) {
@@ -254,15 +254,26 @@ export class InProcessRuntime
         onStart: (task, worktreePath) => {
           this.recordActivity();
           runtimeLog.log(`Started executing task ${task.id} in ${worktreePath}`);
-          // Create agent in AgentStore for lifecycle tracking
+          // Create a runtime-managed task worker agent for lifecycle tracking.
+          // These workers are not heartbeat-managed dashboard agents, so mark them
+          // explicitly and disable heartbeat triggers/timers.
           if (this.agentStore) {
             this.agentStore.createAgent({
               name: `executor-${task.id}`,
               role: "executor",
+              metadata: {
+                agentKind: "task-worker",
+                taskWorker: true,
+                managedBy: "task-executor",
+              },
+              runtimeConfig: {
+                enabled: false,
+              },
             }).then(async (agent: { id: string }) => {
               this.taskAgentMap.set(task.id, agent.id);
               await this.agentStore!.assignTask(agent.id, task.id);
               await this.agentStore!.updateAgentState(agent.id, "active");
+              await this.agentStore!.updateAgentState(agent.id, "running");
             }).catch((err: unknown) => {
               runtimeLog.warn(`Failed to create agent for task ${task.id}:`, err);
             });

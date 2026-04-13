@@ -1,13 +1,22 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { getAgentHealthStatus, getAgentHealthColorVar } from "./agentHealth";
 import type { Agent } from "../api";
 
 // Mock Date.now to get deterministic elapsed time calculations
 const FIXED_NOW = new Date("2026-04-10T12:00:00.000Z").getTime();
 
-function makeAgent(overrides: Partial<Pick<Agent, "state" | "lastHeartbeatAt" | "lastError" | "pauseReason" | "runtimeConfig">> = {}): Pick<Agent, "state" | "lastHeartbeatAt" | "lastError" | "pauseReason" | "runtimeConfig"> {
+type AgentHealthInput = Pick<
+  Agent,
+  "state" | "lastHeartbeatAt" | "lastError" | "pauseReason" | "runtimeConfig" | "metadata" | "name" | "role" | "taskId"
+>;
+
+function makeAgent(overrides: Partial<AgentHealthInput> = {}): AgentHealthInput {
   return {
+    name: "Test Agent",
+    role: "executor",
     state: "idle",
+    taskId: undefined,
+    metadata: {},
     lastHeartbeatAt: undefined,
     lastError: undefined,
     pauseReason: undefined,
@@ -138,6 +147,52 @@ describe("getAgentHealthStatus", () => {
     it('returns "Disabled" for idle agents with monitoring disabled', () => {
       const agent = makeAgent({
         state: "idle",
+        runtimeConfig: { enabled: false },
+      });
+      const status = getAgentHealthStatus(agent);
+      expect(status.label).toBe("Disabled");
+    });
+  });
+
+  describe("task worker health classification", () => {
+    it('returns "Running" for metadata-marked task workers with disabled heartbeat', () => {
+      const agent = makeAgent({
+        name: "executor-FN-1661",
+        role: "executor",
+        state: "active",
+        taskId: "FN-1661",
+        metadata: {
+          agentKind: "task-worker",
+          taskWorker: true,
+          managedBy: "task-executor",
+        },
+        lastHeartbeatAt: new Date(FIXED_NOW - 1_000_000).toISOString(),
+        runtimeConfig: { enabled: false, heartbeatTimeoutMs: 60_000 },
+      });
+      const status = getAgentHealthStatus(agent);
+      expect(status.label).toBe("Running");
+      expect(status.color).toBe("var(--state-active-text)");
+    });
+
+    it('returns "Running" for legacy executor-* task workers with stale heartbeat', () => {
+      const agent = makeAgent({
+        name: "executor-FN-1661",
+        role: "executor",
+        state: "active",
+        taskId: "FN-1661",
+        lastHeartbeatAt: new Date(FIXED_NOW - 1_000_000).toISOString(),
+        runtimeConfig: { heartbeatTimeoutMs: 30_000 },
+      });
+      const status = getAgentHealthStatus(agent);
+      expect(status.label).toBe("Running");
+      expect(status.color).toBe("var(--state-active-text)");
+    });
+
+    it('keeps non-task-worker disabled agents as "Disabled"', () => {
+      const agent = makeAgent({
+        name: "Reviewer",
+        role: "reviewer",
+        state: "active",
         runtimeConfig: { enabled: false },
       });
       const status = getAgentHealthStatus(agent);
@@ -329,14 +384,31 @@ describe("getAgentHealthStatus", () => {
         { agent: makeAgent({ state: "running" }), expectedIconType: "Activity" },
         { agent: makeAgent({ state: "idle" }), expectedIconType: "Bot" },
         { agent: makeAgent({ state: "active", runtimeConfig: { enabled: false } }), expectedIconType: "Bot" },
+        {
+          agent: makeAgent({
+            name: "executor-FN-1661",
+            role: "executor",
+            state: "active",
+            taskId: "FN-1661",
+            metadata: { agentKind: "task-worker" },
+            runtimeConfig: { enabled: false },
+          }),
+          expectedIconType: "Activity",
+        },
         // Active with recent heartbeat should show "Healthy" (Heart icon)
         { agent: makeAgent({ state: "active", lastHeartbeatAt: new Date(FIXED_NOW - 30_000).toISOString() }), expectedIconType: "Heart" },
       ];
 
       testCases.forEach(({ agent, expectedIconType }) => {
         const status = getAgentHealthStatus(agent);
-        // lucide icons have displayName property
-        const iconType = (status.icon as any).type?.displayName ?? (status.icon as any).type?.name;
+        // lucide icons expose their component on the JSX element's `type`
+        const iconElement = status.icon as JSX.Element & {
+          type?: {
+            displayName?: string;
+            name?: string;
+          };
+        };
+        const iconType = iconElement.type?.displayName ?? iconElement.type?.name;
         expect(iconType).toBe(expectedIconType);
       });
     });

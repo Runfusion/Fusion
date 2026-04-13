@@ -1,9 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { Task, TaskStore, CentralCore } from "@fusion/core";
+import type { Task, TaskStore, CentralCore, AgentStore, Agent } from "@fusion/core";
 import { InProcessRuntime } from "./in-process-runtime.js";
 import type { ProjectRuntimeConfig } from "../project-runtime.js";
 
@@ -135,6 +134,21 @@ vi.mock("../executor.js", async () => {
   };
 });
 
+type RuntimeInternals = {
+  agentStore?: AgentStore;
+  stuckTaskDetector?: unknown;
+};
+
+function getRuntimeInternals(runtime: InProcessRuntime): RuntimeInternals {
+  return runtime as unknown as RuntimeInternals;
+}
+
+function getAgentStore(runtime: InProcessRuntime): AgentStore {
+  const store = getRuntimeInternals(runtime).agentStore;
+  expect(store).toBeDefined();
+  return store!;
+}
+
 describe("InProcessRuntime", () => {
   let runtime: InProcessRuntime;
   let mockCentralCore: CentralCore;
@@ -222,7 +236,7 @@ describe("InProcessRuntime", () => {
           stuckTaskDetector: expect.any(Object),
         }),
       );
-      expect((runtime as any).stuckTaskDetector).toBeDefined();
+      expect(getRuntimeInternals(runtime).stuckTaskDetector).toBeDefined();
     });
 
     it("should transition to 'stopped' after stop", async () => {
@@ -407,8 +421,7 @@ describe("InProcessRuntime", () => {
       await runtime.start();
 
       // Create an agent with heartbeat config
-      const store = (runtime as any).agentStore;
-      expect(store).toBeDefined();
+      const store = getAgentStore(runtime);
 
       const createdAgent = await store.createAgent({
         name: "Configured Agent",
@@ -434,12 +447,13 @@ describe("InProcessRuntime", () => {
 
       const monitor = runtime.getHeartbeatMonitor();
       expect(monitor).toBeDefined();
+      const heartbeatMonitor = monitor!;
+      const executeResult = { id: "run-test" } as Awaited<ReturnType<typeof heartbeatMonitor.executeHeartbeat>>;
       const executeSpy = vi
-        .spyOn(monitor!, "executeHeartbeat")
-        .mockResolvedValue({ id: "run-test" } as any);
+        .spyOn(heartbeatMonitor, "executeHeartbeat")
+        .mockResolvedValue(executeResult);
 
-      const store = (runtime as any).agentStore;
-      expect(store).toBeDefined();
+      const store = getAgentStore(runtime);
 
       const agent = await store.createAgent({
         name: "Assignable",
@@ -461,6 +475,72 @@ describe("InProcessRuntime", () => {
           }),
         );
       });
+    }, 30000);
+
+    it("creates runtime task-worker agents with disabled heartbeat metadata and running state", async () => {
+      await runtime.start();
+
+      const store = getAgentStore(runtime);
+
+      const assignTaskSpy = vi.spyOn(store, "assignTask");
+      const updateStateSpy = vi.spyOn(store, "updateAgentState");
+      const executorOptions = mockExecutorCtor.mock.calls.at(-1)?.[0] as {
+        onStart?: (task: Task, worktreePath: string) => void;
+      };
+      expect(executorOptions.onStart).toBeTypeOf("function");
+
+      executorOptions.onStart?.({ id: "FN-1661" } as Task, join(testDir, "worktree-FN-1661"));
+
+      await vi.waitFor(async () => {
+        const agents = await store.listAgents();
+        expect(agents).toHaveLength(1);
+        expect(agents[0]).toMatchObject({
+          name: "executor-FN-1661",
+          role: "executor",
+          state: "running",
+          taskId: "FN-1661",
+          metadata: {
+            agentKind: "task-worker",
+            taskWorker: true,
+            managedBy: "task-executor",
+          },
+          runtimeConfig: {
+            enabled: false,
+          },
+        });
+      });
+
+      expect(assignTaskSpy).toHaveBeenCalledWith(expect.any(String), "FN-1661");
+      expect(updateStateSpy).toHaveBeenNthCalledWith(1, expect.any(String), "active");
+      expect(updateStateSpy).toHaveBeenNthCalledWith(2, expect.any(String), "running");
+      expect(assignTaskSpy.mock.invocationCallOrder[0]).toBeLessThan(updateStateSpy.mock.invocationCallOrder[0]);
+    }, 30000);
+
+    it("does not wake executeHeartbeat for runtime task-worker assignment events", async () => {
+      await runtime.start();
+
+      const monitor = runtime.getHeartbeatMonitor();
+      expect(monitor).toBeDefined();
+      const heartbeatMonitor = monitor!;
+      const executeResult = { id: "run-task-worker" } as Awaited<ReturnType<typeof heartbeatMonitor.executeHeartbeat>>;
+      const executeSpy = vi
+        .spyOn(heartbeatMonitor, "executeHeartbeat")
+        .mockResolvedValue(executeResult);
+
+      const executorOptions = mockExecutorCtor.mock.calls.at(-1)?.[0] as {
+        onStart?: (task: Task, worktreePath: string) => void;
+      };
+      executorOptions.onStart?.({ id: "FN-2001" } as Task, join(testDir, "worktree-FN-2001"));
+
+      const store = getAgentStore(runtime);
+
+      await vi.waitFor(async () => {
+        const agents = await store.listAgents();
+        expect(agents.some((agent: Agent) => agent.name === "executor-FN-2001")).toBe(true);
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(executeSpy).not.toHaveBeenCalled();
     }, 30000);
   });
 

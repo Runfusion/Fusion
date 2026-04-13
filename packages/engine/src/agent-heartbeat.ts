@@ -20,15 +20,13 @@
 import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, AgentHeartbeatConfig, AgentBudgetStatus, Message, MessageStore, TaskStore, TaskDetail, AgentRole, Agent, InboxTask, BlockedStateSnapshot, RunMutationContext } from "@fusion/core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
-import { createTaskCreateTool, createTaskLogTool, createTaskLogToolWithContext, taskCreateParams } from "./agent-tools.js";
+import { createTaskCreateTool, createTaskLogToolWithContext, taskCreateParams } from "./agent-tools.js";
 import { AgentLogger } from "./agent-logger.js";
 import { heartbeatLog } from "./logger.js";
 import { createRunAuditor, type EngineRunContext } from "./run-audit.js";
 
 // Lazy import for pi — avoids pulling the pi SDK into the module graph
 // when heartbeat execution isn't needed.
-type CreateKbAgentFn = (options: import("./pi.js").AgentOptions) => Promise<import("./pi.js").AgentResult>;
-type PromptWithFallbackFn = (session: import("@mariozechner/pi-coding-agent").AgentSession, prompt: string) => Promise<void>;
 
 /** Resolved per-agent heartbeat config after validation and fallback */
 interface ResolvedHeartbeatConfig {
@@ -1081,8 +1079,8 @@ export class HeartbeatMonitor {
     const baseCreateTool = createTaskCreateTool(taskStore);
     const trackedCreateTool: ToolDefinition = {
       ...baseCreateTool,
-      execute: async (id: string, params: Static<typeof taskCreateParams>, _signal?: unknown, _onUpdate?: unknown, _ctx?: unknown) => {
-        const result = await baseCreateTool.execute(id, params, undefined as any, undefined as any, undefined as any);
+      execute: async (id: string, params: Static<typeof taskCreateParams>, signal, onUpdate, ctx) => {
+        const result = await baseCreateTool.execute(id, params, signal, onUpdate, ctx);
 
         // Extract created task ID from the response text ("Created FN-XXX: ...")
         const firstContent = result.content[0];
@@ -1404,6 +1402,11 @@ export class HeartbeatTriggerScheduler {
       if (!this.running) return;
 
       try {
+        if (agent.runtimeConfig?.enabled === false) {
+          heartbeatLog.log(`Assignment trigger skipped for ${agent.id} (heartbeat disabled)`);
+          return;
+        }
+
         // Guard: skip if agent already has an active run
         const activeRun = await this.store.getActiveHeartbeatRun(agent.id);
         if (activeRun) {
