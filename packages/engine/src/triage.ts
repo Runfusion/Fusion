@@ -474,8 +474,16 @@ export class TriageProcessor {
           && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),
       );
 
-      for (const task of triageTasks) {
-        void this.specifyTask(task);
+      // Respect the global concurrency limit — only kick off as many triage
+      // tasks as the semaphore has available slots. Without this gate, all
+      // eligible tasks queue on the semaphore simultaneously, which is
+      // wasteful and confusing in the UI.
+      const maxToStart = this.options.semaphore
+        ? Math.max(0, this.options.semaphore.availableCount)
+        : triageTasks.length;
+
+      for (let i = 0; i < Math.min(triageTasks.length, maxToStart); i++) {
+        void this.specifyTask(triageTasks[i]);
       }
     } catch (err) {
       triageLog.error("Poll error:", err);
