@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type { JSX } from "react";
 import { X, Plus, Play, Pause, Square, Activity, Heart, Trash2, RefreshCw, Bot, LayoutGrid, List, Filter } from "lucide-react";
 import type { Agent, AgentCapability, AgentState } from "../api";
@@ -61,6 +61,15 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
 
   const [editingRoleForAgent, setEditingRoleForAgent] = useState<string | null>(null);
   const roleSelectRef = useRef<HTMLSelectElement>(null);
+
+  // Filter agents for display: hide terminated agents in default "All States" view
+  // but show them when the user explicitly filters to "terminated"
+  const displayAgents = useMemo(() => {
+    if (filterState === "all") {
+      return agents.filter(a => a.state !== "terminated");
+    }
+    return agents;
+  }, [agents, filterState]);
 
   const loadAgents = useCallback(async () => {
     setIsLoading(true);
@@ -270,7 +279,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
 
           {/* Agent List */}
           <div className={view === "board" ? "agent-board" : "agent-list"}>
-            {agents.length === 0 ? (
+            {displayAgents.length === 0 ? (
               <div className="agent-empty">
                 <Bot size={48} opacity={0.3} />
                 <p>No agents found</p>
@@ -278,7 +287,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
               </div>
             ) : view === "board" ? (
               // Board view: compact grid layout
-              agents.map(agent => {
+              displayAgents.map(agent => {
                 const health = getHealthStatus(agent);
                 const stateStyle = STATE_COLORS[agent.state];
                 return (
@@ -409,7 +418,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
               })
             ) : (
               // List view: detailed card layout
-              agents.map(agent => {
+              displayAgents.map(agent => {
                 const health = getHealthStatus(agent);
                 const stateStyle = STATE_COLORS[agent.state];
                 return (

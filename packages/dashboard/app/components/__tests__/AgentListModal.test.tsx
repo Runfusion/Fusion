@@ -183,7 +183,31 @@ describe("AgentListModal", () => {
         expect(screen.getByText("idle")).toBeTruthy();
         expect(screen.getByText("active")).toBeTruthy();
         expect(screen.getByText("paused")).toBeTruthy();
+        // Terminated agents are hidden in default "All States" view
+        expect(screen.queryByText("terminated")).toBeNull();
+      });
+    });
+
+    it("shows terminated agents when explicitly filtered", async () => {
+      render(
+        <AgentListModal
+          isOpen={true}
+          onClose={mockOnClose}
+          addToast={mockAddToast}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("All States")).toBeTruthy();
+      });
+
+      // Switch to terminated filter
+      const filterSelect = screen.getByDisplayValue("All States");
+      fireEvent.change(filterSelect, { target: { value: "terminated" } });
+
+      await waitFor(() => {
         expect(screen.getByText("terminated")).toBeTruthy();
+        expect(screen.getByText("Test Agent 4")).toBeTruthy();
       });
     });
 
@@ -567,7 +591,7 @@ describe("AgentListModal", () => {
   });
 
   describe("agent deletion", () => {
-    it("shows Delete button for idle and terminated agents", async () => {
+    it("shows Delete button for idle agents in default view (terminated filtered out)", async () => {
       render(
         <AgentListModal
           isOpen={true}
@@ -577,12 +601,40 @@ describe("AgentListModal", () => {
       );
 
       await waitFor(() => {
-        // Multiple delete buttons: one for idle (agent-001) and one for terminated (agent-004)
+        // In default "All States" view, only idle agent (agent-001) should have delete button
+        // Terminated agents (agent-004) are filtered out
         const deleteButtons = screen.getAllByTitle("Delete");
-        expect(deleteButtons.length).toBeGreaterThanOrEqual(2);
+        expect(deleteButtons.length).toBeGreaterThanOrEqual(1);
       });
 
-      // Verify Start button appears for terminated agent (agent-004)
+      // Verify terminated agent is not visible
+      expect(screen.queryByText("Test Agent 4")).toBeNull();
+    });
+
+    it("shows Delete button for terminated agents when explicitly filtered", async () => {
+      render(
+        <AgentListModal
+          isOpen={true}
+          onClose={mockOnClose}
+          addToast={mockAddToast}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("All States")).toBeTruthy();
+      });
+
+      // Switch to terminated filter
+      const filterSelect = screen.getByDisplayValue("All States");
+      fireEvent.change(filterSelect, { target: { value: "terminated" } });
+
+      await waitFor(() => {
+        expect(screen.getByText("Test Agent 4")).toBeTruthy();
+        // Now we should see the Delete button for terminated agent
+        expect(screen.getAllByTitle("Delete").length).toBeGreaterThanOrEqual(1);
+      });
+
+      // Verify Start button appears for terminated agent
       const agentCards = document.querySelectorAll(".agent-card");
       let terminatedCard: Element | null = null;
       agentCards.forEach(card => {
@@ -592,7 +644,7 @@ describe("AgentListModal", () => {
       expect(terminatedStartBtn).toBeTruthy();
     });
 
-    it("confirms before deleting agent", async () => {
+    it("confirms before deleting terminated agent (from terminated filter)", async () => {
       const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
 
       render(
@@ -604,7 +656,16 @@ describe("AgentListModal", () => {
       );
 
       await waitFor(() => {
-        expect(screen.getAllByTitle("Delete").length).toBeGreaterThanOrEqual(2);
+        expect(screen.getByText("All States")).toBeTruthy();
+      });
+
+      // Switch to terminated filter to see terminated agent
+      const filterSelect = screen.getByDisplayValue("All States");
+      fireEvent.change(filterSelect, { target: { value: "terminated" } });
+
+      await waitFor(() => {
+        expect(screen.getByText("Test Agent 4")).toBeTruthy();
+        expect(screen.getAllByTitle("Delete").length).toBeGreaterThanOrEqual(1);
       });
 
       // Find delete button for terminated agent (agent-004)
@@ -624,7 +685,7 @@ describe("AgentListModal", () => {
       confirmSpy.mockRestore();
     });
 
-    it("deletes agent after confirmation", async () => {
+    it("deletes terminated agent after confirmation (from terminated filter)", async () => {
       vi.spyOn(window, "confirm").mockReturnValue(true);
 
       render(
@@ -636,7 +697,15 @@ describe("AgentListModal", () => {
       );
 
       await waitFor(() => {
-        expect(screen.getAllByTitle("Delete").length).toBeGreaterThanOrEqual(2);
+        expect(screen.getByText("All States")).toBeTruthy();
+      });
+
+      // Switch to terminated filter to see terminated agent
+      const filterSelect = screen.getByDisplayValue("All States");
+      fireEvent.change(filterSelect, { target: { value: "terminated" } });
+
+      await waitFor(() => {
+        expect(screen.getByText("Test Agent 4")).toBeTruthy();
       });
 
       // Find delete button for terminated agent (agent-004)
@@ -658,7 +727,7 @@ describe("AgentListModal", () => {
       );
     });
 
-    it("deletes idle agent after confirmation", async () => {
+    it("deletes idle agent after confirmation (from default view)", async () => {
       vi.spyOn(window, "confirm").mockReturnValue(true);
 
       render(
@@ -670,7 +739,10 @@ describe("AgentListModal", () => {
       );
 
       await waitFor(() => {
-        expect(screen.getAllByTitle("Delete").length).toBeGreaterThanOrEqual(2);
+        // Only idle agent (agent-001) should have delete button in default view
+        // Terminated agent (agent-004) is filtered out
+        const deleteButtons = screen.getAllByTitle("Delete");
+        expect(deleteButtons.length).toBeGreaterThanOrEqual(1);
       });
 
       // Find delete button for idle agent (agent-001)
@@ -705,17 +777,19 @@ describe("AgentListModal", () => {
       );
 
       await waitFor(() => {
-        expect(screen.getAllByTitle("Delete").length).toBeGreaterThanOrEqual(2);
+        // Only idle agent (agent-001) should have delete button in default view
+        const deleteButtons = screen.getAllByTitle("Delete");
+        expect(deleteButtons.length).toBeGreaterThanOrEqual(1);
       });
 
-      // Click the first available delete button
+      // Click the idle agent's delete button
       const agentCards = document.querySelectorAll(".agent-card");
-      let terminatedCard: Element | null = null;
+      let idleCard: Element | null = null;
       agentCards.forEach(card => {
-        if (card.textContent?.includes("agent-004")) terminatedCard = card;
+        if (card.textContent?.includes("agent-001")) idleCard = card;
       });
-      const terminatedDeleteBtn = terminatedCard?.querySelector('[title="Delete"]') as HTMLElement;
-      fireEvent.click(terminatedDeleteBtn);
+      const idleDeleteBtn = idleCard?.querySelector('[title="Delete"]') as HTMLElement;
+      fireEvent.click(idleDeleteBtn);
 
       await waitFor(() => {
         expect(mockAddToast).toHaveBeenCalledWith(
@@ -1059,8 +1133,9 @@ describe("AgentListModal", () => {
 
       await waitFor(() => {
         // Board view should render compact cards
+        // 4 agents total, but terminated (agent-004) is filtered out in default view
         const boardCards = document.querySelectorAll(".agent-board-card");
-        expect(boardCards.length).toBe(mockAgents.length);
+        expect(boardCards.length).toBe(3);
       });
 
       // Check that board view elements are present
@@ -1122,8 +1197,9 @@ describe("AgentListModal", () => {
         expect(listContainer).toBeTruthy();
 
         // Detailed cards should be present
+        // 4 agents total, but terminated (agent-004) is filtered out in default view
         const agentCards = document.querySelectorAll(".agent-card");
-        expect(agentCards.length).toBe(mockAgents.length);
+        expect(agentCards.length).toBe(3);
       });
     });
   });

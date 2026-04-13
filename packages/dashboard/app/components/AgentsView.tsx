@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type { JSX } from "react";
 import { Plus, Play, Pause, Square, Activity, Heart, Trash2, RefreshCw, Bot, LayoutGrid, List, ChevronRight, ChevronDown, GitBranch, Filter, Upload, Network } from "lucide-react";
 import type { Agent, AgentCapability, AgentState, OrgTreeNode } from "../api";
@@ -222,6 +222,35 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
   const roleSelectRef = useRef<HTMLSelectElement>(null);
 
   const hierarchy = useAgentHierarchy(agents, projectId);
+
+  // Filter agents for display: hide terminated agents in default "All States" view
+  // but show them when the user explicitly filters to "terminated"
+  const displayAgents = useMemo(() => {
+    if (filterState === "all") {
+      return agents.filter(a => a.state !== "terminated");
+    }
+    return agents;
+  }, [agents, filterState]);
+
+  // Filter org tree to exclude terminated agents in default view
+  const displayOrgTree = useMemo(() => {
+    if (filterState === "all") {
+      // Recursively filter out terminated agents from the org tree
+      const filterNode = (node: OrgTreeNode): OrgTreeNode | null => {
+        if (node.agent.state === "terminated") return null;
+        return {
+          ...node,
+          children: node.children
+            .map(filterNode)
+            .filter((n): n is OrgTreeNode => n !== null),
+        };
+      };
+      return orgTree
+        .map(filterNode)
+        .filter((n): n is OrgTreeNode => n !== null);
+    }
+    return orgTree;
+  }, [orgTree, filterState]);
 
   const loadAgents = useCallback(async () => {
     setIsLoading(true);
@@ -501,7 +530,7 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
         {/* Agent List */}
         {agentView === "tree" ? (
           <div className="agent-tree__view">
-            {agents.length === 0 ? (
+            {displayAgents.length === 0 ? (
               <div className="agent-empty">
                 <Bot size={48} opacity={0.3} />
                 <p>No agents found</p>
@@ -529,14 +558,14 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
                 <RefreshCw size={18} className="spin" />
                 <span>Loading org chart...</span>
               </div>
-            ) : orgTree.length === 0 ? (
+            ) : displayOrgTree.length === 0 ? (
               <div className="agent-empty">
                 <Bot size={48} opacity={0.3} />
                 <p>No agents found</p>
                 <p className="text-secondary">Create an agent to get started</p>
               </div>
             ) : (
-              orgTree.map((node) => (
+              displayOrgTree.map((node) => (
                 <OrgChartNode
                   key={node.agent.id}
                   node={node}
@@ -549,7 +578,7 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
           </div>
         ) : (
         <div className={agentView === "board" ? "agent-board" : "agent-list"}>
-          {agents.length === 0 ? (
+          {displayAgents.length === 0 ? (
             <div className="agent-empty">
               <Bot size={48} opacity={0.3} />
               <p>No agents found</p>
@@ -557,7 +586,7 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
             </div>
           ) : agentView === "board" ? (
             // Board view: compact grid layout
-            agents.map(agent => {
+            displayAgents.map(agent => {
               const health = getHealthStatus(agent);
               const stateStyle = STATE_COLORS[agent.state];
               return (
@@ -716,7 +745,7 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
             })
           ) : (
             // List view: detailed card layout
-            agents.map(agent => {
+            displayAgents.map(agent => {
               const health = getHealthStatus(agent);
               const stateStyle = STATE_COLORS[agent.state];
               return (

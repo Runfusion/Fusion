@@ -229,6 +229,7 @@ Manage AI agents with a dedicated control surface accessible from the main dashb
 
 **Features**:
 - **State Filter**: Styled dropdown to filter agents by state (All States, Idle, Active, Paused, Terminated) with Filter icon, aria-label, and consistent dashboard styling using design tokens (`--radius-sm`, `--border`, `--bg`, `--focus-ring`)
+- **Terminated Agent Filtering**: By default ("All States" filter), terminated agents are automatically hidden from the agent list to reduce clutter from frequently-terminating runtime task-worker agents. Terminated agents remain accessible by explicitly selecting the "Terminated" filter option, enabling intentional inspection and cleanup when needed. This behavior applies to both the main AgentsView and the AgentListModal.
 - **View Modes**: Board (compact grid) and list (detailed card) layouts, persisted to localStorage
 - **Agent CRUD**: Create agents with name and role (create form's text input and role/type select both use tokenized styling — `var(--surface)`, `var(--text)`, `var(--border)`, `var(--radius-sm)`, `var(--focus-ring)` — for consistent theme-aware rendering across all color themes and light/dark modes), change state, update roles inline, delete idle and terminated agents (active and paused agents must be stopped/terminated first)
 - **Health Monitoring**: Heartbeat-based health status (Healthy, Unresponsive, Starting, Paused, Terminated) using CSS variable references for theme consistency
