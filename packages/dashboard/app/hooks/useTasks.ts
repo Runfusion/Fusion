@@ -31,7 +31,7 @@ function compareTimestamps(a: string | undefined, b: string | undefined): number
 export interface UseTasksOptions {
   /** 
    * When provided, fetches tasks only for this project.
-   * Note: SSE updates are not filtered by project in current implementation.
+   * SSE events from other project contexts are ignored.
    */
   projectId?: string;
   /**
@@ -59,26 +59,43 @@ export function useTasks(options?: UseTasksOptions) {
   // Tracks when task data was last confirmed fresh by the server.
   // Used to prevent false positives in stuck detection when tab has been in background.
   const lastFetchTimeMs = useRef<number | undefined>(undefined);
+  // Tracks the project context version to detect stale SSE events after project switches.
+  // Incremented whenever projectId changes, invalidating any in-flight SSE handlers.
+  const projectContextVersionRef = useRef(0);
+  // Track previous projectId to detect changes
+  const previousProjectIdRef = useRef<string | undefined>(projectId);
   tasksRef.current = tasks;
   searchQueryRef.current = searchQuery;
+
+  // Detect project changes and invalidate SSE context
+  if (previousProjectIdRef.current !== projectId) {
+    previousProjectIdRef.current = projectId;
+    projectContextVersionRef.current++;
+    // Clear tasks immediately on project change so prior-project rows are not rendered
+    // during the fetch gap. This is scoped to project-context transitions only.
+    setTasks([]);
+  }
 
   const VISIBILITY_REFRESH_DEBOUNCE_MS = 1000;
 
   const refreshTasks = useCallback(async (options?: { clearOnError?: boolean; searchQueryOverride?: string; includeArchivedOverride?: boolean }) => {
     const requestVersion = ++fetchVersionRef.current;
+    const requestProjectId = projectId; // Capture the projectId for this request
     const query = options?.searchQueryOverride ?? searchQuery;
     const wantArchived = options?.includeArchivedOverride ?? includeArchivedRef.current;
 
     try {
-      const fetchedTasks = await api.fetchTasks(undefined, undefined, projectId, query, wantArchived);
-      if (fetchVersionRef.current !== requestVersion) {
+      const fetchedTasks = await api.fetchTasks(undefined, undefined, requestProjectId, query, wantArchived);
+      // Reject if project changed (compare against the projectId at request time) or version is stale
+      if (fetchVersionRef.current !== requestVersion || projectId !== requestProjectId) {
         return;
       }
       setTasks(fetchedTasks.map(normalizeTask));
       // Record when we received fresh server data for stuck detection
       lastFetchTimeMs.current = Date.now();
     } catch {
-      if (fetchVersionRef.current !== requestVersion) {
+      // Reject if project changed or version is stale
+      if (fetchVersionRef.current !== requestVersion || projectId !== requestProjectId) {
         return;
       }
       if (options?.clearOnError) {
@@ -133,9 +150,8 @@ export function useTasks(options?: UseTasksOptions) {
   }, [refreshTasks]);
 
   // SSE live updates
-  // Note: In multi-project mode, SSE receives all task events.
-  // Tasks are filtered by ID match, so cross-project updates won't affect
-  // the local state since task IDs are unique and we only fetch from one project.
+  // Note: SSE events from stale project contexts are ignored via projectContextVersionRef.
+  // This prevents tasks from the previous project from appearing during project switches.
   useEffect(() => {
     let closedByCleanup = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -143,6 +159,10 @@ export function useTasks(options?: UseTasksOptions) {
     if (connectionNonce > 0) {
       void refreshTasksRef.current();
     }
+    // Capture the project context version at effect start.
+    // Any event from a stale SSE connection (created before a project switch)
+    // will have a different context version and will be ignored.
+    const contextVersionAtStart = projectContextVersionRef.current;
     const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
     const es = new EventSource(`/api/events${query}`);
 
@@ -161,6 +181,10 @@ export function useTasks(options?: UseTasksOptions) {
     resetHeartbeat();
 
     const handleCreated = (e: MessageEvent) => {
+      // Guard: reject events from stale project contexts
+      if (projectContextVersionRef.current !== contextVersionAtStart) {
+        return;
+      }
       resetHeartbeat();
       const task = normalizeTask(JSON.parse(e.data) as Task);
       // When search is active, re-fetch to get server-filtered results
@@ -168,9 +192,7 @@ export function useTasks(options?: UseTasksOptions) {
         void refreshTasksRef.current({ searchQueryOverride: searchQueryRef.current });
         return;
       }
-      // In project mode, only add if this task belongs to our project
-      // Since we can't determine project from event, we add and let subsequent
-      // fetches correct the state, or filter by checking if task exists in our set
+      // Add the task if it doesn't already exist
       setTasks((prev) => {
         // Avoid duplicates
         if (prev.some((t) => t.id === task.id)) return prev;
@@ -179,6 +201,10 @@ export function useTasks(options?: UseTasksOptions) {
     };
 
     const handleMoved = (e: MessageEvent) => {
+      // Guard: reject events from stale project contexts
+      if (projectContextVersionRef.current !== contextVersionAtStart) {
+        return;
+      }
       resetHeartbeat();
       // When search is active, re-fetch to get server-filtered results
       if (searchQueryRef.current) {
@@ -197,6 +223,10 @@ export function useTasks(options?: UseTasksOptions) {
     };
 
     const handleUpdated = (e: MessageEvent) => {
+      // Guard: reject events from stale project contexts
+      if (projectContextVersionRef.current !== contextVersionAtStart) {
+        return;
+      }
       resetHeartbeat();
       // When search is active, re-fetch to get server-filtered results
       if (searchQueryRef.current) {
@@ -234,6 +264,10 @@ export function useTasks(options?: UseTasksOptions) {
     };
 
     const handleDeleted = (e: MessageEvent) => {
+      // Guard: reject events from stale project contexts
+      if (projectContextVersionRef.current !== contextVersionAtStart) {
+        return;
+      }
       resetHeartbeat();
       // When search is active, re-fetch to get server-filtered results
       if (searchQueryRef.current) {
@@ -245,6 +279,10 @@ export function useTasks(options?: UseTasksOptions) {
     };
 
     const handleMerged = (e: MessageEvent) => {
+      // Guard: reject events from stale project contexts
+      if (projectContextVersionRef.current !== contextVersionAtStart) {
+        return;
+      }
       resetHeartbeat();
       // When search is active, re-fetch to get server-filtered results
       if (searchQueryRef.current) {

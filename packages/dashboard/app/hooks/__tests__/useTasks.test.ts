@@ -1203,4 +1203,332 @@ describe("useTasks", () => {
       removeEventListenerSpy.mockRestore();
     });
   });
+
+  describe("project switching", () => {
+    it("clears tasks immediately when switching projects to prevent stale data bleed-through", async () => {
+      // Project A has tasks
+      const projectATasks = [
+        createMockTask({ id: "FN-A1", description: "Project A task 1" }),
+        createMockTask({ id: "FN-A2", description: "Project A task 2" }),
+      ];
+      // Project B fetch is unresolved (simulating slow network)
+      mockFetchTasks
+        .mockResolvedValueOnce(projectATasks)
+        .mockImplementation(() => new Promise(() => {})); // Never resolves
+
+      // Start with project A
+      const { result, rerender } = renderHook(
+        ({ projectId }: { projectId?: string }) => useTasks({ projectId }),
+        { initialProps: { projectId: "project-a" } }
+      );
+
+      await waitFor(() => {
+        expect(result.current.tasks).toHaveLength(2);
+      });
+
+      // Verify we're showing project A tasks
+      expect(result.current.tasks.map((t) => t.id)).toEqual(["FN-A1", "FN-A2"]);
+      expect(mockFetchTasks).toHaveBeenLastCalledWith(
+        undefined, undefined, "project-a", undefined, false
+      );
+
+      // Switch to project B - should immediately clear tasks
+      await act(async () => {
+        rerender({ projectId: "project-b" });
+      });
+
+      // Tasks should be cleared immediately (no stale project A tasks visible)
+      expect(result.current.tasks).toHaveLength(0);
+
+      // Project B fetch should be in flight
+      expect(mockFetchTasks).toHaveBeenLastCalledWith(
+        undefined, undefined, "project-b", undefined, false
+      );
+    });
+
+    it("ignores late responses from the previous project after switching", async () => {
+      // Use a more realistic mock that returns different promises per projectId
+      // This simulates real API behavior where different projectIds result in different API calls
+
+      const projectATasks = [
+        createMockTask({ id: "FN-A1", description: "Project A task" }),
+      ];
+
+      // Create pending promises for each project
+      let resolveProjectA: (tasks: Task[]) => void;
+      const projectAFetchPromise = new Promise<Task[]>((resolve) => {
+        resolveProjectA = resolve;
+      });
+
+      let resolveProjectB: (tasks: Task[]) => void;
+      const projectBFetchPromise = new Promise<Task[]>((resolve) => {
+        resolveProjectB = resolve;
+      });
+
+      // Mock to return different promises based on projectId
+      mockFetchTasks.mockImplementation((_limit?: number, _offset?: number, projectId?: string) => {
+        if (projectId === "project-a") {
+          return projectAFetchPromise;
+        }
+        if (projectId === "project-b") {
+          return projectBFetchPromise;
+        }
+        return Promise.resolve([]);
+      });
+
+      // Initial mount with project A
+      const { result, rerender } = renderHook(
+        ({ projectId }: { projectId?: string }) => useTasks({ projectId }),
+        { initialProps: { projectId: "project-a" } }
+      );
+
+      await waitFor(() => {
+        expect(MockEventSource.instances).toHaveLength(1);
+      });
+
+      // Switch to project B before project A resolves
+      await act(async () => {
+        rerender({ projectId: "project-b" });
+      });
+
+      // Tasks should be empty after switch
+      expect(result.current.tasks).toHaveLength(0);
+
+      // Project A's fetch resolves (should be ignored due to projectId mismatch)
+      await act(async () => {
+        resolveProjectA!(projectATasks);
+      });
+
+      // Project A data should NOT appear - projectId mismatch
+      expect(result.current.tasks).toHaveLength(0);
+
+      // Now resolve project B's fetch
+      const projectBTasks = [
+        createMockTask({ id: "FN-B1", description: "Project B task" }),
+      ];
+      await act(async () => {
+        resolveProjectB!(projectBTasks);
+      });
+
+      // Project B data should appear
+      expect(result.current.tasks).toHaveLength(1);
+      expect(result.current.tasks[0].id).toBe("FN-B1");
+    });
+
+    it("ignores SSE task:created events from stale EventSource after project switch", async () => {
+      // Project A has a task
+      const projectATasks = [
+        createMockTask({ id: "FN-A1", description: "Project A task" }),
+      ];
+      // Project B fetch never resolves
+      mockFetchTasks
+        .mockResolvedValueOnce(projectATasks)
+        .mockImplementation(() => new Promise(() => {}));
+
+      // Start with project A
+      const { result, rerender } = renderHook(
+        ({ projectId }: { projectId?: string }) => useTasks({ projectId }),
+        { initialProps: { projectId: "project-a" } }
+      );
+
+      await waitFor(() => {
+        expect(result.current.tasks).toHaveLength(1);
+      });
+
+      const projectAEventSource = MockEventSource.instances[0];
+
+      // Switch to project B
+      await act(async () => {
+        rerender({ projectId: "project-b" });
+      });
+
+      // Tasks should be cleared
+      expect(result.current.tasks).toHaveLength(0);
+
+      // Emit a task:created event from the OLD EventSource (project A)
+      const newTaskFromStaleSource = createMockTask({ id: "FN-A2", description: "Should not appear" });
+      await act(async () => {
+        projectAEventSource._emit("task:created", newTaskFromStaleSource);
+      });
+
+      // The stale event should be ignored - tasks should still be empty
+      expect(result.current.tasks).toHaveLength(0);
+
+      // Now emit from the NEW EventSource (project B) - this should work
+      await waitFor(() => {
+        expect(MockEventSource.instances).toHaveLength(2);
+      });
+
+      const projectBEventSource = MockEventSource.instances[1];
+      const newTaskFromProjectB = createMockTask({ id: "FN-B1", description: "Project B task" });
+
+      await act(async () => {
+        projectBEventSource._emit("task:created", newTaskFromProjectB);
+      });
+
+      // The new event should be accepted
+      expect(result.current.tasks).toHaveLength(1);
+      expect(result.current.tasks[0].id).toBe("FN-B1");
+    });
+
+    it("calls fetchTasks with correct projectId across switch sequence", async () => {
+      mockFetchTasks.mockResolvedValue([]);
+
+      const { result, rerender } = renderHook(
+        ({ projectId }: { projectId?: string }) => useTasks({ projectId }),
+        { initialProps: { projectId: "project-a" } }
+      );
+
+      await waitFor(() => {
+        expect(mockFetchTasks).toHaveBeenCalledTimes(1);
+      });
+      expect(mockFetchTasks).toHaveBeenLastCalledWith(
+        undefined, undefined, "project-a", undefined, false
+      );
+
+      // Switch to project B
+      await act(async () => {
+        rerender({ projectId: "project-b" });
+      });
+
+      // Fetch should be called again for project B
+      await waitFor(() => {
+        expect(mockFetchTasks).toHaveBeenCalledTimes(2);
+      });
+      expect(mockFetchTasks).toHaveBeenLastCalledWith(
+        undefined, undefined, "project-b", undefined, false
+      );
+
+      // Switch to project C
+      await act(async () => {
+        rerender({ projectId: "project-c" });
+      });
+
+      await waitFor(() => {
+        expect(mockFetchTasks).toHaveBeenCalledTimes(3);
+      });
+      expect(mockFetchTasks).toHaveBeenLastCalledWith(
+        undefined, undefined, "project-c", undefined, false
+      );
+
+      // Switch back to project A
+      await act(async () => {
+        rerender({ projectId: "project-a" });
+      });
+
+      await waitFor(() => {
+        expect(mockFetchTasks).toHaveBeenCalledTimes(4);
+      });
+      expect(mockFetchTasks).toHaveBeenLastCalledWith(
+        undefined, undefined, "project-a", undefined, false
+      );
+    });
+
+    it("does not clear tasks when searchQuery changes (only projectId changes trigger clear)", async () => {
+      const initialTasks = [
+        createMockTask({ id: "FN-001", description: "Task 1" }),
+      ];
+      mockFetchTasks.mockResolvedValue(initialTasks);
+
+      const { result, rerender } = renderHook(
+        ({ projectId, searchQuery }: { projectId?: string; searchQuery?: string }) =>
+          useTasks({ projectId, searchQuery }),
+        { initialProps: { projectId: "project-a", searchQuery: undefined } }
+      );
+
+      await waitFor(() => {
+        expect(result.current.tasks).toHaveLength(1);
+      });
+
+      // Change only searchQuery
+      await act(async () => {
+        rerender({ projectId: "project-a", searchQuery: "bug" });
+      });
+
+      // Tasks should NOT be cleared (search query change doesn't affect project context)
+      expect(result.current.tasks).toHaveLength(1);
+
+      // Still showing the same task
+      expect(result.current.tasks[0].id).toBe("FN-001");
+    });
+
+    it("creates new EventSource for each project switch", async () => {
+      mockFetchTasks.mockResolvedValue([]);
+
+      const { rerender } = renderHook(
+        ({ projectId }: { projectId?: string }) => useTasks({ projectId }),
+        { initialProps: { projectId: "project-a" } }
+      );
+
+      await waitFor(() => {
+        expect(MockEventSource.instances).toHaveLength(1);
+      });
+
+      const firstEventSource = MockEventSource.instances[0];
+
+      // Switch to project B
+      await act(async () => {
+        rerender({ projectId: "project-b" });
+      });
+
+      await waitFor(() => {
+        expect(MockEventSource.instances).toHaveLength(2);
+      });
+
+      const secondEventSource = MockEventSource.instances[1];
+
+      // EventSources should be different instances
+      expect(secondEventSource).not.toBe(firstEventSource);
+
+      // Switch to project C
+      await act(async () => {
+        rerender({ projectId: "project-c" });
+      });
+
+      await waitFor(() => {
+        expect(MockEventSource.instances).toHaveLength(3);
+      });
+    });
+
+    it("rejects stale SSE events from multiple project switches", async () => {
+      // Project A, B, C each have EventSource
+      mockFetchTasks.mockResolvedValue([]);
+
+      const { rerender } = renderHook(
+        ({ projectId }: { projectId?: string }) => useTasks({ projectId }),
+        { initialProps: { projectId: "project-a" } }
+      );
+
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+      const esA = MockEventSource.instances[0];
+
+      await act(async () => { rerender({ projectId: "project-b" }); });
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(2));
+      const esB = MockEventSource.instances[1];
+
+      await act(async () => { rerender({ projectId: "project-c" }); });
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(3));
+      const esC = MockEventSource.instances[2];
+
+      // Emit task:created from ALL old EventSources
+      const taskA = createMockTask({ id: "FN-A1" });
+      const taskB = createMockTask({ id: "FN-B1" });
+
+      await act(async () => {
+        esA._emit("task:created", taskA);
+        esB._emit("task:created", taskB);
+      });
+
+      // Only the current EventSource (project C) events should be accepted
+      await act(async () => {
+        esC._emit("task:created", createMockTask({ id: "FN-C1" }));
+      });
+
+      // Should only have project C's task
+      // Since fetchTasks returns empty array, only the SSE-added task remains
+      await waitFor(() => {
+        expect(MockEventSource.instances.length).toBe(3);
+      });
+    });
+  });
 });

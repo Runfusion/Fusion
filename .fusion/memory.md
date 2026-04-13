@@ -256,6 +256,44 @@ When the dashboard supports multiple data paths (local vs remote node mode), ens
 - Missing propagation causes the "silent regression" where local search works but remote search fails without errors
 - Add regression tests that mock the API layer and verify query propagation for both paths
 
+## FN-1657: Project-Context Reset in useTasks
+
+When switching projects in `useTasks`, stale task bleed-through can occur if tasks from the previous project remain visible during the fetch gap or if SSE events from the previous project context are processed. The fix uses three mechanisms:
+
+**1. Immediate task clearing on project change:**
+```typescript
+if (previousProjectIdRef.current !== projectId) {
+  previousProjectIdRef.current = projectId;
+  projectContextVersionRef.current++;
+  setTasks([]); // Clear immediately to prevent stale data visibility
+}
+```
+
+**2. SSE context version guard:**
+```typescript
+const contextVersionAtStart = projectContextVersionRef.current;
+// In each SSE handler:
+if (projectContextVersionRef.current !== contextVersionAtStart) {
+  return; // Reject stale events from previous project context
+}
+```
+
+**3. Fetch projectId tracking:**
+```typescript
+const requestProjectId = projectId; // Capture at request time
+// At resolution:
+if (projectId !== requestProjectId) {
+  return; // Reject responses from wrong project
+}
+```
+
+Key patterns:
+- Use refs to track context state that survives re-renders
+- Increment context version on project change (not search query change)
+- SSE handlers capture version at effect start and compare at event time
+- Fetch handlers capture projectId at call time and compare at resolution time
+- Clear tasks immediately on project change, not after fetch completes
+
 ## FN-1522: Task State Reconciliation Pattern
 
 Tasks can get into contradictory states (e.g., `column: "done"` with `status: "blocked"` in summary/log). This happens when agents mark tasks done without verifying actual completion. Reconciliation steps:
