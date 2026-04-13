@@ -247,9 +247,18 @@ const mocks = vi.hoisted(() => {
 
   const authStorage = {
     getApiKey: vi.fn().mockResolvedValue(undefined),
+    reload: vi.fn(),
+    getOAuthProviders: vi.fn().mockReturnValue([]),
+    hasAuth: vi.fn().mockReturnValue(false),
+    login: vi.fn(),
+    logout: vi.fn(),
+    set: vi.fn(),
+    remove: vi.fn(),
+    get: vi.fn(),
   };
 
   const modelRegistry = {
+    getAll: vi.fn().mockReturnValue([]),
     registerProvider: vi.fn(),
     refresh: vi.fn(),
   };

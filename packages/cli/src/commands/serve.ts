@@ -36,6 +36,7 @@ import {
 } from "./task-lifecycle.js";
 import { promptForPort } from "./port-prompt.js";
 import { createReadOnlyProviderSettingsView } from "./provider-settings.js";
+import { wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
 
 const DIAGNOSTIC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 let diagnosticIntervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -493,9 +494,11 @@ export async function runServe(
     modelRegistry.refresh();
   }
 
+  const dashboardAuthStorage = wrapAuthStorageWithApiKeyProviders(authStorage, modelRegistry);
+
   const app = createServer(store, {
     onMerge: (taskId) => engine.onMerge(taskId),
-    authStorage,
+    authStorage: dashboardAuthStorage,
     modelRegistry,
     automationStore,
     missionAutopilot,

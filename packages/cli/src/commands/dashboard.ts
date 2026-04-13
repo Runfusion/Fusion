@@ -10,11 +10,10 @@ import {
 } from "./task-lifecycle.js";
 import { promptForPort } from "./port-prompt.js";
 import { createReadOnlyProviderSettingsView } from "./provider-settings.js";
+import { wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
 
 // Re-export for backward compatibility with tests
 export { promptForPort };
-
-type LoginCallbacks = Parameters<AuthStorage["login"]>[1];
 
 let processDiagnosticsRegistered = false;
 let diagnosticIntervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -182,80 +181,6 @@ function setDiagnosticDbHealthCheck(check: () => boolean): void {
  */
 function setDiagnosticStoreListenerCheck(check: () => Record<string, number>): void {
   diagnosticStoreListenerCheck = check;
-}
-
-interface DashboardAuthStorage {
-  reload(): void;
-  getOAuthProviders(): Array<{ id: string; name: string }>;
-  hasAuth(provider: string): boolean;
-  login(providerId: string, callbacks: LoginCallbacks): Promise<void>;
-  logout(provider: string): void;
-  getApiKeyProviders(): Array<{ id: string; name: string }>;
-  setApiKey(providerId: string, apiKey: string): void;
-  clearApiKey(providerId: string): void;
-  hasApiKey(providerId: string): boolean;
-}
-
-function getProviderDisplayName(providerId: string): string {
-  const knownProviderNames: Record<string, string> = {
-    openrouter: "OpenRouter",
-    "kimi-coding": "Kimi",
-  };
-
-  if (knownProviderNames[providerId]) {
-    return knownProviderNames[providerId];
-  }
-
-  return providerId
-    .split(/[-_]+/)
-    .filter(Boolean)
-    .map((part) => part[0]?.toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function wrapAuthStorageWithApiKeyProviders(
-  authStorage: AuthStorage,
-  modelRegistry: ModelRegistry,
-): DashboardAuthStorage {
-  return {
-    reload: () => authStorage.reload(),
-    getOAuthProviders: () =>
-      authStorage
-        .getOAuthProviders()
-        .map((provider) => ({ id: provider.id, name: provider.name })),
-    hasAuth: (provider) => authStorage.hasAuth(provider),
-    login: (providerId, callbacks) =>
-      authStorage.login(providerId as Parameters<AuthStorage["login"]>[0], callbacks),
-    logout: (provider) => authStorage.logout(provider),
-    getApiKeyProviders: () => {
-      const oauthProviderIds = new Set(
-        authStorage.getOAuthProviders().map((provider) => provider.id),
-      );
-      const providers = new Map<string, string>();
-
-      for (const model of modelRegistry.getAll()) {
-        const providerId = model.provider;
-        if (!providerId || oauthProviderIds.has(providerId) || providers.has(providerId)) {
-          continue;
-        }
-        providers.set(providerId, getProviderDisplayName(providerId));
-      }
-
-      return Array.from(providers, ([id, name]) => ({ id, name })).sort((a, b) =>
-        a.name.localeCompare(b.name),
-      );
-    },
-    setApiKey: (providerId, apiKey) => {
-      authStorage.set(providerId, { type: "api_key", key: apiKey });
-    },
-    clearApiKey: (providerId) => {
-      authStorage.remove(providerId);
-    },
-    hasApiKey: (providerId) => {
-      const credential = authStorage.get(providerId);
-      return credential?.type === "api_key" || authStorage.hasAuth(providerId);
-    },
-  };
 }
 
 export async function runDashboard(port: number, opts: { paused?: boolean; dev?: boolean; interactive?: boolean; open?: boolean } = {}) {

@@ -2049,6 +2049,55 @@ describe("usage", () => {
       expect(minimax.windows[0].label).toBe("MiniMax-M*");
     });
 
+    it("reads API key from provided AuthStorage before auth files", async () => {
+      const mockResponse = {
+        model_remains: [
+          {
+            model_name: "MiniMax-M*",
+            current_interval_total_count: 100,
+            current_interval_usage_count: 40,
+            remains_time: 60_000,
+            start_time: Date.now() - 60_000,
+            end_time: Date.now() + 60_000,
+          },
+        ],
+      };
+
+      mockReadFileSync.mockImplementation(() => {
+        throw new Error("File not found");
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+      mockRequest.mockImplementation((options: any, callback: any) => {
+        expect(options.headers.authorization).toBe("Bearer auth-storage-minimax-key");
+        const mockRes = {
+          statusCode: 200,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") handler(Buffer.from(JSON.stringify(mockResponse)));
+            if (event === "end") handler();
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage({
+        reload: vi.fn(),
+        hasAuth: vi.fn(() => true),
+        getApiKey: vi.fn((provider: string) =>
+          provider === "minimax" ? "auth-storage-minimax-key" : null
+        ),
+      });
+
+      const minimax = providers.find((p) => p.name === "Minimax")!;
+      expect(minimax.status).toBe("ok");
+      expect(minimax.windows).toHaveLength(1);
+    });
+
     it("handles 401 auth error", async () => {
       mockReadFileSync.mockImplementation((filePath: string) => {
         if (filePath.includes(".pi/agent/auth.json")) {
@@ -2278,6 +2327,106 @@ describe("usage", () => {
       const mcpWindow = zai.windows.find((w) => w.label === "MCP Monthly")!;
       expect(mcpWindow).toBeDefined();
       expect(mcpWindow.percentUsed).toBe(2.5);
+    });
+
+    it("reads API key from provided AuthStorage before auth files", async () => {
+      const mockResponse = {
+        code: 200,
+        msg: "Operation successful",
+        data: {
+          limits: [
+            {
+              type: "TOKENS_LIMIT",
+              percentage: 10,
+              nextResetTime: Date.now() + 60_000,
+            },
+          ],
+          level: "pro",
+        },
+        success: true,
+      };
+
+      mockReadFileSync.mockImplementation(() => {
+        throw new Error("File not found");
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+      mockRequest.mockImplementation((options: any, callback: any) => {
+        expect(options.headers.authorization).toBe("auth-storage-zai-key");
+        const mockRes = {
+          statusCode: 200,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") handler(Buffer.from(JSON.stringify(mockResponse)));
+            if (event === "end") handler();
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage({
+        reload: vi.fn(),
+        hasAuth: vi.fn(() => true),
+        get: vi.fn((provider: string) =>
+          provider === "zai" ? { type: "api_key", key: "auth-storage-zai-key" } : null
+        ),
+      });
+
+      const zai = providers.find((p) => p.name === "Zai")!;
+      expect(zai.status).toBe("ok");
+      expect(zai.plan).toBe("Pro");
+    });
+
+    it("falls back to fusion auth files when pi auth files are absent", async () => {
+      const mockResponse = {
+        code: 200,
+        msg: "Operation successful",
+        data: {
+          limits: [
+            {
+              type: "TOKENS_LIMIT",
+              percentage: 10,
+              nextResetTime: Date.now() + 60_000,
+            },
+          ],
+        },
+        success: true,
+      };
+
+      mockReadFileSync.mockImplementation((filePath: string) => {
+        if (filePath.includes(".fusion/agent/auth.json")) {
+          return JSON.stringify({
+            zai: { type: "api_key", key: "fusion-zai-key" },
+          });
+        }
+        throw new Error("File not found");
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+      mockRequest.mockImplementation((options: any, callback: any) => {
+        expect(options.headers.authorization).toBe("fusion-zai-key");
+        const mockRes = {
+          statusCode: 200,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") handler(Buffer.from(JSON.stringify(mockResponse)));
+            if (event === "end") handler();
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const zai = providers.find((p) => p.name === "Zai")!;
+      expect(zai.status).toBe("ok");
     });
 
     it("parses only TOKENS_LIMIT when no TIME_LIMIT present", async () => {

@@ -21,7 +21,7 @@ import { githubRateLimiter } from "./github-poll.js";
 import { terminalSessionManager } from "./terminal.js";
 import { getTerminalService } from "./terminal-service.js";
 import { listFiles, readFile, writeFile, listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, copyWorkspaceFile, moveWorkspaceFile, deleteWorkspaceFile, renameWorkspaceFile, getWorkspaceFileForDownload, getWorkspaceFolderForZip, readProjectFile, writeProjectFile, FileServiceError, type FileListResponse, type FileContentResponse, type SaveFileResponse, type FileOperationResponse } from "./file-service.js";
-import { fetchAllProviderUsage } from "./usage.js";
+import { clearUsageCache, fetchAllProviderUsage } from "./usage.js";
 import {
   getGitHubAppConfig,
   verifyWebhookSignature,
@@ -97,6 +97,10 @@ export interface AuthStorageLike {
   clearApiKey?(providerId: string): void;
   /** Check if a provider has an API key configured. */
   hasApiKey?(providerId: string): boolean;
+  /** Get the configured API key for usage providers. */
+  getApiKey?(providerId: string): string | null | undefined | Promise<string | null | undefined>;
+  /** Get raw stored credentials for usage providers. */
+  get?(providerId: string): { type?: string; key?: string } | null | undefined;
 }
 
 const upload = multer({
@@ -8074,7 +8078,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.get("/usage", async (_req, res) => {
     try {
-      const providers = await fetchAllProviderUsage();
+      const providers = await fetchAllProviderUsage(options?.authStorage);
       res.json({ providers });
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -14833,6 +14837,7 @@ function registerAuthRoutes(router: Router, authStorage?: AuthStorageLike): void
       }
 
       storage.setApiKey(provider, apiKey.trim());
+      clearUsageCache();
       res.json({ success: true });
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -14861,6 +14866,7 @@ function registerAuthRoutes(router: Router, authStorage?: AuthStorageLike): void
       }
 
       storage.clearApiKey(provider);
+      clearUsageCache();
       res.json({ success: true });
     } catch (err: any) {
       if (err instanceof ApiError) {

@@ -291,6 +291,12 @@ describe("runDashboard — AuthStorage & ModelRegistry wiring", () => {
     expect(serverOpts.authStorage.setApiKey).toBeTypeOf("function");
     expect(serverOpts.authStorage.clearApiKey).toBeTypeOf("function");
     expect(serverOpts.authStorage.hasApiKey).toBeTypeOf("function");
+    expect(serverOpts.authStorage.getApiKeyProviders()).toEqual([
+      { id: "kimi-coding", name: "Kimi" },
+      { id: "minimax", name: "Minimax" },
+      { id: "openrouter", name: "OpenRouter" },
+      { id: "zai", name: "Zai" },
+    ]);
   });
 
   it("creates AuthStorage via AuthStorage.create()", async () => {
@@ -641,5 +647,4 @@ describe("runDashboard — per-project engine manager (multi-project)", () => {
     expect(ProjectManager).not.toHaveBeenCalled();
   });
 });
-
 

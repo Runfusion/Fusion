@@ -61,6 +61,8 @@ export interface ProviderUsage {
 export interface AuthStorageLike {
   reload(): void;
   hasAuth(provider: string): boolean;
+  get?(provider: string): { type?: string; key?: string } | null | undefined;
+  getApiKey?(provider: string): string | null | undefined | Promise<string | null | undefined>;
 }
 
 // Cache for usage data with TTL
@@ -227,12 +229,21 @@ function decodeJwtPayload(token: string): any {
 
 // ── Pi auth storage reader ──────────────────────────────────────────────────
 
-/**
- * Read an API key from pi's auth storage (~/.pi/agent/auth.json).
- * Returns the API key string or null if not found.
- */
-function readPiAuthKey(provider: string): string | null {
-  const authPath = path.join(process.env.HOME || "~", ".pi", "agent", "auth.json");
+function getAuthFileCandidates(): string[] {
+  const home = process.env.HOME || "~";
+  return [
+    path.join(home, ".pi", "agent", "auth.json"),
+    path.join(home, ".pi", "auth.json"),
+    path.join(home, ".fusion", "agent", "auth.json"),
+    path.join(home, ".fusion", "auth.json"),
+    path.join(process.cwd(), ".fusion", "agent", "auth.json"),
+    path.join(process.cwd(), ".fusion", "auth.json"),
+    path.join(process.cwd(), ".pi", "agent", "auth.json"),
+    path.join(process.cwd(), ".pi", "auth.json"),
+  ];
+}
+
+function readAuthKeyFromFile(authPath: string, provider: string): string | null {
   try {
     const auth = JSON.parse(fs.readFileSync(authPath, "utf-8"));
     const entry = auth?.[provider];
@@ -240,6 +251,35 @@ function readPiAuthKey(provider: string): string | null {
       return entry.key;
     }
   } catch {}
+  return null;
+}
+
+/**
+ * Read an API key from the same AuthStorage object used by the dashboard when
+ * available, then fall back to conventional pi/fusion auth files.
+ */
+async function readConfiguredApiKey(provider: string, authStorage?: AuthStorageLike): Promise<string | null> {
+  try {
+    authStorage?.reload();
+  } catch {}
+
+  try {
+    const apiKey = await authStorage?.getApiKey?.(provider);
+    if (apiKey) return apiKey;
+  } catch {}
+
+  try {
+    const entry = authStorage?.get?.(provider);
+    if (entry && (entry.type === "api_key" || entry.type === "key") && entry.key) {
+      return entry.key;
+    }
+  } catch {}
+
+  for (const authPath of getAuthFileCandidates()) {
+    const apiKey = readAuthKeyFromFile(authPath, provider);
+    if (apiKey) return apiKey;
+  }
+
   return null;
 }
 
@@ -1222,7 +1262,7 @@ async function fetchGeminiUsage(): Promise<ProviderUsage> {
 
 // ── Minimax fetcher ─────────────────────────────────────────────────────────
 
-async function fetchMinimaxUsage(): Promise<ProviderUsage> {
+async function fetchMinimaxUsage(authStorage?: AuthStorageLike): Promise<ProviderUsage> {
   const usage: ProviderUsage = {
     name: "Minimax",
     icon: "🟣",
@@ -1230,8 +1270,8 @@ async function fetchMinimaxUsage(): Promise<ProviderUsage> {
     windows: [],
   };
 
-  // Load Minimax API key from pi's auth storage
-  const apiKey = readPiAuthKey("minimax");
+  // Load Minimax API key from the same auth storage the dashboard uses.
+  const apiKey = await readConfiguredApiKey("minimax", authStorage);
   if (!apiKey) {
     usage.error = "No Minimax credentials — add API key to pi";
     return usage;
@@ -1316,7 +1356,7 @@ async function fetchMinimaxUsage(): Promise<ProviderUsage> {
 
 // ── Zai (Zhipu AI) fetcher ──────────────────────────────────────────────────
 
-async function fetchZaiUsage(): Promise<ProviderUsage> {
+async function fetchZaiUsage(authStorage?: AuthStorageLike): Promise<ProviderUsage> {
   const usage: ProviderUsage = {
     name: "Zai",
     icon: "🟡",
@@ -1324,8 +1364,8 @@ async function fetchZaiUsage(): Promise<ProviderUsage> {
     windows: [],
   };
 
-  // Load Zai API key from pi's auth storage
-  const apiKey = readPiAuthKey("zai");
+  // Load Zai API key from the same auth storage the dashboard uses.
+  const apiKey = await readConfiguredApiKey("zai", authStorage);
   if (!apiKey) {
     usage.error = "No Zai credentials — add API key to pi";
     return usage;
@@ -1496,7 +1536,7 @@ export function withTimeout(
   });
 }
 
-export async function fetchAllProviderUsage(_authStorage?: AuthStorageLike): Promise<ProviderUsage[]> {
+export async function fetchAllProviderUsage(authStorage?: AuthStorageLike): Promise<ProviderUsage[]> {
   // Check cache
   if (usageCache && Date.now() - usageCache.timestamp < CACHE_TTL_MS) {
     return usageCache.data;
@@ -1508,8 +1548,8 @@ export async function fetchAllProviderUsage(_authStorage?: AuthStorageLike): Pro
     withTimeout(fetchClaudeUsage(), "Claude", CLAUDE_FETCH_TIMEOUT_MS),
     withTimeout(fetchCodexUsage(), "Codex"),
     withTimeout(fetchGeminiUsage(), "Gemini"),
-    withTimeout(fetchMinimaxUsage(), "Minimax"),
-    withTimeout(fetchZaiUsage(), "Zai"),
+    withTimeout(fetchMinimaxUsage(authStorage), "Minimax"),
+    withTimeout(fetchZaiUsage(authStorage), "Zai"),
   ]);
 
   const providers: ProviderUsage[] = [];
