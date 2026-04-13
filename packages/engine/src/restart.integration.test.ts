@@ -418,14 +418,34 @@ describe("In-progress task resume after restart", () => {
     await executor.resumeOrphaned();
 
     expect(executeSpy).not.toHaveBeenCalled();
-    expect(store.updateTask).toHaveBeenCalledWith("FN-963", {
-      modifiedFiles: ["packages/dashboard/app/components/SettingsModal.tsx"],
+    await vi.waitFor(() => {
+      expect(store.updateTask).toHaveBeenCalledWith("FN-963", {
+        modifiedFiles: ["packages/dashboard/app/components/SettingsModal.tsx"],
+      });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-963", "in-review");
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-963",
+        "Auto-recovered: task work was complete but stuck in in-progress — moved to in-review",
+      );
     });
-    expect(store.moveTask).toHaveBeenCalledWith("FN-963", "in-review");
-    expect(store.logEntry).toHaveBeenCalledWith(
-      "FN-963",
-      "Auto-recovered: task work was complete but stuck in in-progress — moved to in-review",
+  });
+
+  it("resumeOrphaned() does not block startup on completed-task recovery", async () => {
+    const store = createMockStore();
+    const completedTask = makeTask("FN-964", "in-progress", {
+      worktree: "/tmp/wt/FN-964",
+      baseCommitSha: "base123",
+      steps: makeSteps("done", "done", "skipped"),
+    });
+    store.listTasks.mockResolvedValue([completedTask]);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const recoverSpy = vi.spyOn(executor, "recoverCompletedTask").mockImplementation(
+      () => new Promise(() => {}),
     );
+
+    await expect(executor.resumeOrphaned()).resolves.toBeUndefined();
+    expect(recoverSpy).toHaveBeenCalledWith(completedTask);
   });
 
   it("resumeOrphaned() leaves no-progress no-task_done failures for self-healing", async () => {

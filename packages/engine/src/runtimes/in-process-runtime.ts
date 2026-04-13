@@ -466,7 +466,9 @@ export class InProcessRuntime
       // they no longer have a tracked session/worktree, so the stuck detector
       // cannot recover them. Delegate the startup recovery pass to
       // SelfHealingManager so the policy lives in one place.
-      await this.selfHealingManager.runStartupRecovery();
+      void this.selfHealingManager.runStartupRecovery().catch((err) => {
+        runtimeLog.error("Self-healing startup recovery failed:", err);
+      });
 
       // 11. Start scheduler and triage processor
       this.scheduler.start();

@@ -17,6 +17,7 @@ import { CronRunner, createAiPromptExecutor } from "./cron-runner.js";
 import { aiMergeTask } from "./merger.js";
 import { PRIORITY_MERGE } from "./concurrency.js";
 import { runtimeLog } from "./logger.js";
+import type { HeartbeatMonitor, HeartbeatTriggerScheduler } from "./agent-heartbeat.js";
 
 /**
  * Callback for processing pull-request merge strategy.
@@ -256,6 +257,21 @@ export class ProjectEngine {
   /** Get the AutomationStore (if initialized). */
   getAutomationStore(): AutomationStoreType | undefined {
     return this.automationStore;
+  }
+
+  /** Get the project's working directory. */
+  getWorkingDirectory(): string {
+    return this.config.workingDirectory;
+  }
+
+  /** Get the HeartbeatMonitor from the underlying runtime, if initialized. */
+  getHeartbeatMonitor(): HeartbeatMonitor | undefined {
+    return this.runtime.getHeartbeatMonitor();
+  }
+
+  /** Get the HeartbeatTriggerScheduler from the underlying runtime, if initialized. */
+  getHeartbeatTriggerScheduler(): HeartbeatTriggerScheduler | undefined {
+    return this.runtime.getTriggerScheduler();
   }
 
   /**

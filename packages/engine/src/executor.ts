@@ -317,6 +317,8 @@ export interface TaskExecutorOptions {
 export class TaskExecutor {
   private activeWorktrees = new Map<string, string>();
   private executing = new Set<string>();
+  /** Completed orphan recovery tasks currently running during startup. */
+  private recoveringCompleted = new Set<string>();
   /** Active agent sessions per task, used to terminate on pause and inject steering. */
   private activeSessions = new Map<string, {
     session: AgentSession;
@@ -381,7 +383,7 @@ export class TaskExecutor {
 
   /** Returns the set of task IDs currently being executed. */
   getExecutingTaskIds(): Set<string> {
-    return new Set(this.executing);
+    return new Set([...this.executing, ...this.recoveringCompleted]);
   }
 
   /**
@@ -748,8 +750,19 @@ export class TaskExecutor {
       // Fast-path: if the task already completed its work (all steps done),
       // move it directly to in-review instead of re-executing from scratch.
       if (this.isTaskWorkComplete(task)) {
+        if (this.recoveringCompleted.has(task.id)) {
+          executorLog.log(`${task.id} completed-task recovery already running - skipping duplicate startup recovery`);
+          continue;
+        }
         executorLog.log(`${task.id} is already complete — fast-pathing to in-review`);
-        await this.recoverCompletedTask(task);
+        this.recoveringCompleted.add(task.id);
+        void this.recoverCompletedTask(task)
+          .catch((err) =>
+            executorLog.error(`Failed to recover completed orphan ${task.id}:`, err),
+          )
+          .finally(() => {
+            this.recoveringCompleted.delete(task.id);
+          });
         continue;
       }
 
