@@ -159,7 +159,7 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
       try {
         // Get active server sessions with bounded timeout
         const serverSessions = await withTimeout(
-          listTerminalSessions(),
+          listTerminalSessions(projectId),
           BOOTSTRAP_LIST_TIMEOUT_MS,
           "listTerminalSessions"
         );
@@ -232,7 +232,7 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
       // Small delay to avoid race condition with the validation effect
       const timeout = setTimeout(() => {
         withTimeout(
-          createTerminalSession(),
+          createTerminalSession(undefined, undefined, undefined, projectId),
           BOOTSTRAP_CREATE_TIMEOUT_MS,
           "createTerminalSession"
         )
@@ -278,7 +278,7 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
    * Internal create tab function (used for auto-creation and user-initiated creation)
    */
   const createTabInternal = useCallback(async (): Promise<TerminalTab> => {
-    const session = await createTerminalSession();
+    const session = await createTerminalSession(undefined, undefined, undefined, projectId);
     const newTab: TerminalTab = {
       id: generateTabId(),
       sessionId: session.sessionId,
@@ -319,7 +319,7 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
       if (!tabToClose) return currentTabs;
 
       // Non-blocking server session kill
-      killPtyTerminalSession(tabToClose.sessionId).catch((err) => {
+      killPtyTerminalSession(tabToClose.sessionId, projectId).catch((err) => {
         console.warn(`Failed to kill terminal session ${tabToClose.sessionId}:`, err);
       });
 
@@ -389,7 +389,7 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
       if (!activeTab) return currentTabs;
 
       // Kill the old session (non-blocking)
-      killPtyTerminalSession(activeTab.sessionId).catch((err) => {
+      killPtyTerminalSession(activeTab.sessionId, projectId).catch((err) => {
         console.warn(`Failed to kill old session ${activeTab.sessionId}:`, err);
       });
 
@@ -403,7 +403,7 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
     if (!currentActiveTab) return;
 
     // Create new session and update the tab's sessionId
-    const session = await createTerminalSession();
+    const session = await createTerminalSession(undefined, undefined, undefined, projectId);
     
     setTabs((currentTabs) =>
       currentTabs.map((tab) =>
@@ -434,7 +434,7 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
     if (!currentActiveTab) return;
 
     try {
-      const session = await createTerminalSession();
+      const session = await createTerminalSession(undefined, undefined, undefined, projectId);
 
       setTabs((currentTabs) =>
         currentTabs.map((tab) =>

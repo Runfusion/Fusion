@@ -153,7 +153,7 @@ describe("MultiProjectFlow", () => {
       expect(viewMode).toBe("overview");
     });
 
-    it("shows Projects button alongside Back button when currentProject is set", () => {
+    it("shows Projects button with current project name when currentProject is set", () => {
       mockDesktopMatchMedia();
 
       render(
@@ -170,9 +170,10 @@ describe("MultiProjectFlow", () => {
         />
       );
 
-      // Both buttons should be present
-      expect(screen.getByTestId("header-projects-btn")).toBeDefined();
-      expect(screen.getByTestId("back-to-projects-btn")).toBeDefined();
+      // The split button should show the current project name
+      const projectsBtn = screen.getByTestId("header-projects-btn");
+      expect(projectsBtn).toBeDefined();
+      expect(projectsBtn.textContent).toContain("Solo Project");
     });
   });
 });

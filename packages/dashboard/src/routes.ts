@@ -5773,7 +5773,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw badRequest("command exceeds maximum length of 4096 characters");
       }
       
-      const rootDir = store.getRootDir();
+      const scopedStore = await getScopedStore(req);
+      const rootDir = scopedStore.getRootDir();
       const result = terminalSessionManager.createSession(command, rootDir);
       
       if (result.error) {
@@ -5927,7 +5928,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.post("/terminal/sessions", async (req, res) => {
     try {
       const { cwd, cols, rows } = req.body;
-      const terminalService = getTerminalService(store.getRootDir());
+      const scopedStore = await getScopedStore(req);
+      const terminalService = getTerminalService(scopedStore.getRootDir());
 
       const result = await terminalService.createSession({
         cwd,
@@ -5964,9 +5966,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * List all active PTY terminal sessions.
    * Returns: [{ id: string, cwd: string, shell: string, createdAt: string }]
    */
-  router.get("/terminal/sessions", async (_req, res) => {
+  router.get("/terminal/sessions", async (req, res) => {
     try {
-      const terminalService = getTerminalService(store.getRootDir());
+      const scopedStore = await getScopedStore(req);
+      const terminalService = getTerminalService(scopedStore.getRootDir());
       const sessions = terminalService.getAllSessions();
 
       res.json(
@@ -5991,10 +5994,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * Kill a PTY terminal session.
    * Returns: { killed: boolean }
    */
-  router.delete("/terminal/sessions/:id", (req, res) => {
+  router.delete("/terminal/sessions/:id", async (req, res) => {
     try {
       const { id } = req.params;
-      const terminalService = getTerminalService(store.getRootDir());
+      const scopedStore = await getScopedStore(req);
+      const terminalService = getTerminalService(scopedStore.getRootDir());
 
       const killed = terminalService.killSession(id);
 
@@ -6118,11 +6122,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * List available file browser workspaces.
    * Returns: { project: string; tasks: Array<{ id: string; title?: string; worktree: string }> }
    */
-  router.get("/workspaces", async (_req, res) => {
+  router.get("/workspaces", async (req, res) => {
     try {
-      const tasks = await store.listTasks({ slim: true, includeArchived: false });
+      const scopedStore = await getScopedStore(req);
+      const tasks = await scopedStore.listTasks({ slim: true, includeArchived: false });
       res.json({
-        project: store.getRootDir(),
+        project: scopedStore.getRootDir(),
         tasks: tasks
           .filter((task) => typeof task.worktree === "string" && task.worktree.length > 0 && existsSync(task.worktree))
           .map((task) => ({
@@ -6147,9 +6152,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.get("/files", async (req, res) => {
     try {
+      const scopedStore = await getScopedStore(req);
       const { path: subPath, workspace } = req.query;
       const workspaceId = typeof workspace === "string" && workspace.length > 0 ? workspace : "project";
-      const result = await listWorkspaceFiles(store, workspaceId, typeof subPath === "string" ? subPath : undefined);
+      const result = await listWorkspaceFiles(scopedStore, workspaceId, typeof subPath === "string" ? subPath : undefined);
       res.json(result);
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -6175,11 +6181,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.get("/files/{*filepath}", async (req, res) => {
     try {
+      const scopedStore = await getScopedStore(req);
       const filePath = Array.isArray(req.params.filepath) ? req.params.filepath[0] : req.params.filepath ?? "";
       const workspace = typeof req.query.workspace === "string" && req.query.workspace.length > 0
         ? req.query.workspace
         : "project";
-      const result = await readWorkspaceFile(store, workspace, filePath);
+      const result = await readWorkspaceFile(scopedStore, workspace, filePath);
       res.json(result);
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -6208,17 +6215,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.post("/files/{*filepath}", async (req, res) => {
     try {
+      const scopedStore = await getScopedStore(req);
       const filePath = Array.isArray(req.params.filepath) ? req.params.filepath[0] : req.params.filepath ?? "";
       const { content } = req.body;
       const workspace = typeof req.query.workspace === "string" && req.query.workspace.length > 0
         ? req.query.workspace
         : "project";
-      
+
       if (typeof content !== "string") {
         throw badRequest("content is required and must be a string");
       }
 
-      const result = await writeWorkspaceFile(store, workspace, filePath, content);
+      const result = await writeWorkspaceFile(scopedStore, workspace, filePath, content);
       res.json(result);
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -6259,6 +6267,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.post("/files/{*filepath}/copy", async (req, res) => {
     try {
+      const scopedStore = await getScopedStore(req);
       const { filePath, workspace } = extractFileParams(req);
       const { destination } = req.body;
 
@@ -6266,7 +6275,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw badRequest("destination is required and must be a string");
       }
 
-      const result = await copyWorkspaceFile(store, workspace, filePath, destination);
+      const result = await copyWorkspaceFile(scopedStore, workspace, filePath, destination);
       res.json(result);
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -6294,6 +6303,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.post("/files/{*filepath}/move", async (req, res) => {
     try {
+      const scopedStore = await getScopedStore(req);
       const { filePath, workspace } = extractFileParams(req);
       const { destination } = req.body;
 
@@ -6301,7 +6311,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw badRequest("destination is required and must be a string");
       }
 
-      const result = await moveWorkspaceFile(store, workspace, filePath, destination);
+      const result = await moveWorkspaceFile(scopedStore, workspace, filePath, destination);
       res.json(result);
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -6330,8 +6340,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.post("/files/{*filepath}/delete", async (req, res) => {
     try {
+      const scopedStore = await getScopedStore(req);
       const { filePath, workspace } = extractFileParams(req);
-      const result = await deleteWorkspaceFile(store, workspace, filePath);
+      const result = await deleteWorkspaceFile(scopedStore, workspace, filePath);
       res.json(result);
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -6358,6 +6369,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.post("/files/{*filepath}/rename", async (req, res) => {
     try {
+      const scopedStore = await getScopedStore(req);
       const { filePath, workspace } = extractFileParams(req);
       const { newName } = req.body;
 
@@ -6365,7 +6377,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw badRequest("newName is required and must be a string");
       }
 
-      const result = await renameWorkspaceFile(store, workspace, filePath, newName);
+      const result = await renameWorkspaceFile(scopedStore, workspace, filePath, newName);
       res.json(result);
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -6392,8 +6404,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.get("/files/{*filepath}/download", async (req, res) => {
     try {
+      const scopedStore = await getScopedStore(req);
       const { filePath, workspace } = extractFileParams(req);
-      const { absolutePath, stats, fileName } = await getWorkspaceFileForDownload(store, workspace, filePath);
+      const { absolutePath, stats, fileName } = await getWorkspaceFileForDownload(scopedStore, workspace, filePath);
 
       res.setHeader("Content-Type", "application/octet-stream");
       res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
@@ -6427,8 +6440,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.get("/files/{*filepath}/download-zip", async (req, res) => {
     try {
+      const scopedStore = await getScopedStore(req);
       const { filePath, workspace } = extractFileParams(req);
-      const { absolutePath, dirName } = await getWorkspaceFolderForZip(store, workspace, filePath);
+      const { absolutePath, dirName } = await getWorkspaceFolderForZip(scopedStore, workspace, filePath);
 
       const archiver = await import("archiver");
       const archive = archiver.default("zip", { zlib: { level: 6 } });

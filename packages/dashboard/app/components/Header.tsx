@@ -1,14 +1,139 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Server, Workflow, Bot, ChevronLeft, Target, ChevronRight, FileCode, Loader2, Grid3X3, Mail, MessageSquare } from "lucide-react";
+import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Server, Workflow, Bot, ChevronLeft, Target, ChevronRight, FileCode, Loader2, Grid3X3, Mail, MessageSquare, ChevronDown, Check } from "lucide-react";
 import type { ProjectInfo } from "../api";
-import type { NodeConfig } from "@fusion/core";
+import type { NodeConfig, ProjectStatus } from "@fusion/core";
 import { fetchScripts } from "../api";
-import { ProjectSelector } from "./ProjectSelector";
 import { QuickScriptsDropdown } from "./QuickScriptsDropdown";
 import { NodeStatusIndicator } from "./NodeStatusIndicator";
 import { useViewportMode, type ViewportMode } from "../hooks/useViewportMode";
 
 export { useViewportMode };
+
+// Status icon config for project selector dropdown
+const PROJECT_STATUS_CONFIG: Record<ProjectStatus, { color: string }> = {
+  active: { color: "var(--success)" },
+  paused: { color: "var(--warning)" },
+  errored: { color: "var(--color-error)" },
+  initializing: { color: "var(--info)" },
+};
+
+/**
+ * SplitProjectButton - A two-stage button for project navigation.
+ * Left half: navigates to "all projects" view.
+ * Right half: opens a dropdown to select a specific project.
+ */
+function SplitProjectButton({
+  projects,
+  currentProject,
+  onViewAll,
+  onSelectProject,
+}: {
+  projects: ProjectInfo[];
+  currentProject: ProjectInfo | null;
+  onViewAll: () => void;
+  onSelectProject?: (project: ProjectInfo) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isOpen]);
+
+  // Close on Escape
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen]);
+
+  const handleSelectProject = useCallback(
+    (project: ProjectInfo) => {
+      onSelectProject?.(project);
+      setIsOpen(false);
+    },
+    [onSelectProject]
+  );
+
+  return (
+    <div className="split-project-btn" ref={dropdownRef}>
+      {/* Left half: projects view button */}
+      <button
+        className="split-project-btn__left"
+        onClick={onViewAll}
+        title="View all projects"
+        data-testid="header-projects-btn"
+      >
+        <Grid3X3 size={14} />
+        <span>{currentProject?.name || "Projects"}</span>
+      </button>
+      {/* Right half: dropdown arrow (only when multiple projects) */}
+      {projects.length > 1 && (
+        <>
+          <div className="split-project-btn__divider" />
+          <button
+            className={`split-project-btn__right${isOpen ? " split-project-btn__right--open" : ""}`}
+            onClick={() => setIsOpen((prev) => !prev)}
+            title="Switch project"
+            aria-label="Switch project"
+            aria-expanded={isOpen}
+            aria-haspopup="listbox"
+            data-testid="project-selector-trigger"
+          >
+            <ChevronDown size={12} className={`split-project-btn__chevron${isOpen ? " split-project-btn__chevron--open" : ""}`} />
+          </button>
+          {isOpen && (
+            <div
+              className="split-project-btn__dropdown"
+              role="listbox"
+              aria-label="Select project"
+              data-testid="project-selector-dropdown"
+            >
+              {projects.map((project) => {
+                const isCurrent = currentProject?.id === project.id;
+                const statusColor = PROJECT_STATUS_CONFIG[project.status]?.color;
+                return (
+                  <button
+                    key={project.id}
+                    className={`split-project-btn__item${isCurrent ? " split-project-btn__item--current" : ""}`}
+                    onClick={() => handleSelectProject(project)}
+                    role="option"
+                    aria-selected={isCurrent}
+                  >
+                    <span
+                      className="split-project-btn__item-dot"
+                      style={{ backgroundColor: statusColor || "var(--text-muted)" }}
+                    />
+                    <div className="split-project-btn__item-info">
+                      <span className="split-project-btn__item-name">{project.name}</span>
+                      <span className="split-project-btn__item-path">
+                        {project.path.split("/").slice(-2).join("/")}
+                      </span>
+                    </div>
+                    {isCurrent && <Check size={14} className="split-project-btn__item-check" />}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 // GitHub logo icon (Octocat mark) - uses currentColor for theme compatibility
 function GitHubLogo({ size = 16 }: { size?: number }) {
@@ -311,44 +436,14 @@ export function Header({
           <h1 className="logo">Fusion</h1>
         </div>
 
-        {/* Project Selector - shown when 2+ projects on desktop only */}
-        {!isCompact && projects.length > 1 && (
-          <div className="header-project-selector">
-            <ProjectSelector
-              projects={projects}
-              currentProject={currentProject || null}
-              onSelect={(project) => {
-                onSelectProject?.(project);
-              }}
-              onViewAll={onViewAllProjects || (() => {})}
-            />
-          </div>
-        )}
-        
-        {/* Back to All Projects button when viewing a specific project (desktop only) */}
-        {!isCompact && currentProject && onViewAllProjects && (
-          <button
-            className="header-back-button"
-            onClick={onViewAllProjects}
-            title="Back to All Projects"
-            data-testid="back-to-projects-btn"
-          >
-            <ChevronLeft size={14} />
-            <span>All Projects</span>
-          </button>
-        )}
-
-        {/* Projects button - always visible when at least 1 project exists (desktop only) */}
+        {/* Split-button Project Selector - left: projects view, right: project dropdown (desktop only) */}
         {!isCompact && projects.length >= 1 && onViewAllProjects && (
-          <button
-            className="header-projects-btn"
-            onClick={onViewAllProjects}
-            title="View all projects"
-            data-testid="header-projects-btn"
-          >
-            <Grid3X3 size={14} />
-            <span>Projects</span>
-          </button>
+          <SplitProjectButton
+            projects={projects}
+            currentProject={currentProject ?? null}
+            onViewAll={onViewAllProjects}
+            onSelectProject={onSelectProject}
+          />
         )}
 
         {/* Node selector and status indicator */}

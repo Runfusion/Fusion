@@ -373,12 +373,13 @@ describe("tablet header controls", () => {
     expect(screen.queryByTestId("project-selector-trigger")).toBeNull();
   });
 
-  it("does not render back-to-projects button on tablet", () => {
+  it("does not render split project button on tablet", () => {
     renderTabletHeader({
+      projects: [{ id: "1", name: "Project One", path: "/path/one", status: "active" as const }],
       currentProject: { id: "1", name: "Project One", path: "/path/one", status: "active" as const },
       onViewAllProjects: noop,
     });
-    expect(screen.queryByTestId("back-to-projects-btn")).toBeNull();
+    expect(screen.queryByTestId("header-projects-btn")).toBeNull();
   });
 
   it("shows switch project in overflow menu when multiple projects on tablet", () => {

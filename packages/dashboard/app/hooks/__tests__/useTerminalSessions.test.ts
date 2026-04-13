@@ -255,7 +255,7 @@ describe("useTerminalSessions", () => {
         result.current.closeTab(tabId);
       });
 
-      expect(mockKillPtyTerminalSession).toHaveBeenCalledWith(sessionId);
+      expect(mockKillPtyTerminalSession).toHaveBeenCalledWith(sessionId, TEST_PROJECT_ID);
       expect(result.current.tabs.length).toBe(0);
     });
 
@@ -424,7 +424,7 @@ describe("useTerminalSessions", () => {
       });
 
       // Old session should be killed
-      expect(mockKillPtyTerminalSession).toHaveBeenCalledWith("session-1");
+      expect(mockKillPtyTerminalSession).toHaveBeenCalledWith("session-1", TEST_PROJECT_ID);
       
       // Tab should have new session
       expect(result.current.activeTab?.sessionId).toBe("session-new");

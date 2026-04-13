@@ -860,24 +860,25 @@ export interface PtyTerminalSessionInfo {
 export function createTerminalSession(
   cwd?: string,
   cols?: number,
-  rows?: number
+  rows?: number,
+  projectId?: string
 ): Promise<PtyTerminalSession> {
-  return api<PtyTerminalSession>("/terminal/sessions", {
+  return api<PtyTerminalSession>(withProjectId("/terminal/sessions", projectId), {
     method: "POST",
     body: JSON.stringify({ cwd, cols, rows }),
   });
 }
 
 /** Kill a PTY terminal session */
-export function killPtyTerminalSession(sessionId: string): Promise<{ killed: boolean }> {
-  return api<{ killed: boolean }>(`/terminal/sessions/${encodeURIComponent(sessionId)}`, {
+export function killPtyTerminalSession(sessionId: string, projectId?: string): Promise<{ killed: boolean }> {
+  return api<{ killed: boolean }>(withProjectId(`/terminal/sessions/${encodeURIComponent(sessionId)}`, projectId), {
     method: "DELETE",
   });
 }
 
 /** List active PTY terminal sessions */
-export function listTerminalSessions(): Promise<PtyTerminalSessionInfo[]> {
-  return api<PtyTerminalSessionInfo[]>("/terminal/sessions");
+export function listTerminalSessions(projectId?: string): Promise<PtyTerminalSessionInfo[]> {
+  return api<PtyTerminalSessionInfo[]>(withProjectId("/terminal/sessions", projectId));
 }
 
 // --- Git Management API ---
