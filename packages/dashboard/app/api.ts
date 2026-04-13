@@ -4833,6 +4833,44 @@ export function streamChatResponse(
   let abortController = new AbortController();
   let closedByUser = false;
 
+  const dispatchEvent = (eventName: string, rawData: string): void => {
+    if (!eventName || !rawData) {
+      return;
+    }
+
+    switch (eventName) {
+      case "thinking":
+        try {
+          handlers.onThinking?.(JSON.parse(rawData));
+        } catch {
+          handlers.onThinking?.(rawData);
+        }
+        break;
+      case "text":
+        try {
+          handlers.onText?.(JSON.parse(rawData));
+        } catch {
+          handlers.onText?.(rawData);
+        }
+        break;
+      case "done":
+        try {
+          handlers.onDone?.(JSON.parse(rawData));
+        } catch {
+          handlers.onDone?.({ messageId: "" });
+        }
+        break;
+      case "error":
+        try {
+          const parsed = JSON.parse(rawData);
+          handlers.onError?.(parsed.message || parsed);
+        } catch {
+          handlers.onError?.(rawData || "Stream error");
+        }
+        break;
+    }
+  };
+
   // Start streaming via POST
   (async () => {
     try {
@@ -4864,62 +4902,54 @@ export function streamChatResponse(
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let currentEvent = "";
+      let currentDataLines: string[] = [];
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
+      // POST-based chat responses still speak SSE, so parser state must persist
+      // across ReadableStream chunks. Networks can split `event:` and `data:`
+      // lines arbitrarily, and resetting state per-read drops assistant output.
+      const processLines = (chunk: string, flushPendingEvent = false): void => {
+        buffer += chunk;
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
 
-        let currentEvent = "";
-        let currentData = "";
+        if (flushPendingEvent && buffer.length > 0) {
+          lines.push(buffer);
+          buffer = "";
+        }
 
-        for (const line of lines) {
-          if (line.startsWith("event: ")) {
-            currentEvent = line.slice(7).trim();
-          } else if (line.startsWith("data: ")) {
-            currentData = line.slice(6);
+        for (const rawLine of lines) {
+          const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+
+          if (line.startsWith("event:")) {
+            currentEvent = line.slice(6).trim();
+          } else if (line.startsWith("data:")) {
+            const value = line.slice(5);
+            currentDataLines.push(value.startsWith(" ") ? value.slice(1) : value);
           } else if (line === "") {
-            // End of event
-            if (currentEvent && currentData) {
-              switch (currentEvent) {
-                case "thinking":
-                  try {
-                    handlers.onThinking?.(JSON.parse(currentData));
-                  } catch {
-                    handlers.onThinking?.(currentData);
-                  }
-                  break;
-                case "text":
-                  try {
-                    handlers.onText?.(JSON.parse(currentData));
-                  } catch {
-                    handlers.onText?.(currentData);
-                  }
-                  break;
-                case "done":
-                  try {
-                    handlers.onDone?.(JSON.parse(currentData));
-                  } catch {
-                    handlers.onDone?.({ messageId: "" });
-                  }
-                  break;
-                case "error":
-                  try {
-                    const parsed = JSON.parse(currentData);
-                    handlers.onError?.(parsed.message || parsed);
-                  } catch {
-                    handlers.onError?.(currentData || "Stream error");
-                  }
-                  break;
-              }
-            }
+            const currentData = currentDataLines.join("\n");
+            dispatchEvent(currentEvent, currentData);
             currentEvent = "";
-            currentData = "";
+            currentDataLines = [];
           }
         }
+
+        if (flushPendingEvent) {
+          const trailingData = currentDataLines.join("\n");
+          dispatchEvent(currentEvent, trailingData);
+          currentEvent = "";
+          currentDataLines = [];
+        }
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          processLines(decoder.decode(), true);
+          break;
+        }
+
+        processLines(decoder.decode(value, { stream: true }));
       }
     } catch (err: unknown) {
       if (closedByUser) return;
