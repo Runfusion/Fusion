@@ -241,7 +241,7 @@ Import agents from [companies.sh](https://companies.sh) packages. Supports singl
 | `--skip-existing` | Skip agents with names that already exist in Fusion |
 
 **Team hierarchy:**
-When importing a companies.sh package with team structure, the importer preserves manager/report relationships. Agents are linked using Fusion agent IDs (not manifest paths).
+When importing a companies.sh package with team structure, the importer preserves manager/report relationships for both fresh and partial imports. Manifest-style manager references such as `ceo`, `../ceo/AGENTS.md`, and already-valid Fusion agent IDs are resolved to actual Fusion `reportsTo` agent IDs before agents are created, and `--skip-existing` reuses matching existing managers when available instead of flattening the org tree.
 
 **Examples:**
 ```bash

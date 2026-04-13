@@ -429,10 +429,11 @@ Fusion can import agents from [companies.sh](https://companies.sh) packages. The
 
 #### Team Hierarchy
 
-When importing a companies.sh package with team structure, Fusion preserves the manager/report hierarchy:
+When importing a companies.sh package with team structure, Fusion preserves the manager/report hierarchy for both dashboard and CLI imports:
 
 - Team managers are imported with their defined capabilities and instructions
-- Reports are linked to their manager via the `reportsTo` field using Fusion agent IDs
+- Manifest-style manager references such as `ceo`, `../ceo/AGENTS.md`, and already-valid Fusion agent IDs are resolved into real Fusion `reportsTo` agent IDs before agents are persisted
+- Partial imports and `--skip-existing` runs reuse matching existing Fusion agents as managers when possible, so follow-up imports keep the same org tree instead of flattening new reports
 - The import summary shows team count and hierarchy links
 
 #### CLI Usage
