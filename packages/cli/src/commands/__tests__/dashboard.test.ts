@@ -56,6 +56,11 @@ const mockProcessAndAudit = vi.fn().mockResolvedValue({
 
 vi.mock("@fusion/core", () => ({
   TaskStore: vi.fn().mockImplementation(() => makeMockStore()),
+  CentralCore: vi.fn().mockImplementation(() => ({
+    init: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined),
+    getProjectByPath: vi.fn().mockResolvedValue({ id: "project-1" }),
+  })),
   AutomationStore: vi.fn().mockImplementation(() => ({
     init: vi.fn().mockResolvedValue(undefined),
     listSchedules: vi.fn().mockResolvedValue([]),
@@ -88,6 +93,7 @@ vi.mock("@fusion/core", () => ({
     getPlugin: vi.fn(),
     getLoadedPlugins: vi.fn().mockReturnValue([]),
   })),
+  getTaskMergeBlocker: vi.fn().mockReturnValue(undefined),
   syncInsightExtractionAutomation: mockSyncInsightExtraction,
   INSIGHT_EXTRACTION_SCHEDULE_NAME: "Memory Insight Extraction",
   processAndAuditInsightExtraction: mockProcessAndAudit,
@@ -135,6 +141,21 @@ vi.mock("@fusion/engine", async (importOriginal) => {
     ...original,
     WorktreePool: original.WorktreePool,
     AgentSemaphore: original.AgentSemaphore,
+    ProjectEngine: vi.fn().mockImplementation(() => ({
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      getTaskStore: vi.fn().mockImplementation(() => makeMockStore()),
+      getRuntime: vi.fn().mockReturnValue({
+        getHeartbeatMonitor: vi.fn().mockReturnValue(undefined),
+        getMissionAutopilot: vi.fn().mockReturnValue(undefined),
+        getMissionExecutionLoop: vi.fn().mockReturnValue(undefined),
+      }),
+      getAutomationStore: vi.fn().mockReturnValue(undefined),
+      getHeartbeatMonitor: vi.fn().mockReturnValue(undefined),
+      getHeartbeatTriggerScheduler: vi.fn().mockReturnValue(undefined),
+      getWorkingDirectory: vi.fn().mockReturnValue("/tmp/test"),
+      onMerge: vi.fn().mockResolvedValue({ merged: true }),
+    })),
     MissionAutopilot: vi.fn().mockImplementation(() => ({
       start: vi.fn(),
       stop: vi.fn(),
@@ -379,7 +400,7 @@ describe("runDashboard — AuthStorage & ModelRegistry wiring", () => {
   });
 });
 
-describe("runDashboard — MissionAutopilot wiring", () => {
+describe("runDashboard — non-dev mode engine wiring", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     mockDiscoverAndLoadExtensions.mockResolvedValue({
@@ -390,49 +411,17 @@ describe("runDashboard — MissionAutopilot wiring", () => {
     (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
   });
 
-  it("creates a MissionAutopilot instance and passes it to createServer", async () => {
+  it("passes engine to createServer (non-dev mode)", async () => {
     const { createServer } = await import("@fusion/dashboard");
-    const { MissionAutopilot } = await import("@fusion/engine");
+    const { ProjectEngine } = await import("@fusion/engine");
 
     await runDashboard(0, {});
 
-    expect(MissionAutopilot).toHaveBeenCalledTimes(1);
+    expect(ProjectEngine).toHaveBeenCalledTimes(1);
     expect(createServer).toHaveBeenCalledTimes(1);
     const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    expect(serverOpts).toHaveProperty("missionAutopilot");
-    expect(serverOpts.missionAutopilot).toBeDefined();
-  });
-
-  it("passes missionAutopilot and missionStore to Scheduler options", async () => {
-    const { Scheduler } = await import("@fusion/engine");
-
-    await runDashboard(0, {});
-
-    expect(Scheduler).toHaveBeenCalledTimes(1);
-    const schedulerOpts = (Scheduler as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    expect(schedulerOpts).toHaveProperty("missionAutopilot");
-    expect(schedulerOpts).toHaveProperty("missionStore");
-    expect(schedulerOpts.missionAutopilot).toBeDefined();
-    expect(schedulerOpts.missionStore).toBeDefined();
-  });
-
-  it("calls setScheduler on the MissionAutopilot instance after Scheduler creation", async () => {
-    const { MissionAutopilot } = await import("@fusion/engine");
-
-    await runDashboard(0, {});
-
-    expect(MissionAutopilot).toHaveBeenCalledTimes(1);
-    const autopilotInstance = (MissionAutopilot as ReturnType<typeof vi.fn>).mock.results[0].value;
-    expect(autopilotInstance.setScheduler).toHaveBeenCalledTimes(1);
-  });
-
-  it("starts the MissionAutopilot service", async () => {
-    const { MissionAutopilot } = await import("@fusion/engine");
-
-    await runDashboard(0, {});
-
-    const autopilotInstance = (MissionAutopilot as ReturnType<typeof vi.fn>).mock.results[0].value;
-    expect(autopilotInstance.start).toHaveBeenCalledTimes(1);
+    expect(serverOpts).toHaveProperty("engine");
+    expect(serverOpts.engine).toBeDefined();
   });
 });
 
@@ -458,7 +447,6 @@ describe("runDashboard — Plugin wiring", () => {
 
   it("passes pluginStore, pluginLoader, and pluginRunner to createServer", async () => {
     const { createServer } = await import("@fusion/dashboard");
-    const { PluginStore, PluginLoader } = await import("@fusion/core");
 
     await runDashboard(0, {});
 
@@ -487,224 +475,10 @@ describe("runDashboard — Plugin wiring", () => {
     await runDashboard(0, {});
 
     expect(PluginLoader).toHaveBeenCalledTimes(1);
-    const loaderOptions = (PluginLoader as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const loaderOptions = (PluginLoader as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(loaderOptions).toHaveProperty("pluginStore");
     expect(loaderOptions).toHaveProperty("taskStore");
   });
 });
 
-describe("runDashboard — Memory Insight Automation wiring", () => {
-  beforeEach(async () => {
-    vi.clearAllMocks();
-    mockDiscoverAndLoadExtensions.mockResolvedValue({
-      runtime: { pendingProviderRegistrations: [] },
-      errors: [],
-    });
-    const { TaskStore } = await import("@fusion/core");
-    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
-  });
 
-  it("syncs insight extraction automation on startup", async () => {
-    await runDashboard(0, {});
-
-    expect(mockSyncInsightExtraction).toHaveBeenCalledTimes(1);
-    expect(mockSyncInsightExtraction).toHaveBeenCalledWith(
-      expect.any(Object),
-      expect.objectContaining({
-        maxConcurrent: 1,
-        maxWorktrees: 2,
-        autoMerge: false,
-        pollIntervalMs: 60_000,
-      }),
-    );
-  });
-
-  it("passes onScheduleRunProcessed callback to CronRunner", async () => {
-    const { CronRunner } = await import("@fusion/engine");
-
-    await runDashboard(0, {});
-
-    expect(CronRunner).toHaveBeenCalledTimes(1);
-    const cronOptions = (CronRunner as ReturnType<typeof vi.fn>).mock.calls[0][2];
-    expect(cronOptions).toHaveProperty("onScheduleRunProcessed");
-    expect(typeof cronOptions.onScheduleRunProcessed).toBe("function");
-  });
-
-  it("calls syncInsightExtractionAutomation when insight extraction settings change", async () => {
-    await runDashboard(0, {});
-
-    // Get the store mock to emit settings change
-    const { TaskStore } = await import("@fusion/core");
-    const mockStore = (TaskStore as unknown as ReturnType<typeof vi.fn>).mock.results[0].value;
-
-    // Simulate settings update
-    mockSyncInsightExtraction.mockClear();
-    mockStore.emit("settings:updated", {
-      settings: {
-        insightExtractionEnabled: true,
-        insightExtractionSchedule: "0 3 * * *",
-      },
-      previous: {
-        insightExtractionEnabled: false,
-        insightExtractionSchedule: "0 2 * * *",
-      },
-    });
-
-    expect(mockSyncInsightExtraction).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not call syncInsightExtractionAutomation for unrelated settings changes", async () => {
-    await runDashboard(0, {});
-
-    // Get the store mock to emit settings change
-    const { TaskStore } = await import("@fusion/core");
-    const mockStore = (TaskStore as unknown as ReturnType<typeof vi.fn>).mock.results[0].value;
-
-    // Simulate unrelated settings update
-    mockSyncInsightExtraction.mockClear();
-    mockStore.emit("settings:updated", {
-      settings: {
-        maxConcurrent: 5,
-      },
-      previous: {
-        maxConcurrent: 1,
-      },
-    });
-
-    expect(mockSyncInsightExtraction).not.toHaveBeenCalled();
-  });
-
-  it("handles syncInsightExtractionAutomation errors gracefully", async () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    mockSyncInsightExtraction.mockRejectedValueOnce(new Error("Sync failed"));
-
-    await runDashboard(0, {});
-
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining("[memory-audit] Failed to sync insight extraction"),
-    );
-    consoleSpy.mockRestore();
-  });
-});
-
-describe("runDashboard — Semaphore boundary (task lanes only)", () => {
-  beforeEach(async () => {
-    vi.clearAllMocks();
-    mockDiscoverAndLoadExtensions.mockResolvedValue({
-      runtime: { pendingProviderRegistrations: [] },
-      errors: [],
-    });
-    const { TaskStore } = await import("@fusion/core");
-    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
-  });
-
-  it("passes semaphore to TriageProcessor (task lane)", async () => {
-    const { TriageProcessor } = await import("@fusion/engine");
-
-    await runDashboard(0, {});
-
-    expect(TriageProcessor).toHaveBeenCalledTimes(1);
-    const triageOptions = (TriageProcessor as ReturnType<typeof vi.fn>).mock.calls[0][2];
-    expect(triageOptions).toHaveProperty("semaphore");
-    expect(triageOptions.semaphore).toBeDefined();
-  });
-
-  it("passes semaphore to TaskExecutor (task lane)", async () => {
-    const { TaskExecutor } = await import("@fusion/engine");
-
-    await runDashboard(0, {});
-
-    expect(TaskExecutor).toHaveBeenCalledTimes(1);
-    const executorOptions = (TaskExecutor as ReturnType<typeof vi.fn>).mock.calls[0][2];
-    expect(executorOptions).toHaveProperty("semaphore");
-    expect(executorOptions.semaphore).toBeDefined();
-  });
-
-  it("passes semaphore to Scheduler (task lane)", async () => {
-    const { Scheduler } = await import("@fusion/engine");
-
-    await runDashboard(0, {});
-
-    expect(Scheduler).toHaveBeenCalledTimes(1);
-    const schedulerOptions = (Scheduler as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    expect(schedulerOptions).toHaveProperty("semaphore");
-    expect(schedulerOptions.semaphore).toBeDefined();
-  });
-
-  it("creates shared semaphore instance for task lanes", async () => {
-    const { AgentSemaphore } = await import("@fusion/engine");
-    const { TriageProcessor, TaskExecutor, Scheduler } = await import("@fusion/engine");
-
-    await runDashboard(0, {});
-
-    // Get the semaphore instance from each component
-    const triageSemaphore = (TriageProcessor as ReturnType<typeof vi.fn>).mock.calls[0][2].semaphore;
-    const executorSemaphore = (TaskExecutor as ReturnType<typeof vi.fn>).mock.calls[0][2].semaphore;
-    const schedulerSemaphore = (Scheduler as ReturnType<typeof vi.fn>).mock.calls[0][1].semaphore;
-
-    // All should reference the same semaphore instance
-    expect(triageSemaphore).toBe(executorSemaphore);
-    expect(executorSemaphore).toBe(schedulerSemaphore);
-  });
-
-  it("does NOT pass semaphore to HeartbeatMonitor (utility path)", async () => {
-    const { HeartbeatMonitor } = await import("@fusion/engine");
-
-    await runDashboard(0, {});
-
-    expect(HeartbeatMonitor).toHaveBeenCalledTimes(1);
-    const heartbeatOptions = (HeartbeatMonitor as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(heartbeatOptions).not.toHaveProperty("semaphore");
-  });
-
-  it("does NOT pass semaphore to HeartbeatTriggerScheduler (utility path)", async () => {
-    const { HeartbeatTriggerScheduler } = await import("@fusion/engine");
-
-    await runDashboard(0, {});
-
-    expect(HeartbeatTriggerScheduler).toHaveBeenCalledTimes(1);
-    // HeartbeatTriggerScheduler takes 2-3 args: (agentStore, callback, taskStore?)
-    const triggerOptions = (HeartbeatTriggerScheduler as ReturnType<typeof vi.fn>).mock.calls[0];
-    // Semaphore should NOT be in any of the arguments
-    expect(triggerOptions).not.toContainEqual(expect.objectContaining({ _active: expect.any(Number) }));
-  });
-
-  it("does NOT pass semaphore to CronRunner (utility path)", async () => {
-    const { CronRunner } = await import("@fusion/engine");
-
-    await runDashboard(0, {});
-
-    expect(CronRunner).toHaveBeenCalledTimes(1);
-    // CronRunner takes (taskStore, automationStore, options)
-    const cronOptions = (CronRunner as ReturnType<typeof vi.fn>).mock.calls[0][2];
-    expect(cronOptions).not.toHaveProperty("semaphore");
-  });
-
-  it("calls createAiPromptExecutor with cwd only (no semaphore)", async () => {
-    const { createAiPromptExecutor } = await import("@fusion/engine");
-
-    await runDashboard(0, {});
-
-    expect(createAiPromptExecutor).toHaveBeenCalledTimes(1);
-    // createAiPromptExecutor takes only cwd parameter
-    expect(createAiPromptExecutor).toHaveBeenCalledWith(expect.any(String));
-    const calledWith = (createAiPromptExecutor as ReturnType<typeof vi.fn>).mock.calls[0];
-    // Should be called with exactly one argument (cwd)
-    expect(calledWith.length).toBe(1);
-  });
-
-  it("onMerge uses semaphore.run() to gate merge execution (task lane)", async () => {
-    const { createServer } = await import("@fusion/dashboard");
-
-    await runDashboard(0, {});
-
-    // The onMerge function is passed to createServer and should use semaphore.run()
-    expect(createServer).toHaveBeenCalledTimes(1);
-    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    expect(serverOpts).toHaveProperty("onMerge");
-    expect(typeof serverOpts.onMerge).toBe("function");
-    // The onMerge function should be a wrapper that uses semaphore.run()
-    // We can't directly test the internals, but we verified semaphore is passed to
-    // the same instance used by triage/executor/scheduler above
-  });
-});
