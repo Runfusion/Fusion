@@ -98,6 +98,8 @@ if (cached) {
   - The `api()` function in `app/api.ts` only passes `headers: { "Content-Type": "application/json" }` when no `opts.method` is specified — GET requests don't include `method: "GET"` in the fetch options
   - URL-encoded parameter values (like `%20`) are valid values — they're decoded at the URL level, not parameter level
   - Mock setups for successful responses should return 200 status to avoid triggering error paths
+- In the flat ESLint config, put global `ignores` first and include test-only support files (`app/test/**`, `vitest.setup.ts`) when running `eslint .` from a git worktree; later per-file `ignores` do not stop the base recommended configs from linting those files.
+- Dashboard Express routers should normalize `req.params.*` through a string validator/helper before passing values into typed store methods; under strict tsconfig, route params can surface as `string | string[]` and break package typecheck if used directly.
 
 ## Color Theme System
 
@@ -217,6 +219,7 @@ Dashboard SSE (`/api/events`) streams plugin lifecycle events as normalized `plu
 - Test `describe` blocks in Vitest can't access helper functions defined in sibling describe blocks. Place shared helpers in the parent scope or within the same describe block.
 - When extracting shared code from `executor.ts` (e.g., tool factories), move the parameter schemas (`taskCreateParams`, `taskLogParams`) to the shared module too — keep them canonical in one place to avoid duplication.
 - When changing API function signatures (e.g., `startAgentRun`), add new params at the END to preserve backward compatibility. Existing callers passing positional args will break if you insert a new param before existing ones.
+- For UI tests that assert calls to git/dashboard API helpers with optional trailing params (for example `projectId` or `force`), assert the leading semantic arguments via `mock.calls.at(-1)?.slice(0, n)` instead of exact `toHaveBeenCalledWith(...)` on the full argument list. Some call paths omit trailing `undefined` values while others pass them explicitly.
 - `HeartbeatMonitor.executeHeartbeat()` calls `startRun()` internally — do NOT call both `startRun()` and `executeHeartbeat()` for the same run, or you'll get duplicate runs. Use `startRun()` alone for record-only, or `executeHeartbeat()` for full execution.
 - When RunsTab loads data via API calls instead of props, tests must mock the API functions (`fetchAgentRuns`, `fetchAgentRunDetail`) in addition to existing mocks, and set up defaults in `beforeEach`.
 - In UI static analysis tests, avoid regex that spans multiple lines for code patterns (e.g., `setInterval.*5000`). Use separate `toContain()` assertions instead since the code is multi-line.
