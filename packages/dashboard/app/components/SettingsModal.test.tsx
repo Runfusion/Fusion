@@ -79,8 +79,8 @@ describe("SettingsModal", () => {
     mockFetchBackups.mockResolvedValue({ backups: [], totalSize: 0 });
     mockFetchMemory.mockResolvedValue({ content: "## Existing memory\n- Learned pattern" });
     mockSaveMemory.mockResolvedValue({ success: true });
-    mockFetchGlobalConcurrency.mockResolvedValue({ globalMaxConcurrent: 4, currentlyActive: 0, queuedCount: 0, projectsActive: {} });
-    mockUpdateGlobalConcurrency.mockResolvedValue({ globalMaxConcurrent: 4, currentlyActive: 0, queuedCount: 0, projectsActive: {} });
+    mockFetchGlobalConcurrency.mockResolvedValue({ globalMaxConcurrent: 4, currentUsage: 0 });
+    mockUpdateGlobalConcurrency.mockResolvedValue({ globalMaxConcurrent: 4, currentUsage: 0 });
 
     // jsdom doesn't provide URL.createObjectURL — polyfill it
     if (!URL.createObjectURL) {

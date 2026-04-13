@@ -196,6 +196,61 @@ describe("resolveAgentPrompt", () => {
     const result = resolveAgentPrompt("executor", config);
     expect(result).toContain("attachments");
   });
+
+  // ── Task Document Tool Guidance ─────────────────────────────────────────
+
+  it("built-in executor prompt includes task_document_write guidance", () => {
+    const result = resolveAgentPrompt("executor");
+    expect(result).toContain("task_document_write");
+    expect(result).toContain("Task Documents");
+    expect(result).toContain("Documents tab");
+  });
+
+  it("built-in executor prompt includes task_document_read guidance", () => {
+    const result = resolveAgentPrompt("executor");
+    expect(result).toContain("task_document_read");
+    expect(result).toContain("task documents visible in the dashboard");
+  });
+
+  it("senior-engineer prompt includes task_document_write guidance", () => {
+    const config: AgentPromptsConfig = {
+      roleAssignments: {
+        executor: "senior-engineer",
+      },
+    };
+
+    const result = resolveAgentPrompt("executor", config);
+    expect(result).toContain("task_document_write");
+    expect(result).toContain("Task Documents");
+  });
+
+  it("senior-engineer prompt includes task_document_read guidance", () => {
+    const config: AgentPromptsConfig = {
+      roleAssignments: {
+        executor: "senior-engineer",
+      },
+    };
+
+    const result = resolveAgentPrompt("executor", config);
+    expect(result).toContain("task_document_read");
+  });
+
+  it("built-in triage prompt includes task_document_write guidance for planning output", () => {
+    const result = resolveAgentPrompt("triage");
+    expect(result).toContain("task_document_write");
+    expect(result).toContain("planning");
+  });
+
+  it("concise-triage prompt includes task_document_write guidance", () => {
+    const config: AgentPromptsConfig = {
+      roleAssignments: {
+        triage: "concise-triage",
+      },
+    };
+
+    const result = resolveAgentPrompt("triage", config);
+    expect(result).toContain("task_document_write");
+  });
 });
 
 // ---------------------------------------------------------------------------

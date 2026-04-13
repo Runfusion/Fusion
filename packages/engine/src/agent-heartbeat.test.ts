@@ -1016,6 +1016,28 @@ describe("HeartbeatMonitor", () => {
         logEntry: vi.fn().mockResolvedValue({}),
         addComment: vi.fn().mockResolvedValue({}),
         appendAgentLog: vi.fn().mockResolvedValue(undefined),
+        // Document-related methods for task_document tools
+        upsertTaskDocument: vi.fn().mockResolvedValue({
+          id: "doc-1",
+          taskId: "FN-001",
+          key: "test-plan",
+          content: "Test document content",
+          revision: 1,
+          author: "agent",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }),
+        getTaskDocument: vi.fn().mockResolvedValue({
+          id: "doc-1",
+          taskId: "FN-001",
+          key: "test-plan",
+          content: "Test document content",
+          revision: 1,
+          author: "agent",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }),
+        getTaskDocuments: vi.fn().mockResolvedValue([]),
         ...overrides,
       } as unknown as TaskStore;
     }
@@ -1518,10 +1540,48 @@ describe("HeartbeatMonitor", () => {
         expect(callArgs.cwd).toBe("/tmp/test");
         expect(callArgs.systemPrompt).toBe(HEARTBEAT_SYSTEM_PROMPT);
         expect(callArgs.tools).toBe("readonly");
-        expect(callArgs.customTools).toHaveLength(3);
+        // Tools: task_create, task_log, task_document_write, task_document_read, heartbeat_done
+        expect(callArgs.customTools).toHaveLength(5);
         expect(callArgs.customTools![0]!.name).toBe("task_create");
         expect(callArgs.customTools![1]!.name).toBe("task_log");
-        expect(callArgs.customTools![2]!.name).toBe("heartbeat_done");
+        expect(callArgs.customTools![2]!.name).toBe("task_document_write");
+        expect(callArgs.customTools![3]!.name).toBe("task_document_read");
+        // heartbeat_done is last (terminal tool)
+        expect(callArgs.customTools![4]!.name).toBe("heartbeat_done");
+      });
+
+      it("includes document tools in heartbeat session", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({
+          session: mockSession as any,
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp/test" });
+
+        await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+        const callArgs = mockedCreateKbAgent.mock.calls[0]![0];
+        const toolNames = callArgs.customTools!.map((t: any) => t.name);
+        expect(toolNames).toContain("task_document_write");
+        expect(toolNames).toContain("task_document_read");
+      });
+
+      it("heartbeat_done is the terminal tool (last in array)", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({
+          session: mockSession as any,
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp/test" });
+
+        await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+        const callArgs = mockedCreateKbAgent.mock.calls[0]![0];
+        const toolNames = callArgs.customTools!.map((t: any) => t.name);
+        // heartbeat_done should be last for stable terminal signaling
+        expect(toolNames[toolNames.length - 1]).toBe("heartbeat_done");
       });
 
       it("calls promptWithFallback with task context", async () => {
@@ -1760,7 +1820,8 @@ describe("HeartbeatMonitor", () => {
         let capturedDoneTool: any;
         const mockSession = createMockAgentSession();
         mockedCreateKbAgent.mockImplementation(async (opts: any) => {
-          capturedDoneTool = opts.customTools[2]; // heartbeat_done
+          // heartbeat_done is last in the customTools array (index 4)
+          capturedDoneTool = opts.customTools[opts.customTools.length - 1];
           return { session: mockSession as any };
         });
 
@@ -1785,7 +1846,7 @@ describe("HeartbeatMonitor", () => {
         let capturedDoneTool: any;
         const mockSession = createMockAgentSession();
         mockedCreateKbAgent.mockImplementation(async (opts: any) => {
-          capturedDoneTool = opts.customTools[2];
+          capturedDoneTool = opts.customTools[opts.customTools.length - 1];
           return { session: mockSession as any };
         });
 
@@ -2200,6 +2261,28 @@ describe("HeartbeatMonitor", () => {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         } as unknown as TaskDetail),
+        // Document-related methods for task_document tools
+        upsertTaskDocument: vi.fn().mockResolvedValue({
+          id: "doc-1",
+          taskId: "FN-001",
+          key: "test-plan",
+          content: "Test document content",
+          revision: 1,
+          author: "agent",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }),
+        getTaskDocument: vi.fn().mockResolvedValue({
+          id: "doc-1",
+          taskId: "FN-001",
+          key: "test-plan",
+          content: "Test document content",
+          revision: 1,
+          author: "agent",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }),
+        getTaskDocuments: vi.fn().mockResolvedValue([]),
         ...overrides,
       } as unknown as TaskStore;
     }
@@ -2208,15 +2291,17 @@ describe("HeartbeatMonitor", () => {
       mockTaskStore = createMockTaskStoreForTools();
     });
 
-    it("returns task_create and task_log tools", () => {
+    it("returns task_create, task_log, task_document_write, and task_document_read tools", () => {
       const store = createMockStore();
       const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
 
       const tools = monitor.createHeartbeatTools("agent-001", mockTaskStore, "FN-001");
 
-      expect(tools).toHaveLength(2);
+      expect(tools).toHaveLength(4);
       expect(tools[0]!.name).toBe("task_create");
       expect(tools[1]!.name).toBe("task_log");
+      expect(tools[2]!.name).toBe("task_document_write");
+      expect(tools[3]!.name).toBe("task_document_read");
     });
 
     it("task_create tool creates a task in triage via TaskStore", async () => {
@@ -2279,6 +2364,72 @@ describe("HeartbeatMonitor", () => {
       expect(result).toBeDefined();
       // Task was still created
       expect(mockTaskStore.createTask).toHaveBeenCalled();
+    });
+
+    it("task_document_write tool persists documents via TaskStore", async () => {
+      const store = createMockStore();
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+      const tools = monitor.createHeartbeatTools("agent-001", mockTaskStore, "FN-001");
+      const writeTool = tools.find((t) => t.name === "task_document_write")!;
+
+      const result = await writeTool.execute("call-1", { key: "plan", content: "Implementation plan here" }, undefined as any, undefined as any, undefined as any);
+
+      expect(mockTaskStore.upsertTaskDocument).toHaveBeenCalledWith("FN-001", {
+        key: "plan",
+        content: "Implementation plan here",
+        author: "agent",
+      });
+
+      const responseText = result.content[0] && "text" in result.content[0] ? result.content[0].text : "";
+      expect(responseText).toContain("Saved document");
+      expect(responseText).toContain("plan");
+    });
+
+    it("task_document_read tool reads specific document by key", async () => {
+      const store = createMockStore();
+      mockTaskStore.getTaskDocument = vi.fn().mockResolvedValue({
+        id: "doc-1",
+        taskId: "FN-001",
+        key: "plan",
+        content: "Implementation plan content",
+        revision: 2,
+        author: "agent",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+      const tools = monitor.createHeartbeatTools("agent-001", mockTaskStore, "FN-001");
+      const readTool = tools.find((t) => t.name === "task_document_read")!;
+
+      const result = await readTool.execute("call-1", { key: "plan" }, undefined as any, undefined as any, undefined as any);
+
+      expect(mockTaskStore.getTaskDocument).toHaveBeenCalledWith("FN-001", "plan");
+
+      const responseText = result.content[0] && "text" in result.content[0] ? result.content[0].text : "";
+      expect(responseText).toContain("plan");
+      expect(responseText).toContain("Implementation plan content");
+    });
+
+    it("task_document_read tool lists all documents when key is omitted", async () => {
+      const store = createMockStore();
+      mockTaskStore.getTaskDocuments = vi.fn().mockResolvedValue([
+        { id: "doc-1", taskId: "FN-001", key: "plan", content: "", revision: 1, author: "agent", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+        { id: "doc-2", taskId: "FN-001", key: "notes", content: "", revision: 1, author: "agent", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+      ]);
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+      const tools = monitor.createHeartbeatTools("agent-001", mockTaskStore, "FN-001");
+      const readTool = tools.find((t) => t.name === "task_document_read")!;
+
+      const result = await readTool.execute("call-1", { key: undefined }, undefined as any, undefined as any, undefined as any);
+
+      expect(mockTaskStore.getTaskDocuments).toHaveBeenCalledWith("FN-001");
+
+      const responseText = result.content[0] && "text" in result.content[0] ? result.content[0].text : "";
+      expect(responseText).toContain("plan");
+      expect(responseText).toContain("notes");
     });
   });
 

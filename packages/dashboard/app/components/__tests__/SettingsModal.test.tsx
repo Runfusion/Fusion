@@ -54,6 +54,9 @@ vi.mock("../../api", () => ({
     favoriteModels: [],
   })),
   testNtfyNotification: vi.fn(() => Promise.resolve({ success: true })),
+  // Global concurrency mocks
+  fetchGlobalConcurrency: vi.fn(() => Promise.resolve({ globalMaxConcurrent: 4, currentUsage: 0 })),
+  updateGlobalConcurrency: vi.fn(() => Promise.resolve({ globalMaxConcurrent: 4, currentUsage: 0 })),
   // Plugin API mocks
   fetchPlugins: vi.fn(() => Promise.resolve([])),
   installPlugin: vi.fn(() => Promise.resolve({ id: "test-plugin", name: "Test Plugin", version: "1.0.0", state: "started" as const, enabled: true, settings: {}, settingsSchema: {} })),

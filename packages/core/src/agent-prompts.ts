@@ -50,6 +50,22 @@ When creating multiple related tasks, declare dependencies between them:
 
 **Discovered a dependency:** \`task_add_dep(task_id="KB-XXX")\` — use when you discover mid-execution that another task must be completed first. This will return a warning first — you must call again with \`confirm=true\` to proceed. Adding a dependency stops execution, discards current work, and moves the task to triage for re-specification.
 
+## Task Documents
+
+You have tools to persist durable work products as task documents visible in the dashboard's Documents tab:
+
+**Saving work:** \`task_document_write(key="plan", content="...")\` — Save structured notes, plans, research findings, or decision logs. Each write creates a revision so history is preserved. Use descriptive keys like "plan", "notes", "research", "decision-log".
+
+**Reading work:** \`task_document_read(key="plan")\` — Read a saved document by key. Omit the key to list all documents for this task.
+
+**When to use task documents:**
+- Save planning notes or architectural decisions early in the task for downstream continuity
+- Record research findings or investigation results
+- Document design decisions and trade-offs
+- Keep a running log of important choices made during implementation
+
+Documents persist across sessions and are visible to other agents and humans in the Documents tab.
+
 ## Cross-model review via review_step tool
 
 You have a \`review_step\` tool. It spawns a SEPARATE reviewer agent (different
@@ -165,6 +181,11 @@ Your job: take a rough task description and produce a fully specified PROMPT.md 
 
 ## What you produce
 Write a complete PROMPT.md specification to the given path using the write tool.
+
+**Save your planning output as a task document** for downstream executor continuity:
+- Use \`task_document_write(key="plan", content="...")\` to save a structured summary of your planning
+- Include key decisions, approach rationale, architectural choices, and acceptance criteria
+- Future executors will be able to read your plan via \`task_document_read(key="plan")\`
 
 ## PROMPT.md Format
 
@@ -439,6 +460,22 @@ When creating multiple related tasks, declare dependencies between them:
 
 **Discovered a dependency:** \`task_add_dep(task_id="KB-XXX")\` — use when you discover mid-execution that another task must be completed first. This will return a warning first — you must call again with \`confirm=true\` to proceed. Adding a dependency stops execution, discards current work, and moves the task to triage for re-specification.
 
+## Task Documents
+
+You have tools to persist durable work products as task documents visible in the dashboard's Documents tab:
+
+**Saving work:** \`task_document_write(key="plan", content="...")\` — Save structured notes, plans, research findings, or decision logs. Each write creates a revision so history is preserved. Use descriptive keys like "plan", "notes", "research", "decision-log".
+
+**Reading work:** \`task_document_read(key="plan")\` — Read a saved document by key. Omit the key to list all documents for this task.
+
+**When to use task documents:**
+- Save planning notes or architectural decisions early in the task for downstream continuity
+- Record research findings or investigation results
+- Document design decisions and trade-offs
+- Keep a running log of important choices made during implementation
+
+Documents persist across sessions and are visible to other agents and humans in the Documents tab.
+
 ## Cross-model review via review_step tool
 
 You have a \`review_step\` tool. It spawns a SEPARATE reviewer agent (different
@@ -644,6 +681,8 @@ const CONCISE_TRIAGE_PROMPT_TEXT = `You are a task specification agent for "fn".
 
 ## What you produce
 Write a PROMPT.md specification to the given path. Be brief and precise — avoid verbosity.
+
+**Save your planning output as a task document:** Use \`task_document_write(key="plan", content="...")\` to save a structured summary of your planning for downstream executors.
 
 ## PROMPT.md Format
 

@@ -20,7 +20,7 @@
 import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, AgentHeartbeatConfig, AgentBudgetStatus, Message, MessageStore, TaskStore, TaskDetail, AgentRole, Agent, InboxTask, BlockedStateSnapshot, RunMutationContext } from "@fusion/core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
-import { createTaskCreateTool, createTaskLogToolWithContext, taskCreateParams } from "./agent-tools.js";
+import { createTaskCreateTool, createTaskLogToolWithContext, createTaskDocumentWriteTool, createTaskDocumentReadTool, taskCreateParams } from "./agent-tools.js";
 import { AgentLogger } from "./agent-logger.js";
 import { heartbeatLog } from "./logger.js";
 import { createRunAuditor, type EngineRunContext } from "./run-audit.js";
@@ -121,7 +121,7 @@ export function isBlockedStateDuplicate(current: BlockedStateSnapshot, previous:
 /**
  * System prompt for heartbeat agent sessions.
  * Instructs the agent to perform a single-pass check on its assigned task
- * and use `task_create` / `task_log` to record findings or spawn follow-up work.
+ * and use `task_create` / `task_log` / task documents to record findings or spawn follow-up work.
  */
 export const HEARTBEAT_SYSTEM_PROMPT = `You are a heartbeat agent running in a short execution window.
 
@@ -129,10 +129,14 @@ Your job:
 1. Check your assigned task — read the description and PROMPT.md if present.
 2. Do ONE useful action: analyze, review, create follow-up tasks, or log findings.
 3. Use task_create to spawn follow-up work, task_log to record observations.
-4. Call heartbeat_done when finished with an optional summary of what was accomplished.
+4. Use task_document_write to save durable findings, plans, or research notes.
+5. Call heartbeat_done when finished with an optional summary of what was accomplished.
 
 Keep work lightweight — this is a single-pass check, not a full implementation run.
-You have readonly file access plus task_create and task_log tools.`;
+You have readonly file access plus task_create, task_log, and task_document tools.
+
+**Task Documents:** Save important findings with task_document_write(key="...", content="...").
+Documents persist across sessions and are visible in the dashboard's Documents tab.`;
 
 /** Parameter schema for the heartbeat_done tool */
 const heartbeatDoneParams = Type.Object({
@@ -1114,6 +1118,10 @@ export class HeartbeatMonitor {
 
     // task_log tool (with run context for mutation correlation)
     tools.push(createTaskLogToolWithContext(taskStore, taskId, runContext));
+
+    // Document tools for persisting durable findings
+    tools.push(createTaskDocumentWriteTool(taskStore, taskId));
+    tools.push(createTaskDocumentReadTool(taskStore, taskId));
 
     return tools;
   }
