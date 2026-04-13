@@ -1,6 +1,6 @@
 import type { JSX } from "react";
 import { Bot, Heart, Activity, Pause, Square } from "lucide-react";
-import type { Agent, AgentState } from "../api";
+import type { Agent } from "../api";
 
 /** Default heartbeat timeout when not configured per-agent */
 const DEFAULT_HEARTBEAT_TIMEOUT_MS = 60_000;
@@ -11,6 +11,19 @@ export interface AgentHealthStatus {
   icon: JSX.Element;
   color: string;
 }
+
+type AgentHealthInput = Pick<
+  Agent,
+  | "state"
+  | "lastHeartbeatAt"
+  | "lastError"
+  | "pauseReason"
+  | "runtimeConfig"
+  | "metadata"
+  | "name"
+  | "role"
+  | "taskId"
+>;
 
 /**
  * Extract the heartbeat timeout from agent runtimeConfig.
@@ -33,6 +46,21 @@ function isHeartbeatEnabled(runtimeConfig?: Record<string, unknown>): boolean {
   return true;
 }
 
+function isTaskWorkerAgent(agent: AgentHealthInput): boolean {
+  const metadata = agent.metadata as Record<string, unknown> | null | undefined;
+  if (metadata) {
+    if (metadata.agentKind === "task-worker") return true;
+    if (metadata.taskWorker === true) return true;
+    if (metadata.managedBy === "task-executor") return true;
+  }
+
+  return Boolean(
+    agent.role === "executor" &&
+    agent.name?.startsWith("executor-") &&
+    agent.taskId,
+  );
+}
+
 /**
  * Computes a single canonical health status for an agent based on its
  * state, runtimeConfig, and last heartbeat timestamp.
@@ -41,8 +69,8 @@ function isHeartbeatEnabled(runtimeConfig?: Record<string, unknown>): boolean {
  * - "Terminated" — agent.state === "terminated"
  * - "Error" — agent.state === "error" (uses lastError if available)
  * - "Paused" — agent.state === "paused" (uses pauseReason if available)
- * - "Running" — agent.state === "running"
- * - "Disabled" — runtimeConfig.enabled === false
+ * - "Running" — agent.state === "running", or a detected task worker in "active"
+ * - "Disabled" — runtimeConfig.enabled === false for non-task-worker agents
  * - "Starting..." — state === "active" && no lastHeartbeatAt
  * - "Idle" — state !== "active" && no lastHeartbeatAt
  * - "Healthy" — heartbeat is fresh within the configured timeout
@@ -51,8 +79,9 @@ function isHeartbeatEnabled(runtimeConfig?: Record<string, unknown>): boolean {
  * @param agent - The agent object (partial Agent shape is accepted)
  * @returns A health status object with label, icon, and color
  */
-export function getAgentHealthStatus(agent: Pick<Agent, "state" | "lastHeartbeatAt" | "lastError" | "pauseReason" | "runtimeConfig">): AgentHealthStatus {
+export function getAgentHealthStatus(agent: AgentHealthInput): AgentHealthStatus {
   const { state, lastHeartbeatAt, lastError, pauseReason, runtimeConfig } = agent;
+  const isTaskWorker = isTaskWorkerAgent(agent);
 
   // Terminal states - these always take precedence
   if (state === "terminated") {
@@ -80,7 +109,7 @@ export function getAgentHealthStatus(agent: Pick<Agent, "state" | "lastHeartbeat
     };
   }
 
-  if (state === "running") {
+  if (state === "running" || (isTaskWorker && state === "active")) {
     return {
       label: "Running",
       icon: <Activity size={14} />,
@@ -130,7 +159,7 @@ export function getAgentHealthStatus(agent: Pick<Agent, "state" | "lastHeartbeat
  * Returns a CSS variable name for the health color.
  * Useful when you need the raw CSS variable name for custom styling.
  */
-export function getAgentHealthColorVar(agent: Pick<Agent, "state" | "lastHeartbeatAt" | "lastError" | "pauseReason" | "runtimeConfig">): string {
+export function getAgentHealthColorVar(agent: AgentHealthInput): string {
   const status = getAgentHealthStatus(agent);
   // Extract the CSS variable name from the color string
   // e.g., "var(--state-error-text)" -> "--state-error-text"

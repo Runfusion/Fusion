@@ -2905,6 +2905,26 @@ describe("HeartbeatTriggerScheduler", () => {
       expect(callback).not.toHaveBeenCalled();
     });
 
+    it("skips trigger when agent heartbeat is disabled", async () => {
+      const agent: import("@fusion/core").Agent = {
+        id: "agent-test",
+        name: "executor-FN-1661",
+        role: "executor",
+        state: "active",
+        taskId: "FN-1661",
+        metadata: {},
+        runtimeConfig: { enabled: false },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      eventStore.emit("agent:assigned", agent, "FN-1661");
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(callback).not.toHaveBeenCalled();
+      expect(eventStore.getActiveHeartbeatRun).not.toHaveBeenCalled();
+    });
+
     it("skips trigger when agent has active run", async () => {
       (eventStore.getActiveHeartbeatRun as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: "run-active",
