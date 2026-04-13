@@ -28,7 +28,7 @@ import {
   hasIssueBadgeFieldsChanged,
 } from "./github-webhooks.js";
 import { createMissionRouter } from "./mission-routes.js";
-import { getOrCreateProjectStore } from "./project-store-resolver.js";
+import { getOrCreateProjectStore, invalidateAllGlobalSettingsCaches } from "./project-store-resolver.js";
 import { AiSessionStore, SESSION_CLEANUP_DEFAULT_MAX_AGE_MS } from "./ai-session-store.js";
 import { getSession as getPlanningSession, cleanupSession as cleanupPlanningSession } from "./planning.js";
 import { getSubtaskSession, cleanupSubtaskSession } from "./subtask-breakdown.js";
@@ -2065,6 +2065,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.put("/settings/global", async (req, res) => {
     try {
       const settings = await store.updateGlobalSettings(req.body);
+      // Invalidate global settings caches in all project-scoped stores so the
+      // next GET /settings?projectId=xxx reads fresh values from disk rather
+      // than returning a stale per-project cache.
+      invalidateAllGlobalSettingsCaches();
       res.json(settings);
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -9586,7 +9590,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         parseCompanyDirectory,
         parseCompanyArchive,
         parseSingleAgentManifest,
-        convertAgentCompanies,
+        prepareAgentCompaniesImport,
         AgentCompaniesParseError: _AgentCompaniesParseError,
       } = await import("@fusion/core");
 
@@ -9596,7 +9600,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const existingAgents = await agentStore.listAgents();
       const existingNames = new Set(existingAgents.map((a: any) => a.name));
-      const conversionOptions = skipExisting ? { skipExisting: [...existingNames] } : undefined;
+      const conversionOptions = {
+        ...(skipExisting ? { skipExisting: [...existingNames] } : {}),
+        existingAgents,
+      };
 
       let pkg: {
         company?: { name?: string; slug?: string };
@@ -9810,26 +9817,26 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw badRequest("Provide one of: agents (array), source (path), manifest (string), or importSource + companySlug");
       }
 
-      const { inputs, result } = convertAgentCompanies(pkg as any, conversionOptions);
+      const { items: importItems, result } = prepareAgentCompaniesImport(pkg as any, conversionOptions);
       const companyName = pkg.company?.name ?? "Unknown";
       const companySlug = typeof pkg.company?.slug === "string" ? pkg.company.slug : undefined;
 
-      if (inputs.length === 0 && result.errors.length === 0 && result.skipped.length === 0) {
+      if (importItems.length === 0 && result.errors.length === 0 && result.skipped.length === 0) {
         throw badRequest("No agents found in manifest");
       }
 
       if (dryRun) {
-        const agentPreview = inputs.map((input: any) => ({
-          name: input.name,
-          role: input.role,
-          title: typeof input.title === "string" ? input.title : undefined,
-          icon: typeof input.icon === "string" ? input.icon : undefined,
-          reportsTo: typeof input.reportsTo === "string" ? input.reportsTo : undefined,
-          instructionsText: typeof input.instructionsText === "string"
-            ? input.instructionsText.slice(0, 200) + (input.instructionsText.length > 200 ? "..." : "")
+        const agentPreview = importItems.map((item: any) => ({
+          name: item.input.name,
+          role: item.input.role,
+          title: typeof item.input.title === "string" ? item.input.title : undefined,
+          icon: typeof item.input.icon === "string" ? item.input.icon : undefined,
+          reportsTo: item.reportsTo?.resolvedAgentId,
+          instructionsText: typeof item.input.instructionsText === "string"
+            ? item.input.instructionsText.slice(0, 200) + (item.input.instructionsText.length > 200 ? "..." : "")
             : undefined,
-          skills: Array.isArray(input.metadata?.skills)
-            ? input.metadata.skills.filter((skill: unknown): skill is string => typeof skill === "string")
+          skills: Array.isArray(item.input.metadata?.skills)
+            ? item.input.metadata.skills.filter((skill: unknown): skill is string => typeof skill === "string")
             : undefined,
         }));
 
@@ -9847,21 +9854,42 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const created: Array<{ id: string; name: string }> = [];
       const errors: Array<{ name: string; error: string }> = [...result.errors];
+      const createdAgentIdsByManifestKey = new Map<string, string>();
 
-      for (const input of inputs) {
-        if (!skipExisting && existingNames.has(input.name)) {
-          errors.push({ name: input.name, error: "Agent with this name already exists" });
+      for (const item of importItems) {
+        if (!skipExisting && existingNames.has(item.input.name)) {
+          errors.push({ name: item.input.name, error: "Agent with this name already exists" });
           continue;
+        }
+
+        const input = {
+          ...item.input,
+          ...(item.input.metadata ? { metadata: { ...item.input.metadata } } : {}),
+        };
+
+        if (item.reportsTo?.deferredManifestKey) {
+          const resolvedReportsTo = createdAgentIdsByManifestKey.get(item.reportsTo.deferredManifestKey);
+          if (!resolvedReportsTo) {
+            errors.push({
+              name: item.input.name,
+              error: `Could not resolve reportsTo reference "${item.reportsTo.raw}" because the manager was not created`,
+            });
+            continue;
+          }
+          input.reportsTo = resolvedReportsTo;
+        } else if (item.reportsTo?.resolvedAgentId) {
+          input.reportsTo = item.reportsTo.resolvedAgentId;
         }
 
         try {
           const agent = await agentStore.createAgent(input);
           created.push({ id: agent.id, name: agent.name });
+          createdAgentIdsByManifestKey.set(item.manifestKey, agent.id);
         } catch (err: any) {
       if (err instanceof ApiError) {
         throw err;
       }
-          errors.push({ name: input.name, error: err.message });
+          errors.push({ name: item.input.name, error: err.message });
         }
       }
 
