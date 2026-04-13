@@ -4919,7 +4919,10 @@ export function streamChatResponse(
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
 
-        if (flushPendingEvent && buffer.length > 0) {
+        // Only push complete SSE lines (ending with \n) to lines for processing.
+        // Incomplete lines (no trailing \n) are intentionally left in the buffer
+        // to be continued by the next chunk or properly handled at stream end.
+        if (flushPendingEvent && buffer.length > 0 && buffer.endsWith("\n")) {
           lines.push(buffer);
           buffer = "";
         }
@@ -4940,7 +4943,9 @@ export function streamChatResponse(
           }
         }
 
-        if (flushPendingEvent) {
+        // Flush any pending event/data at stream end.
+        // Only dispatch if we have both a valid event type and accumulated data.
+        if (flushPendingEvent && currentEvent && currentDataLines.length > 0) {
           const trailingData = currentDataLines.join("\n");
           dispatchEvent(currentEvent, trailingData);
           currentEvent = "";
