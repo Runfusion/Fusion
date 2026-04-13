@@ -16,9 +16,10 @@ interface UseFileBrowserReturn {
  *
  * @param taskId - The task ID to browse
  * @param enabled - Whether to enable fetching (e.g., when tab is active)
+ * @param projectId - Optional project ID for scoped store resolution
  * @returns File browser state and controls
  */
-export function useFileBrowser(taskId: string, enabled: boolean): UseFileBrowserReturn {
+export function useFileBrowser(taskId: string, enabled: boolean, projectId?: string): UseFileBrowserReturn {
   const [entries, setEntries] = useState<FileNode[]>([]);
   const [currentPath, setCurrentPath] = useState<string>(".");
   const [loading, setLoading] = useState(false);
@@ -48,7 +49,8 @@ export function useFileBrowser(taskId: string, enabled: boolean): UseFileBrowser
       try {
         const response: FileListResponse = await fetchFileList(
           taskId,
-          currentPath === "." ? undefined : currentPath
+          currentPath === "." ? undefined : currentPath,
+          projectId
         );
 
         if (!cancelled) {
@@ -71,7 +73,7 @@ export function useFileBrowser(taskId: string, enabled: boolean): UseFileBrowser
     return () => {
       cancelled = true;
     };
-  }, [taskId, currentPath, enabled, refreshKey]);
+  }, [taskId, currentPath, enabled, refreshKey, projectId]);
 
   return {
     entries,

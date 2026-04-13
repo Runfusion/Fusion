@@ -119,6 +119,7 @@ export function AppModals({
         onClose={modalManager.closeGitHubImport}
         onImport={taskHandlers.handleGitHubImport}
         tasks={tasks}
+        projectId={projectId}
       />
 
       <ModalErrorBoundary>

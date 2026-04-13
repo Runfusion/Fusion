@@ -20,12 +20,10 @@ import {
   GET_METRICS,
   ERROR_EVENT,
   type StartRuntimePayload,
-  type StopRuntimePayload,
 } from "../ipc/ipc-protocol.js";
-import { InProcessRuntime } from "./in-process-runtime.js";
-import type { ProjectRuntimeConfig } from "../project-runtime.js";
 import { runtimeLog } from "../logger.js";
 import { CentralCore } from "@fusion/core";
+import { ProjectEngine } from "../project-engine.js";
 
 // Only run if we're in a forked child process
 if (!process.send) {
@@ -38,8 +36,8 @@ runtimeLog.log("Child process worker starting...");
 // Create IPC worker
 const ipcWorker = new IpcWorker();
 
-// InProcessRuntime instance (created when START_RUNTIME is received)
-let runtime: InProcessRuntime | null = null;
+// ProjectEngine instance (created when START_RUNTIME is received)
+let engine: ProjectEngine | null = null;
 
 // Create a minimal CentralCore stub for the child process
 // The child doesn't need full CentralCore functionality
@@ -57,20 +55,24 @@ const createStubCentralCore = (): CentralCore => {
 
 // Register command handlers
 
-// START_RUNTIME: Create and start the InProcessRuntime
+// START_RUNTIME: Create and start the ProjectEngine (wraps InProcessRuntime + subsystems)
 ipcWorker.onCommand(START_RUNTIME, async (payload: unknown) => {
   const { config } = payload as StartRuntimePayload;
   runtimeLog.log(`Received START_RUNTIME command for project ${config.projectId}`);
 
-  if (runtime) {
+  if (engine) {
     throw new Error("Runtime already started");
   }
 
   // Create stub CentralCore (real coordination happens in host)
   const centralCore = createStubCentralCore();
 
-  // Create InProcessRuntime
-  runtime = new InProcessRuntime(config, centralCore);
+  // Create ProjectEngine (includes InProcessRuntime + triage, merge, PR, notifications, cron)
+  engine = new ProjectEngine(config, centralCore, {
+    projectId: config.projectId,
+  });
+
+  const runtime = engine.getRuntime();
 
   // Forward runtime events to host
   runtime.on("task:created", (task) => {
@@ -96,58 +98,56 @@ ipcWorker.onCommand(START_RUNTIME, async (payload: unknown) => {
     ipcWorker.sendEvent("HEALTH_CHANGED", data);
   });
 
-  // Start the runtime
-  await runtime.start();
+  // Start the engine (starts runtime + all subsystems)
+  await engine.start();
 
-  runtimeLog.log("Runtime started successfully");
+  runtimeLog.log("Engine started successfully");
   return { status: runtime.getStatus() };
 });
 
-// STOP_RUNTIME: Stop the runtime gracefully
-ipcWorker.onCommand(STOP_RUNTIME, async (payload: unknown) => {
+// STOP_RUNTIME: Stop the engine gracefully
+ipcWorker.onCommand(STOP_RUNTIME, async (_payload: unknown) => {
   runtimeLog.log("Received STOP_RUNTIME command");
 
-  if (!runtime) {
+  if (!engine) {
     throw new Error("Runtime not started");
   }
 
-  const { timeoutMs } = (payload as StopRuntimePayload) || {};
+  await engine.stop();
+  engine = null;
 
-  await runtime.stop();
-  runtime = null;
-
-  runtimeLog.log("Runtime stopped successfully");
+  runtimeLog.log("Engine stopped successfully");
   return { stopped: true };
 });
 
 // GET_STATUS: Return current runtime status
 ipcWorker.onCommand(GET_STATUS, async () => {
-  if (!runtime) {
+  if (!engine) {
     return { status: "stopped" };
   }
-  return { status: runtime.getStatus() };
+  return { status: engine.getRuntime().getStatus() };
 });
 
 // GET_METRICS: Return runtime metrics
 ipcWorker.onCommand(GET_METRICS, async () => {
-  if (!runtime) {
+  if (!engine) {
     return {
       inFlightTasks: 0,
       activeAgents: 0,
       lastActivityAt: new Date().toISOString(),
     };
   }
-  return runtime.getMetrics();
+  return engine.getRuntime().getMetrics();
 });
 
 // Handle graceful shutdown
 process.on("SIGTERM", async () => {
   runtimeLog.log("Received SIGTERM, initiating graceful shutdown...");
 
-  if (runtime) {
+  if (engine) {
     try {
-      await runtime.stop();
-      runtimeLog.log("Runtime stopped gracefully");
+      await engine.stop();
+      runtimeLog.log("Engine stopped gracefully");
     } catch (error) {
       runtimeLog.error("Error during graceful shutdown:", error);
     }
@@ -159,10 +159,10 @@ process.on("SIGTERM", async () => {
 process.on("SIGINT", async () => {
   runtimeLog.log("Received SIGINT, initiating graceful shutdown...");
 
-  if (runtime) {
+  if (engine) {
     try {
-      await runtime.stop();
-      runtimeLog.log("Runtime stopped gracefully");
+      await engine.stop();
+      runtimeLog.log("Engine stopped gracefully");
     } catch (error) {
       runtimeLog.error("Error during graceful shutdown:", error);
     }

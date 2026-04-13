@@ -17,6 +17,7 @@ interface GitHubImportModalProps {
   onClose: () => void;
   onImport: (task: Task) => void;
   tasks: Task[];
+  projectId?: string;
 }
 
 // Mobile breakpoint in pixels
@@ -24,7 +25,7 @@ const MOBILE_BREAKPOINT = 640;
 
 type TabType = "issues" | "pulls";
 
-export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubImportModalProps) {
+export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId }: GitHubImportModalProps) {
   const [owner, setOwner] = useState("");
   const [repo, setRepo] = useState("");
   const [labels, setLabels] = useState("");
@@ -276,7 +277,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
       setError(null);
 
       try {
-        const task = await apiImportGitHubIssue(owner.trim(), repo.trim(), selectedIssueNumber);
+        const task = await apiImportGitHubIssue(owner.trim(), repo.trim(), selectedIssueNumber, projectId);
         onImport(task);
         onClose();
       } catch (err: any) {
@@ -295,7 +296,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
       setError(null);
 
       try {
-        const task = await apiImportGitHubPull(owner.trim(), repo.trim(), selectedPullNumber);
+        const task = await apiImportGitHubPull(owner.trim(), repo.trim(), selectedPullNumber, projectId);
         onImport(task);
         onClose();
       } catch (err: any) {

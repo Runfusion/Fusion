@@ -30,6 +30,7 @@ import { SelfHealingManager } from "../self-healing.js";
 import { PluginRunner } from "../plugin-runner.js";
 import { MissionAutopilot } from "../mission-autopilot.js";
 import { MissionExecutionLoop } from "../mission-execution-loop.js";
+import { TriageProcessor } from "../triage.js";
 
 /**
  * InProcessRuntime runs a project within the main process.
@@ -88,6 +89,7 @@ export class InProcessRuntime
   private routineRunner?: RoutineRunner;
   private routineScheduler?: RoutineScheduler;
   private missionExecutionLoop?: MissionExecutionLoop;
+  private triageProcessor?: TriageProcessor;
 
   /**
    * @param config - Runtime configuration
@@ -218,6 +220,7 @@ export class InProcessRuntime
         beforeRequeue: (taskId) => this.selfHealingManager?.checkStuckBudget(taskId) ?? Promise.resolve(true),
         onLoopDetected: (event) => this.executor?.handleLoopDetected(event) ?? Promise.resolve(false),
         onStuck: (event) => {
+          this.triageProcessor?.markStuckAborted(event.taskId);
           this.executor?.markStuckAborted(event.taskId, event.shouldRequeue);
           runtimeLog.warn(
             `Task ${event.taskId} stuck (${event.reason}) — ` +
@@ -372,6 +375,29 @@ export class InProcessRuntime
         runtimeLog.warn(`AgentStore initialization failed (continuing without agent monitoring):`, agentErr);
       }
 
+      // 7. Initialize TriageProcessor (task specification)
+      // Created after AgentStore so per-agent custom instructions are available.
+      this.triageProcessor = new TriageProcessor(
+        this.taskStore,
+        this.config.workingDirectory,
+        {
+          semaphore: this.globalSemaphore,
+          stuckTaskDetector: this.stuckTaskDetector,
+          agentStore: this.agentStore,
+          onSpecifyStart: (t) => {
+            this.recordActivity();
+            runtimeLog.log(`Specifying ${t.id}...`);
+          },
+          onSpecifyComplete: (t) => {
+            this.recordActivity();
+            runtimeLog.log(`Specified ${t.id} → todo`);
+          },
+          onSpecifyError: (t, e) => {
+            runtimeLog.error(`Triage failed for ${t.id}: ${e.message}`);
+          },
+        },
+      );
+
       // Initialize RoutineScheduler (requires RoutineStore from FN-1519)
       try {
         const { RoutineStore: RoutineStoreClass } = await import("@fusion/core");
@@ -430,8 +456,9 @@ export class InProcessRuntime
       // SelfHealingManager so the policy lives in one place.
       await this.selfHealingManager.runStartupRecovery();
 
-      // 11. Start scheduler
+      // 11. Start scheduler and triage processor
       this.scheduler.start();
+      this.triageProcessor?.start();
 
       // 12. Start MissionExecutionLoop for validation cycle handling
       this.missionExecutionLoop = missionExecutionLoop;
@@ -524,7 +551,13 @@ export class InProcessRuntime
         runtimeLog.log("HeartbeatMonitor stopped");
       }
 
-      // 6. Stop scheduler (prevents new task scheduling)
+      // 6. Stop triage processor (prevents new specifications)
+      if (this.triageProcessor) {
+        this.triageProcessor.stop();
+        runtimeLog.log("TriageProcessor stopped");
+      }
+
+      // 7. Stop scheduler (prevents new task scheduling)
       if (this.scheduler) {
         this.scheduler.stop();
         runtimeLog.log("Scheduler stopped");
@@ -666,6 +699,14 @@ export class InProcessRuntime
    */
   getRoutineScheduler(): RoutineScheduler | undefined {
     return this.routineScheduler;
+  }
+
+  /**
+   * Get the TriageProcessor instance (if initialized).
+   * Returns undefined before start() completes.
+   */
+  getTriageProcessor(): TriageProcessor | undefined {
+    return this.triageProcessor;
   }
 
   /**

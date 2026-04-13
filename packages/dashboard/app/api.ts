@@ -577,8 +577,8 @@ export function apiFetchGitHubIssues(
 }
 
 /** Import a specific GitHub issue as a fn task */
-export function apiImportGitHubIssue(owner: string, repo: string, issueNumber: number): Promise<Task> {
-  return api<Task>("/github/issues/import", {
+export function apiImportGitHubIssue(owner: string, repo: string, issueNumber: number, projectId?: string): Promise<Task> {
+  return api<Task>(withProjectId("/github/issues/import", projectId), {
     method: "POST",
     body: JSON.stringify({ owner, repo, issueNumber }),
   });
@@ -599,9 +599,10 @@ export function apiBatchImportGitHubIssues(
   owner: string,
   repo: string,
   issueNumbers: number[],
-  delayMs?: number
+  delayMs?: number,
+  projectId?: string
 ): Promise<{ results: BatchImportResult[] }> {
-  return api<{ results: BatchImportResult[] }>("/github/issues/batch-import", {
+  return api<{ results: BatchImportResult[] }>(withProjectId("/github/issues/batch-import", projectId), {
     method: "POST",
     body: JSON.stringify({ owner, repo, issueNumbers, delayMs }),
   });
@@ -632,8 +633,8 @@ export function apiFetchGitHubPulls(
 }
 
 /** Import a specific GitHub pull request as a fn review task */
-export function apiImportGitHubPull(owner: string, repo: string, prNumber: number): Promise<Task> {
-  return api<Task>("/github/pulls/import", {
+export function apiImportGitHubPull(owner: string, repo: string, prNumber: number, projectId?: string): Promise<Task> {
+  return api<Task>(withProjectId("/github/pulls/import", projectId), {
     method: "POST",
     body: JSON.stringify({ owner, repo, prNumber }),
   });
@@ -814,8 +815,8 @@ export interface TerminalExitEvent {
 }
 
 /** Execute a shell command and get a session ID for streaming output */
-export function execTerminalCommand(command: string): Promise<TerminalExecResponse> {
-  return api<TerminalExecResponse>("/terminal/exec", {
+export function execTerminalCommand(command: string, projectId?: string): Promise<TerminalExecResponse> {
+  return api<TerminalExecResponse>(withProjectId("/terminal/exec", projectId), {
     method: "POST",
     body: JSON.stringify({ command }),
   });
@@ -1146,19 +1147,19 @@ export interface SaveFileResponse {
 }
 
 /** List files in task directory */
-export function fetchFileList(taskId: string, path?: string): Promise<FileListResponse> {
+export function fetchFileList(taskId: string, path?: string, projectId?: string): Promise<FileListResponse> {
   const query = path ? `?path=${encodeURIComponent(path)}` : "";
-  return api<FileListResponse>(`/tasks/${taskId}/files${query}`);
+  return api<FileListResponse>(withProjectId(`/tasks/${taskId}/files${query}`, projectId));
 }
 
 /** Fetch file content */
-export function fetchFileContent(taskId: string, filePath: string): Promise<FileContentResponse> {
-  return api<FileContentResponse>(`/tasks/${taskId}/files/${encodeURIComponent(filePath)}`);
+export function fetchFileContent(taskId: string, filePath: string, projectId?: string): Promise<FileContentResponse> {
+  return api<FileContentResponse>(withProjectId(`/tasks/${taskId}/files/${encodeURIComponent(filePath)}`, projectId));
 }
 
 /** Save file content */
-export function saveFileContent(taskId: string, filePath: string, content: string): Promise<SaveFileResponse> {
-  return api<SaveFileResponse>(`/tasks/${taskId}/files/${encodeURIComponent(filePath)}`, {
+export function saveFileContent(taskId: string, filePath: string, content: string, projectId?: string): Promise<SaveFileResponse> {
+  return api<SaveFileResponse>(withProjectId(`/tasks/${taskId}/files/${encodeURIComponent(filePath)}`, projectId), {
     method: "POST",
     body: JSON.stringify({ content }),
   });
@@ -2734,15 +2735,20 @@ export interface SummarizeTitleResponse {
  * @param description - The task description to summarize (must be 201-2000 chars)
  * @param provider - Optional AI model provider (e.g., "anthropic")
  * @param modelId - Optional AI model ID (e.g., "claude-sonnet-4-5")
+ * @param projectId - Optional project ID for scoped settings resolution
  * @returns The generated title (guaranteed ≤60 characters)
  * @throws Error with descriptive message for 400/429/503 errors
  */
 export async function summarizeTitle(
   description: string,
   provider?: string,
-  modelId?: string
+  modelId?: string,
+  projectId?: string
 ): Promise<string> {
-  const res = await fetch("/api/ai/summarize-title", {
+  const url = projectId
+    ? `/api/ai/summarize-title?projectId=${encodeURIComponent(projectId)}`
+    : "/api/ai/summarize-title";
+  const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ description, provider, modelId }),

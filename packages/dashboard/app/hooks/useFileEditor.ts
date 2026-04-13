@@ -20,12 +20,14 @@ interface UseFileEditorReturn {
  * @param taskId - The task ID
  * @param filePath - The file path to edit (null if no file selected)
  * @param enabled - Whether to enable loading (e.g., when editor is visible)
+ * @param projectId - Optional project ID for scoped store resolution
  * @returns File editor state and controls
  */
 export function useFileEditor(
   taskId: string,
   filePath: string | null,
-  enabled: boolean
+  enabled: boolean,
+  projectId?: string
 ): UseFileEditorReturn {
   const [content, setContentState] = useState<string>("");
   const [originalContent, setOriginalContent] = useState<string>("");
@@ -56,7 +58,7 @@ export function useFileEditor(
       setError(null);
 
       try {
-        const response: FileContentResponse = await fetchFileContent(taskId, filePath!);
+        const response: FileContentResponse = await fetchFileContent(taskId, filePath!, projectId);
 
         if (!cancelled) {
           setContentState(response.content);
@@ -82,7 +84,7 @@ export function useFileEditor(
     return () => {
       cancelled = true;
     };
-  }, [taskId, filePath, enabled]);
+  }, [taskId, filePath, enabled, projectId]);
 
   const hasChanges = content !== originalContent;
 
@@ -95,7 +97,7 @@ export function useFileEditor(
     setError(null);
 
     try {
-      const response: SaveFileResponse = await saveFileContent(taskId, filePath, content);
+      const response: SaveFileResponse = await saveFileContent(taskId, filePath, content, projectId);
       setOriginalContent(content);
       setMtime(response.mtime);
     } catch (err: any) {
@@ -104,7 +106,7 @@ export function useFileEditor(
     } finally {
       setSaving(false);
     }
-  }, [taskId, filePath, content, hasChanges]);
+  }, [taskId, filePath, content, hasChanges, projectId]);
 
   return {
     content,
