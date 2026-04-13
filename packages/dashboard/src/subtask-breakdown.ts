@@ -126,6 +126,7 @@ function buildSubtaskSessionFromRow(row: AiSessionRow): SubtaskInternalSession {
     createdAt,
     updatedAt,
     agent: undefined,
+    projectId: row.projectId ?? undefined,
   };
 }
 

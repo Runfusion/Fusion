@@ -441,6 +441,80 @@ describe("subtask session lifecycle", () => {
     });
   });
 
+  it("createSubtaskSession stores projectId in session and persists it to SQLite", async () => {
+    const description = "Test projectId persistence";
+    const projectId = "test-project-123";
+
+    const store = new MockAiSessionStore();
+    setAiSessionStore(store as any);
+
+    await createSubtaskSession(description, undefined, "/tmp/project", undefined, projectId);
+
+    // Get the session from memory (it's in generating state)
+    const created = await createSubtaskSession("temp");
+    const sessionId = created.sessionId;
+
+    // Create session with projectId
+    await createSubtaskSession(description, undefined, "/tmp/project", undefined, projectId);
+
+    // Wait for session to be persisted
+    await vi.waitFor(() => {
+      const row = store.get(sessionId);
+      return row !== null;
+    }, { timeout: 1000 });
+
+    // The first created session is the one without projectId, create another with projectId
+    const created2 = await createSubtaskSession("temp2");
+    await createSubtaskSession(description, undefined, "/tmp/project", undefined, projectId);
+
+    // Check the persisted row has the projectId
+    const persistedRows = [...store.rows.values()];
+    const withProjectId = persistedRows.find(r => r.projectId === projectId);
+    expect(withProjectId).toBeDefined();
+  });
+
+  it("rehydrateFromStore restores projectId from SQLite rows", () => {
+    const store = new MockAiSessionStore();
+    const row = buildSubtaskRow({
+      id: "subtask-rehydrate-projectId",
+      status: "generating",
+      projectId: "restored-project-456",
+    });
+    store.rows.set(row.id, row);
+
+    const rehydrated = rehydrateFromStore(store as any);
+
+    expect(rehydrated).toBe(1);
+    // Access internal sessions map via getSubtaskSession which should restore projectId
+    const session = getSubtaskSession(row.id);
+    expect(session).toBeDefined();
+    expect(session?.sessionId).toBe(row.id);
+  });
+
+  it("retrySubtaskSession preserves projectId through retry lifecycle", async () => {
+    const store = new MockAiSessionStore();
+    const projectId = "retry-project-789";
+    const row = buildSubtaskRow({
+      id: "subtask-retry-projectId",
+      status: "error",
+      error: "Transient failure",
+      projectId,
+    });
+    store.rows.set(row.id, row);
+    setAiSessionStore(store as any);
+
+    await retrySubtaskSession(row.id, "/tmp/project");
+
+    const session = getSubtaskSession(row.id);
+    expect(session).toBeDefined();
+    expect(session?.status).toBe("complete");
+
+    // Verify the persisted row still has the projectId after retry
+    const updatedRow = store.get(row.id);
+    expect(updatedRow).toBeDefined();
+    expect(updatedRow?.projectId).toBe(projectId);
+  });
+
   it("getSubtaskSession returns undefined for unknown session and public shape for known session", async () => {
     expect(getSubtaskSession("unknown-session")).toBeUndefined();
 

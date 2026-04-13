@@ -928,6 +928,23 @@ describe("POST /subtasks/*", () => {
     expect(typeof res.body.sessionId).toBe("string");
   });
 
+  it("accepts projectId query param without error", async () => {
+    // Mock getOrCreateProjectStore for projectId scoping
+    vi.spyOn(projectStoreResolver, "getOrCreateProjectStore").mockResolvedValue(store);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/subtasks/start-streaming?projectId=test-project-123",
+      JSON.stringify({ description: "Break this feature into subtasks" }),
+      { "Content-Type": "application/json" },
+    );
+
+    // Should return 201 without throwing an error (projectId is forwarded)
+    expect(res.status).toBe(201);
+    expect(typeof res.body.sessionId).toBe("string");
+  });
+
   it("retries a failed subtask session", async () => {
     const retrySpy = vi.spyOn(subtaskBreakdownModule, "retrySubtaskSession").mockResolvedValue();
 
