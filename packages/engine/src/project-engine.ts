@@ -95,6 +95,16 @@ export class ProjectEngine {
   private mergeRunning = false;
   private activeMergeSession: { dispose: () => void } | null = null;
   private mergeRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * Pending manual merge resolvers — keyed by taskId.
+   * When `onMerge` is called, the task is enqueued like auto-merge but a
+   * Promise is stored here so the caller can await the result.
+   */
+  private manualMergeResolvers = new Map<
+    string,
+    { resolve: (result: MergeResult) => void; reject: (err: Error) => void }
+  >();
   private shuttingDown = false;
 
   private static readonly MAX_AUTO_MERGE_RETRIES = 3;
@@ -209,6 +219,12 @@ export class ProjectEngine {
       this.activeMergeSession = null;
     }
 
+    // Reject any pending manual merge promises
+    for (const [taskId, resolver] of this.manualMergeResolvers) {
+      resolver.reject(new Error(`Engine shutting down — merge for ${taskId} aborted`));
+    }
+    this.manualMergeResolvers.clear();
+
     // Remove event listeners
     try {
       const store = this.runtime.getTaskStore();
@@ -284,35 +300,26 @@ export class ProjectEngine {
   }
 
   /**
-   * Directly perform an AI-powered merge for a task (semaphore-gated).
-   * This is the manual "merge now" path, bypassing the auto-merge queue.
+   * Perform an AI-powered merge for a task, serialized through the merge queue.
+   * This is the manual "merge now" path — it shares the same queue as auto-merge
+   * so only one merge runs at a time per project.
    * Returns the full MergeResult so it can be used as the `onMerge` callback
    * in createServer().
    */
   async onMerge(taskId: string): Promise<MergeResult> {
-    const store = this.runtime.getTaskStore();
-    const cwd = this.config.workingDirectory;
-    const semaphore = (this.runtime as any).globalSemaphore;
-    const pool = (this.runtime as any).worktreePool;
-    const agentStore = (this.runtime as any).agentStore;
-    const usageLimitPauser = (this.runtime as any).usageLimitPauser;
-
-    const rawMerge = () =>
-      aiMergeTask(store, cwd, taskId, {
-        pool,
-        usageLimitPauser,
-        agentStore,
-        onSession: (session) => {
-          this.activeMergeSession = session;
-        },
+    // If this task is already queued or actively merging, wait for the
+    // existing merge to finish rather than starting a second one.
+    if (this.mergeActive.has(taskId)) {
+      return new Promise<MergeResult>((resolve, reject) => {
+        this.manualMergeResolvers.set(taskId, { resolve, reject });
+        // Don't re-enqueue — the task is already in the queue/active
       });
+    }
 
-    const result = semaphore
-      ? await semaphore.run(rawMerge, PRIORITY_MERGE)
-      : await rawMerge();
-
-    this.activeMergeSession = null;
-    return result;
+    return new Promise<MergeResult>((resolve, reject) => {
+      this.manualMergeResolvers.set(taskId, { resolve, reject });
+      this.internalEnqueueMerge(taskId);
+    });
   }
 
   // ── Merge eligibility helpers (richer logic from dashboard.ts) ──
@@ -402,76 +409,94 @@ export class ProjectEngine {
 
       while (this.mergeQueue.length > 0 && !this.shuttingDown) {
         const taskId = this.mergeQueue.shift()!;
+        const manualResolver = this.manualMergeResolvers.get(taskId);
         try {
-          // Re-check autoMerge and pause before each merge
+          // Manual merges (onMerge) skip auto-merge eligibility checks
+          if (!manualResolver) {
+            // Re-check autoMerge and pause before each merge
+            const settings = await store.getSettings();
+            if (settings.globalPause || settings.enginePaused) {
+              runtimeLog.log(
+                `Auto-merge skipping ${taskId} — ${settings.globalPause ? "global pause" : "engine paused"} active`,
+              );
+              continue;
+            }
+            if (!settings.autoMerge) {
+              runtimeLog.log(`Auto-merge skipping ${taskId} — autoMerge disabled`);
+              continue;
+            }
+
+            const task = await store.getTask(taskId);
+            if (!task || task.column !== "in-review") {
+              continue;
+            }
+
+            if (!this.canMergeTask(task as any)) {
+              continue;
+            }
+
+            // Fast path: merge already confirmed (e.g. task was moved back to
+            // in-review by auto-recovery after a successful merge) — just
+            // complete the task without re-running the merge process.
+            if (task.mergeDetails?.mergeConfirmed) {
+              runtimeLog.log(
+                `Auto-merge: ${taskId} already has mergeConfirmed — moving to done`,
+              );
+              await store.logEntry(
+                taskId,
+                "Merge already confirmed; completing task (recovered from post-merge state inconsistency)",
+              );
+              await store.updateTask(taskId, { status: null });
+              await store.moveTask(taskId, "done");
+              continue;
+            }
+
+            // Auto-heal verification buffer failures by resetting retry counter
+            if (this.hasAutoHealableVerificationBufferFailure(task as any)) {
+              await store.logEntry(
+                taskId,
+                "Auto-healing stale deterministic verification buffer failure; retrying merge verification",
+              );
+              await store.updateTask(taskId, { mergeRetries: 0, error: null, status: null });
+            } else if (
+              (task.mergeRetries ?? 0) >= ProjectEngine.MAX_AUTO_MERGE_RETRIES &&
+              this.isRetryCooldownElapsed(task as any)
+            ) {
+              await store.logEntry(
+                taskId,
+                `Auto-merge retry cooldown elapsed (${Math.round(ProjectEngine.AUTO_MERGE_COOLDOWN_MS / 60000)}m idle); resetting retries for another attempt`,
+              );
+              await store.updateTask(taskId, { mergeRetries: 0 });
+            }
+          }
+
           const settings = await store.getSettings();
-          if (settings.globalPause || settings.enginePaused) {
-            runtimeLog.log(
-              `Auto-merge skipping ${taskId} — ${settings.globalPause ? "global pause" : "engine paused"} active`,
-            );
-            continue;
-          }
-          if (!settings.autoMerge) {
-            runtimeLog.log(`Auto-merge skipping ${taskId} — autoMerge disabled`);
-            continue;
-          }
-
-          const task = await store.getTask(taskId);
-          if (!task || task.column !== "in-review") {
-            continue;
-          }
-
-          if (!this.canMergeTask(task as any)) {
-            continue;
-          }
-
-          // Fast path: merge already confirmed (e.g. task was moved back to
-          // in-review by auto-recovery after a successful merge) — just
-          // complete the task without re-running the merge process.
-          if (task.mergeDetails?.mergeConfirmed) {
-            runtimeLog.log(
-              `Auto-merge: ${taskId} already has mergeConfirmed — moving to done`,
-            );
-            await store.logEntry(
-              taskId,
-              "Merge already confirmed; completing task (recovered from post-merge state inconsistency)",
-            );
-            await store.updateTask(taskId, { status: null });
-            await store.moveTask(taskId, "done");
-            continue;
-          }
-
-          // Auto-heal verification buffer failures by resetting retry counter
-          if (this.hasAutoHealableVerificationBufferFailure(task as any)) {
-            await store.logEntry(
-              taskId,
-              "Auto-healing stale deterministic verification buffer failure; retrying merge verification",
-            );
-            await store.updateTask(taskId, { mergeRetries: 0, error: null, status: null });
-          } else if (
-            (task.mergeRetries ?? 0) >= ProjectEngine.MAX_AUTO_MERGE_RETRIES &&
-            this.isRetryCooldownElapsed(task as any)
-          ) {
-            await store.logEntry(
-              taskId,
-              `Auto-merge retry cooldown elapsed (${Math.round(ProjectEngine.AUTO_MERGE_COOLDOWN_MS / 60000)}m idle); resetting retries for another attempt`,
-            );
-            await store.updateTask(taskId, { mergeRetries: 0 });
-          }
-
           const mergeStrategy = this.options.getMergeStrategy?.(settings) ?? "direct";
 
           if (mergeStrategy === "pull-request" && this.options.processPullRequestMerge) {
-            runtimeLog.log(`Auto-merge processing PR flow for ${taskId}...`);
+            runtimeLog.log(`${manualResolver ? "Manual" : "Auto"}-merge processing PR flow for ${taskId}...`);
             const result = await this.options.processPullRequestMerge(store, cwd, taskId);
             if (result === "merged") {
-              runtimeLog.log(`Auto-merge PR merged: ${taskId}`);
+              runtimeLog.log(`${manualResolver ? "Manual" : "Auto"}-merge PR merged: ${taskId}`);
             } else if (result === "waiting") {
-              runtimeLog.log(`Auto-merge PR waiting: ${taskId}`);
+              runtimeLog.log(`${manualResolver ? "Manual" : "Auto"}-merge PR waiting: ${taskId}`);
+            }
+            if (manualResolver) {
+              // PR merge path doesn't produce a full MergeResult — fetch the task
+              // and construct one so the dashboard endpoint can respond.
+              const prTask = await store.getTask(taskId).catch(() => null);
+              this.manualMergeResolvers.delete(taskId);
+              manualResolver.resolve({
+                task: prTask!,
+                branch: prTask?.branch ?? "",
+                merged: result === "merged",
+                worktreeRemoved: false,
+                branchDeleted: false,
+              } as MergeResult);
             }
           } else {
             // Direct merge via AI agent, gated by semaphore
-            runtimeLog.log(`Auto-merge merging ${taskId}...`);
+            runtimeLog.log(`${manualResolver ? "Manual" : "Auto"}-merge merging ${taskId}...`);
             const semaphore = (this.runtime as any).globalSemaphore;
             const pool = (this.runtime as any).worktreePool;
             const agentStore = (this.runtime as any).agentStore;
@@ -487,14 +512,20 @@ export class ProjectEngine {
                 },
               });
 
+            let result: MergeResult;
             if (semaphore) {
-              await semaphore.run(rawMerge, PRIORITY_MERGE);
+              result = await semaphore.run(rawMerge, PRIORITY_MERGE);
             } else {
-              await rawMerge();
+              result = await rawMerge();
             }
 
             this.activeMergeSession = null;
-            runtimeLog.log(`Auto-merge merged: ${taskId}`);
+            runtimeLog.log(`${manualResolver ? "Manual" : "Auto"}-merge merged: ${taskId}`);
+
+            if (manualResolver) {
+              this.manualMergeResolvers.delete(taskId);
+              manualResolver.resolve(result);
+            }
 
             // Reset retries on success
             const latestTask = await store.getTask(taskId).catch(() => null);
@@ -505,7 +536,14 @@ export class ProjectEngine {
         } catch (err: any) {
           this.activeMergeSession = null;
           const errorMsg = err?.message ?? String(err);
-          runtimeLog.error(`Auto-merge failed for ${taskId}: ${errorMsg}`);
+          runtimeLog.error(`${manualResolver ? "Manual" : "Auto"}-merge failed for ${taskId}: ${errorMsg}`);
+
+          // If this was a manual merge, reject the promise and skip auto-retry logic
+          if (manualResolver) {
+            this.manualMergeResolvers.delete(taskId);
+            manualResolver.reject(err instanceof Error ? err : new Error(errorMsg));
+            continue;
+          }
 
           const settingsOnErr = await store
             .getSettings()
@@ -602,6 +640,20 @@ export class ProjectEngine {
           }
         } finally {
           this.mergeActive.delete(taskId);
+          // If a manual merge was requested while this task was already in-flight,
+          // the resolver was set but not consumed above. Resolve it now.
+          const lateResolver = this.manualMergeResolvers.get(taskId);
+          if (lateResolver) {
+            this.manualMergeResolvers.delete(taskId);
+            const finalTask = await store.getTask(taskId).catch(() => null);
+            lateResolver.resolve({
+              task: finalTask!,
+              branch: finalTask?.branch ?? "",
+              merged: finalTask?.column === "done",
+              worktreeRemoved: false,
+              branchDeleted: false,
+            } as MergeResult);
+          }
         }
       }
     } finally {
