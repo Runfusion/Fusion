@@ -45,6 +45,16 @@ export interface ProjectRuntimeConfig {
   maxWorktrees: number;
   /** Optional project settings override */
   settings?: ProjectSettings;
+  /** Shared global semaphore from ProjectManager. When provided, the runtime
+   *  uses this semaphore for concurrency control instead of creating its own.
+   *  This ensures cross-project concurrency limits are enforced. */
+  globalSemaphore?: import("./concurrency.js").AgentSemaphore;
+  /**
+   * An already-initialized TaskStore to use instead of creating a new one.
+   * When provided, the runtime will skip TaskStore construction and init().
+   * Useful when the caller (e.g. dashboard.ts) owns and watches the store.
+   */
+  externalTaskStore?: TaskStore;
 }
 
 /**

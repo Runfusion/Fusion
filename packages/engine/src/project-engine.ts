@@ -3,7 +3,10 @@ import type {
   Task,
   CentralCore,
   Settings,
+  MergeResult,
   AutomationStore as AutomationStoreType,
+  ScheduledTask,
+  AutomationRunResult,
 } from "@fusion/core";
 import { InProcessRuntime } from "./runtimes/in-process-runtime.js";
 import type { ProjectRuntimeConfig } from "./project-runtime.js";
@@ -31,6 +34,12 @@ export interface ProjectEngineOptions {
   /** Base URL for ntfy.sh notifications */
   ntfyBaseUrl?: string;
   /**
+   * An already-initialized TaskStore to use instead of creating a new one.
+   * When provided, InProcessRuntime will skip TaskStore construction and init().
+   * Useful when the caller (e.g. dashboard.ts) owns and watches the store.
+   */
+  externalTaskStore?: TaskStore;
+  /**
    * Returns the merge strategy for the current settings.
    * If not provided, defaults to "direct".
    */
@@ -50,6 +59,11 @@ export interface ProjectEngineOptions {
    * Invoked after CronRunner completes a memory insight extraction schedule.
    */
   onInsightRunProcessed?: (schedule: unknown, result: unknown) => void | Promise<void>;
+  /**
+   * Whether to skip starting NtfyNotifier. Useful when the caller manages
+   * notifications independently. Defaults to false (notifier is started).
+   */
+  skipNotifier?: boolean;
 }
 
 /**
@@ -83,6 +97,8 @@ export class ProjectEngine {
   private shuttingDown = false;
 
   private static readonly MAX_AUTO_MERGE_RETRIES = 3;
+  /** 30-minute cooldown before a retry-exhausted task gets another sweep attempt */
+  private static readonly AUTO_MERGE_COOLDOWN_MS = 30 * 60 * 1000;
 
   // Event handler references for cleanup
   private settingsHandlers: Array<(...args: any[]) => void> = [];
@@ -93,7 +109,11 @@ export class ProjectEngine {
     centralCore: CentralCore,
     private options: ProjectEngineOptions = {},
   ) {
-    this.runtime = new InProcessRuntime(config, centralCore);
+    // Pass through externalTaskStore to the runtime config if provided
+    const runtimeConfig: ProjectRuntimeConfig = options.externalTaskStore
+      ? { ...config, externalTaskStore: options.externalTaskStore }
+      : config;
+    this.runtime = new InProcessRuntime(runtimeConfig, centralCore);
   }
 
   /**
@@ -113,12 +133,14 @@ export class ProjectEngine {
       this.prCommentHandler!.handleNewComments(taskId, prInfo, comments),
     );
 
-    // 3. Initialize NtfyNotifier
-    this.notifier = new NtfyNotifier(store, {
-      projectId: this.options.projectId,
-      ntfyBaseUrl: this.options.ntfyBaseUrl,
-    });
-    await this.notifier.start();
+    // 3. Initialize NtfyNotifier (unless caller manages it externally)
+    if (!this.options.skipNotifier) {
+      this.notifier = new NtfyNotifier(store, {
+        projectId: this.options.projectId,
+        ntfyBaseUrl: this.options.ntfyBaseUrl,
+      });
+      await this.notifier.start();
+    }
 
     // 4. Initialize AutomationStore + CronRunner
     try {
@@ -129,7 +151,7 @@ export class ProjectEngine {
       const aiPromptExecutor = await createAiPromptExecutor(cwd);
       this.cronRunner = new CronRunner(store, this.automationStore, {
         aiPromptExecutor,
-        onScheduleRunProcessed: this.options.onInsightRunProcessed as any,
+        onScheduleRunProcessed: this.buildInsightRunHandler(cwd),
       });
 
       // Sync insight extraction automation on startup
@@ -231,15 +253,120 @@ export class ProjectEngine {
     return this.cronRunner;
   }
 
-  // ── Auto-merge subsystem ──
-
-  private canMergeTask(task: Task): boolean {
-    const blocker = this.options.getTaskMergeBlocker?.(task);
-    if (blocker) return false;
-    return (task.mergeRetries ?? 0) < ProjectEngine.MAX_AUTO_MERGE_RETRIES;
+  /** Get the AutomationStore (if initialized). */
+  getAutomationStore(): AutomationStoreType | undefined {
+    return this.automationStore;
   }
 
-  private enqueueMerge(taskId: string): void {
+  /**
+   * Enqueue a task ID for auto-merge if it is not already queued or active.
+   * Exposed publicly so callers can integrate the engine's merge queue with
+   * an external `onMerge` callback (e.g. dashboard's createServer call).
+   */
+  enqueueMerge(taskId: string): void {
+    this.internalEnqueueMerge(taskId);
+  }
+
+  /**
+   * Directly perform an AI-powered merge for a task (semaphore-gated).
+   * This is the manual "merge now" path, bypassing the auto-merge queue.
+   * Returns the full MergeResult so it can be used as the `onMerge` callback
+   * in createServer().
+   */
+  async onMerge(taskId: string): Promise<MergeResult> {
+    const store = this.runtime.getTaskStore();
+    const cwd = this.config.workingDirectory;
+    const semaphore = (this.runtime as any).globalSemaphore;
+    const pool = (this.runtime as any).worktreePool;
+    const agentStore = (this.runtime as any).agentStore;
+    const usageLimitPauser = (this.runtime as any).usageLimitPauser;
+
+    const rawMerge = () =>
+      aiMergeTask(store, cwd, taskId, {
+        pool,
+        usageLimitPauser,
+        agentStore,
+        onSession: (session) => {
+          this.activeMergeSession = session;
+        },
+      });
+
+    const result = semaphore
+      ? await semaphore.run(rawMerge, PRIORITY_MERGE)
+      : await rawMerge();
+
+    this.activeMergeSession = null;
+    return result;
+  }
+
+  // ── Merge eligibility helpers (richer logic from dashboard.ts) ──
+
+  /**
+   * True when a retry-exhausted task in "in-review" has a verification buffer
+   * failure that can be auto-healed by resetting mergeRetries and re-running.
+   */
+  private hasAutoHealableVerificationBufferFailure(task: {
+    mergeRetries?: number | null;
+    column: string;
+    error?: string | null;
+    log?: Array<{ action?: string }>;
+  }): boolean {
+    if (task.column !== "in-review") return false;
+    if ((task.mergeRetries ?? 0) < ProjectEngine.MAX_AUTO_MERGE_RETRIES) return false;
+    const err = task.error ?? "";
+    const matchesVerificationError =
+      err.includes("Deterministic test verification failed") ||
+      err.includes("Deterministic build verification failed") ||
+      err.includes("Build verification failed") ||
+      err.includes("Test verification failed");
+    if (!matchesVerificationError) return false;
+
+    return (
+      task.log?.some(
+        (entry) =>
+          entry.action?.includes("[verification] test command failed (exit 0)") ||
+          entry.action?.includes("[verification] build command failed (exit 0)") ||
+          entry.action?.includes("output exceeded buffer"),
+      ) ?? false
+    );
+  }
+
+  /**
+   * True when a retry-exhausted task has been idle long enough for a
+   * 30-minute cooldown merge attempt.
+   */
+  private isRetryCooldownElapsed(task: { updatedAt?: string | null }): boolean {
+    if (!task.updatedAt) return false;
+    const updated = Date.parse(task.updatedAt);
+    if (Number.isNaN(updated)) return false;
+    return Date.now() - updated >= ProjectEngine.AUTO_MERGE_COOLDOWN_MS;
+  }
+
+  /**
+   * Returns true if the task is eligible for auto-merge. Uses richer eligibility
+   * checks: merge blocker, retry limit, auto-heal patterns, cooldown elapsed.
+   */
+  private canMergeTask(task: {
+    id?: string;
+    mergeRetries?: number | null;
+    column: string;
+    paused?: boolean;
+    status?: string | null;
+    error?: string | null;
+    steps?: Array<{ status: string }>;
+    workflowStepResults?: Array<{ status: string }>;
+    log?: Array<{ action?: string }>;
+    updatedAt?: string | null;
+  }): boolean {
+    if (this.options.getTaskMergeBlocker?.(task as Task)) return false;
+    return (
+      (task.mergeRetries ?? 0) < ProjectEngine.MAX_AUTO_MERGE_RETRIES ||
+      this.hasAutoHealableVerificationBufferFailure(task) ||
+      this.isRetryCooldownElapsed(task)
+    );
+  }
+
+  private internalEnqueueMerge(taskId: string): void {
     if (this.mergeActive.has(taskId)) return;
     this.mergeActive.add(taskId);
     this.mergeQueue.push(taskId);
@@ -257,23 +384,59 @@ export class ProjectEngine {
       while (this.mergeQueue.length > 0 && !this.shuttingDown) {
         const taskId = this.mergeQueue.shift()!;
         try {
+          // Re-check autoMerge and pause before each merge
+          const settings = await store.getSettings();
+          if (settings.globalPause || settings.enginePaused) {
+            runtimeLog.log(
+              `Auto-merge skipping ${taskId} — ${settings.globalPause ? "global pause" : "engine paused"} active`,
+            );
+            continue;
+          }
+          if (!settings.autoMerge) {
+            runtimeLog.log(`Auto-merge skipping ${taskId} — autoMerge disabled`);
+            continue;
+          }
+
           const task = await store.getTask(taskId);
           if (!task || task.column !== "in-review") {
             continue;
           }
 
-          const settings = await store.getSettings();
-          if (settings.globalPause || settings.enginePaused) break;
+          if (!this.canMergeTask(task as any)) {
+            continue;
+          }
+
+          // Auto-heal verification buffer failures by resetting retry counter
+          if (this.hasAutoHealableVerificationBufferFailure(task as any)) {
+            await store.logEntry(
+              taskId,
+              "Auto-healing stale deterministic verification buffer failure; retrying merge verification",
+            );
+            await store.updateTask(taskId, { mergeRetries: 0, error: null, status: null });
+          } else if (
+            (task.mergeRetries ?? 0) >= ProjectEngine.MAX_AUTO_MERGE_RETRIES &&
+            this.isRetryCooldownElapsed(task as any)
+          ) {
+            await store.logEntry(
+              taskId,
+              `Auto-merge retry cooldown elapsed (${Math.round(ProjectEngine.AUTO_MERGE_COOLDOWN_MS / 60000)}m idle); resetting retries for another attempt`,
+            );
+            await store.updateTask(taskId, { mergeRetries: 0 });
+          }
 
           const mergeStrategy = this.options.getMergeStrategy?.(settings) ?? "direct";
 
           if (mergeStrategy === "pull-request" && this.options.processPullRequestMerge) {
-            runtimeLog.log(`Processing PR flow for ${taskId}...`);
+            runtimeLog.log(`Auto-merge processing PR flow for ${taskId}...`);
             const result = await this.options.processPullRequestMerge(store, cwd, taskId);
-            runtimeLog.log(`PR merge result for ${taskId}: ${result}`);
+            if (result === "merged") {
+              runtimeLog.log(`Auto-merge PR merged: ${taskId}`);
+            } else if (result === "waiting") {
+              runtimeLog.log(`Auto-merge PR waiting: ${taskId}`);
+            }
           } else {
             // Direct merge via AI agent, gated by semaphore
-            runtimeLog.log(`Merging ${taskId}...`);
+            runtimeLog.log(`Auto-merge merging ${taskId}...`);
             const semaphore = (this.runtime as any).globalSemaphore;
             const pool = (this.runtime as any).worktreePool;
             const agentStore = (this.runtime as any).agentStore;
@@ -296,66 +459,110 @@ export class ProjectEngine {
             }
 
             this.activeMergeSession = null;
-            runtimeLog.log(`Merged ${taskId}`);
+            runtimeLog.log(`Auto-merge merged: ${taskId}`);
 
             // Reset retries on success
-            if (task.mergeRetries && task.mergeRetries > 0) {
+            const latestTask = await store.getTask(taskId).catch(() => null);
+            if (latestTask?.mergeRetries && latestTask.mergeRetries > 0) {
               await store.updateTask(taskId, { mergeRetries: 0 });
             }
           }
         } catch (err: any) {
           this.activeMergeSession = null;
           const errorMsg = err?.message ?? String(err);
-          runtimeLog.error(`Merge failed for ${taskId}: ${errorMsg}`);
+          runtimeLog.error(`Auto-merge failed for ${taskId}: ${errorMsg}`);
 
-          // Conflict retry with exponential backoff
-          const isConflictError =
-            errorMsg.includes("conflict") || errorMsg.includes("Conflict");
+          const settingsOnErr = await store
+            .getSettings()
+            .catch(() => ({ autoResolveConflicts: true }));
+          const taskOnErr = await store.getTask(taskId).catch(() => null);
+          const mergeStrategyOnErr =
+            this.options.getMergeStrategy?.(settingsOnErr as Settings) ?? "direct";
 
-          if (isConflictError) {
+          // Deterministic verification failure: move back to in-progress
+          const isVerificationError =
+            err?.name === "VerificationError" ||
+            errorMsg.includes("Deterministic test verification failed") ||
+            errorMsg.includes("Deterministic build verification failed");
+
+          if (taskOnErr && isVerificationError) {
+            const failedKind = errorMsg.includes("build verification") ? "build" : "test";
             try {
-              const task = await store.getTask(taskId);
-              const settings = await store.getSettings();
-              if (
-                task &&
-                settings.autoResolveConflicts !== false &&
-                (task.mergeRetries ?? 0) < ProjectEngine.MAX_AUTO_MERGE_RETRIES
-              ) {
-                const retryCount = (task.mergeRetries ?? 0) + 1;
-                await store.updateTask(taskId, {
-                  mergeRetries: retryCount,
-                  status: null,
-                });
-
-                // Exponential backoff: 5s, 10s, 20s
-                const delayMs = 5000 * Math.pow(2, (task.mergeRetries ?? 0));
-                runtimeLog.log(
-                  `Merge conflict retry ${retryCount}/${ProjectEngine.MAX_AUTO_MERGE_RETRIES} for ${taskId} in ${delayMs / 1000}s`,
-                );
-
-                setTimeout(() => {
-                  if (!this.shuttingDown) this.enqueueMerge(taskId);
-                }, delayMs);
-              }
+              await store.addTaskComment(
+                taskId,
+                `Deterministic ${failedKind} verification failed during merge. ` +
+                  `See the prior [verification] log entry for the truncated command output. ` +
+                  `Please fix the failing ${failedKind} and push the update so the merge can retry.`,
+                "agent",
+              );
+              await store.updateTask(taskId, { status: null, mergeRetries: 0, error: null });
+              await store.moveTask(taskId, "in-progress");
+              await store.logEntry(
+                taskId,
+                `Deterministic ${failedKind} verification failed — moved back to in-progress for remediation`,
+              );
+              runtimeLog.log(
+                `Auto-merge: ${taskId} deterministic ${failedKind} verification failed — moved to in-progress`,
+              );
             } catch {
-              // best-effort retry
+              runtimeLog.error(
+                `Auto-merge: failed to return ${taskId} to in-progress after verification failure`,
+              );
             }
+            continue;
           }
 
-          // Verification failure — move back to in-progress
-          const isVerificationError =
-            errorMsg.includes("Verification failed") ||
-            errorMsg.includes("verification failed");
+          if (mergeStrategyOnErr === "direct") {
+            const isConflictError =
+              errorMsg.includes("conflict") || errorMsg.includes("Conflict");
 
-          if (isVerificationError && !isConflictError) {
-            try {
-              const task = await store.getTask(taskId);
-              if (task?.column === "in-review") {
-                await store.moveTask(taskId, "in-progress");
-                runtimeLog.log(`Verification failure — ${taskId} moved back to in-progress`);
+            if (taskOnErr && isConflictError) {
+              const currentRetries = taskOnErr.mergeRetries ?? 0;
+
+              if (
+                (settingsOnErr as Settings).autoResolveConflicts !== false &&
+                currentRetries < ProjectEngine.MAX_AUTO_MERGE_RETRIES
+              ) {
+                const newRetryCount = currentRetries + 1;
+                await store.updateTask(taskId, { mergeRetries: newRetryCount, status: null });
+
+                // Exponential backoff: 5s, 10s, 20s
+                const delayMs = 5000 * Math.pow(2, currentRetries);
+                runtimeLog.log(
+                  `Auto-merge conflict retry ${newRetryCount}/${ProjectEngine.MAX_AUTO_MERGE_RETRIES} for ${taskId} in ${delayMs / 1000}s`,
+                );
+                setTimeout(() => {
+                  if (!this.shuttingDown) this.internalEnqueueMerge(taskId);
+                }, delayMs);
+              } else {
+                // Max retries exceeded or auto-resolve disabled
+                try {
+                  await store.updateTask(taskId, { status: null });
+                } catch {
+                  /* best-effort */
+                }
               }
+            } else {
+              // Non-conflict error — stop retrying until user intervenes
+              try {
+                await store.updateTask(taskId, {
+                  status: null,
+                  mergeRetries: ProjectEngine.MAX_AUTO_MERGE_RETRIES,
+                  error: errorMsg,
+                });
+              } catch {
+                /* best-effort */
+              }
+            }
+          } else {
+            try {
+              await store.updateTask(taskId, {
+                status: null,
+                mergeRetries: ProjectEngine.MAX_AUTO_MERGE_RETRIES,
+                error: errorMsg,
+              });
             } catch {
-              // best-effort
+              /* best-effort */
             }
           }
         } finally {
@@ -375,7 +582,7 @@ export class ProjectEngine {
         const settings = await store.getSettings();
         if (settings.globalPause || settings.enginePaused) return;
         if (!settings.autoMerge) return;
-        this.enqueueMerge(task.id);
+        this.internalEnqueueMerge(task.id);
       } catch {
         // ignore settings read errors
       }
@@ -389,11 +596,11 @@ export class ProjectEngine {
       if (!settings.autoMerge) return;
 
       const tasks = await store.listTasks({ column: "in-review" });
-      const eligible = tasks.filter((t) => this.canMergeTask(t));
+      const eligible = tasks.filter((t) => this.canMergeTask(t as any));
       if (eligible.length > 0) {
         runtimeLog.log(`Auto-merge startup sweep: enqueueing ${eligible.length} task(s)`);
         for (const t of eligible) {
-          this.enqueueMerge(t.id);
+          this.internalEnqueueMerge(t.id);
         }
       }
     } catch {
@@ -412,8 +619,8 @@ export class ProjectEngine {
         if (!settings.globalPause && !settings.enginePaused && settings.autoMerge) {
           const tasks = await store.listTasks({ column: "in-review" });
           for (const t of tasks) {
-            if (this.canMergeTask(t)) {
-              this.enqueueMerge(t.id);
+            if (this.canMergeTask(t as any)) {
+              this.internalEnqueueMerge(t.id);
             }
           }
         }
@@ -451,7 +658,13 @@ export class ProjectEngine {
     this.settingsHandlers.push(onGlobalPause);
 
     // 2. Global unpause — resume orphaned tasks + sweep in-review
-    const onGlobalUnpause = async ({ settings: s, previous: prev }: { settings: Settings; previous: Settings }) => {
+    const onGlobalUnpause = async ({
+      settings: s,
+      previous: prev,
+    }: {
+      settings: Settings;
+      previous: Settings;
+    }) => {
       if (prev.globalPause && !s.globalPause) {
         runtimeLog.log("Global unpause — resuming agentic activity");
 
@@ -460,17 +673,21 @@ export class ProjectEngine {
           executor?.resumeOrphaned?.().catch((err: Error) =>
             runtimeLog.error("Failed to resume orphaned tasks on unpause:", err),
           );
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
 
         if (s.autoMerge) {
           try {
             const tasks = await store.listTasks({ column: "in-review" });
             for (const t of tasks) {
-              if (this.canMergeTask(t)) {
-                this.enqueueMerge(t.id);
+              if (this.canMergeTask(t as any)) {
+                this.internalEnqueueMerge(t.id);
               }
             }
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         }
       }
     };
@@ -478,7 +695,13 @@ export class ProjectEngine {
     this.settingsHandlers.push(onGlobalUnpause);
 
     // 3. Engine unpause — same as global unpause
-    const onEngineUnpause = async ({ settings: s, previous: prev }: { settings: Settings; previous: Settings }) => {
+    const onEngineUnpause = async ({
+      settings: s,
+      previous: prev,
+    }: {
+      settings: Settings;
+      previous: Settings;
+    }) => {
       if (prev.enginePaused && !s.enginePaused) {
         runtimeLog.log("Engine unpaused — resuming agentic activity");
 
@@ -487,17 +710,21 @@ export class ProjectEngine {
           executor?.resumeOrphaned?.().catch((err: Error) =>
             runtimeLog.error("Failed to resume orphaned tasks on engine unpause:", err),
           );
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
 
         if (s.autoMerge) {
           try {
             const tasks = await store.listTasks({ column: "in-review" });
             for (const t of tasks) {
-              if (this.canMergeTask(t)) {
-                this.enqueueMerge(t.id);
+              if (this.canMergeTask(t as any)) {
+                this.internalEnqueueMerge(t.id);
               }
             }
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         }
       }
     };
@@ -505,7 +732,13 @@ export class ProjectEngine {
     this.settingsHandlers.push(onEngineUnpause);
 
     // 4. Stuck task timeout change — trigger immediate check
-    const onStuckTimeoutChange = async ({ settings: s, previous: prev }: { settings: Settings; previous: Settings }) => {
+    const onStuckTimeoutChange = async ({
+      settings: s,
+      previous: prev,
+    }: {
+      settings: Settings;
+      previous: Settings;
+    }) => {
       if (s.taskStuckTimeoutMs !== prev.taskStuckTimeoutMs) {
         runtimeLog.log(
           `Stuck task timeout changed to ${s.taskStuckTimeoutMs}ms — running immediate check`,
@@ -513,23 +746,29 @@ export class ProjectEngine {
         try {
           const detector = (this.runtime as any).stuckTaskDetector;
           await detector?.checkNow?.();
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }
     };
     store.on("settings:updated", onStuckTimeoutChange);
     this.settingsHandlers.push(onStuckTimeoutChange);
 
     // 5. Insight extraction settings change — sync automation
-    const onInsightSettingsChange = async ({ settings: s, previous: prev }: { settings: Settings; previous: Settings }) => {
+    const onInsightSettingsChange = async ({
+      settings: s,
+      previous: prev,
+    }: {
+      settings: Settings;
+      previous: Settings;
+    }) => {
       const insightKeys = [
         "insightExtractionEnabled",
         "insightExtractionSchedule",
         "insightExtractionMinIntervalMs",
       ] as const;
 
-      const changed = insightKeys.some(
-        (key) => (s as any)[key] !== (prev as any)[key],
-      );
+      const changed = insightKeys.some((key) => (s as any)[key] !== (prev as any)[key]);
       if (!changed || !this.automationStore) return;
 
       try {
@@ -547,5 +786,82 @@ export class ProjectEngine {
     };
     store.on("settings:updated", onInsightSettingsChange);
     this.settingsHandlers.push(onInsightSettingsChange);
+  }
+
+  /**
+   * Build the onScheduleRunProcessed callback for CronRunner.
+   * Chains the built-in processAndAuditInsightExtraction with any
+   * caller-provided onInsightRunProcessed callback.
+   */
+  private buildInsightRunHandler(
+    cwd: string,
+  ): (schedule: ScheduledTask, result: AutomationRunResult) => Promise<void> {
+    const callerCallback = this.options.onInsightRunProcessed;
+
+    return async (schedule: ScheduledTask, result: AutomationRunResult): Promise<void> => {
+      // Invoke caller-provided callback first (e.g. for test hooks)
+      if (callerCallback) {
+        try {
+          await callerCallback(schedule, result);
+        } catch (err) {
+          runtimeLog.warn(
+            "onInsightRunProcessed callback error:",
+            err instanceof Error ? err.message : err,
+          );
+        }
+      }
+
+      // Run built-in processAndAuditInsightExtraction
+      try {
+        const { INSIGHT_EXTRACTION_SCHEDULE_NAME, processAndAuditInsightExtraction } =
+          await import("@fusion/core");
+
+        if (
+          typeof INSIGHT_EXTRACTION_SCHEDULE_NAME !== "string" ||
+          typeof processAndAuditInsightExtraction !== "function"
+        ) {
+          return;
+        }
+
+        if (schedule.name !== INSIGHT_EXTRACTION_SCHEDULE_NAME) {
+          return;
+        }
+
+        const stepResults = result.stepResults ?? [];
+        const aiStep = stepResults.find(
+          (sr) =>
+            sr.stepName === "Extract Memory Insights and Prune" ||
+            sr.stepName === "Extract Memory Insights",
+        );
+
+        if (!aiStep) {
+          runtimeLog.log(`No insight extraction step found in ${schedule.name} result`);
+          return;
+        }
+
+        runtimeLog.log("Processing memory insight extraction run...");
+
+        const auditReport = await processAndAuditInsightExtraction(cwd, {
+          rawResponse: aiStep.output ?? "",
+          stepSuccess: aiStep.success,
+          runAt: result.startedAt,
+          error: aiStep.error,
+        });
+
+        const pruneStatus = auditReport.pruning.applied
+          ? ` | Pruned: ${auditReport.pruning.originalSize} -> ${auditReport.pruning.newSize} chars`
+          : ` | Pruning: ${auditReport.pruning.reason}`;
+
+        runtimeLog.log(
+          `Memory audit complete — Health: ${auditReport.health}, ` +
+            `Insights: ${auditReport.insightsMemory.insightCount}${pruneStatus}`,
+        );
+      } catch (err) {
+        runtimeLog.warn(
+          "Failed to process insight extraction:",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    };
   }
 }

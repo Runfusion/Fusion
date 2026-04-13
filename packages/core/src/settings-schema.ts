@@ -36,6 +36,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   globalPause: false,
   enginePaused: false,
   maxConcurrent: 2,
+  globalMaxConcurrent: 4,
   maxWorktrees: 4,
   pollIntervalMs: 15000,
   groupOverlappingFiles: true,

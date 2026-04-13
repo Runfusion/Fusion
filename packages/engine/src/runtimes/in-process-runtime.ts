@@ -89,6 +89,7 @@ export class InProcessRuntime
   private routineRunner?: RoutineRunner;
   private routineScheduler?: RoutineScheduler;
   private missionExecutionLoop?: MissionExecutionLoop;
+  private missionAutopilot?: MissionAutopilot;
   private triageProcessor?: TriageProcessor;
 
   /**
@@ -124,11 +125,16 @@ export class InProcessRuntime
     runtimeLog.log(`Starting InProcessRuntime for project ${this.config.projectId}`);
 
     try {
-      // 1. Initialize TaskStore
+      // 1. Initialize TaskStore (use external if provided, otherwise create new)
       const { TaskStore, PluginStore: PluginStoreClass, PluginLoader: PluginLoaderClass } = await import("@fusion/core");
-      this.taskStore = new TaskStore(this.config.workingDirectory);
-      await this.taskStore.init();
-      runtimeLog.log(`TaskStore initialized for project ${this.config.projectId}`);
+      if (this.config.externalTaskStore) {
+        this.taskStore = this.config.externalTaskStore;
+        runtimeLog.log(`TaskStore provided externally for project ${this.config.projectId}`);
+      } else {
+        this.taskStore = new TaskStore(this.config.workingDirectory);
+        await this.taskStore.init();
+        runtimeLog.log(`TaskStore initialized for project ${this.config.projectId}`);
+      }
 
       // 2. Initialize Plugin system (PluginStore + PluginLoader + PluginRunner)
       this.pluginStore = new PluginStoreClass(this.taskStore.getFusionDir());
@@ -164,15 +170,21 @@ export class InProcessRuntime
         );
       }
 
-      // 4. Initialize global semaphore from CentralCore
-      const globalLimit = await this.getGlobalConcurrencyLimit();
-      this.globalSemaphore = new AgentSemaphore(() => globalLimit);
+      // 4. Initialize global semaphore — use shared one from ProjectManager if provided,
+      // otherwise create a local one from CentralCore (single-project mode).
+      if (this.config.globalSemaphore) {
+        this.globalSemaphore = this.config.globalSemaphore;
+      } else {
+        const globalLimit = await this.getGlobalConcurrencyLimit();
+        this.globalSemaphore = new AgentSemaphore(() => globalLimit);
+      }
 
       // 5. Initialize Scheduler
       const missionStore = this.taskStore.getMissionStore();
-      const missionAutopilot = missionStore
+      this.missionAutopilot = missionStore
         ? new MissionAutopilot(this.taskStore, missionStore)
         : undefined;
+      const missionAutopilot = this.missionAutopilot;
 
       // Initialize MissionExecutionLoop for validation cycle handling
       const missionExecutionLoop = missionStore
@@ -482,6 +494,9 @@ export class InProcessRuntime
         void this.scheduler.reconcileAllMissionFeatures();
       }
 
+      // 14. Start MissionAutopilot background polling
+      this.missionAutopilot?.start();
+
       this.setStatus("active");
       runtimeLog.log(`InProcessRuntime started for project ${this.config.projectId}`);
     } catch (error) {
@@ -561,6 +576,12 @@ export class InProcessRuntime
       if (this.scheduler) {
         this.scheduler.stop();
         runtimeLog.log("Scheduler stopped");
+      }
+
+      // 7. Stop mission autopilot background polling
+      if (this.missionAutopilot) {
+        this.missionAutopilot.stop();
+        runtimeLog.log("MissionAutopilot stopped");
       }
 
       // 7. Stop mission execution loop
@@ -707,6 +728,22 @@ export class InProcessRuntime
    */
   getTriageProcessor(): TriageProcessor | undefined {
     return this.triageProcessor;
+  }
+
+  /**
+   * Get the MissionAutopilot instance (if initialized).
+   * Returns undefined when no MissionStore is available.
+   */
+  getMissionAutopilot(): MissionAutopilot | undefined {
+    return this.missionAutopilot;
+  }
+
+  /**
+   * Get the MissionExecutionLoop instance (if initialized).
+   * Returns undefined when no MissionStore is available.
+   */
+  getMissionExecutionLoop(): MissionExecutionLoop | undefined {
+    return this.missionExecutionLoop;
   }
 
   /**

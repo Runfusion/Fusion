@@ -95,6 +95,8 @@ export class ProjectManager extends EventEmitter<ProjectManagerEvents> {
   private runtimes = new Map<string, ProjectRuntime>();
   private projectNames = new Map<string, string>();
   private globalSemaphore: AgentSemaphore;
+  /** Mutable limit read by the shared semaphore's getter function. */
+  private currentGlobalLimit = 4;
 
   /**
    * @param centralCore - CentralCore reference for global coordination
@@ -103,11 +105,10 @@ export class ProjectManager extends EventEmitter<ProjectManagerEvents> {
     super();
     this.setMaxListeners(100);
 
-    // Initialize global semaphore with limit from CentralCore
-    this.globalSemaphore = new AgentSemaphore(() => {
-      // This will be updated dynamically from CentralCore
-      return 4; // Default, will refresh
-    });
+    // Initialize global semaphore with a getter that reads the mutable limit.
+    // This single semaphore instance is shared across all runtimes so
+    // cross-project concurrency is enforced correctly.
+    this.globalSemaphore = new AgentSemaphore(() => this.currentGlobalLimit);
 
     // Refresh the global limit periodically
     this.refreshGlobalLimit();
@@ -122,9 +123,7 @@ export class ProjectManager extends EventEmitter<ProjectManagerEvents> {
   private async refreshGlobalLimit(): Promise<void> {
     try {
       const state = await this.centralCore.getGlobalConcurrencyState();
-      // Update semaphore limit dynamically
-      // Note: AgentSemaphore reads limit via getter, so we update the source
-      this.globalSemaphore = new AgentSemaphore(() => state.globalMaxConcurrent);
+      this.currentGlobalLimit = state.globalMaxConcurrent;
     } catch (error) {
       projectManagerLog.warn("Failed to refresh global concurrency limit:", error);
     }
@@ -161,8 +160,11 @@ export class ProjectManager extends EventEmitter<ProjectManagerEvents> {
 
     // Create appropriate runtime based on isolation mode
     let runtime: ProjectRuntime;
+    // Inject the shared global semaphore so all runtimes share one concurrency pool.
+    const configWithSemaphore = { ...config, globalSemaphore: this.globalSemaphore };
+
     if (config.isolationMode === "child-process") {
-      runtime = new ChildProcessRuntime(config, this.centralCore);
+      runtime = new ChildProcessRuntime(configWithSemaphore, this.centralCore);
     } else {
       let assignedNode = undefined;
 
@@ -184,7 +186,7 @@ export class ProjectManager extends EventEmitter<ProjectManagerEvents> {
         });
       } else {
         // Default to local in-process runtime (includes unassigned + local-node assigned)
-        runtime = new InProcessRuntime(config, this.centralCore);
+        runtime = new InProcessRuntime(configWithSemaphore, this.centralCore);
       }
     }
 

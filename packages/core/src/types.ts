@@ -902,6 +902,11 @@ export interface ProjectSettings {
   /** Maximum number of concurrent AI agents across all activity types
    *  (triage specification, task execution, and merge operations). */
   maxConcurrent: number;
+  /** System-wide maximum concurrent agents across ALL projects.
+   *  When multiple projects are active, the sum of their in-flight agents
+   *  will not exceed this limit. Applies to triage, execution, and merge.
+   *  Default: 4. When undefined, falls back to CentralCore default (4). */
+  globalMaxConcurrent?: number;
   maxWorktrees: number;
   pollIntervalMs: number;
   groupOverlappingFiles: boolean;

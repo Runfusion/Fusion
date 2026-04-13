@@ -13,13 +13,15 @@ const mockState = vi.hoisted(() => ({
   runtimes: [] as any[],
 }));
 
-vi.mock("../logger.js", () => ({
-  runtimeLog: {
-    log: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  },
-}));
+vi.mock("../logger.js", () => {
+  const mockLogger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  return {
+    runtimeLog: mockLogger,
+    createLogger: () => mockLogger,
+    schedulerLog: mockLogger,
+    triageLog: mockLogger,
+  };
+});
 
 vi.mock("@fusion/core", () => ({
   CentralCore: class MockCentralCore {},
@@ -86,6 +88,21 @@ vi.mock("./in-process-runtime.js", () => {
   }
 
   return { InProcessRuntime: MockInProcessRuntime };
+});
+
+vi.mock("../project-engine.js", async () => {
+  const { InProcessRuntime } = await import("./in-process-runtime.js");
+  class MockProjectEngine {
+    private runtime: any;
+    constructor(config: any, centralCore: any, _options?: any) {
+      this.runtime = new InProcessRuntime(config, centralCore);
+    }
+    start = vi.fn(async () => { await this.runtime.start(); });
+    stop = vi.fn(async () => { await this.runtime.stop(); });
+    getRuntime = vi.fn(() => this.runtime);
+    getTaskStore = vi.fn(() => null);
+  }
+  return { ProjectEngine: MockProjectEngine };
 });
 
 type MockWorker = {
@@ -348,7 +365,9 @@ describe("child-process-worker", () => {
       expect(runtime.stop).toHaveBeenCalledTimes(1);
     });
 
-    expect(worker.shutdown).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(worker.shutdown).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("SIGINT stops runtime and shuts down IPC worker", async () => {
@@ -363,6 +382,8 @@ describe("child-process-worker", () => {
       expect(runtime.stop).toHaveBeenCalledTimes(1);
     });
 
-    expect(worker.shutdown).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(worker.shutdown).toHaveBeenCalledTimes(1);
+    });
   });
 });
