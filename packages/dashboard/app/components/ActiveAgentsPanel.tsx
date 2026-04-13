@@ -4,11 +4,12 @@ import { useLiveTranscript } from "../hooks/useLiveTranscript";
 
 interface LiveAgentCardProps {
   agent: Agent;
+  projectId?: string;
   onSelect?: (agentId: string) => void;
 }
 
-function LiveAgentCard({ agent, onSelect }: LiveAgentCardProps) {
-  const { entries, isConnected } = useLiveTranscript(agent.taskId);
+function LiveAgentCard({ agent, projectId, onSelect }: LiveAgentCardProps) {
+  const { entries, isConnected } = useLiveTranscript(agent.taskId, projectId);
   const elapsed = agent.lastHeartbeatAt
     ? Math.floor((Date.now() - new Date(agent.lastHeartbeatAt).getTime()) / 1000)
     : 0;
@@ -52,7 +53,7 @@ function LiveAgentCard({ agent, onSelect }: LiveAgentCardProps) {
         ) : (
           entries.slice(0, 20).map((entry, i) => (
             <div key={i} className="live-agent-card-line">
-              {entry.content}
+              {entry.text}
             </div>
           ))
         )}
@@ -73,10 +74,11 @@ function formatElapsed(seconds: number): string {
 
 interface ActiveAgentsPanelProps {
   agents: Agent[];
+  projectId?: string;
   onAgentSelect?: (agentId: string) => void;
 }
 
-export function ActiveAgentsPanel({ agents, onAgentSelect }: ActiveAgentsPanelProps) {
+export function ActiveAgentsPanel({ agents, projectId, onAgentSelect }: ActiveAgentsPanelProps) {
   if (agents.length === 0) return null;
 
   return (
@@ -87,7 +89,7 @@ export function ActiveAgentsPanel({ agents, onAgentSelect }: ActiveAgentsPanelPr
       </div>
       <div className="active-agents-grid">
         {agents.map(agent => (
-          <LiveAgentCard key={agent.id} agent={agent} onSelect={onAgentSelect} />
+          <LiveAgentCard key={agent.id} agent={agent} projectId={projectId} onSelect={onAgentSelect} />
         ))}
       </div>
     </div>
