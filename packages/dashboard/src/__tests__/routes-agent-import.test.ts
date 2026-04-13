@@ -13,7 +13,7 @@ const mockChatStoreInit = vi.fn().mockResolvedValue(undefined);
 const mockParseCompanyDirectory = vi.fn();
 const mockParseCompanyArchive = vi.fn();
 const mockParseSingleAgentManifest = vi.fn();
-const mockConvertAgentCompanies = vi.fn();
+const mockPrepareAgentCompaniesImport = vi.fn();
 
 class MockAgentCompaniesParseError extends Error {
   constructor(message: string) {
@@ -35,7 +35,7 @@ vi.mock("@fusion/core", () => {
     parseCompanyDirectory: (...args: unknown[]) => mockParseCompanyDirectory(...args),
     parseCompanyArchive: (...args: unknown[]) => mockParseCompanyArchive(...args),
     parseSingleAgentManifest: (...args: unknown[]) => mockParseSingleAgentManifest(...args),
-    convertAgentCompanies: (...args: unknown[]) => mockConvertAgentCompanies(...args),
+    prepareAgentCompaniesImport: (...args: unknown[]) => mockPrepareAgentCompaniesImport(...args),
     AgentCompaniesParseError: MockAgentCompaniesParseError,
   };
 });
@@ -106,8 +106,13 @@ describe("POST /api/agents/import", () => {
       },
     });
 
-    mockConvertAgentCompanies.mockReturnValue({
-      inputs: [{ name: "YAML Agent", role: "custom", title: "Chief Executive", metadata: { skills: ["review"] } }],
+    mockPrepareAgentCompaniesImport.mockReturnValue({
+      items: [{
+        manifestKey: "yaml-agent",
+        aliases: ["yaml-agent"],
+        index: 0,
+        input: { name: "YAML Agent", role: "custom", title: "Chief Executive", metadata: { skills: ["review"] } },
+      }],
       result: {
         created: ["YAML Agent"],
         skipped: [],
@@ -138,7 +143,7 @@ describe("POST /api/agents/import", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(mockConvertAgentCompanies).toHaveBeenCalledTimes(1);
+    expect(mockPrepareAgentCompaniesImport).toHaveBeenCalledTimes(1);
     const body = response.body as any;
     expect(body.created).toHaveLength(1);
     expect(body.created[0].name).toBe("YAML Agent");
@@ -172,6 +177,97 @@ describe("POST /api/agents/import", () => {
     const body = response.body as any;
     expect(body.companyName).toBe("Archive Co");
     expect(body.companySlug).toBe("archive-co");
+  });
+
+  it("creates hierarchical agents with resolved parent ids", async () => {
+    const sourceDir = join(testDir, "hierarchy-company");
+    mkdirSync(join(sourceDir, "agents", "ceo"), { recursive: true });
+    writeFileSync(join(sourceDir, "agents", "ceo", "AGENTS.md"), "---\nname: CEO\n---\nLead");
+
+    mockPrepareAgentCompaniesImport.mockReturnValue({
+      items: [
+        {
+          manifestKey: "ceo",
+          aliases: ["ceo"],
+          index: 0,
+          input: { name: "CEO", role: "custom" },
+        },
+        {
+          manifestKey: "vp-eng",
+          aliases: ["vp-eng"],
+          index: 1,
+          input: { name: "VP Eng", role: "custom" },
+          reportsTo: { raw: "ceo", deferredManifestKey: "ceo" },
+        },
+        {
+          manifestKey: "staff-eng",
+          aliases: ["staff-eng"],
+          index: 2,
+          input: { name: "Staff Eng", role: "custom" },
+          reportsTo: { raw: "../vp-eng/AGENTS.md", deferredManifestKey: "vp-eng" },
+        },
+      ],
+      result: {
+        created: ["CEO", "VP Eng", "Staff Eng"],
+        skipped: [],
+        errors: [],
+      },
+    });
+
+    const response = await postImport(app, { source: sourceDir });
+
+    expect(response.status).toBe(200);
+    expect(mockCreateAgent).toHaveBeenCalledTimes(3);
+    expect(mockCreateAgent.mock.calls[0]?.[0]).toEqual({ name: "CEO", role: "custom" });
+    expect(mockCreateAgent.mock.calls[1]?.[0]).toEqual({
+      name: "VP Eng",
+      role: "custom",
+      reportsTo: "agent-CEO",
+    });
+    expect(mockCreateAgent.mock.calls[2]?.[0]).toEqual({
+      name: "Staff Eng",
+      role: "custom",
+      reportsTo: "agent-VP Eng",
+    });
+  });
+
+  it("uses helper-resolved existing manager ids for partial imports", async () => {
+    mockListAgents.mockResolvedValue([{ id: "agent-ceo", name: "CEO" }]);
+    mockPrepareAgentCompaniesImport.mockReturnValue({
+      items: [
+        {
+          manifestKey: "vp-eng",
+          aliases: ["vp-eng"],
+          index: 0,
+          input: { name: "VP Eng", role: "custom" },
+          reportsTo: { raw: "../ceo/AGENTS.md", resolvedAgentId: "agent-ceo" },
+        },
+      ],
+      result: {
+        created: ["VP Eng"],
+        skipped: ["CEO"],
+        errors: [],
+      },
+    });
+
+    const response = await postImport(app, {
+      manifest: "---\nname: VP Eng\nreportsTo: ../ceo/AGENTS.md\n---\nLead engineering",
+      skipExisting: true,
+    });
+
+    expect(response.status).toBe(200);
+    expect(mockCreateAgent).toHaveBeenCalledWith({
+      name: "VP Eng",
+      role: "custom",
+      reportsTo: "agent-ceo",
+    });
+    expect(mockPrepareAgentCompaniesImport).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        skipExisting: ["CEO"],
+        existingAgents: [{ id: "agent-ceo", name: "CEO" }],
+      }),
+    );
   });
 
   it("rejects non-directory source paths", async () => {
@@ -211,8 +307,8 @@ describe("POST /api/agents/import", () => {
 
   it("honors skipExisting and returns skipped agents", async () => {
     mockListAgents.mockResolvedValue([{ id: "agent-existing", name: "YAML Agent" }]);
-    mockConvertAgentCompanies.mockReturnValue({
-      inputs: [],
+    mockPrepareAgentCompaniesImport.mockReturnValue({
+      items: [],
       result: {
         created: [],
         skipped: ["YAML Agent"],
