@@ -24,6 +24,7 @@ interface BoardProps {
   ) => Promise<Task>;
   onArchiveTask?: (id: string) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
+  onDeleteTask?: (id: string) => Promise<Task>;
   onArchiveAllDone?: () => Promise<Task[]>;
   /** Lazy-load archived tasks. Called the first time the user expands the archived column. */
   onLoadArchivedTasks?: () => Promise<void>;
@@ -66,7 +67,7 @@ function areTaskArraysEqual(previous: Task[], next: Task[]): boolean {
   return previous.every((task, index) => task === next[index]);
 }
 
-export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, onLoadArchivedTasks, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, taskStuckTimeoutMs, onOpenMission, lastFetchTimeMs }: BoardProps) {
+export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onDeleteTask, onArchiveAllDone, onLoadArchivedTasks, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, taskStuckTimeoutMs, onOpenMission, lastFetchTimeMs }: BoardProps) {
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const archivedLoadedRef = useRef(false);
   const { fetchBatch } = useBatchBadgeFetch(projectId);
@@ -173,6 +174,7 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetai
             onUpdateTask={onUpdateTask}
             onArchiveTask={onArchiveTask}
             onUnarchiveTask={onUnarchiveTask}
+            onDeleteTask={onDeleteTask}
             allTasks={tasks}
             availableModels={availableModels}
             onOpenDetailWithTab={onOpenDetailWithTab}

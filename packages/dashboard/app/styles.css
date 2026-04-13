@@ -5361,6 +5361,37 @@ body {
   outline-offset: 1px;
 }
 
+/* Delete button - visible on hover for triage column */
+.card-delete-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.card:hover .card-delete-btn {
+  opacity: 1;
+}
+
+.card-delete-btn:hover {
+  color: var(--color-error, #f85149);
+}
+
+.card-delete-btn:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  opacity: 1;
+}
+
 /* Archive/Unarchive buttons */
 .card-archive-btn,
 .card-unarchive-btn {
@@ -6695,6 +6726,22 @@ body {
   }
 
   .card-edit-btn svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  /* Card delete button: always visible on mobile (no hover) */
+  .card-delete-btn {
+    opacity: 1;
+    width: 32px;
+    height: 32px;
+    margin-right: -8px;
+    margin-top: -8px;
+    margin-bottom: -8px;
+    border-radius: var(--radius-md);
+  }
+
+  .card-delete-btn svg {
     width: 16px;
     height: 16px;
   }

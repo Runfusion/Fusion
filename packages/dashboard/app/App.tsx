@@ -364,6 +364,7 @@ function AppInner() {
             onUpdateTask={updateTask}
             onArchiveTask={archiveTask}
             onUnarchiveTask={unarchiveTask}
+            onDeleteTask={deleteTask}
             onArchiveAllDone={archiveAllDone}
             onLoadArchivedTasks={loadArchivedTasks}
             searchQuery={searchQuery}

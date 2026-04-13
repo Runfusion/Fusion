@@ -47,6 +47,7 @@ vi.mock("lucide-react", () => ({
   CircleDot: ({ size }: { size?: number }) => <span data-testid="circle-dot-icon">⭕</span>,
   Target: ({ size }: { size?: number }) => <span data-testid="target-icon">🎯</span>,
   Bot: ({ size }: { size?: number }) => <span data-testid="bot-icon">🤖</span>,
+  Trash2: ({ size }: { size?: number }) => <span data-testid="trash-icon">🗑️</span>,
 }));
 
 beforeEach(() => {
@@ -3830,6 +3831,181 @@ describe("TaskCard send-back functionality", () => {
       const secondCallArgs = mockUseTaskDiffStats.mock.calls[0];
       const secondOptions = secondCallArgs[4] as Record<string, unknown>;
       expect(secondOptions.stepVersion).toBe("Step 1:done");
+    });
+  });
+});
+
+/**
+ * Tests for delete button functionality in TaskCard.
+ */
+describe("TaskCard delete button", () => {
+  const noopToast = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("shows delete button for triage column tasks when onDeleteTask is provided", () => {
+    const task = makeTask({ column: "triage" });
+    const onDeleteTask = vi.fn().mockResolvedValue(task);
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onDeleteTask={onDeleteTask}
+      />
+    );
+
+    const deleteBtn = screen.getByRole("button", { name: /Delete task/i });
+    expect(deleteBtn).toBeDefined();
+    expect(deleteBtn.classList.contains("card-delete-btn")).toBe(true);
+  });
+
+  it("does not show delete button for non-triage column tasks", () => {
+    for (const column of ["todo", "in-progress", "in-review", "done", "archived"] as const) {
+      const task = makeTask({ column });
+      const onDeleteTask = vi.fn().mockResolvedValue(task);
+
+      render(
+        <TaskCard
+          task={task}
+          onOpenDetail={vi.fn()}
+          addToast={noopToast}
+          onDeleteTask={onDeleteTask}
+        />
+      );
+
+      const deleteBtn = screen.queryByRole("button", { name: /Delete task/i });
+      expect(deleteBtn).toBeNull();
+    }
+  });
+
+  it("does not show delete button when onDeleteTask is not provided", () => {
+    const task = makeTask({ column: "triage" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const deleteBtn = screen.queryByRole("button", { name: /Delete task/i });
+    expect(deleteBtn).toBeNull();
+  });
+
+  it("clicking delete button shows confirmation dialog and calls onDeleteTask on confirm", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const task = makeTask({ column: "triage", id: "FN-123" });
+    const onDeleteTask = vi.fn().mockResolvedValue(task);
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onDeleteTask={onDeleteTask}
+      />
+    );
+
+    const deleteBtn = screen.getByRole("button", { name: /Delete task/i });
+    fireEvent.click(deleteBtn);
+
+    await waitFor(() => {
+      expect(window.confirm).toHaveBeenCalledWith("Delete FN-123?");
+    });
+
+    await waitFor(() => {
+      expect(onDeleteTask).toHaveBeenCalledWith("FN-123");
+    });
+
+    await waitFor(() => {
+      expect(noopToast).toHaveBeenCalledWith("Deleted FN-123", "success");
+    });
+  });
+
+  it("clicking delete button does not call onDeleteTask when confirmation is cancelled", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const task = makeTask({ column: "triage", id: "FN-456" });
+    const onDeleteTask = vi.fn().mockResolvedValue(task);
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onDeleteTask={onDeleteTask}
+      />
+    );
+
+    const deleteBtn = screen.getByRole("button", { name: /Delete task/i });
+    fireEvent.click(deleteBtn);
+
+    await waitFor(() => {
+      expect(window.confirm).toHaveBeenCalledWith("Delete FN-456?");
+    });
+
+    expect(onDeleteTask).not.toHaveBeenCalled();
+  });
+
+  it("delete button click does not propagate to card click (does not open detail)", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const task = makeTask({ column: "triage", id: "FN-789" });
+    const onDeleteTask = vi.fn().mockResolvedValue(task);
+    const onOpenDetail = vi.fn();
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={onOpenDetail}
+        addToast={noopToast}
+        onDeleteTask={onDeleteTask}
+      />
+    );
+
+    const deleteBtn = screen.getByRole("button", { name: /Delete task/i });
+    fireEvent.click(deleteBtn);
+
+    // Wait for the click to propagate
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    // onOpenDetail should not have been called because stopPropagation was used
+    expect(onOpenDetail).not.toHaveBeenCalled();
+  });
+
+  it("shows error toast when delete fails", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const task = makeTask({ column: "triage", id: "FN-ERROR" });
+    const onDeleteTask = vi.fn().mockRejectedValue(new Error("Network error"));
+    const addToast = vi.fn();
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={addToast}
+        onDeleteTask={onDeleteTask}
+      />
+    );
+
+    const deleteBtn = screen.getByRole("button", { name: /Delete task/i });
+    fireEvent.click(deleteBtn);
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith(
+        expect.stringContaining("Failed to delete FN-ERROR"),
+        "error"
+      );
     });
   });
 });

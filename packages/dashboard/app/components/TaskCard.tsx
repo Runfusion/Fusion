@@ -1,5 +1,5 @@
 import { memo, useCallback, useState, useRef, useEffect, useMemo } from "react";
-import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot } from "lucide-react";
+import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2 } from "lucide-react";
 import type { Task, TaskDetail, Column, PrInfo, IssueInfo } from "@fusion/core";
 import { COLUMN_LABELS, VALID_TRANSITIONS } from "@fusion/core";
 import { fetchTaskDetail, uploadAttachment, fetchMission, fetchAgent } from "../api";
@@ -86,6 +86,7 @@ interface TaskCardProps {
   ) => Promise<Task>;
   onArchiveTask?: (id: string) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
+  onDeleteTask?: (id: string) => Promise<Task>;
   onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes") => void;
   /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
   taskStuckTimeoutMs?: number;
@@ -181,6 +182,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.onUpdateTask === next.onUpdateTask &&
     previous.onArchiveTask === next.onArchiveTask &&
     previous.onUnarchiveTask === next.onUnarchiveTask &&
+    previous.onDeleteTask === next.onDeleteTask &&
     previous.onOpenDetailWithTab === next.onOpenDetailWithTab &&
     previous.onOpenMission === next.onOpenMission &&
     previous.onMoveTask === next.onMoveTask &&
@@ -227,6 +229,7 @@ function TaskCardComponent({
   onUpdateTask,
   onArchiveTask,
   onUnarchiveTask,
+  onDeleteTask,
   onOpenDetailWithTab,
   taskStuckTimeoutMs,
   onOpenMission,
@@ -669,6 +672,19 @@ function TaskCardComponent({
     });
   }, [addToast, onUnarchiveTask, task.id]);
 
+  const handleDeleteClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (!onDeleteTask) return;
+
+    if (window.confirm(`Delete ${task.id}?`)) {
+      void onDeleteTask(task.id).then(() => {
+        addToast(`Deleted ${task.id}`, "success");
+      }).catch((err: any) => {
+        addToast(`Failed to delete ${task.id}: ${err.message}`, "error");
+      });
+    }
+  }, [addToast, onDeleteTask, task.id]);
+
   const handleOpenFiles = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     onOpenDetailWithTab?.(task, "changes");
@@ -808,6 +824,16 @@ function TaskCardComponent({
               aria-label="Edit task"
             >
               <Pencil size={12} />
+            </button>
+          )}
+          {task.column === "triage" && onDeleteTask && (
+            <button
+              className="card-delete-btn"
+              onClick={handleDeleteClick}
+              title="Delete task"
+              aria-label="Delete task"
+            >
+              <Trash2 size={12} />
             </button>
           )}
           {task.column === "done" && onArchiveTask && (

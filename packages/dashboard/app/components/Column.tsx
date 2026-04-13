@@ -33,6 +33,7 @@ interface ColumnProps {
   ) => Promise<Task>;
   onArchiveTask?: (id: string) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
+  onDeleteTask?: (id: string) => Promise<Task>;
   onArchiveAllDone?: () => Promise<Task[]>;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
@@ -61,7 +62,7 @@ interface ColumnProps {
   lastFetchTimeMs?: number;
 }
 
-function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, collapsed, onToggleCollapse, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs, onOpenMission, lastFetchTimeMs }: ColumnProps) {
+function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onDeleteTask, onArchiveAllDone, collapsed, onToggleCollapse, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs, onOpenMission, lastFetchTimeMs }: ColumnProps) {
   const [dragOver, setDragOver] = useState(false);
   const [visibleTaskCount, setVisibleTaskCount] = useState(VISIBLE_TASKS_INITIAL);
   const countFlashing = useFlashOnIncrease(tasks.length);
@@ -253,6 +254,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
                   onUpdateTask={onUpdateTask}
                   onArchiveTask={onArchiveTask}
                   onUnarchiveTask={onUnarchiveTask}
+                  onDeleteTask={onDeleteTask}
                   onOpenDetailWithTab={onOpenDetailWithTab}
                   taskStuckTimeoutMs={taskStuckTimeoutMs}
                   onOpenMission={onOpenMission}
