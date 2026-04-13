@@ -38,6 +38,21 @@ const pendingCreations = new Map<string, Promise<TaskStore>>();
 const initializedProjects = new Set<string>();
 
 /**
+ * Optional callback invoked once when a new project store is first created.
+ * Used by the dashboard server to lazily start an engine for secondary projects.
+ */
+let _onProjectFirstCreated: ((projectId: string) => void) | undefined;
+
+/**
+ * Register a callback to be called once when a new project is first accessed.
+ * The callback fires after the store is cached — exactly once per projectId.
+ * Pass `undefined` to clear the callback.
+ */
+export function setOnProjectFirstCreated(cb: ((projectId: string) => void) | undefined): void {
+  _onProjectFirstCreated = cb;
+}
+
+/**
  * Get or create a cached TaskStore for the given projectId.
  *
  * - First call for a projectId: creates, inits, and caches the store.
@@ -81,6 +96,12 @@ export async function getOrCreateProjectStore(projectId: string): Promise<TaskSt
 
     storeCache.set(projectId, store);
     pendingCreations.delete(projectId);
+
+    // Notify once that a new project was first accessed
+    if (_onProjectFirstCreated) {
+      _onProjectFirstCreated(projectId);
+    }
+
     return store;
   })();
 

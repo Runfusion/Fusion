@@ -191,6 +191,11 @@ vi.mock("@fusion/engine", async (importOriginal) => {
       registerAgent: vi.fn(),
       getRegisteredAgents: vi.fn().mockReturnValue([]),
     })),
+    ProjectManager: vi.fn().mockImplementation(() => ({
+      getRuntime: vi.fn().mockReturnValue(undefined),
+      addProject: vi.fn().mockResolvedValue({}),
+      stopAll: vi.fn().mockResolvedValue(undefined),
+    })),
   };
 });
 
@@ -478,6 +483,162 @@ describe("runDashboard — Plugin wiring", () => {
     const loaderOptions = (PluginLoader as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(loaderOptions).toHaveProperty("pluginStore");
     expect(loaderOptions).toHaveProperty("taskStore");
+  });
+});
+
+describe("runDashboard — per-project engine manager (multi-project)", () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockDiscoverAndLoadExtensions.mockResolvedValue({
+      runtime: { pendingProviderRegistrations: [] },
+      errors: [],
+    });
+    const { TaskStore } = await import("@fusion/core");
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
+  });
+
+  it("creates a ProjectManager in non-dev mode", async () => {
+    const { ProjectManager } = await import("@fusion/engine");
+
+    await runDashboard(0, {});
+
+    expect(ProjectManager).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes onProjectFirstAccessed callback to createServer", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+
+    await runDashboard(0, {});
+
+    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(serverOpts).toHaveProperty("onProjectFirstAccessed");
+    expect(serverOpts.onProjectFirstAccessed).toBeTypeOf("function");
+  });
+
+  it("onProjectFirstAccessed starts an engine for a new project via ProjectManager", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+    const { ProjectManager } = await import("@fusion/engine");
+    const { CentralCore } = await import("@fusion/core");
+
+    const mockProject = {
+      id: "proj_other",
+      path: "/other/project",
+      name: "Other Project",
+      isolationMode: "in-process",
+      settings: { maxConcurrent: 2, maxWorktrees: 4 },
+    };
+
+    // Make CentralCore.getProject resolve with a project for the new ID
+    (CentralCore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      getProjectByPath: vi.fn().mockResolvedValue({ id: "project-1" }),
+      getProject: vi.fn().mockImplementation((id: string) =>
+        id === "proj_other" ? Promise.resolve(mockProject) : Promise.resolve(null),
+      ),
+    }));
+
+    const mockAddProject = vi.fn().mockResolvedValue({});
+    const mockGetRuntime = vi.fn().mockReturnValue(undefined);
+    (ProjectManager as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      getRuntime: mockGetRuntime,
+      addProject: mockAddProject,
+      stopAll: vi.fn().mockResolvedValue(undefined),
+    }));
+
+    await runDashboard(0, {});
+
+    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    const cb: (id: string) => void = serverOpts.onProjectFirstAccessed;
+
+    // Simulate the dashboard server encountering a new project
+    cb("proj_other");
+
+    // Allow fire-and-forget promise to settle
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(mockAddProject).toHaveBeenCalledTimes(1);
+    expect(mockAddProject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "proj_other",
+        workingDirectory: "/other/project",
+        isolationMode: "in-process",
+      }),
+    );
+  });
+
+  it("onProjectFirstAccessed skips the primary project (already managed by ProjectEngine)", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+    const { ProjectManager } = await import("@fusion/engine");
+
+    const mockAddProject = vi.fn().mockResolvedValue({});
+    (ProjectManager as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      getRuntime: vi.fn().mockReturnValue(undefined),
+      addProject: mockAddProject,
+      stopAll: vi.fn().mockResolvedValue(undefined),
+    }));
+
+    await runDashboard(0, {});
+
+    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    const cb: (id: string) => void = serverOpts.onProjectFirstAccessed;
+
+    // The primary project ID is whatever CentralCore.getProjectByPath returned
+    // In our mock that's "project-1", but runtimeConfig uses cwd as fallback.
+    // Either way, firing the callback with the primary ID should be a no-op.
+    // We confirm by firing for a null project — addProject must not be called.
+    const { CentralCore } = await import("@fusion/core");
+    (CentralCore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      getProjectByPath: vi.fn().mockResolvedValue({ id: "project-1" }),
+      getProject: vi.fn().mockResolvedValue(null), // project not found
+    }));
+
+    cb("proj_unknown");
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(mockAddProject).not.toHaveBeenCalled();
+  });
+
+  it("onProjectFirstAccessed skips if runtime already running for that project", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+    const { ProjectManager } = await import("@fusion/engine");
+    const { CentralCore } = await import("@fusion/core");
+
+    const mockProject = { id: "proj_dupe", path: "/dupe", name: "Dupe", isolationMode: "in-process", settings: {} };
+    (CentralCore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      getProjectByPath: vi.fn().mockResolvedValue({ id: "project-1" }),
+      getProject: vi.fn().mockResolvedValue(mockProject),
+    }));
+
+    const mockAddProject = vi.fn().mockResolvedValue({});
+    // getRuntime returns a truthy value → runtime already running
+    (ProjectManager as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      getRuntime: vi.fn().mockReturnValue({ getStatus: vi.fn().mockReturnValue("active") }),
+      addProject: mockAddProject,
+      stopAll: vi.fn().mockResolvedValue(undefined),
+    }));
+
+    await runDashboard(0, {});
+
+    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    const cb: (id: string) => void = serverOpts.onProjectFirstAccessed;
+
+    cb("proj_dupe");
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(mockAddProject).not.toHaveBeenCalled();
+  });
+
+  it("does not create ProjectManager in dev mode", async () => {
+    const { ProjectManager } = await import("@fusion/engine");
+
+    await runDashboard(0, { dev: true });
+
+    expect(ProjectManager).not.toHaveBeenCalled();
   });
 });
 

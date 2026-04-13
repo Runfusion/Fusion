@@ -10,7 +10,7 @@ import { createApiRoutes } from "./routes.js";
 import { createSSE } from "./sse.js";
 import { rateLimit, RATE_LIMITS } from "./rate-limit.js";
 import { ApiError, sendErrorResponse } from "./api-error.js";
-import { getOrCreateProjectStore, evictAllProjectStores } from "./project-store-resolver.js";
+import { getOrCreateProjectStore, evictAllProjectStores, setOnProjectFirstCreated } from "./project-store-resolver.js";
 import { getTerminalService, type TerminalSession, STALE_SESSION_THRESHOLD_MS } from "./terminal-service.js";
 import { WebSocketServer, type WebSocket } from "ws";
 import { terminalSessionManager } from "./terminal.js";
@@ -66,6 +66,10 @@ process.on("beforeExit", () => {
 });
 
 export interface ServerOptions {
+  /** Optional ProjectEngine — when provided, subsystems (onMerge, automationStore,
+   *  missionAutopilot, missionExecutionLoop, heartbeatMonitor) are derived from it.
+   *  Explicit options still override engine-derived values. */
+  engine?: import("@fusion/engine").ProjectEngine;
   /** Custom merge handler — when provided, used instead of store.mergeTask */
   onMerge?: (taskId: string) => Promise<MergeResult>;
   /** When true, run API/websocket server only (skip frontend static assets + SPA fallback) */
@@ -135,6 +139,12 @@ export interface ServerOptions {
   chatStore?: import("@fusion/core").ChatStore;
   /** Optional ChatManager for AI chat message handling */
   chatManager?: import("./chat.js").ChatManager;
+  /**
+   * Called once when a secondary project (identified by projectId query param)
+   * is first accessed via a project-scoped API or SSE request. Use this to
+   * lazily start an engine for that project.
+   */
+  onProjectFirstAccessed?: (projectId: string) => void;
 }
 
 type DashboardExpressApp = ReturnType<typeof express> & {
@@ -194,6 +204,44 @@ function shouldScheduleAiSessionCleanup(): boolean {
 }
 
 export function createServer(store: TaskStore, options?: ServerOptions): ReturnType<typeof express> {
+  // ── Derive defaults from engine when provided (explicit options override) ──
+  const engine = options?.engine;
+  if (engine) {
+    if (!options!.onMerge) {
+      options = { ...options, onMerge: (taskId: string) => engine.onMerge(taskId) };
+    }
+    if (!options!.automationStore) {
+      options = { ...options, automationStore: engine.getAutomationStore() };
+    }
+    if (!options!.missionAutopilot) {
+      const ma = engine.getRuntime().getMissionAutopilot();
+      if (ma) options = { ...options, missionAutopilot: ma };
+    }
+    if (!options!.missionExecutionLoop) {
+      const mel = engine.getRuntime().getMissionExecutionLoop();
+      if (mel) options = { ...options, missionExecutionLoop: mel };
+    }
+    if (!options!.heartbeatMonitor) {
+      const hb = engine.getHeartbeatMonitor();
+      if (hb) {
+        options = {
+          ...options,
+          heartbeatMonitor: {
+            rootDir: engine.getWorkingDirectory(),
+            startRun: hb.startRun.bind(hb),
+            executeHeartbeat: hb.executeHeartbeat.bind(hb),
+            stopRun: hb.stopRun.bind(hb),
+          },
+        };
+      }
+    }
+  }
+
+  // Register callback for lazy engine startup on secondary projects
+  if (options?.onProjectFirstAccessed) {
+    setOnProjectFirstCreated(options.onProjectFirstAccessed);
+  }
+
   const app = express();
   const mutationRateLimit = rateLimit(RATE_LIMITS.mutation);
   const setupRateLimit = rateLimit(RATE_LIMITS.api);

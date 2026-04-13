@@ -14,6 +14,7 @@ import {
   getOrCreateProjectStore,
   evictProjectStore,
   evictAllProjectStores,
+  setOnProjectFirstCreated,
 } from "../project-store-resolver.js";
 import type { TaskStore } from "@fusion/core";
 
@@ -189,11 +190,96 @@ describe("project-store-resolver", () => {
     expect(sameStore).toBe(store);
 
     // Emit events from "mutation path" — same store instance
-    sameStore.emit("task:created", { id: "FN-001" });
-    sameStore.emit("task:updated", { id: "FN-001", title: "Updated" });
+    sameStore.emit("task:created", { id: "FN-001" } as any);
+    sameStore.emit("task:updated", { id: "FN-001", title: "Updated" } as any);
 
     // SSE listener should have received both events through the shared EventEmitter
     expect(events).toEqual(["created:FN-001", "updated:FN-001"]);
+  });
+
+  describe("setOnProjectFirstCreated", () => {
+    afterEach(() => {
+      // Always clear the callback so it doesn't bleed into other tests
+      setOnProjectFirstCreated(undefined);
+    });
+
+    it("fires callback once when a new project store is first created", async () => {
+      const cb = vi.fn();
+      setOnProjectFirstCreated(cb);
+
+      await getOrCreateProjectStore("proj_cb_new");
+
+      expect(cb).toHaveBeenCalledTimes(1);
+      expect(cb).toHaveBeenCalledWith("proj_cb_new");
+    });
+
+    it("does not fire callback on subsequent cache hits for the same project", async () => {
+      const cb = vi.fn();
+      setOnProjectFirstCreated(cb);
+
+      await getOrCreateProjectStore("proj_cb_cached");
+      await getOrCreateProjectStore("proj_cb_cached");
+      await getOrCreateProjectStore("proj_cb_cached");
+
+      expect(cb).toHaveBeenCalledTimes(1);
+    });
+
+    it("fires callback once per unique project (any number of projects)", async () => {
+      const cb = vi.fn();
+      setOnProjectFirstCreated(cb);
+
+      // Use sequential awaits to avoid concurrent import() race in vitest mock resolution
+      await getOrCreateProjectStore("proj_multi_1");
+      await getOrCreateProjectStore("proj_multi_2");
+      await getOrCreateProjectStore("proj_multi_3");
+      await getOrCreateProjectStore("proj_multi_4");
+      await getOrCreateProjectStore("proj_multi_5");
+
+      expect(cb).toHaveBeenCalledTimes(5);
+      expect(cb).toHaveBeenCalledWith("proj_multi_1");
+      expect(cb).toHaveBeenCalledWith("proj_multi_2");
+      expect(cb).toHaveBeenCalledWith("proj_multi_3");
+      expect(cb).toHaveBeenCalledWith("proj_multi_4");
+      expect(cb).toHaveBeenCalledWith("proj_multi_5");
+    });
+
+    it("deduplicates concurrent calls — callback fires exactly once even under concurrency", async () => {
+      const cb = vi.fn();
+      setOnProjectFirstCreated(cb);
+
+      await Promise.all([
+        getOrCreateProjectStore("proj_concurrent_cb"),
+        getOrCreateProjectStore("proj_concurrent_cb"),
+        getOrCreateProjectStore("proj_concurrent_cb"),
+      ]);
+
+      expect(cb).toHaveBeenCalledTimes(1);
+      expect(cb).toHaveBeenCalledWith("proj_concurrent_cb");
+    });
+
+    it("stops firing after callback is cleared with undefined", async () => {
+      const cb = vi.fn();
+      setOnProjectFirstCreated(cb);
+      setOnProjectFirstCreated(undefined);
+
+      await getOrCreateProjectStore("proj_cb_cleared");
+
+      expect(cb).not.toHaveBeenCalled();
+    });
+
+    it("fires for a re-created project after eviction", async () => {
+      const cb = vi.fn();
+      setOnProjectFirstCreated(cb);
+
+      await getOrCreateProjectStore("proj_cb_evict");
+      expect(cb).toHaveBeenCalledTimes(1);
+
+      evictProjectStore("proj_cb_evict");
+      createdStores.length = 0;
+
+      await getOrCreateProjectStore("proj_cb_evict");
+      expect(cb).toHaveBeenCalledTimes(2);
+    });
   });
 
   it("SSE stream receives live events via shared store (integration)", async () => {
@@ -223,14 +309,14 @@ describe("project-store-resolver", () => {
 
     // Simulate task creation via API (this is what routes.ts does)
     const newTask = { id: "FN-100", description: "Integration test task" };
-    apiStore.emit("task:created", newTask);
+    apiStore.emit("task:created", newTask as any);
 
     // Simulate task update
     const updatedTask = { ...newTask, title: "Updated title" };
-    apiStore.emit("task:updated", updatedTask);
+    apiStore.emit("task:updated", updatedTask as any);
 
     // Simulate task move
-    apiStore.emit("task:moved", { task: updatedTask, from: "triage", to: "todo" });
+    apiStore.emit("task:moved", { task: updatedTask as any, from: "triage", to: "todo" });
 
     // Assert SSE listener received all events in order
     expect(sseMessages).toHaveLength(3);

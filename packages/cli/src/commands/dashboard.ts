@@ -1,8 +1,8 @@
 import type { AddressInfo } from "node:net";
-import { TaskStore, AutomationStore, CentralCore, AgentStore, PluginStore, PluginLoader, getTaskMergeBlocker, syncInsightExtractionAutomation, INSIGHT_EXTRACTION_SCHEDULE_NAME, processAndAuditInsightExtraction } from "@fusion/core";
-import type { Settings, ScheduledTask, AutomationRunResult } from "@fusion/core";
+import { TaskStore, AutomationStore, CentralCore, AgentStore, PluginStore, PluginLoader, getTaskMergeBlocker } from "@fusion/core";
 import { createServer, GitHubClient } from "@fusion/dashboard";
-import { TriageProcessor, TaskExecutor, Scheduler, AgentSemaphore, WorktreePool, aiMergeTask, UsageLimitPauser, PRIORITY_MERGE, scanIdleWorktrees, cleanupOrphanedWorktrees, NtfyNotifier, PrMonitor, PrCommentHandler, CronRunner, StuckTaskDetector, SelfHealingManager, MissionAutopilot, MissionExecutionLoop, createAiPromptExecutor, HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "@fusion/engine";
+import { aiMergeTask, MissionAutopilot, MissionExecutionLoop, HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext, ProjectEngine, type ProjectEngineOptions, ProjectManager } from "@fusion/engine";
+import type { ProjectRuntimeConfig } from "@fusion/engine";
 import { AuthStorage, DefaultPackageManager, ModelRegistry, SettingsManager, discoverAndLoadExtensions, getAgentDir, createExtensionRuntime } from "@mariozechner/pi-coding-agent";
 import {
   getMergeStrategy,
@@ -298,7 +298,6 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   }> = [];
   let disposed = false;
   let shutdownInProgress = false;
-  let mergeRetryTimer: ReturnType<typeof setTimeout> | null = null;
   const dashboardStartedAt = Date.now();
 
   async function logShutdownDiagnostics(reason: string): Promise<void> {
@@ -369,109 +368,20 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     taskStore: store,
   });
 
-  // ── HeartbeatMonitor: runtime monitoring (UTILITY — NO semaphore) ───
+  // ── HeartbeatMonitor + HeartbeatTriggerScheduler ──────────────────────
   //
-  // ⚠️ UTILITY PATH: This component does NOT receive the task-lane semaphore.
+  // In non-dev mode: obtained from ProjectEngine after engine.start(), which
+  // delegates to InProcessRuntime's already-initialized instances. This avoids
+  // running duplicate heartbeat infrastructure alongside the engine's own.
   //
-  // Provides the Paperclip-style heartbeat execution engine:
-  //   wake → check inbox → work → exit
+  // In dev mode: created inline inside the opts.dev block below, since the
+  // engine does not start in dev mode.
   //
-  // Enables lightweight agent sessions for monitoring, not task-lane work.
-  // By design, heartbeat sessions are independent of task concurrency limits
-  // so they can run regardless of how busy the task lanes are.
+  // heartbeatMonitorImpl is a mutable reference. The proxy passed to
+  // createServer delegates through it so routes work in both modes.
   //
-  // Passed to createServer to enable the dashboard's heartbeat routes.
-  //
-  let heartbeatMonitor: HeartbeatMonitor | undefined;
+  let heartbeatMonitorImpl: HeartbeatMonitor | undefined;
   let triggerScheduler: HeartbeatTriggerScheduler | undefined;
-  try {
-    heartbeatMonitor = new HeartbeatMonitor({
-      store: agentStore,
-      agentStore: agentStore, // enables per-agent config resolution
-      taskStore: store,
-      rootDir: cwd,
-      onMissed: (agentId) => {
-        console.log(`[engine] Agent ${agentId} missed heartbeat`);
-      },
-      onTerminated: (agentId) => {
-        console.log(`[engine] Agent ${agentId} terminated (unresponsive)`);
-      },
-    });
-    heartbeatMonitor.start();
-
-    // HeartbeatTriggerScheduler: trigger scheduling (UTILITY — NO semaphore) ──
-    //
-    // ⚠️ UTILITY PATH: This scheduler does NOT receive the task-lane semaphore.
-    //
-    // Manages timer and assignment-based triggers for heartbeat execution.
-    // By design, trigger scheduling is independent of task-lane concurrency limits.
-    //
-    triggerScheduler = new HeartbeatTriggerScheduler(
-      agentStore,
-      async (agentId, source, context: WakeContext) => {
-        if (!heartbeatMonitor) return;
-        await heartbeatMonitor.executeHeartbeat({
-          agentId,
-          source,
-          triggerDetail: context.triggerDetail,
-          taskId: typeof context.taskId === "string" ? context.taskId : undefined,
-          triggeringCommentIds: Array.isArray(context.triggeringCommentIds)
-            ? context.triggeringCommentIds.filter((id): id is string => typeof id === "string" && id.length > 0)
-            : undefined,
-          triggeringCommentType:
-            context.triggeringCommentType === "steering"
-            || context.triggeringCommentType === "task"
-            || context.triggeringCommentType === "pr"
-              ? context.triggeringCommentType
-              : undefined,
-          contextSnapshot: { ...context },
-        });
-      },
-      store,
-    );
-    triggerScheduler.start();
-
-    // Register existing agents that have heartbeat config
-    const agents = await agentStore.listAgents();
-    for (const agent of agents) {
-      const rc = agent.runtimeConfig;
-      if (rc && (rc.heartbeatIntervalMs || rc.enabled !== undefined || rc.maxConcurrentRuns)) {
-        triggerScheduler.registerAgent(agent.id, {
-          heartbeatIntervalMs: rc.heartbeatIntervalMs as number | undefined,
-          enabled: rc.enabled as boolean | undefined,
-          maxConcurrentRuns: rc.maxConcurrentRuns as number | undefined,
-        });
-      }
-    }
-    if (agents.length > 0) {
-      console.log(`[engine] Registered ${triggerScheduler.getRegisteredAgents().length} agents for heartbeat triggers`);
-    }
-  } catch (err) {
-    // Non-fatal — agent monitoring is optional
-    console.log(`[engine] HeartbeatMonitor initialization failed (continuing without agent monitoring):`, err);
-  }
-
-  // ── NtfyNotifier: push notifications for task completion and failures ─
-  //
-  // Resolve the project ID from the central registry so that notification
-  // deep links include ?project=...&task=... for multi-project dashboards.
-  // Falls back to no project ID (task-only links) when the central DB is
-  // unavailable or the project is not registered (single-project / legacy).
-  //
-  let ntfyProjectId: string | undefined;
-  try {
-    const central = new CentralCore();
-    await central.init();
-    const registered = await central.getProjectByPath(cwd);
-    await central.close();
-    if (registered) {
-      ntfyProjectId = registered.id;
-    }
-  } catch {
-    // Central DB unavailable or project not registered — backward compatible
-  }
-  const notifier = new NtfyNotifier(store, { projectId: ntfyProjectId });
-  notifier.start();
 
   // Set enginePaused if starting in paused mode
   if (opts.paused) {
@@ -479,345 +389,45 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     console.log("[engine] Starting in paused mode — automation disabled");
   }
 
-  // ── Task-lane concurrency semaphore ────────────────────────────────
+  // ── onMerge: AI-powered merge ─────────────────────────────────────
   //
-  // ⚠️ SEMAPHORE BOUNDARY: This semaphore governs ONLY task-lane agents.
+  // onMergeImpl is a mutable reference so createServer always gets a stable
+  // wrapper function while the underlying implementation is swapped when the
+  // engine starts in non-dev mode.
   //
-  // Governed components (task lanes):
-  //   - TriageProcessor: specification agents that produce PROMPT.md
-  //   - TaskExecutor: task execution agents that implement features
-  //   - Scheduler: coordinates which agent gets which task
-  //   - onMerge: AI-powered merge execution for completed tasks
+  // In dev mode: calls aiMergeTask directly (no engine, no semaphore).
+  // In non-dev mode: replaced by engine.onMerge() after ProjectEngine starts
+  // (semaphore-gated via the engine's InProcessRuntime).
   //
-  // UTILITY WORKFLOWS — NOT governed by this semaphore:
-  //   - HeartbeatMonitor: lightweight heartbeat sessions for agent monitoring
-  //   - HeartbeatTriggerScheduler: timer/assignment-based trigger scheduling
-  //   - CronRunner (via createAiPromptExecutor): scheduled automation prompts
-  //   - Model sync, auth setup, plugin loading: bootstrap/setup workflows
-  //
-  // This boundary prevents utility workflows from being blocked by
-  // task-lane saturation and ensures utility work is always available.
-  //
-  // The limit is read from a cached value that is refreshed from the store
-  // on each scheduler poll cycle (see engine block below). This avoids
-  // async I/O in the synchronous getter while still picking up live changes.
-  //
-  const initialSettings = await store.getSettings();
-  let cachedMaxConcurrent = initialSettings.maxConcurrent;
-  const semaphore = new AgentSemaphore(() => cachedMaxConcurrent);
-
-  // ── Shared worktree pool ──────────────────────────────────────────
-  //
-  // Enables worktree recycling across tasks when `recycleWorktrees` is
-  // enabled in settings. Completed task worktrees are returned to the
-  // pool instead of being deleted; new tasks acquire a warm worktree
-  // preserving build caches (node_modules, dist/, etc.).
-  //
-  // Created unconditionally — the `recycleWorktrees` gating logic lives
-  // inside TaskExecutor and aiMergeTask (see HAI-037). When the setting
-  // is off the pool simply stays empty.
-  //
-  const pool = new WorktreePool();
-
-  // ── Startup: rehydrate or clean up worktrees from previous runs ────
-  //
-  // When `recycleWorktrees` is true, scan the .worktrees/ directory for
-  // idle worktrees (not assigned to any active task) and load them into
-  // the pool so new tasks can reuse them instead of creating fresh ones.
-  //
-  // When `recycleWorktrees` is false, clean up orphaned worktrees left
-  // behind by previous engine runs to avoid disk waste.
-  //
-  if (initialSettings.recycleWorktrees) {
-    const idlePaths = await scanIdleWorktrees(cwd, store);
-    if (idlePaths.length > 0) {
-      pool.rehydrate(idlePaths);
-      console.log(`[engine] Rehydrated pool with ${idlePaths.length} idle worktree(s)`);
-    }
-  } else {
-    const cleaned = await cleanupOrphanedWorktrees(cwd, store);
-    if (cleaned > 0) {
-      console.log(`[engine] Cleaned up ${cleaned} orphaned worktree(s)`);
-    }
-  }
-
-  // ── Usage limit pauser ──────────────────────────────────────────────
-  //
-  // Shared pauser that triggers globalPause when any agent hits an API
-  // usage limit (rate limits, overloaded, quota exceeded). A single
-  // instance is shared across triage, executor, and merger so that the
-  // pause is deduplicated across concurrent agents.
-  //
-  const usageLimitPauser = new UsageLimitPauser(store);
-  const githubClient = new GitHubClient();
-
-  // ── onMerge: AI-powered merge (TASK LANE — semaphore-gated) ─────────────
-  //
-  // ⚠️ TASK LANE: aiMergeTask is wrapped with semaphore.run() to ensure
-  // merge agents count toward settings.maxConcurrent alongside triage and execution.
-  //
-  // The raw aiMergeTask does NOT receive the semaphore directly;
-  // the semaphore gating is applied at the onMerge wrapper level.
-  //
-  // Track the active merge session so it can be killed on global pause.
-  let activeMergeSession: { dispose: () => void } | null = null;
-
-  const rawMerge = (taskId: string) =>
+  let onMergeImpl = (taskId: string) =>
     aiMergeTask(store, cwd, taskId, {
-      pool,
-      usageLimitPauser,
       agentStore,
       onAgentText: (delta) => process.stdout.write(delta),
-      onSession: (session) => { activeMergeSession = session; },
     });
 
-  const onMerge = (taskId: string) => semaphore.run(() => rawMerge(taskId), PRIORITY_MERGE);
+  const onMerge = (taskId: string) => onMergeImpl(taskId);
 
-  // When globalPause transitions from false → true, terminate the active merge session.
-  registerHandler(store, "settings:updated", ({ settings, previous }) => {
-    if (settings.globalPause && !previous.globalPause) {
-      if (activeMergeSession) {
-        console.log("[auto-merge] Global pause — terminating active merge session");
-        activeMergeSession.dispose();
-        activeMergeSession = null;
-      }
-    }
-  });
-
-  // ── Serialized auto-merge queue ─────────────────────────────────────
+  // ── MissionAutopilot + MissionExecutionLoop: mission lifecycle ────
   //
-  // Three paths feed into this queue:
-  //   1. Event-driven: `task:moved` → "in-review" (immediate reaction)
-  //   2. Startup sweep: tasks already in "in-review" when the engine starts
-  //   3. Periodic retry: a setInterval catches tasks stuck in "in-review"
-  //      after a previous merge attempt failed
+  // Created inline for dev mode (engine doesn't start in dev mode).
+  // In non-dev mode, the engine is passed to createServer which derives these.
   //
-  // The queue ensures only one `aiMergeTask` runs at a time, preventing
-  // concurrent git merge operations in rootDir. Task IDs in the queue or
-  // actively being processed are tracked in `mergeActive` so the periodic
-  // sweep doesn't re-enqueue them.
-  //
-  const mergeQueue: string[] = [];
-  const mergeActive = new Set<string>(); // IDs queued or currently merging
-  let mergeRunning = false;
-  const maxAutoMergeRetries = 3;
-
-  function hasAutoHealableVerificationBufferFailure(task: {
-    mergeRetries?: number | null;
-    column: string;
-    error?: string | null;
-    log?: Array<{ action?: string }>;
-  }): boolean {
-    if (task.column !== "in-review") return false;
-    if ((task.mergeRetries ?? 0) < maxAutoMergeRetries) return false;
-    const err = task.error ?? "";
-    const matchesVerificationError = err.includes("Deterministic test verification failed")
-      || err.includes("Deterministic build verification failed")
-      || err.includes("Build verification failed")
-      || err.includes("Test verification failed");
-    if (!matchesVerificationError) return false;
-
-    return task.log?.some((entry) =>
-      entry.action?.includes("[verification] test command failed (exit 0)")
-      || entry.action?.includes("[verification] build command failed (exit 0)")
-      || entry.action?.includes("output exceeded buffer"),
-    ) ?? false;
-  }
-
-  // Cooldown after which a retry-exhausted task in review is eligible for one
-  // more sweep-driven merge attempt. Without this, any task that hits the retry
-  // limit with an error shape that doesn't match the buffer-heal pattern gets
-  // stranded until a human clears mergeRetries.
-  const autoMergeCooldownMs = 30 * 60 * 1000;
-
-  function isRetryCooldownElapsed(task: { updatedAt?: string | null }): boolean {
-    if (!task.updatedAt) return false;
-    const updated = Date.parse(task.updatedAt);
-    if (Number.isNaN(updated)) return false;
-    return Date.now() - updated >= autoMergeCooldownMs;
-  }
-
-  function canAutoMergeTask(task: { mergeRetries?: number | null; column: string; paused?: boolean; status?: string | null; error?: string | null; steps?: Array<{ status: string }>; workflowStepResults?: Array<{ status: string }>; log?: Array<{ action?: string }>; updatedAt?: string | null }): boolean {
-    if (getTaskMergeBlocker(task as any)) return false;
-    return (task.mergeRetries ?? 0) < maxAutoMergeRetries
-      || hasAutoHealableVerificationBufferFailure(task)
-      || isRetryCooldownElapsed(task);
-  }
-
-  /** Enqueue a task for auto-merge if not already queued/active. */
-  function enqueueMerge(taskId: string): void {
-    if (mergeActive.has(taskId)) return;
-    mergeActive.add(taskId);
-    mergeQueue.push(taskId);
-    drainMergeQueue();
-  }
-
-  /** Process the merge queue sequentially. */
-  async function drainMergeQueue(): Promise<void> {
-    if (mergeRunning) return;
-    mergeRunning = true;
-    try {
-      while (mergeQueue.length > 0) {
-        const taskId = mergeQueue.shift()!;
-        try {
-          // Re-check autoMerge and globalPause before each merge (setting may have been toggled)
-          const settings = await store.getSettings();
-          if (settings.globalPause || settings.enginePaused) {
-            console.log(`[auto-merge] Skipping ${taskId} — ${settings.globalPause ? "global pause" : "engine paused"} active`);
-            continue;
+  let missionAutopilotImpl: MissionAutopilot | undefined = new MissionAutopilot(store, store.getMissionStore());
+  let missionExecutionLoopImpl: MissionExecutionLoop | undefined = new MissionExecutionLoop({
+    taskStore: store,
+    missionStore: store.getMissionStore(),
+    missionAutopilot: {
+      notifyValidationComplete: async (featureId: string, _status: "passed" | "failed" | "blocked" | "error") => {
+        if (missionAutopilotImpl) {
+          const missionStore = store.getMissionStore();
+          const feature = missionStore?.getFeature(featureId);
+          if (feature?.taskId) {
+            await missionAutopilotImpl.handleTaskCompletion(feature.taskId);
           }
-          if (!settings.autoMerge) {
-            console.log(`[auto-merge] Skipping ${taskId} — autoMerge disabled`);
-            continue;
-          }
-          // Verify the task is still in-review and not paused
-          const task = await store.getTask(taskId);
-          if (!canAutoMergeTask(task as any)) {
-            continue;
-          }
-          if (hasAutoHealableVerificationBufferFailure(task as any)) {
-            await store.logEntry(
-              taskId,
-              "Auto-healing stale deterministic verification buffer failure; retrying merge verification",
-            );
-            await store.updateTask(taskId, { mergeRetries: 0, error: null, status: null });
-          } else if ((task.mergeRetries ?? 0) >= maxAutoMergeRetries && isRetryCooldownElapsed(task as any)) {
-            await store.logEntry(
-              taskId,
-              `Auto-merge retry cooldown elapsed (${Math.round(autoMergeCooldownMs / 60000)}m idle); resetting retries for another attempt`,
-            );
-            await store.updateTask(taskId, { mergeRetries: 0 });
-          }
-          const mergeStrategy = getMergeStrategy(settings);
-          if (mergeStrategy === "pull-request") {
-            console.log(`[auto-merge] Processing PR flow for ${taskId}...`);
-            const result = await processPullRequestMergeTask(store, cwd, taskId, githubClient, getTaskMergeBlocker);
-            if (result === "merged") {
-              console.log(`[auto-merge] ✓ ${taskId} merged via pull request`);
-            } else if (result === "waiting") {
-              console.log(`[auto-merge] … ${taskId} waiting on PR checks or reviews`);
-            }
-          } else {
-            console.log(`[auto-merge] Merging ${taskId}...`);
-            await onMerge(taskId);
-            console.log(`[auto-merge] ✓ ${taskId} merged`);
-            // Clear mergeRetries on success
-            if (task.mergeRetries && task.mergeRetries > 0) {
-              await store.updateTask(taskId, { mergeRetries: 0 });
-            }
-          }
-        } catch (err: any) {
-          const errorMsg = err.message ?? String(err);
-          console.log(`[auto-merge] ✗ ${taskId}: ${errorMsg}`);
-
-          const settings = await store.getSettings().catch(() => ({ autoResolveConflicts: true, mergeStrategy: "direct" as const }));
-          const task = await store.getTask(taskId).catch(() => null);
-          const mergeStrategy = getMergeStrategy(settings);
-
-          // Deterministic verification failure: kick the task back to
-          // "in-progress" so the executor rebuilds it. Parking it in
-          // "in-review" with a fatal error would require manual
-          // intervention, but the failing test/build is exactly the kind
-          // of issue the agent can fix on its own if given another turn.
-          const isVerificationError = err?.name === "VerificationError"
-            || errorMsg.includes("Deterministic test verification failed")
-            || errorMsg.includes("Deterministic build verification failed");
-          if (task && isVerificationError) {
-            const failedKind = errorMsg.includes("build verification") ? "build" : "test";
-            try {
-              await store.addTaskComment(
-                taskId,
-                `Deterministic ${failedKind} verification failed during merge. `
-                + `See the prior [verification] log entry for the truncated command output. `
-                + `Please fix the failing ${failedKind} and push the update so the merge can retry.`,
-                "agent",
-              );
-              await store.updateTask(taskId, { status: null, mergeRetries: 0, error: null });
-              await store.moveTask(taskId, "in-progress");
-              await store.logEntry(
-                taskId,
-                `Deterministic ${failedKind} verification failed — moved back to in-progress for remediation`,
-              );
-              console.log(`[auto-merge] ↩ ${taskId}: deterministic ${failedKind} verification failed — moved to in-progress`);
-            } catch (moveErr) {
-              console.log(`[auto-merge] failed to return ${taskId} to in-progress after verification failure:`, moveErr);
-            }
-            continue;
-          }
-
-          if (mergeStrategy === "direct") {
-            // Check if this is a conflict error and if we should retry
-            const isConflictError = errorMsg.includes("conflict") || errorMsg.includes("Conflict");
-
-            if (task && isConflictError) {
-              const currentRetries = task.mergeRetries ?? 0;
-              const maxRetries = maxAutoMergeRetries;
-
-              if (settings.autoResolveConflicts !== false && currentRetries < maxRetries) {
-                // Increment retry counter and re-enqueue with delay
-                const newRetryCount = currentRetries + 1;
-                await store.updateTask(taskId, { mergeRetries: newRetryCount, status: null });
-
-                // Calculate exponential backoff delay: 5s, 10s, 20s
-                const delayMs = 5000 * Math.pow(2, currentRetries);
-                console.log(`[auto-merge] ↻ ${taskId}: retry ${newRetryCount}/${maxRetries} in ${delayMs / 1000}s`);
-
-                setTimeout(() => {
-                  enqueueMerge(taskId);
-                }, delayMs);
-              } else {
-                // Max retries exceeded or auto-resolve disabled - keep in in-review
-                if (currentRetries >= maxRetries) {
-                  console.log(`[auto-merge] ⊘ ${taskId}: max retries (${maxRetries}) exceeded — manual resolution required`);
-                } else {
-                  console.log(`[auto-merge] ⊘ ${taskId}: autoResolveConflicts disabled — manual resolution required`);
-                }
-                // Reset task status so it doesn't appear stuck as "merging" in the UI
-                try {
-                  await store.updateTask(taskId, { status: null });
-                } catch { /* best-effort */ }
-              }
-            } else {
-              // Non-conflict error - stop auto-retrying until a user intervenes.
-              // This prevents the periodic sweep from re-enqueueing the same
-              // broken merge on every poll cycle.
-              try {
-                await store.updateTask(taskId, {
-                  status: null,
-                  mergeRetries: maxAutoMergeRetries,
-                  error: errorMsg,
-                });
-              } catch { /* best-effort */ }
-            }
-          } else {
-            try {
-              await store.updateTask(taskId, {
-                status: null,
-                mergeRetries: maxAutoMergeRetries,
-                error: errorMsg,
-              });
-            } catch { /* best-effort */ }
-          }
-        } finally {
-          mergeActive.delete(taskId);
         }
-      }
-    } finally {
-      mergeRunning = false;
-    }
-  }
-
-  // Auto-merge: when a task lands in "in-review" and autoMerge is enabled,
-  // enqueue it for serialized merge processing.
-  registerHandler(store, "task:moved", async ({ task, to }) => {
-    if (to !== "in-review") return;
-    if (getTaskMergeBlocker(task)) return;
-    try {
-      const settings = await store.getSettings();
-      if (settings.globalPause || settings.enginePaused) return;
-      if (!settings.autoMerge) return;
-      enqueueMerge(task.id);
-    } catch { /* ignore settings read errors */ }
+      },
+    },
+    rootDir: cwd,
   });
 
   // ── Auth & model wiring ────────────────────────────────────────────
@@ -912,62 +522,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     modelRegistry.refresh();
   }
 
-  // ── MissionAutopilot: autonomous mission progression ─────────────
-  //
-  // Created before createServer so it can be passed to both the server
-  // and the Scheduler. The scheduler reference is set after Scheduler
-  // construction via setScheduler() to break the circular dependency.
-  // In dev mode the autopilot is created but never started.
-  //
-  const missionAutopilot = new MissionAutopilot(store, store.getMissionStore());
-
-  // ── MissionExecutionLoop: validation cycle orchestration ───────────
-  //
-  // Created alongside MissionAutopilot to handle the validation cycle
-  // (implement → validate → fix → pass). In dev mode the loop is created
-  // but not started.
-  //
-  const missionExecutionLoop = new MissionExecutionLoop({
-    taskStore: store,
-    missionStore: store.getMissionStore(),
-    missionAutopilot: {
-      notifyValidationComplete: async (featureId: string, _status: "passed" | "failed" | "blocked" | "error") => {
-        // Delegate to autopilot after validation completes
-        // Pass the feature's linked taskId to handleTaskCompletion, not the featureId
-        if (missionAutopilot) {
-          const missionStore = store.getMissionStore();
-          const feature = missionStore?.getFeature(featureId);
-          if (feature?.taskId) {
-            await missionAutopilot.handleTaskCompletion(feature.taskId);
-          }
-        }
-      },
-    },
-    rootDir: cwd,
-  });
-
   const dashboardAuthStorage = wrapAuthStorageWithApiKeyProviders(authStorage, modelRegistry);
-
-  // Start the web server with AI merge, auth, model registry, and plugin wiring
-  const app = createServer(store, {
-    onMerge,
-    authStorage: dashboardAuthStorage,
-    modelRegistry,
-    automationStore,
-    missionAutopilot,
-    missionExecutionLoop,
-    heartbeatMonitor: heartbeatMonitor
-      ? {
-          rootDir: cwd,
-          startRun: heartbeatMonitor.startRun.bind(heartbeatMonitor),
-          executeHeartbeat: heartbeatMonitor.executeHeartbeat.bind(heartbeatMonitor),
-          stopRun: heartbeatMonitor.stopRun.bind(heartbeatMonitor),
-        }
-      : undefined,
-    pluginStore,
-    pluginLoader,
-    pluginRunner: pluginLoader,
-  });
 
   function dispose(): void {
     if (disposed) return;
@@ -977,351 +532,124 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       target.off(event, handler);
     }
     handlers.length = 0;
-
-    if (mergeRetryTimer) {
-      clearTimeout(mergeRetryTimer);
-      mergeRetryTimer = null;
-    }
   }
+
+  // ── createServer: deferred until engine is conditionally started ────
+  //
+  // In non-dev mode, pass the engine so createServer derives subsystem
+  // options (onMerge, automationStore, missionAutopilot, etc.) automatically.
+  // In dev mode, no engine — pass individual proxy objects instead.
+  //
+  let app: ReturnType<typeof createServer>;
 
   // Start the AI engine (unless in dev mode)
   if (!opts.dev) {
-    // ── Self-healing: auto-unpause, stuck kill budgets, maintenance ─────
-    const selfHealing = new SelfHealingManager(store, {
-      rootDir: cwd,
-      recoverCompletedTask: (task) => executorRef.current?.recoverCompletedTask(task) ?? Promise.resolve(false),
-      getExecutingTaskIds: () => executorRef.current?.getExecutingTaskIds() ?? new Set(),
-      recoverApprovedTriageTask: (task) => triageRef.current?.recoverApprovedTask(task) ?? Promise.resolve(false),
-      getSpecifyingTaskIds: () => triageRef.current?.getProcessingTaskIds() ?? new Set(),
-    });
-
-    // ── Stuck task detector: monitors agent sessions for stagnation ────
-    // Created before triage/executor so it can be passed in options.
-    // The onStuck callback is wired via late-binding closures on triageRef
-    // and executorRef to avoid circular construction order dependencies.
-    const executorRef: { current: TaskExecutor | null } = { current: null };
-    const triageRef: { current: TriageProcessor | null } = { current: null };
-    const stuckTaskDetector = new StuckTaskDetector(store, {
-      beforeRequeue: (taskId) => selfHealing.checkStuckBudget(taskId),
-      onLoopDetected: (event) => executorRef.current?.handleLoopDetected(event) ?? Promise.resolve(false),
-      onStuck: (event) => {
-        // Notify whichever component owns this task (triage or executor).
-        // Both check their own tracking sets so only the owner acts.
-        triageRef.current?.markStuckAborted(event.taskId);
-        executorRef.current?.markStuckAborted(event.taskId, event.shouldRequeue);
-        console.log(
-          `[engine] ⚠ ${event.taskId} stuck (${event.reason}) — ` +
-          `no progress for ${Math.round(event.noProgressMs / 60_000)}min, ` +
-          `${event.activitySinceProgress} events since last progress — ` +
-          `terminated, ${event.shouldRequeue ? "will retry" : "budget exhausted"}`,
-        );
-      },
-    });
-
-    // ── TriageProcessor: task specification (TASK LANE — receives semaphore) ──
+    // ── ProjectEngine: core AI engine subsystems ────────────────────────
     //
-    // Receives the task-lane semaphore to ensure specification agents
-    // count toward settings.maxConcurrent alongside execution and merge.
+    // ProjectEngine composes InProcessRuntime with higher-level subsystems:
+    //   - TaskStore (via externalTaskStore — reuses dashboard's store)
+    //   - Scheduler, TaskExecutor, TriageProcessor (via InProcessRuntime)
+    //   - WorktreePool + rehydration (via InProcessRuntime)
+    //   - AgentSemaphore (via InProcessRuntime — manages its own semaphore)
+    //   - StuckTaskDetector + SelfHealingManager (via InProcessRuntime)
+    //   - MissionAutopilot + MissionExecutionLoop (via InProcessRuntime)
+    //   - PrMonitor + PrCommentHandler (via ProjectEngine)
+    //   - NtfyNotifier (via ProjectEngine)
+    //   - CronRunner + AutomationStore (via ProjectEngine, separate from UI automationStore)
+    //   - Auto-merge queue with richer conflict/verification logic (via ProjectEngine)
+    //   - 5 settings event listeners (via ProjectEngine)
     //
-    const triage = new TriageProcessor(store, cwd, {
-      semaphore,
-      usageLimitPauser,
-      stuckTaskDetector,
-      agentStore,
-      onSpecifyStart: (t) => console.log(`[engine] Specifying ${t.id}...`),
-      onSpecifyComplete: (t) => console.log(`[engine] ✓ ${t.id} → todo`),
-      onSpecifyError: (t, e) => console.log(`[engine] ✗ ${t.id}: ${e.message}`),
-    });
-    triageRef.current = triage;
+    const githubClient = new GitHubClient();
 
-    // ── TaskExecutor: task execution (TASK LANE — receives semaphore) ──────────
-    //
-    // Receives the task-lane semaphore to ensure execution agents
-    // count toward settings.maxConcurrent alongside specification and merge.
-    //
-    const executor = new TaskExecutor(store, cwd, {
-      semaphore,
-      pool,
-      usageLimitPauser,
-      stuckTaskDetector,
-      agentStore,
-      onStart: (t, p) => console.log(`[engine] Executing ${t.id} in ${p}`),
-      onComplete: (t) => console.log(`[engine] ✓ ${t.id} → in-review`),
-      onError: (t, e) => console.log(`[engine] ✗ ${t.id}: ${e.message}`),
-    });
-    executorRef.current = executor;
-
-    const settings = await store.getSettings();
-    const prMonitor = new PrMonitor();
-    const prCommentHandler = new PrCommentHandler(store);
-    prMonitor.onNewComments((taskId, prInfo, comments) =>
-      prCommentHandler.handleNewComments(taskId, prInfo, comments),
-    );
-
-    // ── MissionAutopilot is already created above (before createServer) ──
-    // The scheduler reference is set after construction via setScheduler()
-    // to break the circular dependency.
-
-    // ── Scheduler: task coordination (TASK LANE — receives semaphore) ──────────
-    //
-    // Receives the task-lane semaphore to ensure task assignment decisions
-    // respect the concurrency limit alongside running execution agents.
-    //
-    const scheduler = new Scheduler(store, {
-      semaphore,
-      prMonitor,
-      missionStore: store.getMissionStore(),
-      missionAutopilot,
-      missionExecutionLoop,
-      onSchedule: (t) => console.log(`[engine] Scheduled ${t.id}`),
-      onBlocked: (t, deps) => console.log(`[engine] ${t.id} blocked by ${deps.join(", ")}`),
-      onClosedPrFeedback: async (taskId, prInfo, comments) => {
-        await prCommentHandler.createFollowUpTask(taskId, prInfo, comments);
-      },
-    });
-
-    // Break circular dependency: Scheduler ↔ MissionAutopilot
-    missionAutopilot.setScheduler(scheduler);
-
-    // ── CronRunner: scheduled task execution ──────────────────────────
-
-    // Post-run callback for memory insight extraction processing
-    const onMemoryInsightRunProcessed = async (
-      schedule: ScheduledTask,
-      result: AutomationRunResult,
-    ): Promise<void> => {
-      // Only process the memory insight extraction schedule
-      if (schedule.name !== INSIGHT_EXTRACTION_SCHEDULE_NAME) {
-        return;
-      }
-
-      // Extract the AI step output from the result
-      const stepResults = result.stepResults ?? [];
-      // Step name updated in FN-1477 to include pruning
-      const aiStep = stepResults.find(
-        (sr) => sr.stepName === "Extract Memory Insights and Prune" || sr.stepName === "Extract Memory Insights",
-      );
-
-      if (!aiStep) {
-        console.log(`[memory-audit] No insight extraction step found in ${schedule.name} result`);
-        return;
-      }
-
-      console.log(`[memory-audit] Processing memory insight extraction run...`);
-
-      try {
-        const auditReport = await processAndAuditInsightExtraction(cwd, {
-          rawResponse: aiStep.output ?? "",
-          stepSuccess: aiStep.success,
-          runAt: result.startedAt,
-          error: aiStep.error,
-        });
-
-        const pruneStatus = auditReport.pruning.applied
-          ? ` | Pruned: ${auditReport.pruning.originalSize} → ${auditReport.pruning.newSize} chars`
-          : ` | Pruning: ${auditReport.pruning.reason}`;
-
-        console.log(
-          `[memory-audit] ✓ Audit complete — Health: ${auditReport.health}, ` +
-          `Insights: ${auditReport.insightsMemory.insightCount}${pruneStatus}`,
-        );
-      } catch (err) {
-        console.error(
-          `[memory-audit] ✗ Failed to process insight extraction: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
+    const engineOptions: ProjectEngineOptions = {
+      externalTaskStore: store,
+      getMergeStrategy,
+      processPullRequestMerge: (s, wd, taskId) =>
+        processPullRequestMergeTask(s, wd, taskId, githubClient, getTaskMergeBlocker),
+      getTaskMergeBlocker,
     };
 
-    // ── CronRunner: scheduled automation (UTILITY — NO semaphore) ──────────
-    //
-    // ⚠️ UTILITY PATH: CronRunner does NOT receive the task-lane semaphore.
-    //
-    // Uses createAiPromptExecutor (cwd-only factory) for AI execution in
-    // scheduled tasks. By design, automation prompts are independent of
-    // task concurrency limits so they can run regardless of task-lane saturation.
-    //
-    // createAiPromptExecutor takes only `cwd` (no semaphore parameter),
-    // ensuring automation never competes with task-lane agents for slots.
-    //
-    const aiPromptExecutor = await createAiPromptExecutor(cwd);
-    const cronRunner = new CronRunner(store, automationStore, {
-      aiPromptExecutor,
-      onScheduleRunProcessed: onMemoryInsightRunProcessed,
-    });
-
-    // ── Sync insight extraction automation on startup ─────────────────
-    // Run sync BEFORE starting the cron runner to avoid stale config races.
-    // This ensures the insight extraction schedule is created/updated/deleted
-    // before the first tick can execute it.
+    // Resolve project ID from CentralCore for engine
+    let engineProjectId: string | undefined;
     try {
-      await syncInsightExtractionAutomation(automationStore, settings);
-    } catch (err) {
-      console.error(
-        `[memory-audit] Failed to sync insight extraction automation: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      const central = new CentralCore();
+      await central.init();
+      const registered = await central.getProjectByPath(cwd).catch(() => null);
+      await central.close().catch(() => {});
+      if (registered) engineProjectId = registered.id;
+    } catch {
+      // Central DB unavailable — engine will run without project registration
     }
 
-    cronRunner.start();
+    const runtimeConfig: ProjectRuntimeConfig = {
+      projectId: engineProjectId ?? cwd,
+      workingDirectory: cwd,
+      isolationMode: "in-process",
+      // maxConcurrent/maxWorktrees are read from settings inside InProcessRuntime
+      // via CentralCore; use safe defaults here.
+      maxConcurrent: 4,
+      maxWorktrees: 10,
+    };
 
-    triage.start();
-    scheduler.start();
-    missionAutopilot.start();
-    missionExecutionLoop.start();
-    stuckTaskDetector.start();
-    selfHealing.start();
-
-    // ── Startup: recover active missions for validation loop ─────────────
-    // Re-enqueue pending validations from any missions that were interrupted
-    // before the engine was stopped (e.g., features in validating/needs_fix state).
-    void missionExecutionLoop.recoverActiveMissions().catch((err) => {
-      console.error("[engine] Failed to recover active missions:", err);
-    });
-
-    // ── Startup sweep: resume orphaned in-progress tasks ──────────────
-    executor.resumeOrphaned().catch((err) =>
-      console.error("[engine] Failed to resume orphaned tasks:", err),
-    );
-
-    // ── Startup sweep: enqueue any tasks already in "in-review" ───────
-    if (settings.autoMerge) {
-      const existing = await store.listTasks({ column: "in-review" });
-      const inReview = existing.filter((t) => canAutoMergeTask(t as any));
-      if (inReview.length > 0) {
-        console.log(
-          `[auto-merge] Startup sweep: enqueueing ${inReview.length} in-review task(s)`,
-        );
-        for (const t of inReview) {
-          enqueueMerge(t.id);
-        }
-      }
+    const centralCoreForEngine = new CentralCore();
+    try {
+      await centralCoreForEngine.init();
+    } catch {
+      // Non-fatal — engine uses fallback concurrency defaults
     }
 
-    // ── Always sync semaphore limit on any settings change ────────────
-    // Without this, changing maxConcurrent in the dashboard has no effect
-    // on the semaphore until an unpause transition or merge retry fires.
-    registerHandler(store, "settings:updated", ({ settings: s }) => {
-      if (s.maxConcurrent !== undefined) {
-        cachedMaxConcurrent = s.maxConcurrent;
-      }
+    const engine = new ProjectEngine(runtimeConfig, centralCoreForEngine, engineOptions);
+    await engine.start();
+
+    // Obtain TriggerScheduler from the engine for shutdown cleanup
+    triggerScheduler = engine.getHeartbeatTriggerScheduler();
+
+    // ── Per-project engine manager ───────────────────────────────────────
+    //
+    // The dashboard can serve any number of registered projects via
+    // ?projectId= query params on API/SSE routes. Each project needs its
+    // own engine (Scheduler, TriageProcessor, TaskExecutor) to triage and
+    // execute tasks. We lazily start an InProcessRuntime for each project
+    // the first time it is accessed, reusing the same CentralCore.
+    //
+    // The primary project (cwd) is already covered by ProjectEngine above;
+    // all others are managed here by ProjectManager.
+    //
+    const perProjectManager = new ProjectManager(centralCoreForEngine);
+
+    const onProjectFirstAccessed = (projectId: string): void => {
+      // The primary project's engine is already running via ProjectEngine
+      if (projectId === runtimeConfig.projectId) return;
+      // Fire-and-forget: start InProcessRuntime for this project
+      centralCoreForEngine.getProject(projectId).then(async (project) => {
+        if (!project) return;
+        if (perProjectManager.getRuntime(projectId)) return; // already running
+        await perProjectManager.addProject({
+          projectId: project.id,
+          workingDirectory: project.path,
+          isolationMode: (project.isolationMode as "in-process" | "child-process") ?? "in-process",
+          maxConcurrent: (project.settings as Record<string, unknown> | undefined)?.maxConcurrent as number ?? 4,
+          maxWorktrees: (project.settings as Record<string, unknown> | undefined)?.maxWorktrees as number ?? 10,
+        });
+        console.log(`[dashboard] Started engine for project ${project.name} (${projectId})`);
+      }).catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[dashboard] Failed to start engine for project ${projectId}: ${message}`);
+      });
+    };
+
+    // Pass engine to createServer — it derives onMerge, automationStore,
+    // missionAutopilot, missionExecutionLoop, and heartbeatMonitor automatically.
+    app = createServer(store, {
+      engine,
+      authStorage: dashboardAuthStorage,
+      modelRegistry,
+      automationStore,
+      pluginStore,
+      pluginLoader,
+      pluginRunner: pluginLoader,
+      onProjectFirstAccessed,
     });
-
-    // ── Immediate unpause: resume orphans + merge sweep ─────────────
-    // When globalPause transitions from true → false, immediately:
-    // 1. Resume orphaned in-progress tasks whose agents were killed by pause
-    // 2. Sweep the merge queue for in-review tasks that need merging
-    registerHandler(store, "settings:updated", async ({ settings: s, previous: prev }) => {
-      if (prev.globalPause && !s.globalPause) {
-        console.log("[engine] Global unpause — resuming agentic activity");
-
-        executor.resumeOrphaned().catch((err) =>
-          console.error("[engine] Failed to resume orphaned tasks on unpause:", err),
-        );
-
-        if (s.autoMerge) {
-          try {
-            const tasks = await store.listTasks({ column: "in-review" });
-            for (const t of tasks) {
-              if (canAutoMergeTask(t as any)) {
-                enqueueMerge(t.id);
-              }
-            }
-          } catch { /* ignore errors in unpause sweep */ }
-        }
-      }
-    });
-
-    // ── Immediate engine-unpause: resume orphans + merge sweep ────────
-    // When enginePaused transitions from true → false, same resume logic
-    // as globalPause unpause: pick up orphaned tasks and sweep merge queue.
-    registerHandler(store, "settings:updated", async ({ settings: s, previous: prev }) => {
-      if (prev.enginePaused && !s.enginePaused) {
-        console.log("[engine] Engine unpaused — resuming agentic activity");
-
-        executor.resumeOrphaned().catch((err) =>
-          console.error("[engine] Failed to resume orphaned tasks on engine unpause:", err),
-        );
-
-        if (s.autoMerge) {
-          try {
-            const tasks = await store.listTasks({ column: "in-review" });
-            for (const t of tasks) {
-              if (canAutoMergeTask(t as any)) {
-                enqueueMerge(t.id);
-              }
-            }
-          } catch { /* ignore errors in unpause sweep */ }
-        }
-      }
-    });
-
-    // ── Stuck task timeout change: immediate check ────────────────────
-    // When taskStuckTimeoutMs is changed (e.g., user reduces timeout),
-    // immediately check for stuck tasks under the new timer value.
-    registerHandler(store, "settings:updated", async ({ settings: s, previous: prev }) => {
-      if (s.taskStuckTimeoutMs !== prev.taskStuckTimeoutMs) {
-        try {
-          console.log(`[stuck-detector] Timeout changed to ${s.taskStuckTimeoutMs}ms — running immediate check`);
-          await stuckTaskDetector.checkNow();
-        } catch (err) {
-          console.error("[stuck-detector] Error during immediate stuck-task check:", err);
-        }
-      }
-    });
-
-    // ── Insight extraction automation sync on settings change ─────────
-    // When insight extraction settings change (enable/disable/schedule/min interval),
-    // resync the automation schedule without requiring a restart.
-    registerHandler(store, "settings:updated", async ({ settings: s, previous: prev }) => {
-      const insightKeys = [
-        "insightExtractionEnabled",
-        "insightExtractionSchedule",
-        "insightExtractionMinIntervalMs",
-      ] as const;
-
-      const relevantKeyChanged = insightKeys.some((key) => s[key] !== prev[key]);
-      if (relevantKeyChanged) {
-        try {
-          await syncInsightExtractionAutomation(automationStore, s);
-          console.log("[memory-audit] Insight extraction automation synced with settings");
-        } catch (err) {
-          console.error(
-            `[memory-audit] Failed to sync insight extraction automation: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      }
-    });
-
-    // ── Periodic retry: catch failed merges on each poll cycle ────────
-    // Uses a setTimeout chain so the interval dynamically follows
-    // settings.pollIntervalMs without requiring an engine restart.
-    // The readiness predicate uses canAutoMergeTask() to detect tasks that
-    // have become unblocked while respecting retry limits.
-    async function scheduleMergeRetry(): Promise<void> {
-      if (disposed) return;
-      const currentSettings = await store.getSettings().catch(() => settings);
-      const interval = currentSettings.pollIntervalMs ?? 15_000;
-      mergeRetryTimer = setTimeout(async () => {
-        if (disposed) return;
-        try {
-          const s = await store.getSettings();
-          // Refresh the cached limit so the semaphore picks up live changes
-          cachedMaxConcurrent = s.maxConcurrent;
-          if (!s.globalPause && !s.enginePaused && s.autoMerge) {
-            const tasks = await store.listTasks({ column: "in-review" });
-            for (const t of tasks) {
-              if (canAutoMergeTask(t as any)) {
-                enqueueMerge(t.id);
-              }
-            }
-          }
-        } catch { /* ignore errors in periodic sweep */ }
-        if (!disposed) {
-          scheduleMergeRetry();
-        }
-      }, interval);
-    }
-    // Kick off the first retry after the current poll interval
-    scheduleMergeRetry();
 
     const shutdown = async (signal: NodeJS.Signals) => {
       if (shutdownInProgress) return;
@@ -1349,22 +677,116 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       dispose();
       stopDiagnosticInterval();
 
-      // Stop heartbeat components first (they reference agentStore)
-      if (triggerScheduler) triggerScheduler.stop();
-      if (heartbeatMonitor) heartbeatMonitor.stop();
-      selfHealing.stop();
-      stuckTaskDetector.stop();
-      missionAutopilot.stop();
-      missionExecutionLoop.stop();
-      triage.stop();
-      scheduler.stop();
-      cronRunner.stop();
-      notifier.stop();
+      // Stop all per-project engines
+      await perProjectManager.stopAll().catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[dashboard] Per-project manager stop error: ${message}`);
+      });
+
+      // Stop engine (stops all subsystems: InProcessRuntime + ProjectEngine auxiliaries,
+      // including HeartbeatMonitor, TriggerScheduler, NtfyNotifier, MissionAutopilot, etc.)
+      await engine.stop().catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[dashboard] Engine stop error: ${message}`);
+      });
+
+      await centralCoreForEngine.close().catch(() => {});
+
       store.close();
       process.exit(0);
     };
     registerHandler(process, "SIGINT", () => void shutdown("SIGINT"));
     registerHandler(process, "SIGTERM", () => void shutdown("SIGTERM"));
+  } else {
+  // Dev mode: create HeartbeatMonitor + TriggerScheduler inline (engine not started)
+    try {
+      heartbeatMonitorImpl = new HeartbeatMonitor({
+        store: agentStore,
+        agentStore,
+        taskStore: store,
+        rootDir: cwd,
+        onMissed: (agentId) => {
+          console.log(`[engine] Agent ${agentId} missed heartbeat`);
+        },
+        onTerminated: (agentId) => {
+          console.log(`[engine] Agent ${agentId} terminated (unresponsive)`);
+        },
+      });
+      heartbeatMonitorImpl.start();
+
+      triggerScheduler = new HeartbeatTriggerScheduler(
+        agentStore,
+        async (agentId, source, context: WakeContext) => {
+          if (!heartbeatMonitorImpl) return;
+          await heartbeatMonitorImpl.executeHeartbeat({
+            agentId,
+            source,
+            triggerDetail: context.triggerDetail,
+            taskId: typeof context.taskId === "string" ? context.taskId : undefined,
+            triggeringCommentIds: Array.isArray(context.triggeringCommentIds)
+              ? context.triggeringCommentIds.filter((id): id is string => typeof id === "string" && id.length > 0)
+              : undefined,
+            triggeringCommentType:
+              context.triggeringCommentType === "steering"
+              || context.triggeringCommentType === "task"
+              || context.triggeringCommentType === "pr"
+                ? context.triggeringCommentType
+                : undefined,
+            contextSnapshot: { ...context },
+          });
+        },
+        store,
+      );
+      triggerScheduler.start();
+
+      const agents = await agentStore.listAgents();
+      for (const agent of agents) {
+        const rc = agent.runtimeConfig;
+        if (rc && (rc.heartbeatIntervalMs || rc.enabled !== undefined || rc.maxConcurrentRuns)) {
+          triggerScheduler.registerAgent(agent.id, {
+            heartbeatIntervalMs: rc.heartbeatIntervalMs as number | undefined,
+            enabled: rc.enabled as boolean | undefined,
+            maxConcurrentRuns: rc.maxConcurrentRuns as number | undefined,
+          });
+        }
+      }
+      if (agents.length > 0) {
+        console.log(`[engine] Registered ${triggerScheduler.getRegisteredAgents().length} agents for heartbeat triggers`);
+      }
+    } catch (err) {
+      console.log(`[engine] HeartbeatMonitor initialization failed (continuing without agent monitoring):`, err);
+    }
+
+    // Dev mode: no engine, pass individual proxy objects to createServer
+    app = createServer(store, {
+      onMerge,
+      authStorage: dashboardAuthStorage,
+      modelRegistry,
+      automationStore,
+      missionAutopilot: {
+        watchMission: (missionId: string) => missionAutopilotImpl?.watchMission(missionId),
+        unwatchMission: (missionId: string) => missionAutopilotImpl?.unwatchMission(missionId),
+        isWatching: (missionId: string) => missionAutopilotImpl?.isWatching(missionId) ?? false,
+        getAutopilotStatus: (missionId: string) => missionAutopilotImpl!.getAutopilotStatus(missionId),
+        checkAndStartMission: (missionId: string) => missionAutopilotImpl?.checkAndStartMission(missionId) ?? Promise.resolve(),
+        recoverStaleMission: (missionId: string) => missionAutopilotImpl?.recoverStaleMission(missionId) ?? Promise.resolve(),
+        start: () => missionAutopilotImpl?.start(),
+        stop: () => missionAutopilotImpl?.stop(),
+      },
+      missionExecutionLoop: {
+        recoverActiveMissions: () => missionExecutionLoopImpl?.recoverActiveMissions() ?? Promise.resolve({ recoveredCount: 0 }),
+        isRunning: () => missionExecutionLoopImpl?.isRunning() ?? false,
+      },
+      heartbeatMonitor: {
+        rootDir: cwd,
+        startRun: (...args: Parameters<HeartbeatMonitor["startRun"]>) => heartbeatMonitorImpl!.startRun(...args),
+        executeHeartbeat: (...args: Parameters<HeartbeatMonitor["executeHeartbeat"]>) => heartbeatMonitorImpl!.executeHeartbeat(...args),
+        stopRun: (...args: Parameters<HeartbeatMonitor["stopRun"]>) => heartbeatMonitorImpl!.stopRun(...args),
+      },
+      pluginStore,
+      pluginLoader,
+      pluginRunner: pluginLoader,
+    });
   }
 
   // Dev mode: simplified shutdown handlers (no engine components)
@@ -1395,8 +817,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       dispose();
       stopDiagnosticInterval();
       if (triggerScheduler) triggerScheduler.stop();
-      if (heartbeatMonitor) heartbeatMonitor.stop();
-      notifier.stop();
+      if (heartbeatMonitorImpl) heartbeatMonitorImpl.stop();
       store.close();
       process.exit(0);
     };
