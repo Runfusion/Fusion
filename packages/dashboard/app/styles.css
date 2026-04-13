@@ -67,6 +67,9 @@
   --executor-footer-height: 0px;
   --executor-footer-height-mobile: 0px;
 
+  /* PWA standalone mode bottom gap (FN-1626): extra breathing room for iOS home indicator */
+  --standalone-bottom-gap: 0px;
+
   /* Shadow tokens */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
   --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
@@ -6371,8 +6374,12 @@ body {
 
 @media (display-mode: standalone) {
   #root {
-    padding-bottom: env(safe-area-inset-bottom, 0px);
+    /* FN-1626: additive bottom spacing = safe-area inset + 8px home bar gap */
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--standalone-bottom-gap));
   }
+
+  /* PWA standalone mode: 8px extra breathing room for iOS home indicator */
+  --standalone-bottom-gap: 8px;
 }
 
 /* === Mobile Responsive Overrides ===
@@ -18791,7 +18798,7 @@ html .column.drag-over * {
     font-size: 11px;
     height: 32px;
     overflow: hidden;
-    bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px));
+    bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px) + var(--standalone-bottom-gap));
   }
 
   .executor-status-bar__segment {
@@ -26614,12 +26621,12 @@ html .column.drag-over * {
 
   /* Content padding: mobile nav only (no footer) */
   .project-content--with-mobile-nav:not(.project-content--with-footer) {
-    padding-bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px) + var(--standalone-bottom-gap));
   }
 
   /* Content padding: both mobile nav AND footer */
   .project-content--with-footer.project-content--with-mobile-nav {
-    padding-bottom: calc(32px + var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(32px + var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px) + var(--standalone-bottom-gap));
   }
 }
 

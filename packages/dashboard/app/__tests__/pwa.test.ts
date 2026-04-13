@@ -42,6 +42,22 @@ describe("PWA configuration", () => {
     expect(cssContent).toMatch(/@media\s*\(\s*display-mode:\s*standalone\s*\)\s*\{[^}]*#root\s*\{[^}]*env\(safe-area-inset-bottom,\s*0px\)/);
   });
 
+  it("CSS includes --standalone-bottom-gap token with 8px value in standalone mode", () => {
+    const cssContent = readFileSync(resolve(__dirname, "../styles.css"), "utf8");
+
+    // Token definition in :root
+    expect(cssContent).toContain("--standalone-bottom-gap: 0px");
+    // Token override in standalone mode sets 8px gap
+    expect(cssContent).toMatch(/--standalone-bottom-gap:\s*8px/);
+  });
+
+  it("CSS uses additive bottom spacing in standalone mode (safe-area + gap)", () => {
+    const cssContent = readFileSync(resolve(__dirname, "../styles.css"), "utf8");
+
+    // #root should use var(--standalone-bottom-gap) in a calc expression for additive spacing
+    expect(cssContent).toContain("var(--standalone-bottom-gap))");
+  });
+
   it("service worker contains lifecycle handlers and versioned cache name", () => {
     const swSource = readFileSync(resolve(__dirname, "../public/sw.js"), "utf8");
 

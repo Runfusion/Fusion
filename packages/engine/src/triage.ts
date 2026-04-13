@@ -464,9 +464,10 @@ export class TriageProcessor {
       }
       this.wasEnginePaused = false;
 
-      const tasks = await this.store.listTasks({ slim: true, column: "triage" });
+      // Fetch all tasks (not just triage) to count active agents across columns.
+      const allTasks = await this.store.listTasks({ slim: true, includeArchived: false });
       const now = Date.now();
-      const triageTasks = tasks.filter(
+      const triageTasks = allTasks.filter(
         (t) => t.column === "triage" && !this.processing.has(t.id) && !t.paused
           // Skip tasks awaiting manual plan approval — they should not be auto-discovered
           && t.status !== "awaiting-approval"
@@ -474,13 +475,26 @@ export class TriageProcessor {
           && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),
       );
 
-      // Respect the global concurrency limit — only kick off as many triage
-      // tasks as the semaphore has available slots. Without this gate, all
-      // eligible tasks queue on the semaphore simultaneously, which is
-      // wasteful and confusing in the UI.
-      const maxToStart = this.options.semaphore
+      // Respect both per-project maxConcurrent and the global semaphore.
+      // Count all active agent slots: in-progress tasks + already-specifying tasks.
+      const maxConcurrent = settings.maxConcurrent ?? 2;
+      const inProgress = allTasks.filter((t) => t.column === "in-progress").length;
+      const specifying = allTasks.filter(
+        (t) => t.column === "triage" && t.status === "specifying" && !t.paused,
+      ).length;
+      const activeAgents = inProgress + specifying;
+
+      const perProjectAvailable = Math.max(0, maxConcurrent - activeAgents);
+      const semaphoreAvailable = this.options.semaphore
         ? Math.max(0, this.options.semaphore.availableCount)
-        : triageTasks.length;
+        : Infinity;
+      const maxToStart = Math.min(perProjectAvailable, semaphoreAvailable);
+
+      if (maxToStart <= 0 && triageTasks.length > 0) {
+        triageLog.log(
+          `Triage throttled: ${activeAgents} active agents (${inProgress} executing, ${specifying} specifying), limit ${maxConcurrent}`,
+        );
+      }
 
       for (let i = 0; i < Math.min(triageTasks.length, maxToStart); i++) {
         void this.specifyTask(triageTasks[i]);

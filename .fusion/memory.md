@@ -327,6 +327,34 @@ The mobile bottom-spacing is controlled by a single CSS variable `--mobile-nav-h
 
 When adjusting mobile bottom spacing, change `--mobile-nav-height` in one place and all related elements will update. Tab touch targets (`.mobile-nav-tab`) remain at 36px minimum regardless of nav height changes.
 
+### FN-1626: PWA Home Bar Bottom Spacing
+
+For installed PWA mode (`@media (display-mode: standalone)`), an additional `--standalone-bottom-gap` token provides extra breathing room for the iOS home indicator:
+- **`:root` default**: `--standalone-bottom-gap: 0px` (non-PWA fallback)
+- **Standalone mode**: `--standalone-bottom-gap: 8px` (extra 8px for home bar)
+- **Additive spacing pattern**: All bottom-positioned elements use `+ var(--standalone-bottom-gap)` in their calc expressions
+
+This pattern ensures PWA mode gets extra bottom room without breaking non-PWA behavior:
+```css
+/* :root */
+--standalone-bottom-gap: 0px;
+
+@media (display-mode: standalone) {
+  --standalone-bottom-gap: 8px;
+}
+
+/* Usage example */
+#root {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--standalone-bottom-gap));
+}
+
+.executor-status-bar {
+  bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px) + var(--standalone-bottom-gap));
+}
+```
+
+The token-based approach allows all bottom-layout consumers to be updated together by adding `+ var(--standalone-bottom-gap)` to their calc expressions.
+
 ## FN-1458: Mobile Header Search Safe-Area-Inset Fix
 
 - When fixing mobile header search positioning issues (search box clipping off-screen), add safe-area-inset handling to both `.header` and `.header-floating-search` in the mobile media query
