@@ -12,14 +12,12 @@ import type {
   ProjectSettings,
   BatchStatusResult,
   BatchStatusResponse,
-  BatchStatusEntry,
   ActivityLogEntry,
   ActivityEventType,
   WorkflowStep,
   WorkflowStepInput,
   WorkflowStepResult,
   PluginInstallation,
-  PluginState,
   TaskDocument,
   TaskDocumentRevision,
 
@@ -39,10 +37,9 @@ import type {
   AgentRatingInput,
   ChatSession,
   ChatMessage,
-  RunAuditEvent,
 } from "@fusion/core";
-import type { PlanningQuestion, PlanningSummary, PlanningResponse } from "@fusion/core";
-import type { ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, AutomationStep, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult } from "@fusion/core";
+import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
+import type { ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult } from "@fusion/core";
 
 function looksLikeHtml(body: string): boolean {
   const trimmed = body.trim();
@@ -4826,11 +4823,13 @@ export function streamChatResponse(
     onConnectionStateChange?: (state: StreamConnectionState) => void;
   },
   projectId?: string,
-  _options?: { maxReconnectAttempts?: number },
+  options?: { maxReconnectAttempts?: number },
 ): { close: () => void; isConnected: () => boolean } {
   const url = buildApiUrl(withProjectId(`/chat/sessions/${encodeURIComponent(sessionId)}/messages`, projectId));
 
-  let abortController = new AbortController();
+  void options;
+
+  const abortController = new AbortController();
   let closedByUser = false;
 
   const dispatchEvent = (eventName: string, rawData: string): void => {

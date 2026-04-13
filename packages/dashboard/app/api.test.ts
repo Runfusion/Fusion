@@ -2796,13 +2796,21 @@ describe("resilient SSE reconnect", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     ControlledEventSource.instances = [];
-    (globalThis as any).EventSource = ControlledEventSource;
+    Object.defineProperty(globalThis, "EventSource", {
+      configurable: true,
+      writable: true,
+      value: ControlledEventSource,
+    });
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { ok: true }));
   });
 
   afterEach(() => {
     vi.useRealTimers();
-    (globalThis as any).EventSource = OriginalEventSource;
+    Object.defineProperty(globalThis, "EventSource", {
+      configurable: true,
+      writable: true,
+      value: OriginalEventSource,
+    });
     globalThis.fetch = originalFetch;
   });
 
