@@ -685,6 +685,7 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
+    // Click on "Models" (global models section)
     fireEvent.click(screen.getByText("Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
@@ -707,6 +708,7 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
+    // Click on "Models" (global models section)
     fireEvent.click(screen.getByText("Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
@@ -734,6 +736,7 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
+    // Click on "Models" (global models section)
     fireEvent.click(screen.getByText("Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
@@ -741,12 +744,13 @@ describe("SettingsModal", () => {
     expect(screen.getByLabelText("Default Model")).toBeTruthy();
   });
 
-  it("saving in Models section updates project settings with planning and validator models", async () => {
+  it("saving in Project Models section updates project settings with planning and validator models", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Models"));
+    // Click on "Project Models" (project-scoped models section)
+    fireEvent.click(screen.getByText("Project Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     // Select planning model
@@ -770,12 +774,13 @@ describe("SettingsModal", () => {
     expect(projectPayload.validatorModelId).toBe("gpt-4o");
   });
 
-  it("saving in Models section updates planning and validator fallback models", async () => {
+  it("saving in Project Models section updates planning and validator fallback models", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Models"));
+    // Click on "Project Models" (project-scoped models section)
+    fireEvent.click(screen.getByText("Project Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     const planningFallbackTrigger = screen.getByLabelText("Planning Fallback Model");
@@ -796,11 +801,12 @@ describe("SettingsModal", () => {
     expect(projectPayload.validatorFallbackModelId).toBe("gpt-4o");
   });
 
-  it("shows Models in sidebar", async () => {
+  it("shows Models and Project Models in sidebar", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     expect(screen.getAllByText("Models").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Project Models").length).toBeGreaterThanOrEqual(1);
   });
 
   it("supports creating and saving a model preset", async () => {
@@ -808,7 +814,8 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Models"));
+    // Model presets are in Project Models section
+    fireEvent.click(screen.getByText("Project Models"));
     await user.click(screen.getByText("Add Preset"));
 
     await user.type(screen.getByLabelText("Name"), "Budget");
@@ -837,7 +844,8 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Models"));
+    // Auto-select presets are in Project Models section
+    fireEvent.click(screen.getByText("Project Models"));
     await user.click(screen.getByLabelText("Auto-select preset based on task size"));
     fireEvent.change(screen.getByLabelText("Small tasks (S):"), { target: { value: "budget" } });
     fireEvent.change(screen.getByLabelText("Medium tasks (M):"), { target: { value: "normal" } });
@@ -856,6 +864,7 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
+    // Models section has default model dropdown
     fireEvent.click(screen.getByText("Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
@@ -881,6 +890,7 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
+    // Models section has default model dropdown
     fireEvent.click(screen.getByText("Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
@@ -909,6 +919,7 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
+    // Models section has default model dropdown
     fireEvent.click(screen.getByText("Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
@@ -940,6 +951,7 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
+    // Models section shows empty state when no models available
     fireEvent.click(screen.getByText("Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
@@ -950,11 +962,12 @@ describe("SettingsModal", () => {
 
   // --- Planning & Validation model tests ---
 
-  it("shows Models section with planning and validator model dropdowns", async () => {
+  it("shows Project Models section with planning and validator model dropdowns", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Models"));
+    // Project Models section has planning and validator model dropdowns
+    fireEvent.click(screen.getByText("Project Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     // Both dropdowns should be present
@@ -967,7 +980,8 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Models"));
+    // Project Models section has planning model dropdown
+    fireEvent.click(screen.getByText("Project Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     // Open planning model dropdown and select a model
@@ -989,7 +1003,8 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Models"));
+    // Project Models section has validator model dropdown
+    fireEvent.click(screen.getByText("Project Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     // Open validator model dropdown and select a model
@@ -1568,14 +1583,15 @@ describe("SettingsModal", () => {
     expect(layout!.querySelector(".settings-content")).toBeTruthy();
   });
 
-  it("has .settings-sidebar with 12 .settings-nav-item buttons for all sections", async () => {
+  it("has .settings-sidebar with 14 .settings-nav-item buttons for all sections", async () => {
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     const sidebar = container.querySelector(".settings-sidebar");
     expect(sidebar).toBeTruthy();
     const navItems = sidebar!.querySelectorAll(".settings-nav-item");
-    expect(navItems.length).toBe(13);
+    // 14 nav items (group headers are not nav items)
+    expect(navItems.length).toBe(14);
 
     // Labels include scope icons (Globe for global, Folder for project)
     const labels = Array.from(navItems).map((el) => el.textContent?.trim());
@@ -1583,8 +1599,9 @@ describe("SettingsModal", () => {
       "Authentication",
       "Appearance",
       "Notifications",
-      "General",
       "Models",
+      "General",
+      "Project Models",
       "Scheduling",
       "Worktrees",
       "Commands",
@@ -1705,6 +1722,7 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
+    // OpenRouter model sync is in Models section (global settings)
     fireEvent.click(screen.getByText("Models"));
     const checkbox = screen.getByLabelText("Sync OpenRouter model list at dashboard startup");
     expect(checkbox).toBeTruthy();
@@ -2501,15 +2519,25 @@ describe("SettingsModal", () => {
     const projectIcon = projectBanner!.querySelector(".settings-scope-icon svg");
     expect(projectIcon).toBeTruthy();
 
-    // Switch to Models → should show mixed scope banner with both icons (SVG, not emoji)
+    // Switch to Models → should show global scope banner (Models is now a global-only section)
     fireEvent.click(screen.getAllByText("Models")[0]);
-    const mixedBanner = container.querySelector(".settings-scope-mixed");
-    expect(mixedBanner).toBeTruthy();
-    expect(mixedBanner?.textContent).toContain("global");
-    expect(mixedBanner?.textContent).toContain("project");
-    // Verify mixed banner uses both icons as SVG elements, not emoji
-    const mixedIcons = mixedBanner!.querySelectorAll(".settings-scope-icon svg");
-    expect(mixedIcons.length).toBe(2);
+    const modelsBanner = container.querySelector(".settings-scope-global");
+    expect(modelsBanner).toBeTruthy();
+    expect(modelsBanner?.textContent).toContain("Fusion");
+    expect(container.querySelector(".settings-scope-project")).toBeNull();
+    // Verify Models banner uses Globe icon as SVG element
+    const modelsIcon = modelsBanner!.querySelector(".settings-scope-icon svg");
+    expect(modelsIcon).toBeTruthy();
+
+    // Switch to Project Models → should show project scope banner
+    fireEvent.click(screen.getByText("Project Models"));
+    const projectModelsBanner = container.querySelector(".settings-scope-project");
+    expect(projectModelsBanner).toBeTruthy();
+    expect(projectModelsBanner?.textContent).toContain("project");
+    expect(container.querySelector(".settings-scope-global")).toBeNull();
+    // Verify Project Models banner uses Folder icon as SVG element
+    const projectModelsIcon = projectModelsBanner!.querySelector(".settings-scope-icon svg");
+    expect(projectModelsIcon).toBeTruthy();
   });
 
   // --- Settings save error handling tests ---

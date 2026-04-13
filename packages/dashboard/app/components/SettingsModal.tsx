@@ -18,41 +18,51 @@ import { applyPresetToSelection, generateUniquePresetId } from "../utils/modelPr
  * Sections have a `scope` to indicate where their settings are stored:
  *   - "global": User-level settings stored in ~/.pi/fusion/settings.json (shared across projects)
  *   - "project": Project-specific settings stored in .fusion/config.json
- *   - "mixed": Section contains both global and project settings (rendered specially)
  *   - undefined: Section operates independently of settings storage (e.g. authentication)
+ *
+ * Group headers (isGroupHeader: true) are non-clickable labels that visually group sections.
  *
  * To add a new section:
  *   1. Add an entry to SETTINGS_SECTIONS with a unique id, label, and scope
  *   2. Add a corresponding case in renderSectionFields()
  *
  * Sections:
- *   - general: Task prefix configuration (project)
- *   - models: Mixed scope — default/fallback models (global), planning & validator models,
- *     model presets, and AI summarization (project). Rendered as sub-sections on one screen.
- *     The sidebar shows both global and project icons for this section.
+ *   - authentication: OAuth provider status, login/logout (independent)
  *   - appearance: Theme and color settings (global)
+ *   - notifications: ntfy.sh notification settings (global)
+ *   - global-models: Default/fallback models and thinking level (global)
+ *   - general: Task prefix configuration (project)
+ *   - project-models: Planning & validator models, model presets, and AI summarization (project)
  *   - scheduling: Concurrency, poll interval, file overlap serialization, and step execution
  *     settings (runStepsInNewSessions, maxParallelSteps) (project)
  *   - worktrees: Worktree limits, init commands, recycling (project)
  *   - commands: Test and build command configuration (project)
  *   - merge: Auto-merge settings (project)
- *   - notifications: ntfy.sh notification settings (global)
- *   - authentication: OAuth provider status, login/logout (independent)
+ *   - memory: Project memory settings (project)
+ *   - prompts: Agent prompt customization (project)
+ *   - backups: Database backup settings (project)
+ *   - plugins: Plugin management (project)
  */
 /** Section entry type with optional icon */
 type SettingsSection = {
   id: string;
   label: string;
-  scope: "global" | "project" | "mixed" | undefined;
+  scope: "global" | "project" | undefined;
   icon?: typeof Globe;
+  isGroupHeader?: boolean;
 };
 
 const SETTINGS_SECTIONS: SettingsSection[] = [
+  // Global group
   { id: "authentication", label: "Authentication", scope: undefined, icon: Globe },
   { id: "appearance", label: "Appearance", scope: "global" },
   { id: "notifications", label: "Notifications", scope: "global" },
+  { id: "global-models", label: "Models", scope: "global" },
+  { id: "__global_header", label: "Global", scope: undefined, isGroupHeader: true },
+  // Project group
+  { id: "__project_header", label: "Project", scope: undefined, isGroupHeader: true },
   { id: "general", label: "General", scope: "project" },
-  { id: "models", label: "Models", scope: "mixed" },
+  { id: "project-models", label: "Project Models", scope: "project" },
   { id: "scheduling", label: "Scheduling", scope: "project" },
   { id: "worktrees", label: "Worktrees", scope: "project" },
   { id: "commands", label: "Commands", scope: "project" },
@@ -69,7 +79,7 @@ interface SettingsModalProps {
   onClose: () => void;
   addToast: (message: string, type?: ToastType) => void;
   projectId?: string;
-  /** Optional section to show when the modal first opens. Defaults to "general". */
+  /** Optional section to show when the modal first opens. Defaults to first non-group-header section. */
   initialSection?: SectionId;
   /** Current theme mode */
   themeMode?: ThemeMode;
@@ -93,7 +103,9 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const [form, setForm] = useState<Settings & { worktreeInitCommand?: string }>({ maxConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 15000, groupOverlappingFiles: true, autoMerge: true, mergeStrategy: "direct", recycleWorktrees: false, worktreeNaming: "random", includeTaskIdInCommit: true, worktreeInitCommand: "", ntfyEnabled: false, ntfyTopic: undefined });
   const [loading, setLoading] = useState(true);
-  const [activeSection, setActiveSection] = useState<SectionId>(initialSection ?? SETTINGS_SECTIONS[0].id);
+  // Find the first non-group-header section for default active section
+  const firstNonHeaderSection = SETTINGS_SECTIONS.find((s) => !s.isGroupHeader);
+  const [activeSection, setActiveSection] = useState<SectionId>(initialSection ?? firstNonHeaderSection?.id ?? "authentication");
   const [prefixError, setPrefixError] = useState<string | null>(null);
 
   /** Get the scope of the currently active section */
@@ -159,7 +171,7 @@ export function SettingsModal({
   }, []);
 
   useEffect(() => {
-    if (activeSection === "models") {
+    if (activeSection === "global-models" || activeSection === "project-models") {
       setModelsLoading(true);
       fetchModels()
         .then((response) => {
@@ -596,18 +608,6 @@ export function SettingsModal({
         </div>
       );
     }
-    if (activeSectionScope === "mixed") {
-      return (
-        <div className="settings-scope-banner settings-scope-mixed">
-          <span className="settings-scope-icon"><Globe size={14} /></span>
-          <span className="settings-scope-icon"><Folder size={14} /></span>
-          <span>
-            This section contains both global settings (default &amp; fallback models) and project
-            settings (planning, validator, presets, and AI summarization).
-          </span>
-        </div>
-      );
-    }
     return null;
   };
 
@@ -668,19 +668,10 @@ export function SettingsModal({
             </div>
           </>
         );
-      case "models": {
+      case "global-models": {
         const selectedValue = form.defaultProvider && form.defaultModelId
           ? `${form.defaultProvider}/${form.defaultModelId}`
           : "";
-        const planningValue = form.planningProvider && form.planningModelId
-          ? `${form.planningProvider}/${form.planningModelId}`
-          : "";
-        const validatorValue = form.validatorProvider && form.validatorModelId
-          ? `${form.validatorProvider}/${form.validatorModelId}`
-          : "";
-        const presets = form.modelPresets || [];
-        const presetOptions = presets.map((preset) => ({ id: preset.id, name: preset.name }));
-        const inUsePresetIds = new Set(Object.values(form.defaultPresetBySize || {}).filter(Boolean));
 
         return (
           <>
@@ -688,7 +679,6 @@ export function SettingsModal({
 
             {/* --- Default Model --- */}
             <h4 className="settings-section-heading">Default Model</h4>
-            <small className="settings-note">🌐 Default model is shared across all projects.</small>
             {modelsLoading ? (
               <div className="settings-empty-state">Loading available models…</div>
             ) : availableModels.length === 0 ? (
@@ -782,6 +772,45 @@ export function SettingsModal({
               );
             })()}
 
+            {/* --- OpenRouter Model Sync --- */}
+            <h4 className="settings-section-heading" style={{ marginTop: "1.5rem" }}>OpenRouter Models</h4>
+            <div className="form-group">
+              <label htmlFor="openrouterModelSync" className="checkbox-label">
+                <input
+                  id="openrouterModelSync"
+                  type="checkbox"
+                  checked={form.openrouterModelSync !== false}
+                  onChange={(e) => setForm((f) => ({ ...f, openrouterModelSync: e.target.checked }))}
+                />
+                Sync OpenRouter model list at dashboard startup
+              </label>
+              <small>
+                When enabled, the dashboard fetches the latest available models from the OpenRouter
+                API on startup, so the model picker always shows the most up-to-date catalog. Disable
+                to skip the initial API call and use only the built-in model list.
+              </small>
+            </div>
+          </>
+        );
+      }
+
+      case "project-models": {
+        const planningValue = form.planningProvider && form.planningModelId
+          ? `${form.planningProvider}/${form.planningModelId}`
+          : "";
+        const validatorValue = form.validatorProvider && form.validatorModelId
+          ? `${form.validatorProvider}/${form.validatorModelId}`
+          : "";
+        const presets = form.modelPresets || [];
+        const presetOptions = presets.map((preset) => ({ id: preset.id, name: preset.name }));
+        const inUsePresetIds = new Set(Object.values(form.defaultPresetBySize || {}).filter(Boolean));
+
+        return (
+          <>
+            {renderScopeBanner()}
+
+            {/* --- Token Cap --- */}
+            <h4 className="settings-section-heading">Token Cap</h4>
             <div className="form-group">
               <label htmlFor="tokenCap">Token Cap</label>
               <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
@@ -1123,25 +1152,6 @@ export function SettingsModal({
                 ))}
               </>
             ) : null}
-
-            {/* --- OpenRouter Model Sync --- */}
-            <h4 className="settings-section-heading" style={{ marginTop: "1.5rem" }}>OpenRouter Models</h4>
-            <div className="form-group">
-              <label htmlFor="openrouterModelSync" className="checkbox-label">
-                <input
-                  id="openrouterModelSync"
-                  type="checkbox"
-                  checked={form.openrouterModelSync !== false}
-                  onChange={(e) => setForm((f) => ({ ...f, openrouterModelSync: e.target.checked }))}
-                />
-                Sync OpenRouter model list at dashboard startup
-              </label>
-              <small>
-                When enabled, the dashboard fetches the latest available models from the OpenRouter
-                API on startup, so the model picker always shows the most up-to-date catalog. Disable
-                to skip the initial API call and use only the built-in model list.
-              </small>
-            </div>
 
             {/* --- AI Summarization --- */}
             <h4 className="settings-section-heading" style={{ marginTop: "1.5rem" }}>AI Summarization</h4>
@@ -2153,35 +2163,37 @@ export function SettingsModal({
         ) : (
           <div className="settings-layout">
             <nav className="settings-sidebar">
-              {SETTINGS_SECTIONS.map((section) => (
-                <button
-                  key={section.id}
-                  className={`settings-nav-item${activeSection === section.id ? " active" : ""}`}
-                  onClick={() => setActiveSection(section.id)}
-                  title={
-                    section.scope === "global"
-                      ? "Shared across all projects"
-                      : section.scope === "project"
-                        ? "Specific to this project"
-                        : section.scope === "mixed"
-                          ? "Global and project settings"
+              {SETTINGS_SECTIONS.map((section) => {
+                // Render group headers as non-clickable styled divs
+                if (section.isGroupHeader) {
+                  return (
+                    <div key={section.id} className="settings-group-header">
+                      {section.label}
+                    </div>
+                  );
+                }
+                return (
+                  <button
+                    key={section.id}
+                    className={`settings-nav-item${activeSection === section.id ? " active" : ""}`}
+                    onClick={() => setActiveSection(section.id)}
+                    title={
+                      section.scope === "global"
+                        ? "Shared across all projects"
+                        : section.scope === "project"
+                          ? "Specific to this project"
                           : undefined
-                  }
-                >
-                  {section.scope === "global" && <Globe className="settings-scope-icon" aria-label="Global setting" size={16} />}
-                  {section.scope === "project" && <Folder className="settings-scope-icon" aria-label="Project setting" size={16} />}
-                  {section.scope === "mixed" && (
-                    <>
-                      <Globe className="settings-scope-icon" aria-label="Global setting" size={16} />
-                      <Folder className="settings-scope-icon" aria-label="Project setting" size={16} />
-                    </>
-                  )}
-                  {section.icon && section.scope !== "global" && section.scope !== "project" && section.scope !== "mixed" && (
-                    <section.icon className="settings-scope-icon" aria-label="Global setting" size={16} />
-                  )}
-                  {section.label}
-                </button>
-              ))}
+                    }
+                  >
+                    {section.scope === "global" && <Globe className="settings-scope-icon" aria-label="Global setting" size={16} />}
+                    {section.scope === "project" && <Folder className="settings-scope-icon" aria-label="Project setting" size={16} />}
+                    {section.icon && !section.scope && (
+                      <section.icon className="settings-scope-icon" aria-label="Global setting" size={16} />
+                    )}
+                    {section.label}
+                  </button>
+                );
+              })}
             </nav>
             <div className="settings-content">
               {renderSectionFields()}

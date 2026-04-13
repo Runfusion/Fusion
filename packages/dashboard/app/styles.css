@@ -3306,6 +3306,21 @@ body {
   border-left-color: var(--todo);
 }
 
+/* Settings group headers - visual separators between global and project sections */
+.settings-group-header {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  padding: var(--space-md) var(--space-md) var(--space-xs);
+  margin-top: var(--space-sm);
+  user-select: none;
+}
+.settings-group-header:first-child {
+  margin-top: 0;
+}
+
 .settings-content {
   flex: 1;
   overflow-y: auto;
@@ -6615,6 +6630,11 @@ body {
   .settings-nav-item.active {
     border-left-color: transparent;
     border-bottom-color: var(--todo);
+  }
+
+  /* Hide group headers on mobile - they don't fit well in horizontal scroll row */
+  .settings-group-header {
+    display: none;
   }
 
   .settings-scope-icon {
