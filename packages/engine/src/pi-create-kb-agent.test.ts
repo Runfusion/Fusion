@@ -346,10 +346,14 @@ describe("createKbAgent", () => {
     existsSyncMock.mockImplementation((path) => {
       const value = String(path);
       return value === "/project/.worktrees/fn-001" ||
-        value === "/project/.worktrees/fn-001/.git" ||
-        value === "/project/.worktrees/fn-001/package.json";
+        value === "/project/.worktrees/fn-001/.git";
     });
-    execSyncMock.mockReturnValue("worktree /project\nHEAD abc123\nbranch refs/heads/main\n");
+    execSyncMock.mockImplementation((cmd) => {
+      if (cmd === "git rev-parse --show-toplevel") {
+        return "/project/.worktrees/fn-001\n";
+      }
+      return "worktree /project\nHEAD abc123\nbranch refs/heads/main\n";
+    });
 
     const { createKbAgent } = await import("./pi.js");
 
@@ -364,17 +368,19 @@ describe("createKbAgent", () => {
     expect(createAgentSessionMock).not.toHaveBeenCalled();
   });
 
-  it("allows a coding agent in a registered complete worktree", async () => {
+  it("allows a coding agent in a registered complete worktree without a root package.json", async () => {
     existsSyncMock.mockImplementation((path) => {
       const value = String(path);
       return value === "/project/.worktrees/fn-001" ||
-        value === "/project/.worktrees/fn-001/.git" ||
-        value === "/project/.worktrees/fn-001/package.json";
+        value === "/project/.worktrees/fn-001/.git";
     });
-    execSyncMock.mockReturnValue(
-      "worktree /project\nHEAD abc123\nbranch refs/heads/main\n\n" +
-      "worktree /project/.worktrees/fn-001\nHEAD def456\nbranch refs/heads/fusion/fn-001\n",
-    );
+    execSyncMock.mockImplementation((cmd) => {
+      if (cmd === "git rev-parse --show-toplevel") {
+        return "/project/.worktrees/fn-001\n";
+      }
+      return "worktree /project\nHEAD abc123\nbranch refs/heads/main\n\n" +
+        "worktree /project/.worktrees/fn-001\nHEAD def456\nbranch refs/heads/fusion/fn-001\n";
+    });
 
     const { createKbAgent } = await import("./pi.js");
 

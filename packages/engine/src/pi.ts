@@ -292,11 +292,23 @@ async function isRegisteredGitWorktree(projectRoot: string, worktreePath: string
   }
 }
 
+async function isCompleteGitWorktree(worktreePath: string): Promise<boolean> {
+  try {
+    const { stdout } = await execAsync("git rev-parse --show-toplevel", {
+      cwd: worktreePath,
+      encoding: "utf-8",
+    });
+    return resolve(stdout.trim()) === resolve(worktreePath);
+  } catch {
+    return false;
+  }
+}
+
 async function assertValidWorktreeSession(cwd: string, projectRoot: string): Promise<void> {
   if (!existsSync(cwd)) {
     throw new Error(`Refusing to start coding agent in missing worktree: ${cwd}`);
   }
-  if (!existsSync(join(cwd, ".git")) || !existsSync(join(cwd, "package.json"))) {
+  if (!existsSync(join(cwd, ".git")) || !await isCompleteGitWorktree(cwd)) {
     throw new Error(`Refusing to start coding agent in incomplete worktree: ${cwd}`);
   }
   if (!await isRegisteredGitWorktree(projectRoot, cwd)) {
