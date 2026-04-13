@@ -9,6 +9,7 @@ import {
   AgentCompaniesParseError,
   agentManifestToAgentCreateInput,
   convertAgentCompanies,
+  prepareAgentCompaniesImport,
   mapRoleToCapability,
   parseAgentManifest,
   parseCompanyArchive,
@@ -384,6 +385,96 @@ name: Zip CEO
         skipped: ["Existing"],
         errors: [],
       });
+    });
+
+    it("prepares imports with manager-first ordering and deferred hierarchy refs", () => {
+      const { items, result } = prepareAgentCompaniesImport({
+        company: { name: "Example" },
+        agents: [
+          { name: "IC", reportsTo: "../vp-eng/AGENTS.md" },
+          { name: "CEO", slug: "ceo" },
+          { name: "VP Eng", slug: "vp-eng", reportsTo: "ceo" },
+        ],
+        teams: [],
+        projects: [],
+        tasks: [],
+      });
+
+      expect(items.map((item) => item.input.name)).toEqual(["CEO", "VP Eng", "IC"]);
+      expect(items[0]).not.toHaveProperty("reportsTo");
+      expect(items[1]?.reportsTo).toEqual({
+        raw: "ceo",
+        deferredManifestKey: "ceo",
+      });
+      expect(items[2]?.reportsTo).toEqual({
+        raw: "../vp-eng/AGENTS.md",
+        deferredManifestKey: "vp-eng",
+      });
+      expect(result.errors).toEqual([]);
+    });
+
+    it("resolves existing manager refs by slug, path, and agent id", () => {
+      const existingAgents = [
+        {
+          id: "agent-ceo01",
+          name: "Chief Executive Officer",
+          metadata: { agentCompaniesSlug: "ceo" },
+        },
+      ];
+
+      const { items, result } = prepareAgentCompaniesImport(
+        {
+          company: { name: "Example" },
+          agents: [
+            { name: "Ops Lead", reportsTo: "ceo" },
+            { name: "QA Lead", reportsTo: "../ceo/AGENTS.md" },
+            { name: "Staff Eng", reportsTo: "agent-ceo01" },
+          ],
+          teams: [],
+          projects: [],
+          tasks: [],
+        },
+        { existingAgents },
+      );
+
+      expect(items.map((item) => item.input.reportsTo)).toEqual([
+        "agent-ceo01",
+        "agent-ceo01",
+        "agent-ceo01",
+      ]);
+      expect(result.errors).toEqual([]);
+    });
+
+    it("keeps unresolved internal refs out of the import plan", () => {
+      const { items, result } = prepareAgentCompaniesImport({
+        company: { name: "Example" },
+        agents: [{ name: "Worker", reportsTo: "unknown-manager" }],
+        teams: [],
+        projects: [],
+        tasks: [],
+      });
+
+      expect(items).toEqual([]);
+      expect(result).toEqual({
+        created: [],
+        skipped: [],
+        errors: [
+          {
+            name: "Worker",
+            error:
+              'Could not resolve reportsTo reference "unknown-manager" to an imported or existing Fusion agent',
+          },
+        ],
+      });
+    });
+
+    it("stores the manifest slug in metadata for future hierarchy resolution", () => {
+      const input = agentManifestToAgentCreateInput({
+        name: "CEO",
+        slug: "ceo",
+      });
+
+      expect(input.metadata).toEqual({ agentCompaniesSlug: "ceo" });
     });
 
     it("defaults to custom role when no skills are present", () => {

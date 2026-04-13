@@ -444,8 +444,13 @@ export {
   parseCompanyArchive,
   mapRoleToCapability,
   agentManifestToAgentCreateInput,
+  prepareAgentCompaniesImport,
   convertAgentCompanies,
   AgentCompaniesParseError,
+} from "./agent-companies-parser.js";
+export type {
+  PreparedAgentCompaniesImportItem,
+  PreparedAgentCompaniesImportResult,
 } from "./agent-companies-parser.js";
 
 // ── Agent Companies Exporter ──────────────────────────────

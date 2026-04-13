@@ -40,6 +40,226 @@ const VALID_ROLES: Set<string> = new Set([
   "custom",
 ]);
 
+function slugifyAgentReference(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function normalizeReference(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function normalizePathReference(value: string): string {
+  const normalized = value.trim().replace(/\\/g, "/").replace(/\/+/g, "/");
+  const withoutFile = normalized.replace(/\/AGENTS\.md$/i, "").replace(/\.md$/i, "");
+  return withoutFile.replace(/^\.\//, "").replace(/\/$/, "").toLowerCase();
+}
+
+function extractPathBasename(value: string): string | undefined {
+  const normalized = normalizePathReference(value);
+  if (!normalized.includes("/")) {
+    return undefined;
+  }
+
+  const segments = normalized.split("/").filter(Boolean);
+  return segments.at(-1);
+}
+
+function looksLikeFusionAgentId(value: string): boolean {
+  return /^agent-[a-z0-9-]+$/i.test(value.trim());
+}
+
+function pushAlias(aliases: Set<string>, value: string | undefined | null): void {
+  if (typeof value !== "string") {
+    return;
+  }
+
+  const normalized = normalizeReference(value);
+  if (normalized.length > 0) {
+    aliases.add(normalized);
+  }
+
+  const slug = slugifyAgentReference(value);
+  if (slug.length > 0) {
+    aliases.add(slug);
+  }
+
+  const pathRef = normalizePathReference(value);
+  if (pathRef !== normalized && pathRef.length > 0) {
+    aliases.add(pathRef);
+  }
+
+  const basename = extractPathBasename(value);
+  if (basename) {
+    aliases.add(basename);
+    const basenameSlug = slugifyAgentReference(basename);
+    if (basenameSlug.length > 0) {
+      aliases.add(basenameSlug);
+    }
+  }
+}
+
+function collectAgentManifestAliases(agent: AgentManifest): string[] {
+  const aliases = new Set<string>();
+  pushAlias(aliases, agent.slug);
+  pushAlias(aliases, agent.name);
+  pushAlias(aliases, agent.title);
+  return [...aliases];
+}
+
+function collectExistingAgentAliases(agent: {
+  id: string;
+  name: string;
+  title?: string;
+  metadata?: Record<string, unknown>;
+}): string[] {
+  const aliases = new Set<string>();
+  pushAlias(aliases, agent.id);
+  pushAlias(aliases, agent.name);
+  pushAlias(aliases, agent.title);
+
+  const metadataSlug = agent.metadata?.agentCompaniesSlug;
+  if (typeof metadataSlug === "string") {
+    pushAlias(aliases, metadataSlug);
+  }
+
+  return [...aliases];
+}
+
+function addAliases(
+  index: Map<string, Set<string>>,
+  ownerKey: string,
+  aliases: Iterable<string>,
+): void {
+  for (const alias of aliases) {
+    const bucket = index.get(alias) ?? new Set<string>();
+    bucket.add(ownerKey);
+    index.set(alias, bucket);
+  }
+}
+
+function resolveUniqueAlias(
+  aliasIndex: Map<string, Set<string>>,
+  reference: string,
+): { value?: string; ambiguous?: true } {
+  const aliases = new Set<string>();
+  pushAlias(aliases, reference);
+
+  const matches = new Set<string>();
+  for (const alias of aliases) {
+    for (const match of aliasIndex.get(alias) ?? []) {
+      matches.add(match);
+    }
+  }
+
+  if (matches.size === 1) {
+    return { value: [...matches][0] };
+  }
+
+  if (matches.size > 1) {
+    return { ambiguous: true };
+  }
+
+  return {};
+}
+
+function createUniqueManifestKey(baseKey: string, usedKeys: Set<string>): string {
+  let candidate = baseKey;
+  let counter = 2;
+
+  while (usedKeys.has(candidate)) {
+    candidate = `${baseKey}#${counter}`;
+    counter += 1;
+  }
+
+  usedKeys.add(candidate);
+  return candidate;
+}
+
+function topologicallySortImportPlanItems(
+  items: PreparedAgentCompaniesImportItem[],
+): {
+  orderedItems: PreparedAgentCompaniesImportItem[];
+  cycleErrors: Array<{ name: string; error: string }>;
+} {
+  const byKey = new Map(items.map((item) => [item.manifestKey, item]));
+  const indegree = new Map<string, number>();
+  const dependents = new Map<string, string[]>();
+
+  for (const item of items) {
+    indegree.set(item.manifestKey, 0);
+  }
+
+  for (const item of items) {
+    const deferredKey = item.reportsTo?.deferredManifestKey;
+    if (!deferredKey || !byKey.has(deferredKey)) {
+      continue;
+    }
+
+    indegree.set(item.manifestKey, (indegree.get(item.manifestKey) ?? 0) + 1);
+    const downstream = dependents.get(deferredKey) ?? [];
+    downstream.push(item.manifestKey);
+    dependents.set(deferredKey, downstream);
+  }
+
+  const ready = items
+    .filter((item) => (indegree.get(item.manifestKey) ?? 0) === 0)
+    .sort((a, b) => a.index - b.index);
+  const orderedItems: PreparedAgentCompaniesImportItem[] = [];
+
+  while (ready.length > 0) {
+    const current = ready.shift();
+    if (!current) {
+      continue;
+    }
+
+    orderedItems.push(current);
+
+    for (const dependentKey of dependents.get(current.manifestKey) ?? []) {
+      const nextDegree = (indegree.get(dependentKey) ?? 0) - 1;
+      indegree.set(dependentKey, nextDegree);
+      if (nextDegree === 0) {
+        const dependent = byKey.get(dependentKey);
+        if (dependent) {
+          ready.push(dependent);
+          ready.sort((a, b) => a.index - b.index);
+        }
+      }
+    }
+  }
+
+  const cycleErrors = items
+    .filter((item) => !orderedItems.some((ordered) => ordered.manifestKey === item.manifestKey))
+    .sort((a, b) => a.index - b.index)
+    .map((item) => ({
+      name: item.input.name,
+      error: `Could not resolve reportsTo hierarchy for ${item.input.name} because the import graph contains a cycle involving "${item.reportsTo?.raw ?? "unknown"}"`,
+    }));
+
+  return { orderedItems, cycleErrors };
+}
+
+export interface PreparedAgentCompaniesImportItem {
+  manifestKey: string;
+  aliases: string[];
+  input: AgentCreateInput;
+  index: number;
+  reportsTo?: {
+    raw: string;
+    resolvedAgentId?: string;
+    deferredManifestKey?: string;
+  };
+}
+
+export interface PreparedAgentCompaniesImportResult {
+  items: PreparedAgentCompaniesImportItem[];
+  result: AgentCompaniesImportResult;
+}
+
 /**
  * Map a role string to a Fusion agent capability.
  * Unknown roles fall back to "custom".
@@ -291,6 +511,9 @@ export function agentManifestToAgentCreateInput(agent: AgentManifest): AgentCrea
   if (Array.isArray(agent.metadata?.sources) && agent.metadata.sources.length > 0) {
     metadata.sources = agent.metadata.sources;
   }
+  if (typeof agent.slug === "string" && agent.slug.trim().length > 0) {
+    metadata.agentCompaniesSlug = agent.slug.trim();
+  }
 
   return {
     name: agent.name,
@@ -311,34 +534,162 @@ export function agentManifestToAgentCreateInput(agent: AgentManifest): AgentCrea
   };
 }
 
-export function convertAgentCompanies(
+export function prepareAgentCompaniesImport(
   pkg: AgentCompaniesPackage,
-  options?: { skipExisting?: string[] },
-): { inputs: AgentCreateInput[]; result: AgentCompaniesImportResult } {
+  options?: {
+    skipExisting?: string[];
+    existingAgents?: Array<{
+      id: string;
+      name: string;
+      title?: string;
+      metadata?: Record<string, unknown>;
+    }>;
+  },
+): PreparedAgentCompaniesImportResult {
   const existingNames = new Set(options?.skipExisting ?? []);
-  const inputs: AgentCreateInput[] = [];
+  const existingAliasIndex = new Map<string, Set<string>>();
+  const existingAgentsById = new Map(
+    (options?.existingAgents ?? []).map((agent) => [agent.id, agent]),
+  );
+
+  for (const agent of options?.existingAgents ?? []) {
+    addAliases(existingAliasIndex, agent.id, collectExistingAgentAliases(agent));
+  }
+
+  const plannedAgents: Array<PreparedAgentCompaniesImportItem & { manifest: AgentManifest }> = [];
+  const pendingAgents: Array<PreparedAgentCompaniesImportItem & { manifest: AgentManifest }> = [];
+  const manifestAliasIndex = new Map<string, Set<string>>();
+  const usedManifestKeys = new Set<string>();
   const result: AgentCompaniesImportResult = {
     created: [],
     skipped: [],
     errors: [],
   };
 
-  for (const agent of pkg.agents) {
+  for (const [index, agent] of pkg.agents.entries()) {
     if (existingNames.has(agent.name)) {
       result.skipped.push(agent.name);
       continue;
     }
 
-    try {
-      inputs.push(agentManifestToAgentCreateInput(agent));
-      result.created.push(agent.name);
-    } catch (error) {
-      result.errors.push({
-        name: agent.name,
-        error: (error as Error).message,
-      });
-    }
+    const aliases = collectAgentManifestAliases(agent);
+    const baseKey = aliases[0] ?? createUniqueManifestKey(`agent-${index + 1}`, usedManifestKeys);
+    const manifestKey = createUniqueManifestKey(baseKey, usedManifestKeys);
+
+    const planned = {
+      manifest: agent,
+      manifestKey,
+      aliases,
+      input: agentManifestToAgentCreateInput(agent),
+      index,
+    };
+
+    addAliases(manifestAliasIndex, manifestKey, aliases);
+    plannedAgents.push(planned);
   }
 
-  return { inputs, result };
+  for (const planned of plannedAgents) {
+    const rawReportsTo = typeof planned.manifest.reportsTo === "string"
+      ? planned.manifest.reportsTo.trim()
+      : undefined;
+
+    if (!rawReportsTo) {
+      delete planned.input.reportsTo;
+      pendingAgents.push(planned);
+      result.created.push(planned.input.name);
+      continue;
+    }
+
+    const existingMatch = resolveUniqueAlias(existingAliasIndex, rawReportsTo);
+    if (existingMatch.ambiguous) {
+      result.errors.push({
+        name: planned.input.name,
+        error: `reportsTo reference "${rawReportsTo}" is ambiguous among existing Fusion agents`,
+      });
+      continue;
+    }
+    if (existingMatch.value) {
+      planned.input.reportsTo = existingMatch.value;
+      planned.reportsTo = {
+        raw: rawReportsTo,
+        resolvedAgentId: existingMatch.value,
+      };
+      pendingAgents.push(planned);
+      result.created.push(planned.input.name);
+      continue;
+    }
+
+    const manifestMatch = resolveUniqueAlias(manifestAliasIndex, rawReportsTo);
+    if (manifestMatch.ambiguous) {
+      result.errors.push({
+        name: planned.input.name,
+        error: `reportsTo reference "${rawReportsTo}" matches multiple imported agents`,
+      });
+      continue;
+    }
+    if (manifestMatch.value) {
+      if (manifestMatch.value === planned.manifestKey) {
+        result.errors.push({
+          name: planned.input.name,
+          error: `reportsTo reference "${rawReportsTo}" resolves to the agent itself`,
+        });
+        continue;
+      }
+
+      delete planned.input.reportsTo;
+      planned.reportsTo = {
+        raw: rawReportsTo,
+        deferredManifestKey: manifestMatch.value,
+      };
+      pendingAgents.push(planned);
+      result.created.push(planned.input.name);
+      continue;
+    }
+
+    if (looksLikeFusionAgentId(rawReportsTo) && !existingAgentsById.has(rawReportsTo)) {
+      planned.input.reportsTo = rawReportsTo;
+      planned.reportsTo = {
+        raw: rawReportsTo,
+        resolvedAgentId: rawReportsTo,
+      };
+      pendingAgents.push(planned);
+      result.created.push(planned.input.name);
+      continue;
+    }
+
+    result.errors.push({
+      name: planned.input.name,
+      error: `Could not resolve reportsTo reference "${rawReportsTo}" to an imported or existing Fusion agent`,
+    });
+  }
+
+  const { orderedItems, cycleErrors } = topologicallySortImportPlanItems(pendingAgents);
+  for (const error of cycleErrors) {
+    result.errors.push(error);
+    result.created = result.created.filter((name) => name !== error.name);
+  }
+
+  return {
+    items: orderedItems.map(({ manifest: _manifest, ...item }) => item),
+    result,
+  };
+}
+
+export function convertAgentCompanies(
+  pkg: AgentCompaniesPackage,
+  options?: {
+    skipExisting?: string[];
+    existingAgents?: Array<{
+      id: string;
+      name: string;
+      title?: string;
+      metadata?: Record<string, unknown>;
+    }>;
+  },
+): { inputs: AgentCreateInput[]; result: AgentCompaniesImportResult } {
+  const { items, result } = prepareAgentCompaniesImport(pkg, options);
+  return {
+    inputs: items.map((item) => item.input),
+    result,
+  };
 }
