@@ -101,4 +101,23 @@ describe("core modals mobile css coverage", () => {
     expect(mobileBlock).toContain(".gm-nav-item {");
     expect(mobileBlock).toContain("min-height: 36px;");
   });
+
+  it("TaskDetailModal: action dropdown menus have max-height constraint on mobile", () => {
+    const css = fs.readFileSync(stylesPath, "utf-8");
+    const mobileBlock = getMainMobileBlock(css);
+
+    // Verify dropdown menu selectors are in mobile block
+    expect(mobileBlock).toContain(".detail-actions-menu {");
+    expect(mobileBlock).toContain(".detail-move-menu {");
+
+    // Extract the dropdown menu rule block and verify constraints
+    const menuBlockMatch = mobileBlock.match(
+      /\.detail-actions-menu,\s*\.detail-move-menu\s*\{[^}]+\}/s,
+    );
+    expect(menuBlockMatch).not.toBeNull();
+    const menuBlock = menuBlockMatch![0];
+
+    expect(menuBlock).toContain("max-height");
+    expect(menuBlock).toContain("overflow-y: auto");
+  });
 });

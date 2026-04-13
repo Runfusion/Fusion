@@ -6560,10 +6560,13 @@ body {
     min-width: 0;
   }
 
-  /* Mobile dropdown menus — position above action bar */
+  /* Mobile dropdown menus — position above action bar, constrained to viewport */
   .detail-actions-menu,
   .detail-move-menu {
     bottom: calc(100% + 4px);
+    max-height: calc(100dvh - 120px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .modal-header {
