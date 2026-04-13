@@ -373,7 +373,10 @@ export class ProjectEngine {
     workflowStepResults?: Array<{ status: string }>;
     log?: Array<{ action?: string }>;
     updatedAt?: string | null;
+    mergeDetails?: { mergeConfirmed?: boolean } | null;
   }): boolean {
+    // Already-confirmed merges always eligible — just need to move to done
+    if (task.mergeDetails?.mergeConfirmed) return true;
     if (this.options.getTaskMergeBlocker?.(task as Task)) return false;
     return (
       (task.mergeRetries ?? 0) < ProjectEngine.MAX_AUTO_MERGE_RETRIES ||
@@ -419,6 +422,22 @@ export class ProjectEngine {
           }
 
           if (!this.canMergeTask(task as any)) {
+            continue;
+          }
+
+          // Fast path: merge already confirmed (e.g. task was moved back to
+          // in-review by auto-recovery after a successful merge) — just
+          // complete the task without re-running the merge process.
+          if (task.mergeDetails?.mergeConfirmed) {
+            runtimeLog.log(
+              `Auto-merge: ${taskId} already has mergeConfirmed — moving to done`,
+            );
+            await store.logEntry(
+              taskId,
+              "Merge already confirmed; completing task (recovered from post-merge state inconsistency)",
+            );
+            await store.updateTask(taskId, { status: null });
+            await store.moveTask(taskId, "done");
             continue;
           }
 
