@@ -14032,6 +14032,12 @@ html .column.drag-over * {
   width: 100%;
 }
 
+/* Override padding from .description-with-refine textarea to fill available width */
+/* The refine button is in the controls panel, not overlaid on textarea */
+.quick-entry-textarea-wrap textarea {
+  padding-right: 8px;
+}
+
 /* Quick Entry Box expand button - bottom-right of textarea */
 .quick-entry-expand-btn {
   position: absolute;

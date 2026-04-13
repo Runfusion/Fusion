@@ -197,6 +197,20 @@ function clickSave() {
   fireEvent.click(screen.getByTestId("quick-entry-save"));
 }
 
+function mockDesktopViewport() {
+  Object.defineProperty(window, "innerWidth", { value: 1280, configurable: true });
+  return vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
+}
+
 describe("QuickEntryBox", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -2627,6 +2641,33 @@ describe("QuickEntryBox", () => {
       await waitFor(() => {
         expect((textarea as HTMLTextAreaElement).value).toBe("Line 1");
       });
+    });
+  });
+
+  describe("textarea width contract (FN-1596)", () => {
+    it("textarea spans full width of the quick-entry-box container", () => {
+      mockDesktopViewport();
+      renderQuickEntryBox({});
+      const quickEntryBox = screen.getByTestId("quick-entry-box");
+      const input = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
+
+      // Get the bounding rectangles for the textarea and its container
+      const inputRect = input.getBoundingClientRect();
+      const containerRect = quickEntryBox.getBoundingClientRect();
+
+      // The textarea should span the full width of its container (within 2px tolerance for rounding)
+      // This ensures the input visually reaches the right edge of the container
+      expect(inputRect.width).toBeGreaterThanOrEqual(containerRect.width - 2);
+
+      // The textarea should be at least 80% of the container width
+      // (accounting for the toggle button on the right)
+      expect(inputRect.width).toBeGreaterThanOrEqual(containerRect.width * 0.8);
+    });
+
+    it("textarea wrapper has quick-entry-textarea-wrap class for CSS targeting", () => {
+      renderQuickEntryBox({});
+      const wrapper = screen.getByTestId("quick-entry-input").parentElement;
+      expect(wrapper).toHaveClass("quick-entry-textarea-wrap");
     });
   });
 });
