@@ -94,7 +94,7 @@ describe("useFileBrowser", () => {
       .mockRejectedValueOnce(new Error("boom"))
       .mockResolvedValueOnce(response("src", ["index.ts"]));
 
-    const { result } = renderHook(() => useFileBrowser("FN-001", true));
+    const { result } = renderHook(() => useFileBrowser("FN-001", true, "project-1"));
 
     await waitFor(() => {
       expect(result.current.error).toBe("boom");
@@ -108,16 +108,16 @@ describe("useFileBrowser", () => {
     expect(result.current.error).toBeNull();
 
     await waitFor(() => {
-      expect(mockFetchFileList).toHaveBeenLastCalledWith("FN-001", "src");
+      expect(mockFetchFileList).toHaveBeenLastCalledWith("FN-001", "src", "project-1");
       expect(result.current.entries.map((entry) => entry.name)).toEqual(["index.ts"]);
     });
   });
 
   it("normalizes '.' path to undefined when calling fetchFileList", async () => {
-    const { result } = renderHook(() => useFileBrowser("FN-001", true));
+    const { result } = renderHook(() => useFileBrowser("FN-001", true, "project-1"));
 
     await waitFor(() => {
-      expect(mockFetchFileList).toHaveBeenCalledWith("FN-001", undefined);
+      expect(mockFetchFileList).toHaveBeenCalledWith("FN-001", undefined, "project-1");
     });
 
     act(() => {
@@ -125,12 +125,12 @@ describe("useFileBrowser", () => {
     });
 
     await waitFor(() => {
-      expect(mockFetchFileList).toHaveBeenLastCalledWith("FN-001", undefined);
+      expect(mockFetchFileList).toHaveBeenLastCalledWith("FN-001", undefined, "project-1");
     });
   });
 
   it("passes non-dot paths directly to fetchFileList", async () => {
-    const { result } = renderHook(() => useFileBrowser("FN-001", true));
+    const { result } = renderHook(() => useFileBrowser("FN-001", true, "project-1"));
 
     await waitFor(() => {
       expect(mockFetchFileList).toHaveBeenCalled();
@@ -141,7 +141,7 @@ describe("useFileBrowser", () => {
     });
 
     await waitFor(() => {
-      expect(mockFetchFileList).toHaveBeenLastCalledWith("FN-001", "subdir");
+      expect(mockFetchFileList).toHaveBeenLastCalledWith("FN-001", "subdir", "project-1");
     });
   });
 

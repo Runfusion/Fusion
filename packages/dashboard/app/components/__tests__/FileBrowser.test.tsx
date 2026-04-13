@@ -66,6 +66,7 @@ const defaultProps = {
   onNavigate: vi.fn(),
   workspace: "test-ws",
   onRefresh: vi.fn(),
+  projectId: "project-1",
 };
 
 function renderFileBrowser(overrides: Partial<typeof defaultProps> = {}) {
@@ -433,7 +434,7 @@ describe("FileBrowser", () => {
     expect(dangerBtn).not.toBeNull();
     fireEvent.click(dangerBtn!);
     await waitFor(() => {
-      expect(mockDeleteFile).toHaveBeenCalledWith("test-ws", "readme.md");
+      expect(mockDeleteFile).toHaveBeenCalledWith("test-ws", "readme.md", "project-1");
       expect(onRefresh).toHaveBeenCalled();
     });
   });
@@ -501,7 +502,7 @@ describe("FileBrowser", () => {
     );
     fireEvent.click(dialogRename!.closest("button")!);
     await waitFor(() => {
-      expect(mockRenameFile).toHaveBeenCalledWith("test-ws", "readme.md", "new-readme.md");
+      expect(mockRenameFile).toHaveBeenCalledWith("test-ws", "readme.md", "new-readme.md", "project-1");
       expect(onRefresh).toHaveBeenCalled();
     });
   });
@@ -543,7 +544,7 @@ describe("FileBrowser", () => {
     );
     fireEvent.click(dialogCopy!.closest("button")!);
     await waitFor(() => {
-      expect(mockCopyFile).toHaveBeenCalledWith("test-ws", "readme.md", "backup/readme.md");
+      expect(mockCopyFile).toHaveBeenCalledWith("test-ws", "readme.md", "backup/readme.md", "project-1");
       expect(onRefresh).toHaveBeenCalled();
     });
   });
@@ -576,7 +577,7 @@ describe("FileBrowser", () => {
     );
     fireEvent.click(dialogMove!.closest("button")!);
     await waitFor(() => {
-      expect(mockMoveFile).toHaveBeenCalledWith("test-ws", "readme.md", "docs/readme.md");
+      expect(mockMoveFile).toHaveBeenCalledWith("test-ws", "readme.md", "docs/readme.md", "project-1");
       expect(onRefresh).toHaveBeenCalled();
     });
   });

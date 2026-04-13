@@ -383,7 +383,7 @@ describe("GitHubImportModal", () => {
       ]);
       vi.mocked(apiImportGitHubIssue).mockResolvedValueOnce(mockTask);
 
-      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} projectId="project-1" />);
 
       await waitFor(() => {
         expect(screen.getByText("First Issue")).toBeTruthy();
@@ -393,7 +393,7 @@ describe("GitHubImportModal", () => {
       fireEvent.click(screen.getByRole("button", { name: /Import$/i }));
 
       await waitFor(() => {
-        expect(apiImportGitHubIssue).toHaveBeenCalledWith("dustinbyrne", "kb", 1);
+        expect(apiImportGitHubIssue).toHaveBeenCalledWith("dustinbyrne", "kb", 1, "project-1");
         expect(onImport).toHaveBeenCalledWith(mockTask);
         expect(onClose).toHaveBeenCalled();
       });
@@ -745,7 +745,7 @@ describe("GitHubImportModal", () => {
       vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce(mockPulls);
       vi.mocked(apiImportGitHubPull).mockResolvedValueOnce(mockPRTask);
 
-      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} projectId="project-1" />);
 
       // Switch to Pull Requests tab
       fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
@@ -761,7 +761,7 @@ describe("GitHubImportModal", () => {
       fireEvent.click(screen.getByRole("button", { name: /Import$/i }));
 
       await waitFor(() => {
-        expect(apiImportGitHubPull).toHaveBeenCalledWith("dustinbyrne", "kb", 1);
+        expect(apiImportGitHubPull).toHaveBeenCalledWith("dustinbyrne", "kb", 1, "project-1");
         expect(onImport).toHaveBeenCalledWith(mockPRTask);
         expect(onClose).toHaveBeenCalled();
       });

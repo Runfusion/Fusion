@@ -67,7 +67,7 @@ describe("useFileEditor", () => {
   it("fetches file content when enabled and filePath is set", async () => {
     mockFetchFileContent.mockResolvedValueOnce(contentResponse("file body"));
 
-    const { result } = renderHook(() => useFileEditor("FN-001", "README.md", true));
+    const { result } = renderHook(() => useFileEditor("FN-001", "README.md", true, "project-1"));
 
     await waitFor(() => {
       expect(result.current.loading).toBe(true);
@@ -78,7 +78,7 @@ describe("useFileEditor", () => {
       expect(result.current.content).toBe("file body");
     });
 
-    expect(mockFetchFileContent).toHaveBeenCalledWith("FN-001", "README.md");
+    expect(mockFetchFileContent).toHaveBeenCalledWith("FN-001", "README.md", "project-1");
   });
 
   it("sets content and originalContent from fetch response", async () => {
@@ -164,7 +164,7 @@ describe("useFileEditor", () => {
     mockFetchFileContent.mockResolvedValueOnce(contentResponse("original"));
     mockSaveFileContent.mockResolvedValueOnce(saveResponse());
 
-    const { result } = renderHook(() => useFileEditor("FN-001", "file.txt", true));
+    const { result } = renderHook(() => useFileEditor("FN-001", "file.txt", true, "project-1"));
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -178,7 +178,7 @@ describe("useFileEditor", () => {
       await result.current.save();
     });
 
-    expect(mockSaveFileContent).toHaveBeenCalledWith("FN-001", "file.txt", "updated");
+    expect(mockSaveFileContent).toHaveBeenCalledWith("FN-001", "file.txt", "updated", "project-1");
   });
 
   it("save updates originalContent and mtime after success", async () => {
