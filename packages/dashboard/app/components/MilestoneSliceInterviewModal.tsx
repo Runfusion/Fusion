@@ -330,13 +330,16 @@ export function MilestoneSliceInterviewModal({
       setStreamingOutput("");
 
       try {
+        connectToInterviewStream(sessionId);
         await respondToInterview(sessionId, responses, projectId, sessionTabId);
       } catch (err: any) {
+        streamConnectionRef.current?.close();
+        streamConnectionRef.current = null;
         setError(err.message || "Failed to submit response");
         setView({ type: "question", sessionId, question: view.question });
       }
     },
-    [projectId, respondToInterview, sessionTabId, view],
+    [connectToInterviewStream, projectId, respondToInterview, sessionTabId, view],
   );
 
   const handleApply = useCallback(async () => {
