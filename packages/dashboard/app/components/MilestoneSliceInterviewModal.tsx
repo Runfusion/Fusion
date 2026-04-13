@@ -11,6 +11,8 @@ import {
   applySliceInterview,
   skipMilestoneInterview,
   skipSliceInterview,
+  fetchAiSession,
+  parseConversationHistory,
   type TargetInterviewSummary,
 } from "../api";
 import {
@@ -37,6 +39,8 @@ interface MilestoneSliceInterviewModalProps {
   targetTitle: string;
   missionContext?: string;
   projectId?: string;
+  /** Resume a session from background (fetches session and restores state) */
+  resumeSessionId?: string;
 }
 
 interface QuestionResponse {
@@ -66,6 +70,7 @@ export function MilestoneSliceInterviewModal({
   targetTitle,
   missionContext,
   projectId,
+  resumeSessionId,
 }: MilestoneSliceInterviewModalProps) {
   const [view, setView] = useState<ViewState>({ type: "initial" });
   const [error, setError] = useState<string | null>(null);
@@ -238,6 +243,68 @@ export function MilestoneSliceInterviewModal({
       textareaRef.current?.focus();
     }
   }, [isOpen, view.type]);
+
+  // Reconnect to a persisted session when resumeSessionId is provided
+  useEffect(() => {
+    if (!isOpen || !resumeSessionId || view.type !== "initial") return;
+
+    let cancelled = false;
+
+    fetchAiSession(resumeSessionId).then((session) => {
+      if (cancelled || !session) return;
+
+      const parsedHistory = parseConversationHistory(session.conversationHistory);
+      setConversationHistory(parsedHistory);
+      setLockSessionId(session.id);
+      setResponseHistory(
+        parsedHistory
+          .map((entry) => entry.response)
+          .filter((response): response is QuestionResponse =>
+            Boolean(response && typeof response === "object" && !Array.isArray(response)),
+          ),
+      );
+
+      if (session.status === "awaiting_input" && session.currentQuestion) {
+        try {
+          const question = JSON.parse(session.currentQuestion) as PlanningQuestion;
+          currentSessionIdRef.current = session.id;
+          setView({ type: "question", sessionId: session.id, question });
+        } catch {
+          setError("Failed to restore session question.");
+        }
+      } else if (session.status === "complete" && session.result) {
+        try {
+          const summary = JSON.parse(session.result) as TargetInterviewSummary;
+          currentSessionIdRef.current = session.id;
+          setEditedSummary(summary);
+          setView({ type: "summary", sessionId: session.id, summary });
+        } catch {
+          setError("Failed to restore session result.");
+        }
+      } else if (session.status === "generating") {
+        currentSessionIdRef.current = session.id;
+        if (session.thinkingOutput) {
+          setStreamingOutput(session.thinkingOutput);
+        }
+        setView({ type: "loading" });
+        connectToInterviewStream(session.id);
+      } else if (session.status === "error") {
+        currentSessionIdRef.current = session.id;
+        setError(null);
+        setView({
+          type: "error",
+          sessionId: session.id,
+          errorMessage: session.error ?? "The session encountered an error.",
+        });
+      }
+    }).catch(() => {
+      if (!cancelled) setError("Failed to resume session.");
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [connectToInterviewStream, isOpen, resumeSessionId, view.type]);
 
   // Cleanup on close
   useEffect(() => {

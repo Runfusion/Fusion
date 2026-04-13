@@ -15,6 +15,8 @@ const mockConnectSliceInterviewStream = vi.fn();
 const mockAcquireSessionLock = vi.fn();
 const mockReleaseSessionLock = vi.fn();
 const mockForceAcquireSessionLock = vi.fn();
+const mockFetchAiSession = vi.fn();
+const mockParseConversationHistory = vi.fn();
 
 vi.mock("../api", () => ({
   startMilestoneInterview: (...args: any[]) => mockStartMilestoneInterview(...args),
@@ -30,6 +32,8 @@ vi.mock("../api", () => ({
   acquireSessionLock: (...args: any[]) => mockAcquireSessionLock(...args),
   releaseSessionLock: (...args: any[]) => mockReleaseSessionLock(...args),
   forceAcquireSessionLock: (...args: any[]) => mockForceAcquireSessionLock(...args),
+  fetchAiSession: (...args: any[]) => mockFetchAiSession(...args),
+  parseConversationHistory: (...args: any[]) => mockParseConversationHistory(...args),
 }));
 
 vi.mock("../hooks/useSessionLock", () => ({
@@ -95,6 +99,9 @@ describe("MilestoneSliceInterviewModal", () => {
     mockAcquireSessionLock.mockResolvedValue({ acquired: true, currentHolder: null });
     mockReleaseSessionLock.mockResolvedValue(undefined);
     mockForceAcquireSessionLock.mockResolvedValue(undefined);
+    mockFetchAiSession.mockReset();
+    mockParseConversationHistory.mockReset();
+    mockParseConversationHistory.mockReturnValue([]);
 
     // Setup stream handlers capture
     mockConnectMilestoneInterviewStream.mockImplementation((sessionId, projectId, handlers) => {
@@ -401,6 +408,143 @@ describe("MilestoneSliceInterviewModal", () => {
 
       // Summary should show Refined Scope header
       expect(screen.getByText("Refined Scope")).toBeDefined();
+    });
+  });
+
+  describe("resume session rehydration", () => {
+    const mockSessionAwaitingInput = {
+      id: "session-resume-123",
+      type: "milestone_interview" as const,
+      status: "awaiting_input" as const,
+      title: "Plan milestone scope",
+      projectId: "proj-1",
+      lockedByTab: null,
+      updatedAt: new Date().toISOString(),
+      inputPayload: JSON.stringify({
+        targetType: "milestone",
+        targetId: "MS-001",
+        targetTitle: "Test Milestone",
+        missionContext: "Test Mission",
+      }),
+      conversationHistory: JSON.stringify([
+        { question: { id: "q1", type: "text", question: "What is the scope?" }, response: { q1: "MVP" } } ]),
+      currentQuestion: JSON.stringify(SAMPLE_QUESTION),
+      result: null,
+      thinkingOutput: "",
+      error: null,
+      createdAt: new Date().toISOString(),
+      lockedAt: null,
+    };
+
+    const mockSessionGenerating = {
+      ...mockSessionAwaitingInput,
+      id: "session-resume-456",
+      status: "generating" as const,
+      currentQuestion: null,
+      thinkingOutput: "Analyzing requirements...",
+    };
+
+    const mockSessionError = {
+      ...mockSessionAwaitingInput,
+      id: "session-resume-789",
+      status: "error" as const,
+      currentQuestion: null,
+      result: null,
+      error: "AI service unavailable",
+    };
+
+    it("restores awaiting_input session with question when resumeSessionId is provided", async () => {
+      mockFetchAiSession.mockResolvedValue(mockSessionAwaitingInput);
+
+      render(
+        <MilestoneSliceInterviewModal
+          isOpen={true}
+          onClose={vi.fn()}
+          onApplied={vi.fn()}
+          targetType="milestone"
+          targetId="MS-001"
+          targetTitle="Test Milestone"
+          projectId="test-project"
+          resumeSessionId="session-resume-123"
+        />,
+      );
+
+      await waitFor(() => {
+        expect(mockFetchAiSession).toHaveBeenCalledWith("session-resume-123");
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("What is the target scope?")).toBeDefined();
+        expect(screen.getByText("Pick the size for this feature.")).toBeDefined();
+      });
+    });
+
+    it("reconnects to stream for generating session when resumeSessionId is provided", async () => {
+      mockFetchAiSession.mockResolvedValue(mockSessionGenerating);
+
+      render(
+        <MilestoneSliceInterviewModal
+          isOpen={true}
+          onClose={vi.fn()}
+          onApplied={vi.fn()}
+          targetType="milestone"
+          targetId="MS-001"
+          targetTitle="Test Milestone"
+          projectId="test-project"
+          resumeSessionId="session-resume-456"
+        />,
+      );
+
+      await waitFor(() => {
+        expect(mockFetchAiSession).toHaveBeenCalledWith("session-resume-456");
+        expect(mockConnectMilestoneInterviewStream).toHaveBeenCalled();
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText(/AI is thinking/)).toBeDefined();
+      });
+    });
+
+    it("shows error state for error session when resumeSessionId is provided", async () => {
+      mockFetchAiSession.mockResolvedValue(mockSessionError);
+
+      render(
+        <MilestoneSliceInterviewModal
+          isOpen={true}
+          onClose={vi.fn()}
+          onApplied={vi.fn()}
+          targetType="milestone"
+          targetId="MS-001"
+          targetTitle="Test Milestone"
+          projectId="test-project"
+          resumeSessionId="session-resume-789"
+        />,
+      );
+
+      await waitFor(() => {
+        expect(mockFetchAiSession).toHaveBeenCalledWith("session-resume-789");
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("AI service unavailable")).toBeDefined();
+      });
+    });
+
+    it("does not resume when resumeSessionId is not provided", async () => {
+      render(
+        <MilestoneSliceInterviewModal
+          isOpen={true}
+          onClose={vi.fn()}
+          onApplied={vi.fn()}
+          targetType="milestone"
+          targetId="MS-001"
+          targetTitle="Test Milestone"
+          projectId="test-project"
+        />,
+      );
+
+      expect(mockFetchAiSession).not.toHaveBeenCalled();
+      expect(screen.getByText("Start Interview")).toBeDefined();
     });
   });
 });

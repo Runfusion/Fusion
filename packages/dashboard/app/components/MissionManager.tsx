@@ -96,6 +96,7 @@ import {
   fetchValidationRun,
   fetchAssertion,
   fetchAiSessions,
+  fetchAiSession,
   type AiSessionSummary,
 } from "../api";
 import type { AutopilotStatus as AutopilotStatusType, AutopilotState } from "./mission-types";
@@ -111,6 +112,8 @@ interface MissionManagerProps {
   resumeSessionId?: string;
   /** Pre-select and load this mission when the modal opens */
   targetMissionId?: string;
+  /** Resume session ID for milestone/slice interview sessions */
+  milestoneSliceResumeSessionId?: string;
 }
 
 // Status badge colors — use CSS custom-property-compatible tokens
@@ -406,7 +409,7 @@ function getAutopilotActivitySummary(state: AutopilotState, lastActivityAt?: str
   return `Last activation ${getRelativeTime(lastActivityAt)}`;
 }
 
-export function MissionManager({ isOpen, isInline = false, onClose, addToast, projectId, onSelectTask, availableTasks = [], resumeSessionId, targetMissionId }: MissionManagerProps) {
+export function MissionManager({ isOpen, isInline = false, onClose, addToast, projectId, onSelectTask, availableTasks = [], resumeSessionId, targetMissionId, milestoneSliceResumeSessionId }: MissionManagerProps) {
   const isActive = isInline || isOpen;
   const [missions, setMissions] = useState<MissionWithSummary[]>([]);
   const [selectedMission, setSelectedMission] = useState<MissionWithHierarchy | null>(null);
@@ -454,6 +457,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     type: "milestone" | "slice";
     id: string;
     title: string;
+    resumeSessionId?: string;
   } | null>(null);
 
   // Triage preview state
@@ -483,6 +487,38 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [isActive, projectId, effectiveResumeSessionId]);
+
+  // Auto-open milestone/slice interview modal when resuming from background session
+  useEffect(() => {
+    if (!isActive || !milestoneSliceResumeSessionId) return;
+    let cancelled = false;
+
+    fetchAiSession(milestoneSliceResumeSessionId).then((session) => {
+      if (cancelled || !session) return;
+
+      // Parse the inputPayload to get target info
+      try {
+        const payload = JSON.parse(session.inputPayload || "{}");
+        if (payload.targetId && payload.targetType) {
+          setInterviewTarget({
+            type: payload.targetType as "milestone" | "slice",
+            id: payload.targetId,
+            title: payload.targetTitle || session.title,
+            resumeSessionId: milestoneSliceResumeSessionId,
+          });
+        }
+      } catch {
+        // If parsing fails, try to use session title as fallback
+        setInterviewTarget({
+          type: "milestone",
+          id: "",
+          title: session.title,
+          resumeSessionId: milestoneSliceResumeSessionId,
+        });
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [isActive, milestoneSliceResumeSessionId]);
 
   // Delete confirmation
   const [deleteConfirmId, setDeleteConfirmId] = useState<{ type: string; id: string } | null>(null);
@@ -3408,6 +3444,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       targetTitle={interviewTarget.title}
       missionContext={selectedMission?.title}
       projectId={projectId}
+      resumeSessionId={interviewTarget.resumeSessionId}
     />
   ) : null;
 

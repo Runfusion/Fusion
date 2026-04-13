@@ -122,6 +122,64 @@ describe("Utility component mobile adaptations", () => {
     expect(container.firstChild).toBeNull();
   });
 
+  it("calls onOpenSession when clicking on a milestone_interview session item", () => {
+    const onOpenSession = vi.fn();
+    const sessions: AiSessionSummary[] = [
+      {
+        id: "sess-milestone-1",
+        type: "milestone_interview",
+        status: "awaiting_input",
+        title: "Plan milestone scope",
+        projectId: "proj-1",
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+
+    render(
+      <BackgroundTasksIndicator
+        sessions={sessions}
+        generating={0}
+        needsInput={1}
+        onOpenSession={onOpenSession}
+        onDismissSession={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /AI 1/i }));
+    fireEvent.click(screen.getByText("Plan milestone scope"));
+
+    expect(onOpenSession).toHaveBeenCalledWith(sessions[0]);
+  });
+
+  it("calls onOpenSession when clicking on a slice_interview session item", () => {
+    const onOpenSession = vi.fn();
+    const sessions: AiSessionSummary[] = [
+      {
+        id: "sess-slice-1",
+        type: "slice_interview",
+        status: "error",
+        title: "Plan slice scope",
+        projectId: "proj-1",
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+
+    render(
+      <BackgroundTasksIndicator
+        sessions={sessions}
+        generating={0}
+        needsInput={0}
+        onOpenSession={onOpenSession}
+        onDismissSession={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /AI 1/i }));
+    fireEvent.click(screen.getByText("Plan slice scope"));
+
+    expect(onOpenSession).toHaveBeenCalledWith(sessions[0]);
+  });
+
   it("renders ExecutorStatusBar segments", () => {
     render(<ExecutorStatusBar tasks={[]} />);
 

@@ -35,6 +35,7 @@ import { useRemoteNodeData } from "./hooks/useRemoteNodeData";
 import { useRemoteNodeEvents } from "./hooks/useRemoteNodeEvents";
 import { NodeProvider, useNodeContext } from "./context/NodeContext";
 import type { AiSessionSummary } from "./api";
+import { fetchAiSession } from "./api";
 
 function AppInner() {
   const { toasts, addToast, removeToast } = useToast();
@@ -123,6 +124,7 @@ function AppInner() {
   const [nodesOpen, setNodesOpen] = useState(false);
   const [missionResumeSessionId, setMissionResumeSessionId] = useState<string | undefined>(undefined);
   const [missionTargetId, setMissionTargetId] = useState<string | undefined>(undefined);
+  const [milestoneSliceResumeSessionId, setMilestoneSliceResumeSessionId] = useState<string | undefined>(undefined);
   const [quickChatOpen, setQuickChatOpen] = useState(false);
 
   // Settings state
@@ -163,6 +165,7 @@ function AppInner() {
     if (newView === "missions") {
       setMissionResumeSessionId(undefined);
       setMissionTargetId(undefined);
+      setMilestoneSliceResumeSessionId(undefined);
     }
     handleChangeTaskView(newView);
   }, [handleChangeTaskView]);
@@ -260,6 +263,14 @@ function AppInner() {
     } else if (session.type === "mission_interview") {
       setMissionTargetId(undefined);
       setMissionResumeSessionId(session.id);
+      setMilestoneSliceResumeSessionId(undefined);
+      handleChangeTaskView("missions");
+    } else if (session.type === "milestone_interview" || session.type === "slice_interview") {
+      // For milestone/slice interviews, we need to fetch the session to get the target ID
+      // Then navigate to missions view with the resume session ID
+      setMissionResumeSessionId(undefined);
+      setMissionTargetId(undefined);
+      setMilestoneSliceResumeSessionId(session.id);
       handleChangeTaskView("missions");
     }
   }, [handleChangeTaskView, modalManager]);
@@ -320,6 +331,7 @@ function AppInner() {
             onClose={() => {
               setMissionTargetId(undefined);
               setMissionResumeSessionId(undefined);
+              setMilestoneSliceResumeSessionId(undefined);
               handleChangeTaskView("board");
             }}
             addToast={addToast}
@@ -331,6 +343,7 @@ function AppInner() {
             availableTasks={tasks.map((t) => ({ id: t.id, title: t.title }))}
             resumeSessionId={missionResumeSessionId}
             targetMissionId={missionTargetId}
+            milestoneSliceResumeSessionId={milestoneSliceResumeSessionId}
           />
         </PageErrorBoundary>
       );
