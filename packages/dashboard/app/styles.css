@@ -3817,6 +3817,7 @@ body {
 
 .detail-body {
   padding: 20px;
+  overflow-x: hidden;
   overflow-y: auto;
   flex: 1;
 }
@@ -6656,6 +6657,7 @@ body {
   .detail-body {
     padding: 14px;
     overflow-x: hidden;
+    overflow-y: auto;
   }
 
   .detail-title {
