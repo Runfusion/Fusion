@@ -74,6 +74,7 @@ class BadgeWebSocketStore {
   // from corrupting badge state after project switches.
   private previousProjectIdRef: string | null = null;
   private projectContextVersionRef = 0;
+  private contextVersionAtStart = 0;
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);

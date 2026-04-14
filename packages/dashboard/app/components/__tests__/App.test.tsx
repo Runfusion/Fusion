@@ -3,6 +3,8 @@ import { render, screen, fireEvent, waitFor, act } from "@testing-library/react"
 import type { Settings } from "@fusion/core";
 import { scopedKey } from "../../utils/projectStorage";
 
+// No mock needed - tests use localStorage directly
+
 const defaultSettings: Settings = {
   maxConcurrent: 2,
   maxWorktrees: 4,

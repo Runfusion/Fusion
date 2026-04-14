@@ -28,7 +28,7 @@ Like Trello, but your tasks get specified, executed, and delivered by AI — pow
 2. **GitHub (Optional)** — Connect GitHub for issue import and PR management
 3. **First Task** — Create your first task or import from GitHub
 
-The wizard is **dismissible and non-blocking** — click **Skip for now** to dismiss it and use the dashboard immediately. You can re-trigger onboarding later from Settings → Authentication, or by clearing the `modelOnboardingComplete` flag in global settings.
+The wizard is **dismissible and non-blocking** — click **Skip for now** to dismiss it and use the dashboard immediately. After dismissing, a **Continue Setup** banner appears at the top of the dashboard, letting you resume from where you left off. You can also re-trigger onboarding later from Settings → Authentication, or by clearing the `modelOnboardingComplete` flag in global settings.
 
 ### Prerequisites
 
