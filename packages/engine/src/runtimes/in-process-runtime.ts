@@ -478,6 +478,8 @@ export class InProcessRuntime
         rootDir: this.config.workingDirectory,
         recoverCompletedTask: (task) => this.executor.recoverCompletedTask(task),
         getExecutingTaskIds: () => this.executor.getExecutingTaskIds(),
+        recoverApprovedTriageTask: (task) => this.triageProcessor?.recoverApprovedTask(task) ?? Promise.resolve(false),
+        getSpecifyingTaskIds: () => this.triageProcessor?.getProcessingTaskIds() ?? new Set<string>(),
       });
       this.selfHealingManager.start();
       this.stuckTaskDetector.start();

@@ -3,6 +3,7 @@ import { X, Loader2, CheckCircle, Key, Zap, GitPullRequest, Rocket, Plus } from 
 import type { AuthProvider, ModelInfo } from "../api";
 import {
   fetchAuthStatus,
+  fetchGlobalSettings,
   loginProvider,
   logoutProvider,
   saveApiKey,
@@ -18,6 +19,7 @@ import {
   clearOnboardingState,
   type OnboardingStepId,
 } from "./model-onboarding-state";
+import type { SectionId } from "./SettingsModal";
 
 export interface ModelOnboardingModalProps {
   /** Called when onboarding is complete or dismissed */
@@ -848,7 +850,7 @@ import type { ColorTheme, Column, MergeResult, Task, ThemeMode } from "@fusion/c
 import type { UseProjectActionsResult } from "../hooks/useProjectActions";
 import type { ModalManager } from "../hooks/useModalManager";
 import type { UseTaskHandlersResult } from "../hooks/useTaskHandlers";
-import type { Toast, ToastType } from "../hooks/useToast";
+import type { Toast } from "../hooks/useToast";
 import { ModalErrorBoundary } from "./ErrorBoundary";
 import { TaskDetailModal } from "./TaskDetailModal";
 import { SettingsModal } from "./SettingsModal";
@@ -1119,10 +1121,6 @@ export function AppModals({
     </>
   );
 }
-
-import { useEffect, useRef } from "react";
-import { fetchAuthStatus, fetchGlobalSettings } from "../api";
-import type { SectionId } from "../components/SettingsModal";
 
 export interface UseAuthOnboardingOptions {
   projectId?: string;

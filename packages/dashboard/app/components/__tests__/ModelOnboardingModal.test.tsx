@@ -37,6 +37,17 @@ vi.mock("../CustomModelDropdown", () => ({
   ),
 }));
 
+// Mock model-onboarding-state
+const mockGetOnboardingState = vi.fn();
+const mockSaveOnboardingState = vi.fn();
+const mockClearOnboardingState = vi.fn();
+
+vi.mock("../model-onboarding-state", () => ({
+  getOnboardingState: (...args: unknown[]) => mockGetOnboardingState(...args),
+  saveOnboardingState: (...args: unknown[]) => mockSaveOnboardingState(...args),
+  clearOnboardingState: (...args: unknown[]) => mockClearOnboardingState(...args),
+}));
+
 const defaultAuthProviders: AuthProvider[] = [
   { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
   { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
@@ -75,6 +86,15 @@ beforeEach(() => {
   mockLogoutProvider.mockResolvedValue({ success: true });
   mockSaveApiKey.mockResolvedValue({ success: true });
   mockClearApiKey.mockResolvedValue({ success: true });
+  // Default to no persisted state (start at ai-setup)
+  mockGetOnboardingState.mockReturnValue(null);
+  mockSaveOnboardingState.mockImplementation(() => {});
+  mockClearOnboardingState.mockImplementation(() => {});
+});
+
+afterEach(() => {
+  // Clean up localStorage
+  localStorage.removeItem("kb-onboarding-state");
 });
 
 describe("ModelOnboardingModal", () => {
