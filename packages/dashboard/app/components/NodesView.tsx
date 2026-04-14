@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, Server, Wifi, WifiOff, Globe, RefreshCw } from "lucide-react";
+import { Plus, Server, Wifi, WifiOff, Globe, RefreshCw, X } from "lucide-react";
 import { useNodes } from "../hooks/useNodes";
 import { useProjects } from "../hooks/useProjects";
 import type { NodeInfo, NodeUpdateInput } from "../api";
@@ -11,9 +11,10 @@ import type { ToastType } from "../hooks/useToast";
 
 interface NodesViewProps {
   addToast: (message: string, type?: ToastType) => void;
+  onClose: () => void;
 }
 
-export function NodesView({ addToast }: NodesViewProps) {
+export function NodesView({ addToast, onClose }: NodesViewProps) {
   const { nodes, loading, error, refresh, register, update, unregister, healthCheck } = useNodes();
   const { projects } = useProjects();
   const [addModalOpen, setAddModalOpen] = useState(false);
@@ -84,6 +85,13 @@ export function NodesView({ addToast }: NodesViewProps) {
         </div>
 
         <div className="nodes-view-actions">
+          <button
+            className="btn-icon nodes-view-close"
+            onClick={onClose}
+            aria-label="Close nodes view"
+          >
+            <X size={16} />
+          </button>
           <button className="btn btn-sm" onClick={() => void handleRefresh()} disabled={loading}>
             <RefreshCw size={14} className={loading ? "spin" : ""} />
             Refresh

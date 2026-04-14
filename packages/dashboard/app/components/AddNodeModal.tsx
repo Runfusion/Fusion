@@ -141,6 +141,7 @@ export function AddNodeModal({ isOpen, onClose, onSubmit, addToast }: AddNodeMod
               placeholder="Build Machine"
               disabled={isSubmitting}
               aria-invalid={Boolean(errors.name)}
+              autoFocus
             />
             {errors.name && <span className="add-node-modal__error">{errors.name}</span>}
           </label>

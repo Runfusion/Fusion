@@ -87,7 +87,7 @@ describe("NodesView", () => {
       ],
     }));
 
-    render(<NodesView addToast={vi.fn()} />);
+    render(<NodesView addToast={vi.fn()} onClose={vi.fn()} />);
 
     // Check node cards are rendered - use the node card class to find elements
     const nodeCards = document.querySelectorAll(".node-card");
@@ -106,7 +106,7 @@ describe("NodesView", () => {
   it("renders empty state when there are no nodes", () => {
     mockUseNodes.mockReturnValue(makeUseNodesResult({ nodes: [] }));
 
-    render(<NodesView addToast={vi.fn()} />);
+    render(<NodesView addToast={vi.fn()} onClose={vi.fn()} />);
 
     expect(screen.getByText("No nodes are registered yet.")).toBeDefined();
     expect(screen.getByText("Add First Node")).toBeDefined();
@@ -119,7 +119,7 @@ describe("NodesView", () => {
   it("opens Add Node modal when Add Node button is clicked", () => {
     mockUseNodes.mockReturnValue(makeUseNodesResult({ nodes: [] }));
 
-    render(<NodesView addToast={vi.fn()} />);
+    render(<NodesView addToast={vi.fn()} onClose={vi.fn()} />);
 
     fireEvent.click(screen.getByText("Add Node"));
     expect(screen.getByRole("dialog", { name: "Add Node" })).toBeDefined();
@@ -140,7 +140,7 @@ describe("NodesView", () => {
       nodes: [makeNode({ id: "node-1", name: "Detail Node" })],
     }));
 
-    render(<NodesView addToast={vi.fn()} />);
+    render(<NodesView addToast={vi.fn()} onClose={vi.fn()} />);
 
     // Click on the node card (not the topology node)
     const nodeCard = document.querySelector(".node-card");
@@ -167,7 +167,7 @@ describe("NodesView", () => {
       nodes: [makeNode({ id: "node-1", name: "Local Node", type: "local" })],
     }));
 
-    render(<NodesView addToast={vi.fn()} />);
+    render(<NodesView addToast={vi.fn()} onClose={vi.fn()} />);
 
     // Click on the node card to open detail modal
     const nodeCard = document.querySelector(".node-card");
@@ -176,5 +176,18 @@ describe("NodesView", () => {
 
     // Modal should show "Projects (2)" - including the unassigned project
     expect(screen.getByText("Projects (2)")).toBeDefined();
+  });
+
+  it("renders close button and calls onClose when clicked", () => {
+    mockUseNodes.mockReturnValue(makeUseNodesResult({ nodes: [] }));
+
+    const onClose = vi.fn();
+    render(<NodesView addToast={vi.fn()} onClose={onClose} />);
+
+    const closeButton = screen.getByRole("button", { name: "Close nodes view" });
+    expect(closeButton).toBeInTheDocument();
+
+    fireEvent.click(closeButton);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

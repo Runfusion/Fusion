@@ -286,11 +286,8 @@ function AppInner() {
     if (nodesOpen) {
       return (
         <div className="nodes-management-overlay">
-          <div className="nodes-management-overlay__header">
-            <button className="btn btn-sm" onClick={() => setNodesOpen(false)}>Close Nodes</button>
-          </div>
           <PageErrorBoundary>
-            <NodesView addToast={addToast} />
+            <NodesView addToast={addToast} onClose={() => setNodesOpen(false)} />
           </PageErrorBoundary>
         </div>
       );

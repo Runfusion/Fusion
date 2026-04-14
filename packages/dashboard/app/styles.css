@@ -26116,6 +26116,10 @@ html .column.drag-over * {
   gap: var(--space-sm);
 }
 
+.nodes-view-close {
+  margin-left: auto;
+}
+
 .nodes-view-stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -26341,24 +26345,43 @@ html .column.drag-over * {
 .add-node-modal__body {
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
+  gap: var(--space-md);
 }
 
 .add-node-modal__field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  font-size: 13px;
+  gap: 4px;
+}
+
+.add-node-modal__field > span {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
 }
 
 .add-node-modal__field input,
 .add-node-modal__field select {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
   width: 100%;
+}
+
+.add-node-modal__field input:focus,
+.add-node-modal__field select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .add-node-modal__error {
   color: var(--color-error);
   font-size: 12px;
+  margin-top: 2px;
 }
 
 .node-detail-modal {
