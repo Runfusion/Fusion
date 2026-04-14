@@ -163,7 +163,7 @@ export async function clearDefaultProject(): Promise<void> {
   const globalStore = new GlobalSettingsStore();
   await globalStore.init();
   const current = await globalStore.getSettings();
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   const { defaultProjectId: _, ...rest } = current;
   await globalStore.updateSettings(rest as Record<string, unknown>);
 }

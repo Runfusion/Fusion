@@ -26,7 +26,7 @@ import type { AiSessionStore, AiSessionRow } from "./ai-session-store.js";
 import { SessionEventBuffer, type SessionBufferedEvent } from "./sse-buffer.js";
 
 // Dynamic import for @fusion/engine to avoid resolution issues in test environment
-// eslint-disable-next-line @typescript-eslint/consistent-type-imports, @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentResult = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let createKbAgent: any;

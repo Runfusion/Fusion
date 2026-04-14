@@ -47,7 +47,7 @@ export function useSessionFiles(
       return;
     }
 
-    let cancelled = false;
+    const cancelled = false;
 
     async function load() {
       setLoading(true);

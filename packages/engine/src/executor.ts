@@ -3175,7 +3175,7 @@ and show an appropriate message to the user.\`
     startPoint?: string,
   ): Promise<{ path: string; branch: string }> {
     // Track the worktree path we're attempting to use (may change during recovery)
-    let currentPath = path;
+    const currentPath = path;
 
     for (let attempt = 0; attempt < this.MAX_WORKTREE_RETRIES; attempt++) {
       try {

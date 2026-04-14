@@ -532,7 +532,7 @@ function TaskCardComponent({
 
     // Compare all three sources and pick the freshest
     let bestData = pickPreferredBadge<PrInfo>(wsData, wsTimestamp, taskInfo, taskTimestamp);
-    let bestTimestamp = wsTimestamp && wsTimestamp >= taskTimestamp ? wsTimestamp : taskTimestamp;
+    const bestTimestamp = wsTimestamp && wsTimestamp >= taskTimestamp ? wsTimestamp : taskTimestamp;
 
     if (batchInfo && batchTimestamp) {
       if (!bestTimestamp || batchTimestamp > bestTimestamp) {
@@ -553,7 +553,7 @@ function TaskCardComponent({
 
     // Compare all three sources and pick the freshest
     let bestData = pickPreferredBadge<IssueInfo>(wsData, wsTimestamp, taskInfo, taskTimestamp);
-    let bestTimestamp = wsTimestamp && wsTimestamp >= taskTimestamp ? wsTimestamp : taskTimestamp;
+    const bestTimestamp = wsTimestamp && wsTimestamp >= taskTimestamp ? wsTimestamp : taskTimestamp;
 
     if (batchInfo && batchTimestamp) {
       if (!bestTimestamp || batchTimestamp > bestTimestamp) {

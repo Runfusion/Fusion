@@ -37,7 +37,7 @@ async function getBackupManager(projectName?: string): Promise<{
  * Usage: fn backup --create
  */
 export async function runBackupCreate(projectName?: string): Promise<void> {
-  const { manager, kbDir, store } = await getBackupManager(projectName);
+  const { kbDir, store } = await getBackupManager(projectName);
   const settings = await store.getSettings();
   
   console.log("Creating database backup...");

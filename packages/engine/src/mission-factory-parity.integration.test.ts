@@ -140,9 +140,9 @@ function createMockTaskStore() {
  */
 
 describe("MissionFactory Parity: Engine Scheduler/Autopilot", () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   let missionStore: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   let taskStore: any;
   let scheduler: Scheduler;
   let autopilot: MissionAutopilot;

@@ -583,7 +583,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
 
   // API Error Handling Middleware - MUST be after API routes but before SPA fallback
   // This ensures API errors return JSON instead of falling through to the SPA fallback (which returns HTML)
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   app.use("/api", (err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     if (res.headersSent) {
       return;

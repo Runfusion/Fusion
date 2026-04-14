@@ -691,7 +691,7 @@ export class PluginLoader extends EventEmitter<{
     const hook = plugin.hooks[hookName];
     if (!hook) return;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const fn = hook as (...args: unknown[]) => unknown;
     const result = fn(...args);
     if (result instanceof Promise) {

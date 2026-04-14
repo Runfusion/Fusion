@@ -1035,7 +1035,7 @@ export class TriageProcessor {
     checkpointRef: { current: string | null },
     specReviewVerdictRef: { current: ReviewVerdict | null },
     approvedCommentFingerprintRef: { current: string },
-    settings: {
+    _settings: {
       defaultProvider?: string;
       defaultModelId?: string;
       defaultThinkingLevel?: string;

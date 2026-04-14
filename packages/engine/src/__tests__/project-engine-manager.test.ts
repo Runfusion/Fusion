@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // Mock ProjectEngine before importing the manager
 vi.mock("../project-engine.js", () => {
   return {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     ProjectEngine: vi.fn().mockImplementation((config: any) => ({
       start: vi.fn().mockResolvedValue(undefined),
       stop: vi.fn().mockResolvedValue(undefined),
@@ -128,7 +128,7 @@ describe("ProjectEngineManager", () => {
       // Make the first start fail
       let callCount = 0;
       (ProjectEngine as unknown as ReturnType<typeof vi.fn>).mockImplementation(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         (config: any) => ({
           start: vi.fn().mockImplementation(async () => {
             callCount++;
@@ -262,7 +262,7 @@ describe("ProjectEngineManager", () => {
 
       const store = manager.getStore("proj_aaa");
       expect(store).toBeDefined();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       expect((store as any).projectId).toBe("proj_aaa");
     });
 

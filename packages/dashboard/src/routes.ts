@@ -116,7 +116,7 @@ export function __setCreateKbAgentForRefine(mock: typeof createKbAgentForRefine)
 }
 
 // Default system prompt for workflow step refinement (fallback when overrides unavailable)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 let resolveWorkflowStepRefinePrompt: (key: string, overrides?: Record<string, string | undefined>) => string = () => DEFAULT_WORKFLOW_STEP_REFINE_PROMPT;
 let promptOverridesReady = false;
 
@@ -1944,7 +1944,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: scopedStore, engine } = await getProjectContext(req);
       // Strip server-owned fields that should never be persisted to config.json.
       // These are computed server-side and injected only on GET /settings.
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+       
       const { githubTokenConfigured, ...clientSettings } = req.body;
 
       // Reject global-only fields with a helpful error pointing to the correct endpoint

@@ -6,7 +6,7 @@ import type { ExecException } from "node:child_process";
 vi.mock("node:child_process", async () => {
   const { promisify } = await import("node:util");
   const execSyncFn = vi.fn();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const execFn: any = vi.fn((cmd: string, opts: any, cb: any) => {
     const callback = typeof opts === "function" ? opts : cb;
     const options = typeof opts === "function" ? {} : (opts ?? {});
@@ -21,10 +21,10 @@ vi.mock("node:child_process", async () => {
       }
     }
   });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   execFn[promisify.custom] = (cmd: string, opts?: any) =>
     new Promise((resolve, reject) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       execFn(cmd, opts, (err: any, stdout: string, stderr: string) => {
         if (err) {
           (err as Record<string, unknown>).stdout = stdout;

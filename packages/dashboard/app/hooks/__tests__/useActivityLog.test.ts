@@ -45,7 +45,7 @@ describe("useActivityLog visibility change", () => {
     if (originalVisibilityState) {
       Object.defineProperty(document, "visibilityState", originalVisibilityState);
     } else {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       delete (document as any).visibilityState;
     }
   });

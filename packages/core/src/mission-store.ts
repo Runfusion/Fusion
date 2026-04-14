@@ -652,7 +652,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       let currentSliceId: string | undefined;
       let currentMilestoneId: string | undefined;
 
-      let totalMilestones = milestones.length;
+      const totalMilestones = milestones.length;
       let completedMilestones = 0;
       let totalFeatures = 0;
       let completedFeatures = 0;

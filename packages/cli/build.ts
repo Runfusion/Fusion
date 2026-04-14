@@ -18,8 +18,8 @@
  *     minimal dist/client/index.html stub so clean-checkout tests can run.
  */
 
-import { join, dirname, basename } from "node:path";
-import { cpSync, mkdirSync, existsSync, rmSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { cpSync, mkdirSync, existsSync, rmSync, writeFileSync } from "node:fs";
 
 const cliRoot = dirname(new URL(import.meta.url).pathname);
 const workspaceRoot = join(cliRoot, "..", "..");
@@ -224,7 +224,6 @@ function compileBinary(outFile: string, target: string, isCrossCompile: boolean)
 
   // Prepare asset paths for embedding
   const nativeAssetDir = join(runtimeDir, prebuildName);
-  const assetArgs: string[] = [];
   
   // NOTE: Embedding native .node files with --assets doesn't work correctly
   // because Bun extracts them to a temp location but node-pty expects them

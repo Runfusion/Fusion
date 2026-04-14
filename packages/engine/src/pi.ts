@@ -387,10 +387,10 @@ export function wrapToolsWithBoundary(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const originalExecute = tool.execute as any;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     return {
       ...tool,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       execute: async (...args: any[]) => {
         const toolCallId = args[0] as string;
         const params = args[1] as Record<string, unknown>;

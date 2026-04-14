@@ -63,7 +63,6 @@ export function SessionNotificationBanner({
           !dismissedIds.has(session.id),
       ),
     // dismissRevision is a stable counter that bumps whenever dismissedIds changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [sessions, dismissRevision],
   );
 

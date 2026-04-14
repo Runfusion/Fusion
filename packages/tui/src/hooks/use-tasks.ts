@@ -5,7 +5,7 @@
  * enabling TUI components to display live task data without polling.
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import type { Task, Column } from "@fusion/core";
 import { useFusion } from "../fusion-context.js";
 

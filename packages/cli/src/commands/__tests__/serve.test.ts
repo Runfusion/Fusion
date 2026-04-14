@@ -490,6 +490,7 @@ vi.mock("@fusion/engine", () => ({
         engines.clear();
       }),
       onProjectAccessed: vi.fn(),
+      startReconciliation: vi.fn(),
     };
   }),
   TriageProcessor: mocks.triageCtor,

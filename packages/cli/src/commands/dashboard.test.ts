@@ -606,6 +606,7 @@ vi.mock("@fusion/engine", async (importOriginal) => {
           engines.clear();
         }),
         onProjectAccessed: vi.fn(),
+        startReconciliation: vi.fn(),
       };
     }),
     ProjectManager: vi.fn().mockImplementation(() => ({

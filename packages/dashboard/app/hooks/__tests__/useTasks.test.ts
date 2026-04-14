@@ -1059,7 +1059,7 @@ describe("useTasks", () => {
         Object.defineProperty(document, "visibilityState", originalVisibilityState);
       } else {
         // If no original descriptor, just delete our mock
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         delete (document as any).visibilityState;
       }
     });

@@ -75,7 +75,6 @@ export function useDeepLink(options: UseDeepLinkOptions): UseDeepLinkResult {
       .catch(() => {
         addToast(`Task ${taskId} not found`, "error");
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     projectId,
     projects,

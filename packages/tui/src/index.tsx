@@ -49,7 +49,7 @@ import { render, Box, Text } from "ink";
 import { FusionProvider, useFusion } from "./fusion-context.js";
 import { ScreenRouter, type ScreenId } from "./components/screen-router.js";
 import { useGlobalShortcuts, HelpOverlay } from "./hooks/use-global-shortcuts.js";
-import { ResponsiveHeader, ResponsiveTable, ResponsiveTaskRow, ResponsiveStatusBar } from "./components/responsive-layout.js";
+import { ResponsiveHeader, ResponsiveTable, ResponsiveStatusBar } from "./components/responsive-layout.js";
 import { fileURLToPath } from "url";
 
 /**

@@ -640,7 +640,7 @@ async function main() {
             if (!id) { console.error("Usage: fn task comment <id> [message] [--author <name>]"); process.exit(1); }
             const authorIdx = args.indexOf("--author");
             const author = authorIdx !== -1 && authorIdx + 1 < args.length ? args[authorIdx + 1] : undefined;
-            const messageParts = args.slice(3).filter((arg, index, arr) => {
+            const messageParts = args.slice(3).filter((arg, index) => {
               const absoluteIndex = index + 3;
               return absoluteIndex !== authorIdx && absoluteIndex !== authorIdx + 1;
             });
@@ -850,6 +850,7 @@ async function main() {
           case "status":
             await runGitStatus(projectName);
             break;
+          // fallthrough - git commands need consistent project resolution
           case "fetch": {
             const remote = args[2];
             await runGitFetch(remote, projectName);

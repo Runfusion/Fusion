@@ -41,7 +41,7 @@ async function main() {
 
   console.log("Simulating board activity... (Ctrl+C to stop)\n");
 
-  // eslint-disable-next-line no-constant-condition
+   
   while (true) {
     const tasks = await store.listTasks();
     const triage = tasks.filter((t) => t.column === "triage" && !t.paused);

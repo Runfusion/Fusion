@@ -291,7 +291,7 @@ describe("IpcWorker", () => {
     it("handler throwing a non-Error value still sends ERROR response with stringified message", async () => {
       const { worker, sendMessage, findSent } = createWorker();
       worker.onCommand("GET_STATUS", async () => {
-        throw "string error"; // eslint-disable-line no-throw-literal
+        throw "string error";  
       });
 
       sendMessage({ type: "GET_STATUS", id: "cmd-4", payload: {} });

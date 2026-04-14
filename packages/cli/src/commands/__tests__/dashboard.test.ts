@@ -199,6 +199,7 @@ vi.mock("@fusion/engine", async (importOriginal) => {
           engines.clear();
         }),
         onProjectAccessed: vi.fn(),
+        startReconciliation: vi.fn(),
       };
     }),
     MissionAutopilot: vi.fn().mockImplementation(() => ({

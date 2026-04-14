@@ -18,7 +18,7 @@ describe("useLiveTranscript", () => {
     });
 
     // Simulate SSE event with `text` field (matching AgentLogEntry)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const es = (globalThis as any).EventSource;
     const instance = es.instances[0];
     act(() => {
@@ -42,7 +42,7 @@ describe("useLiveTranscript", () => {
     });
 
     // Simulate legacy SSE event with `content` field instead of `text`
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const es = (globalThis as any).EventSource;
     const instance = es.instances[0];
     act(() => {
@@ -66,7 +66,7 @@ describe("useLiveTranscript", () => {
       expect(result.current.entries).toHaveLength(0);
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const es = (globalThis as any).EventSource;
     const instance = es.instances[0];
     act(() => {
@@ -89,7 +89,7 @@ describe("useLiveTranscript", () => {
   it("includes projectId in stream URL when provided", async () => {
     renderHook(() => useLiveTranscript("FN-001", "project-abc"));
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const es = (globalThis as any).EventSource;
     expect(es.instances).toHaveLength(1);
     expect(es.instances[0].url).toContain("projectId=project-abc");
@@ -98,7 +98,7 @@ describe("useLiveTranscript", () => {
   it("does not include projectId in URL when not provided", async () => {
     renderHook(() => useLiveTranscript("FN-001"));
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const es = (globalThis as any).EventSource;
     expect(es.instances).toHaveLength(1);
     expect(es.instances[0].url).not.toContain("projectId");
@@ -115,7 +115,7 @@ describe("useLiveTranscript", () => {
     });
 
     // Add an entry first
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const es = (globalThis as any).EventSource;
     const instance = es.instances[0];
     act(() => {
@@ -139,11 +139,11 @@ describe("useLiveTranscript", () => {
     const { unmount } = renderHook(() => useLiveTranscript("FN-001"));
 
     await waitFor(() => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       expect((globalThis as any).EventSource.instances).toHaveLength(1);
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const es = (globalThis as any).EventSource;
     const instance = es.instances[0];
     const closeSpy = vi.spyOn(instance, "close");
@@ -158,7 +158,7 @@ describe("useLiveTranscript", () => {
 
     expect(result.current.isConnected).toBe(false);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const es = (globalThis as any).EventSource;
     const instance = es.instances[0];
 
@@ -176,7 +176,7 @@ describe("useLiveTranscript", () => {
       expect(result.current.entries).toHaveLength(0);
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const es = (globalThis as any).EventSource;
     const instance = es.instances[0];
 
@@ -196,7 +196,7 @@ describe("useLiveTranscript", () => {
       expect(result.current.entries).toHaveLength(0);
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const es = (globalThis as any).EventSource;
     const instance = es.instances[0];
     act(() => {

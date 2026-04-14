@@ -26,7 +26,7 @@ const readFileSyncMock = vi.fn(() => "{}");
 vi.mock("node:child_process", async () => {
   const { promisify } = await import("node:util");
   const execSyncFn = execSyncMock;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const execFn: any = vi.fn((cmd: string, opts: any, cb: any) => {
     const callback = typeof opts === "function" ? opts : cb;
     const options = typeof opts === "function" ? {} : (opts ?? {});
@@ -41,10 +41,10 @@ vi.mock("node:child_process", async () => {
       }
     }
   });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   execFn[promisify.custom] = (cmd: string, opts?: any) =>
     new Promise((resolve, reject) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       execFn(cmd, opts, (err: any, stdout: string, stderr: string) => {
         if (err) {
           (err as Record<string, unknown>).stdout = stdout;
@@ -127,7 +127,7 @@ describe("worktree path boundary helpers", () => {
       };
 
       // Import the wrapping function
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const tools = [mockReadTool as any];
 
       // Simulate wrapping (normally done inside createKbAgent)
@@ -165,7 +165,7 @@ describe("worktree path boundary helpers", () => {
       };
 
       const { wrapToolsWithBoundary } = await import("./pi.js");
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const wrapped = wrapToolsWithBoundary(
         [mockReadTool as any],
         "/project/.worktrees/fn-001",
@@ -188,7 +188,7 @@ describe("worktree path boundary helpers", () => {
       };
 
       const { wrapToolsWithBoundary } = await import("./pi.js");
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const wrapped = wrapToolsWithBoundary(
         [mockReadTool as any],
         "/project/.worktrees/fn-001",
@@ -211,7 +211,7 @@ describe("worktree path boundary helpers", () => {
       };
 
       const { wrapToolsWithBoundary } = await import("./pi.js");
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const wrapped = wrapToolsWithBoundary([mockTool as any], null, null);
 
       // Should be the same tool, not wrapped
@@ -232,7 +232,7 @@ describe("worktree path boundary helpers", () => {
       };
 
       const { wrapToolsWithBoundary } = await import("./pi.js");
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const wrapped = wrapToolsWithBoundary(
         [mockTaskTool as any],
         "/project/.worktrees/fn-001",
@@ -253,7 +253,7 @@ describe("worktree path boundary helpers", () => {
       };
 
       const { wrapToolsWithBoundary } = await import("./pi.js");
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const wrapped = wrapToolsWithBoundary(
         [mockWriteTool as any],
         "/project/.worktrees/fn-001",
@@ -279,7 +279,7 @@ describe("worktree path boundary helpers", () => {
       };
 
       const { wrapToolsWithBoundary } = await import("./pi.js");
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const wrapped = wrapToolsWithBoundary(
         [mockBashTool as any],
         "/project/.worktrees/fn-001",
@@ -305,7 +305,7 @@ describe("worktree path boundary helpers", () => {
       };
 
       const { wrapToolsWithBoundary } = await import("./pi.js");
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const wrapped = wrapToolsWithBoundary(
         [mockBashTool as any],
         "/project/.worktrees/fn-001",

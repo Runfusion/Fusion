@@ -12,6 +12,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
+import * as readline from "node:readline";
 import { PluginStore, PluginLoader, validatePluginManifest } from "@fusion/core";
 import { resolveProject } from "../project-context.js";
 
@@ -218,7 +219,6 @@ export async function runPluginUninstall(
     console.log();
 
     const response = await new Promise<string>((resolve) => {
-      const readline = require("readline");
       const rl = readline.createInterface({
         input: process.stdin,
         output: process.stdout,

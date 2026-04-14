@@ -16,13 +16,13 @@ import { promisify } from "node:util";
 const execAsync = promisify(exec);
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentSession, ToolDefinition } from "@mariozechner/pi-coding-agent";
-import type { TaskDetail, Settings, TaskStep, StepStatus, TaskStore } from "@fusion/core";
+import type { AgentSession } from "@mariozechner/pi-coding-agent";
+import type { TaskDetail, Settings, TaskStore } from "@fusion/core";
 
 import { createKbAgent, promptWithFallback, describeModel, compactSessionContext } from "./pi.js";
 import { generateWorktreeName } from "./worktree-names.js";
 import { AgentSemaphore } from "./concurrency.js";
-import { StuckTaskDetector, type DisposableSession } from "./stuck-task-detector.js";
+import { StuckTaskDetector } from "./stuck-task-detector.js";
 import { AgentLogger } from "./agent-logger.js";
 import { createLogger } from "./logger.js";
 import { isContextLimitError } from "./context-limit-detector.js";
@@ -584,7 +584,7 @@ export class StepSessionExecutor {
    * @returns Array of {@link StepResult} for all steps, in step-index order.
    */
   async executeAll(): Promise<StepResult[]> {
-    const { taskDetail, settings } = this.options;
+    const { taskDetail } = this.options;
     const prompt = taskDetail.prompt ?? "";
 
     // Parse file scopes and determine execution plan
@@ -967,7 +967,7 @@ export class StepSessionExecutor {
    * into the primary worktree. Parallel worktrees are cleaned up afterwards.
    */
   private async executeParallelWave(wave: ParallelWave): Promise<StepResult[]> {
-    const { taskDetail, semaphore } = this.options;
+    const { taskDetail } = this.options;
 
     stepExecLog.log(
       `Wave ${wave.waveNumber}: executing steps [${wave.indices.join(", ")}] in parallel ` +
@@ -1114,7 +1114,7 @@ export class StepSessionExecutor {
    * Cherry-pick commits from a parallel step's worktree into the primary worktree.
    */
   private async cherryPickCommits(stepIndex: number, worktreePath: string): Promise<void> {
-    const { worktreePath: primaryPath, rootDir, taskDetail } = this.options;
+    const { worktreePath: primaryPath, taskDetail } = this.options;
 
     // Get commits made in the parallel worktree since it was created
     let commits: string;
