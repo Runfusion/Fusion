@@ -1338,8 +1338,7 @@ export function SettingsModal({
                 value={form.maxConcurrent ?? ""}
                 onChange={(e) => {
                   const val = e.target.value;
-                  const num = Number(val);
-                  setForm((f) => ({ ...f, maxConcurrent: val === "" || isNaN(num) ? f.maxConcurrent : num }));
+                  setForm((f) => ({ ...f, maxConcurrent: val === "" ? undefined : Number(val) } as any));
                 }}
               />
             </div>
@@ -1353,8 +1352,7 @@ export function SettingsModal({
                 value={form.pollIntervalMs ?? ""}
                 onChange={(e) => {
                   const val = e.target.value;
-                  const num = Number(val);
-                  setForm((f) => ({ ...f, pollIntervalMs: val === "" || isNaN(num) ? f.pollIntervalMs : num }));
+                  setForm((f) => ({ ...f, pollIntervalMs: val === "" ? undefined : Number(val) } as any));
                 }}
               />
             </div>
@@ -1486,8 +1484,7 @@ export function SettingsModal({
                 value={form.maxWorktrees ?? ""}
                 onChange={(e) => {
                   const val = e.target.value;
-                  const num = Number(val);
-                  setForm((f) => ({ ...f, maxWorktrees: val === "" || isNaN(num) ? f.maxWorktrees : num }));
+                  setForm((f) => ({ ...f, maxWorktrees: val === "" ? undefined : Number(val) } as any));
                 }}
               />
               <small>Limits total git worktrees including in-review tasks</small>
