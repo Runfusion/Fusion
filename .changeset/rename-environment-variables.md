@@ -1,5 +1,6 @@
 ---
 "@gsxdsm/fusion": minor
+"@fusion/dashboard": patch
 ---
 
 Rename environment variables from KB_* to FUSION_* prefix

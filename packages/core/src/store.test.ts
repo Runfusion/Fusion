@@ -1199,7 +1199,7 @@ describe("TaskStore", () => {
       expect(settings.experimentalFeatures).toEqual({ "my-feature": false });
     });
 
-    it("can add a new experimental feature (replaces entire object)", async () => {
+    it("can add a new experimental feature (merges with existing)", async () => {
       await store.updateSettings({
         experimentalFeatures: { "feature-a": true },
       });
@@ -1209,9 +1209,9 @@ describe("TaskStore", () => {
       });
 
       const settings = await store.getSettings();
-      // Note: updateSettings replaces experimentalFeatures entirely, not merged
-      // To preserve existing features, pass all features in a single update
-      expect(settings.experimentalFeatures).toEqual({ "feature-b": true });
+      // Note: updateSettings merges experimentalFeatures, preserving existing features
+      // To replace entirely, pass null for experimentalFeatures first, then the new object
+      expect(settings.experimentalFeatures).toEqual({ "feature-a": true, "feature-b": true });
     });
 
     it("can remove an experimental feature by setting it to null (selective removal)", async () => {

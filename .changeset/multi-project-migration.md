@@ -1,4 +1,5 @@
 ---
+"@fusion/core": minor
 "@gsxdsm/fusion": minor
 ---
 

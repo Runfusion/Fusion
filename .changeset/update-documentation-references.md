@@ -1,5 +1,8 @@
 ---
 "@gsxdsm/fusion": patch
+"@fusion/core": patch
+"@fusion/dashboard": patch
+"@fusion/engine": patch
 ---
 
 Update documentation and remaining references for Fusion rebrand
