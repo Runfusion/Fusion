@@ -1,3 +1,27 @@
+/**
+ * Badge WebSocket hook with multi-project isolation.
+ *
+ * ## Scoped Key Format
+ * All badge state is keyed by `${projectId}:${taskId}` where `projectId` defaults to
+ * `"default"` when not in a project-scoped context. This prevents overlapping task IDs
+ * across projects from sharing badge state (e.g., `proj-A/FN-063` vs `proj-B/FN-063`).
+ *
+ * ## Project-Switch Reset Behavior (FN-1657)
+ * When `projectId` changes, the store:
+ * 1. Increments `projectContextVersionRef` to invalidate any pending callbacks from the old context
+ * 2. Clears badge snapshots immediately to prevent stale data visibility
+ * 3. Re-subscribes all active tasks over the new project-scoped WebSocket
+ * 4. Rejects incoming messages from old context via context version guard
+ *
+ * ## Backward Compatibility
+ * - WebSocket URL: `/api/ws` (default) or `/api/ws?projectId=<encoded>` when projectId is present
+ * - Subscribe payload: `{ type: "subscribe", taskId, projectId? }`
+ * - Unsubscribe payload: `{ type: "unsubscribe", taskId, projectId? }`
+ * - Incoming badge message: `{ type: "badge:updated", taskId, timestamp, prInfo?, issueInfo?, projectId? }`
+ *
+ * If incoming messages omit `projectId`, they are treated as current-connection scope only.
+ * If `projectId` is present and does not match active context, the message is ignored.
+ */
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import type { IssueInfo, PrInfo } from "@fusion/core";
 
@@ -7,6 +31,8 @@ interface BadgeUpdatedMessage {
   prInfo?: PrInfo | null;
   issueInfo?: IssueInfo | null;
   timestamp: string;
+  /** Present when message is from a project-scoped channel (FN-1745+ server) */
+  projectId?: string;
 }
 
 interface BadgeSnapshot {
@@ -44,6 +70,11 @@ class BadgeWebSocketStore {
     isConnected: false,
   };
 
+  // FN-1657 context-version guard: prevents stale callbacks from old project contexts
+  // from corrupting badge state after project switches.
+  private previousProjectIdRef: string | null = null;
+  private projectContextVersionRef = 0;
+
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => {
@@ -57,6 +88,11 @@ class BadgeWebSocketStore {
 
   setProjectId(projectId: string | null): void {
     if (this.projectId === projectId) return;
+
+    // FN-1657: Increment context version to invalidate any pending callbacks from old context
+    this.previousProjectIdRef = this.projectId;
+    this.projectContextVersionRef++;
+    this.contextVersionAtStart = this.projectContextVersionRef;
 
     const hadSubscriptions = this.subscriptionsByTask.size > 0;
     // Collect all (hookId, taskId) pairs that were subscribed
@@ -100,7 +136,7 @@ class BadgeWebSocketStore {
     // Only send subscribe message if this is a genuinely new subscription
     // (not a re-subscription from project switch or unmount/remount)
     if (isNewSubscription) {
-      this.send({ type: "subscribe", taskId });
+      this.send({ type: "subscribe", taskId, projectId: this.projectId });
     }
   }
 
@@ -113,7 +149,7 @@ class BadgeWebSocketStore {
     if (subscribers.size === 0) {
       this.subscriptionsByTask.delete(scopedKey);
       this.badgeUpdates.delete(scopedKey);
-      this.send({ type: "unsubscribe", taskId });
+      this.send({ type: "unsubscribe", taskId, projectId: this.projectId });
       this.emit();
     }
 
@@ -148,6 +184,10 @@ class BadgeWebSocketStore {
       return;
     }
 
+    // Capture context version at socket start to detect stale callbacks later
+    // This is captured in the closure so each socket remembers its creation version
+    const contextVersionAtConnect = this.projectContextVersionRef;
+
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     let url = `${protocol}//${window.location.host}/api/ws`;
     if (this.projectId) {
@@ -157,6 +197,11 @@ class BadgeWebSocketStore {
     this.ws = ws;
 
     ws.onopen = () => {
+      // FN-1657: Reject callback if context changed since socket creation
+      if (this.projectContextVersionRef !== contextVersionAtConnect) {
+        ws.close();
+        return;
+      }
       this.isConnected = true;
       this.reconnectDelayMs = 1_000;
       this.emit();
@@ -168,14 +213,25 @@ class BadgeWebSocketStore {
         uniqueTaskIds.add(taskId);
       }
       for (const taskId of uniqueTaskIds) {
-        this.send({ type: "subscribe", taskId });
+        this.send({ type: "subscribe", taskId, projectId: this.projectId });
       }
     };
 
     ws.onmessage = (event) => {
+      // FN-1657: Reject callbacks from stale context using captured version
+      if (this.projectContextVersionRef !== contextVersionAtConnect) {
+        return;
+      }
+
       try {
         const message = JSON.parse(event.data as string) as BadgeUpdatedMessage;
         if (message.type !== "badge:updated") {
+          return;
+        }
+
+        // Backward compatibility: if incoming message has projectId and it doesn't match
+        // our active context, ignore the message (FN-1745+ server behavior)
+        if (message.projectId !== undefined && message.projectId !== this.projectId) {
           return;
         }
 
@@ -193,6 +249,11 @@ class BadgeWebSocketStore {
     };
 
     ws.onclose = () => {
+      // FN-1657: Reject callbacks from stale context using captured version
+      if (this.projectContextVersionRef !== contextVersionAtConnect) {
+        return;
+      }
+
       this.ws = null;
 
       if (this.isConnected) {
@@ -204,7 +265,7 @@ class BadgeWebSocketStore {
         return;
       }
 
-      this.scheduleReconnect();
+      this.scheduleReconnect(contextVersionAtConnect);
     };
 
     ws.onerror = () => {
@@ -230,14 +291,21 @@ class BadgeWebSocketStore {
     }
   }
 
-  private scheduleReconnect(): void {
+  private scheduleReconnect(contextVersionAtSchedule?: number): void {
     if (this.reconnectTimeout) {
       return;
     }
 
+    // Capture version at schedule time if not provided
+    const versionAtSchedule = contextVersionAtSchedule ?? this.projectContextVersionRef;
+
     const delay = Math.min(this.reconnectDelayMs, 5_000);
     this.reconnectTimeout = setTimeout(() => {
       this.reconnectTimeout = null;
+      // FN-1657: Skip reconnect if context changed since scheduling
+      if (this.projectContextVersionRef !== versionAtSchedule) {
+        return;
+      }
       if (!this.shouldReconnect) {
         return;
       }
@@ -248,7 +316,7 @@ class BadgeWebSocketStore {
     this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 2, 5_000);
   }
 
-  private send(message: { type: "subscribe" | "unsubscribe"; taskId: string }): void {
+  private send(message: { type: "subscribe" | "unsubscribe"; taskId: string; projectId?: string | null }): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return;
     }

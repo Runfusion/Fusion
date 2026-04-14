@@ -75,7 +75,12 @@ describe("useBadgeWebSocket", () => {
     });
 
     expect(result.current.isConnected).toBe(true);
-    expect(MockWebSocket.instances[0].sent).toContain(JSON.stringify({ type: "subscribe", taskId: "FN-063" }));
+    // Check payload contains required fields (projectId may be null or omitted)
+    const subscribeMsg = MockWebSocket.instances[0].sent.find((p) => {
+      const parsed = JSON.parse(p);
+      return parsed.type === "subscribe" && parsed.taskId === "FN-063";
+    });
+    expect(subscribeMsg).toBeDefined();
   });
 
   it("stores badge update snapshots from the server", async () => {
@@ -194,7 +199,12 @@ describe("useBadgeWebSocket", () => {
     });
 
     expect(result.current.isConnected).toBe(true);
-    expect(MockWebSocket.instances[1].sent).toContain(JSON.stringify({ type: "subscribe", taskId: "FN-063" }));
+    // Check payload contains required fields (projectId may be null or omitted)
+    const subscribeMsg = MockWebSocket.instances[1].sent.find((p) => {
+      const parsed = JSON.parse(p);
+      return parsed.type === "subscribe" && parsed.taskId === "FN-063";
+    });
+    expect(subscribeMsg).toBeDefined();
   });
 
   it("sends unsubscribe, clears cached state, and closes the socket when the final subscription is removed", () => {
@@ -223,7 +233,12 @@ describe("useBadgeWebSocket", () => {
       result.current.unsubscribeFromBadge("FN-063");
     });
 
-    expect(MockWebSocket.instances[0].sent).toContain(JSON.stringify({ type: "unsubscribe", taskId: "FN-063" }));
+    // Check unsubscribe payload contains required fields (projectId may be null or omitted)
+    const unsubscribeMsg = MockWebSocket.instances[0].sent.find((p) => {
+      const parsed = JSON.parse(p);
+      return parsed.type === "unsubscribe" && parsed.taskId === "FN-063";
+    });
+    expect(unsubscribeMsg).toBeDefined();
     expect(MockWebSocket.instances[0].close).toHaveBeenCalled();
     expect(result.current.badgeUpdates.has("default:FN-063")).toBe(false);
   });
@@ -239,21 +254,34 @@ describe("useBadgeWebSocket", () => {
     });
 
     expect(MockWebSocket.instances).toHaveLength(1);
-    expect(
-      MockWebSocket.instances[0].sent.filter((payload) => payload === JSON.stringify({ type: "subscribe", taskId: "FN-063" })),
-    ).toHaveLength(1);
+    // Check exactly one subscribe message was sent
+    const subscribeMsgs = MockWebSocket.instances[0].sent.filter((payload) => {
+      const parsed = JSON.parse(payload);
+      return parsed.type === "subscribe" && parsed.taskId === "FN-063";
+    });
+    expect(subscribeMsgs).toHaveLength(1);
 
     act(() => {
       first.result.current.unsubscribeFromBadge("FN-063");
     });
 
-    expect(MockWebSocket.instances[0].sent).not.toContain(JSON.stringify({ type: "unsubscribe", taskId: "FN-063" }));
+    // No unsubscribe yet (still one subscription)
+    const unsubscribeAfterFirst = MockWebSocket.instances[0].sent.filter((payload) => {
+      const parsed = JSON.parse(payload);
+      return parsed.type === "unsubscribe" && parsed.taskId === "FN-063";
+    });
+    expect(unsubscribeAfterFirst).toHaveLength(0);
 
     act(() => {
       second.result.current.unsubscribeFromBadge("FN-063");
     });
 
-    expect(MockWebSocket.instances[0].sent).toContain(JSON.stringify({ type: "unsubscribe", taskId: "FN-063" }));
+    // Now unsubscribe should be sent (all subscriptions removed)
+    const unsubscribeAfterSecond = MockWebSocket.instances[0].sent.filter((payload) => {
+      const parsed = JSON.parse(payload);
+      return parsed.type === "unsubscribe" && parsed.taskId === "FN-063";
+    });
+    expect(unsubscribeAfterSecond).toHaveLength(1);
   });
 
   it("unsubscribes owned task subscriptions on unmount", () => {
@@ -266,7 +294,12 @@ describe("useBadgeWebSocket", () => {
 
     unmount();
 
-    expect(MockWebSocket.instances[0].sent).toContain(JSON.stringify({ type: "unsubscribe", taskId: "FN-063" }));
+    // Check unsubscribe payload was sent
+    const unsubscribeMsg = MockWebSocket.instances[0].sent.find((p) => {
+      const parsed = JSON.parse(p);
+      return parsed.type === "unsubscribe" && parsed.taskId === "FN-063";
+    });
+    expect(unsubscribeMsg).toBeDefined();
   });
 
   describe("projectId support", () => {
@@ -337,7 +370,10 @@ describe("useBadgeWebSocket", () => {
 
       // Record the subscribe message from initial connection
       const initialSubscribe = MockWebSocket.instances[0].sent.filter(
-        (p) => p === JSON.stringify({ type: "subscribe", taskId: "FN-063" }),
+        (p) => {
+          const parsed = JSON.parse(p);
+          return parsed.type === "subscribe" && parsed.taskId === "FN-063";
+        },
       ).length;
 
       // Change project - this immediately creates a new socket (no timer needed)
@@ -350,7 +386,10 @@ describe("useBadgeWebSocket", () => {
 
       // Subscribe should be sent again for the new connection
       const newSubscribe = MockWebSocket.instances[1].sent.filter(
-        (p) => p === JSON.stringify({ type: "subscribe", taskId: "FN-063" }),
+        (p) => {
+          const parsed = JSON.parse(p);
+          return parsed.type === "subscribe" && parsed.taskId === "FN-063";
+        },
       ).length;
 
       expect(newSubscribe).toBeGreaterThanOrEqual(1);
@@ -448,6 +487,216 @@ describe("useBadgeWebSocket", () => {
       expect(resultA.current.badgeUpdates.get("proj-B:FN-063")?.prInfo?.status).toBe("open");
       // Project A's data should not be present (overwritten by project switch)
       expect(resultA.current.badgeUpdates.get("proj-A:FN-063")).toBeUndefined();
+    });
+
+    it("includes projectId in subscribe payload when project is set", () => {
+      const { result } = renderHook(() => useBadgeWebSocket("proj-abc"));
+
+      act(() => {
+        result.current.subscribeToBadge("FN-999");
+        MockWebSocket.instances[0].emitOpen();
+      });
+
+      // Find subscribe message and verify projectId is included
+      const subscribeMsg = MockWebSocket.instances[0].sent.find((p) => {
+        const parsed = JSON.parse(p);
+        return parsed.type === "subscribe" && parsed.taskId === "FN-999";
+      });
+      expect(subscribeMsg).toBeDefined();
+      const parsed = JSON.parse(subscribeMsg!);
+      expect(parsed.projectId).toBe("proj-abc");
+    });
+
+    it("includes projectId in unsubscribe payload when project is set", () => {
+      const { result } = renderHook(() => useBadgeWebSocket("proj-xyz"));
+
+      act(() => {
+        result.current.subscribeToBadge("FN-888");
+        MockWebSocket.instances[0].emitOpen();
+      });
+
+      // Clear sent messages and unsubscribe
+      MockWebSocket.instances[0].sent = [];
+
+      act(() => {
+        result.current.unsubscribeFromBadge("FN-888");
+      });
+
+      // Find unsubscribe message and verify projectId is included
+      const unsubscribeMsg = MockWebSocket.instances[0].sent.find((p) => {
+        const parsed = JSON.parse(p);
+        return parsed.type === "unsubscribe" && parsed.taskId === "FN-888";
+      });
+      expect(unsubscribeMsg).toBeDefined();
+      const parsed = JSON.parse(unsubscribeMsg!);
+      expect(parsed.projectId).toBe("proj-xyz");
+    });
+
+    it("clears badge updates immediately on project switch (before reconnect)", () => {
+      const { result, rerender } = renderHook(
+        ({ projectId }: { projectId?: string }) => useBadgeWebSocket(projectId),
+        { initialProps: { projectId: "proj-A" } },
+      );
+
+      // Subscribe and receive badge update
+      act(() => {
+        result.current.subscribeToBadge("FN-063");
+        MockWebSocket.instances[0].emitOpen();
+        MockWebSocket.instances[0].emitMessage({
+          type: "badge:updated",
+          taskId: "FN-063",
+          prInfo: { url: "https://github.com/owner/repo/pull/1", number: 1, status: "merged", title: "PR1", headBranch: "feat", baseBranch: "main", commentCount: 0 },
+          timestamp: "2026-03-30T12:00:00.000Z",
+        });
+      });
+
+      // Badge data should exist
+      expect(result.current.badgeUpdates.get("proj-A:FN-063")?.prInfo?.status).toBe("merged");
+
+      // Switch project - this should clear badge data BEFORE reconnect
+      // We do NOT advance timers for reconnect, just verify immediate clear
+      rerender({ projectId: "proj-B" });
+
+      // Badge data should be cleared immediately (not waiting for reconnect)
+      expect(result.current.badgeUpdates.has("proj-A:FN-063")).toBe(false);
+      expect(result.current.badgeUpdates.has("proj-B:FN-063")).toBe(false);
+    });
+
+    it("ignores messages from old context after project switch (context version guard)", () => {
+      const { result, rerender } = renderHook(
+        ({ projectId }: { projectId?: string }) => useBadgeWebSocket(projectId),
+        { initialProps: { projectId: "proj-A" } },
+      );
+
+      // Subscribe in project A
+      act(() => {
+        result.current.subscribeToBadge("FN-063");
+        MockWebSocket.instances[0].emitOpen();
+      });
+
+      // Send a message on project A socket first to establish baseline
+      act(() => {
+        MockWebSocket.instances[0].emitMessage({
+          type: "badge:updated",
+          taskId: "FN-063",
+          prInfo: { url: "https://github.com/owner/repo/pull/1", number: 1, status: "merged", title: "Merged PR", headBranch: "feat", baseBranch: "main", commentCount: 0 },
+          timestamp: "2026-03-30T12:00:00.000Z",
+        });
+      });
+
+      // Verify data exists
+      expect(result.current.badgeUpdates.get("proj-A:FN-063")?.prInfo?.status).toBe("merged");
+
+      // Switch to project B - flush useEffect to ensure setProjectId runs
+      rerender({ projectId: "proj-B" });
+      act(() => {
+        vi.runAllTimers(); // Flush all pending timers/effects
+      });
+
+      // Open the new socket
+      act(() => {
+        MockWebSocket.instances[1].emitOpen();
+      });
+
+      // Send message on OLD socket (proj-A) - should be ignored due to context version
+      act(() => {
+        MockWebSocket.instances[0].emitMessage({
+          type: "badge:updated",
+          taskId: "FN-063",
+          prInfo: { url: "https://github.com/owner/repo/pull/99", number: 99, status: "stale-from-old", title: "Stale PR", headBranch: "feat", baseBranch: "main", commentCount: 0 },
+          timestamp: "2026-03-30T12:05:00.000Z",
+        });
+      });
+
+      // Badge data should still be empty (old message was rejected)
+      expect(result.current.badgeUpdates.get("proj-B:FN-063")).toBeUndefined();
+
+      // Send message on NEW socket (proj-B) - should work
+      act(() => {
+        MockWebSocket.instances[1].emitMessage({
+          type: "badge:updated",
+          taskId: "FN-063",
+          prInfo: { url: "https://github.com/owner/repo/pull/2", number: 2, status: "open", title: "Good PR", headBranch: "feat", baseBranch: "main", commentCount: 0 },
+          timestamp: "2026-03-30T12:06:00.000Z",
+        });
+      });
+
+      // Now badge data should exist from the new socket
+      expect(result.current.badgeUpdates.get("proj-B:FN-063")?.prInfo?.status).toBe("open");
+    });
+
+    it("ignores reconnect timer from old context after project switch", () => {
+      const { result, rerender } = renderHook(
+        ({ projectId }: { projectId?: string }) => useBadgeWebSocket(projectId),
+        { initialProps: { projectId: "proj-A" } },
+      );
+
+      // Subscribe and close socket to trigger reconnect timer
+      act(() => {
+        result.current.subscribeToBadge("FN-063");
+        MockWebSocket.instances[0].emitOpen();
+        MockWebSocket.instances[0].emitClose(1006); // Abnormal close triggers reconnect
+      });
+
+      // Before advancing timers, switch to project B
+      rerender({ projectId: "proj-B" });
+      act(() => {
+        vi.runAllTimers(); // Flush all pending timers including reconnect
+      });
+
+      // The old context reconnect timer should have been skipped
+      // We should have at most 2 sockets: old (closed) + new (for project B)
+      // The reconnect for project A should NOT have been created
+      expect(MockWebSocket.instances.length).toBeLessThanOrEqual(2);
+    });
+
+    it("ignores badge message with mismatched projectId from server (FN-1745+ behavior)", () => {
+      const { result } = renderHook(() => useBadgeWebSocket("proj-A"));
+
+      act(() => {
+        result.current.subscribeToBadge("FN-063");
+        MockWebSocket.instances[0].emitOpen();
+      });
+
+      // Simulate message from server with different projectId (cross-project leak attempt)
+      act(() => {
+        MockWebSocket.instances[0].emitMessage({
+          type: "badge:updated",
+          taskId: "FN-063",
+          projectId: "proj-B", // Different project
+          prInfo: { url: "https://github.com/owner/repo/pull/999", number: 999, status: "malicious", title: "Malicious PR", headBranch: "feat", baseBranch: "main", commentCount: 0 },
+          timestamp: "2026-03-30T12:00:00.000Z",
+        });
+      });
+
+      // Message with mismatched projectId should be ignored
+      // The badge data should not be updated
+      const badgeData = result.current.badgeUpdates.get("proj-A:FN-063");
+      expect(badgeData?.prInfo?.status).toBeUndefined();
+    });
+
+    it("accepts badge message with matching projectId from server", () => {
+      const { result } = renderHook(() => useBadgeWebSocket("proj-A"));
+
+      act(() => {
+        result.current.subscribeToBadge("FN-063");
+        MockWebSocket.instances[0].emitOpen();
+      });
+
+      // Simulate message from server with matching projectId
+      act(() => {
+        MockWebSocket.instances[0].emitMessage({
+          type: "badge:updated",
+          taskId: "FN-063",
+          projectId: "proj-A", // Same project
+          prInfo: { url: "https://github.com/owner/repo/pull/1", number: 1, status: "open", title: "Good PR", headBranch: "feat", baseBranch: "main", commentCount: 0 },
+          timestamp: "2026-03-30T12:00:00.000Z",
+        });
+      });
+
+      // Message with matching projectId should be accepted
+      const badgeData = result.current.badgeUpdates.get("proj-A:FN-063");
+      expect(badgeData?.prInfo?.status).toBe("open");
     });
   });
 });
