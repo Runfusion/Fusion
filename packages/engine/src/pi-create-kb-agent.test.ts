@@ -20,7 +20,7 @@ const setFallbackResolverMock = vi.fn();
 const reloadMock = vi.fn(async () => {});
 const execSyncMock = vi.fn((_cmd?: any, _opts?: any) => "");
 const existsSyncMock = vi.fn((_path: PathLike) => false);
-const readFileSyncMock = vi.fn(() => "{}");
+const readFileSyncMock = vi.fn((_path?: any) => "{}");
 
 // Route async `exec` through the `execSync` mock so the promisify bridge works.
 vi.mock("node:child_process", async () => {
@@ -537,5 +537,285 @@ describe("createKbAgent", () => {
         retry: { enabled: true, maxRetries: 3 },
       }),
     );
+  });
+
+  describe("skill selection", () => {
+    beforeEach(() => {
+      // Reset modules to ensure fresh imports for each test
+      vi.resetModules();
+    });
+
+    it("without skillSelection does not pass skillsOverride to resource loader", async () => {
+      let capturedResourceLoaderOptions: any;
+      vi.doMock("@mariozechner/pi-coding-agent", () => ({
+        AuthStorage: {
+          create: () => ({
+            setFallbackResolver: setFallbackResolverMock,
+          }),
+        },
+        createAgentSession: createAgentSessionMock,
+        createCodingTools: createCodingToolsMock,
+        createExtensionRuntime: createExtensionRuntimeMock,
+        createReadOnlyTools: createReadOnlyToolsMock,
+        DefaultResourceLoader: class {
+          constructor(options: any) {
+            capturedResourceLoaderOptions = options;
+          }
+          async reload() {
+            await reloadMock();
+          }
+        },
+        DefaultPackageManager: class {
+          async resolve() {
+            return packageManagerResolveMock();
+          }
+        },
+        discoverAndLoadExtensions: discoverAndLoadExtensionsMock,
+        getAgentDir: () => "/mock-agent-dir",
+        ModelRegistry: class {
+          find(provider: string, modelId: string) {
+            return findMock(provider, modelId);
+          }
+          getAll() {
+            return getAllMock();
+          }
+          registerProvider(name: string, config: unknown) {
+            return registerProviderMock(name, config);
+          }
+          refresh() {
+            return refreshMock();
+          }
+        },
+        SessionManager: {
+          inMemory: () => ({ kind: "session-manager" }),
+        },
+        SettingsManager: {
+          create: settingsManagerCreateMock,
+          inMemory: settingsManagerInMemoryMock,
+        },
+      }));
+
+      const { createKbAgent: freshCreateKbAgent } = await import("./pi.js");
+
+      await freshCreateKbAgent({
+        cwd: "/tmp",
+        systemPrompt: "test",
+        tools: "coding",
+      });
+
+      // skillsOverride should not be present when skillSelection is not provided
+      expect(capturedResourceLoaderOptions.skillsOverride).toBeUndefined();
+    });
+
+    it("with skillSelection (empty patterns, no requested names) passes through all skills (filter not active)", async () => {
+      // Mock existsSync to return true for settings file
+      existsSyncMock.mockImplementation((path) => {
+        const value = String(path);
+        return value.includes(".fusion/settings.json");
+      });
+      readFileSyncMock.mockImplementation((path) => {
+        const value = String(path);
+        if (value.includes(".fusion/settings.json")) {
+          return JSON.stringify({});
+        }
+        return "{}";
+      });
+
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      let capturedResourceLoaderOptions: any;
+      vi.doMock("@mariozechner/pi-coding-agent", () => ({
+        AuthStorage: {
+          create: () => ({
+            setFallbackResolver: setFallbackResolverMock,
+          }),
+        },
+        createAgentSession: createAgentSessionMock,
+        createCodingTools: createCodingToolsMock,
+        createExtensionRuntime: createExtensionRuntimeMock,
+        createReadOnlyTools: createReadOnlyToolsMock,
+        DefaultResourceLoader: class {
+          constructor(options: any) {
+            capturedResourceLoaderOptions = options;
+          }
+          async reload() {
+            await reloadMock();
+          }
+        },
+        DefaultPackageManager: class {
+          async resolve() {
+            return packageManagerResolveMock();
+          }
+        },
+        discoverAndLoadExtensions: discoverAndLoadExtensionsMock,
+        getAgentDir: () => "/mock-agent-dir",
+        ModelRegistry: class {
+          find(provider: string, modelId: string) {
+            return findMock(provider, modelId);
+          }
+          getAll() {
+            return getAllMock();
+          }
+          registerProvider(name: string, config: unknown) {
+            return registerProviderMock(name, config);
+          }
+          refresh() {
+            return refreshMock();
+          }
+        },
+        SessionManager: {
+          inMemory: () => ({ kind: "session-manager" }),
+        },
+        SettingsManager: {
+          create: settingsManagerCreateMock,
+          inMemory: settingsManagerInMemoryMock,
+        },
+      }));
+
+      const { createKbAgent: freshCreateKbAgent } = await import("./pi.js");
+
+      await freshCreateKbAgent({
+        cwd: "/tmp",
+        systemPrompt: "test",
+        tools: "coding",
+        skillSelection: {
+          projectRootDir: "/tmp",
+        },
+      });
+
+      // When filterActive is false, skillsOverride returns base unchanged
+      // The callback should exist but simply return the base skills
+      if (capturedResourceLoaderOptions.skillsOverride) {
+        const result = capturedResourceLoaderOptions.skillsOverride({
+          skills: [{ name: "test", filePath: "/path", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false }],
+          diagnostics: [],
+        });
+        expect(result.skills).toHaveLength(1); // All skills pass through
+      }
+
+      consoleErrorSpy.mockRestore();
+    });
+
+    it("with skillSelection (specific requested names) activates skill filtering", async () => {
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      let capturedResourceLoaderOptions: any;
+      vi.doMock("@mariozechner/pi-coding-agent", () => ({
+        AuthStorage: {
+          create: () => ({
+            setFallbackResolver: setFallbackResolverMock,
+          }),
+        },
+        createAgentSession: createAgentSessionMock,
+        createCodingTools: createCodingToolsMock,
+        createExtensionRuntime: createExtensionRuntimeMock,
+        createReadOnlyTools: createReadOnlyToolsMock,
+        DefaultResourceLoader: class {
+          constructor(options: any) {
+            capturedResourceLoaderOptions = options;
+          }
+          async reload() {
+            await reloadMock();
+          }
+        },
+        DefaultPackageManager: class {
+          async resolve() {
+            return packageManagerResolveMock();
+          }
+        },
+        discoverAndLoadExtensions: discoverAndLoadExtensionsMock,
+        getAgentDir: () => "/mock-agent-dir",
+        ModelRegistry: class {
+          find(provider: string, modelId: string) {
+            return findMock(provider, modelId);
+          }
+          getAll() {
+            return getAllMock();
+          }
+          registerProvider(name: string, config: unknown) {
+            return registerProviderMock(name, config);
+          }
+          refresh() {
+            return refreshMock();
+          }
+        },
+        SessionManager: {
+          inMemory: () => ({ kind: "session-manager" }),
+        },
+        SettingsManager: {
+          create: settingsManagerCreateMock,
+          inMemory: settingsManagerInMemoryMock,
+        },
+      }));
+
+      const { createKbAgent: freshCreateKbAgent } = await import("./pi.js");
+
+      await freshCreateKbAgent({
+        cwd: "/tmp",
+        systemPrompt: "test",
+        tools: "coding",
+        skillSelection: {
+          projectRootDir: "/tmp",
+          requestedSkillNames: ["paperclip"],
+          sessionPurpose: "executor",
+        },
+      });
+
+      // skillsOverride should be present
+      expect(capturedResourceLoaderOptions.skillsOverride).toBeDefined();
+
+      // The override should filter skills
+      const result = capturedResourceLoaderOptions.skillsOverride({
+        skills: [
+          { name: "paperclip", filePath: "/path/paperclip", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+          { name: "lint", filePath: "/path/lint", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+        ],
+        diagnostics: [],
+      });
+
+      // Only paperclip should pass through (matching requested name)
+      expect(result.skills).toHaveLength(1);
+      expect(result.skills[0].name).toBe("paperclip");
+
+      consoleErrorSpy.mockRestore();
+    });
+
+    it("diagnostics are logged via console.error with [pi] [skills] prefix", async () => {
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      // Test diagnostics logging by directly calling createSkillsOverrideFromSelection
+      const { createSkillsOverrideFromSelection } = await import("./skill-resolver.js");
+
+      const selection = {
+        allowedSkillPaths: new Set(["/path/nonexistent"]),
+        diagnostics: [],
+        filterActive: true,
+      };
+
+      const override = createSkillsOverrideFromSelection(selection, {
+        sessionPurpose: "executor",
+      });
+
+      // Invoke the override to trigger diagnostics
+      const result = override({
+        skills: [],
+        diagnostics: [],
+      });
+
+      // Check that diagnostics were produced
+      expect(result.diagnostics.length).toBeGreaterThan(0);
+
+      // Check that diagnostics were logged with correct prefix
+      const skillLogs = consoleErrorSpy.mock.calls.filter(call =>
+        String(call[0]).includes("[pi] [skills]")
+      );
+      expect(skillLogs.length).toBeGreaterThan(0);
+
+      // Should include the session purpose
+      const lastLog = skillLogs[skillLogs.length - 1][0] as string;
+      expect(lastLog).toContain("[executor]");
+
+      consoleErrorSpy.mockRestore();
+    });
   });
 });

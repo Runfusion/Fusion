@@ -1011,3 +1011,31 @@ All major timers/intervals properly cleared on shutdown:
 3. Watch for listener count growth — especially `task:created`, `task:updated` (SSE subscriptions)
 4. Watch for `beforeExit code=0` without preceding shutdown log (unexpected exit)
 5. `db=failed` indicates database connectivity issues
+
+## Skill Selection Resolver (FN-1510)
+
+The skill selection resolver (`packages/engine/src/skill-resolver.ts`) computes deterministic session skill sets from project settings and optional caller overrides.
+
+**Key patterns:**
+- `resolveSessionSkills(context)` reads `.fusion/settings.json` (primary) or `.pi/settings.json` (fallback) for skill patterns
+- Skill patterns use `+` prefix (include) or `-` prefix (exclude); unprefixed patterns are treated as `+`
+- `requestedSkillNames` acts as intersection filter on top of pattern-based selection (case-insensitive name matching)
+- `filterActive: false` means no filtering (all discovered skills pass through); `filterActive: true` means filtering is active
+- `createSkillsOverrideFromSelection()` returns the `skillsOverride` callback for `DefaultResourceLoader`
+- `skillsOverride` is only set when `skillSelection` is provided in `AgentOptions`; omitting it preserves existing behavior
+
+**Settings format:**
+```json
+{
+  "skills": ["+skills/foo/SKILL.md", "-skills/bar/SKILL.md"],
+  "packages": [
+    { "source": "@myorg/ai-kit", "skills": ["+skills/custom/SKILL.md"] }
+  ]
+}
+```
+
+**Test patterns:**
+- Use in-memory mock filesystem (`Map<string, string>`) for unit tests
+- `mockFiles.set(path, content)` and `mockFiles.get(path)` for read/write
+- `mockFiles.clear()` in `beforeEach` to reset state between tests
+- `vi.resetModules()` when using `vi.doMock` inside tests

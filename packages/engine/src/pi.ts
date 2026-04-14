@@ -27,6 +27,11 @@ import {
   type AgentSession,
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
+import {
+  resolveSessionSkills,
+  createSkillsOverrideFromSelection,
+  type SkillSelectionContext,
+} from "./skill-resolver.js";
 
 export interface AgentResult {
   session: AgentSession;
@@ -141,6 +146,11 @@ export interface AgentOptions {
    *  uses this instead of creating an in-memory session. Pass a file-based
    *  SessionManager to enable session persistence and pause/resume. */
   sessionManager?: SessionManager;
+  /** Optional skill selection context. When provided, the agent session's
+   *  skills are filtered according to project execution settings and any
+   *  caller-requested skill names. Omit to use default skill discovery
+   *  (all discovered skills included). */
+  skillSelection?: SkillSelectionContext;
 }
 
 function resolveConfiguredModel(
@@ -472,11 +482,28 @@ export async function createKbAgent(options: AgentOptions): Promise<AgentResult>
     options.fallbackModelId,
   );
 
+  // Resolve skill selection if provided
+  let skillsOverrideFn: ReturnType<typeof createSkillsOverrideFromSelection> | undefined;
+  if (options.skillSelection) {
+    const selectionResult = resolveSessionSkills(options.skillSelection);
+    if (selectionResult.diagnostics.length > 0) {
+      const purpose = options.skillSelection.sessionPurpose ?? "skills";
+      for (const diag of selectionResult.diagnostics) {
+        console.error(`[pi] [skills] [${purpose}] ${diag.type}: ${diag.message}`);
+      }
+    }
+    skillsOverrideFn = createSkillsOverrideFromSelection(selectionResult, {
+      requestedSkillNames: options.skillSelection.requestedSkillNames,
+      sessionPurpose: options.skillSelection.sessionPurpose,
+    });
+  }
+
   const resourceLoader = new DefaultResourceLoader({
     cwd: options.cwd,
     settingsManager,
     systemPromptOverride: () => options.systemPrompt,
     appendSystemPromptOverride: () => [],
+    ...(skillsOverrideFn ? { skillsOverride: skillsOverrideFn } : {}),
   });
   await resourceLoader.reload();
 

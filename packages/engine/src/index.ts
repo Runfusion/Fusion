@@ -18,6 +18,13 @@ export { MissionExecutionLoop, type MissionExecutionLoopOptions, type Validation
 export { aiMergeTask, type MergerOptions } from "./merger.js";
 export { reviewStep, type ReviewType, type ReviewVerdict, type ReviewResult, type ReviewOptions } from "./reviewer.js";
 export { createKbAgent, type AgentOptions, type AgentResult } from "./pi.js";
+export {
+  resolveSessionSkills,
+  createSkillsOverrideFromSelection,
+  type SkillSelectionContext,
+  type SkillSelectionResult,
+  type SkillDiagnostic,
+} from "./skill-resolver.js";
 export { AgentReflectionService, type AgentReflectionServiceOptions } from "./agent-reflection.js";
 export { WorktreePool, scanIdleWorktrees, cleanupOrphanedWorktrees } from "./worktree-pool.js";
 export { createLogger, type Logger } from "./logger.js";

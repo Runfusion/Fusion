@@ -680,6 +680,7 @@ describe("SettingsModal", () => {
 
     render(<SettingsModal onClose={onClose} addToast={addToast} initialSection="scheduling" />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitFor(() => expect(fetchGlobalConcurrency).toHaveBeenCalled());
 
     const input = screen.getByLabelText("Global Max Concurrent") as HTMLInputElement;
     expect(input.value).toBe("8");
