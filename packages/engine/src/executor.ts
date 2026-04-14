@@ -12,6 +12,7 @@ import { findWorktreeUser } from "./merger.js";
 import { generateWorktreeName, slugify } from "./worktree-names.js";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import { createKbAgent, describeModel, promptWithFallback, compactSessionContext } from "./pi.js";
+import { buildSessionSkillContext } from "./session-skill-context.js";
 import { reviewStep, type ReviewVerdict } from "./reviewer.js";
 import { AuthStorage, ModelRegistry, SessionManager, getAgentDir, type ToolDefinition, type AgentSession } from "@mariozechner/pi-coding-agent";
 import { PRIORITY_EXECUTE, type AgentSemaphore } from "./concurrency.js";
@@ -1123,6 +1124,15 @@ export class TaskExecutor {
       // When runStepsInNewSessions is enabled, each step runs in its own
       // fresh agent session via StepSessionExecutor. Otherwise, the existing
       // single-session flow runs all steps in one monolithic session.
+
+      // Build skill selection context early so it's available in both paths
+      const skillContext = await buildSessionSkillContext({
+        agentStore: this.options.agentStore!,
+        task: detail,
+        sessionPurpose: "executor",
+        projectRootDir: this.rootDir,
+      });
+
       if (settings.runStepsInNewSessions) {
         // ── Step-Session Path ──────────────────────────────────────────
         executorLog.log(`${task.id}: using step-session mode (maxParallel=${settings.maxParallelSteps ?? 2})`);
@@ -1136,6 +1146,8 @@ export class TaskExecutor {
           semaphore: this.options.semaphore,
           stuckTaskDetector: this.options.stuckTaskDetector,
           pluginRunner: this.options.pluginRunner,
+          // Pass skill selection context from the main executor session
+          skillSelection: skillContext.skillSelectionContext,
           onStepStart: (stepIndex) => {
             this.options.stuckTaskDetector?.recordProgress(task.id);
             try {
@@ -1436,6 +1448,8 @@ export class TaskExecutor {
           fallbackModelId: executorFallbackModelId,
           defaultThinkingLevel: executorThinkingLevel,
           sessionManager,
+          // Skill selection: use assigned agent skills if available, otherwise role fallback
+          ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
         });
 
         if (isResuming) {
@@ -1666,6 +1680,8 @@ export class TaskExecutor {
               fallbackModelId: executorFallbackModelId,
               defaultThinkingLevel: executorThinkingLevel,
               sessionManager: SessionManager.create(worktreePath),
+              // Skill selection: use assigned agent skills if available, otherwise role fallback
+              ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
             });
             // Update session file for the retry session (so pause/resume works)
             if (retrySessionFile) {
@@ -3091,6 +3107,14 @@ and show an appropriate message to the user.\`
       const stepInstructions = await this.resolveInstructionsForRole("executor");
       const stepSystemPrompt = buildSystemPromptWithInstructions(systemPrompt, stepInstructions);
 
+      // Build skill selection context for workflow step session
+      const skillContext = await buildSessionSkillContext({
+        agentStore: this.options.agentStore!,
+        task,
+        sessionPurpose: "executor",
+        projectRootDir: this.rootDir,
+      });
+
       const { session } = await createKbAgent({
         cwd: worktreePath,
         systemPrompt: stepSystemPrompt,
@@ -3100,6 +3124,8 @@ and show an appropriate message to the user.\`
         fallbackProvider: settings.fallbackProvider,
         fallbackModelId: settings.fallbackModelId,
         defaultThinkingLevel: settings.defaultThinkingLevel,
+        // Skill selection: use assigned agent skills if available, otherwise role fallback
+        ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
       });
 
       executorLog.log(`${task.id}: workflow step '${workflowStep.name}' using model ${describeModel(session)}${useOverride ? " (workflow step override)" : ""}`);
@@ -3911,6 +3937,15 @@ and show an appropriate message to the user.\`
           const childBasePrompt = `You are a child agent spawned by a parent task executor. Your job is to complete the following delegated task. Work autonomously and thoroughly. Report your findings and results.\n\nParent task: ${taskId}\nChild agent: ${agent.id} (${name})`;
           const childSystemPrompt = buildSystemPromptWithInstructions(childBasePrompt, childInstructions);
 
+          // Build skill selection context for child agent session
+          const childTask = await this.store.getTask(taskId);
+          const skillContext = await buildSessionSkillContext({
+            agentStore: this.options.agentStore!,
+            task: childTask,
+            sessionPurpose: "executor",
+            projectRootDir: this.rootDir,
+          });
+
           // Create child agent session
           const { session: childSession } = await createKbAgent({
             cwd: childWorktreePath,
@@ -3920,6 +3955,8 @@ and show an appropriate message to the user.\`
             defaultModelId: settings.defaultModelId,
             fallbackProvider: settings.fallbackProvider,
             fallbackModelId: settings.fallbackModelId,
+            // Skill selection: use assigned agent skills if available, otherwise role fallback
+            ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
           });
 
           // Store tracking state
