@@ -5998,8 +5998,16 @@ Task with acceptance criteria
         { onSummarize: mockOnSummarize, settings: { autoSummarizeTitles: true } }
       );
 
-      expect(task.title).toBe("AI Generated Title");
+      // Title is not set synchronously - summarization happens async
+      expect(task.title).toBeUndefined();
       expect(mockOnSummarize).toHaveBeenCalledWith(longDescription);
+
+      // Wait for async summarization to complete
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Verify title was set asynchronously
+      const updatedTask = await store.getTask(task.id);
+      expect(updatedTask.title).toBe("AI Generated Title");
     });
 
     it("should not call onSummarize when title is already provided", async () => {
@@ -6059,8 +6067,16 @@ Task with acceptance criteria
         { onSummarize: mockOnSummarize }
       );
 
-      expect(task.title).toBe("AI Title");
+      // Title is not set synchronously
+      expect(task.title).toBeUndefined();
       expect(mockOnSummarize).toHaveBeenCalled();
+
+      // Wait for async summarization to complete
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Verify title was set asynchronously
+      const updatedTask = await store.getTask(task.id);
+      expect(updatedTask.title).toBe("AI Title");
     });
 
     it("should handle onSummarize returning null", async () => {
@@ -6071,7 +6087,15 @@ Task with acceptance criteria
         { onSummarize: mockOnSummarize, settings: { autoSummarizeTitles: true } }
       );
 
+      // Task created without title
       expect(task.title).toBeUndefined();
+
+      // Wait for async summarization to complete
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Title should remain undefined
+      const updatedTask = await store.getTask(task.id);
+      expect(updatedTask.title).toBeUndefined();
     });
 
     it("should handle onSummarize throwing error gracefully", async () => {
@@ -6085,6 +6109,10 @@ Task with acceptance criteria
 
       expect(task.title).toBeUndefined();
       expect(task.id).toMatch(/^FN-\d+$/); // Task still created
+
+      // Wait for async error to be logged
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
       expect(consoleSpy.mock.calls[0][0]).toMatch(/Title summarization failed for task/);
       expect(consoleSpy.mock.calls[0][0]).toMatch(/AI service failed/);
       expect(consoleSpy.mock.calls[0][0]).toMatch(/desc length: 201/);
@@ -6103,6 +6131,12 @@ Task with acceptance criteria
       );
 
       expect(mockOnSummarize).toHaveBeenCalled();
+
+      // Wait for async summarization
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const updatedTask = await store.getTask(task.id);
+      expect(updatedTask.title).toBe("AI Title");
     });
 
     it("should not trigger summarization at exactly 200 characters", async () => {
@@ -6115,6 +6149,7 @@ Task with acceptance criteria
       );
 
       expect(mockOnSummarize).not.toHaveBeenCalled();
+      expect(task.title).toBeUndefined();
     });
 
     it("should prioritize explicit title over summarize flag", async () => {
@@ -6137,10 +6172,16 @@ Task with acceptance criteria
         { onSummarize: mockOnSummarize, settings: { autoSummarizeTitles: true } }
       );
 
-      expect(task.title).toBe("Generated Task Title");
+      // Title not set synchronously
+      expect(task.title).toBeUndefined();
 
-      const detail = await store.getTask(task.id);
-      expect(detail.prompt).toMatch(/^# FN-\d+: Generated Task Title\n/);
+      // Wait for async summarization
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Verify title and PROMPT.md were updated
+      const updatedTask = await store.getTask(task.id);
+      expect(updatedTask.title).toBe("Generated Task Title");
+      expect(updatedTask.prompt).toMatch(/^# FN-\d+: Generated Task Title\n/);
     });
 
     it("should preserve original description when generating a title", async () => {
@@ -6152,11 +6193,39 @@ Task with acceptance criteria
         { onSummarize: mockOnSummarize, settings: { autoSummarizeTitles: true } }
       );
 
-      expect(task.title).toBe("AI Summary Title");
+      // Title not set synchronously
+      expect(task.title).toBeUndefined();
       expect(task.description).toBe(originalDescription);
 
-      const detail = await store.getTask(task.id);
-      expect(detail.description).toBe(originalDescription);
+      // Wait for async summarization
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const updatedTask = await store.getTask(task.id);
+      expect(updatedTask.title).toBe("AI Summary Title");
+      expect(updatedTask.description).toBe(originalDescription);
+    });
+
+    it("should not overwrite user-set title during async summarization", async () => {
+      const mockOnSummarize = vi.fn().mockImplementation(async () => {
+        // Simulate slow AI response
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return "AI Title";
+      });
+
+      const task = await store.createTask(
+        { description: "a".repeat(201) },
+        { onSummarize: mockOnSummarize, settings: { autoSummarizeTitles: true } }
+      );
+
+      // Immediately update with user title
+      await store.updateTask(task.id, { title: "User Title" });
+
+      // Wait for delayed onSummarize to resolve
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Title should still be "User Title" (race guard should have prevented overwrite)
+      const updatedTask = await store.getTask(task.id);
+      expect(updatedTask.title).toBe("User Title");
     });
   });
 

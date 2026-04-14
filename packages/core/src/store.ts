@@ -1116,29 +1116,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     }
 
     // Determine if we should try to summarize the title
-    let title = input.title?.trim() || undefined;
+    const title = input.title?.trim() || undefined;
     const shouldSummarize =
       !title && // Only if no title provided
       input.description.length > 200 && // Only if description is long enough
       (input.summarize === true || // Explicit request
         options?.settings?.autoSummarizeTitles === true); // Auto-enabled
-
-    if (shouldSummarize && options?.onSummarize) {
-      try {
-        const generatedTitle = await options.onSummarize(input.description);
-        if (generatedTitle) {
-          title = generatedTitle;
-        }
-      } catch (err) {
-        // Log warning but don't block task creation
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        const autoEnabled = options?.settings?.autoSummarizeTitles === true;
-        console.warn(
-          `[TaskStore] Title summarization failed for task ${id}: ${errorMsg}` +
-          ` (desc length: ${input.description.length}, auto-summarize: ${autoEnabled})`
-        );
-      }
-    }
 
     // Determine enabledWorkflowSteps: explicit input takes precedence, otherwise auto-apply default-on steps
     let resolvedWorkflowSteps: string[] | undefined = input.enabledWorkflowSteps?.length
@@ -1163,6 +1146,46 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       resolvedWorkflowSteps = undefined;
     }
 
+    // Create the task immediately with current title (may be undefined)
+    const task = await this._createTaskInternal(input, title, resolvedWorkflowSteps, id);
+
+    // Fire async background handler for title summarization (non-blocking)
+    if (shouldSummarize && options?.onSummarize) {
+      Promise.resolve().then(async () => {
+        try {
+          const generatedTitle = await options.onSummarize!(input.description);
+          if (generatedTitle) {
+            // Guard against races: fetch current task and only update if no title set
+            const currentTask = await this.getTask(id);
+            if (currentTask && !currentTask.title) {
+              await this.updateTask(id, { title: generatedTitle });
+            }
+          }
+        } catch (err) {
+          // Log warning but don't crash
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          const autoEnabled = options?.settings?.autoSummarizeTitles === true;
+          console.warn(
+            `[TaskStore] Title summarization failed for task ${id}: ${errorMsg}` +
+            ` (desc length: ${input.description.length}, auto-summarize: ${autoEnabled})`
+          );
+        }
+      }).catch(() => {}); // Prevent unhandled rejection
+    }
+
+    return task;
+  }
+
+  /**
+   * Internal helper for task creation. Used by createTask() and potentially other
+   * internal methods that need to create tasks without triggering summarization.
+   */
+  private async _createTaskInternal(
+    input: TaskCreateInput,
+    title: string | undefined,
+    resolvedWorkflowSteps: string[] | undefined,
+    id: string
+  ): Promise<Task> {
     const now = new Date().toISOString();
     const task: Task = {
       id,
