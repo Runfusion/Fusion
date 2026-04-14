@@ -248,4 +248,63 @@ describe("useProjectHealth", () => {
 
     pending.resolve(createHealth("p1"));
   });
+
+  it("does not set loading to true during background polling refreshes", async () => {
+    // This is a regression test for FN-1734: polling refreshes should NOT
+    // set loading=true, as that would cause UI flicker and scroll position resets
+    vi.useFakeTimers();
+    mockFetchProjectHealth.mockResolvedValue(createHealth("p1"));
+
+    const { result } = renderUseProjectHealth(["p1"]);
+
+    // Flush initial effects
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Initial load should be complete - loading should be false
+    expect(result.current.loading).toBe(false);
+    expect(result.current.healthMap.p1).toEqual(createHealth("p1"));
+
+    // Capture loading state before polling
+    const loadingBeforePolling = result.current.loading;
+
+    // Advance timer for polling refresh (10 seconds)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+      await Promise.resolve();
+    });
+
+    // After polling refresh: loading should still be false
+    // (Regression: this was the bug - loading was set to true on every refresh)
+    expect(result.current.loading).toBe(false);
+    expect(loadingBeforePolling).toBe(false);
+
+    // Health data should still be present
+    expect(result.current.healthMap.p1).toEqual(createHealth("p1"));
+  });
+
+  it("handles projectIds transition from empty to non-empty correctly", async () => {
+    // This tests that switching from no projects to having projects works correctly
+    const { result, rerender } = renderUseProjectHealth([]);
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+    expect(result.current.healthMap).toEqual({});
+
+    // Now switch to having projects
+    rerender({ ids: ["p1"] });
+
+    // Should start loading again for the new project
+    await waitFor(() => {
+      expect(result.current.loading).toBe(true);
+    });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    expect(result.current.healthMap.p1).toEqual(createHealth("p1"));
+  });
 });

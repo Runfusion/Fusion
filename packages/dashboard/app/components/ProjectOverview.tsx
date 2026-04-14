@@ -183,8 +183,15 @@ export function ProjectOverview({
     onSelectProject(project);
   }, [onSelectProject, recentProjectIds]);
 
+  // Determine if we need to show skeleton
+  // Show skeleton for initial load if:
+  // 1. Projects list is still loading, OR
+  // 2. Projects exist but we haven't fetched health data yet (healthLoading with no data)
+  // Don't show skeleton during background health polling when health data already exists
+  const needsInitialSkeleton = loading || (healthLoading && projects.length > 0 && Object.keys(healthMap).length === 0);
+
   // Show skeleton while loading
-  if (loading || healthLoading) {
+  if (needsInitialSkeleton) {
     return <ProjectGridSkeleton />;
   }
 

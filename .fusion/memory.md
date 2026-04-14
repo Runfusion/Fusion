@@ -76,6 +76,16 @@ if (cached) {
 }
 ```
 
+## FN-1734: Polling Hook Loading Contract
+
+When implementing polling hooks that fetch data periodically (e.g., health metrics, status updates):
+- **Loading contract**: `loading` should be `true` ONLY for initial data fetch, NOT during background polling
+- **Background polling pattern**: Use a ref (`initialLoadCompleteRef`) to track if initial load is done; only set `loading: true` when `!initialLoadCompleteRef.current`
+- **Component behavior**: Components consuming these hooks should show skeleton only when there's genuinely no data (not just when `loading` is true during refresh)
+- **Why it matters**: Setting `loading` to true on every poll causes skeleton flicker and scroll position resets, degrading UX
+
+Reference: `useProjectHealth` in `packages/dashboard/app/hooks/useProjectHealth.ts` demonstrates this pattern.
+
 ## Conventions
 
 - When mocking function types with Vitest for the build (tsc), use `vi.fn().mockResolvedValue(x) as unknown as T` instead of `vi.fn<Parameters<T>, ReturnType<T>>()`. The generic syntax works at runtime but fails during `tsc` build.

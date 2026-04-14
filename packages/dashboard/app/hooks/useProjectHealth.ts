@@ -5,7 +5,7 @@ import { fetchProjectHealth } from "../api";
 export interface UseMultiProjectHealthResult {
   /** Map of project ID to health data */
   healthMap: Record<string, ProjectHealth | null>;
-  /** Loading state */
+  /** Loading state - true only for initial load, false during background polling */
   loading: boolean;
   /** Error if any */
   error: string | null;
@@ -20,21 +20,39 @@ const BATCH_SIZE = 5; // Number of concurrent health fetches
 
 /**
  * Hook for fetching health metrics for multiple projects.
- * 
+ *
  * Automatically polls every 10 seconds when the ProjectOverview is visible.
  * Stops polling when component unmounts.
  * Fetches health in batches to avoid overwhelming the server.
+ *
+ * Loading behavior: `loading` is true only during the initial fetch.
+ * Background polling updates do NOT set `loading` to true, so the UI
+ * keeps previously loaded data visible during refreshes. This prevents
+ * skeleton flicker and scroll position resets during periodic updates.
  */
 export function useProjectHealth(projectIds: string[]): UseMultiProjectHealthResult {
   const [healthMap, setHealthMap] = useState<Record<string, ProjectHealth | null>>({});
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true); // Start true for initial load
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Track if we've completed the initial load
+  const initialLoadCompleteRef = useRef(false);
 
+  /**
+   * Refresh health data for all projects.
+   * This is called both for initial load and for background polling.
+   * Background polling does NOT set loading=true to avoid UI flicker.
+   */
   const refresh = useCallback(async () => {
+    // Handle empty projectIds - clear health state and complete initial load
     if (projectIds.length === 0) {
       setHealthMap({});
+      // Mark initial load complete (there's nothing to fetch)
+      if (!initialLoadCompleteRef.current) {
+        initialLoadCompleteRef.current = true;
+      }
+      setLoading(false);
       return;
     }
 
@@ -44,16 +62,20 @@ export function useProjectHealth(projectIds: string[]): UseMultiProjectHealthRes
     }
     abortRef.current = new AbortController();
 
-    try {
+    // Determine if this is the initial load
+    const isInitial = !initialLoadCompleteRef.current;
+    if (isInitial) {
       setLoading(true);
-      setError(null);
+    }
+    setError(null);
 
+    try {
       // Fetch health in batches
       const newHealthMap: Record<string, ProjectHealth | null> = {};
-      
+
       for (let i = 0; i < projectIds.length; i += BATCH_SIZE) {
         const batch = projectIds.slice(i, i + BATCH_SIZE);
-        
+
         // Fetch this batch concurrently
         const batchResults = await Promise.allSettled(
           batch.map(async (id) => {
@@ -77,12 +99,15 @@ export function useProjectHealth(projectIds: string[]): UseMultiProjectHealthRes
       }
 
       setHealthMap(newHealthMap);
+      initialLoadCompleteRef.current = true;
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
         // Ignore abort errors
         return;
       }
       setError(err instanceof Error ? err.message : "Failed to fetch health data");
+      // Mark initial load complete even on error so we don't stay in loading state
+      initialLoadCompleteRef.current = true;
     } finally {
       setLoading(false);
     }
@@ -102,7 +127,10 @@ export function useProjectHealth(projectIds: string[]): UseMultiProjectHealthRes
 
   // Initial fetch and when project IDs change
   useEffect(() => {
-    refresh();
+    // Reset initial load state when projectIds changes
+    initialLoadCompleteRef.current = false;
+
+    void refresh();
 
     return () => {
       if (abortRef.current) {
@@ -122,7 +150,7 @@ export function useProjectHealth(projectIds: string[]): UseMultiProjectHealthRes
 
     // Start new polling interval
     intervalRef.current = setInterval(() => {
-      refresh();
+      void refresh();
     }, POLL_INTERVAL_MS);
 
     return () => {
