@@ -1,4 +1,4 @@
-import { getCurrentRepo, resolveDependencyOrder, type TaskStore, type Task, type MissionStore, type PrInfo } from "@fusion/core";
+import { getCurrentRepo, resolveDependencyOrder, type TaskStore, type Task, type MissionStore, type MissionFeature, type PrInfo } from "@fusion/core";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -116,7 +116,7 @@ export class Scheduler {
   /**
    * Async listener guard convention:
    * - Any async mission helper invoked from event listeners is wrapped in internal try/catch
-   *   (`handleMissionTaskStart` / `handleMissionTaskCompletion`).
+   *   (`handleMissionTaskMove` / `handleMissionTaskCompletion`).
    * - Fire-and-forget Promise chains in listeners terminate with `.catch(...)`.
    * Keep this invariant when adding new async EventEmitter callbacks.
    */
@@ -198,14 +198,10 @@ export class Scheduler {
         }
       }
 
-      // Mission progress tracking: when task with sliceId moves to in-progress
-      if (task.sliceId && this.options.missionStore && to === "in-progress") {
-        void this.handleMissionTaskStart(task.id, task.sliceId);
-      }
-
-      // Mission progress tracking: when task with sliceId moves to done
-      if (task.sliceId && this.options.missionStore && to === "done") {
-        void this.handleMissionTaskCompletion(task.id, task.sliceId);
+      // Mission progress tracking. Resolve by linked feature instead of only
+      // task.sliceId so older one-way-linked mission tasks are kept in sync too.
+      if (this.options.missionStore) {
+        void this.handleMissionTaskMove(task.id, to);
       }
 
       // Mission failure tracking: status/error are cleared during moveTask(in-progress → todo),
@@ -714,43 +710,103 @@ export class Scheduler {
   }
 
   /**
-   * Handle mission task start.
-   * When a task with a sliceId moves to "in-progress", update the linked
-   * feature status to "in-progress" to reflect active work.
+   * Handle a mission-linked task column move.
+   * Keeps feature state synchronized with task columns across the full task
+   * lifecycle, including review/merge transitions and older tasks whose task
+   * row has mission/slice metadata but whose feature row lacks taskId.
    */
-  private async handleMissionTaskStart(taskId: string, sliceId: string): Promise<void> {
+  private async handleMissionTaskMove(taskId: string, toColumn: import("@fusion/core").Column): Promise<void> {
     if (!this.options.missionStore) return;
 
     const missionStore = this.options.missionStore;
 
     try {
-      // Find the feature linked to this task
-      const feature = missionStore.getFeatureByTaskId(taskId);
-      if (!feature) {
-        schedulerLog.log(`Task ${taskId} has sliceId ${sliceId} but no linked feature found`);
+      const task = await this.store.getTask(taskId);
+      if (!task) {
         return;
       }
 
-      if (feature.sliceId !== sliceId) {
+      const feature = this.resolveMissionFeatureForTask(missionStore, task);
+      if (!feature) {
+        return;
+      }
+
+      if (task.sliceId && feature.sliceId !== task.sliceId) {
         schedulerLog.warn(
-          `Task ${taskId} sliceId ${sliceId} does not match linked feature ${feature.id} sliceId ${feature.sliceId}; skipping mission start update`,
+          `Task ${taskId} sliceId ${task.sliceId} does not match linked feature ${feature.id} sliceId ${feature.sliceId}; skipping mission update`,
         );
         return;
       }
 
-      // Only update if feature is still in "triaged" status
-      if (feature.status === "triaged") {
-        await missionStore.updateFeatureStatus(feature.id, "in-progress");
-        schedulerLog.log(`Feature ${feature.id} marked in-progress (task ${taskId} started)`);
+      const reconciliation = await reconcileMissionFeatureState(
+        this.store,
+        { ...task, column: toColumn },
+        feature,
+      );
+
+      if (reconciliation.kind === "blocked") {
+        schedulerLog.warn(`Task ${taskId} mission update blocked — ${reconciliation.reason}`);
+        return;
+      }
+
+      if (reconciliation.kind === "failure") {
+        schedulerLog.warn(`Task ${taskId} mission update reported failure — ${reconciliation.reason}`);
+        return;
+      }
+
+      const sliceIdBeforeUpdate = feature.sliceId;
+
+      if (reconciliation.kind === "update") {
+        missionStore.updateFeatureStatus(feature.id, reconciliation.status);
+        schedulerLog.log(
+          `Feature ${feature.id} marked ${reconciliation.status} (${reconciliation.reason})`,
+        );
+      }
+
+      if (toColumn === "done") {
+        await this.handleMissionTaskCompletion(taskId, sliceIdBeforeUpdate);
       }
     } catch (err) {
-      schedulerLog.error(`Error handling mission task start for ${taskId}:`, err);
+      schedulerLog.error(`Error handling mission task move for ${taskId}:`, err);
     }
+  }
+
+  private resolveMissionFeatureForTask(missionStore: MissionStore, task: Task): MissionFeature | undefined {
+    const linkedFeature = missionStore.getFeatureByTaskId(task.id);
+    if (linkedFeature) {
+      return linkedFeature;
+    }
+
+    if (!task.sliceId || !task.title) {
+      return undefined;
+    }
+
+    const normalizedTaskTitle = this.normalizeMissionFeatureTitle(task.title);
+    const matchingFeature = missionStore
+      .listFeatures(task.sliceId)
+      .find((feature) =>
+        !feature.taskId
+        && this.normalizeMissionFeatureTitle(feature.title) === normalizedTaskTitle
+      );
+
+    if (!matchingFeature) {
+      return undefined;
+    }
+
+    schedulerLog.warn(
+      `Repairing one-way mission link: task ${task.id} matched unlinked feature ${matchingFeature.id}`,
+    );
+    return missionStore.linkFeatureToTask(matchingFeature.id, task.id);
+  }
+
+  private normalizeMissionFeatureTitle(title: string): string {
+    return title.trim().replace(/\s+/g, " ").toLowerCase();
   }
 
   /**
    * Handle mission task completion.
-   * When a task moves to "done", update the linked feature status to "done".
+   * When a task moves to "done", advance mission execution after the linked
+   * feature status has already been reconciled by handleMissionTaskMove().
    * updateFeatureStatus cascades via recomputeSliceStatus — if all features
    * in the slice are done the slice status becomes "complete" automatically.
    *
@@ -764,10 +820,6 @@ export class Scheduler {
     const missionStore = this.options.missionStore;
 
     try {
-      const task = await this.store.getTask(taskId);
-      if (!task) {
-        return;
-      }
       const feature = missionStore.getFeatureByTaskId(taskId);
       if (!feature) return;
 
@@ -778,27 +830,7 @@ export class Scheduler {
         return;
       }
 
-      const reconciliation = await reconcileMissionFeatureState(
-        this.store,
-        { ...task, column: "done" },
-        feature,
-      );
-      if (reconciliation.kind === "blocked") {
-        schedulerLog.warn(`Task ${taskId} mission completion blocked — ${reconciliation.reason}`);
-        return;
-      }
-
-      if (reconciliation.kind === "failure") {
-        schedulerLog.warn(`Task ${taskId} mission completion reported failure — ${reconciliation.reason}`);
-        return;
-      }
-
       const sliceIdBeforeUpdate = feature.sliceId;
-
-      if (reconciliation.kind === "update" && reconciliation.status === "done") {
-        missionStore.updateFeatureStatus(feature.id, "done");
-        schedulerLog.log(`Feature ${feature.id} marked done (task ${taskId} completed)`);
-      }
 
       // Trigger the mission execution loop to run validation
       // This is called regardless of whether the slice is complete - the loop
@@ -951,6 +983,21 @@ export class Scheduler {
     try {
       const missions = missionStore.listMissions();
       const activeMissions = missions.filter((m) => m.status === "active");
+      const activeMissionIds = new Set(activeMissions.map((mission) => mission.id));
+      const taskBySliceAndTitle = new Map<string, Task | null>();
+      const missionTasks = await this.store.listTasks({ slim: true, includeArchived: false });
+
+      for (const task of missionTasks) {
+        if (!task.missionId || !task.sliceId || !task.title || !activeMissionIds.has(task.missionId)) {
+          continue;
+        }
+
+        const key = this.getMissionFeatureTitleKey(task.sliceId, task.title);
+        taskBySliceAndTitle.set(
+          key,
+          taskBySliceAndTitle.has(key) ? null : task,
+        );
+      }
 
       for (const mission of activeMissions) {
         const hierarchy = missionStore.getMissionWithHierarchy(mission.id);
@@ -962,12 +1009,28 @@ export class Scheduler {
 
         for (const slice of activeSlices) {
           for (const feature of slice.features) {
-            if (!feature.taskId) continue;
+            let featureForReconciliation = feature;
+            let task: Task | undefined;
 
-            const task = await this.store.getTask(feature.taskId);
+            if (feature.taskId) {
+              task = await this.store.getTask(feature.taskId);
+            } else {
+              const matchedTask = taskBySliceAndTitle.get(
+                this.getMissionFeatureTitleKey(feature.sliceId, feature.title),
+              );
+              if (matchedTask) {
+                schedulerLog.warn(
+                  `Repairing one-way mission link during reconciliation: task ${matchedTask.id} matched unlinked feature ${feature.id}`,
+                );
+                featureForReconciliation = missionStore.linkFeatureToTask(feature.id, matchedTask.id);
+                task = matchedTask;
+                totalFixed++;
+              }
+            }
+
             if (!task) continue;
 
-            const reconciliation = await reconcileMissionFeatureState(this.store, task, feature);
+            const reconciliation = await reconcileMissionFeatureState(this.store, task, featureForReconciliation);
 
             if (reconciliation.kind === "failure") {
               if (this.options.onTaskFailed) {
@@ -985,7 +1048,7 @@ export class Scheduler {
             }
 
             if (reconciliation.kind === "update") {
-              missionStore.updateFeatureStatus(feature.id, reconciliation.status);
+              missionStore.updateFeatureStatus(featureForReconciliation.id, reconciliation.status);
               totalFixed++;
             }
           }
@@ -1000,5 +1063,9 @@ export class Scheduler {
     }
 
     return totalFixed;
+  }
+
+  private getMissionFeatureTitleKey(sliceId: string, title: string): string {
+    return `${sliceId}\0${this.normalizeMissionFeatureTitle(title)}`;
   }
 }

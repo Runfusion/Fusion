@@ -124,6 +124,14 @@ describe("Scheduler", () => {
       getMissionWithHierarchy: vi.fn(),
       findNextPendingSlice: vi.fn(),
       activateSlice: vi.fn(),
+      listFeatures: vi.fn().mockReturnValue([]),
+      linkFeatureToTask: vi.fn((featureId: string, taskId: string) => ({
+        id: featureId,
+        taskId,
+        sliceId: "SL-001",
+        title: "Linked feature",
+        status: "triaged",
+      })),
       ...overrides,
     };
   }
@@ -1148,7 +1156,13 @@ describe("Scheduler", () => {
         updateFeatureStatus: vi.fn().mockReturnValue({ id: "F-001", status: "in-progress" }),
       });
 
-      const store = createMockStore();
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue(createMockTask({
+          id: "FN-001",
+          column: "in-progress",
+          sliceId: "SL-001",
+        })),
+      });
       const scheduler = new Scheduler(store, { missionStore: mockMissionStore as any });
 
       // Trigger task:moved event by calling the registered handler
@@ -1157,9 +1171,9 @@ describe("Scheduler", () => {
       expect(movedHandler).toBeDefined();
 
       // Simulate task moving to in-progress with sliceId
-      const task = createMockTask({ id: "FN-001", sliceId: "SL-001" });
+      const task = createMockTask({ id: "FN-001", column: "in-progress", sliceId: "SL-001" });
       movedHandler({ task, to: "in-progress" });
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(mockMissionStore.getFeatureByTaskId).toHaveBeenCalledWith("FN-001");
       expect(mockMissionStore.updateFeatureStatus).toHaveBeenCalledWith("F-001", "in-progress");
@@ -1171,15 +1185,21 @@ describe("Scheduler", () => {
         updateFeatureStatus: vi.fn(),
       });
 
-      const store = createMockStore();
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue(createMockTask({
+          id: "FN-001",
+          column: "in-progress",
+          sliceId: "SL-001",
+        })),
+      });
       const scheduler = new Scheduler(store, { missionStore: mockMissionStore as any });
 
       const onCalls = (store.on as any).mock.calls;
       const movedHandler = onCalls.find((call: any) => call[0] === "task:moved")?.[1];
 
-      const task = createMockTask({ id: "FN-001", sliceId: "SL-001" });
+      const task = createMockTask({ id: "FN-001", column: "in-progress", sliceId: "SL-001" });
       movedHandler({ task, to: "in-progress" });
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(mockMissionStore.getFeatureByTaskId).toHaveBeenCalledWith("FN-001");
       expect(mockMissionStore.updateFeatureStatus).not.toHaveBeenCalled();
@@ -1207,7 +1227,13 @@ describe("Scheduler", () => {
         activateSlice: vi.fn().mockReturnValue({ id: "SL-002", status: "active" }),
       });
 
-      const store = createMockStore();
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue(createMockTask({
+          id: "FN-001",
+          column: "done",
+          sliceId: "SL-001",
+        })),
+      });
       const scheduler = new Scheduler(store, { missionStore: mockMissionStore as any });
 
       const slice = { id: "SL-001", milestoneId: "MS-001", status: "complete" } as any;
@@ -1225,7 +1251,13 @@ describe("Scheduler", () => {
         getMission: vi.fn().mockReturnValue({ id: "M-001", status: "active", autoAdvance: false }),
       });
 
-      const store = createMockStore();
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue(createMockTask({
+          id: "FN-001",
+          column: "done",
+          sliceId: "SL-001",
+        })),
+      });
       const scheduler = new Scheduler(store, { missionStore: mockMissionStore as any });
 
       const slice = { id: "SL-001", milestoneId: "MS-001", status: "complete" } as any;
@@ -1355,15 +1387,21 @@ describe("Scheduler", () => {
         updateFeatureStatus: vi.fn(),
       });
 
-      const store = createMockStore();
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue(createMockTask({
+          id: "FN-001",
+          column: "done",
+          sliceId: "SL-001",
+        })),
+      });
       const scheduler = new Scheduler(store, { missionStore: mockMissionStore as any });
 
       const onCalls = (store.on as any).mock.calls;
       const movedHandler = onCalls.find((call: any) => call[0] === "task:moved")?.[1];
 
-      const task = createMockTask({ id: "FN-001", sliceId: "SL-001" });
+      const task = createMockTask({ id: "FN-001", column: "done", sliceId: "SL-001" });
       movedHandler({ task, from: "in-progress", to: "done" });
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(mockMissionStore.updateFeatureStatus).not.toHaveBeenCalled();
       expect(mockMissionStore.getSlice).not.toHaveBeenCalled();
@@ -1769,13 +1807,79 @@ describe("Scheduler", () => {
         missionAutopilot: mockAutopilot as any,
       });
 
-      // Simulate task:moved event: task with sliceId moves to "done"
-      await (scheduler as any).handleMissionTaskCompletion("FN-001", "SL-001");
+      // Simulate task:moved event: task moves to "done"
+      await (scheduler as any).handleMissionTaskMove("FN-001", "done");
 
       // Feature status should be updated to "done"
       expect(mockMissionStore.updateFeatureStatus).toHaveBeenCalledWith("F-001", "done");
       // Should delegate to autopilot (not call onSliceComplete)
       expect(mockAutopilot.handleTaskCompletion).toHaveBeenCalledWith("FN-001");
+    });
+
+    it("marks a linked feature in-progress when a task reaches in-review without task slice metadata", async () => {
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue(createMockTask({
+          id: "FN-1702",
+          column: "in-review",
+          sliceId: undefined,
+        })),
+      });
+      const mockMissionStore = createMockMissionStore({
+        getFeatureByTaskId: vi.fn().mockReturnValue({
+          id: "F-1702",
+          sliceId: "SL-001",
+          status: "triaged",
+        }),
+        updateFeatureStatus: vi.fn(),
+      });
+
+      const scheduler = new Scheduler(store, {
+        missionStore: mockMissionStore as any,
+      });
+
+      await (scheduler as any).handleMissionTaskMove("FN-1702", "in-review");
+
+      expect(mockMissionStore.updateFeatureStatus).toHaveBeenCalledWith("F-1702", "in-progress");
+    });
+
+    it("links a one-way mission task to a matching unlinked feature before marking it done", async () => {
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue(createMockTask({
+          id: "FN-1702",
+          title: "First-run onboarding trigger",
+          column: "done",
+          missionId: "M-001",
+          sliceId: "SL-001",
+        } as Partial<Task>)),
+      });
+      const matchedFeature = {
+        id: "F-1702",
+        sliceId: "SL-001",
+        title: "First-run onboarding trigger",
+        status: "triaged",
+      };
+      const linkedFeature = {
+        ...matchedFeature,
+        taskId: "FN-1702",
+      };
+      const mockMissionStore = createMockMissionStore({
+        getFeatureByTaskId: vi.fn()
+          .mockReturnValueOnce(undefined)
+          .mockReturnValue(linkedFeature),
+        listFeatures: vi.fn().mockReturnValue([matchedFeature]),
+        linkFeatureToTask: vi.fn().mockReturnValue(linkedFeature),
+        updateFeatureStatus: vi.fn(),
+        getSlice: vi.fn().mockReturnValue({ id: "SL-001", milestoneId: "MS-001", status: "active" }),
+      });
+
+      const scheduler = new Scheduler(store, {
+        missionStore: mockMissionStore as any,
+      });
+
+      await (scheduler as any).handleMissionTaskMove("FN-1702", "done");
+
+      expect(mockMissionStore.linkFeatureToTask).toHaveBeenCalledWith("F-1702", "FN-1702");
+      expect(mockMissionStore.updateFeatureStatus).toHaveBeenCalledWith("F-1702", "done");
     });
 
     it("falls back to onSliceComplete when no autopilot", async () => {
@@ -1823,7 +1927,7 @@ describe("Scheduler", () => {
         missionStore: mockMissionStore as any,
       });
 
-      await (scheduler as any).handleMissionTaskCompletion("FN-001", "SL-001");
+      await (scheduler as any).handleMissionTaskMove("FN-001", "done");
 
       // Feature status should be updated
       expect(mockMissionStore.updateFeatureStatus).toHaveBeenCalledWith("F-001", "done");
@@ -1863,7 +1967,7 @@ describe("Scheduler", () => {
         missionAutopilot: mockAutopilot as any,
       });
 
-      await (scheduler as any).handleMissionTaskCompletion("FN-001", "SL-001");
+      await (scheduler as any).handleMissionTaskMove("FN-001", "done");
 
       // Delegates to autopilot, which internally checks autoAdvance
       expect(mockAutopilot.handleTaskCompletion).toHaveBeenCalledWith("FN-001");
@@ -1899,7 +2003,7 @@ describe("Scheduler", () => {
         missionAutopilot: mockAutopilot as any,
       });
 
-      await (scheduler as any).handleMissionTaskCompletion("FN-001", "SL-001");
+      await (scheduler as any).handleMissionTaskMove("FN-001", "done");
 
       expect(mockMissionStore.updateFeatureStatus).not.toHaveBeenCalled();
       expect(mockAutopilot.handleTaskCompletion).not.toHaveBeenCalled();
@@ -1969,6 +2073,43 @@ describe("Scheduler", () => {
       const result = await scheduler.reconcileAllMissionFeatures();
 
       expect(mockMissionStore.updateFeatureStatus).toHaveBeenCalledWith("F-001", "in-progress");
+      expect(result).toBe(1);
+    });
+
+    it("updates feature to in-progress when task is in-review and feature is triaged", async () => {
+      const store = createMockStore({
+        getTask: vi.fn().mockReturnValue(createMockTask({ id: "FN-1702", column: "in-review" })),
+      });
+      const mockMissionStore = createMockMissionStore({
+        listMissions: vi.fn().mockReturnValue([
+          { id: "M-001", status: "active" },
+        ]),
+        getMissionWithHierarchy: vi.fn().mockReturnValue({
+          id: "M-001",
+          status: "active",
+          milestones: [{
+            id: "MS-001",
+            slices: [{
+              id: "SL-001",
+              status: "active",
+              features: [{
+                id: "F-1702",
+                taskId: "FN-1702",
+                status: "triaged",
+              }],
+            }],
+          }],
+        }),
+        updateFeatureStatus: vi.fn(),
+      });
+
+      const scheduler = new Scheduler(store, {
+        missionStore: mockMissionStore as any,
+      });
+
+      const result = await scheduler.reconcileAllMissionFeatures();
+
+      expect(mockMissionStore.updateFeatureStatus).toHaveBeenCalledWith("F-1702", "in-progress");
       expect(result).toBe(1);
     });
 
@@ -2170,6 +2311,60 @@ describe("Scheduler", () => {
 
       expect(mockMissionStore.updateFeatureStatus).not.toHaveBeenCalled();
       expect(result).toBe(0);
+    });
+
+    it("repairs one-way mission task links by exact feature title during reconciliation", async () => {
+      const matchedTask = createMockTask({
+        id: "FN-1702",
+        title: "First-run onboarding trigger",
+        column: "done",
+        missionId: "M-001",
+        sliceId: "SL-001",
+      } as Partial<Task>);
+      const matchedFeature = {
+        id: "F-1702",
+        sliceId: "SL-001",
+        title: "First-run onboarding trigger",
+        taskId: undefined,
+        status: "triaged",
+      };
+      const linkedFeature = {
+        ...matchedFeature,
+        taskId: "FN-1702",
+      };
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([matchedTask]),
+        getTask: vi.fn(),
+      });
+      const mockMissionStore = createMockMissionStore({
+        listMissions: vi.fn().mockReturnValue([
+          { id: "M-001", status: "active" },
+        ]),
+        getMissionWithHierarchy: vi.fn().mockReturnValue({
+          id: "M-001",
+          status: "active",
+          milestones: [{
+            id: "MS-001",
+            slices: [{
+              id: "SL-001",
+              status: "active",
+              features: [matchedFeature],
+            }],
+          }],
+        }),
+        linkFeatureToTask: vi.fn().mockReturnValue(linkedFeature),
+        updateFeatureStatus: vi.fn(),
+      });
+
+      const scheduler = new Scheduler(store, {
+        missionStore: mockMissionStore as any,
+      });
+
+      const result = await scheduler.reconcileAllMissionFeatures();
+
+      expect(mockMissionStore.linkFeatureToTask).toHaveBeenCalledWith("F-1702", "FN-1702");
+      expect(mockMissionStore.updateFeatureStatus).toHaveBeenCalledWith("F-1702", "done");
+      expect(result).toBe(2);
     });
 
     it("skips features without taskId", async () => {

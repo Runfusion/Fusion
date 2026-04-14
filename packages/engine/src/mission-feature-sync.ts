@@ -38,14 +38,28 @@ export async function reconcileMissionFeatureState(
     return { kind: "noop" };
   }
 
+  if (task.column === "archived") {
+    if (feature.status !== "done") {
+      return {
+        kind: "update",
+        status: "done",
+        reason: `task ${task.id} was archived after completion`,
+      };
+    }
+
+    return { kind: "noop" };
+  }
+
   if (
-    task.column === "in-progress"
+    (task.column === "in-progress" || task.column === "in-review")
     && (feature.status === "triaged" || feature.status === "defined")
   ) {
     return {
       kind: "update",
       status: "in-progress",
-      reason: `task ${task.id} started`,
+      reason: task.column === "in-review"
+        ? `task ${task.id} is in review`
+        : `task ${task.id} started`,
     };
   }
 
