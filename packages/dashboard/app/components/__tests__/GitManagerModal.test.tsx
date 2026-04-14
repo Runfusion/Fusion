@@ -1177,7 +1177,7 @@ describe("GitManagerModal", () => {
     await user.click(screen.getByRole("button", { name: /^add$/i }));
 
     await waitFor(() => {
-      expect(addGitRemote).toHaveBeenCalledWith("origin", "https://github.com/test/repo.git");
+      expectLatestCallStartsWith(addGitRemote as any, "origin", "https://github.com/test/repo.git");
       expect(mockAddToast).toHaveBeenCalledWith("Remote 'origin' added successfully", "success");
     });
   });
@@ -1233,7 +1233,7 @@ describe("GitManagerModal", () => {
 
     await waitFor(() => {
       expect(window.confirm).toHaveBeenCalledWith("Are you sure you want to remove remote 'origin'?");
-      expect(removeGitRemote).toHaveBeenCalledWith("origin");
+      expectLatestCallStartsWith(removeGitRemote as any, "origin");
       expect(mockAddToast).toHaveBeenCalledWith("Remote 'origin' removed", "success");
     });
   });
@@ -1267,7 +1267,7 @@ describe("GitManagerModal", () => {
     await user.click(saveButton as HTMLButtonElement);
 
     await waitFor(() => {
-      expect(renameGitRemote).toHaveBeenCalledWith("origin", "upstream");
+      expectLatestCallStartsWith(renameGitRemote as any, "origin", "upstream");
       expect(mockAddToast).toHaveBeenCalledWith("Remote renamed to 'upstream'", "success");
     });
   });
@@ -1300,7 +1300,7 @@ describe("GitManagerModal", () => {
     await user.click(saveButton as HTMLButtonElement);
 
     await waitFor(() => {
-      expect(updateGitRemoteUrl).toHaveBeenCalledWith("origin", "https://new-url.com/repo.git");
+      expectLatestCallStartsWith(updateGitRemoteUrl as any, "origin", "https://new-url.com/repo.git");
       expect(mockAddToast).toHaveBeenCalledWith("Remote URL updated", "success");
     });
   });
@@ -1422,7 +1422,7 @@ describe("GitManagerModal", () => {
     await user.click(saveButton as HTMLButtonElement);
 
     await waitFor(() => {
-      expect(renameGitRemote).toHaveBeenCalledWith("origin", "upstream");
+      expectLatestCallStartsWith(renameGitRemote as any, "origin", "upstream");
     });
   });
 
@@ -1456,7 +1456,7 @@ describe("GitManagerModal", () => {
     await user.click(saveButton as HTMLButtonElement);
 
     await waitFor(() => {
-      expect(updateGitRemoteUrl).toHaveBeenCalledWith("origin", "https://new-url.com/repo.git");
+      expectLatestCallStartsWith(updateGitRemoteUrl as any, "origin", "https://new-url.com/repo.git");
     });
   });
 
@@ -2088,5 +2088,265 @@ describe("GitManagerModal", () => {
 
     // fetchCommitDiff should have been called for both commits
     expect(fetchCommitDiff).toHaveBeenCalledTimes(2);
+  });
+
+  // ── projectId Propagation ───────────────────────────────────────
+
+  describe("projectId propagation", () => {
+    it("passes projectId to fetchGitRemotesDetailed when remotes tab loads", async () => {
+      render(
+        <GitManagerModal
+          isOpen={true}
+          onClose={vi.fn()}
+          tasks={mockTasks}
+          addToast={mockAddToast}
+          projectId="proj-abc"
+        />
+      );
+      fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+      await waitFor(() => {
+        expect(fetchGitRemotesDetailed).toHaveBeenCalledWith("proj-abc");
+      });
+    });
+
+    it("passes projectId to fetchRemote when Fetch is clicked", async () => {
+      const user = userEvent.setup();
+      render(
+        <GitManagerModal
+          isOpen={true}
+          onClose={vi.fn()}
+          tasks={mockTasks}
+          addToast={mockAddToast}
+          projectId="proj-abc"
+        />
+      );
+      fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+      const fetchButton = await screen.findByRole("button", { name: /fetch/i });
+      await user.click(fetchButton);
+
+      await waitFor(() => {
+        expectLatestCallStartsWith(fetchRemote as any, undefined, "proj-abc");
+      });
+    });
+
+    it("passes projectId to fetchAheadCommits when ahead commits are loaded", async () => {
+      // Mock status with ahead > 0 to trigger loadAheadCommits
+      (fetchGitStatus as any).mockResolvedValue({
+        branch: "main",
+        commit: "abc1234",
+        isDirty: false,
+        ahead: 2,
+        behind: 0,
+      });
+      (fetchAheadCommits as any).mockResolvedValue([
+        {
+          hash: "aaa1111",
+          shortHash: "aaa1",
+          message: "Ahead commit 1",
+          author: "Dev",
+          date: "2026-01-01T00:00:00Z",
+          parents: [],
+        },
+      ]);
+
+      render(
+        <GitManagerModal
+          isOpen={true}
+          onClose={vi.fn()}
+          tasks={mockTasks}
+          addToast={mockAddToast}
+          projectId="proj-abc"
+        />
+      );
+      fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+      await waitFor(() => {
+        expect(fetchAheadCommits).toHaveBeenCalledWith("proj-abc");
+      });
+    });
+
+    it("passes projectId to fetchRemoteCommits when remote commits are loaded", async () => {
+      (fetchRemoteCommits as any).mockResolvedValue([
+        {
+          hash: "rc1",
+          shortHash: "rc1",
+          message: "Remote commit 1",
+          author: "Dev",
+          date: "2026-01-01T00:00:00Z",
+          parents: [],
+        },
+      ]);
+
+      render(
+        <GitManagerModal
+          isOpen={true}
+          onClose={vi.fn()}
+          tasks={mockTasks}
+          addToast={mockAddToast}
+          projectId="proj-abc"
+        />
+      );
+      fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+      await waitFor(() => {
+        expect(fetchRemoteCommits).toHaveBeenCalledWith("origin", undefined, 10, "proj-abc");
+      });
+    });
+
+    it("passes projectId to addGitRemote when adding a new remote", async () => {
+      const user = userEvent.setup();
+      (fetchGitRemotesDetailed as any).mockResolvedValue([]);
+      (addGitRemote as any).mockResolvedValue(undefined);
+
+      render(
+        <GitManagerModal
+          isOpen={true}
+          onClose={vi.fn()}
+          tasks={mockTasks}
+          addToast={mockAddToast}
+          projectId="proj-abc"
+        />
+      );
+      fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText("Add Remote")).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText("Add Remote"));
+
+      const nameInput = screen.getByPlaceholderText("Remote name (e.g., origin)");
+      const urlInput = screen.getByPlaceholderText("Repository URL");
+
+      await user.type(nameInput, "newremote");
+      await user.type(urlInput, "https://github.com/test/repo.git");
+
+      await user.click(screen.getByRole("button", { name: /^add$/i }));
+
+      await waitFor(() => {
+        expect(addGitRemote).toHaveBeenCalledWith("newremote", "https://github.com/test/repo.git", "proj-abc");
+      });
+    });
+
+    it("passes projectId to removeGitRemote when removing a remote", async () => {
+      const user = userEvent.setup();
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      (fetchGitRemotesDetailed as any).mockResolvedValue([
+        {
+          name: "origin",
+          fetchUrl: "https://github.com/dustinbyrne/kb.git",
+          pushUrl: "https://github.com/dustinbyrne/kb.git",
+        },
+      ]);
+      (removeGitRemote as any).mockResolvedValue(undefined);
+
+      render(
+        <GitManagerModal
+          isOpen={true}
+          onClose={vi.fn()}
+          tasks={mockTasks}
+          addToast={mockAddToast}
+          projectId="proj-abc"
+        />
+      );
+      fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText("origin")).toBeInTheDocument();
+      });
+
+      const removeButton = screen.getByTitle("Remove remote");
+      await user.click(removeButton);
+
+      await waitFor(() => {
+        expect(removeGitRemote).toHaveBeenCalledWith("origin", "proj-abc");
+      });
+    });
+
+    it("passes projectId to renameGitRemote when renaming a remote", async () => {
+      const user = userEvent.setup();
+      (fetchGitRemotesDetailed as any).mockResolvedValue([
+        {
+          name: "origin",
+          fetchUrl: "https://github.com/dustinbyrne/kb.git",
+          pushUrl: "https://github.com/dustinbyrne/kb.git",
+        },
+      ]);
+      (renameGitRemote as any).mockResolvedValue(undefined);
+
+      render(
+        <GitManagerModal
+          isOpen={true}
+          onClose={vi.fn()}
+          tasks={mockTasks}
+          addToast={mockAddToast}
+          projectId="proj-abc"
+        />
+      );
+      fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText("origin")).toBeInTheDocument();
+      });
+
+      const renameButton = screen.getByTitle("Edit remote name");
+      await user.click(renameButton);
+
+      const nameInput = screen.getByDisplayValue("origin");
+      await user.clear(nameInput);
+      await user.type(nameInput, "upstream");
+
+      const saveButton = nameInput.closest(".gm-remote-edit")?.querySelector(".btn.btn-sm.btn-primary");
+      expect(saveButton).toBeTruthy();
+      await user.click(saveButton as HTMLButtonElement);
+
+      await waitFor(() => {
+        expect(renameGitRemote).toHaveBeenCalledWith("origin", "upstream", "proj-abc");
+      });
+    });
+
+    it("passes projectId to updateGitRemoteUrl when updating remote URL", async () => {
+      const user = userEvent.setup();
+      (fetchGitRemotesDetailed as any).mockResolvedValue([
+        {
+          name: "origin",
+          fetchUrl: "https://old-url.com/repo.git",
+          pushUrl: "https://old-url.com/repo.git",
+        },
+      ]);
+      (updateGitRemoteUrl as any).mockResolvedValue(undefined);
+
+      render(
+        <GitManagerModal
+          isOpen={true}
+          onClose={vi.fn()}
+          tasks={mockTasks}
+          addToast={mockAddToast}
+          projectId="proj-abc"
+        />
+      );
+      fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText("origin")).toBeInTheDocument();
+      });
+
+      const editButton = screen.getByTitle("Edit remote URL");
+      await user.click(editButton);
+
+      const urlInput = screen.getByDisplayValue("https://old-url.com/repo.git");
+      await user.clear(urlInput);
+      await user.type(urlInput, "https://new-url.com/repo.git");
+
+      const saveButton = urlInput.closest(".gm-remote-edit")?.querySelector(".btn.btn-sm.btn-primary");
+      expect(saveButton).toBeTruthy();
+      await user.click(saveButton as HTMLButtonElement);
+
+      await waitFor(() => {
+        expect(updateGitRemoteUrl).toHaveBeenCalledWith("origin", "https://new-url.com/repo.git", "proj-abc");
+      });
+    });
   });
 });

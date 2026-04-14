@@ -836,6 +836,7 @@ export function GitManagerModal({ isOpen, onClose, tasks, addToast, projectId }:
                 onPull={handlePull}
                 onPush={handlePush}
                 addToast={addToast}
+                projectId={projectId}
               />
             )}
           </div>
@@ -1646,6 +1647,7 @@ function RemotesPanel({
   onPull,
   onPush,
   addToast,
+  projectId,
 }: {
   status: GitStatus | null;
   remoteLoading: string | null;
@@ -1654,6 +1656,7 @@ function RemotesPanel({
   onPull: () => void;
   onPush: () => void;
   addToast: (message: string, type?: ToastType) => void;
+  projectId?: string;
 }) {
   const [remotes, setRemotes] = useState<GitRemoteDetailed[]>([]);
   const [loading, setLoading] = useState(false);
@@ -1727,7 +1730,7 @@ function RemotesPanel({
   const loadRemotes = async () => {
     setLoading(true);
     try {
-      const data = await fetchGitRemotesDetailed();
+      const data = await fetchGitRemotesDetailed(projectId);
       setRemotes(data);
     } catch (err: any) {
       addToast(err.message || "Failed to load remotes", "error");
@@ -1739,7 +1742,7 @@ function RemotesPanel({
   const loadAheadCommits = async () => {
     setLoadingAhead(true);
     try {
-      const commits = await fetchAheadCommits();
+      const commits = await fetchAheadCommits(projectId);
       setAheadCommits(commits);
     } catch {
       // Silently ignore — ahead commits are a nice-to-have
@@ -1753,7 +1756,7 @@ function RemotesPanel({
     setLoadingRemoteCommits(true);
     setRemoteCommitsError(null);
     try {
-      const commits = await fetchRemoteCommits(remoteName, undefined, 10);
+      const commits = await fetchRemoteCommits(remoteName, undefined, 10, projectId);
       setRemoteCommits(commits);
     } catch (err: any) {
       setRemoteCommitsError(err.message || "Failed to load remote commits");
@@ -1769,7 +1772,7 @@ function RemotesPanel({
 
     setRemoteActionLoading("add");
     try {
-      await addGitRemote(newRemoteName.trim(), newRemoteUrl.trim());
+      await addGitRemote(newRemoteName.trim(), newRemoteUrl.trim(), projectId);
       addToast(`Remote '${newRemoteName}' added successfully`, "success");
       setNewRemoteName("");
       setNewRemoteUrl("");
@@ -1787,7 +1790,7 @@ function RemotesPanel({
 
     setRemoteActionLoading(`remove-${name}`);
     try {
-      await removeGitRemote(name);
+      await removeGitRemote(name, projectId);
       addToast(`Remote '${name}' removed`, "success");
       await loadRemotes();
     } catch (err: any) {
@@ -1802,7 +1805,7 @@ function RemotesPanel({
 
     setRemoteActionLoading(`rename-${oldName}`);
     try {
-      await renameGitRemote(oldName, editNameValue.trim());
+      await renameGitRemote(oldName, editNameValue.trim(), projectId);
       addToast(`Remote renamed to '${editNameValue.trim()}'`, "success");
       setEditingRemote(null);
       setEditNameValue("");
@@ -1819,7 +1822,7 @@ function RemotesPanel({
 
     setRemoteActionLoading(`url-${name}`);
     try {
-      await updateGitRemoteUrl(name, editUrlValue.trim());
+      await updateGitRemoteUrl(name, editUrlValue.trim(), projectId);
       addToast(`Remote URL updated`, "success");
       setEditingRemote(null);
       setEditUrlValue("");
