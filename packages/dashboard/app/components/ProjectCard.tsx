@@ -1,4 +1,4 @@
-import { memo, useCallback } from "react";
+import { memo, useCallback, useState } from "react";
 import { Play, Pause, AlertCircle, Loader2, MoreHorizontal, Trash2, Folder, ArrowRight } from "lucide-react";
 import type { RegisteredProject, ProjectHealth, ProjectStatus } from "@fusion/core";
 import type { NodeInfo } from "../api";
@@ -92,6 +92,7 @@ function ProjectCardInner({
   node,
   isLoading = false,
 }: ProjectCardProps) {
+  const [removeArmed, setRemoveArmed] = useState(false);
   const statusConfig = STATUS_CONFIG[project.status];
   const StatusIcon = statusConfig.icon;
 
@@ -111,8 +112,14 @@ function ProjectCardInner({
 
   const handleRemove = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!removeArmed) {
+      setRemoveArmed(true);
+      return;
+    }
+
     onRemove(project);
-  }, [onRemove, project]);
+    setRemoveArmed(false);
+  }, [removeArmed, onRemove, project]);
 
   const isPaused = project.status === "paused";
   const isErrored = project.status === "errored";
@@ -227,13 +234,14 @@ function ProjectCardInner({
           </button>
 
           <button
-            className="project-card-action project-card-action-remove"
+            className={`project-card-action project-card-action-remove ${removeArmed ? "is-armed" : ""}`}
             onClick={handleRemove}
             disabled={isLoading}
-            title="Remove project"
-            aria-label="Remove project"
+            title={removeArmed ? "Confirm remove" : "Remove project"}
+            aria-label={removeArmed ? "Confirm remove project" : "Remove project"}
           >
             <Trash2 size={14} />
+            <span>{removeArmed ? "Confirm" : ""}</span>
           </button>
         </div>
       </div>

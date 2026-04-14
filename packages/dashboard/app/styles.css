@@ -2047,6 +2047,10 @@ body {
   border-color: var(--color-error);
 }
 
+.project-card-action-remove.is-armed {
+  background: color-mix(in srgb, var(--color-error) 14%, transparent);
+}
+
 /* Animation for initializing spinner */
 @keyframes spin {
   from {

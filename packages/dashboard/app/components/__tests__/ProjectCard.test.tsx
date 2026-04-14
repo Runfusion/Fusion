@@ -334,8 +334,39 @@ describe("ProjectCard", () => {
       />
     );
 
+    // First click arms the button (does not call onRemove)
     fireEvent.click(screen.getByLabelText("Remove project"));
+    expect(onRemove).not.toHaveBeenCalled();
+
+    // Second click confirms and calls onRemove
+    fireEvent.click(screen.getByLabelText("Confirm remove project"));
     expect(onRemove).toHaveBeenCalledWith(project);
+  });
+
+  it("shows armed state on first click of remove button", () => {
+    const onRemove = vi.fn();
+    const { container } = render(
+      <ProjectCard
+        project={makeProject()}
+        health={makeHealth()}
+        onSelect={noop}
+        onPause={noop}
+        onResume={noop}
+        onRemove={onRemove}
+      />
+    );
+
+    // Initially not armed
+    expect(screen.getByLabelText("Remove project")).toBeDefined();
+    expect(container.querySelector(".is-armed")).toBeNull();
+
+    // First click arms the button
+    fireEvent.click(screen.getByLabelText("Remove project"));
+    expect(onRemove).not.toHaveBeenCalled();
+
+    // Button now shows confirm state
+    expect(screen.getByLabelText("Confirm remove project")).toBeDefined();
+    expect(container.querySelector(".is-armed")).not.toBeNull();
   });
 
   it("disables pause button when initializing", () => {
