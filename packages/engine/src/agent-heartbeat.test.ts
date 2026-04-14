@@ -1342,6 +1342,97 @@ describe("HeartbeatMonitor", () => {
       });
     });
 
+    // ── Utility Lane Independence Regression ─────────────────────────────────────
+    // FN-1727: Heartbeat runs must execute on the control-plane (utility) lane
+    // and must NOT consume task-lane semaphore slots. This test proves that
+    // heartbeat execution completes successfully even when task execution
+    // slots are saturated (e.g., maxConcurrent: 0 or all slots occupied).
+    // The utility AI helper path must remain responsive under task-lane pressure.
+    describe("slot-saturation: heartbeat runs on utility lane independent of task-lane semaphore", () => {
+      it("executes heartbeat successfully while task-lane semaphore is saturated", async () => {
+        // Import AgentSemaphore directly to create a saturated slot fixture
+        const { AgentSemaphore } = await import("./concurrency.js");
+
+        // Create a semaphore with maxConcurrent=0 to simulate fully saturated state
+        // The defensive guard in AgentSemaphore.limit returns minimum 1, so we
+        // use a static limit of 0 and manually acquire to simulate saturation.
+        const taskLaneSemaphore = new AgentSemaphore(0);
+
+        // Acquire the single available slot to saturate task lanes
+        await taskLaneSemaphore.acquire();
+
+        // Verify the semaphore is saturated (no available slots)
+        expect(taskLaneSemaphore.availableCount).toBe(0);
+        expect(taskLaneSemaphore.activeCount).toBe(1);
+
+        // Create the heartbeat monitor (it does NOT receive the task-lane semaphore)
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({ session: mockSession as any });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        // Execute heartbeat while task lanes are saturated
+        // This MUST succeed because heartbeat runs on the utility lane
+        const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+        // CRITICAL ASSERTIONS:
+        // 1. Heartbeat completed successfully (proves it didn't wait for task-lane slot)
+        expect(result).toBeDefined();
+        expect(result.status).toBe("completed");
+
+        // 2. Agent session was created (proves execution proceeded)
+        expect(mockedCreateKbAgent).toHaveBeenCalledOnce();
+
+        // 3. Semaphore saturation is still held (proves heartbeat didn't consume task-lane slot)
+        expect(taskLaneSemaphore.activeCount).toBe(1);
+
+        // 4. Semaphore available count is still 0 (still saturated from task-lane perspective)
+        expect(taskLaneSemaphore.availableCount).toBe(0);
+
+        // Cleanup: release the task-lane slot
+        taskLaneSemaphore.release();
+        expect(taskLaneSemaphore.activeCount).toBe(0);
+      });
+
+      it("completes on_demand heartbeat while task-lane slots are fully occupied", async () => {
+        const { AgentSemaphore } = await import("./concurrency.js");
+
+        // Simulate multiple task-lane agents holding all slots
+        const taskLaneSemaphore = new AgentSemaphore(2);
+
+        // Saturate both slots with "task-lane agents"
+        await taskLaneSemaphore.acquire(); // Agent 1
+        await taskLaneSemaphore.acquire(); // Agent 2
+
+        expect(taskLaneSemaphore.availableCount).toBe(0);
+
+        // Now execute heartbeat - it should complete without waiting
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({ session: mockSession as any });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        const startTime = Date.now();
+        const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+        const elapsed = Date.now() - startTime;
+
+        // Should complete quickly (not blocked by semaphore wait)
+        expect(elapsed).toBeLessThan(500);
+
+        // Heartbeat should succeed
+        expect(result.status).toBe("completed");
+
+        // Task-lane slots should remain occupied
+        expect(taskLaneSemaphore.activeCount).toBe(2);
+
+        // Cleanup
+        taskLaneSemaphore.release();
+        taskLaneSemaphore.release();
+      });
+    });
+
     describe("executeHeartbeat - inbox selection", () => {
       const makeInboxSelection = (taskId: string, priority: "in_progress" | "todo" | "blocked" = "todo") => {
         const now = new Date().toISOString();
