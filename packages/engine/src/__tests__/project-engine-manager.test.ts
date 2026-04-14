@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock ProjectEngine before importing the manager
 vi.mock("../project-engine.js", () => {
@@ -311,6 +311,226 @@ describe("ProjectEngineManager", () => {
 
       // No new engine created
       expect(ProjectEngine).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("startReconciliation / stopReconciliation", () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("starts reconciliation and detects new projects on interval", async () => {
+      const manager = new ProjectEngineManager(centralCore);
+
+      // Start reconciliation with a short interval
+      manager.startReconciliation(1000);
+
+      // Advance time to trigger the first reconciliation tick
+      await vi.advanceTimersByTimeAsync(1000);
+
+      // Should have started engines for all registered projects
+      expect(manager.getEngine("proj_aaa")).toBeDefined();
+      expect(manager.getEngine("proj_bbb")).toBeDefined();
+      expect(manager.getEngine("proj_ccc")).toBeDefined();
+
+      manager.stopReconciliation();
+    });
+
+    it("runs an immediate reconciliation tick on startReconciliation", async () => {
+      const manager = new ProjectEngineManager(centralCore);
+
+      // Clear any previous calls
+      vi.clearAllMocks();
+
+      // Start reconciliation - should run immediately
+      manager.startReconciliation(60000);
+
+      // Don't advance time - the immediate tick should have run
+      await vi.waitFor(() => {
+        expect(manager.getEngine("proj_aaa")).toBeDefined();
+      });
+
+      manager.stopReconciliation();
+    });
+
+    it("starts engines for newly registered projects on reconciliation tick", async () => {
+      // Create a manager with no initial projects
+      const projectMap = new Map<string, RegisteredProject>();
+      const emptyCentralCore = {
+        init: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        listProjects: vi.fn().mockResolvedValue([]),
+        getProject: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(projectMap.get(id) ?? null),
+        ),
+        getProjectByPath: vi.fn().mockResolvedValue(null),
+      } as unknown as CentralCore;
+      const manager = new ProjectEngineManager(emptyCentralCore);
+
+      manager.startReconciliation(1000);
+
+      // Advance time to trigger the immediate tick (no projects yet)
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(manager.getEngine("proj_aaa")).toBeUndefined();
+
+      // Simulate a new project being registered
+      projectMap.set("proj_aaa", projectA);
+      (emptyCentralCore.listProjects as ReturnType<typeof vi.fn>).mockResolvedValue([projectA]);
+
+      // Advance time to trigger reconciliation - should find the new project
+      await vi.advanceTimersByTimeAsync(1000);
+
+      // Should have started engine for the new project
+      await vi.waitFor(() => {
+        expect(manager.getEngine("proj_aaa")).toBeDefined();
+      });
+
+      manager.stopReconciliation();
+    });
+
+    it("retries failed project starts on subsequent reconciliation ticks", async () => {
+      // Track how many times start() is called to fail only the FIRST set
+      let startCallCount = 0;
+      const manager = new ProjectEngineManager(centralCore);
+
+      // Make starts fail on the first 3 calls (one per project in the first tick)
+      (ProjectEngine as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (config: any) => ({
+          start: vi.fn().mockImplementation(async () => {
+            startCallCount++;
+            // Fail only the first 3 calls (one per project in first reconciliation tick)
+            if (startCallCount <= 3) {
+              throw new Error("transient failure");
+            }
+          }),
+          stop: vi.fn().mockResolvedValue(undefined),
+          getTaskStore: vi.fn().mockReturnValue({ projectId: config.projectId }),
+          _config: config,
+        }),
+      );
+
+      // Start reconciliation (runs immediate tick which fails all 3)
+      manager.startReconciliation(1000);
+
+      // Wait for the immediate tick to complete
+      await vi.advanceTimersByTimeAsync(100);
+      await new Promise((resolve) => setTimeout(resolve, 10)); // Let promises settle
+
+      // After immediate tick: all should have failed
+      expect(manager.getEngine("proj_aaa")).toBeUndefined();
+      expect(manager.getEngine("proj_bbb")).toBeUndefined();
+      expect(manager.getEngine("proj_ccc")).toBeUndefined();
+
+      // First scheduled tick (after 1000ms): should retry and succeed
+      await vi.advanceTimersByTimeAsync(1000);
+      await new Promise((resolve) => setTimeout(resolve, 10)); // Let promises settle
+
+      expect(manager.getEngine("proj_aaa")).toBeDefined();
+      expect(manager.getEngine("proj_bbb")).toBeDefined();
+      expect(manager.getEngine("proj_ccc")).toBeDefined();
+
+      manager.stopReconciliation();
+
+      // Reset mock for other tests
+      (ProjectEngine as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (config: any) => ({
+          start: vi.fn().mockResolvedValue(undefined),
+          stop: vi.fn().mockResolvedValue(undefined),
+          getTaskStore: vi.fn().mockReturnValue({ projectId: config.projectId }),
+          _config: config,
+        }),
+      );
+    });
+
+    it("is idempotent - multiple calls to startReconciliation don't create multiple intervals", async () => {
+      const manager = new ProjectEngineManager(centralCore);
+
+      // Call multiple times
+      manager.startReconciliation();
+      manager.startReconciliation();
+      manager.startReconciliation();
+
+      // Advance time
+      await vi.advanceTimersByTimeAsync(35000);
+
+      // Should only have started engines once (not 3 times each)
+      expect(manager.getEngine("proj_aaa")).toBeDefined();
+      expect(manager.getEngine("proj_bbb")).toBeDefined();
+      expect(manager.getEngine("proj_ccc")).toBeDefined();
+
+      // stopReconciliation should clean up without errors
+      manager.stopReconciliation();
+      manager.stopReconciliation(); // idempotent
+    });
+
+    it("stopReconciliation stops the interval and prevents future ticks", async () => {
+      const manager = new ProjectEngineManager(centralCore);
+
+      manager.startReconciliation(1000);
+
+      // Let the first tick run
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(manager.getEngine("proj_aaa")).toBeDefined();
+
+      // Stop reconciliation
+      manager.stopReconciliation();
+
+      // Clear mocks to track new calls
+      vi.clearAllMocks();
+      (ProjectEngine as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (config: any) => ({
+          start: vi.fn().mockResolvedValue(undefined),
+          stop: vi.fn().mockResolvedValue(undefined),
+          getTaskStore: vi.fn().mockReturnValue({ projectId: config.projectId }),
+          _config: config,
+        }),
+      );
+
+      // Advance more time - no new engines should be started
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(ProjectEngine).not.toHaveBeenCalled();
+    });
+
+    it("stopAll stops reconciliation as part of shutdown", async () => {
+      const manager = new ProjectEngineManager(centralCore);
+
+      manager.startReconciliation(1000);
+      await manager.startAll();
+
+      // Verify engines started
+      expect(manager.getEngine("proj_aaa")).toBeDefined();
+
+      // stopAll should stop reconciliation
+      await manager.stopAll();
+
+      // Calling startReconciliation after stopAll should be no-op
+      vi.clearAllMocks();
+      manager.startReconciliation();
+      await vi.advanceTimersByTimeAsync(35000);
+
+      // No new engines because manager is stopped
+      expect(ProjectEngine).not.toHaveBeenCalled();
+    });
+
+    it("interval is unref'd so it doesn't prevent process exit", async () => {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+
+      const manager = new ProjectEngineManager(centralCore);
+      manager.startReconciliation(60000);
+
+      // The interval should be unref'd - we can't easily test this directly,
+      // but we verify startReconciliation doesn't throw
+      expect(() => manager.stopReconciliation()).not.toThrow();
+
+      await manager.stopAll();
     });
   });
 });

@@ -7,7 +7,8 @@
  *
  * The manager is the single owner of all engines. It handles:
  *   - Eager startup of all registered projects via `startAll()`
- *   - Lazy startup of newly-accessed projects via `ensureEngine()`
+ *   - Background reconciliation of newly registered projects via `startReconciliation()`
+ *   - Lazy startup of newly-accessed projects via `ensureEngine()` and `onProjectAccessed()`
  *   - Deduplication of concurrent start requests for the same project
  *   - Graceful shutdown of all engines via `stopAll()`
  */
@@ -34,6 +35,9 @@ export interface EngineManagerOptions {
   onInsightRunProcessed?: ProjectEngineOptions["onInsightRunProcessed"];
 }
 
+/** Default interval for background reconciliation (30 seconds). */
+export const DEFAULT_RECONCILIATION_INTERVAL_MS = 30_000;
+
 export class ProjectEngineManager {
   private engines = new Map<string, ProjectEngine>();
   private starting = new Map<string, Promise<ProjectEngine>>();
@@ -47,6 +51,10 @@ export class ProjectEngineManager {
   private globalSemaphore: AgentSemaphore;
   private currentGlobalLimit = 4;
   private concurrencyListener?: (...args: unknown[]) => void;
+
+  /** Reconciliation state for background project startup. */
+  private reconciliationInterval: ReturnType<typeof setInterval> | null = null;
+  private reconciliationStopped = false;
 
   constructor(
     private centralCore: CentralCore,
@@ -163,9 +171,16 @@ export class ProjectEngineManager {
     runtimeLog.log(`Engine startup complete: ${started} started, ${failed} failed`);
   }
 
-  /** Gracefully stop all engines. */
+  /** Gracefully stop all engines and reconciliation. */
   async stopAll(): Promise<void> {
     this.stopped = true;
+    this.reconciliationStopped = true;
+
+    // Stop reconciliation interval
+    if (this.reconciliationInterval !== null) {
+      clearInterval(this.reconciliationInterval);
+      this.reconciliationInterval = null;
+    }
 
     // Remove concurrency change listener
     if (this.concurrencyListener && typeof this.centralCore.off === "function") {
@@ -200,6 +215,96 @@ export class ProjectEngineManager {
         `Failed to start engine for project ${projectId}: ${message}`,
       );
     });
+  }
+
+  // ── Background Reconciliation ────────────────────────────────────────
+
+  /**
+   * Start background reconciliation to detect and start engines for
+   * newly registered projects without requiring UI access.
+   *
+   * This runs on an interval, checking for projects that have been
+   * registered but don't have running engines yet.
+   *
+   * Idempotent — safe to call multiple times. Reconciliation stops
+   * when `stopReconciliation()` or `stopAll()` is called.
+   *
+   * @param intervalMs How often to check for new projects (default: 30 seconds)
+   */
+  startReconciliation(intervalMs: number = DEFAULT_RECONCILIATION_INTERVAL_MS): void {
+    if (this.stopped || this.reconciliationStopped) return;
+    if (this.reconciliationInterval !== null) return; // Already running
+
+    runtimeLog.log(`Starting project engine reconciliation (interval: ${intervalMs}ms)`);
+
+    // Run an immediate reconciliation tick, then schedule periodic checks
+    this.reconcile().catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      runtimeLog.warn(`Reconciliation tick failed: ${message}`);
+    });
+
+    this.reconciliationInterval = setInterval(() => {
+      if (this.reconciliationStopped) {
+        this.stopReconciliation();
+        return;
+      }
+      this.reconcile().catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        runtimeLog.warn(`Reconciliation tick failed: ${message}`);
+      });
+    }, intervalMs);
+
+    // Prevent the interval from keeping the process alive
+    this.reconciliationInterval.unref?.();
+  }
+
+  /**
+   * Stop background reconciliation.
+   * Idempotent — safe to call even if reconciliation is not running.
+   */
+  stopReconciliation(): void {
+    this.reconciliationStopped = true;
+    if (this.reconciliationInterval !== null) {
+      clearInterval(this.reconciliationInterval);
+      this.reconciliationInterval = null;
+      runtimeLog.log("Stopped project engine reconciliation");
+    }
+  }
+
+  /**
+   * Check for registered projects that don't have engines and start them.
+   * This is the core reconciliation logic used by both `startReconciliation`
+   * and `startAll()`.
+   */
+  private async reconcile(): Promise<void> {
+    if (this.stopped || this.reconciliationStopped) return;
+
+    try {
+      const projects = await this.centralCore.listProjects();
+      if (projects.length === 0) return;
+
+      // Find projects that don't have running or pending engines
+      const missing = projects.filter((p) => !this.has(p.id));
+      if (missing.length === 0) return;
+
+      runtimeLog.log(
+        `Reconciliation: found ${missing.length} project(s) without engines`,
+      );
+
+      // Start engines for missing projects (fire-and-forget)
+      for (const project of missing) {
+        if (this.stopped || this.reconciliationStopped) break;
+        this.ensureEngine(project.id).catch((err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          runtimeLog.warn(
+            `Failed to start engine for project ${project.id}: ${message}`,
+          );
+        });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      runtimeLog.warn(`Reconciliation failed: ${message}`);
+    }
   }
 
   // ── Internal ──

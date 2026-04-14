@@ -145,8 +145,14 @@ export interface ServerOptions {
   chatManager?: import("./chat.js").ChatManager;
   /**
    * Called once when a secondary project (identified by projectId query param)
-   * is first accessed via a project-scoped API or SSE request. Use this to
-   * lazily start an engine for that project.
+   * is first accessed via a project-scoped API or SSE request.
+   *
+   * @deprecated This callback is a fast-path fallback for immediate engine
+   * startup on project access. ProjectEngineManager.startReconciliation() is
+   * the primary mechanism for ensuring all registered projects have engines
+   * started — it runs without requiring any UI or API access. This callback
+   * is NOT required for correctness; it only provides a potential optimization
+   * for projects that are accessed before the next reconciliation tick.
    */
   onProjectFirstAccessed?: (projectId: string) => void;
 }
