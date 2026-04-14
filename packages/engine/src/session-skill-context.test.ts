@@ -84,6 +84,20 @@ describe("normalizeAgentSkills", () => {
   it("returns empty array for array of only invalid entries", () => {
     expect(normalizeAgentSkills([null, undefined, "", 123, {}])).toEqual([]);
   });
+
+  it("handles object entries with name, deduplicates, trims, and drops invalid entries", () => {
+    const skills = [
+      { name: "  review  " },
+      "  custom-skill  ",
+      { name: "review" },
+      123,
+      null,
+      { foo: "bar" },
+      "",
+      { name: "" },
+    ];
+    expect(normalizeAgentSkills(skills)).toEqual(["review", "custom-skill"]);
+  });
 });
 
 describe("buildSessionSkillContextSync", () => {
@@ -123,6 +137,26 @@ describe("buildSessionSkillContextSync", () => {
 
       expect(result.skillSource).toBe("assigned-agent");
       expect(result.resolvedSkillNames).toEqual(["triage", "executor"]);
+    });
+
+    it("correctly extracts skills from a cached agent object", () => {
+      const agent = {
+        id: "agent-001",
+        name: "Test Agent",
+        role: "executor" as const,
+        state: "idle" as const,
+        metadata: { skills: ["triage", "executor"] },
+      } as unknown as Agent;
+
+      const result = buildSessionSkillContextSync(agent, "executor", projectRootDir);
+
+      expect(result.skillSource).toBe("assigned-agent");
+      expect(result.resolvedSkillNames).toEqual(["triage", "executor"]);
+      expect(result.skillSelectionContext).toEqual({
+        projectRootDir,
+        requestedSkillNames: ["triage", "executor"],
+        sessionPurpose: "executor",
+      });
     });
 
     it("falls back to role when agent has empty skills", () => {
@@ -259,6 +293,56 @@ describe("buildSessionSkillContext", () => {
     expect(result.skillSource).toBe("assigned-agent");
     expect(result.resolvedSkillNames).toEqual(["triage", "executor"]);
     expect(mockAgentStore.getAgent).toHaveBeenCalledWith("agent-001");
+  });
+
+  it("resolves assigned-agent skills when task.assignedAgentId points to an agent with metadata.skills", async () => {
+    const mockAgent: Agent = {
+      id: "agent-001",
+      name: "Test Agent",
+      role: "executor",
+      state: "idle",
+      metadata: { skills: ["review", "custom-skill"] },
+    } as unknown as Agent;
+
+    const mockAgentStore = {
+      getAgent: vi.fn().mockResolvedValue(mockAgent),
+    } as unknown as AgentStore;
+
+    const result = await buildSessionSkillContext({
+      agentStore: mockAgentStore,
+      task: { assignedAgentId: "agent-001" },
+      sessionPurpose: "executor",
+      projectRootDir,
+    });
+
+    expect(result.skillSource).toBe("assigned-agent");
+    expect(result.resolvedSkillNames).toEqual(["review", "custom-skill"]);
+    expect(result.skillSelectionContext?.requestedSkillNames).toEqual(["review", "custom-skill"]);
+    expect(mockAgentStore.getAgent).toHaveBeenCalledWith("agent-001");
+  });
+
+  it("falls back to role fallback skills when assigned agent has no skills", async () => {
+    const mockAgent: Agent = {
+      id: "agent-001",
+      name: "Test Agent",
+      role: "executor",
+      state: "idle",
+      metadata: { skills: [] },
+    } as unknown as Agent;
+
+    const mockAgentStore = {
+      getAgent: vi.fn().mockResolvedValue(mockAgent),
+    } as unknown as AgentStore;
+
+    const result = await buildSessionSkillContext({
+      agentStore: mockAgentStore,
+      task: { assignedAgentId: "agent-001" },
+      sessionPurpose: "executor",
+      projectRootDir,
+    });
+
+    expect(result.skillSource).toBe("role-fallback");
+    expect(result.resolvedSkillNames).toEqual(["executor"]);
   });
 
   it("falls back to role when no assignedAgentId", async () => {

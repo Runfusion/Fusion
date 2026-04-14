@@ -358,6 +358,29 @@ describe("resolveSessionSkills", () => {
       expect(infoDiags).toHaveLength(1); // Only + pattern gets info diag
       expect(infoDiags[0].skillPath).toBe("skills/foo/SKILL.md");
     });
+
+    it("with requestedSkillNames intersects with allowed patterns and produces correct diagnostics", () => {
+      const dir = createMockProjectDir({
+        skills: ["+skills/review/SKILL.md", "+skills/lint/SKILL.md"],
+      });
+
+      const result = resolveSessionSkills({
+        projectRootDir: dir,
+        requestedSkillNames: ["review", "missing-skill"],
+      });
+
+      expect(result.filterActive).toBe(true);
+      expect(result.allowedSkillPaths.has("skills/review/SKILL.md")).toBe(true);
+      expect(result.allowedSkillPaths.has("skills/lint/SKILL.md")).toBe(true);
+
+      // Check for info diagnostics
+      const infoDiags = result.diagnostics.filter(d => d.type === "info");
+      // Should have diagnostics for: review (requested), missing-skill (requested), +skills/review (pattern), +skills/lint (pattern)
+      expect(infoDiags.some(d => d.skillName === "review")).toBe(true);
+      expect(infoDiags.some(d => d.skillName === "missing-skill")).toBe(true);
+      expect(infoDiags.some(d => d.skillPath === "skills/review/SKILL.md")).toBe(true);
+      expect(infoDiags.some(d => d.skillPath === "skills/lint/SKILL.md")).toBe(true);
+    });
   });
 });
 
@@ -672,6 +695,100 @@ describe("createSkillsOverrideFromSelection", () => {
       expect(result1.skills.map(s => s.name)).toEqual(result2.skills.map(s => s.name));
       // Order is preserved from input order (deterministic = consistent)
       expect(result1.skills.map(s => s.name)).toEqual(["c", "a", "b"]);
+    });
+
+    it("filters discovered Skill[] by requested names and logs warnings for missing skills", () => {
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      // Create selection with empty allowed paths (only requested names filtering)
+      const selection: SkillSelectionResult = {
+        allowedSkillPaths: new Set<string>(),
+        excludedSkillPaths: new Set<string>(),
+        diagnostics: [],
+        filterActive: true,
+      };
+
+      const override = createSkillsOverrideFromSelection(selection, {
+        requestedSkillNames: ["found-skill", "missing-skill"],
+        sessionPurpose: "executor",
+      });
+
+      // Only one skill matches the requested names
+      const base = {
+        skills: [
+          { name: "found-skill", filePath: "/path/found", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+        ],
+        diagnostics: [],
+      };
+
+      const result = override(base);
+
+      // Should only return the found skill
+      expect(result.skills).toHaveLength(1);
+      expect(result.skills[0].name).toBe("found-skill");
+
+      // Should produce warning for missing-skill
+      const missingWarning = result.diagnostics.find(d =>
+        d.type === "warning" && d.message.includes("missing-skill") && d.message.includes("not found in discovered skills")
+      );
+      expect(missingWarning).toBeDefined();
+
+      // Verify console.error logging
+      expect(consoleErrorSpy).toHaveBeenCalled();
+      const loggedMessages = consoleErrorSpy.mock.calls.map(c => c[0] as string);
+      const hasExecutorPrefix = loggedMessages.some(m => m.includes("[executor]") && m.includes("missing-skill"));
+      expect(hasExecutorPrefix).toBe(true);
+
+      consoleErrorSpy.mockRestore();
+    });
+  });
+
+  describe("end-to-end flow with project settings + agent metadata + discovered skills", () => {
+    beforeEach(() => {
+      mockFiles.clear();
+      mockDirCounter = 0;
+    });
+
+    it("full end-to-end flow: settings patterns + agent skills produce matching override", () => {
+      // Create mock project dir with settings that include review but exclude lint
+      const dir = createMockProjectDir({
+        skills: ["+skills/review/SKILL.md"],
+      });
+
+      // Step 1: Resolve session skills from settings
+      const resolvedSkills = resolveSessionSkills({
+        projectRootDir: dir,
+        requestedSkillNames: ["review"],
+      });
+
+      expect(resolvedSkills.filterActive).toBe(true);
+      expect(resolvedSkills.allowedSkillPaths.has("skills/review/SKILL.md")).toBe(true);
+
+      // Step 2: Create override from selection
+      const override = createSkillsOverrideFromSelection(resolvedSkills, {
+        sessionPurpose: "executor",
+      });
+
+      // Step 3: Apply override to discovered skills (both review and lint exist)
+      const base = {
+        skills: [
+          { name: "review", filePath: "skills/review/SKILL.md", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+          { name: "lint", filePath: "skills/lint/SKILL.md", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+        ],
+        diagnostics: [],
+      };
+
+      const result = override(base);
+
+      // Only review should pass through (lint is not in allowed paths)
+      expect(result.skills).toHaveLength(1);
+      expect(result.skills[0].name).toBe("review");
+
+      // No missing-skill warnings since review exists and matches the pattern
+      const missingWarnings = result.diagnostics.filter(d =>
+        d.type === "warning" && d.message.includes("not found")
+      );
+      expect(missingWarnings).toHaveLength(0);
     });
   });
 });
