@@ -4049,11 +4049,12 @@ git log --oneline
   }
 
   // Build project memory section from settings
-  // When enabled, agents consult and update .fusion/memory.md for durable project learnings.
+  // When enabled, agents consult and update project memory for durable project learnings.
+  // Backend-aware: instructions branch based on memoryBackendType (file, readonly, qmd)
   const memoryEnabled = settings?.memoryEnabled !== false;
   let memorySection = "";
   if (memoryEnabled && rootDir) {
-    memorySection = "\n" + buildExecutionMemoryInstructions(rootDir);
+    memorySection = "\n" + buildExecutionMemoryInstructions(rootDir, settings);
   }
 
   // Build steering comments section (last 10 comments only to avoid context bloat)

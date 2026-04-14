@@ -390,6 +390,8 @@ export {
   buildExecutionMemoryInstructions,
   readProjectMemory,
   readProjectMemoryWithBackend,
+  resolveMemoryInstructionContext,
+  type MemoryInstructionContext,
 } from "./project-memory.js";
 
 // ── Memory Backend ───────────────────────────────────────
