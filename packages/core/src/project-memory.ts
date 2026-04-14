@@ -107,9 +107,98 @@ async function getMemoryBackendUtils() {
   const module = await import("./memory-backend.js");
   return {
     resolveMemoryBackend: module.resolveMemoryBackend,
+    getMemoryBackendCapabilities: module.getMemoryBackendCapabilities,
     MEMORY_BACKEND_SETTINGS_KEYS: module.MEMORY_BACKEND_SETTINGS_KEYS,
     DEFAULT_MEMORY_BACKEND: module.DEFAULT_MEMORY_BACKEND,
   };
+}
+
+// ── Memory Instruction Context ─────────────────────────────────────────
+
+/**
+ * Context for memory instruction generation.
+ * Provides the engine with enough information to generate appropriate
+ * prompt instructions for different memory backends.
+ */
+export interface MemoryInstructionContext {
+  /** The backend type (e.g., "file", "readonly", "qmd") */
+  backendType: string;
+  /** Human-readable backend name */
+  backendName: string;
+  /** Backend capabilities */
+  capabilities: import("./memory-backend.js").MemoryBackendCapabilities;
+  /**
+   * Path hint for memory instructions.
+   * - For "file" backend: ".fusion/memory.md"
+   * - For "readonly" backend: null (no write path)
+   * - For "qmd"/non-file backends: null (path is backend-specific)
+   */
+  instructionPathHint: string | null;
+}
+
+/**
+ * Resolve the memory instruction context based on project settings.
+ *
+ * This function determines what memory instructions should be injected
+ * based on the configured backend type:
+ * - "file" backend: full read/write instructions with `.fusion/memory.md` path
+ * - "readonly" backend: read-only instructions, no write/update directives
+ * - "qmd"/non-file backends: instructions without unconditional `.fusion/memory.md` path
+ *   (unless `instructionPathHint` is explicitly non-null)
+ *
+ * @param settings - Optional project settings containing memoryEnabled and memoryBackendType
+ * @returns The resolved instruction context
+ */
+export function resolveMemoryInstructionContext(
+  settings?: MemorySettings,
+): MemoryInstructionContext {
+  // Synchronous resolution using getMemoryBackendCapabilities
+  // This avoids the async import but requires synchronous access to capabilities
+  // For file backend (default), we can inline the capabilities
+  const backendType = settings?.memoryBackendType || "file";
+
+  switch (backendType) {
+    case "readonly":
+      return {
+        backendType: "readonly",
+        backendName: "Read-Only",
+        capabilities: {
+          readable: true,
+          writable: false,
+          supportsAtomicWrite: false,
+          hasConflictResolution: false,
+          persistent: false,
+        },
+        instructionPathHint: null,
+      };
+    case "qmd":
+      return {
+        backendType: "qmd",
+        backendName: "QMD (Quantized Memory Distillation)",
+        capabilities: {
+          readable: true,
+          writable: true,
+          supportsAtomicWrite: false,
+          hasConflictResolution: false,
+          persistent: true,
+        },
+        instructionPathHint: null,
+      };
+    case "file":
+    default:
+      return {
+        backendType: "file",
+        backendName: "File (.fusion/memory.md)",
+        capabilities: {
+          readable: true,
+          writable: true,
+          supportsAtomicWrite: true,
+          hasConflictResolution: false,
+          persistent: true,
+        },
+        instructionPathHint: ".fusion/memory.md",
+      };
+  }
 }
 
 /**
@@ -204,11 +293,43 @@ export async function readProjectMemoryWithBackend(
  * to include relevant memory insights in the task specification.
  *
  * @param rootDir - Absolute path to the project root directory.
+ * @param settings - Optional project settings for backend-aware instruction generation.
+ *                 When provided, the function branches based on memoryBackendType:
+ *                 - "file": includes `.fusion/memory.md` read guidance
+ *                 - "readonly": read-only instructions, no write directives
+ *                 - "qmd"/non-file: instructions without unconditional `.fusion/memory.md` path
  * @returns The memory instruction section string, or empty string if the
  *          memory file does not exist yet.
  */
-export function buildTriageMemoryInstructions(rootDir: string): string {
-  return `
+export function buildTriageMemoryInstructions(
+  rootDir: string,
+  settings?: MemorySettings,
+): string {
+  void rootDir; // Parameter kept for future use (e.g., checking file existence)
+  const ctx = resolveMemoryInstructionContext(settings);
+
+  // Read-only backend: provide read guidance without file path reference
+  if (!ctx.capabilities.readable) {
+    return ""; // No memory available
+  }
+
+  if (!ctx.capabilities.writable) {
+    // Read-only backend: consult memory for context but don't mention file path
+    return `
+## Project Memory
+
+This project has a memory system that stores durable project learnings.
+
+**Before writing the specification:**
+1. Consult the project memory for relevant context
+2. Incorporate any useful learnings into your specification
+`;
+  }
+
+  // Writable backend (file or qmd)
+  if (ctx.instructionPathHint) {
+    // File backend: mention the explicit path
+    return `
 ## Project Memory
 
 This project has a memory file at \`.fusion/memory.md\` that stores durable project learnings.
@@ -219,6 +340,20 @@ This project has a memory file at \`.fusion/memory.md\` that stores durable proj
 3. Incorporate relevant learnings into your specification — reference actual patterns, constraints, and conventions documented there
 
 **If the memory file contains useful context for this task, reference it in the specification.** For example, if the memory documents that the project uses a specific pattern for API routes, ensure the specification follows that pattern.
+`;
+  }
+
+  // QMD/non-file writable backend: generic instructions without specific path
+  return `
+## Project Memory
+
+This project has a memory system that stores durable project learnings.
+
+**Before writing the specification:**
+1. Consult the project memory for relevant context
+2. Incorporate any useful learnings into your specification
+
+**If the memory contains useful context for this task, reference it in the specification.**
 `;
 }
 
@@ -233,16 +368,43 @@ This project has a memory file at \`.fusion/memory.md\` that stores durable proj
  * - Agents CAN edit/consolidate existing entries (not just append)
  * - Only genuinely reusable insights qualify — not task-specific trivia
  *
- * The path is always the project-root relative path (`.fusion/memory.md`),
- * not a worktree-local path. Agents running in worktrees should access
- * the memory file at its project-root location.
- *
  * @param rootDir - Absolute path to the project root directory.
+ * @param settings - Optional project settings for backend-aware instruction generation.
+ *                  When provided, the function branches based on memoryBackendType:
+ *                  - "file": includes `.fusion/memory.md` read/write guidance
+ *                  - "readonly": read-only instructions, no write/update directives
+ *                  - "qmd"/non-file: instructions without unconditional `.fusion/memory.md` path
  * @returns The memory instruction section string.
  */
-export function buildExecutionMemoryInstructions(rootDir: string): string {
-  void rootDir; // Parameter kept for future use (e.g., checking file size)
-  return `
+export function buildExecutionMemoryInstructions(
+  rootDir: string,
+  settings?: MemorySettings,
+): string {
+  void rootDir; // Parameter kept for future use (e.g., checking file existence)
+  const ctx = resolveMemoryInstructionContext(settings);
+
+  // Read-only backend: provide read guidance without file path reference
+  if (!ctx.capabilities.readable) {
+    return ""; // No memory available
+  }
+
+  if (!ctx.capabilities.writable) {
+    // Read-only backend: consult memory for context but no update instructions
+    return `
+## Project Memory
+
+This project has a memory system that stores durable project learnings.
+
+**At the start of execution:**
+1. Consult the project memory for relevant context
+2. Apply any useful learnings to your implementation
+`;
+  }
+
+  // Writable backend (file or qmd)
+  if (ctx.instructionPathHint) {
+    // File backend: mention the explicit path with full read/write instructions
+    return `
 ## Project Memory
 
 This project has a memory file at \`.fusion/memory.md\` that stores durable project learnings accumulated from past task runs.
@@ -271,6 +433,32 @@ This project has a memory file at \`.fusion/memory.md\` that stores durable proj
 - Use \`- \` prefix for list items
 - Keep entries concise and actionable
 - Example: \`- The API layer uses Zod schemas for all request validation\`
+`;
+  }
+
+  // QMD/non-file writable backend: generic instructions without specific path
+  return `
+## Project Memory
+
+This project has a memory system that stores durable project learnings accumulated from past task runs.
+
+**At the start of execution:**
+1. Consult the project memory for relevant context
+2. Apply any useful learnings to your implementation
+
+**At the end of execution (before calling \`task_done()\`):**
+1. Review what you learned during this task that would genuinely benefit future runs
+2. **If nothing durable was learned, skip the memory update entirely** — do not append trivial or task-specific notes
+3. Only write when you have genuinely durable, reusable insights such as:
+   - New architectural patterns or module boundaries discovered
+   - Conventions or standards that should be followed
+   - Pitfalls or anti-patterns to avoid in future work
+   - Important constraints or context that affects implementation decisions
+4. **Avoid** writing task-specific trivia such as:
+   - Per-task implementation logs or changelog entries
+   - Transient failures resolved without broader lessons
+   - One-off file paths, variable names, or minor code changes
+   - Notes about what you did rather than what future agents should know
 `;
 }
 

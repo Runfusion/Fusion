@@ -1410,11 +1410,12 @@ export function buildSpecificationPrompt(
   }
 
   // Build project memory section from settings.
-  // When enabled, agents consult .fusion/memory.md for durable project learnings.
+  // When enabled, agents consult project memory for durable project learnings.
+  // Backend-aware: instructions branch based on memoryBackendType (file, readonly, qmd)
   const memoryEnabled = settings?.memoryEnabled !== false;
   let memorySection = "";
   if (memoryEnabled) {
-    memorySection = "\n\n" + buildTriageMemoryInstructions("");
+    memorySection = "\n\n" + buildTriageMemoryInstructions("", settings);
   }
 
   let attachmentsSection = "";

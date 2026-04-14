@@ -810,13 +810,30 @@ The `.fusion/memory-insights.md` file has different semantics:
 
 #### 3.8.7 Prompt Instruction Compatibility
 
-Prompt instructions always reference `.fusion/memory.md` (project-root path). This is preserved regardless of backend:
+Prompt instructions branch based on the configured memory backend type via `resolveMemoryInstructionContext()`:
 
-- **Triage prompts**: `buildTriageMemoryInstructions()` still returns the same instruction text
-- **Executor prompts**: `buildExecutionMemoryInstructions()` still returns the same instruction text
-- **Path reference**: Instructions always show `.fusion/memory.md`, not backend-specific paths
+**Backend-specific behavior:**
 
-The backend abstraction does **not** change what instructions agents receive — it only changes where that content is stored.
+| Backend Type | Path Hint | Behavior |
+|-------------|-----------|-----------|
+| `file` | `.fusion/memory.md` | Full read/write instructions with explicit file path |
+| `readonly` | `null` | Read-only instructions, no write/update directives |
+| `qmd` / non-file | `null` | Generic instructions without unconditional `.fusion/memory.md` reference |
+
+**API functions:**
+
+- `buildTriageMemoryInstructions(rootDir, settings?)` — Returns backend-appropriate instructions for the specification agent
+- `buildExecutionMemoryInstructions(rootDir, settings?)` — Returns backend-appropriate instructions for the executor agent
+- `resolveMemoryInstructionContext(settings?)` — Returns `MemoryInstructionContext` with backend metadata and capabilities
+
+**Behavior details:**
+
+- **File backend**: Instructions include `.fusion/memory.md` guidance and read/write directives
+- **Readonly backend**: Instructions include read-only wording but no write/update directives
+- **QMD/non-file backends**: Instructions are generic without assuming a file path; agents consult the project memory through backend-specific mechanisms
+- **Backward compatibility**: When `memoryBackendType` is omitted or unknown, defaults to file behavior
+
+**Invariant:** `memoryEnabled: false` always removes memory instructions regardless of backend type.
 
 ---
 

@@ -2357,6 +2357,65 @@ describe("buildExecutionPrompt", () => {
       expect(result).toContain("`.fusion/memory.md`");
     });
   });
+
+  describe("memoryBackendType setting", () => {
+    it("includes .fusion/memory.md for file backend", () => {
+      const task = createMockTaskDetail();
+      const result = buildExecutionPrompt(task, "/project", {
+        memoryEnabled: true,
+        memoryBackendType: "file",
+      } as any);
+      expect(result).toContain("## Project Memory");
+      // Check that the Project Memory section contains .fusion/memory.md
+      const memorySectionMatch = result.match(/## Project Memory\n([\s\S]*?)(?=\n## [^#]|$)/);
+      expect(memorySectionMatch).toBeTruthy();
+      expect(memorySectionMatch![1]).toContain(".fusion/memory.md");
+    });
+
+    it("includes read-only wording for readonly backend without write directives in memory section", () => {
+      const task = createMockTaskDetail();
+      const result = buildExecutionPrompt(task, "/project", {
+        memoryEnabled: true,
+        memoryBackendType: "readonly",
+      } as any);
+      expect(result).toContain("## Project Memory");
+      // Extract the Project Memory section
+      const memorySectionMatch = result.match(/## Project Memory\n([\s\S]*?)(?=\n## [^#]|$)/);
+      expect(memorySectionMatch).toBeTruthy();
+      const memorySection = memorySectionMatch![1];
+      // Should NOT contain write/update directives in the memory section
+      expect(memorySection).not.toMatch(/write.*memory|update.*memory/i);
+      // Should NOT contain the specific file path in the memory section
+      expect(memorySection).not.toContain(".fusion/memory.md");
+    });
+
+    it("does not include .fusion/memory.md in Project Memory section for qmd backend", () => {
+      const task = createMockTaskDetail();
+      const result = buildExecutionPrompt(task, "/project", {
+        memoryEnabled: true,
+        memoryBackendType: "qmd",
+      } as any);
+      expect(result).toContain("## Project Memory");
+      // Extract the Project Memory section
+      const memorySectionMatch = result.match(/## Project Memory\n([\s\S]*?)(?=\n## [^#]|$)/);
+      expect(memorySectionMatch).toBeTruthy();
+      const memorySection = memorySectionMatch![1];
+      // QMD should NOT unconditionally reference .fusion/memory.md in the memory section
+      expect(memorySection).not.toContain(".fusion/memory.md");
+      // Should instruct to consult project memory
+      expect(memorySection).toMatch(/consult.*project memory/i);
+    });
+
+    it("excludes memory section when memoryEnabled: false regardless of backend", () => {
+      const task = createMockTaskDetail();
+      const result = buildExecutionPrompt(task, "/project", {
+        memoryEnabled: false,
+        memoryBackendType: "file",
+      } as any);
+      expect(result).toContain("Execute this task.");
+      expect(result).not.toContain("## Project Memory");
+    });
+  });
 });
 
 // Import the summarizeToolArgs helper directly (not affected by mocks above)

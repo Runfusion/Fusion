@@ -317,6 +317,71 @@ describe("buildSpecificationPrompt", () => {
     });
   });
 
+  describe("memoryBackendType setting", () => {
+    it("includes .fusion/memory.md for file backend", () => {
+      const settings: Settings = {
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        memoryEnabled: true,
+        memoryBackendType: "file",
+      };
+      const prompt = buildSpecificationPrompt(
+        baseTask,
+        ".fusion/tasks/KB-001/PROMPT.md",
+        settings,
+      );
+      expect(prompt).toContain("## Project Memory");
+      expect(prompt).toContain(".fusion/memory.md");
+    });
+
+    it("includes read-only wording for readonly backend without write directives", () => {
+      const settings: Settings = {
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        memoryEnabled: true,
+        memoryBackendType: "readonly",
+      };
+      const prompt = buildSpecificationPrompt(
+        baseTask,
+        ".fusion/tasks/KB-001/PROMPT.md",
+        settings,
+      );
+      expect(prompt).toContain("## Project Memory");
+      // Should NOT contain write/update directives
+      expect(prompt).not.toMatch(/write.*memory|update.*memory/i);
+      // Should NOT contain the specific file path
+      expect(prompt).not.toContain(".fusion/memory.md");
+    });
+
+    it("does not include .fusion/memory.md for qmd backend", () => {
+      const settings: Settings = {
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        memoryEnabled: true,
+        memoryBackendType: "qmd",
+      };
+      const prompt = buildSpecificationPrompt(
+        baseTask,
+        ".fusion/tasks/KB-001/PROMPT.md",
+        settings,
+      );
+      expect(prompt).toContain("## Project Memory");
+      // QMD should NOT unconditionally reference .fusion/memory.md
+      expect(prompt).not.toContain(".fusion/memory.md");
+      // Should instruct to consult project memory
+      expect(prompt).toMatch(/consult.*project memory/i);
+    });
+  });
+
   describe("user comments", () => {
     it("includes user comments section when user comments exist", () => {
       const taskWithComments: TaskDetail = {
