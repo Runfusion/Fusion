@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Globe, Folder } from "lucide-react";
 import { THINKING_LEVELS, PROMPT_KEY_CATALOG, isGlobalSettingsKey, isProjectSettingsKey } from "@fusion/core";
-import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent } from "@fusion/core";
+import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent, PromptKey, AgentPromptsConfig } from "@fusion/core";
 import { fetchSettings, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemory, saveMemory, fetchGlobalConcurrency, updateGlobalConcurrency } from "../api";
 import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData, MemoryBackendCapabilities } from "../api";
 import { useMemoryBackendStatus } from "../hooks/useMemoryBackendStatus";
@@ -10,6 +10,7 @@ import { ThemeSelector } from "./ThemeSelector";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { FileEditor } from "./FileEditor";
 import { PluginManager } from "./PluginManager";
+import { AgentPromptsManager } from "./AgentPromptsManager";
 import { applyPresetToSelection, generateUniquePresetId } from "../utils/modelPresets";
 
 /**
@@ -2094,73 +2095,22 @@ export function SettingsModal({
           <>
             {renderScopeBanner()}
             <h4 className="settings-section-heading">Prompts</h4>
-            <p className="settings-note">
-              Customize specific segments of AI agent prompts. Edits override built-in defaults.
-              Use the Reset button to restore the original default for any prompt.
-            </p>
-            <div className="prompt-overrides-list">
-              {Object.values(PROMPT_KEY_CATALOG).map((promptMeta) => {
-                const key = promptMeta.key;
-                const currentOverride = form.promptOverrides?.[key] ?? "";
-                const hasOverride = currentOverride !== "";
-                return (
-                  <div key={key} className="prompt-override-item">
-                    <div className="prompt-override-header">
-                      <div className="prompt-override-info">
-                        <span className="prompt-override-name">{promptMeta.name}</span>
-                        <code className="prompt-override-key">{key}</code>
-                        {hasOverride && (
-                          <span className="prompt-override-badge">customized</span>
-                        )}
-                      </div>
-                      {hasOverride && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => {
-                            setForm((f) => ({
-                              ...f,
-                              promptOverrides: {
-                                ...f.promptOverrides,
-                                [key]: null as unknown as string,
-                              },
-                            }));
-                          }}
-                        >
-                          Reset
-                        </button>
-                      )}
-                    </div>
-                    <p className="prompt-override-description">{promptMeta.description}</p>
-                    <div className="prompt-override-editor">
-                      <textarea
-                        id={`prompt-${key}`}
-                        aria-label={`${promptMeta.name} prompt override (${key})`}
-                        className="prompt-override-textarea"
-                        value={currentOverride}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          setForm((f) => ({
-                            ...f,
-                            promptOverrides: {
-                              ...f.promptOverrides,
-                              [key]: value,
-                            },
-                          }));
-                        }}
-                        placeholder={`Default: ${promptMeta.defaultContent.slice(0, 100)}${promptMeta.defaultContent.length > 100 ? "..." : ""}`}
-                        rows={4}
-                      />
-                      <small className="prompt-override-hint">
-                        {hasOverride
-                          ? "Custom override active. Click Reset to restore default."
-                          : `No override set. Using built-in default (${promptMeta.defaultContent.length} chars).`}
-                      </small>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <AgentPromptsManager
+              value={form.agentPrompts}
+              onChange={(agentPrompts: AgentPromptsConfig) => {
+                setForm((f) => ({
+                  ...f,
+                  agentPrompts,
+                }));
+              }}
+              promptOverrides={form.promptOverrides}
+              onPromptOverridesChange={(promptOverrides: Record<PromptKey, string | null> | undefined) => {
+                setForm((f) => ({
+                  ...f,
+                  promptOverrides,
+                }));
+              }}
+            />
           </>
         );
       case "plugins":

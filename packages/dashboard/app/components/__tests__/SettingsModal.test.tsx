@@ -2779,7 +2779,7 @@ describe("Prompts section", () => {
     expect(screen.getAllByText("Prompts").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("shows prompt override editor when Prompts section is selected", async () => {
+  it("shows AgentPromptsManager when Prompts section is selected", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
@@ -2789,84 +2789,75 @@ describe("Prompts section", () => {
     // Should show scope banner (project-scoped)
     expect(screen.getByText("These settings only affect this project.")).toBeTruthy();
 
-    // Should show the info note
-    expect(screen.getByText(/Customize specific segments/)).toBeTruthy();
-
-    // Should show at least one prompt key (from PROMPT_KEY_CATALOG)
-    // The catalog includes keys like "executor-welcome", "triage-welcome", etc.
-    expect(screen.getByText("executor-welcome")).toBeTruthy();
+    // Should show the AgentPromptsManager with tabs
+    expect(screen.getByTestId("tab-templates")).toBeTruthy();
+    expect(screen.getByTestId("tab-assignments")).toBeTruthy();
+    expect(screen.getByTestId("tab-overrides")).toBeTruthy();
   });
 
-  it("renders prompt entries with name, key, and description from catalog", async () => {
+  it("shows built-in templates in Templates tab", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     fireEvent.click(screen.getAllByText("Prompts")[0]);
 
-    // Should show prompt names from the catalog
-    expect(screen.getByText("Executor Welcome")).toBeTruthy();
-    expect(screen.getByText("Executor Guardrails")).toBeTruthy();
+    // Templates tab should be active by default
+    expect(screen.getByTestId("tab-templates")).toHaveClass(/active/);
 
-    // Should show prompt keys as code
-    expect(screen.getByText("executor-welcome")).toBeTruthy();
-
-    // Should show descriptions (multiple elements may match)
-    expect(screen.getAllByText(/Introductory section/).length).toBeGreaterThan(0);
+    // Should show built-in templates
+    expect(screen.getByTestId("builtin-template-default-executor")).toBeTruthy();
+    expect(screen.getByTestId("builtin-template-default-triage")).toBeTruthy();
   });
 
-  it("shows textarea for each prompt entry", async () => {
+  it("shows Assignments tab with role dropdowns", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     fireEvent.click(screen.getAllByText("Prompts")[0]);
 
-    // Should have textareas for prompt editing
-    const textareas = screen.getAllByRole("textbox");
-    expect(textareas.length).toBeGreaterThan(0);
+    // Click Assignments tab
+    fireEvent.click(screen.getByTestId("tab-assignments"));
 
-    // Should have aria-labels for each prompt
-    expect(screen.getByLabelText(/Executor Welcome prompt override/i)).toBeTruthy();
+    // Should show role assignment rows
+    expect(screen.getByTestId("assignment-executor")).toBeTruthy();
+    expect(screen.getByTestId("assignment-triage")).toBeTruthy();
+    expect(screen.getByTestId("assignment-reviewer")).toBeTruthy();
+    expect(screen.getByTestId("assignment-merger")).toBeTruthy();
   });
 
-  it("shows placeholder text with default content hint", async () => {
+  it("shows Overrides tab with accordion items", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     fireEvent.click(screen.getAllByText("Prompts")[0]);
 
-    // Should show hints about default content
-    const hintElements = screen.getAllByText(/No override set/);
-    expect(hintElements.length).toBeGreaterThan(0);
+    // Click Overrides tab
+    fireEvent.click(screen.getByTestId("tab-overrides"));
+
+    // Should show override items (collapsed by default)
+    expect(screen.getByTestId("override-executor-welcome")).toBeTruthy();
+    expect(screen.getByTestId("override-triage-welcome")).toBeTruthy();
   });
 
-  it("shows customized badge and Reset button when override exists", async () => {
-    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      ...defaultSettings,
-      promptOverrides: {
-        "executor-welcome": "Custom override text",
-      },
+  it("editing a prompt override includes override in save payload", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByText("Prompts")[0]);
+
+    // Click Overrides tab
+    fireEvent.click(screen.getByTestId("tab-overrides"));
+
+    // Expand the executor-welcome override by clicking the expand button
+    fireEvent.click(screen.getByTestId("expand-executor-welcome"));
+
+    // Wait for the expanded editor to appear
+    await waitFor(() => {
+      expect(screen.getByTestId("override-input-executor-welcome")).toBeTruthy();
     });
 
-    render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
-
-    fireEvent.click(screen.getAllByText("Prompts")[0]);
-
-    // Should show "customized" badge
-    expect(screen.getByText("customized")).toBeTruthy();
-
-    // Should show Reset button
-    expect(screen.getByText("Reset")).toBeTruthy();
-  });
-
-  it("editing a prompt textarea includes override in save payload", async () => {
-    render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
-
-    fireEvent.click(screen.getAllByText("Prompts")[0]);
-
     // Find the textarea for executor-welcome
-    const textarea = screen.getByLabelText(/Executor Welcome prompt override/i) as HTMLTextAreaElement;
+    const textarea = screen.getByTestId("override-input-executor-welcome") as HTMLTextAreaElement;
     expect(textarea).toBeTruthy();
 
     // Type custom content
@@ -2896,8 +2887,19 @@ describe("Prompts section", () => {
 
     fireEvent.click(screen.getAllByText("Prompts")[0]);
 
+    // Click Overrides tab
+    fireEvent.click(screen.getByTestId("tab-overrides"));
+
+    // Expand the executor-welcome override by clicking the expand button
+    fireEvent.click(screen.getByTestId("expand-executor-welcome"));
+
+    // Wait for the expanded editor to appear
+    await waitFor(() => {
+      expect(screen.getByTestId("override-input-executor-welcome")).toBeTruthy();
+    });
+
     // Find and click the Reset button
-    fireEvent.click(screen.getByText("Reset"));
+    fireEvent.click(screen.getByTestId("reset-executor-welcome"));
 
     // Save
     fireEvent.click(screen.getByText("Save"));
@@ -2915,8 +2917,19 @@ describe("Prompts section", () => {
 
     fireEvent.click(screen.getAllByText("Prompts")[0]);
 
+    // Click Overrides tab
+    fireEvent.click(screen.getByTestId("tab-overrides"));
+
+    // Expand the executor-welcome override by clicking the expand button
+    fireEvent.click(screen.getByTestId("expand-executor-welcome"));
+
+    // Wait for the expanded editor to appear
+    await waitFor(() => {
+      expect(screen.getByTestId("override-input-executor-welcome")).toBeTruthy();
+    });
+
     // Find the textarea and type content
-    const textarea = screen.getByLabelText(/Executor Welcome prompt override/i) as HTMLTextAreaElement;
+    const textarea = screen.getByTestId("override-input-executor-welcome") as HTMLTextAreaElement;
     fireEvent.change(textarea, { target: { value: "Custom message" } });
 
     // Save
@@ -2935,12 +2948,11 @@ describe("Prompts section", () => {
     }
   });
 
-  it("shows Reset button only for prompts with existing overrides", async () => {
+  it("shows customized badge and Reset button for existing overrides", async () => {
     (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ...defaultSettings,
       promptOverrides: {
-        "executor-welcome": "Custom text",
-        "triage-welcome": "Another custom",
+        "executor-welcome": "Custom override text",
       },
     });
 
@@ -2949,8 +2961,71 @@ describe("Prompts section", () => {
 
     fireEvent.click(screen.getAllByText("Prompts")[0]);
 
-    // Should have exactly 2 Reset buttons (one for each override)
-    const resetButtons = screen.getAllByText("Reset");
-    expect(resetButtons.length).toBe(2);
+    // Click Overrides tab
+    fireEvent.click(screen.getByTestId("tab-overrides"));
+
+    // Expand the executor-welcome override by clicking the expand button
+    const expandBtn = screen.getByTestId("expand-executor-welcome");
+    fireEvent.click(expandBtn);
+
+    // Wait for the expanded editor to appear
+    await waitFor(() => {
+      expect(screen.getByTestId("override-input-executor-welcome")).toBeTruthy();
+    });
+
+    // Should show "customized" badge
+    expect(screen.getByText("customized")).toBeTruthy();
+
+    // Should show Reset button
+    expect(screen.getByTestId("reset-executor-welcome")).toBeTruthy();
+  });
+
+  it("can create a custom template", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByText("Prompts")[0]);
+
+    // Templates tab should be active by default
+    expect(screen.getByTestId("tab-templates")).toHaveClass(/active/);
+
+    // Click "Add Custom Template" button
+    fireEvent.click(screen.getByTestId("add-template-btn"));
+
+    // Should show the template editor
+    expect(screen.getByTestId("template-editor")).toBeTruthy();
+    expect(screen.getByTestId("template-name-input")).toBeTruthy();
+    expect(screen.getByTestId("template-description-input")).toBeTruthy();
+    expect(screen.getByTestId("template-role-select")).toBeTruthy();
+    expect(screen.getByTestId("template-prompt-input")).toBeTruthy();
+  });
+
+  it("saving with agentPrompts includes it in the save payload", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByText("Prompts")[0]);
+
+    // Click "Add Custom Template" button
+    fireEvent.click(screen.getByTestId("add-template-btn"));
+
+    // Fill in the template
+    fireEvent.change(screen.getByTestId("template-name-input"), { target: { value: "My Custom Template" } });
+    fireEvent.change(screen.getByTestId("template-description-input"), { target: { value: "A custom template description" } });
+    fireEvent.change(screen.getByTestId("template-prompt-input"), { target: { value: "Custom prompt text" } });
+
+    // Save the template
+    fireEvent.click(screen.getByTestId("save-template-btn"));
+
+    // Save the settings
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    // Verify the payload contains agentPrompts with the custom template
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.agentPrompts).toBeDefined();
+    expect(payload.agentPrompts.templates).toBeDefined();
+    expect(payload.agentPrompts.templates.length).toBe(1);
+    expect(payload.agentPrompts.templates[0].name).toBe("My Custom Template");
   });
 });
