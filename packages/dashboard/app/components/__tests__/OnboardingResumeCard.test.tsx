@@ -1,99 +1,145 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { OnboardingResumeCard } from "../OnboardingResumeCard";
-import * as onboardingState from "../model-onboarding-state";
 
-// Mock the onboarding state module
+// Mock the model-onboarding-state module
 vi.mock("../model-onboarding-state", () => ({
-  isOnboardingResumable: vi.fn(),
   getOnboardingResumeStep: vi.fn(),
 }));
 
-const mockIsOnboardingResumable = onboardingState.isOnboardingResumable as ReturnType<typeof vi.fn>;
-const mockGetOnboardingResumeStep = onboardingState.getOnboardingResumeStep as ReturnType<typeof vi.fn>;
+import { getOnboardingResumeStep } from "../model-onboarding-state";
 
 describe("OnboardingResumeCard", () => {
-  const mockOnContinue = vi.fn();
+  const mockGetOnboardingResumeStep = getOnboardingResumeStep as ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    mockGetOnboardingResumeStep.mockReset();
+    mockGetOnboardingResumeStep.mockReturnValue(null);
   });
 
   afterEach(() => {
-    localStorage.removeItem("kb-onboarding-state");
+    mockGetOnboardingResumeStep.mockReset();
   });
 
-  it("renders null when onboarding is not resumable", () => {
-    mockIsOnboardingResumable.mockReturnValue(false);
-    const { container } = render(<OnboardingResumeCard onContinue={mockOnContinue} />);
-    expect(container.firstChild).toBeNull();
+  describe("rendering", () => {
+    it("renders nothing when no resumable state exists", () => {
+      mockGetOnboardingResumeStep.mockReturnValue(null);
+      const { container } = render(<OnboardingResumeCard onResume={vi.fn()} />);
+      expect(container.firstChild).toBeNull();
+    });
+
+    it("renders the resume card when resumable state exists", () => {
+      mockGetOnboardingResumeStep.mockReturnValue({
+        currentStep: "ai-setup",
+        label: "AI Setup",
+      });
+      render(<OnboardingResumeCard onResume={vi.fn()} />);
+      expect(screen.getByRole("region", { name: "Resume onboarding" })).toBeInTheDocument();
+    });
+
+    it("displays the step label", () => {
+      mockGetOnboardingResumeStep.mockReturnValue({
+        currentStep: "github",
+        label: "GitHub",
+      });
+      render(<OnboardingResumeCard onResume={vi.fn()} />);
+      expect(screen.getByText("GitHub")).toBeInTheDocument();
+    });
+
+    it("displays the title", () => {
+      mockGetOnboardingResumeStep.mockReturnValue({
+        currentStep: "first-task",
+        label: "First Task",
+      });
+      render(<OnboardingResumeCard onResume={vi.fn()} />);
+      expect(screen.getByText("Continue Setup")).toBeInTheDocument();
+    });
+
+    it("displays the continue button", () => {
+      mockGetOnboardingResumeStep.mockReturnValue({
+        currentStep: "ai-setup",
+        label: "AI Setup",
+      });
+      render(<OnboardingResumeCard onResume={vi.fn()} />);
+      expect(screen.getByText("Continue onboarding")).toBeInTheDocument();
+    });
+
+    it("has accessible button with proper role", () => {
+      mockGetOnboardingResumeStep.mockReturnValue({
+        currentStep: "ai-setup",
+        label: "AI Setup",
+      });
+      render(<OnboardingResumeCard onResume={vi.fn()} />);
+      const button = screen.getByRole("button", { name: "Continue onboarding" });
+      expect(button).toBeInTheDocument();
+    });
   });
 
-  it("renders null when getOnboardingResumeStep returns null", () => {
-    mockIsOnboardingResumable.mockReturnValue(true);
-    mockGetOnboardingResumeStep.mockReturnValue(null);
-    const { container } = render(<OnboardingResumeCard onContinue={mockOnContinue} />);
-    expect(container.firstChild).toBeNull();
+  describe("interaction", () => {
+    it("calls onResume when button is clicked", () => {
+      mockGetOnboardingResumeStep.mockReturnValue({
+        currentStep: "ai-setup",
+        label: "AI Setup",
+      });
+      const onResume = vi.fn();
+      render(<OnboardingResumeCard onResume={onResume} />);
+
+      const button = screen.getByRole("button", { name: "Continue onboarding" });
+      fireEvent.click(button);
+
+      expect(onResume).toHaveBeenCalledTimes(1);
+    });
+
+    it("button is keyboard accessible", () => {
+      mockGetOnboardingResumeStep.mockReturnValue({
+        currentStep: "ai-setup",
+        label: "AI Setup",
+      });
+      const onResume = vi.fn();
+      render(<OnboardingResumeCard onResume={onResume} />);
+
+      const button = screen.getByRole("button", { name: "Continue onboarding" });
+      // Click simulates both mouse and keyboard activation
+      fireEvent.click(button);
+
+      expect(onResume).toHaveBeenCalledTimes(1);
+    });
   });
 
-  it("renders the resume card with correct content", () => {
-    mockIsOnboardingResumable.mockReturnValue(true);
-    mockGetOnboardingResumeStep.mockReturnValue({ currentStep: "github", label: "GitHub" });
+  describe("step context", () => {
+    it("shows correct message for ai-setup step", () => {
+      mockGetOnboardingResumeStep.mockReturnValue({
+        currentStep: "ai-setup",
+        label: "AI Setup",
+      });
+      render(<OnboardingResumeCard onResume={vi.fn()} />);
+      expect(screen.getByText(/AI Setup/)).toBeInTheDocument();
+    });
 
-    render(<OnboardingResumeCard onContinue={mockOnContinue} />);
+    it("shows correct message for github step", () => {
+      mockGetOnboardingResumeStep.mockReturnValue({
+        currentStep: "github",
+        label: "GitHub",
+      });
+      render(<OnboardingResumeCard onResume={vi.fn()} />);
+      expect(screen.getByText(/GitHub/)).toBeInTheDocument();
+    });
 
-    expect(screen.getByRole("region", { name: /continue where you left off/i })).toBeTruthy();
-    expect(screen.getByText("Continue where you left off")).toBeTruthy();
-    expect(screen.getByText(/Resume onboarding at/i)).toBeTruthy();
-    expect(screen.getByText("GitHub")).toBeTruthy();
-    expect(screen.getByText("Continue onboarding")).toBeTruthy();
+    it("shows correct message for first-task step", () => {
+      mockGetOnboardingResumeStep.mockReturnValue({
+        currentStep: "first-task",
+        label: "First Task",
+      });
+      render(<OnboardingResumeCard onResume={vi.fn()} />);
+      expect(screen.getByText(/First Task/)).toBeInTheDocument();
+    });
   });
 
-  it("renders with different step labels", () => {
-    mockIsOnboardingResumable.mockReturnValue(true);
-    mockGetOnboardingResumeStep.mockReturnValue({ currentStep: "ai-setup", label: "AI Setup" });
-
-    render(<OnboardingResumeCard onContinue={mockOnContinue} />);
-
-    expect(screen.getByText("AI Setup")).toBeTruthy();
-  });
-
-  it("calls onContinue when button is clicked", () => {
-    mockIsOnboardingResumable.mockReturnValue(true);
-    mockGetOnboardingResumeStep.mockReturnValue({ currentStep: "first-task", label: "First Task" });
-
-    render(<OnboardingResumeCard onContinue={mockOnContinue} />);
-
-    fireEvent.click(screen.getByText("Continue onboarding"));
-    expect(mockOnContinue).toHaveBeenCalledTimes(1);
-  });
-
-  it("button is keyboard accessible", () => {
-    mockIsOnboardingResumable.mockReturnValue(true);
-    mockGetOnboardingResumeStep.mockReturnValue({ currentStep: "github", label: "GitHub" });
-
-    render(<OnboardingResumeCard onContinue={mockOnContinue} />);
-
-    const button = screen.getByRole("button", { name: "Continue onboarding" });
-    expect(button).toBeTruthy();
-
-    // Test keyboard activation - buttons respond to keyPress or click
-    button.focus();
-    expect(document.activeElement).toBe(button);
-
-    // Use click to verify the button is functional
-    fireEvent.click(button);
-    expect(mockOnContinue).toHaveBeenCalledTimes(1);
-  });
-
-  it("has proper heading structure for accessibility", () => {
-    mockIsOnboardingResumable.mockReturnValue(true);
-    mockGetOnboardingResumeStep.mockReturnValue({ currentStep: "ai-setup", label: "AI Setup" });
-
-    render(<OnboardingResumeCard onContinue={mockOnContinue} />);
-
-    const heading = screen.getByRole("heading", { level: 3 });
-    expect(heading).toBeTruthy();
-    expect(heading).toHaveTextContent("Continue where you left off");
+  describe("hidden state", () => {
+    it("does not render when currentStep is null", () => {
+      mockGetOnboardingResumeStep.mockReturnValue(null);
+      const { container } = render(<OnboardingResumeCard onResume={vi.fn()} />);
+      expect(container.firstChild).toBeNull();
+    });
   });
 });

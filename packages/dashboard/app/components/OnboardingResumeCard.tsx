@@ -1,22 +1,20 @@
-import { Lightbulb } from "lucide-react";
-import { isOnboardingResumable, getOnboardingResumeStep } from "./model-onboarding-state";
+import { Play, Sparkles } from "lucide-react";
+import { getOnboardingResumeStep } from "./model-onboarding-state";
 
 interface OnboardingResumeCardProps {
-  /** Callback when user clicks continue onboarding */
-  onContinue: () => void;
+  /** Called when the user clicks "Continue onboarding" */
+  onResume: () => void;
 }
 
 /**
- * Dashboard resume card shown when onboarding was dismissed but not completed.
- * Allows users to continue from their last step rather than starting over.
+ * A banner/card that appears when a user has previously started onboarding
+ * but dismissed the modal without completing. It allows them to resume
+ * from where they left off.
  */
-export function OnboardingResumeCard({ onContinue }: OnboardingResumeCardProps) {
-  // Don't render if onboarding cannot be resumed
-  if (!isOnboardingResumable()) {
-    return null;
-  }
-
+export function OnboardingResumeCard({ onResume }: OnboardingResumeCardProps) {
   const resumeStep = getOnboardingResumeStep();
+
+  // Should not render if no resumable state exists
   if (!resumeStep) {
     return null;
   }
@@ -25,27 +23,26 @@ export function OnboardingResumeCard({ onContinue }: OnboardingResumeCardProps) 
     <section
       className="onboarding-resume-card"
       role="region"
-      aria-labelledby="onboarding-resume-heading"
+      aria-label="Resume onboarding"
     >
-      <div className="onboarding-resume-card__content">
-        <div className="onboarding-resume-card__icon">
-          <Lightbulb size={20} aria-hidden="true" />
+      <div className="onboarding-resume-card__main">
+        <div className="onboarding-resume-card__icon" aria-hidden="true">
+          <Sparkles size={20} />
         </div>
-        <div className="onboarding-resume-card__text">
-          <h3 id="onboarding-resume-heading" className="onboarding-resume-card__title">
-            Continue where you left off
-          </h3>
-          <p className="onboarding-resume-card__meta">
-            Resume onboarding at <strong>{resumeStep.label}</strong>
+        <div className="onboarding-resume-card__content">
+          <h2 className="onboarding-resume-card__title">Continue Setup</h2>
+          <p className="onboarding-resume-card__description">
+            You&apos;re on the <strong>{resumeStep.label}</strong> step. Continue where you left off to complete your dashboard setup.
           </p>
         </div>
       </div>
       <div className="onboarding-resume-card__actions">
         <button
-          className="onboarding-resume-card__continue"
-          onClick={onContinue}
+          className="onboarding-resume-card__resume-btn"
+          onClick={onResume}
         >
-          Continue onboarding
+          <Play size={14} aria-hidden="true" />
+          <span>Continue onboarding</span>
         </button>
       </div>
     </section>

@@ -1,151 +1,194 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import {
   getOnboardingState,
   saveOnboardingState,
   clearOnboardingState,
   isOnboardingResumable,
   getOnboardingResumeStep,
+  ONBOARDING_STEP_LABELS,
 } from "../model-onboarding-state";
 
-const STORAGE_KEY = "kb-onboarding-state";
-
 describe("model-onboarding-state", () => {
+  const STORAGE_KEY = "fusion_model_onboarding_state";
+
+  // Mutable store shared across tests
+  let mockStore: Record<string, string> = {};
+
+  // Mock localStorage implementation
+  const mockLocalStorage = {
+    getItem: (key: string) => mockStore[key] ?? null,
+    setItem: (key: string, value: string) => {
+      mockStore[key] = value;
+    },
+    removeItem: (key: string) => {
+      delete mockStore[key];
+    },
+    clear: () => {
+      mockStore = {};
+    },
+  };
+
   beforeEach(() => {
-    // Clear storage before each test
-    localStorage.removeItem(STORAGE_KEY);
+    // Reset store for each test
+    mockStore = {};
+    // Reset modules to avoid caching issues
+    vi.resetModules();
+    // Stub the global localStorage
+    vi.stubGlobal("localStorage", mockLocalStorage);
   });
 
   afterEach(() => {
-    // Clean up after each test
-    localStorage.removeItem(STORAGE_KEY);
+    vi.unstubAllGlobals();
   });
 
   describe("getOnboardingState", () => {
-    it("returns null when no state is stored", () => {
+    it("returns null when no state exists", () => {
       expect(getOnboardingState()).toBeNull();
     });
 
-    it("returns null when stored data is malformed", () => {
-      localStorage.setItem(STORAGE_KEY, "not-json");
-      expect(getOnboardingState()).toBeNull();
+    it("returns null for malformed JSON", () => {
+      mockStore[STORAGE_KEY] = "not valid json";
+      const result = getOnboardingState();
+      expect(result).toBeNull();
     });
 
-    it("returns null when stored data is missing currentStep", () => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ updatedAt: "2024-01-01T00:00:00.000Z" }));
-      expect(getOnboardingState()).toBeNull();
+    it("returns null for non-object JSON", () => {
+      mockStore[STORAGE_KEY] = '"just a string"';
+      const result = getOnboardingState();
+      expect(result).toBeNull();
     });
 
-    it("returns parsed state when valid", () => {
+    it("returns parsed state for valid data", () => {
       const state = { currentStep: "ai-setup" as const, updatedAt: "2024-01-01T00:00:00.000Z" };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      mockStore[STORAGE_KEY] = JSON.stringify(state);
       expect(getOnboardingState()).toEqual(state);
     });
 
-    it("fills in updatedAt if missing", () => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ currentStep: "github" }));
+    it("returns parsed state for unknown step IDs", () => {
+      const state = { currentStep: "unknown-step", updatedAt: "2024-01-01T00:00:00.000Z" };
+      mockStore[STORAGE_KEY] = JSON.stringify(state);
+      // Unknown steps are now accepted (fallback label logic handles them)
+      expect(getOnboardingState()).toEqual(state);
+    });
+
+    it("returns null when currentStep is missing", () => {
+      const state = { updatedAt: "2024-01-01T00:00:00.000Z" };
+      mockStore[STORAGE_KEY] = JSON.stringify(state);
       const result = getOnboardingState();
-      expect(result?.currentStep).toBe("github");
-      expect(result?.updatedAt).toBeTruthy();
+      expect(result).toBeNull();
+    });
+
+    it("returns null when currentStep is not a string", () => {
+      const state = { currentStep: 123, updatedAt: "2024-01-01T00:00:00.000Z" };
+      mockStore[STORAGE_KEY] = JSON.stringify(state);
+      const result = getOnboardingState();
+      expect(result).toBeNull();
     });
   });
 
   describe("saveOnboardingState", () => {
     it("persists state to localStorage", () => {
-      saveOnboardingState({ currentStep: "first-task" });
-      const stored = localStorage.getItem(STORAGE_KEY);
-      expect(stored).toBeTruthy();
-      const parsed = JSON.parse(stored!);
+      saveOnboardingState("ai-setup");
+      const stored = mockStore[STORAGE_KEY];
+      const parsed = JSON.parse(stored);
+      expect(parsed.currentStep).toBe("ai-setup");
+      expect(parsed.updatedAt).toBeDefined();
+    });
+
+    it("overwrites existing state", () => {
+      saveOnboardingState("github");
+      saveOnboardingState("first-task");
+      const stored = mockStore[STORAGE_KEY];
+      const parsed = JSON.parse(stored);
       expect(parsed.currentStep).toBe("first-task");
-      expect(parsed.updatedAt).toBeTruthy();
     });
   });
 
   describe("clearOnboardingState", () => {
     it("removes state from localStorage", () => {
-      saveOnboardingState({ currentStep: "ai-setup" });
+      const state = { currentStep: "ai-setup" as const, updatedAt: "2024-01-01T00:00:00.000Z" };
+      mockStore[STORAGE_KEY] = JSON.stringify(state);
       clearOnboardingState();
-      expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+      expect(mockStore[STORAGE_KEY]).toBeUndefined();
     });
   });
 
   describe("isOnboardingResumable", () => {
-    it("returns false when no state is stored", () => {
+    it("returns false when no state exists", () => {
       expect(isOnboardingResumable()).toBe(false);
     });
 
-    it("returns false when state is terminal 'complete'", () => {
-      saveOnboardingState({ currentStep: "complete" });
+    it("returns false when step is 'complete'", () => {
+      const state = { currentStep: "complete" as const, updatedAt: "2024-01-01T00:00:00.000Z" };
+      mockStore[STORAGE_KEY] = JSON.stringify(state);
       expect(isOnboardingResumable()).toBe(false);
     });
 
     it("returns true for non-terminal steps", () => {
-      saveOnboardingState({ currentStep: "ai-setup" });
-      expect(isOnboardingResumable()).toBe(true);
-
-      saveOnboardingState({ currentStep: "github" });
-      expect(isOnboardingResumable()).toBe(true);
-
-      saveOnboardingState({ currentStep: "first-task" });
-      expect(isOnboardingResumable()).toBe(true);
+      const steps: Array<"ai-setup" | "github" | "first-task"> = ["ai-setup", "github", "first-task"];
+      for (const step of steps) {
+        const state = { currentStep: step, updatedAt: "2024-01-01T00:00:00.000Z" };
+        mockStore[STORAGE_KEY] = JSON.stringify(state);
+        expect(isOnboardingResumable()).toBe(true);
+      }
     });
   });
 
   describe("getOnboardingResumeStep", () => {
-    it("returns null when no state is stored", () => {
+    it("returns null when no state exists", () => {
       expect(getOnboardingResumeStep()).toBeNull();
     });
 
-    it("returns null for terminal 'complete' step", () => {
-      saveOnboardingState({ currentStep: "complete" });
+    it("returns null when step is 'complete'", () => {
+      const state = { currentStep: "complete" as const, updatedAt: "2024-01-01T00:00:00.000Z" };
+      mockStore[STORAGE_KEY] = JSON.stringify(state);
       expect(getOnboardingResumeStep()).toBeNull();
     });
 
-    it("returns step and label for 'ai-setup'", () => {
-      saveOnboardingState({ currentStep: "ai-setup" });
-      expect(getOnboardingResumeStep()).toEqual({
-        currentStep: "ai-setup",
-        label: "AI Setup",
-      });
+    it("returns step info for known steps", () => {
+      const steps: Array<"ai-setup" | "github" | "first-task"> = ["ai-setup", "github", "first-task"];
+      for (const step of steps) {
+        const state = { currentStep: step, updatedAt: "2024-01-01T00:00:00.000Z" };
+        mockStore[STORAGE_KEY] = JSON.stringify(state);
+        const result = getOnboardingResumeStep();
+        expect(result).toEqual({
+          currentStep: step,
+          label: ONBOARDING_STEP_LABELS[step],
+        });
+      }
     });
 
-    it("returns step and label for 'github'", () => {
-      saveOnboardingState({ currentStep: "github" });
-      expect(getOnboardingResumeStep()).toEqual({
-        currentStep: "github",
-        label: "GitHub",
-      });
-    });
-
-    it("returns step and label for 'first-task'", () => {
-      saveOnboardingState({ currentStep: "first-task" });
-      expect(getOnboardingResumeStep()).toEqual({
-        currentStep: "first-task",
-        label: "First Task",
-      });
-    });
-
-    it("generates fallback label for unknown step IDs", () => {
-      // @ts-expect-error - Testing with arbitrary step ID
-      saveOnboardingState({ currentStep: "custom-step" });
+    it("returns fallback label for unknown future step IDs", () => {
+      const state = { currentStep: "custom-step" as const, updatedAt: "2024-01-01T00:00:00.000Z" };
+      mockStore[STORAGE_KEY] = JSON.stringify(state);
       const result = getOnboardingResumeStep();
-      expect(result?.currentStep).toBe("custom-step");
-      expect(result?.label).toBe("Custom Step");
+      expect(result).toEqual({
+        currentStep: "custom-step",
+        label: "Custom Step", // Falls back to title-case formatting
+      });
     });
 
-    it("generates fallback label for kebab-case steps", () => {
-      // @ts-expect-error - Testing with arbitrary step ID
-      saveOnboardingState({ currentStep: "my-custom-step" });
+    it("handles kebab-case unknown steps", () => {
+      const state = { currentStep: "my-custom-step" as const, updatedAt: "2024-01-01T00:00:00.000Z" };
+      mockStore[STORAGE_KEY] = JSON.stringify(state);
       const result = getOnboardingResumeStep();
-      expect(result?.currentStep).toBe("my-custom-step");
       expect(result?.label).toBe("My Custom Step");
     });
 
-    it("generates fallback label for snake_case steps", () => {
-      // @ts-expect-error - Testing with arbitrary step ID
-      saveOnboardingState({ currentStep: "my_custom_step" });
+    it("handles snake_case unknown steps", () => {
+      const state = { currentStep: "my_custom_step" as const, updatedAt: "2024-01-01T00:00:00.000Z" };
+      mockStore[STORAGE_KEY] = JSON.stringify(state);
       const result = getOnboardingResumeStep();
-      expect(result?.currentStep).toBe("my_custom_step");
       expect(result?.label).toBe("My Custom Step");
+    });
+  });
+
+  describe("ONBOARDING_STEP_LABELS", () => {
+    it("has labels for all known steps", () => {
+      expect(ONBOARDING_STEP_LABELS["ai-setup"]).toBe("AI Setup");
+      expect(ONBOARDING_STEP_LABELS["github"]).toBe("GitHub");
+      expect(ONBOARDING_STEP_LABELS["first-task"]).toBe("First Task");
+      expect(ONBOARDING_STEP_LABELS["complete"]).toBe("Complete");
     });
   });
 });

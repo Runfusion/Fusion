@@ -487,7 +487,7 @@ function AppInner() {
         />
       )}
       {viewMode === "project" && currentProject && !modalManager.modelOnboardingOpen && isOnboardingResumable() && (
-        <OnboardingResumeCard onContinue={modalManager.openModelOnboarding} />
+        <OnboardingResumeCard onResume={modalManager.openModelOnboarding} />
       )}
       <div
         className={`project-content${viewMode === "project" && currentProject ? " project-content--with-footer" : ""}${isMobile ? " project-content--with-mobile-nav" : ""}`}
