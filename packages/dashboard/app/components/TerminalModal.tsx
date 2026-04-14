@@ -357,7 +357,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
           cursorBlink: true,
           cursorStyle: "block",
           fontSize: 14,
-          fontFamily: "monospace",
+          fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
           theme: {
             background: "#1e1e1e",
             foreground: "#d4d4d4",
@@ -384,15 +384,19 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
         terminal.loadAddon(webLinksAddon);
 
         // Try to load WebGL addon for better performance
-        try {
-          const { WebglAddon } = await import("@xterm/addon-webgl");
-          const webglAddon = new WebglAddon();
-          webglAddon.onContextLoss(() => {
-            webglAddon.dispose();
-          });
-          terminal.loadAddon(webglAddon);
-        } catch {
-          // WebGL not available, fallback to canvas
+        // Skip WebGL on mobile devices to avoid rendering artifacts (e.g., garbled
+        // Unicode characters in powerline prompt symbols on iOS Safari/WebKit).
+        if (!isMobileDevice()) {
+          try {
+            const { WebglAddon } = await import("@xterm/addon-webgl");
+            const webglAddon = new WebglAddon();
+            webglAddon.onContextLoss(() => {
+              webglAddon.dispose();
+            });
+            terminal.loadAddon(webglAddon);
+          } catch {
+            // WebGL not available, fallback to canvas
+          }
         }
 
         // Open terminal in container

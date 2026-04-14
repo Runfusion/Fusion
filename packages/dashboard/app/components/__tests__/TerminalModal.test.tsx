@@ -865,6 +865,84 @@ describe("TerminalModal", () => {
     });
   });
 
+  // --- FN-1739 mobile WebGL skip regression tests ---
+  describe("mobile WebGL skip (FN-1739)", () => {
+    let savedInnerWidth: typeof window.innerWidth;
+    let savedOntouchstart: typeof window.ontouchstart;
+    let savedNavigator: typeof navigator;
+
+    beforeEach(() => {
+      savedInnerWidth = window.innerWidth;
+      savedOntouchstart = window.ontouchstart;
+      savedNavigator = navigator;
+
+      // Mock WebGL addon to track if it's loaded
+      vi.mock("@xterm/addon-webgl", () => ({
+        WebglAddon: vi.fn(() => ({
+          onContextLoss: vi.fn(),
+          dispose: vi.fn(),
+        })),
+      }));
+    });
+
+    afterEach(() => {
+      Object.defineProperty(window, "innerWidth", {
+        value: savedInnerWidth,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(window, "ontouchstart", {
+        value: savedOntouchstart,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(navigator, "maxTouchPoints", {
+        value: (savedNavigator as any).maxTouchPoints,
+        writable: true,
+        configurable: true,
+      });
+    });
+
+    function simulateMobileDevice() {
+      Object.defineProperty(window, "innerWidth", {
+        value: 375,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(window, "ontouchstart", {
+        value: undefined,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(navigator, "maxTouchPoints", {
+        value: 2,
+        writable: true,
+        configurable: true,
+      });
+    }
+
+    it("does not load WebGL addon when device is mobile", async () => {
+      simulateMobileDevice();
+
+      // Import WebGL addon mock to get reference for assertions
+      const webglModule = await import("@xterm/addon-webgl");
+      const loadAddonSpy = vi.spyOn(mockTerminalInstance, "loadAddon");
+
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+      // Wait for xterm initialization to complete
+      await waitFor(() => {
+        expect(mockTerminalInstance.open).toHaveBeenCalled();
+      });
+
+      // WebGL addon constructor should NOT have been called
+      expect(webglModule.WebglAddon).not.toHaveBeenCalled();
+
+      // loadAddon should NOT have been called with WebGL addon
+      expect(loadAddonSpy).not.toHaveBeenCalledWith(expect.any(Object));
+    });
+  });
+
   describe("xterm import MIME type retry", () => {
     function isXtermImportBatch(values: Iterable<unknown>): values is Promise<unknown>[] {
       return (
