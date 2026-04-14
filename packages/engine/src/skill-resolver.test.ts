@@ -131,6 +131,9 @@ describe("resolveSessionSkills", () => {
       expect(result.allowedSkillPaths.size).toBe(1);
       expect(result.allowedSkillPaths.has("skills/foo/SKILL.md")).toBe(false);
       expect(result.allowedSkillPaths.has("skills/bar/SKILL.md")).toBe(true);
+      // Verify excludedSkillPaths is also populated
+      expect(result.excludedSkillPaths.size).toBe(1);
+      expect(result.excludedSkillPaths.has("skills/foo/SKILL.md")).toBe(true);
     });
 
     it("exclusion pattern removes previously added entry", () => {
@@ -143,6 +146,24 @@ describe("resolveSessionSkills", () => {
       });
 
       expect(result.allowedSkillPaths.size).toBe(0);
+      expect(result.excludedSkillPaths.size).toBe(1);
+      expect(result.excludedSkillPaths.has("skills/foo/SKILL.md")).toBe(true);
+    });
+
+    it("tracks excluded paths from multiple exclusion patterns", () => {
+      const dir = createMockProjectDir({
+        skills: ["-skills/foo/SKILL.md", "-skills/bar/SKILL.md"],
+      });
+
+      const result = resolveSessionSkills({
+        projectRootDir: dir,
+      });
+
+      expect(result.filterActive).toBe(true);
+      expect(result.allowedSkillPaths.size).toBe(0);
+      expect(result.excludedSkillPaths.size).toBe(2);
+      expect(result.excludedSkillPaths.has("skills/foo/SKILL.md")).toBe(true);
+      expect(result.excludedSkillPaths.has("skills/bar/SKILL.md")).toBe(true);
     });
   });
 
@@ -158,6 +179,7 @@ describe("resolveSessionSkills", () => {
 
       // Last + wins
       expect(result.allowedSkillPaths.has("skills/foo/SKILL.md")).toBe(true);
+      expect(result.excludedSkillPaths.has("skills/foo/SKILL.md")).toBe(false);
     });
 
     it("last entry wins (exclusion after inclusion)", () => {
@@ -171,6 +193,7 @@ describe("resolveSessionSkills", () => {
 
       // Last - wins
       expect(result.allowedSkillPaths.has("skills/foo/SKILL.md")).toBe(false);
+      expect(result.excludedSkillPaths.has("skills/foo/SKILL.md")).toBe(true);
     });
   });
 
@@ -367,6 +390,7 @@ describe("createSkillsOverrideFromSelection", () => {
     it("returns base unchanged", () => {
       const selection: SkillSelectionResult = {
         allowedSkillPaths: new Set(),
+        excludedSkillPaths: new Set(),
         diagnostics: [],
         filterActive: false,
       };
@@ -391,6 +415,7 @@ describe("createSkillsOverrideFromSelection", () => {
     it("filters skills by allowedSkillPaths", () => {
       const selection: SkillSelectionResult = {
         allowedSkillPaths: new Set(["/path/foo"]),
+        excludedSkillPaths: new Set<string>(),
         diagnostics: [],
         filterActive: true,
       };
@@ -413,6 +438,7 @@ describe("createSkillsOverrideFromSelection", () => {
     it("appends warning diagnostic for allowed paths not matching any skill", () => {
       const selection: SkillSelectionResult = {
         allowedSkillPaths: new Set(["/path/nonexistent"]),
+        excludedSkillPaths: new Set<string>(),
         diagnostics: [],
         filterActive: true,
       };
@@ -436,6 +462,7 @@ describe("createSkillsOverrideFromSelection", () => {
     it("checks requested names against discovered skills (case-insensitive)", () => {
       const selection: SkillSelectionResult = {
         allowedSkillPaths: new Set(),
+        excludedSkillPaths: new Set<string>(),
         diagnostics: [],
         filterActive: true,
       };
@@ -463,6 +490,7 @@ describe("createSkillsOverrideFromSelection", () => {
     it("preserves base diagnostics alongside new diagnostics", () => {
       const selection: SkillSelectionResult = {
         allowedSkillPaths: new Set(["/path/foo"]),
+        excludedSkillPaths: new Set<string>(),
         diagnostics: [],
         filterActive: true,
       };
@@ -488,6 +516,7 @@ describe("createSkillsOverrideFromSelection", () => {
 
       const selection: SkillSelectionResult = {
         allowedSkillPaths: new Set(["/path/nonexistent"]),
+        excludedSkillPaths: new Set<string>(),
         diagnostics: [],
         filterActive: true,
       };
@@ -516,6 +545,7 @@ describe("createSkillsOverrideFromSelection", () => {
 
       const selection: SkillSelectionResult = {
         allowedSkillPaths: new Set(["/path/foo"]),
+        excludedSkillPaths: new Set<string>(),
         diagnostics: [],
         filterActive: true,
       };
@@ -539,6 +569,133 @@ describe("createSkillsOverrideFromSelection", () => {
       expect(lastCall).toContain("missing-skill");
 
       consoleErrorSpy.mockRestore();
+    });
+
+    it("produces warning diagnostic for disabled skills (exists but excluded by patterns)", () => {
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      // Simulate a skill that exists but was disabled by project exclusion pattern
+      const selection: SkillSelectionResult = {
+        allowedSkillPaths: new Set<string>(),
+        excludedSkillPaths: new Set(["/path/disabled-skill"]),
+        diagnostics: [],
+        filterActive: true,
+      };
+
+      const override = createSkillsOverrideFromSelection(selection, {
+        sessionPurpose: "executor",
+      });
+
+      // Skill exists in discovered skills but was excluded
+      const base = {
+        skills: [
+          { name: "disabled-skill", filePath: "/path/disabled-skill", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+        ],
+        diagnostics: [],
+      };
+
+      const result = override(base);
+
+      // Skill should be filtered out (excluded)
+      expect(result.skills).toHaveLength(0);
+
+      // Should produce warning diagnostic for disabled skill (ResourceDiagnostic only supports warning|error|collision)
+      expect(result.diagnostics).toHaveLength(1);
+      expect(result.diagnostics[0].type).toBe("warning");
+      expect(result.diagnostics[0].message).toContain("disabled");
+      expect(result.diagnostics[0].message).toContain("disabled-skill");
+
+      // Verify logging
+      expect(consoleErrorSpy).toHaveBeenCalled();
+      const lastCall = consoleErrorSpy.mock.calls[consoleErrorSpy.mock.calls.length - 1][0] as string;
+      expect(lastCall).toContain("disabled");
+
+      consoleErrorSpy.mockRestore();
+    });
+
+    it("distinguishes missing skills (not found) from disabled skills (excluded) via message content", () => {
+      const selection: SkillSelectionResult = {
+        allowedSkillPaths: new Set(["/path/allowed-skill", "/path/missing-skill"]),
+        excludedSkillPaths: new Set(["/path/disabled-skill"]),
+        diagnostics: [],
+        filterActive: true,
+      };
+
+      const override = createSkillsOverrideFromSelection(selection);
+
+      // All three skills exist in discovered skills
+      const base = {
+        skills: [
+          { name: "allowed-skill", filePath: "/path/allowed-skill", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+          { name: "disabled-skill", filePath: "/path/disabled-skill", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+          { name: "other", filePath: "/path/other", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+        ],
+        diagnostics: [],
+      };
+
+      const result = override(base);
+
+      // Only "allowed-skill" should pass through (in allowed paths AND not in excluded paths)
+      // "disabled-skill" is excluded by patterns
+      // "other" is not in allowed paths
+      expect(result.skills).toHaveLength(1);
+      expect(result.skills[0].name).toBe("allowed-skill");
+
+      // Should have 2 diagnostics:
+      // 1. Warning for missing-skill (allowed path not found in discovered skills)
+      // 2. Warning for disabled-skill (exists but was excluded by patterns)
+      // Both are "warning" type since ResourceDiagnostic only supports warning|error|collision
+      // The distinction is made via message content
+      expect(result.diagnostics).toHaveLength(2);
+
+      const missingDiag = result.diagnostics.find(d => d.message.includes("missing-skill"));
+      expect(missingDiag).toBeDefined();
+      expect(missingDiag!.message).toContain("missing-skill");
+      expect(missingDiag!.message).toContain("not found");
+
+      const disabledDiag = result.diagnostics.find(d => d.message.includes("disabled-skill"));
+      expect(disabledDiag).toBeDefined();
+      expect(disabledDiag!.message).toContain("disabled-skill");
+      expect(disabledDiag!.message).toContain("disabled");
+    });
+
+    it("returns skills in deterministic order (same input = same output order)", () => {
+      const selection: SkillSelectionResult = {
+        allowedSkillPaths: new Set(["/path/c", "/path/b", "/path/a"]),
+        excludedSkillPaths: new Set<string>(),
+        diagnostics: [],
+        filterActive: true,
+      };
+
+      const override = createSkillsOverrideFromSelection(selection);
+
+      // Input order: c, a, b
+      const base1 = {
+        skills: [
+          { name: "c", filePath: "/path/c", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+          { name: "a", filePath: "/path/a", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+          { name: "b", filePath: "/path/b", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+        ],
+        diagnostics: [],
+      };
+
+      // Same input order: c, a, b (should produce same output)
+      const base2 = {
+        skills: [
+          { name: "c", filePath: "/path/c", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+          { name: "a", filePath: "/path/a", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+          { name: "b", filePath: "/path/b", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+        ],
+        diagnostics: [],
+      };
+
+      const result1 = override(base1);
+      const result2 = override(base2);
+
+      // Both results should have the same skills in the same order
+      expect(result1.skills.map(s => s.name)).toEqual(result2.skills.map(s => s.name));
+      // Order is preserved from input order (deterministic = consistent)
+      expect(result1.skills.map(s => s.name)).toEqual(["c", "a", "b"]);
     });
   });
 });
