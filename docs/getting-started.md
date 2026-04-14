@@ -42,11 +42,15 @@ Start the dashboard:
 fn dashboard
 ```
 
-On first launch, Fusion opens the **model onboarding wizard**. It guides you through:
+On first launch, Fusion automatically opens the **model onboarding wizard**. It guides you through:
 
 - Choosing one or more AI providers
 - Authenticating providers (OAuth or API key)
 - Selecting a default model
+
+**The onboarding wizard is dismissible and non-blocking.** If you skip setup, you can complete it later:
+- Click **Skip for now** to dismiss the wizard — the dashboard remains fully usable
+- Re-open onboarding anytime from **Settings → Authentication**, or by clearing the `modelOnboardingComplete` flag in global settings
 
 Onboarding completion is tracked by `modelOnboardingComplete` in global settings.
 
