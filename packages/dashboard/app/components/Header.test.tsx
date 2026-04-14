@@ -248,12 +248,14 @@ describe("Header", () => {
     it("renders usage button with correct title when onOpenUsage is provided on desktop", () => {
       renderHeader({ onOpenUsage: vi.fn() }, "desktop");
       expect(screen.getByTitle("View usage")).toBeDefined();
+      expect(screen.getByTestId("desktop-header-usage-btn")).toBeDefined();
     });
 
     it("does not render usage button inline on mobile when onOpenUsage is provided", () => {
       renderHeader({ onOpenUsage: vi.fn() }, "mobile");
       // Button should NOT be inline on mobile (it's in overflow menu)
       expect(screen.queryByTitle("View usage")).toBeNull();
+      expect(screen.queryByTestId("desktop-header-usage-btn")).toBeNull();
     });
 
     it("shows usage in overflow menu on mobile", () => {
@@ -265,7 +267,7 @@ describe("Header", () => {
     it("calls onOpenUsage when usage button is clicked on desktop", () => {
       const onOpenUsage = vi.fn();
       renderHeader({ onOpenUsage }, "desktop");
-      fireEvent.click(screen.getByTitle("View usage"));
+      fireEvent.click(screen.getByTestId("desktop-header-usage-btn"));
       expect(onOpenUsage).toHaveBeenCalled();
     });
 

@@ -680,7 +680,12 @@ export function Header({
 
         {/* Usage button - desktop only (moved to overflow on mobile/tablet) */}
         {!isCompact && onOpenUsage && (
-          <button className="btn-icon" onClick={onOpenUsage} title="View usage">
+          <button
+            className="btn-icon"
+            onClick={onOpenUsage}
+            title="View usage"
+            data-testid="desktop-header-usage-btn"
+          >
             <Activity size={16} />
           </button>
         )}
