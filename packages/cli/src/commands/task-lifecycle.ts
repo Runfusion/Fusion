@@ -213,6 +213,12 @@ export async function processPullRequestMergeTask(
     return "waiting";
   }
 
+  // Cross-process safety net: abort if another task is already mid-merge.
+  const activeMerge = store.getActiveMergingTask(task.id);
+  if (activeMerge) {
+    await store.updateTask(task.id, { status: "awaiting-pr-checks" });
+    return "waiting";
+  }
   await store.updateTask(task.id, { status: "merging-pr" });
   const mergedPr = await github.mergePr({ number: prInfo.number, method: "squash" });
   await store.updatePrInfo(task.id, { ...mergedPr, lastCheckedAt: new Date().toISOString() });

@@ -1436,6 +1436,24 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   /**
+   * Returns the ID of a task currently in an active merge status ("merging" or
+   * "merging-pr"), optionally excluding a specific task ID.
+   *
+   * This is a lightweight database-level check used as a cross-process guard:
+   * multiple engine processes share the same SQLite database, but each has its
+   * own in-memory merge queue. Without this check, two processes can start
+   * merging different tasks simultaneously.
+   */
+  getActiveMergingTask(excludeTaskId?: string): string | undefined {
+    const sql = excludeTaskId
+      ? `SELECT id FROM tasks WHERE status IN ('merging', 'merging-pr') AND id != ? LIMIT 1`
+      : `SELECT id FROM tasks WHERE status IN ('merging', 'merging-pr') LIMIT 1`;
+    const params = excludeTaskId ? [excludeTaskId] : [];
+    const row = this.db.prepare(sql).get(...params) as { id: string } | undefined;
+    return row?.id;
+  }
+
+  /**
    * Search tasks by full-text query across title, ID, description, and comments.
    * Uses SQLite FTS5 for fast tokenized matching with relevance ranking.
    * Falls back to listTasks() for empty/whitespace-only queries.

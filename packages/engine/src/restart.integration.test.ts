@@ -145,6 +145,7 @@ function createMockStore(overrides: Record<string, any> = {}) {
       return makeTask("FN-NEW", "triage");
     }),
     deleteTask: vi.fn().mockResolvedValue(undefined),
+    getActiveMergingTask: vi.fn().mockReturnValue(undefined),
     _trigger(event: string, ...args: any[]) {
       for (const fn of listeners.get(event) || []) fn(...args);
     },

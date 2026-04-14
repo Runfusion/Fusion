@@ -65,6 +65,7 @@ function makeMockStore() {
     logEntry: vi.fn().mockResolvedValue(undefined),
     updateTask: vi.fn().mockResolvedValue({}),
     getFusionDir: vi.fn().mockReturnValue("/tmp/test/.fusion"),
+    getActiveMergingTask: vi.fn().mockReturnValue(undefined),
     getMissionStore: vi.fn().mockReturnValue(mockMissionStore),
     close: vi.fn(),
     on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {

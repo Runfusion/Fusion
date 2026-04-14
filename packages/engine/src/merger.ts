@@ -1298,6 +1298,14 @@ export async function aiMergeTask(
   }
 
   // 5. Execute merge with retry logic
+  // Cross-process safety net: abort if another task is already mid-merge.
+  // The engine's drainMergeQueue also checks, but this catches direct callers.
+  const activeMerge = store.getActiveMergingTask(taskId);
+  if (activeMerge) {
+    throw new Error(
+      `Cannot merge ${taskId}: task ${activeMerge} is already merging (cross-process conflict)`,
+    );
+  }
   await store.updateTask(taskId, { status: "merging" });
 
   // Normalize explicit verification commands from settings

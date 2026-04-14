@@ -65,6 +65,7 @@ const mocks = vi.hoisted(() => {
         emitter.off(event, handler);
       }),
       emit: emitter.emit.bind(emitter),
+      getActiveMergingTask: vi.fn().mockReturnValue(undefined),
     };
   }
 

@@ -471,6 +471,36 @@ export class ProjectEngine {
           }
 
           const settings = await store.getSettings();
+
+          // Cross-process guard: check if another process is already merging a
+          // task for this project. The in-memory mergeQueue serializes within
+          // this process, but multiple processes (e.g. dashboard + serve) share
+          // the same SQLite database and can race.
+          const activeMergingTask = store.getActiveMergingTask(taskId);
+          if (activeMergingTask) {
+            const retryMs = settings.pollIntervalMs ?? 15_000;
+            runtimeLog.log(
+              `Merge deferred for ${taskId} — ${activeMergingTask} is already merging (cross-process guard, retry in ${retryMs / 1000}s)`,
+            );
+            // Temporarily remove the manual resolver so the finally block
+            // doesn't prematurely resolve it. The re-enqueue will restore it.
+            if (manualResolver) {
+              this.manualMergeResolvers.delete(taskId);
+            }
+            // Re-queue after the poll interval so we retry once the other merge finishes
+            setTimeout(() => {
+              if (this.shuttingDown) {
+                manualResolver?.reject(new Error("Engine shutting down"));
+                return;
+              }
+              if (manualResolver) {
+                this.manualMergeResolvers.set(taskId, manualResolver);
+              }
+              this.internalEnqueueMerge(taskId);
+            }, retryMs);
+            continue;
+          }
+
           const mergeStrategy = this.options.getMergeStrategy?.(settings) ?? "direct";
 
           if (mergeStrategy === "pull-request" && this.options.processPullRequestMerge) {
@@ -679,14 +709,13 @@ export class ProjectEngine {
 
   private async startupMergeSweep(store: TaskStore): Promise<void> {
     try {
-      const settings = await store.getSettings();
-      if (!settings.autoMerge) return;
-
       const tasks = await store.listTasks({ column: "in-review" });
 
       // Clear stale "merging"/"merging-pr" statuses left by a prior crash.
       // No merge is actually running at startup, so any task still marked
       // as merging is a leftover from a previous engine lifecycle.
+      // This runs unconditionally (regardless of autoMerge setting) because
+      // stale statuses block manual merges too.
       const staleStatuses = new Set(["merging", "merging-pr"]);
       for (const t of tasks) {
         if (t.status && staleStatuses.has(t.status)) {
@@ -696,6 +725,9 @@ export class ProjectEngine {
           (t as any).status = null;
         }
       }
+
+      const settings = await store.getSettings();
+      if (!settings.autoMerge) return;
 
       const eligible = tasks.filter((t) => this.canMergeTask(t as any));
       if (eligible.length > 0) {
