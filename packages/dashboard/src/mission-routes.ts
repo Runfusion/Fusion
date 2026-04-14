@@ -30,12 +30,11 @@ import type {
   SliceStatus,
   FeatureStatus,
   InterviewState,
-  MissionContractAssertion,
+  MissionAssertionStatus,
+  FeatureLoopState,
   ContractAssertionCreateInput,
   ContractAssertionUpdateInput,
-  MilestoneValidationRollup,
 } from "@fusion/core";
-import type { MissionSummary } from "@fusion/core";
 import {
   MISSION_STATUSES,
   MILESTONE_STATUSES,
@@ -57,10 +56,6 @@ import {
 import type { AiSessionStore } from "./ai-session-store.js";
 
 // ── Validation Utilities ────────────────────────────────────────────────────
-
-function validateUuid(id: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
-}
 
 function validateMissionId(id: string): boolean {
   // Accept generated format: M-{base36timestamp}-{random} (e.g. M-LZ7DN0-A2B5)
@@ -413,10 +408,7 @@ export function createMissionRouter(
         const rootDir = scopedStore.getRootDir();
         const settings = await scopedStore.getSettings();
 
-        const {
-          createMissionInterviewSession,
-          RateLimitError,
-        } = await import("./mission-interview.js");
+        const { createMissionInterviewSession } = await import("./mission-interview.js");
 
         const sessionId = await createMissionInterviewSession(
           ip,
@@ -427,11 +419,12 @@ export function createMissionRouter(
           modelId,
         );
         res.status(201).json({ sessionId });
-      } catch (err: any) {
-        if (err.name === "RateLimitError") {
-          throw rateLimited(err.message);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (err instanceof Error && err.name === "RateLimitError") {
+          throw rateLimited(errMsg);
         } else {
-          throw internalError(err.message || "Failed to start interview session");
+          throw internalError(errMsg || "Failed to start interview session");
         }
       }
     })
@@ -473,11 +466,7 @@ export function createMissionRouter(
         const rootDir = scopedStore.getRootDir();
         const settings = await scopedStore.getSettings();
 
-        const {
-          submitMissionInterviewResponse,
-          SessionNotFoundError,
-          InvalidSessionStateError,
-        } = await import("./mission-interview.js");
+        const { submitMissionInterviewResponse } = await import("./mission-interview.js");
 
         const result = await submitMissionInterviewResponse(
           sessionId,
@@ -486,13 +475,15 @@ export function createMissionRouter(
           settings.promptOverrides,
         );
         res.json(result);
-      } catch (err: any) {
-        if (err.name === "SessionNotFoundError") {
-          throw notFound(err.message);
-        } else if (err.name === "InvalidSessionStateError") {
-          throw badRequest(err.message);
+      } catch (err: unknown) {
+        const errName = err instanceof Error ? err.name : "";
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errName === "SessionNotFoundError") {
+          throw notFound(errMsg);
+        } else if (errName === "InvalidSessionStateError") {
+          throw badRequest(errMsg);
         } else {
-          throw internalError(err.message || "Failed to process response");
+          throw internalError(errMsg || "Failed to process response");
         }
       }
     })
@@ -531,21 +522,19 @@ export function createMissionRouter(
         const rootDir = scopedStore.getRootDir();
         const settings = await scopedStore.getSettings();
 
-        const {
-          retryMissionInterviewSession,
-          SessionNotFoundError,
-          InvalidSessionStateError,
-        } = await import("./mission-interview.js");
+        const { retryMissionInterviewSession } = await import("./mission-interview.js");
 
         await retryMissionInterviewSession(sessionId, rootDir, settings.promptOverrides);
         res.json({ success: true, sessionId });
-      } catch (err: any) {
-        if (err.name === "SessionNotFoundError") {
-          throw notFound(err.message);
-        } else if (err.name === "InvalidSessionStateError") {
-          throw badRequest(err.message);
+      } catch (err: unknown) {
+        const errName = err instanceof Error ? err.name : "";
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errName === "SessionNotFoundError") {
+          throw notFound(errMsg);
+        } else if (errName === "InvalidSessionStateError") {
+          throw badRequest(errMsg);
         } else {
-          throw internalError(err.message || "Failed to retry interview session");
+          throw internalError(errMsg || "Failed to retry interview session");
         }
       }
     })
@@ -576,18 +565,17 @@ export function createMissionRouter(
       }
 
       try {
-        const {
-          cancelMissionInterviewSession,
-          SessionNotFoundError,
-        } = await import("./mission-interview.js");
+        const { cancelMissionInterviewSession } = await import("./mission-interview.js");
 
         await cancelMissionInterviewSession(sessionId);
         res.json({ success: true });
-      } catch (err: any) {
-        if (err.name === "SessionNotFoundError") {
-          throw notFound(err.message);
+      } catch (err: unknown) {
+        const errName = err instanceof Error ? err.name : "";
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errName === "SessionNotFoundError") {
+          throw notFound(errMsg);
         } else {
-          throw internalError(err.message || "Failed to cancel session");
+          throw internalError(errMsg || "Failed to cancel session");
         }
       }
     })
@@ -696,8 +684,9 @@ export function createMissionRouter(
         req.on("close", () => {
           clearInterval(heartbeat);
         });
-      } catch (err: any) {
-        writeSSEEvent(res, "error", JSON.stringify({ message: err.message || "Stream error" }));
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        writeSSEEvent(res, "error", JSON.stringify({ message: errMsg || "Stream error" }));
         res.end();
       }
     })
@@ -723,7 +712,6 @@ export function createMissionRouter(
           getMissionInterviewSession,
           getMissionInterviewSummary,
           cleanupMissionInterviewSession,
-          SessionNotFoundError,
         } = await import("./mission-interview.js");
 
         const session = getMissionInterviewSession(sessionId);
@@ -795,15 +783,17 @@ export function createMissionRouter(
         // Return the full hierarchy
         const result = missionStore.getMissionWithHierarchy(mission.id);
         res.status(201).json(result);
-      } catch (err: any) {
+      } catch (err: unknown) {
         // Re-throw ApiError subclasses without wrapping
         if (err instanceof ApiError) {
           throw err;
         }
-        if (err.name === "SessionNotFoundError") {
-          throw notFound(err.message);
+        const errName = err instanceof Error ? err.name : "";
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errName === "SessionNotFoundError") {
+          throw notFound(errMsg);
         } else {
-          throw internalError(err.message || "Failed to create mission");
+          throw internalError(errMsg || "Failed to create mission");
         }
       }
     })
@@ -870,8 +860,9 @@ export function createMissionRouter(
       try {
         const mission = missionStore.updateMission(missionId, updates);
         res.json(mission);
-      } catch (err: any) {
-        if (err.message?.includes("not found")) {
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errMsg.includes("not found")) {
           throw notFound("Mission not found");
         }
         throw err;
@@ -1040,8 +1031,9 @@ export function createMissionRouter(
       try {
         const mission = missionStore.updateMissionInterviewState(missionId, validatedState);
         res.json(mission);
-      } catch (err: any) {
-        if (err.message?.includes("not found")) {
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errMsg.includes("not found")) {
           throw notFound("Mission not found");
         }
         throw err;
@@ -1206,8 +1198,9 @@ export function createMissionRouter(
       try {
         const milestone = missionStore.updateMilestone(milestoneId, updates);
         res.json(milestone);
-      } catch (err: any) {
-        if (err.message?.includes("not found")) {
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errMsg.includes("not found")) {
           throw notFound("Milestone not found");
         }
         throw err;
@@ -1281,8 +1274,9 @@ export function createMissionRouter(
       try {
         const milestone = missionStore.updateMilestoneInterviewState(milestoneId, validatedState);
         res.json(milestone);
-      } catch (err: any) {
-        if (err.message?.includes("not found")) {
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errMsg.includes("not found")) {
           throw notFound("Milestone not found");
         }
         throw err;
@@ -1442,8 +1436,9 @@ export function createMissionRouter(
       try {
         const slice = missionStore.updateSlice(sliceId, updates);
         res.json(slice);
-      } catch (err: any) {
-        if (err.message?.includes("not found")) {
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errMsg.includes("not found")) {
           throw notFound("Slice not found");
         }
         throw err;
@@ -1490,8 +1485,9 @@ export function createMissionRouter(
       try {
         const slice = await missionStore.activateSlice(sliceId);
         res.json(slice);
-      } catch (err: any) {
-        if (err.message?.includes("not found")) {
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errMsg.includes("not found")) {
           throw notFound("Slice not found");
         }
         throw err;
@@ -1558,7 +1554,7 @@ export function createMissionRouter(
 
       // Validate status if provided
       if (status !== undefined) {
-        if (typeof status !== "string" || !MISSION_ASSERTION_STATUSES.includes(status as any)) {
+        if (typeof status !== "string" || !MISSION_ASSERTION_STATUSES.includes(status as MissionAssertionStatus)) {
           throw badRequest(`Invalid status. Must be one of: ${MISSION_ASSERTION_STATUSES.join(", ")}`);
         }
       }
@@ -1566,7 +1562,7 @@ export function createMissionRouter(
       const input: ContractAssertionCreateInput = {
         title: title.trim(),
         assertion: assertionText.trim(),
-        status: status as any,
+        status: status as MissionAssertionStatus,
       };
 
       const created = missionStore.addContractAssertion(milestoneId, input);
@@ -1679,10 +1675,10 @@ export function createMissionRouter(
       }
 
       if (status !== undefined) {
-        if (typeof status !== "string" || !MISSION_ASSERTION_STATUSES.includes(status as any)) {
+        if (typeof status !== "string" || !MISSION_ASSERTION_STATUSES.includes(status as MissionAssertionStatus)) {
           throw badRequest(`Invalid status. Must be one of: ${MISSION_ASSERTION_STATUSES.join(", ")}`);
         }
-        updates.status = status as any;
+        updates.status = status as MissionAssertionStatus;
       }
 
       const updated = missionStore.updateContractAssertion(assertionId, updates);
@@ -1733,14 +1729,15 @@ export function createMissionRouter(
       try {
         missionStore.linkFeatureToAssertion(featureId, assertionId);
         res.json({ success: true });
-      } catch (err: any) {
-        if (err.message?.includes("not found")) {
-          if (err.message?.includes(`Feature ${featureId}`)) {
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errMsg.includes("not found")) {
+          if (errMsg.includes(`Feature ${featureId}`)) {
             throw notFound("Feature not found");
           }
           throw notFound("Assertion not found");
         }
-        if (err.message?.includes("already linked")) {
+        if (errMsg.includes("already linked")) {
           throw conflict(`Feature ${featureId} is already linked to assertion ${assertionId}`);
         }
         throw err;
@@ -1768,14 +1765,15 @@ export function createMissionRouter(
       try {
         missionStore.unlinkFeatureFromAssertion(featureId, assertionId);
         res.json({ success: true });
-      } catch (err: any) {
-        if (err.message?.includes("not found")) {
-          if (err.message?.includes(`Feature ${featureId}`)) {
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errMsg.includes("not found")) {
+          if (errMsg.includes(`Feature ${featureId}`)) {
             throw notFound("Feature not found");
           }
           throw notFound("Assertion not found");
         }
-        if (err.message?.includes("not linked")) {
+        if (errMsg.includes("not linked")) {
           throw badRequest(`Feature ${featureId} is not linked to assertion ${assertionId}`);
         }
         throw err;
@@ -1883,7 +1881,7 @@ export function createMissionRouter(
 
       // Transition feature to validating state
       missionStore.updateFeature(featureId, {
-        loopState: "validating" as any,
+        loopState: "validating" as FeatureLoopState,
       });
 
       // Start a validator run
@@ -2021,8 +2019,9 @@ export function createMissionRouter(
           recoveredCount: result.recoveredCount,
           message: `Recovered ${result.recoveredCount} features`,
         });
-      } catch (err: any) {
-        throw internalError(`Recovery failed: ${err.message}`);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        throw internalError(`Recovery failed: ${errMsg}`);
       }
     })
   );
@@ -2165,8 +2164,9 @@ export function createMissionRouter(
       try {
         const feature = missionStore.updateFeature(featureId, updates);
         res.json(feature);
-      } catch (err: any) {
-        if (err.message?.includes("not found")) {
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errMsg.includes("not found")) {
           throw notFound("Feature not found");
         }
         throw err;
@@ -2223,9 +2223,10 @@ export function createMissionRouter(
       try {
         const feature = missionStore.linkFeatureToTask(featureId, taskId);
         res.json(feature);
-      } catch (err: any) {
-        if (err.message?.includes("already linked")) {
-          throw conflict(err.message);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errMsg.includes("already linked")) {
+          throw conflict(errMsg);
         }
         throw err;
       }
@@ -2288,11 +2289,12 @@ export function createMissionRouter(
           taskDescription || undefined,
         );
         res.json(feature);
-      } catch (err: any) {
-        if (err.message?.includes("already")) {
-          throw badRequest(err.message);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errMsg.includes("already")) {
+          throw badRequest(errMsg);
         }
-        if (err.message?.includes("TaskStore")) {
+        if (errMsg.includes("TaskStore")) {
           throw new ApiError(503, "TaskStore not available for triage operations");
         }
         throw err;
@@ -2322,8 +2324,9 @@ export function createMissionRouter(
       try {
         const triaged = await missionStore.triageSlice(sliceId);
         res.json({ triaged, count: triaged.length });
-      } catch (err: any) {
-        if (err.message?.includes("TaskStore")) {
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errMsg.includes("TaskStore")) {
           throw new ApiError(503, "TaskStore not available for triage operations");
         }
         throw err;
@@ -2432,7 +2435,7 @@ export function createMissionRouter(
               try {
                 await store.pauseTask(feature.taskId, true);
                 pausedTaskIds.push(feature.taskId);
-              } catch (err: any) {
+              } catch (_err) {
                 // Log but don't fail — task may already be paused or not found
               }
             }
@@ -2696,10 +2699,7 @@ export function createMissionRouter(
           ? `Mission: "${mission.title}". ${mission.description || ""}`
           : undefined;
 
-        const {
-          createTargetInterviewSession,
-          RateLimitError,
-        } = await import("./milestone-slice-interview.js");
+        const { createTargetInterviewSession } = await import("./milestone-slice-interview.js");
 
         const sessionId = await createTargetInterviewSession(
           ip,
@@ -2710,11 +2710,12 @@ export function createMissionRouter(
           rootDir
         );
         res.status(201).json({ sessionId });
-      } catch (err: any) {
-        if (err.name === "RateLimitError") {
-          throw rateLimited(err.message);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (err instanceof Error && err.name === "RateLimitError") {
+          throw rateLimited(errMsg);
         } else {
-          throw internalError(err.message || "Failed to start interview session");
+          throw internalError(errMsg || "Failed to start interview session");
         }
       }
     })
@@ -2756,22 +2757,20 @@ export function createMissionRouter(
       }
 
       try {
-        const {
-          submitTargetInterviewResponse,
-          TargetSessionNotFoundError,
-          TargetInvalidSessionStateError,
-        } = await import("./milestone-slice-interview.js");
+        const { submitTargetInterviewResponse } = await import("./milestone-slice-interview.js");
 
         const rootDir = await getRootDirForRequest(req);
         const result = await submitTargetInterviewResponse(sessionId, responses, rootDir);
         res.json(result);
-      } catch (err: any) {
-        if (err.name === "TargetSessionNotFoundError") {
-          throw notFound(err.message);
-        } else if (err.name === "TargetInvalidSessionStateError") {
-          throw badRequest(err.message);
+      } catch (err: unknown) {
+        const errName = err instanceof Error ? err.name : "";
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errName === "TargetSessionNotFoundError") {
+          throw notFound(errMsg);
+        } else if (errName === "TargetInvalidSessionStateError") {
+          throw badRequest(errMsg);
         } else {
-          throw internalError(err.message || "Failed to process response");
+          throw internalError(errMsg || "Failed to process response");
         }
       }
     })
@@ -2880,8 +2879,9 @@ export function createMissionRouter(
         req.on("close", () => {
           clearInterval(heartbeat);
         });
-      } catch (err: any) {
-        writeSSEEvent(res, "error", JSON.stringify({ message: err.message || "Stream error" }));
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        writeSSEEvent(res, "error", JSON.stringify({ message: errMsg || "Stream error" }));
         res.end();
       }
     })
@@ -2920,22 +2920,20 @@ export function createMissionRouter(
       }
 
       try {
-        const {
-          retryTargetInterviewSession,
-          TargetSessionNotFoundError,
-          TargetInvalidSessionStateError,
-        } = await import("./milestone-slice-interview.js");
+        const { retryTargetInterviewSession } = await import("./milestone-slice-interview.js");
 
         const rootDir = await getRootDirForRequest(req);
         await retryTargetInterviewSession(sessionId, rootDir);
         res.json({ success: true, sessionId });
-      } catch (err: any) {
-        if (err.name === "TargetSessionNotFoundError") {
-          throw notFound(err.message);
-        } else if (err.name === "TargetInvalidSessionStateError") {
-          throw badRequest(err.message);
+      } catch (err: unknown) {
+        const errName = err instanceof Error ? err.name : "";
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errName === "TargetSessionNotFoundError") {
+          throw notFound(errMsg);
+        } else if (errName === "TargetInvalidSessionStateError") {
+          throw badRequest(errMsg);
         } else {
-          throw internalError(err.message || "Failed to retry interview session");
+          throw internalError(errMsg || "Failed to retry interview session");
         }
       }
     })
@@ -2960,18 +2958,17 @@ export function createMissionRouter(
       }
 
       try {
-        const {
-          applyTargetInterview,
-          TargetSessionNotFoundError,
-        } = await import("./milestone-slice-interview.js");
+        const { applyTargetInterview } = await import("./milestone-slice-interview.js");
 
         const milestone = applyTargetInterview(sessionId, missionStore);
         res.json(milestone);
-      } catch (err: any) {
-        if (err.name === "TargetSessionNotFoundError") {
-          throw notFound(err.message);
+      } catch (err: unknown) {
+        const errName = err instanceof Error ? err.name : "";
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errName === "TargetSessionNotFoundError") {
+          throw notFound(errMsg);
         } else {
-          throw internalError(err.message || "Failed to apply interview");
+          throw internalError(errMsg || "Failed to apply interview");
         }
       }
     })
@@ -2997,11 +2994,13 @@ export function createMissionRouter(
 
         const milestone = skipTargetInterview("milestone", milestoneId, missionStore);
         res.json(milestone);
-      } catch (err: any) {
-        if (err.name === "TargetSessionNotFoundError") {
-          throw notFound(err.message);
+      } catch (err: unknown) {
+        const errName = err instanceof Error ? err.name : "";
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errName === "TargetSessionNotFoundError") {
+          throw notFound(errMsg);
         } else {
-          throw internalError(err.message || "Failed to skip interview");
+          throw internalError(errMsg || "Failed to skip interview");
         }
       }
     })
@@ -3044,10 +3043,7 @@ export function createMissionRouter(
             ? `Milestone: "${milestone.title}".`
             : undefined;
 
-        const {
-          createTargetInterviewSession,
-          RateLimitError,
-        } = await import("./milestone-slice-interview.js");
+        const { createTargetInterviewSession } = await import("./milestone-slice-interview.js");
 
         const sessionId = await createTargetInterviewSession(
           ip,
@@ -3058,11 +3054,12 @@ export function createMissionRouter(
           rootDir
         );
         res.status(201).json({ sessionId });
-      } catch (err: any) {
-        if (err.name === "RateLimitError") {
-          throw rateLimited(err.message);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (err instanceof Error && err.name === "RateLimitError") {
+          throw rateLimited(errMsg);
         } else {
-          throw internalError(err.message || "Failed to start interview session");
+          throw internalError(errMsg || "Failed to start interview session");
         }
       }
     })
@@ -3104,22 +3101,20 @@ export function createMissionRouter(
       }
 
       try {
-        const {
-          submitTargetInterviewResponse,
-          TargetSessionNotFoundError,
-          TargetInvalidSessionStateError,
-        } = await import("./milestone-slice-interview.js");
+        const { submitTargetInterviewResponse } = await import("./milestone-slice-interview.js");
 
         const rootDir = await getRootDirForRequest(req);
         const result = await submitTargetInterviewResponse(sessionId, responses, rootDir);
         res.json(result);
-      } catch (err: any) {
-        if (err.name === "TargetSessionNotFoundError") {
-          throw notFound(err.message);
-        } else if (err.name === "TargetInvalidSessionStateError") {
-          throw badRequest(err.message);
+      } catch (err: unknown) {
+        const errName = err instanceof Error ? err.name : "";
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errName === "TargetSessionNotFoundError") {
+          throw notFound(errMsg);
+        } else if (errName === "TargetInvalidSessionStateError") {
+          throw badRequest(errMsg);
         } else {
-          throw internalError(err.message || "Failed to process response");
+          throw internalError(errMsg || "Failed to process response");
         }
       }
     })
@@ -3228,8 +3223,9 @@ export function createMissionRouter(
         req.on("close", () => {
           clearInterval(heartbeat);
         });
-      } catch (err: any) {
-        writeSSEEvent(res, "error", JSON.stringify({ message: err.message || "Stream error" }));
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        writeSSEEvent(res, "error", JSON.stringify({ message: errMsg || "Stream error" }));
         res.end();
       }
     })
@@ -3268,22 +3264,20 @@ export function createMissionRouter(
       }
 
       try {
-        const {
-          retryTargetInterviewSession,
-          TargetSessionNotFoundError,
-          TargetInvalidSessionStateError,
-        } = await import("./milestone-slice-interview.js");
+        const { retryTargetInterviewSession } = await import("./milestone-slice-interview.js");
 
         const rootDir = await getRootDirForRequest(req);
         await retryTargetInterviewSession(sessionId, rootDir);
         res.json({ success: true, sessionId });
-      } catch (err: any) {
-        if (err.name === "TargetSessionNotFoundError") {
-          throw notFound(err.message);
-        } else if (err.name === "TargetInvalidSessionStateError") {
-          throw badRequest(err.message);
+      } catch (err: unknown) {
+        const errName = err instanceof Error ? err.name : "";
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errName === "TargetSessionNotFoundError") {
+          throw notFound(errMsg);
+        } else if (errName === "TargetInvalidSessionStateError") {
+          throw badRequest(errMsg);
         } else {
-          throw internalError(err.message || "Failed to retry interview session");
+          throw internalError(errMsg || "Failed to retry interview session");
         }
       }
     })
@@ -3308,18 +3302,17 @@ export function createMissionRouter(
       }
 
       try {
-        const {
-          applyTargetInterview,
-          TargetSessionNotFoundError,
-        } = await import("./milestone-slice-interview.js");
+        const { applyTargetInterview } = await import("./milestone-slice-interview.js");
 
         const slice = applyTargetInterview(sessionId, missionStore);
         res.json(slice);
-      } catch (err: any) {
-        if (err.name === "TargetSessionNotFoundError") {
-          throw notFound(err.message);
+      } catch (err: unknown) {
+        const errName = err instanceof Error ? err.name : "";
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errName === "TargetSessionNotFoundError") {
+          throw notFound(errMsg);
         } else {
-          throw internalError(err.message || "Failed to apply interview");
+          throw internalError(errMsg || "Failed to apply interview");
         }
       }
     })
@@ -3345,11 +3338,13 @@ export function createMissionRouter(
 
         const slice = skipTargetInterview("slice", sliceId, missionStore);
         res.json(slice);
-      } catch (err: any) {
-        if (err.name === "TargetSessionNotFoundError") {
-          throw notFound(err.message);
+      } catch (err: unknown) {
+        const errName = err instanceof Error ? err.name : "";
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errName === "TargetSessionNotFoundError") {
+          throw notFound(errMsg);
         } else {
-          throw internalError(err.message || "Failed to skip interview");
+          throw internalError(errMsg || "Failed to skip interview");
         }
       }
     })
