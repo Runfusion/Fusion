@@ -1023,6 +1023,12 @@ The skill selection resolver (`packages/engine/src/skill-resolver.ts`) computes 
 - `filterActive: false` means no filtering (all discovered skills pass through); `filterActive: true` means filtering is active
 - `createSkillsOverrideFromSelection()` returns the `skillsOverride` callback for `DefaultResourceLoader`
 - `skillsOverride` is only set when `skillSelection` is provided in `AgentOptions`; omitting it preserves existing behavior
+- `SkillSelectionResult` includes `excludedSkillPaths` to track skills explicitly disabled by `-` patterns
+- Filtering distinguishes three cases:
+  1. **Allowed skills**: skills matching `allowedSkillPaths` pass through
+  2. **Disabled skills**: skills matching `excludedSkillPaths` are filtered out and produce warnings
+  3. **Missing skills**: configured paths not matching any discovered skill produce warnings
+- The `createSkillsOverrideFromSelection` callback filters skills and produces diagnostic messages via `console.error` with `[pi] [skills]` prefix
 
 **Settings format:**
 ```json

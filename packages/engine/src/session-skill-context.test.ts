@@ -92,7 +92,7 @@ describe("buildSessionSkillContextSync", () => {
 
   describe("assigned agent skills", () => {
     it("uses assigned agent skills when available", () => {
-      const agent = {
+      const agent: Agent = {
         id: "agent-001",
         name: "Test Agent",
         role: "executor",
@@ -112,7 +112,7 @@ describe("buildSessionSkillContextSync", () => {
     });
 
     it("uses object-style agent skills", () => {
-      const agent = {
+      const agent: Agent = {
         id: "agent-001",
         name: "Test Agent",
         role: "executor",
@@ -127,7 +127,7 @@ describe("buildSessionSkillContextSync", () => {
     });
 
     it("falls back to role when agent has empty skills", () => {
-      const agent = {
+      const agent: Agent = {
         id: "agent-001",
         name: "Test Agent",
         role: "executor",
@@ -142,7 +142,7 @@ describe("buildSessionSkillContextSync", () => {
     });
 
     it("falls back to role when agent has no metadata", () => {
-      const agent = {
+      const agent: Agent = {
         id: "agent-001",
         name: "Test Agent",
         role: "executor",
@@ -157,7 +157,7 @@ describe("buildSessionSkillContextSync", () => {
     });
 
     it("falls back to role when agent has no metadata.skills", () => {
-      const agent = {
+      const agent: Agent = {
         id: "agent-001",
         name: "Test Agent",
         role: "executor",
@@ -209,7 +209,7 @@ describe("buildSessionSkillContextSync", () => {
     });
 
     it("uses agent skills over role fallback", () => {
-      const agent = {
+      const agent: Agent = {
         id: "agent-001",
         name: "Test Agent",
         role: "executor",
@@ -238,7 +238,7 @@ describe("buildSessionSkillContext", () => {
   const projectRootDir = "/test/project";
 
   it("uses assigned agent skills when available", async () => {
-    const mockAgent = {
+    const mockAgent: Agent = {
       id: "agent-001",
       name: "Test Agent",
       role: "executor",
