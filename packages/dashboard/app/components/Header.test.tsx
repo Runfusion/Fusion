@@ -925,6 +925,57 @@ describe("Header", () => {
       fireEvent.click(closeBtn);
       expect(onSearchChange).toHaveBeenCalledWith("");
     });
+
+    it("does not render mobile project switch trigger on desktop", () => {
+      const projects = [
+        { id: "1", name: "Project One", path: "/path/one", status: "active" as const },
+        { id: "2", name: "Project Two", path: "/path/two", status: "active" as const },
+      ];
+      renderHeader({
+        projects,
+        currentProject: projects[0],
+        onSelectProject: vi.fn(),
+      }, "desktop");
+      expect(screen.queryByTestId("mobile-project-switch-trigger")).toBeNull();
+    });
+
+    it("does not render mobile project switch trigger on tablet", () => {
+      const projects = [
+        { id: "1", name: "Project One", path: "/path/one", status: "active" as const },
+        { id: "2", name: "Project Two", path: "/path/two", status: "active" as const },
+      ];
+      renderHeader({
+        projects,
+        currentProject: projects[0],
+        onSelectProject: vi.fn(),
+      }, "tablet");
+      expect(screen.queryByTestId("mobile-project-switch-trigger")).toBeNull();
+    });
+
+    it("renders mobile project switch trigger on mobile with 2+ projects", () => {
+      const projects = [
+        { id: "1", name: "Project One", path: "/path/one", status: "active" as const },
+        { id: "2", name: "Project Two", path: "/path/two", status: "active" as const },
+      ];
+      renderHeader({
+        projects,
+        currentProject: projects[0],
+        onSelectProject: vi.fn(),
+      }, "mobile");
+      expect(screen.getByTestId("mobile-project-switch-trigger")).toBeDefined();
+    });
+
+    it("does not render mobile project switch trigger on mobile with single project", () => {
+      const projects = [
+        { id: "1", name: "Project One", path: "/path/one", status: "active" as const },
+      ];
+      renderHeader({
+        projects,
+        currentProject: projects[0],
+        onSelectProject: vi.fn(),
+      }, "mobile");
+      expect(screen.queryByTestId("mobile-project-switch-trigger")).toBeNull();
+    });
   });
 
   describe("Back to All Projects button", () => {

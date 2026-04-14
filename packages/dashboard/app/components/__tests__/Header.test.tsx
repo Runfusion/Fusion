@@ -998,6 +998,176 @@ describe("Header", () => {
       fireEvent.click(closeBtn);
       expect(onSearchChange).toHaveBeenCalledWith("");
     });
+
+    // ── Mobile Project Switch (logo-adjacent) ─────────────────────
+
+    it("renders mobile project switch trigger when 2+ projects and onSelectProject provided", () => {
+      const projects = [
+        { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+        { id: "proj_2", name: "Project Two", path: "/path/2", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+      ];
+      render(
+        <Header
+          projects={projects}
+          currentProject={projects[0]}
+          onSelectProject={vi.fn()}
+        />
+      );
+      expect(screen.getByTestId("mobile-project-switch-trigger")).toBeDefined();
+    });
+
+    it("does not render mobile project switch trigger with single project", () => {
+      const projects = [
+        { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+      ];
+      render(
+        <Header
+          projects={projects}
+          currentProject={projects[0]}
+          onSelectProject={vi.fn()}
+        />
+      );
+      expect(screen.queryByTestId("mobile-project-switch-trigger")).toBeNull();
+    });
+
+    it("does not render mobile project switch trigger when onSelectProject is not provided", () => {
+      const projects = [
+        { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+        { id: "proj_2", name: "Project Two", path: "/path/2", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+      ];
+      render(
+        <Header
+          projects={projects}
+          currentProject={projects[0]}
+        />
+      );
+      expect(screen.queryByTestId("mobile-project-switch-trigger")).toBeNull();
+    });
+
+    it("mobile project switch trigger opens dropdown when clicked", () => {
+      const projects = [
+        { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+        { id: "proj_2", name: "Project Two", path: "/path/2", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+      ];
+      render(
+        <Header
+          projects={projects}
+          currentProject={projects[0]}
+          onSelectProject={vi.fn()}
+        />
+      );
+      const trigger = screen.getByTestId("mobile-project-switch-trigger");
+      fireEvent.click(trigger);
+      expect(screen.getByTestId("mobile-project-switch-dropdown")).toBeDefined();
+    });
+
+    it("mobile project switch dropdown shows all projects", () => {
+      const projects = [
+        { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+        { id: "proj_2", name: "Project Two", path: "/path/2", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+      ];
+      render(
+        <Header
+          projects={projects}
+          currentProject={projects[0]}
+          onSelectProject={vi.fn()}
+        />
+      );
+      fireEvent.click(screen.getByTestId("mobile-project-switch-trigger"));
+      expect(screen.getByTestId("mobile-project-switch-item-proj_1")).toBeDefined();
+      expect(screen.getByTestId("mobile-project-switch-item-proj_2")).toBeDefined();
+    });
+
+    it("mobile project switch calls onSelectProject when project is selected", () => {
+      const projects = [
+        { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+        { id: "proj_2", name: "Project Two", path: "/path/2", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+      ];
+      const onSelectProject = vi.fn();
+      render(
+        <Header
+          projects={projects}
+          currentProject={projects[0]}
+          onSelectProject={onSelectProject}
+        />
+      );
+      fireEvent.click(screen.getByTestId("mobile-project-switch-trigger"));
+      fireEvent.click(screen.getByTestId("mobile-project-switch-item-proj_2"));
+      expect(onSelectProject).toHaveBeenCalledWith(projects[1]);
+    });
+
+    it("mobile project switch dropdown closes after selection", () => {
+      const projects = [
+        { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+        { id: "proj_2", name: "Project Two", path: "/path/2", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+      ];
+      render(
+        <Header
+          projects={projects}
+          currentProject={projects[0]}
+          onSelectProject={vi.fn()}
+        />
+      );
+      fireEvent.click(screen.getByTestId("mobile-project-switch-trigger"));
+      expect(screen.getByTestId("mobile-project-switch-dropdown")).toBeDefined();
+      fireEvent.click(screen.getByTestId("mobile-project-switch-item-proj_2"));
+      expect(screen.queryByTestId("mobile-project-switch-dropdown")).toBeNull();
+    });
+
+    it("mobile project switch closes on outside click", () => {
+      const projects = [
+        { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+        { id: "proj_2", name: "Project Two", path: "/path/2", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+      ];
+      render(
+        <Header
+          projects={projects}
+          currentProject={projects[0]}
+          onSelectProject={vi.fn()}
+        />
+      );
+      fireEvent.click(screen.getByTestId("mobile-project-switch-trigger"));
+      expect(screen.getByTestId("mobile-project-switch-dropdown")).toBeDefined();
+      fireEvent.mouseDown(document.body);
+      expect(screen.queryByTestId("mobile-project-switch-dropdown")).toBeNull();
+    });
+
+    it("mobile project switch closes on Escape key", () => {
+      const projects = [
+        { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+        { id: "proj_2", name: "Project Two", path: "/path/2", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+      ];
+      render(
+        <Header
+          projects={projects}
+          currentProject={projects[0]}
+          onSelectProject={vi.fn()}
+        />
+      );
+      fireEvent.click(screen.getByTestId("mobile-project-switch-trigger"));
+      expect(screen.getByTestId("mobile-project-switch-dropdown")).toBeDefined();
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(screen.queryByTestId("mobile-project-switch-dropdown")).toBeNull();
+    });
+
+    it("mobile project switch shows current project as selected", () => {
+      const projects = [
+        { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+        { id: "proj_2", name: "Project Two", path: "/path/2", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+      ];
+      render(
+        <Header
+          projects={projects}
+          currentProject={projects[0]}
+          onSelectProject={vi.fn()}
+        />
+      );
+      fireEvent.click(screen.getByTestId("mobile-project-switch-trigger"));
+      const currentItem = screen.getByTestId("mobile-project-switch-item-proj_1");
+      expect(currentItem.getAttribute("aria-selected")).toBe("true");
+      const otherItem = screen.getByTestId("mobile-project-switch-item-proj_2");
+      expect(otherItem.getAttribute("aria-selected")).toBe("false");
+    });
   });
 
   // ── Project Selector ────────────────────────────────────
