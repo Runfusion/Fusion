@@ -1,4 +1,4 @@
-import { Activity, CheckCircle, ListTodo } from "lucide-react";
+import { Activity, CheckCircle, ListTodo, Zap } from "lucide-react";
 import type { AgentStats } from "../api";
 
 interface AgentMetricsBarProps {
@@ -12,6 +12,7 @@ export function AgentMetricsBar({ stats }: AgentMetricsBarProps) {
     { icon: Activity, label: "Active Agents", value: stats.activeCount, color: "var(--state-active-text)" },
     { icon: ListTodo, label: "Assigned Tasks", value: stats.assignedTaskCount, color: "var(--in-progress)" },
     { icon: CheckCircle, label: "Success Rate", value: `${Math.round(stats.successRate * 100)}%`, color: "var(--color-success, #3fb950)" },
+    { icon: Zap, label: "Total Runs", value: stats.completedRuns, color: "var(--in-progress)" },
   ];
 
   return (
