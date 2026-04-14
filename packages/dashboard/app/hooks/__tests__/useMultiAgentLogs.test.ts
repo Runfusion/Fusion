@@ -514,4 +514,103 @@ describe("useMultiAgentLogs", () => {
     expect(result.current["FN-001"].entries[0].detail).toBe(longDetail);
     expect(result.current["FN-001"].entries[0].detail!.length).toBe(5000);
   });
+
+  describe("projectId support", () => {
+    it("includes projectId in EventSource URL when provided", async () => {
+      mockFetchAgentLogs.mockResolvedValue([]);
+
+      renderHook(() => useMultiAgentLogs(["FN-001", "FN-002"], "proj-123"));
+
+      await waitFor(() => {
+        const urls = [...new Set(MockEventSource.instances.map((es) => es.url))];
+        expect(urls).toContain("/api/tasks/FN-001/logs/stream?projectId=proj-123");
+        expect(urls).toContain("/api/tasks/FN-002/logs/stream?projectId=proj-123");
+      });
+    });
+
+    it("includes projectId in fetchAgentLogs call when provided", async () => {
+      mockFetchAgentLogs.mockResolvedValue([]);
+
+      renderHook(() => useMultiAgentLogs(["FN-001"], "proj-123"));
+
+      await waitFor(() => {
+        expect(mockFetchAgentLogs).toHaveBeenCalledWith("FN-001", "proj-123", { limit: 500 });
+      });
+    });
+
+    it("does not include projectId in URL when not provided", async () => {
+      mockFetchAgentLogs.mockResolvedValue([]);
+
+      renderHook(() => useMultiAgentLogs(["FN-001"]));
+
+      await waitFor(() => {
+        const urls = [...new Set(MockEventSource.instances.map((es) => es.url))];
+        expect(urls).toContain("/api/tasks/FN-001/logs/stream");
+      });
+    });
+
+    it("creates new EventSource when taskIds change with projectId", async () => {
+      mockFetchAgentLogs.mockResolvedValue([]);
+
+      const { rerender } = renderHook(
+        ({ taskIds, projectId }: { taskIds: string[]; projectId?: string }) =>
+          useMultiAgentLogs(taskIds, projectId),
+        { initialProps: { taskIds: ["FN-001"], projectId: "proj-A" } },
+      );
+
+      await waitFor(() => {
+        const urls = [...new Set(MockEventSource.instances.map((es) => es.url))];
+        expect(urls).toContain("/api/tasks/FN-001/logs/stream?projectId=proj-A");
+      });
+
+      const initialCount = MockEventSource.instances.length;
+
+      // Add a new taskId
+      rerender({ taskIds: ["FN-001", "FN-002"], projectId: "proj-A" });
+
+      // Wait for new connection
+      await waitFor(() => {
+        const urls = [...new Set(MockEventSource.instances.map((es) => es.url))];
+        expect(urls).toContain("/api/tasks/FN-002/logs/stream?projectId=proj-A");
+      });
+      expect(MockEventSource.instances.length).toBeGreaterThan(initialCount);
+    });
+
+    it("fetches with correct projectId based on when effect runs", async () => {
+      // This test verifies that projectId is used at the time the effect runs
+      mockFetchAgentLogs.mockResolvedValue([]);
+
+      // Render with projectId proj-A
+      const { result: result1 } = renderHook(
+        ({ taskIds, projectId }: { taskIds: string[]; projectId?: string }) =>
+          useMultiAgentLogs(taskIds, projectId),
+        { initialProps: { taskIds: ["FN-001"], projectId: "proj-A" } },
+      );
+
+      // Wait for initial fetch
+      await waitFor(() => {
+        expect(result1.current["FN-001"]).toBeDefined();
+      });
+
+      // Capture calls made so far
+      const initialCallCount = mockFetchAgentLogs.mock.calls.length;
+
+      // Create new hook instance with proj-B
+      const { result: result2, rerender: rerender2 } = renderHook(
+        ({ taskIds, projectId }: { taskIds: string[]; projectId?: string }) =>
+          useMultiAgentLogs(taskIds, projectId),
+        { initialProps: { taskIds: ["FN-001"], projectId: "proj-B" } },
+      );
+
+      // Wait for fetch
+      await waitFor(() => {
+        expect(result2.current["FN-001"]).toBeDefined();
+      });
+
+      // The new hook should have made a fetch with proj-B
+      expect(mockFetchAgentLogs.mock.calls.length).toBeGreaterThan(initialCallCount);
+      const lastCall = mockFetchAgentLogs.mock.calls.at(-1);
+      expect(lastCall?.[1]).toBe("proj-B");
+    });
+  });
 });

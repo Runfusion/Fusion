@@ -29,6 +29,7 @@ class BadgeWebSocketStore {
   private reconnectDelayMs = 1_000;
   private shouldReconnect = false;
   private isConnected = false;
+  private projectId: string | null = null;
   private snapshot: StoreSnapshot = {
     badgeUpdates: new Map(),
     isConnected: false,
@@ -43,6 +44,34 @@ class BadgeWebSocketStore {
 
   getSnapshot(): StoreSnapshot {
     return this.snapshot;
+  }
+
+  setProjectId(projectId: string | null): void {
+    if (this.projectId === projectId) return;
+
+    const hadSubscriptions = this.subscriptionsByTask.size > 0;
+    // Collect all (hookId, taskId) pairs that were subscribed
+    const previousSubscriptions: Array<{ hookId: string; taskId: string }> = [];
+    for (const [taskId, subscribers] of this.subscriptionsByTask) {
+      for (const hookId of subscribers) {
+        previousSubscriptions.push({ hookId, taskId });
+      }
+    }
+
+    this.projectId = projectId;
+    this.reset();
+
+    // Re-subscribe to all previous subscriptions after project change
+    // This ensures badge subscriptions survive project switches
+    // Note: we restore subscriptions BEFORE calling connect() so that
+    // onopen will send the subscribe messages over the new socket
+    if (hadSubscriptions) {
+      for (const { hookId, taskId } of previousSubscriptions) {
+        this.subscriptionsByTask.set(taskId, new Set([hookId]));
+      }
+      this.shouldReconnect = this.subscriptionsByTask.size > 0;
+      this.connect();
+    }
   }
 
   subscribeTask(hookId: string, taskId: string): void {
@@ -101,7 +130,11 @@ class BadgeWebSocketStore {
     }
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${protocol}//${window.location.host}/api/ws`);
+    let url = `${protocol}//${window.location.host}/api/ws`;
+    if (this.projectId) {
+      url += `?projectId=${encodeURIComponent(this.projectId)}`;
+    }
+    const ws = new WebSocket(url);
     this.ws = ws;
 
     ws.onopen = () => {
@@ -216,7 +249,7 @@ function hasMessageField(message: BadgeUpdatedMessage, field: "prInfo" | "issueI
   return Object.prototype.hasOwnProperty.call(message, field);
 }
 
-export function useBadgeWebSocket(): {
+export function useBadgeWebSocket(projectId?: string): {
   badgeUpdates: Map<string, BadgeSnapshot>;
   isConnected: boolean;
   subscribeToBadge: (taskId: string) => void;
@@ -239,6 +272,11 @@ export function useBadgeWebSocket(): {
   const unsubscribeFromBadge = useCallback((taskId: string) => {
     badgeWebSocketStore.unsubscribeTask(hookIdRef.current!, taskId);
   }, []);
+
+  // Update project context when projectId changes
+  useEffect(() => {
+    badgeWebSocketStore.setProjectId(projectId ?? null);
+  }, [projectId]);
 
   useEffect(() => {
     return () => {

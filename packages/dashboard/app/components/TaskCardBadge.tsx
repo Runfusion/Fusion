@@ -26,10 +26,11 @@ interface TaskCardBadgeProps {
   issueInfo?: IssueInfo;
   updatedAt: string;
   isInViewport: boolean;
+  projectId?: string;
 }
 
-function TaskCardBadgeComponent({ taskId, prInfo, issueInfo, updatedAt, isInViewport }: TaskCardBadgeProps) {
-  const { badgeUpdates, subscribeToBadge, unsubscribeFromBadge } = useBadgeWebSocket();
+function TaskCardBadgeComponent({ taskId, prInfo, issueInfo, updatedAt, isInViewport, projectId }: TaskCardBadgeProps) {
+  const { badgeUpdates, subscribeToBadge, unsubscribeFromBadge } = useBadgeWebSocket(projectId);
   const hasGitHubBadge = Boolean(prInfo || issueInfo);
 
   useEffect(() => {
@@ -42,7 +43,7 @@ function TaskCardBadgeComponent({ taskId, prInfo, issueInfo, updatedAt, isInView
     return () => {
       unsubscribeFromBadge(taskId);
     };
-  }, [hasGitHubBadge, isInViewport, subscribeToBadge, taskId, unsubscribeFromBadge]);
+  }, [hasGitHubBadge, isInViewport, projectId, subscribeToBadge, taskId, unsubscribeFromBadge]);
 
   const liveBadgeData = badgeUpdates.get(taskId);
   const livePrInfo = pickPreferredBadge<PrInfo>(

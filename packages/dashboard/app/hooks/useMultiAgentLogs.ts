@@ -42,7 +42,7 @@ interface InitState {
  * When task IDs are added or removed, connections are opened/closed accordingly.
  * When the component unmounts, all EventSources are closed to prevent memory leaks.
  */
-export function useMultiAgentLogs(taskIds: string[]): LogStateMap {
+export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogStateMap {
   // Store state per task
   const [stateMap, setStateMap] = useState<Record<string, InitState>>({});
 
@@ -67,8 +67,9 @@ export function useMultiAgentLogs(taskIds: string[]): LogStateMap {
     };
   }, []);
 
-  // Stable comparison of task IDs to prevent effect re-runs on every render
+  // Stable comparison of task IDs and projectId to prevent effect re-runs on every render
   const taskIdsKey = taskIds.join(",");
+  const stableKey = [taskIdsKey, projectId ?? ""].join("|");
 
   // Main effect to manage connections
   useEffect(() => {
@@ -152,8 +153,9 @@ export function useMultiAgentLogs(taskIds: string[]): LogStateMap {
       cancelled[taskId] = false;
       pendingLiveEntriesRef.current[taskId] = [];
 
-      // Open SSE connection immediately so rerenders cannot race a second setup
-      const es = new EventSource(`/api/tasks/${taskId}/logs/stream`);
+      // Build SSE URL with optional projectId for multi-project support
+      const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+      const es = new EventSource(`/api/tasks/${taskId}/logs/stream${query}`);
       sources[taskId] = es;
 
       const handleAgentLog = (e: MessageEvent) => {
@@ -194,8 +196,8 @@ export function useMultiAgentLogs(taskIds: string[]): LogStateMap {
       es.addEventListener("agent:log", handleAgentLog);
       es.addEventListener("error", handleError);
 
-      // Fetch historical logs
-      void fetchAgentLogs(taskId, undefined, { limit: MAX_LOG_ENTRIES })
+      // Fetch historical logs with projectId
+      void fetchAgentLogs(taskId, projectId, { limit: MAX_LOG_ENTRIES })
         .then((historical) => {
           if (cancelled[taskId]) return;
 
@@ -244,7 +246,7 @@ export function useMultiAgentLogs(taskIds: string[]): LogStateMap {
         }
       }
     };
-  }, [taskIdsKey]); // Use stable string key instead of array reference
+  }, [stableKey]); // Use stable key including projectId
 
   // Close all connections on unmount
   useEffect(() => {

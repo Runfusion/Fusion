@@ -79,7 +79,7 @@ function createEmptyBuffer(): BufferedMessages {
  * }, [onData]);
  * ```
  */
-export function useTerminal(sessionId: string | null): UseTerminalReturn {
+export function useTerminal(sessionId: string | null, projectId?: string): UseTerminalReturn {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("disconnected");
   
   const wsRef = useRef<WebSocket | null>(null);
@@ -213,9 +213,12 @@ export function useTerminal(sessionId: string | null): UseTerminalReturn {
     isManualCloseRef.current = false;
     setConnectionStatus("connecting");
 
-    // Build WebSocket URL
+    // Build WebSocket URL with optional projectId for multi-project support
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/api/terminal/ws?sessionId=${encodeURIComponent(sessionId)}`;
+    let wsUrl = `${protocol}//${window.location.host}/api/terminal/ws?sessionId=${encodeURIComponent(sessionId)}`;
+    if (projectId) {
+      wsUrl += `&projectId=${encodeURIComponent(projectId)}`;
+    }
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
@@ -338,7 +341,7 @@ export function useTerminal(sessionId: string | null): UseTerminalReturn {
     ws.onerror = () => {
       // Errors are handled by onclose
     };
-  }, [sessionId]);
+  }, [sessionId, projectId]);
 
   // Manual reconnect
   const reconnect = useCallback(() => {

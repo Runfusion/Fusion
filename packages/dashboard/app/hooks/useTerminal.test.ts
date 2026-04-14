@@ -72,6 +72,57 @@ describe("useTerminal", () => {
     expect(MockWebSocket.instances[0].url).toContain("/api/terminal/ws?sessionId=test-session-123");
   });
 
+  describe("projectId support", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("includes projectId in WebSocket URL when provided", () => {
+      const { result } = renderHook(() => useTerminal("test-session-123", "proj-456"));
+
+      expect(result.current.connectionStatus).toBe("connecting");
+      expect(MockWebSocket.instances).toHaveLength(1);
+      expect(MockWebSocket.instances[0].url).toContain("/api/terminal/ws?sessionId=test-session-123");
+      expect(MockWebSocket.instances[0].url).toContain("projectId=proj-456");
+    });
+
+    it("does not include projectId in URL when not provided", () => {
+      const { result } = renderHook(() => useTerminal("test-session-123"));
+
+      expect(result.current.connectionStatus).toBe("connecting");
+      expect(MockWebSocket.instances).toHaveLength(1);
+      expect(MockWebSocket.instances[0].url).toBe(
+        `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/api/terminal/ws?sessionId=test-session-123`,
+      );
+    });
+
+    it("updates URL when projectId changes", () => {
+      const { result, rerender } = renderHook(
+        ({ sessionId, projectId }: { sessionId: string | null; projectId?: string }) =>
+          useTerminal(sessionId, projectId),
+        { initialProps: { sessionId: "test-session-123", projectId: "proj-A" } },
+      );
+
+      expect(MockWebSocket.instances[0].url).toContain("projectId=proj-A");
+
+      // Change projectId
+      rerender({ sessionId: "test-session-123", projectId: "proj-B" });
+
+      // Wait for reconnect
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+
+      // New WebSocket should have new projectId
+      expect(MockWebSocket.instances).toHaveLength(2);
+      expect(MockWebSocket.instances[1].url).toContain("projectId=proj-B");
+    });
+  });
+
   it("reports connected status when the websocket opens", () => {
     const { result } = renderHook(() => useTerminal("test-session-123"));
 

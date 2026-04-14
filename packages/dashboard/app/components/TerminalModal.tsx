@@ -295,7 +295,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
 
   // Get the WebSocket connection for the active session
   const { connectionStatus, sendInput, resize, onData, onConnect, onExit, onScrollback, reconnect, onSessionInvalid } = 
-    useTerminal(activeTab?.sessionId ?? null);
+    useTerminal(activeTab?.sessionId ?? null, projectId);
 
   // Keep a ref to resize so the viewport-change effect can call it
   // without needing resize as a dependency (avoids ordering issues).

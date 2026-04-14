@@ -459,7 +459,7 @@ describe("TerminalModal", () => {
     render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
     await waitFor(() => {
-      expect(mockUseTerminal).toHaveBeenCalledWith("test-session-123");
+      expect(mockUseTerminal).toHaveBeenCalledWith("test-session-123", undefined);
     });
   });
 
