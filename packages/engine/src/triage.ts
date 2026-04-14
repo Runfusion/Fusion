@@ -1203,6 +1203,7 @@ export class TriageProcessor {
               defaultThinkingLevel: currentSettings.defaultThinkingLevel,
               store,
               taskId,
+              task: currentDetail,
               userComments: currentUserComments.length > 0 ? currentUserComments : undefined,
               agentStore: this.options.agentStore,
               rootDir,

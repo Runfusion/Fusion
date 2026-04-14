@@ -2339,6 +2339,7 @@ export class TaskExecutor {
               validatorFallbackModelId: settings.validatorFallbackModelId,
               store,
               taskId,
+              task: detail,
               agentPrompts: settings.agentPrompts,
               agentStore: this.options.agentStore,
               rootDir: this.rootDir,

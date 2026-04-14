@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { getTaskMergeBlocker, type TaskStore, type MergeResult, type MergeDetails, type WorkflowStep, type WorkflowStepResult, type Settings, type AgentPromptsConfig } from "@fusion/core";
 import { resolveAgentPrompt } from "@fusion/core";
 import { createKbAgent, describeModel, promptWithFallback, compactSessionContext } from "./pi.js";
+import { buildSessionSkillContext } from "./session-skill-context.js";
 import type { WorktreePool } from "./worktree-pool.js";
 import { AgentLogger } from "./agent-logger.js";
 import { mergerLog } from "./logger.js";
@@ -2018,6 +2019,22 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     mergerInstructions,
   );
 
+  // Build skill selection context (assigned agent skills take precedence over role fallback)
+  let skillContext = undefined;
+  if (options.agentStore) {
+    try {
+      const task = await store.getTask(taskId);
+      skillContext = await buildSessionSkillContext({
+        agentStore: options.agentStore,
+        task,
+        sessionPurpose: "merger",
+        projectRootDir: rootDir,
+      });
+    } catch {
+      // Graceful fallback - no skill selection
+    }
+  }
+
   const { session } = await createKbAgent({
     cwd: rootDir,
     systemPrompt: mergerSystemPrompt,
@@ -2030,6 +2047,8 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     defaultProvider: settings.defaultProvider,
     defaultModelId: settings.defaultModelId,
     defaultThinkingLevel: settings.defaultThinkingLevel,
+    // Skill selection: use assigned agent skills if available, otherwise role fallback
+    ...(skillContext?.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
   });
 
   options.onSession?.(session);
@@ -2472,6 +2491,22 @@ If issues are found that need attention, describe them clearly.`;
     }
     const postMergeSystemPrompt = buildSystemPromptWithInstructions(systemPrompt, postMergeInstructions);
 
+    // Build skill selection context for post-merge session
+    let postMergeSkillContext = undefined;
+    if (mergeOptions.agentStore) {
+      try {
+        const task = await store.getTask(taskId);
+        postMergeSkillContext = await buildSessionSkillContext({
+          agentStore: mergeOptions.agentStore,
+          task,
+          sessionPurpose: "merger",
+          projectRootDir: rootDir,
+        });
+      } catch {
+        // Graceful fallback - no skill selection
+      }
+    }
+
     const { session } = await createKbAgent({
       cwd: rootDir,
       systemPrompt: postMergeSystemPrompt,
@@ -2481,6 +2516,8 @@ If issues are found that need attention, describe them clearly.`;
       fallbackProvider: settings.fallbackProvider,
       fallbackModelId: settings.fallbackModelId,
       defaultThinkingLevel: settings.defaultThinkingLevel,
+      // Skill selection: use assigned agent skills if available, otherwise role fallback
+      ...(postMergeSkillContext?.skillSelectionContext ? { skillSelection: postMergeSkillContext.skillSelectionContext } : {}),
     });
 
     mergerLog.log(`${taskId}: [post-merge] workflow step '${workflowStep.name}' using model ${describeModel(session)}${useOverride ? " (workflow step override)" : ""}`);
