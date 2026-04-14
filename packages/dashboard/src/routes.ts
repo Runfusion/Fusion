@@ -1847,6 +1847,20 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   }
 
+  /**
+   * Trigger a heartbeat wake for an assigned agent based on a comment event.
+   *
+   * UTILITY PATH: This function is on the heartbeat control-plane lane and is
+   * independent of task-lane saturation. It must NOT be gated on maxConcurrent,
+   * semaphore state, or queue depth.
+   *
+   * Skip reasons (these are normal operation, not saturation gates):
+   * - No HeartbeatMonitor available (heartbeat executor not configured)
+   * - No agent assigned to the task
+   * - HeartbeatMonitor is bound to a different project
+   * - Agent's responseMode is not "immediate" (non-immediate mode skips on-demand wakes)
+   * - Agent already has an active heartbeat run (prevents duplicate runs)
+   */
   const triggerCommentWakeForAssignedAgent = async (
     scopedStore: TaskStore,
     task: Task,
@@ -1856,6 +1870,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       triggerDetail: string;
     },
   ): Promise<void> => {
+    // Skip: no HeartbeatMonitor available
     if (!hasHeartbeatExecutor || !heartbeatMonitor || !task.assignedAgentId) {
       return;
     }
@@ -1871,15 +1886,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     await agentStore.init();
 
     const assignedAgent = await agentStore.getAgent(task.assignedAgentId);
+    // Skip: agent not found
     if (!assignedAgent) {
       return;
     }
 
+    // Skip: agent's responseMode is not "immediate" (non-immediate mode skips on-demand wakes)
     const responseMode = (assignedAgent.runtimeConfig as { messageResponseMode?: string } | undefined)?.messageResponseMode;
     if (responseMode !== "immediate") {
       return;
     }
 
+    // Skip: agent already has an active heartbeat run (prevents duplicate runs)
     const activeRun = await agentStore.getActiveHeartbeatRun(assignedAgent.id);
     if (activeRun) {
       return;
@@ -6600,6 +6618,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   });
 
   // ── Planning Mode Routes ──────────────────────────────────────────────────
+  // UTILITY PATH: Planning and subtask session routes are on a separate control-plane lane.
+  // They must NOT be gated on task-lane saturation (maxConcurrent, semaphore, queue depth).
+  // These routes create/manage AI planning and subtask breakdown sessions.
 
   router.post("/subtasks/start-streaming", async (req, res) => {
     try {
@@ -6870,6 +6891,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  /**
+   * POST /api/subtasks/:sessionId/retry
+   * Retry a failed subtask breakdown session.
+   *
+   * UTILITY PATH: This route is independent of task-lane saturation.
+   * Session-lock 409 with { error, lockedByTab } is preserved.
+   */
   router.post("/subtasks/:sessionId/retry", async (req, res) => {
     try {
       const { sessionId } = req.params;
@@ -6913,6 +6941,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * Start a new planning session.
    * Body: { initialPlan: string }
    * Returns: { sessionId: string, firstQuestion: PlanningQuestion }
+   *
+   * UTILITY PATH: This route is independent of task-lane saturation.
    */
   router.post("/planning/start", async (req, res) => {
     try {
@@ -6957,9 +6987,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * Start a new planning session with AI agent streaming.
    * Body: { initialPlan: string }
    * Returns: { sessionId: string }
-   * 
+   *
    * After receiving sessionId, connect to GET /api/planning/:sessionId/stream
    * for real-time thinking output and questions.
+   *
+   * UTILITY PATH: This route is independent of task-lane saturation.
    */
   router.post("/planning/start-streaming", async (req, res) => {
     try {
@@ -7013,6 +7045,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * Submit a response to the current planning question.
    * Body: { sessionId: string, responses: Record<string, unknown> }
    * Returns: { type: "question" | "complete", data: PlanningQuestion | PlanningSummary }
+   *
+   * UTILITY PATH: This route is independent of task-lane saturation.
+   * Session-lock 409 with { error, lockedByTab } is preserved (multi-tab coordination, not saturation).
    */
   router.post("/planning/respond", async (req, res) => {
     try {
@@ -7060,6 +7095,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  /**
+   * POST /api/planning/:sessionId/retry
+   * Retry a failed planning session.
+   *
+   * UTILITY PATH: This route is independent of task-lane saturation.
+   * Session-lock 409 with { error, lockedByTab } is preserved.
+   */
   router.post("/planning/:sessionId/retry", async (req, res) => {
     try {
       const { sessionId } = req.params;
@@ -10800,6 +10842,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    *
    * When triggerExecution is true AND HeartbeatMonitor is available,
    * also executes a heartbeat run after recording the heartbeat event.
+   *
+   * UTILITY PATH: Heartbeat routes are on a separate control-plane lane and are
+   * independent of task-lane saturation. They must NOT be gated on maxConcurrent,
+   * semaphore state, or queue depth.
    */
   router.post("/agents/:id/heartbeat", async (req, res) => {
     try {
@@ -10906,6 +10952,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * record is created and fully completed without duplicate startRun calls.
    *
    * Returns 409 Conflict if the agent already has an active run.
+   *
+   * UTILITY PATH: Agent run routes are on a separate control-plane lane and are
+   * independent of task-lane saturation. They must NOT be gated on maxConcurrent,
+   * semaphore state, or queue depth. The active-run 409 contract is preserved:
+   * { error: "Agent already has an active run", details: { runId } }.
    */
   router.post("/agents/:id/runs", async (req, res) => {
     try {

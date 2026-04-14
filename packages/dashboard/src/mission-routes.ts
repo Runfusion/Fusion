@@ -334,6 +334,10 @@ export function createMissionRouter(
 
   // ── Interview Endpoints ─────────────────────────────────────────────────────
   // Note: These are mounted at /api/missions/interview/* via the router
+  //
+  // UTILITY PATH: All interview routes (mission, milestone, slice) are on a separate
+  // control-plane lane. They must NOT be gated on task-lane saturation (maxConcurrent,
+  // semaphore, queue depth). Session-lock 409 with { error, lockedByTab } is preserved.
 
   /**
    * Helper to resolve rootDir for the current request's project scope.
@@ -374,6 +378,8 @@ export function createMissionRouter(
    * Start a mission interview session with AI agent streaming.
    * Body: { missionTitle: string, modelProvider?: string, modelId?: string }
    * Returns: { sessionId: string }
+   *
+   * UTILITY PATH: Independent of task-lane saturation.
    */
   router.post(
     "/interview/start",
@@ -435,6 +441,9 @@ export function createMissionRouter(
    * POST /api/missions/interview/respond
    * Submit response to interview question.
    * Body: { sessionId: string, responses: Record<string, unknown> }
+   *
+   * UTILITY PATH: Independent of task-lane saturation.
+   * Session-lock 409 with { error, lockedByTab } is preserved.
    */
   router.post(
     "/interview/respond",
@@ -492,6 +501,9 @@ export function createMissionRouter(
   /**
    * POST /api/missions/interview/:sessionId/retry
    * Retry a failed interview session by replaying the last user interaction.
+   *
+   * UTILITY PATH: Independent of task-lane saturation.
+   * Session-lock 409 with { error, lockedByTab } is preserved.
    */
   router.post(
     "/interview/:sessionId/retry",
@@ -2651,11 +2663,14 @@ export function createMissionRouter(
   );
 
   // ── Milestone Interview Routes ─────────────────────────────────────────────────
+  // UTILITY PATH: Milestone interview routes are independent of task-lane saturation.
 
   /**
    * POST /milestones/:milestoneId/interview/start
    * Start a milestone interview session with AI agent streaming.
    * Returns: { sessionId: string }
+   *
+   * UTILITY PATH: Independent of task-lane saturation.
    */
   router.post(
     "/milestones/:milestoneId/interview/start",
@@ -2709,6 +2724,9 @@ export function createMissionRouter(
    * POST /milestones/:milestoneId/interview/respond
    * Submit response to milestone interview question.
    * Body: { sessionId: string, responses: Record<string, unknown>, tabId?: string }
+   *
+   * UTILITY PATH: Independent of task-lane saturation.
+   * Session-lock 409 with { error, lockedByTab } is preserved.
    */
   router.post(
     "/milestones/:milestoneId/interview/respond",
@@ -2872,6 +2890,9 @@ export function createMissionRouter(
   /**
    * POST /milestones/:milestoneId/interview/:sessionId/retry
    * Retry a failed milestone interview session.
+   *
+   * UTILITY PATH: Independent of task-lane saturation.
+   * Session-lock 409 with { error, lockedByTab } is preserved.
    */
   router.post(
     "/milestones/:milestoneId/interview/:sessionId/retry",
@@ -2987,11 +3008,14 @@ export function createMissionRouter(
   );
 
   // ── Slice Interview Routes ─────────────────────────────────────────────────
+  // UTILITY PATH: Slice interview routes are independent of task-lane saturation.
 
   /**
    * POST /slices/:sliceId/interview/start
    * Start a slice interview session with AI agent streaming.
    * Returns: { sessionId: string }
+   *
+   * UTILITY PATH: Independent of task-lane saturation.
    */
   router.post(
     "/slices/:sliceId/interview/start",
@@ -3048,6 +3072,9 @@ export function createMissionRouter(
    * POST /slices/:sliceId/interview/respond
    * Submit response to slice interview question.
    * Body: { sessionId: string, responses: Record<string, unknown>, tabId?: string }
+   *
+   * UTILITY PATH: Independent of task-lane saturation.
+   * Session-lock 409 with { error, lockedByTab } is preserved.
    */
   router.post(
     "/slices/:sliceId/interview/respond",
@@ -3211,6 +3238,9 @@ export function createMissionRouter(
   /**
    * POST /slices/:sliceId/interview/:sessionId/retry
    * Retry a failed slice interview session.
+   *
+   * UTILITY PATH: Independent of task-lane saturation.
+   * Session-lock 409 with { error, lockedByTab } is preserved.
    */
   router.post(
     "/slices/:sliceId/interview/:sessionId/retry",

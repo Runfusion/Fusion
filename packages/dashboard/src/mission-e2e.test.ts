@@ -33,6 +33,7 @@ import {
   submitMissionInterviewResponse,
 } from "./mission-interview.js";
 import * as missionInterviewModule from "./mission-interview.js";
+import * as milestoneSliceInterviewModule from "./milestone-slice-interview.js";
 import * as projectStoreResolver from "./project-store-resolver.js";
 
 // Mock MissionStore factory
@@ -4304,5 +4305,116 @@ describe("Mission API", () => {
 
       expect(res.status).toBe(404);
     });
+  });
+});
+
+/**
+ * Mission Interview Route Saturation-Independence Tests
+ *
+ * These tests verify that mission interview routes (mission, milestone, slice)
+ * are NOT gated on task-lane saturation (maxConcurrent, semaphore, queue depth).
+ */
+describe("Mission interview routes are independent of task-lane saturation", () => {
+  // Helper to create a mock AI session store for interview routes
+  function createMockAiSessionStore() {
+    const store = new Map<string, any>();
+    return {
+      store,
+      upsert: vi.fn((row) => store.set(row.id, row)),
+      get: vi.fn((id) => store.get(id) ?? null),
+      delete: vi.fn((id) => store.delete(id)),
+      listRecoverable: vi.fn(() => Array.from(store.values())),
+      acquireLock: vi.fn().mockReturnValue({ acquired: true, currentHolder: null }),
+    };
+  }
+
+  // Helper to build an app with saturated settings
+  function buildAppWithSaturatedSettings() {
+    const aiSessionStore = createMockAiSessionStore();
+    const { app, missionStore } = buildApp({ aiSessionStore });
+    const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+    // Override getSettings to return saturated settings
+    ms.getSettings = vi.fn().mockResolvedValue({
+      maxConcurrent: 0, // Saturated: zero task slots available
+      promptOverrides: {},
+    });
+
+    return { app, missionStore: ms, aiSessionStore };
+  }
+
+  it("POST /api/missions/interview/start succeeds under saturated settings", async () => {
+    const { app, missionStore } = buildAppWithSaturatedSettings();
+    const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+    // Mock createMissionInterviewSession to return a session
+    const createSessionMock = vi.fn().mockResolvedValue("mission-saturation-test-session");
+    vi.spyOn(missionInterviewModule, "createMissionInterviewSession").mockImplementation(createSessionMock);
+
+    const res = await request(
+      app,
+      "POST",
+      "/api/missions/interview/start",
+      JSON.stringify({ missionTitle: "Build auth system" }),
+      { "content-type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(res.body.sessionId).toBe("mission-saturation-test-session");
+    // Verify no saturation error was introduced
+    expect(res.body.error).toBeUndefined();
+  });
+
+  it("POST /api/missions/milestones/:milestoneId/interview/start succeeds under saturated settings", async () => {
+    const { app, missionStore } = buildAppWithSaturatedSettings();
+    const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+    // Create a milestone
+    const mission = ms.createMission({ title: "Test Mission" });
+    const milestone = ms.addMilestone(mission.id, { title: "Test Milestone" });
+
+    // Mock createTargetInterviewSession to return a session (from milestone-slice-interview module)
+    const createSessionMock = vi.fn().mockResolvedValue("milestone-saturation-test-session");
+    vi.spyOn(milestoneSliceInterviewModule, "createTargetInterviewSession").mockImplementation(createSessionMock);
+
+    const res = await request(
+      app,
+      "POST",
+      `/api/missions/milestones/${milestone.id}/interview/start`,
+      JSON.stringify({}),
+      { "content-type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(res.body.sessionId).toBe("milestone-saturation-test-session");
+    // Verify no saturation error was introduced
+    expect(res.body.error).toBeUndefined();
+  });
+
+  it("POST /api/missions/slices/:sliceId/interview/start succeeds under saturated settings", async () => {
+    const { app, missionStore } = buildAppWithSaturatedSettings();
+    const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+    // Create a slice
+    const mission = ms.createMission({ title: "Test Mission" });
+    const milestone = ms.addMilestone(mission.id, { title: "Test Milestone" });
+    const slice = ms.addSlice(milestone.id, { title: "Test Slice" });
+
+    // Mock createTargetInterviewSession to return a session (from milestone-slice-interview module)
+    const createSessionMock = vi.fn().mockResolvedValue("slice-saturation-test-session");
+    vi.spyOn(milestoneSliceInterviewModule, "createTargetInterviewSession").mockImplementation(createSessionMock);
+
+    const res = await request(
+      app,
+      "POST",
+      `/api/missions/slices/${slice.id}/interview/start`,
+      JSON.stringify({}),
+      { "content-type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(res.body.sessionId).toBe("slice-saturation-test-session");
+    // Verify no saturation error was introduced
+    expect(res.body.error).toBeUndefined();
   });
 });
