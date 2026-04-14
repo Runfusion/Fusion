@@ -47,15 +47,22 @@ const defaultModels = [
   { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
 ];
 
-async function clickContinueToModelStep() {
+// Navigate through steps helper
+async function navigateToGitHubStep() {
   await waitFor(() => {
-    expect(screen.getByText("Continue →")).toBeTruthy();
+    expect(screen.getByText("Next →")).toBeTruthy();
   });
-
-  fireEvent.click(screen.getByText("Continue →"));
-
+  fireEvent.click(screen.getByText("Next →"));
   await waitFor(() => {
-    expect(screen.getByText("Choose Default Model")).toBeTruthy();
+    expect(screen.getByText("Connect GitHub")).toBeTruthy();
+  });
+}
+
+async function navigateToFirstTaskStep() {
+  await navigateToGitHubStep();
+  fireEvent.click(screen.getByText("Next →"));
+  await waitFor(() => {
+    expect(screen.getByText("Create Your First Task")).toBeTruthy();
   });
 }
 
@@ -71,18 +78,60 @@ beforeEach(() => {
 });
 
 describe("ModelOnboardingModal", () => {
-  describe("provider step", () => {
-    it("renders the provider step by default", async () => {
+  describe("step structure", () => {
+    it("renders the AI Setup step by default with all three step indicators", async () => {
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
 
       await waitFor(() => {
-        expect(screen.getByText("Set Up AI Provider")).toBeTruthy();
+        expect(screen.getByText("Set Up AI")).toBeTruthy();
       });
 
-      expect(screen.getByText("Connect Provider")).toBeTruthy();
-      expect(screen.getByText("Select Model")).toBeTruthy();
+      // Check step indicators
+      expect(screen.getByText("AI Setup")).toBeTruthy();
+      expect(screen.getByText("GitHub")).toBeTruthy();
+      expect(screen.getByText("First Task")).toBeTruthy();
+
+      // Check that AI Setup step is active
+      expect(screen.getByText("AI Setup").closest(".model-onboarding-step-indicator")).toHaveClass("active");
     });
 
+    it("shows Next button on first step, not Back", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Next →")).toBeTruthy();
+      });
+
+      // Back button should not exist on first step
+      expect(screen.queryByText("← Back")).toBeNull();
+    });
+
+    it("shows Skip for now button on non-terminal steps", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Skip for now")).toBeTruthy();
+      });
+    });
+
+    it("shows Back and Next buttons on middle steps", async () => {
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToGitHubStep();
+
+      // Both Back and Next should be visible
+      expect(screen.getByText("← Back")).toBeTruthy();
+      expect(screen.getByText("Next →")).toBeTruthy();
+    });
+  });
+
+  describe("AI Setup step", () => {
     it("shows OAuth providers with Login button", async () => {
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
 
@@ -117,38 +166,29 @@ describe("ModelOnboardingModal", () => {
       expect(screen.getByTestId("onboarding-apikey-save-openai")).toBeTruthy();
     });
 
-    it("disables Continue button when no providers are authenticated", async () => {
+    it("shows model dropdown in AI Setup step", async () => {
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
 
       await waitFor(() => {
-        expect(screen.getByText("Continue →")).toBeTruthy();
+        expect(screen.getByText("Default Model (Optional)")).toBeTruthy();
       });
 
-      expect(screen.getByText("Continue →").closest("button")?.disabled).toBe(true);
+      expect(screen.getByTestId("mock-model-dropdown")).toBeTruthy();
     });
 
-    it("supports mixed auth states across OAuth and API key providers", async () => {
-      mockFetchAuthStatus.mockResolvedValueOnce({
-        providers: [
-          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
-          { id: "openrouter", name: "OpenRouter", authenticated: true, type: "api_key" },
-          { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
-        ],
-      });
-
+    it("allows model selection in AI Setup step", async () => {
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
 
       await waitFor(() => {
-        expect(screen.getByTestId("onboarding-auth-status-openrouter")).toBeTruthy();
-        expect(screen.getByTestId("onboarding-auth-status-openai")).toBeTruthy();
+        expect(screen.getByTestId("mock-model-dropdown")).toBeTruthy();
       });
 
-      expect(screen.getByTestId("onboarding-auth-status-openrouter").textContent).toContain("Key saved");
-      expect(screen.getByTestId("onboarding-auth-status-openai").textContent).toContain("No API key");
+      const dropdown = screen.getByTestId("mock-model-dropdown");
+      fireEvent.change(dropdown, { target: { value: "anthropic/claude-sonnet-4-5" } });
 
       await waitFor(() => {
-        expect(screen.getByText("Choose Default Model")).toBeTruthy();
-      }, { timeout: 3000 });
+        expect(screen.getByText(/Claude Sonnet 4\.5/)).toBeTruthy();
+      });
     });
 
     it("initiates OAuth login when Login is clicked", async () => {
@@ -182,41 +222,6 @@ describe("ModelOnboardingModal", () => {
 
       await waitFor(() => {
         expect(mockSaveApiKey).toHaveBeenCalledWith("openai", "sk-test-key-123");
-      });
-    });
-
-    it("auto-advances to model selection after API key authentication", async () => {
-      mockFetchAuthStatus
-        .mockResolvedValueOnce({
-          providers: [
-            { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
-            { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
-          ],
-        })
-        .mockResolvedValueOnce({
-          providers: [
-            { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
-            { id: "openai", name: "OpenAI", authenticated: true, type: "api_key" },
-          ],
-        });
-
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
-
-      await waitFor(() => {
-        expect(screen.getByTestId("onboarding-apikey-input-openai")).toBeTruthy();
-      });
-
-      fireEvent.change(screen.getByTestId("onboarding-apikey-input-openai"), {
-        target: { value: "sk-api-key" },
-      });
-      fireEvent.click(screen.getByTestId("onboarding-apikey-save-openai"));
-
-      await waitFor(() => {
-        expect(mockSaveApiKey).toHaveBeenCalledWith("openai", "sk-api-key");
-      });
-
-      await waitFor(() => {
-        expect(screen.getByText("Choose Default Model")).toBeTruthy();
       });
     });
 
@@ -266,95 +271,143 @@ describe("ModelOnboardingModal", () => {
     });
   });
 
-  describe("model selection step", () => {
-    it("advances to model step when Continue is clicked with authenticated provider", async () => {
-      mockFetchAuthStatus.mockResolvedValueOnce({
-        providers: [
-          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
-        ],
-      });
-
+  describe("GitHub step", () => {
+    it("shows optional guidance when GitHub provider is not configured", async () => {
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
 
-      await clickContinueToModelStep();
+      await navigateToGitHubStep();
+
+      expect(screen.getByText(/GitHub integration is not configured/)).toBeTruthy();
+      expect(screen.getByText("Continue without GitHub →")).toBeTruthy();
     });
 
-    it("shows model dropdown on the model step", async () => {
+    it("shows GitHub status and login/logout actions when GitHub provider is present", async () => {
       mockFetchAuthStatus.mockResolvedValueOnce({
         providers: [
-          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+          { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
         ],
       });
 
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
 
-      await clickContinueToModelStep();
+      await navigateToGitHubStep();
 
-      expect(screen.getByTestId("mock-model-dropdown")).toBeTruthy();
+      // Use more specific selector to avoid matching the header title
+      expect(screen.getByTestId("onboarding-auth-status-github")).toBeTruthy();
+      expect(screen.getByText("✗ Not connected")).toBeTruthy();
+      expect(screen.getByText("Connect")).toBeTruthy();
     });
 
-    it("allows model selection", async () => {
+    it("shows connected status when GitHub is authenticated", async () => {
       mockFetchAuthStatus.mockResolvedValueOnce({
         providers: [
-          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+          { id: "github", name: "GitHub", authenticated: true, type: "oauth" },
         ],
       });
 
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
 
-      await clickContinueToModelStep();
+      await navigateToGitHubStep();
 
-      const dropdown = screen.getByTestId("mock-model-dropdown");
-      fireEvent.change(dropdown, { target: { value: "anthropic/claude-sonnet-4-5" } });
+      expect(screen.getByTestId("onboarding-auth-status-github")).toBeTruthy();
+      expect(screen.getByText("✓ Connected")).toBeTruthy();
+      expect(screen.getByText("Disconnect")).toBeTruthy();
+    });
+
+    it("allows navigating to First Task step via Continue without GitHub", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToGitHubStep();
+
+      fireEvent.click(screen.getByText("Continue without GitHub →"));
 
       await waitFor(() => {
-        expect(screen.getByText(/Claude Sonnet 4\.5/)).toBeTruthy();
+        expect(screen.getByText("Create Your First Task")).toBeTruthy();
       });
     });
 
-    it("allows going back to provider step", async () => {
+    it("allows navigation back to AI Setup step", async () => {
       mockFetchAuthStatus.mockResolvedValueOnce({
         providers: [
-          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
         ],
       });
 
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
 
-      await clickContinueToModelStep();
+      await navigateToGitHubStep();
+      fireEvent.click(screen.getByText("← Back"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Set Up AI")).toBeTruthy();
+      });
+    });
+  });
+
+  describe("First Task step", () => {
+    it("shows CTA options for creating first task", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToFirstTaskStep();
+
+      expect(screen.getByText("Create a New Task")).toBeTruthy();
+      expect(screen.getByText("Import from GitHub")).toBeTruthy();
+    });
+
+    it("shows skip note about CLI and board creation", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToFirstTaskStep();
+
+      expect(screen.getByText(/fn task create/)).toBeTruthy();
+    });
+
+    it("allows navigation back to GitHub step", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToFirstTaskStep();
 
       fireEvent.click(screen.getByText("← Back"));
 
       await waitFor(() => {
-        expect(screen.getByText("Set Up AI Provider")).toBeTruthy();
+        expect(screen.getByText("Connect GitHub")).toBeTruthy();
       });
     });
   });
 
   describe("completion", () => {
-    it("saves model selection and marks onboarding complete", async () => {
+    it("completes onboarding and calls onOpenNewTask callback", async () => {
       const onComplete = vi.fn();
+      const onOpenNewTask = vi.fn();
+
       mockFetchAuthStatus.mockResolvedValueOnce({
         providers: [
           { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} />);
-
-      await clickContinueToModelStep();
+      render(
+        <ModelOnboardingModal
+          onComplete={onComplete}
+          addToast={vi.fn()}
+          onOpenNewTask={onOpenNewTask}
+        />
+      );
 
       // Select a model
+      await waitFor(() => {
+        expect(screen.getByTestId("mock-model-dropdown")).toBeTruthy();
+      });
       const dropdown = screen.getByTestId("mock-model-dropdown");
       fireEvent.change(dropdown, { target: { value: "anthropic/claude-sonnet-4-5" } });
 
-      // Click Complete Setup
-      await waitFor(() => {
-        expect(screen.getByText("Complete Setup")).toBeTruthy();
-      });
+      // Navigate through all steps
+      await navigateToFirstTaskStep();
 
-      fireEvent.click(screen.getByText("Complete Setup"));
+      // Click Create a New Task
+      fireEvent.click(screen.getByText("Create a New Task"));
 
+      // Should mark onboarding complete
       await waitFor(() => {
         expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -364,6 +417,69 @@ describe("ModelOnboardingModal", () => {
           }),
         );
       });
+
+      // Should close modal and call both callbacks
+      expect(onComplete).toHaveBeenCalled();
+      expect(onOpenNewTask).toHaveBeenCalled();
+    });
+
+    it("completes onboarding and calls onOpenGitHubImport callback", async () => {
+      const onComplete = vi.fn();
+      const onOpenGitHubImport = vi.fn();
+
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+        ],
+      });
+
+      render(
+        <ModelOnboardingModal
+          onComplete={onComplete}
+          addToast={vi.fn()}
+          onOpenGitHubImport={onOpenGitHubImport}
+        />
+      );
+
+      // Navigate through all steps
+      await navigateToFirstTaskStep();
+
+      // Click Import from GitHub
+      fireEvent.click(screen.getByText("Import from GitHub"));
+
+      // Should mark onboarding complete
+      await waitFor(() => {
+        expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(
+          expect.objectContaining({
+            modelOnboardingComplete: true,
+          }),
+        );
+      });
+
+      // Should close modal and call both callbacks
+      expect(onComplete).toHaveBeenCalled();
+      expect(onOpenGitHubImport).toHaveBeenCalled();
+    });
+
+    it("completes with Finish Setup button (no CTA)", async () => {
+      const onComplete = vi.fn();
+
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} />);
+
+      // Navigate through all steps
+      await navigateToFirstTaskStep();
+
+      // Click Finish Setup
+      await waitFor(() => {
+        expect(screen.getByText("Finish Setup")).toBeTruthy();
+      });
+      fireEvent.click(screen.getByText("Finish Setup"));
 
       // Should show completion screen
       await waitFor(() => {
@@ -377,6 +493,7 @@ describe("ModelOnboardingModal", () => {
 
     it("completes without model selection", async () => {
       const onComplete = vi.fn();
+
       mockFetchAuthStatus.mockResolvedValueOnce({
         providers: [
           { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
@@ -385,10 +502,11 @@ describe("ModelOnboardingModal", () => {
 
       render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} />);
 
-      await clickContinueToModelStep();
+      // Navigate through all steps without selecting model
+      await navigateToFirstTaskStep();
 
-      // Click Complete Setup without selecting a model
-      fireEvent.click(screen.getByText("Complete Setup"));
+      // Click Finish Setup
+      fireEvent.click(screen.getByText("Finish Setup"));
 
       await waitFor(() => {
         expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(
@@ -407,7 +525,7 @@ describe("ModelOnboardingModal", () => {
       render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} />);
 
       await waitFor(() => {
-        expect(screen.getByText("Set Up AI Provider")).toBeTruthy();
+        expect(screen.getByText("Set Up AI")).toBeTruthy();
       });
 
       // Click the X close button
@@ -472,21 +590,6 @@ describe("ModelOnboardingModal", () => {
       });
     });
 
-    it("shows empty state when no models are available on model step", async () => {
-      mockFetchAuthStatus.mockResolvedValueOnce({
-        providers: [
-          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
-        ],
-      });
-      mockFetchModels.mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] });
-
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
-
-      await clickContinueToModelStep();
-
-      expect(screen.getByText(/No models available/)).toBeTruthy();
-    });
-
     it("handles auth status fetch failure gracefully", async () => {
       mockFetchAuthStatus.mockRejectedValueOnce(new Error("Network error"));
 
@@ -494,7 +597,7 @@ describe("ModelOnboardingModal", () => {
 
       await waitFor(() => {
         // Should still render the modal without crashing
-        expect(screen.getByText("Set Up AI Provider")).toBeTruthy();
+        expect(screen.getByText("Set Up AI")).toBeTruthy();
       });
     });
 
@@ -506,6 +609,29 @@ describe("ModelOnboardingModal", () => {
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
 
       expect(screen.getByText("Loading providers…")).toBeTruthy();
+    });
+
+    it("works without optional callbacks", async () => {
+      const onComplete = vi.fn();
+
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+        ],
+      });
+
+      // Render without onOpenNewTask and onOpenGitHubImport
+      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} />);
+
+      // Navigate through all steps
+      await navigateToFirstTaskStep();
+
+      // Click Finish Setup - should work without callbacks
+      fireEvent.click(screen.getByText("Finish Setup"));
+
+      await waitFor(() => {
+        expect(screen.getByText("All Set!")).toBeTruthy();
+      });
     });
   });
 });

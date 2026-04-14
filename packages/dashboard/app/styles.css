@@ -22786,6 +22786,11 @@ html .column.drag-over * {
   border-bottom: 1px solid var(--border);
 }
 
+.onboarding-step-wrapper {
+  display: flex;
+  align-items: center;
+}
+
 .model-onboarding-step-indicator {
   display: flex;
   align-items: center;
@@ -22829,6 +22834,11 @@ html .column.drag-over * {
   height: 2px;
   background: var(--border);
   margin: 0 12px;
+  transition: background-color var(--transition-fast);
+}
+
+.model-onboarding-step-connector.done {
+  background: var(--success, #22c55e);
 }
 
 /* Content area */
@@ -22930,6 +22940,146 @@ html .column.drag-over * {
   padding: 8px 0;
 }
 
+/* AI Setup section */
+.model-onboarding-ai-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.onboarding-model-section {
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.onboarding-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 8px 0;
+  color: var(--text);
+}
+
+/* GitHub optional step */
+.model-onboarding-github {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.model-onboarding-github-optional {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 16px;
+  text-align: center;
+}
+
+.model-onboarding-github-optional .optional-icon {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+.model-onboarding-github-optional p {
+  color: var(--text-muted);
+  max-width: 320px;
+  line-height: 1.5;
+}
+
+/* First Task step */
+.model-onboarding-first-task {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.onboarding-cta-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.onboarding-cta-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  text-align: left;
+  width: 100%;
+}
+
+.onboarding-cta-card:hover {
+  border-color: var(--accent);
+  background: var(--card-hover);
+}
+
+.onboarding-cta-card:focus {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.onboarding-cta-card.primary {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.onboarding-cta-card.primary:hover {
+  background: color-mix(in srgb, var(--accent) 15%, var(--surface));
+}
+
+.onboarding-cta-card .cta-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: var(--bg-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.onboarding-cta-card.primary .cta-icon {
+  background: var(--accent);
+  color: #fff;
+}
+
+.onboarding-cta-card .cta-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.onboarding-cta-card .cta-content strong {
+  font-size: 15px;
+  color: var(--text);
+}
+
+.onboarding-cta-card .cta-content span {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.onboarding-skip-note {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.onboarding-skip-note code {
+  background: var(--bg-hover);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
 /* Complete step */
 .model-onboarding-complete {
   display: flex;
@@ -23018,6 +23168,31 @@ html .column.drag-over * {
   .model-onboarding-footer .btn-primary {
     flex: 1;
     min-width: 0;
+  }
+
+  .onboarding-step-wrapper {
+    flex-direction: row;
+  }
+
+  .model-onboarding-step-indicator .step-label {
+    display: none;
+  }
+
+  .onboarding-cta-card {
+    padding: 12px;
+  }
+
+  .onboarding-cta-card .cta-icon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .onboarding-cta-card .cta-content strong {
+    font-size: 14px;
+  }
+
+  .onboarding-cta-card .cta-content span {
+    font-size: 12px;
   }
 }
 

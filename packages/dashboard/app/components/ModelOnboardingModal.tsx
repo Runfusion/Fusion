@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { X, Loader2, CheckCircle, Key, Zap } from "lucide-react";
+import { X, Loader2, CheckCircle, Key, Zap, GitPullRequest, Rocket, Plus } from "lucide-react";
 import type { AuthProvider, ModelInfo } from "../api";
 import {
   fetchAuthStatus,
@@ -18,23 +18,30 @@ export interface ModelOnboardingModalProps {
   onComplete: () => void;
   /** Toast helper */
   addToast: (message: string, type?: ToastType) => void;
+  /** Optional callback when user wants to open new task creation */
+  onOpenNewTask?: () => void;
+  /** Optional callback when user wants to open GitHub import */
+  onOpenGitHubImport?: () => void;
 }
 
-type OnboardingStep = "providers" | "model" | "complete";
+type OnboardingStep = "ai-setup" | "github" | "first-task" | "complete";
 
 /**
- * First-run onboarding modal that guides users through:
- * 1. Provider credential setup (OAuth login or API key entry)
- * 2. Default model selection
+ * Multi-step onboarding modal that guides users through:
+ * 1. AI Setup - Provider credential setup (OAuth login or API key entry) and default model selection
+ * 2. GitHub (Optional) - GitHub connection status and login
+ * 3. First Task - CTA to create first task or import from GitHub
  *
  * Dismissing the modal marks onboarding as complete to prevent repeated popups.
  */
 export function ModelOnboardingModal({
   onComplete,
   addToast,
+  onOpenNewTask,
+  onOpenGitHubImport,
 }: ModelOnboardingModalProps) {
   const [isOpen, setIsOpen] = useState(true);
-  const [step, setStep] = useState<OnboardingStep>("providers");
+  const [step, setStep] = useState<OnboardingStep>("ai-setup");
   const [authProviders, setAuthProviders] = useState<AuthProvider[]>([]);
   const [authLoading, setAuthLoading] = useState(true);
   const [authActionInProgress, setAuthActionInProgress] = useState<string | null>(null);
@@ -44,6 +51,16 @@ export function ModelOnboardingModal({
   const [apiKeyInputs, setApiKeyInputs] = useState<Record<string, string>>({});
   const [apiKeyErrors, setApiKeyErrors] = useState<Record<string, string>>({});
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Step definitions for progress indicator
+  const steps = [
+    { key: "ai-setup" as const, label: "AI Setup" },
+    { key: "github" as const, label: "GitHub" },
+    { key: "first-task" as const, label: "First Task" },
+  ];
+
+  // Get current step index for progress indicator
+  const currentStepIndex = steps.findIndex((s) => s.key === step);
 
   // Load auth providers
   const loadAuthStatus = useCallback(async () => {
@@ -72,17 +89,10 @@ export function ModelOnboardingModal({
     );
   }, [loadAuthStatus, loadModels]);
 
-  // Check if we can skip the providers step (already authenticated)
-  const hasAuthenticatedProvider = authProviders.some((p) => p.authenticated);
-
-  // Auto-advance to model step when provider is authenticated
-  useEffect(() => {
-    if (!authLoading && hasAuthenticatedProvider && step === "providers") {
-      // Small delay to let the user see the success state
-      const timer = setTimeout(() => setStep("model"), 600);
-      return () => clearTimeout(timer);
-    }
-  }, [authLoading, hasAuthenticatedProvider, step]);
+  // Check if we have GitHub provider
+  const githubProvider = authProviders.find((p) => p.id === "github");
+  const hasGithubProvider = !!githubProvider;
+  const isGithubAuthenticated = githubProvider?.authenticated ?? false;
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -92,6 +102,24 @@ export function ModelOnboardingModal({
       }
     };
   }, []);
+
+  // Navigate to next step
+  const handleNext = useCallback(() => {
+    if (step === "ai-setup") {
+      setStep("github");
+    } else if (step === "github") {
+      setStep("first-task");
+    }
+  }, [step]);
+
+  // Navigate to previous step
+  const handleBack = useCallback(() => {
+    if (step === "github") {
+      setStep("ai-setup");
+    } else if (step === "first-task") {
+      setStep("github");
+    }
+  }, [step]);
 
   // OAuth login handler
   const handleLogin = useCallback(
@@ -209,12 +237,9 @@ export function ModelOnboardingModal({
   );
 
   // Handle model selection from CustomModelDropdown
-  const handleModelSelect = useCallback(
-    (value: string) => {
-      setSelectedModel(value);
-    },
-    [],
-  );
+  const handleModelSelect = useCallback((value: string) => {
+    setSelectedModel(value);
+  }, []);
 
   // Complete onboarding
   const handleComplete = useCallback(async () => {
@@ -256,6 +281,86 @@ export function ModelOnboardingModal({
     }
   }, [selectedModel, availableModels, addToast]);
 
+  // Handle first task CTA - mark complete, close modal, then open new task
+  const handleOpenNewTask = useCallback(async () => {
+    // First complete the onboarding
+    setSaving(true);
+    try {
+      const updates: Record<string, unknown> = {
+        modelOnboardingComplete: true,
+      };
+
+      // If a model was selected, persist it as the default
+      if (selectedModel) {
+        const slashIdx = selectedModel.indexOf("/");
+        const provider =
+          slashIdx !== -1 ? selectedModel.slice(0, slashIdx) : undefined;
+        const modelId =
+          slashIdx !== -1 ? selectedModel.slice(slashIdx + 1) : selectedModel;
+
+        const model = availableModels.find((m) => m.id === modelId);
+        if (model) {
+          updates.defaultProvider = model.provider;
+          updates.defaultModelId = model.id;
+        } else if (provider && modelId) {
+          updates.defaultProvider = provider;
+          updates.defaultModelId = modelId;
+        }
+      }
+
+      await updateGlobalSettings(updates);
+    } catch {
+      // Best-effort: continue even if save fails
+    } finally {
+      setSaving(false);
+    }
+
+    // Close modal and trigger callback
+    setIsOpen(false);
+    onComplete();
+    onOpenNewTask?.();
+  }, [selectedModel, availableModels, onComplete, onOpenNewTask]);
+
+  // Handle GitHub import CTA - mark complete, close modal, then open GitHub import
+  const handleOpenGitHubImport = useCallback(async () => {
+    // First complete the onboarding
+    setSaving(true);
+    try {
+      const updates: Record<string, unknown> = {
+        modelOnboardingComplete: true,
+      };
+
+      // If a model was selected, persist it as the default
+      if (selectedModel) {
+        const slashIdx = selectedModel.indexOf("/");
+        const provider =
+          slashIdx !== -1 ? selectedModel.slice(0, slashIdx) : undefined;
+        const modelId =
+          slashIdx !== -1 ? selectedModel.slice(slashIdx + 1) : selectedModel;
+
+        const model = availableModels.find((m) => m.id === modelId);
+        if (model) {
+          updates.defaultProvider = model.provider;
+          updates.defaultModelId = model.id;
+        } else if (provider && modelId) {
+          updates.defaultProvider = provider;
+          updates.defaultModelId = modelId;
+        }
+      }
+
+      await updateGlobalSettings(updates);
+    } catch {
+      // Best-effort: continue even if save fails
+    } finally {
+      setSaving(false);
+    }
+
+    // Close modal and trigger callback
+    setIsOpen(false);
+    onComplete();
+    onOpenGitHubImport?.();
+  }, [selectedModel, availableModels, onComplete, onOpenGitHubImport]);
+
   // Dismiss without completing (still marks onboarding complete)
   const handleDismiss = useCallback(async () => {
     setSaving(true);
@@ -281,6 +386,10 @@ export function ModelOnboardingModal({
   );
   const apiKeyProviders = authProviders.filter((p) => p.type === "api_key");
 
+  // Filter out GitHub from AI providers list
+  const aiOauthProviders = oauthProviders.filter((p) => p.id !== "github");
+  const aiApiKeyProviders = apiKeyProviders.filter((p) => p.id !== "github");
+
   return (
     <div
       className="modal-overlay open"
@@ -292,14 +401,19 @@ export function ModelOnboardingModal({
         {/* Header */}
         <div className="model-onboarding-header">
           <h2 id="onboarding-title" className="model-onboarding-title">
-            {step === "providers" && (
+            {step === "ai-setup" && (
               <>
-                <Zap size={24} /> Set Up AI Provider
+                <Zap size={24} /> Set Up AI
               </>
             )}
-            {step === "model" && (
+            {step === "github" && (
               <>
-                <Zap size={24} /> Choose Default Model
+                <GitPullRequest size={24} /> Connect GitHub
+              </>
+            )}
+            {step === "first-task" && (
+              <>
+                <Rocket size={24} /> Create Your First Task
               </>
             )}
             {step === "complete" && (
@@ -320,32 +434,42 @@ export function ModelOnboardingModal({
           )}
         </div>
 
-        {/* Step indicator */}
+        {/* Step indicator - 3 progress steps + complete */}
         <div className="model-onboarding-steps">
-          <div
-            className={`model-onboarding-step-indicator${step === "providers" ? " active" : ""}${step === "model" || step === "complete" ? " done" : ""}`}
-          >
-            <span className="step-number">1</span>
-            <span className="step-label">Connect Provider</span>
-          </div>
-          <div className="model-onboarding-step-connector" />
-          <div
-            className={`model-onboarding-step-indicator${step === "model" ? " active" : ""}${step === "complete" ? " done" : ""}`}
-          >
-            <span className="step-number">2</span>
-            <span className="step-label">Select Model</span>
-          </div>
+          {steps.map((s, index) => (
+            <div key={s.key} className="onboarding-step-wrapper">
+              {index > 0 && (
+                <div
+                  className={`model-onboarding-step-connector ${
+                    index <= currentStepIndex ? "done" : ""
+                  }`}
+                />
+              )}
+              <div
+                className={`model-onboarding-step-indicator ${
+                  step === s.key ? "active" : ""
+                } ${currentStepIndex > index ? "done" : ""}`}
+              >
+                <span className="step-number">
+                  {currentStepIndex > index ? (
+                    <CheckCircle size={14} />
+                  ) : (
+                    index + 1
+                  )}
+                </span>
+                <span className="step-label">{s.label}</span>
+              </div>
+            </div>
+          ))}
         </div>
 
         {/* Content */}
         <div className="model-onboarding-content">
-          {step === "providers" && (
-            <div className="model-onboarding-providers">
+          {step === "ai-setup" && (
+            <div className="model-onboarding-ai-setup">
               <p className="model-onboarding-description">
-                Connect at least one AI provider to start running tasks.
-                {oauthProviders.length > 0 &&
-                  apiKeyProviders.length > 0 &&
-                  " OAuth providers open a browser for login; API key providers need a key from the provider's dashboard."}
+                Connect an AI provider and choose a default model. You can
+                authenticate via OAuth or enter an API key.
               </p>
 
               {authLoading ? (
@@ -361,7 +485,7 @@ export function ModelOnboardingModal({
               ) : (
                 <>
                   {/* OAuth Providers */}
-                  {oauthProviders.map((provider) => (
+                  {aiOauthProviders.map((provider) => (
                     <div key={provider.id} className="onboarding-provider-row">
                       <div className="onboarding-provider-info">
                         <strong>{provider.name}</strong>
@@ -401,7 +525,7 @@ export function ModelOnboardingModal({
                   ))}
 
                   {/* API Key Providers */}
-                  {apiKeyProviders.map((provider) => (
+                  {aiApiKeyProviders.map((provider) => (
                     <div key={provider.id} className="onboarding-provider-row">
                       <div className="onboarding-provider-info">
                         <strong>
@@ -473,48 +597,151 @@ export function ModelOnboardingModal({
                   ))}
                 </>
               )}
+
+              {/* Model Selection */}
+              <div className="onboarding-model-section">
+                <h3 className="onboarding-section-title">
+                  Default Model (Optional)
+                </h3>
+                <p className="model-onboarding-description">
+                  Select a default model for AI tasks. You can change this later
+                  in Settings.
+                </p>
+
+                {availableModels.length === 0 ? (
+                  <div className="model-onboarding-empty">
+                    No models available. Please configure a provider first.
+                  </div>
+                ) : (
+                  <div className="onboarding-model-selector">
+                    <CustomModelDropdown
+                      models={availableModels}
+                      value={selectedModel}
+                      onChange={handleModelSelect}
+                      placeholder="Select a default model…"
+                      label="Default model"
+                    />
+                  </div>
+                )}
+
+                {selectedModel && (
+                  <div className="onboarding-model-preview">
+                    <small className="settings-muted">
+                      Selected:{" "}
+                      {availableModels.find((m) => m.id === selectedModel)
+                        ?.name ?? selectedModel}
+                    </small>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
-          {step === "model" && (
-            <div className="model-onboarding-model">
+          {step === "github" && (
+            <div className="model-onboarding-github">
               <p className="model-onboarding-description">
-                Select the default model Fusion will use for AI tasks. You can
-                change this later in Settings.
+                Connect GitHub to import issues and manage pull requests. This is
+                optional — you can still use Fusion without GitHub.
               </p>
 
-              {availableModels.length === 0 ? (
-                <div className="model-onboarding-empty">
-                  No models available. Please check your provider configuration.
+              {!hasGithubProvider ? (
+                <div className="model-onboarding-github-optional">
+                  <GitPullRequest size={48} className="optional-icon" />
+                  <p>
+                    GitHub integration is not configured. You can set it up later
+                    in Settings → Authentication.
+                  </p>
                   <button
                     className="btn btn-sm"
-                    style={{ marginTop: 8 }}
-                    onClick={() => setStep("providers")}
+                    onClick={() => setStep("first-task")}
                   >
-                    ← Back to Providers
+                    Continue without GitHub →
                   </button>
                 </div>
               ) : (
-                <div className="onboarding-model-selector">
-                  <CustomModelDropdown
-                    models={availableModels}
-                    value={selectedModel}
-                    onChange={handleModelSelect}
-                    placeholder="Select a default model…"
-                    label="Default model"
-                  />
+                <div className="onboarding-provider-row">
+                  <div className="onboarding-provider-info">
+                    <strong>
+                      <GitPullRequest size={16} style={{ marginRight: 8 }} />
+                      GitHub
+                    </strong>
+                    <span
+                      data-testid="onboarding-auth-status-github"
+                      className={`auth-status-badge ${isGithubAuthenticated ? "authenticated" : "not-authenticated"}`}
+                    >
+                      {isGithubAuthenticated
+                        ? "✓ Connected"
+                        : "✗ Not connected"}
+                    </span>
+                  </div>
+                  <div>
+                    {authActionInProgress === "github" ? (
+                      <button className="btn btn-sm" disabled>
+                        {isGithubAuthenticated
+                          ? "Logging out…"
+                          : "Waiting for login…"}
+                      </button>
+                    ) : isGithubAuthenticated ? (
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => handleLogout("github")}
+                      >
+                        Disconnect
+                      </button>
+                    ) : (
+                      <button
+                        className="btn btn-primary btn-sm"
+                        onClick={() => handleLogin("github")}
+                      >
+                        Connect
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
+            </div>
+          )}
 
-              {selectedModel && (
-                <div className="onboarding-model-preview">
-                  <small className="settings-muted">
-                    Selected:{" "}
-                    {availableModels.find((m) => m.id === selectedModel)?.name ??
-                      selectedModel}
-                  </small>
-                </div>
-              )}
+          {step === "first-task" && (
+            <div className="model-onboarding-first-task">
+              <p className="model-onboarding-description">
+                You're all set! What would you like to do first?
+              </p>
+
+              <div className="onboarding-cta-options">
+                <button
+                  className="onboarding-cta-card primary"
+                  onClick={handleOpenNewTask}
+                  disabled={saving}
+                >
+                  <div className="cta-icon">
+                    <Plus size={24} />
+                  </div>
+                  <div className="cta-content">
+                    <strong>Create a New Task</strong>
+                    <span>Describe a task and let AI handle the rest</span>
+                  </div>
+                </button>
+
+                <button
+                  className="onboarding-cta-card"
+                  onClick={handleOpenGitHubImport}
+                  disabled={saving}
+                >
+                  <div className="cta-icon">
+                    <GitPullRequest size={24} />
+                  </div>
+                  <div className="cta-content">
+                    <strong>Import from GitHub</strong>
+                    <span>Bring in issues from your repositories</span>
+                  </div>
+                </button>
+              </div>
+
+              <p className="onboarding-skip-note">
+                You can always create tasks later from the board or use{" "}
+                <code>fn task create</code> from the CLI.
+              </p>
             </div>
           )}
 
@@ -522,8 +749,8 @@ export function ModelOnboardingModal({
             <div className="model-onboarding-complete">
               <CheckCircle size={48} className="success-icon" />
               <p>
-                You're ready to start using Fusion! You can always change your
-                model and provider settings from the Settings panel.
+                You're ready to start using Fusion! Check out the dashboard to
+                create your first task.
               </p>
             </div>
           )}
@@ -531,7 +758,7 @@ export function ModelOnboardingModal({
 
         {/* Footer */}
         <div className="model-onboarding-footer">
-          {step === "providers" && (
+          {step === "ai-setup" && (
             <>
               <button
                 className="btn btn-sm"
@@ -540,26 +767,26 @@ export function ModelOnboardingModal({
               >
                 Skip for now
               </button>
-              <button
-                className="btn btn-primary"
-                onClick={() => {
-                  // Fetch models now that provider is authenticated
-                  loadModels();
-                  setStep("model");
-                }}
-                disabled={!hasAuthenticatedProvider}
-              >
-                Continue →
+              <button className="btn btn-primary" onClick={handleNext}>
+                Next →
               </button>
             </>
           )}
 
-          {step === "model" && (
+          {step === "github" && (
             <>
-              <button
-                className="btn btn-sm"
-                onClick={() => setStep("providers")}
-              >
+              <button className="btn btn-sm" onClick={handleBack}>
+                ← Back
+              </button>
+              <button className="btn btn-primary" onClick={handleNext}>
+                Next →
+              </button>
+            </>
+          )}
+
+          {step === "first-task" && (
+            <>
+              <button className="btn btn-sm" onClick={handleBack}>
                 ← Back
               </button>
               <button
@@ -573,7 +800,7 @@ export function ModelOnboardingModal({
                     <span>Saving…</span>
                   </>
                 ) : (
-                  "Complete Setup"
+                  "Finish Setup"
                 )}
               </button>
             </>
@@ -589,4 +816,364 @@ export function ModelOnboardingModal({
       </div>
     </div>
   );
+}
+
+import type { ProjectInfo } from "../api";
+import type { ColorTheme, Column, MergeResult, Task, ThemeMode } from "@fusion/core";
+import type { UseProjectActionsResult } from "../hooks/useProjectActions";
+import type { ModalManager } from "../hooks/useModalManager";
+import type { UseTaskHandlersResult } from "../hooks/useTaskHandlers";
+import type { Toast, ToastType } from "../hooks/useToast";
+import { ModalErrorBoundary } from "./ErrorBoundary";
+import { TaskDetailModal } from "./TaskDetailModal";
+import { SettingsModal } from "./SettingsModal";
+import { GitHubImportModal } from "./GitHubImportModal";
+import { PlanningModeModal } from "./PlanningModeModal";
+import { SubtaskBreakdownModal } from "./SubtaskBreakdownModal";
+import { TerminalModal } from "./TerminalModal";
+import { ScriptsModal } from "./ScriptsModal";
+import { FileBrowserModal } from "./FileBrowserModal";
+import { UsageIndicator } from "./UsageIndicator";
+import { ScheduledTasksModal } from "./ScheduledTasksModal";
+import { NewTaskModal } from "./NewTaskModal";
+import { ActivityLogModal } from "./ActivityLogModal";
+import { GitManagerModal } from "./GitManagerModal";
+import { WorkflowStepManager } from "./WorkflowStepManager";
+import { AgentListModal } from "./AgentListModal";
+import { MailboxModal } from "./MailboxModal";
+import { SetupWizardModal } from "./SetupWizardModal";
+import { ToastContainer } from "./ToastContainer";
+
+interface AppModalsProps {
+  projectId?: string;
+  tasks: Task[];
+  projects: ProjectInfo[];
+  currentProject: ProjectInfo | null;
+  addToast: (message: string, type?: ToastType) => void;
+  toasts: Toast[];
+  removeToast: (id: number) => void;
+  modalManager: ModalManager;
+  projectActions: Pick<UseProjectActionsResult, "handleSetupComplete" | "handleModelOnboardingComplete">;
+  taskHandlers: Pick<UseTaskHandlersResult, "handleModalCreate" | "handlePlanningTaskCreated" | "handlePlanningTasksCreated" | "handleSubtaskTasksCreated" | "handleGitHubImport">;
+  taskOperations: {
+    moveTask: (taskId: string, column: Column, position?: number) => Promise<Task>;
+    deleteTask: (taskId: string) => Promise<Task>;
+    mergeTask: (taskId: string) => Promise<MergeResult>;
+    retryTask: (taskId: string) => Promise<Task>;
+    duplicateTask: (taskId: string) => Promise<Task>;
+  };
+  deepLink: {
+    handleDetailClose: () => void;
+  };
+  settings: {
+    githubTokenConfigured: boolean;
+    themeMode: ThemeMode;
+    colorTheme: ColorTheme;
+    setThemeMode: (mode: ThemeMode) => void;
+    setColorTheme: (theme: ColorTheme) => void;
+  };
+  /** Optional override for the settings modal close handler. When provided, this is called instead of modalManager.closeSettings. */
+  onSettingsClose?: () => void;
+}
+
+export function AppModals({
+  projectId,
+  tasks,
+  projects,
+  currentProject,
+  addToast,
+  toasts,
+  removeToast,
+  modalManager,
+  projectActions,
+  taskHandlers,
+  taskOperations,
+  deepLink,
+  settings,
+  onSettingsClose,
+}: AppModalsProps) {
+  // Use the override handler if provided, otherwise fall back to modalManager.closeSettings
+  const handleSettingsClose = onSettingsClose ?? modalManager.closeSettings;
+
+  // Handlers for onboarding CTAs
+  const handleOpenNewTask = useCallback(() => {
+    modalManager.openNewTask();
+  }, [modalManager]);
+
+  const handleOpenGitHubImport = useCallback(() => {
+    modalManager.openGitHubImport();
+  }, [modalManager]);
+
+  return (
+    <>
+      {modalManager.detailTask && (
+        <ModalErrorBoundary>
+          <TaskDetailModal
+            task={modalManager.detailTask}
+            projectId={projectId}
+            tasks={tasks}
+            onClose={deepLink.handleDetailClose}
+            onOpenDetail={modalManager.openDetailTask}
+            onMoveTask={taskOperations.moveTask}
+            onDeleteTask={taskOperations.deleteTask}
+            onMergeTask={taskOperations.mergeTask}
+            onRetryTask={taskOperations.retryTask}
+            onDuplicateTask={taskOperations.duplicateTask}
+            onTaskUpdated={modalManager.updateDetailTask}
+            addToast={addToast}
+            githubTokenConfigured={settings.githubTokenConfigured}
+            initialTab={modalManager.detailTaskInitialTab}
+          />
+        </ModalErrorBoundary>
+      )}
+
+      {modalManager.settingsOpen && (
+        <ModalErrorBoundary>
+          <SettingsModal
+            onClose={handleSettingsClose}
+            addToast={addToast}
+            initialSection={modalManager.settingsInitialSection}
+            projectId={projectId}
+            themeMode={settings.themeMode}
+            colorTheme={settings.colorTheme}
+            onThemeModeChange={settings.setThemeMode}
+            onColorThemeChange={settings.setColorTheme}
+          />
+        </ModalErrorBoundary>
+      )}
+
+      <GitHubImportModal
+        isOpen={modalManager.githubImportOpen}
+        onClose={modalManager.closeGitHubImport}
+        onImport={taskHandlers.handleGitHubImport}
+        tasks={tasks}
+        projectId={projectId}
+      />
+
+      <ModalErrorBoundary>
+        <PlanningModeModal
+          isOpen={modalManager.isPlanningOpen}
+          onClose={modalManager.closePlanning}
+          onTaskCreated={taskHandlers.handlePlanningTaskCreated}
+          onTasksCreated={taskHandlers.handlePlanningTasksCreated}
+          tasks={tasks}
+          initialPlan={modalManager.planningInitialPlan ?? undefined}
+          projectId={projectId}
+          resumeSessionId={modalManager.planningResumeSessionId}
+        />
+      </ModalErrorBoundary>
+
+      <ModalErrorBoundary>
+        <SubtaskBreakdownModal
+          isOpen={modalManager.isSubtaskOpen}
+          onClose={modalManager.closeSubtask}
+          initialDescription={modalManager.subtaskInitialDescription ?? ""}
+          onTasksCreated={taskHandlers.handleSubtaskTasksCreated}
+          projectId={projectId}
+          resumeSessionId={modalManager.subtaskResumeSessionId}
+        />
+      </ModalErrorBoundary>
+
+      <TerminalModal
+        isOpen={modalManager.terminalOpen}
+        onClose={modalManager.closeTerminal}
+        initialCommand={modalManager.terminalInitialCommand}
+        projectId={projectId}
+      />
+
+      <ScriptsModal
+        isOpen={modalManager.scriptsOpen}
+        onClose={modalManager.closeScripts}
+        addToast={addToast}
+        onRunScript={modalManager.runScript}
+        projectId={projectId}
+      />
+
+      {modalManager.filesOpen && (
+        <FileBrowserModal
+          initialWorkspace={modalManager.fileBrowserWorkspace}
+          isOpen={true}
+          onClose={modalManager.closeFiles}
+          onWorkspaceChange={modalManager.setFileWorkspace}
+          projectId={projectId}
+        />
+      )}
+
+      <UsageIndicator
+        isOpen={modalManager.usageOpen}
+        onClose={modalManager.closeUsage}
+        projectId={projectId}
+      />
+
+      {modalManager.schedulesOpen && (
+        <ScheduledTasksModal
+          onClose={modalManager.closeSchedules}
+          addToast={addToast}
+        />
+      )}
+
+      <ModalErrorBoundary>
+        <NewTaskModal
+          isOpen={modalManager.newTaskModalOpen}
+          onClose={modalManager.closeNewTask}
+          tasks={tasks}
+          onCreateTask={taskHandlers.handleModalCreate}
+          addToast={addToast}
+          projectId={projectId}
+          onPlanningMode={modalManager.openPlanningWithInitialPlan}
+          onSubtaskBreakdown={modalManager.openSubtaskBreakdown}
+        />
+      </ModalErrorBoundary>
+
+      <ActivityLogModal
+        isOpen={modalManager.activityLogOpen}
+        onClose={modalManager.closeActivityLog}
+        tasks={tasks}
+        projectId={projectId}
+        projects={projects}
+        currentProject={currentProject}
+        onOpenTaskDetail={(taskId) => {
+          const task = tasks.find((candidate) => candidate.id === taskId);
+          if (task) {
+            modalManager.openDetailTask(task);
+          }
+        }}
+      />
+
+      <ModalErrorBoundary>
+        <GitManagerModal
+          isOpen={modalManager.gitManagerOpen}
+          onClose={modalManager.closeGitManager}
+          tasks={tasks}
+          addToast={addToast}
+          projectId={projectId}
+        />
+      </ModalErrorBoundary>
+
+      <ModalErrorBoundary>
+        <WorkflowStepManager
+          isOpen={modalManager.workflowStepsOpen}
+          onClose={modalManager.closeWorkflowSteps}
+          addToast={addToast}
+          projectId={projectId}
+        />
+      </ModalErrorBoundary>
+
+      <AgentListModal
+        isOpen={modalManager.agentsOpen}
+        onClose={modalManager.closeAgents}
+        addToast={addToast}
+        projectId={projectId}
+      />
+
+      <MailboxModal
+        isOpen={modalManager.mailboxOpen}
+        onClose={modalManager.closeMailbox}
+        projectId={projectId}
+        addToast={addToast}
+        agents={modalManager.mailboxAgents}
+      />
+
+      {modalManager.setupWizardOpen && (
+        <SetupWizardModal
+          onProjectRegistered={projectActions.handleSetupComplete}
+          onClose={modalManager.closeSetupWizard}
+        />
+      )}
+
+      {modalManager.modelOnboardingOpen && (
+        <ModelOnboardingModal
+          onComplete={projectActions.handleModelOnboardingComplete}
+          addToast={addToast}
+          onOpenNewTask={handleOpenNewTask}
+          onOpenGitHubImport={handleOpenGitHubImport}
+        />
+      )}
+
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
+    </>
+  );
+}
+
+import { useEffect, useRef } from "react";
+import { fetchAuthStatus, fetchGlobalSettings } from "../api";
+import type { SectionId } from "../components/SettingsModal";
+
+export interface UseAuthOnboardingOptions {
+  projectId?: string;
+  openModelOnboarding: () => void;
+  openSettings: (section?: SectionId) => void;
+}
+
+/**
+ * Runs auth/onboarding checks and opens the appropriate setup modal.
+ *
+ * This hook implements a one-shot guard: the auto-trigger logic runs at most
+ * once per hook instance (regardless of effect re-runs due to dependency changes).
+ * This prevents repeat auto-opens on incidental rerenders or project context churn.
+ *
+ * Trigger behavior:
+ * - First-run (onboarding incomplete): opens model onboarding wizard
+ * - Completed onboarding + unauthenticated providers: opens Settings → Authentication
+ * - Already configured: no auto-open
+ */
+export function useAuthOnboarding({
+  projectId,
+  openModelOnboarding,
+  openSettings,
+}: UseAuthOnboardingOptions): void {
+  // One-shot guard: prevents the auto-trigger logic from running more than once
+  // per hook instance, even if the effect re-runs due to dependency changes.
+  const hasTriggeredRef = useRef(false);
+
+  useEffect(() => {
+    // Skip if we've already triggered (one-shot guard)
+    if (hasTriggeredRef.current) return;
+    // Mark as triggered immediately to prevent any race condition on re-runs
+    hasTriggeredRef.current = true;
+
+    let shouldOpenOnboarding = false;
+    let shouldOpenSettings = false;
+
+    fetchAuthStatus()
+      .then(({ providers }) => {
+        const hasAuthenticatedProvider = providers.some((provider) => provider.authenticated);
+        const needsSetup = providers.length > 0 && !hasAuthenticatedProvider;
+
+        if (needsSetup || (providers.length > 0 && hasAuthenticatedProvider)) {
+          return fetchGlobalSettings()
+            .then((globalSettings) => {
+              const hasDefaultModel = !!(
+                globalSettings.defaultProvider && globalSettings.defaultModelId
+              );
+              // Explicit first-run detection: onboarding is incomplete when
+              // modelOnboardingComplete is false or undefined
+              const onboardingIncomplete =
+                globalSettings.modelOnboardingComplete === false ||
+                globalSettings.modelOnboardingComplete === undefined;
+              const setupIncomplete = !hasAuthenticatedProvider || !hasDefaultModel;
+
+              if (onboardingIncomplete && setupIncomplete) {
+                shouldOpenOnboarding = true;
+              } else if (!hasAuthenticatedProvider) {
+                // Completed onboarding but no authenticated provider → fallback
+                // to Settings Authentication section
+                shouldOpenSettings = true;
+              }
+            });
+        }
+      })
+      .then(() => {
+        // Execute after the promise chain resolves
+        if (shouldOpenOnboarding) {
+          openModelOnboarding();
+        } else if (shouldOpenSettings) {
+          openSettings("authentication");
+        }
+      })
+      .catch(() => {
+        // Fail silently - non-blocking behavior preserves dashboard usability.
+        // Onboarding can be manually triggered later via Settings if needed.
+      });
+  }, [projectId, openModelOnboarding, openSettings]);
 }

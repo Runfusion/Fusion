@@ -591,7 +591,7 @@ describe("App auto-open Settings on unauthenticated", () => {
 
     // The onboarding modal should be open showing the provider step
     await waitFor(() => {
-      expect(screen.getByText("Set Up AI Provider")).toBeTruthy();
+      expect(screen.getByText("Set Up AI")).toBeTruthy();
     });
 
     // Settings modal should NOT be open
@@ -618,7 +618,7 @@ describe("App auto-open Settings on unauthenticated", () => {
     expect(screen.getByText("GitHub")).toBeTruthy();
 
     // Onboarding modal should NOT be open
-    expect(screen.queryByText("Set Up AI Provider")).toBeNull();
+    expect(screen.queryByText("Set Up AI")).toBeNull();
   });
 
   it("does NOT auto-open anything when at least one provider is authenticated and default model is set", async () => {
@@ -642,7 +642,7 @@ describe("App auto-open Settings on unauthenticated", () => {
     expect(screen.queryByText("Settings")).toBeNull();
 
     // Onboarding modal should NOT be open
-    expect(screen.queryByText("Set Up AI Provider")).toBeNull();
+    expect(screen.queryByText("Set Up AI")).toBeNull();
   });
 
   it("treats authenticated API-key providers as valid auth for onboarding checks", async () => {
@@ -663,7 +663,7 @@ describe("App auto-open Settings on unauthenticated", () => {
     await waitFor(() => expect(fetchSettings).toHaveBeenCalledTimes(1));
 
     expect(screen.queryByText("Settings")).toBeNull();
-    expect(screen.queryByText("Set Up AI Provider")).toBeNull();
+    expect(screen.queryByText("Set Up AI")).toBeNull();
   });
 
   it("auto-opens onboarding when providers are authenticated but default model is missing", async () => {
@@ -684,7 +684,7 @@ describe("App auto-open Settings on unauthenticated", () => {
 
     // Onboarding modal should be open
     await waitFor(() => {
-      expect(screen.getByText("Set Up AI Provider")).toBeTruthy();
+      expect(screen.getByText("Set Up AI")).toBeTruthy();
     });
   });
 
@@ -699,7 +699,7 @@ describe("App auto-open Settings on unauthenticated", () => {
     // Settings modal should NOT be open
     expect(screen.queryByText("Settings")).toBeNull();
     // Onboarding modal should NOT be open
-    expect(screen.queryByText("Set Up AI Provider")).toBeNull();
+    expect(screen.queryByText("Set Up AI")).toBeNull();
   });
 
   it("re-opening Settings via gear icon defaults to Authentication tab after closing onboarding", async () => {
@@ -709,7 +709,7 @@ describe("App auto-open Settings on unauthenticated", () => {
     // Wait for onboarding to auto-open
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
     await waitFor(() => {
-      expect(screen.getByText("Set Up AI Provider")).toBeTruthy();
+      expect(screen.getByText("Set Up AI")).toBeTruthy();
     });
 
     // Dismiss the onboarding modal via Skip for now button
@@ -717,7 +717,7 @@ describe("App auto-open Settings on unauthenticated", () => {
 
     // Onboarding modal should be closed
     await waitFor(() => {
-      expect(screen.queryByText("Set Up AI Provider")).toBeNull();
+      expect(screen.queryByText("Set Up AI")).toBeNull();
     });
 
     // Open settings via the gear icon button

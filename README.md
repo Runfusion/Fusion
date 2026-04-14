@@ -22,7 +22,13 @@ Like Trello, but your tasks get specified, executed, and delivered by AI — pow
 
 3. **Open** [http://localhost:4040](http://localhost:4040) — create tasks from the board or the CLI.
 
-**First-run setup:** On first launch, Fusion automatically opens the **Model Onboarding wizard**. It walks you through provider authentication (OAuth login or API key entry) and default model selection. The wizard is **dismissible and non-blocking** — click **Skip for now** to dismiss it and use the dashboard immediately. You can re-trigger onboarding later from Settings → Authentication, or by clearing the `modelOnboardingComplete` flag in global settings.
+**First-run setup:** On first launch, Fusion automatically opens the **onboarding wizard** with three guided steps:
+
+1. **AI Setup** — Connect an AI provider and choose a default model
+2. **GitHub (Optional)** — Connect GitHub for issue import and PR management
+3. **First Task** — Create your first task or import from GitHub
+
+The wizard is **dismissible and non-blocking** — click **Skip for now** to dismiss it and use the dashboard immediately. You can re-trigger onboarding later from Settings → Authentication, or by clearing the `modelOnboardingComplete` flag in global settings.
 
 ### Prerequisites
 
