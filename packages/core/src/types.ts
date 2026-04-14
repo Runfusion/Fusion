@@ -970,6 +970,15 @@ export interface ProjectSettings {
    *  commit scope (e.g. `feat(KB-001): ...`). When false, the scope is
    *  omitted (e.g. `feat: ...`). Default: true. */
   includeTaskIdInCommit?: boolean;
+  /** When true, fusion adds --author attribution to all commits it creates.
+   *  When false, no author attribution is added. Default: true. */
+  commitAuthorEnabled?: boolean;
+  /** Name used in the git --author flag for Fusion commits.
+   *  Only used when commitAuthorEnabled is true. Default: "Fusion". */
+  commitAuthorName?: string;
+  /** Email used in the git --author flag for Fusion commits.
+   *  Only used when commitAuthorEnabled is true. Default: "noreply@runfusion.ai". */
+  commitAuthorEmail?: string;
   /** AI model provider for planning/triage (specification) agent.
    *  Must be set together with `planningModelId`. When both are undefined,
    *  falls back to `defaultProvider`/`defaultModelId`. */

@@ -1621,6 +1621,61 @@ export function SettingsModal({
               <small>When disabled, merge commit messages omit the task ID from the scope (e.g. <code>feat: ...</code> instead of <code>feat(KB-001): ...</code>)</small>
             </div>
             <div className="form-group">
+              <label htmlFor="commitAuthorEnabled" className="checkbox-label">
+                <input
+                  id="commitAuthorEnabled"
+                  type="checkbox"
+                  checked={form.commitAuthorEnabled !== false}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, commitAuthorEnabled: e.target.checked }))
+                  }
+                />
+                Add author attribution to commits
+              </label>
+              <small>
+                When enabled, all commits made by Fusion include <code>--author</code>{" "}
+                attribution identifying them as AI-generated
+              </small>
+            </div>
+
+            {form.commitAuthorEnabled !== false && (
+              <>
+                <div className="form-group">
+                  <label htmlFor="commitAuthorName">Author Name</label>
+                  <input
+                    id="commitAuthorName"
+                    type="text"
+                    value={form.commitAuthorName ?? ""}
+                    placeholder="Fusion"
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        commitAuthorName: e.target.value || undefined,
+                      }))
+                    }
+                  />
+                  <small>Name used in commit author attribution</small>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="commitAuthorEmail">Author Email</label>
+                  <input
+                    id="commitAuthorEmail"
+                    type="email"
+                    value={form.commitAuthorEmail ?? ""}
+                    placeholder="noreply@runfusion.ai"
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        commitAuthorEmail: e.target.value || undefined,
+                      }))
+                    }
+                  />
+                  <small>Email used in commit author attribution</small>
+                </div>
+              </>
+            )}
+
+            <div className="form-group">
               <label htmlFor="autoResolveConflicts" className="checkbox-label">
                 <input
                   id="autoResolveConflicts"

@@ -3329,6 +3329,66 @@ describe("buildMergePrompt — truncation behavior", () => {
     // Diff stat should be unchanged
     expect(prompt).toContain(shortDiffStat);
   });
+
+  it("includes author arg in no-conflicts commit instruction", async () => {
+    const { buildMergePrompt } = await import("./merger.js");
+
+    const prompt = buildMergePrompt({
+      taskId: "FN-001",
+      branch: "fusion/fn-001",
+      commitLog: "- feat: something",
+      diffStat: "1 file changed",
+      hasConflicts: false,
+      authorArg: ' --author="Fusion <noreply@runfusion.ai>"',
+    });
+
+    expect(prompt).toContain('Be sure to include `--author="Fusion <noreply@runfusion.ai>"` in the commit command');
+  });
+
+  it("includes author arg in conflicts commit instruction", async () => {
+    const { buildMergePrompt } = await import("./merger.js");
+
+    const prompt = buildMergePrompt({
+      taskId: "FN-001",
+      branch: "fusion/fn-001",
+      commitLog: "- feat: something",
+      diffStat: "1 file changed",
+      hasConflicts: true,
+      authorArg: ' --author="CustomBot <bot@example.com>"',
+    });
+
+    expect(prompt).toContain('Be sure to include `--author="CustomBot <bot@example.com>"` in the commit command');
+  });
+
+  it("omits author instruction when authorArg is not provided", async () => {
+    const { buildMergePrompt } = await import("./merger.js");
+
+    const prompt = buildMergePrompt({
+      taskId: "FN-001",
+      branch: "fusion/fn-001",
+      commitLog: "- feat: something",
+      diffStat: "1 file changed",
+      hasConflicts: false,
+    });
+
+    expect(prompt).not.toContain("Be sure to include");
+    expect(prompt).toContain("Write and run the `git commit` command with a good message summarizing the work");
+  });
+
+  it("handles empty authorArg gracefully", async () => {
+    const { buildMergePrompt } = await import("./merger.js");
+
+    const prompt = buildMergePrompt({
+      taskId: "FN-001",
+      branch: "fusion/fn-001",
+      commitLog: "- feat: something",
+      diffStat: "1 file changed",
+      hasConflicts: false,
+      authorArg: "",
+    });
+
+    expect(prompt).not.toContain("Be sure to include");
+  });
 });
 
 // ── Context Limit Recovery Tests ─────────────────────────────────────

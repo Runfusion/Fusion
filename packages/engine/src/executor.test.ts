@@ -2416,6 +2416,58 @@ describe("buildExecutionPrompt", () => {
       expect(result).not.toContain("## Project Memory");
     });
   });
+
+  describe("commit author attribution", () => {
+    it("includes default author in commit instruction when commitAuthorEnabled is true", () => {
+      const task = createMockTaskDetail();
+      const result = buildExecutionPrompt(task, "/project", {
+        commitAuthorEnabled: true,
+      } as any);
+      expect(result).toContain('--author="Fusion <noreply@runfusion.ai>"');
+    });
+
+    it("includes custom author name and email in commit instruction", () => {
+      const task = createMockTaskDetail();
+      const result = buildExecutionPrompt(task, "/project", {
+        commitAuthorEnabled: true,
+        commitAuthorName: "CustomBot",
+        commitAuthorEmail: "bot@example.com",
+      } as any);
+      expect(result).toContain('--author="CustomBot <bot@example.com>"');
+    });
+
+    it("omits author from commit instruction when commitAuthorEnabled is false", () => {
+      const task = createMockTaskDetail();
+      const result = buildExecutionPrompt(task, "/project", {
+        commitAuthorEnabled: false,
+      } as any);
+      expect(result).not.toContain("--author");
+      // Should still contain commit instruction without author
+      expect(result).toContain("git commit -m");
+    });
+
+    it("uses default author when commitAuthorEnabled is true but name/email are undefined", () => {
+      const task = createMockTaskDetail();
+      const result = buildExecutionPrompt(task, "/project", {
+        commitAuthorEnabled: true,
+        commitAuthorName: undefined,
+        commitAuthorEmail: undefined,
+      } as any);
+      expect(result).toContain('--author="Fusion <noreply@runfusion.ai>"');
+    });
+
+    it("uses default author when settings is undefined", () => {
+      const task = createMockTaskDetail();
+      const result = buildExecutionPrompt(task, "/project");
+      expect(result).toContain('--author="Fusion <noreply@runfusion.ai>"');
+    });
+
+    it("uses default author when settings is empty object", () => {
+      const task = createMockTaskDetail();
+      const result = buildExecutionPrompt(task, "/project", {} as any);
+      expect(result).toContain('--author="Fusion <noreply@runfusion.ai>"');
+    });
+  });
 });
 
 // Import the summarizeToolArgs helper directly (not affected by mocks above)

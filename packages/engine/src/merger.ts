@@ -972,15 +972,27 @@ export async function resolveConflicts(
   return remainingComplex;
 }
 
+/** Build the --author flag for git commits based on project settings. */
+function getCommitAuthorArg(settings: {
+  commitAuthorEnabled?: boolean;
+  commitAuthorName?: string;
+  commitAuthorEmail?: string;
+}): string {
+  if (settings.commitAuthorEnabled === false) return "";
+  const name = settings.commitAuthorName || "Fusion";
+  const email = settings.commitAuthorEmail || "noreply@runfusion.ai";
+  return ` --author="${name} <${email}>"`;
+}
+
 /**
  * Build the merge system prompt. When `includeTaskId` is true (default),
  * the commit format uses `<type>(<scope>): <summary>` where scope is the
  * task ID. When false, it uses `<type>: <summary>` with no scope.
  */
-function buildMergeSystemPrompt(includeTaskId: boolean, agentPrompts?: AgentPromptsConfig): string {
+function buildMergeSystemPrompt(includeTaskId: boolean, agentPrompts?: AgentPromptsConfig, authorArg?: string): string {
   const commitFormat = includeTaskId
     ? `\`\`\`
-git commit -m "<type>(<scope>): <summary>" -m "<body>"
+git commit -m "<type>(<scope>): <summary>" -m "<body>"${authorArg || ""}
 \`\`\`
 
 Message format:
@@ -988,6 +1000,7 @@ Message format:
 - **Scope:** the task ID (e.g., KB-001)
 - **Summary:** one line describing what the squash brings in (imperative mood)
 - **Body:** 2-5 bullet points summarizing the key changes, each starting with "- "
+${authorArg ? `- **Author:** Always include the --author flag as shown in the example above.` : ""}
 
 Example:
 \`\`\`
@@ -995,17 +1008,17 @@ git commit -m "feat(KB-003): add user profile page" -m "- Add /profile route wit
 - Create ProfileCard and EditProfileForm components
 - Add profile image resizing via sharp
 - Update nav bar with profile link
-- Add profile e2e tests"
+- Add profile e2e tests"${authorArg || ""}
 \`\`\``
     : `\`\`\`
-git commit -m "<type>: <summary>" -m "<body>"
+git commit -m "<type>: <summary>" -m "<body>"${authorArg || ""}
 \`\`\`
 
 Message format:
 - **Type:** feat, fix, refactor, docs, test, chore
 - **Summary:** one line describing what the squash brings in (imperative mood)
 - **Body:** 2-5 bullet points summarizing the key changes, each starting with "- "
-
+${authorArg ? `- **Author:** Always include the --author flag as shown in the example above.` : ""}
 Do NOT include a scope in the commit message type.
 
 Example:
@@ -1014,7 +1027,7 @@ git commit -m "feat: add user profile page" -m "- Add /profile route with avatar
 - Create ProfileCard and EditProfileForm components
 - Add profile image resizing via sharp
 - Update nav bar with profile link
-- Add profile e2e tests"
+- Add profile e2e tests"${authorArg || ""}
 \`\`\``;
 
   // Resolve the base merger prompt from agent prompts config, falling back to the inline default
@@ -1347,6 +1360,7 @@ export async function aiMergeTask(
         attemptNum,
         options,
         result,
+        settings,
         testCommand: effectiveTestCommand,
         buildCommand: effectiveBuildCommand,
         testSource: effectiveTestSource,
@@ -1592,6 +1606,11 @@ interface MergeAttemptParams {
   attemptNum: 1 | 2 | 3;
   options: MergerOptions;
   result: MergeResult;
+  settings: {
+    commitAuthorEnabled?: boolean;
+    commitAuthorName?: string;
+    commitAuthorEmail?: string;
+  };
   testCommand?: string;
   buildCommand?: string;
   /** Source of the test command: 'explicit' from settings or 'inferred' from project files */
@@ -1626,6 +1645,7 @@ async function executeMergeAttempt(
     attemptNum,
     options,
     result,
+    settings,
     testCommand,
     buildCommand,
     testSource,
@@ -1706,8 +1726,9 @@ async function executeMergeAttempt(
           if (staged !== "0") {
             const escapedLog = commitLog.replace(/"/g, '\\"');
             const fallbackPrefix = includeTaskId ? `feat(${taskId})` : "feat";
+            const authorArg = getCommitAuthorArg(settings);
             await execAsync(
-              `git commit -m "${fallbackPrefix}: merge ${branch}" -m "${escapedLog}"`,
+              `git commit -m "${fallbackPrefix}: merge ${branch}" -m "${escapedLog}"${authorArg}`,
               { cwd: rootDir },
             );
             mergerLog.log(`${taskId}: committed after auto-resolving all conflicts`);
@@ -1851,7 +1872,7 @@ async function executeMergeAttempt(
  * Attempt 3: Use git merge -X theirs --squash strategy
  */
 async function attemptWithTheirsStrategy(params: MergeAttemptParams): Promise<boolean> {
-  const { rootDir, branch, commitLog, includeTaskId, taskId, store, testCommand, buildCommand, testSource, buildSource } = params;
+  const { rootDir, branch, commitLog, includeTaskId, taskId, store, settings, testCommand, buildCommand, testSource, buildSource } = params;
 
   mergerLog.log(`${taskId}: attempting merge with -X theirs strategy`);
 
@@ -1890,8 +1911,9 @@ async function attemptWithTheirsStrategy(params: MergeAttemptParams): Promise<bo
     // Commit with fallback message
     const escapedLog = commitLog.replace(/"/g, '\\"');
     const fallbackPrefix = includeTaskId ? `feat(${taskId})` : "feat";
+    const authorArg = getCommitAuthorArg(settings);
     await execAsync(
-      `git commit -m "${fallbackPrefix}: merge ${branch} (auto-resolved)" -m "${escapedLog}"`,
+      `git commit -m "${fallbackPrefix}: merge ${branch} (auto-resolved)" -m "${escapedLog}"${authorArg}`,
       { cwd: rootDir },
     );
     mergerLog.log(`${taskId}: committed with -X theirs auto-resolution`);
@@ -2014,8 +2036,9 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
       // Graceful fallback
     }
   }
+  const authorArg = getCommitAuthorArg(settings);
   const mergerSystemPrompt = buildSystemPromptWithInstructions(
-    buildMergeSystemPrompt(includeTaskId, settings.agentPrompts),
+    buildMergeSystemPrompt(includeTaskId, settings.agentPrompts, authorArg),
     mergerInstructions,
   );
 
@@ -2064,6 +2087,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
       simplifiedContext,
       testCommand,
       buildCommand,
+      authorArg,
     });
 
     // Attempt prompting with fresh session (first attempt).
@@ -2123,6 +2147,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
             simplifiedContext: true, // Also skip detailed context
             testCommand,
             buildCommand,
+            authorArg,
           });
 
           try {
@@ -2173,8 +2198,9 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
         mergerLog.log("Agent didn't commit — committing with fallback message");
         const escapedLog = commitLog.replace(/"/g, '\\"');
         const fallbackPrefix = includeTaskId ? `feat(${taskId})` : "feat";
+        const authorArg = getCommitAuthorArg(settings);
         await execAsync(
-          `git commit -m "${fallbackPrefix}: merge ${branch}" -m "${escapedLog}"`,
+          `git commit -m "${fallbackPrefix}: merge ${branch}" -m "${escapedLog}"${authorArg}`,
           { cwd: rootDir },
         );
       } else {
@@ -2208,10 +2234,11 @@ interface MergePromptParams {
   simplifiedContext?: boolean;
   testCommand?: string;
   buildCommand?: string;
+  authorArg?: string;
 }
 
 export function buildMergePrompt(params: MergePromptParams): string {
-  const { taskId, branch, commitLog, diffStat, hasConflicts, simplifiedContext, testCommand, buildCommand } = params;
+  const { taskId, branch, commitLog, diffStat, hasConflicts, simplifiedContext, testCommand, buildCommand, authorArg } = params;
 
   // Apply truncation to prevent context overflow for large branches/diffs
   const truncatedCommitLog = truncateWithEllipsis(commitLog, MERGE_COMMIT_LOG_MAX_CHARS);
@@ -2242,14 +2269,14 @@ export function buildMergePrompt(params: MergePromptParams): string {
       "## ⚠️ There are merge conflicts",
       "Run `git diff --name-only --diff-filter=U` to see which files.",
       "Resolve each conflict, then `git add` the resolved files.",
-      "After resolving all conflicts, write and run the commit command.",
+      `After resolving all conflicts, write and run the commit command.${authorArg ? ` Be sure to include \`${authorArg.trim()}\` in the commit command.` : ""}`,
     );
   } else {
     parts.push(
       "",
       "## No conflicts",
       "The merge applied cleanly. All changes are staged.",
-      "Write and run the `git commit` command with a good message summarizing the work.",
+      `Write and run the \`git commit\` command with a good message summarizing the work.${authorArg ? ` Be sure to include \`${authorArg.trim()}\` in the commit command.` : ""}`,
     );
   }
 

@@ -559,6 +559,102 @@ describe("SettingsModal", () => {
     expect(payload.includeTaskIdInCommit).toBe(false);
   });
 
+  it("shows Add author attribution to commits checkbox in Merge section", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Merge"));
+    const checkbox = screen.getByLabelText("Add author attribution to commits");
+    expect(checkbox).toBeTruthy();
+    expect(checkbox.getAttribute("type")).toBe("checkbox");
+  });
+
+  it("toggling commitAuthorEnabled checkbox sends false in save payload when unchecked", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Merge"));
+    const checkbox = screen.getByLabelText("Add author attribution to commits");
+    // Default is checked (true), click to uncheck
+    fireEvent.click(checkbox);
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.commitAuthorEnabled).toBe(false);
+  });
+
+  it("shows author name and email fields when commitAuthorEnabled is true", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Merge"));
+    // Author name and email fields should be visible when author attribution is enabled
+    expect(screen.getByLabelText("Author Name")).toBeTruthy();
+    expect(screen.getByLabelText("Author Email")).toBeTruthy();
+  });
+
+  it("hides author name and email fields when commitAuthorEnabled is false", async () => {
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...defaultSettings,
+      commitAuthorEnabled: false,
+    });
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Merge"));
+    // Author name and email fields should be hidden
+    expect(screen.queryByLabelText("Author Name")).toBeNull();
+    expect(screen.queryByLabelText("Author Email")).toBeNull();
+  });
+
+  it("sends custom author name and email in save payload", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Merge"));
+
+    // Change author name
+    const nameInput = screen.getByLabelText("Author Name");
+    fireEvent.change(nameInput, { target: { value: "CustomBot" } });
+
+    // Change author email
+    const emailInput = screen.getByLabelText("Author Email");
+    fireEvent.change(emailInput, { target: { value: "bot@example.com" } });
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.commitAuthorName).toBe("CustomBot");
+    expect(payload.commitAuthorEmail).toBe("bot@example.com");
+  });
+
+  it("clears author name to undefined when input is emptied", async () => {
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...defaultSettings,
+      commitAuthorName: "SomeBot",
+      commitAuthorEmail: "some@example.com",
+    });
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Merge"));
+
+    // Clear author name
+    const nameInput = screen.getByLabelText("Author Name");
+    fireEvent.change(nameInput, { target: { value: "" } });
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.commitAuthorName).toBeUndefined();
+  });
+
   it("toggling autoResolveConflicts checkbox sends false in save payload when unchecked", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());

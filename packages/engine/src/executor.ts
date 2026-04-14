@@ -4031,6 +4031,11 @@ export function buildExecutionPrompt(task: TaskDetail, rootDir?: string, setting
   const reviewMatch = prompt.match(/##\s*Review Level[:\s]*(\d)/);
   const reviewLevel = reviewMatch ? parseInt(reviewMatch[1], 10) : 0;
 
+  // Build author arg for git commits based on settings
+  const authorArg = settings?.commitAuthorEnabled !== false
+    ? ` --author="${settings?.commitAuthorName || "Fusion"} <${settings?.commitAuthorEmail || "noreply@runfusion.ai"}>"`
+    : "";
+
   // Build step progress for resume
   const hasProgress = task.steps.length > 0 && task.steps.some((s) => s.status !== "pending");
   let progressSection = "";
@@ -4149,7 +4154,7 @@ ${hasProgress
 Use \`task_update\` to report progress on every step transition.
 Use \`task_log\` for important actions and decisions.
 Use \`task_create\` for truly separate follow-up work, not for fixes required to get tests, build, or typecheck back to green.
-Commit at step boundaries: \`git commit -m "feat(${task.id}): complete Step N — description"\`
+Commit at step boundaries: \`git commit -m "feat(${task.id}): complete Step N — description"${authorArg}\`
 When all steps are complete: call \`task_done()\`
 
 If a build command is configured, run that exact command in this worktree before calling \`task_done()\`.

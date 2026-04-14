@@ -1654,6 +1654,53 @@ Alias for `autoResolveConflicts`. When enabled, enables automatic resolution of:
 
 This setting is preferred for new configurations. If both settings are present, `smartConflictResolution` takes precedence.
 
+### `commitAuthorEnabled` (default: `true`)
+
+When enabled, all git commits made by Fusion (both merger squash commits and executor step-boundary commits) include `--author` attribution to identify them as AI-generated.
+
+**Configuration:**
+
+```json
+{
+  "settings": {
+    "commitAuthorEnabled": true,
+    "commitAuthorName": "Fusion",
+    "commitAuthorEmail": "noreply@runfusion.ai"
+  }
+}
+```
+
+### `commitAuthorName` (default: `"Fusion"`)
+
+The name used in the git `--author` flag for Fusion commits. Only used when `commitAuthorEnabled` is true.
+
+**Example:**
+```json
+{
+  "settings": {
+    "commitAuthorName": "MyBot"
+  }
+}
+```
+
+### `commitAuthorEmail` (default: `"noreply@runfusion.ai"`)
+
+The email used in the git `--author` flag for Fusion commits. Only used when `commitAuthorEnabled` is true.
+
+**Example:**
+```json
+{
+  "settings": {
+    "commitAuthorEmail": "bot@example.com"
+  }
+}
+```
+
+**Notes:**
+- When disabled (`commitAuthorEnabled: false`), no `--author` flag is added to commits
+- The committer identity (who physically makes the commit) remains unchanged — only the author metadata is affected
+- Configure or disable via Settings → Merge → Author attribution in the dashboard
+
 ### `requirePlanApproval` (default: `false`)
 
 When enabled, AI-generated task specifications require manual approval before the task can move from "triage" to "todo". 
