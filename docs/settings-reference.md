@@ -139,6 +139,8 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `agentPrompts` | `object` | `undefined` | Custom agent prompt templates + role assignments. |
 | `promptOverrides` | `Record<string, string>` | `undefined` | Fine-grained prompt segment overrides (e.g., `{"executor-welcome": "..."}`). |
 
+> **Note:** Agent `metadata.skills` is not a top-level project setting, but it is the primary mechanism for controlling execution-time skill selection. The engine's `buildSessionSkillContext` function reads this metadata from the assigned agent and uses it to resolve which skills are available in the agent session. If `metadata.skills` is absent or empty, the engine falls back to role-based skills (`executor`, `reviewer`, `merger`, `triage`).
+
 ### Additional ProjectSettings fields
 
 These exist in `ProjectSettings` but are not part of `PROJECT_SETTINGS_KEYS`.

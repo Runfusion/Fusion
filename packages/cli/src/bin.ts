@@ -133,6 +133,7 @@ Usage:
                                       Import agents from an Agent Companies package (directory, archive, or AGENTS.md file)
   fn agent export <dir> [--company-name <name>] [--company-slug <slug>]
                                       Export Fusion agents to an Agent Companies package directory
+                                      (agent skills assigned via metadata.skills affect execution-time tools)
   fn agent mailbox <id>             View an agent's mailbox
   fn message inbox                  List inbox messages
   fn message outbox                 List sent messages

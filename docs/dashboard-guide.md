@@ -154,6 +154,16 @@ Inspect agents, runtime status, run history, and configuration.
 
 ![Agents view](./screenshots/agents-view.png)
 
+### Agent Skill Assignment
+
+Agents can be assigned skills that determine which capabilities are injected into their sessions at execution time. Skills are configured via the agent's `metadata.skills` field—an array of skill names such as `["review", "executor"]`.
+
+You can set `metadata.skills` in two ways:
+- **Dashboard**: Edit an agent and add or update the `skills` key in its metadata JSON.
+- **Import**: When importing agents from YAML, the `skills` list is mapped to `metadata.skills` automatically.
+
+During task execution, the engine's `buildSessionSkillContext` reads `metadata.skills` from the assigned agent. If valid skills are present, they take **precedence** over the default role fallback skills (e.g., `executor`, `reviewer`, `merger`, `triage`). If no skills are assigned, the engine falls back to the standard role-based skill mapping.
+
 ## Mission Manager
 
 Manage mission hierarchy and progression state.

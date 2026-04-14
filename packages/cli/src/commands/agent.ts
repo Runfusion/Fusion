@@ -33,6 +33,10 @@ async function createAgentStore(projectName?: string): Promise<AgentStore> {
 /**
  * Stop (pause) a running agent.
  * Transitions state from running/active to paused.
+ *
+ * Note: Agent `metadata.skills` (array of skill names) controls which skills
+ * are injected into the agent session at execution time when the agent is
+ * assigned to a task. Skills are resolved by `buildSessionSkillContext`.
  */
 export async function runAgentStop(id: string, projectName?: string): Promise<void> {
   const agentStore = await createAgentStore(projectName);
