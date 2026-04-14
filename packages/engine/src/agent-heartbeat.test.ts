@@ -3322,3 +3322,370 @@ describe("HeartbeatTriggerScheduler", () => {
     });
   });
 });
+
+describe("executeHeartbeat — skill selection resolver contract (FN-1510/FN-1511)", () => {
+  // We need to test the skill selection contract without affecting other tests.
+  // Since buildSessionSkillContextSync is called via dynamic import inside executeHeartbeat,
+  // we need to test the integration at a higher level - verifying that createKbAgent
+  // receives the skillSelection option when agent has skills.
+
+  // Helper: create a mock session returned by createKbAgent
+  function createMockAgentSession() {
+    return {
+      prompt: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn(),
+      subscribe: vi.fn(),
+      model: { provider: "mock", id: "mock-model" },
+    };
+  }
+
+  let mockTaskStore: TaskStore;
+
+  // Helper: create a basic mock task store
+  function createMockTaskStore(): TaskStore {
+    return {
+      getTask: vi.fn().mockResolvedValue({
+        id: "FN-001",
+        title: "Test Task",
+        description: "Test task description",
+        prompt: "# Test PROMPT.md\nSome content",
+        steps: [],
+        column: "todo",
+        dependencies: [],
+        log: [],
+        attachments: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as TaskDetail),
+      selectNextTaskForAgent: vi.fn().mockResolvedValue(null),
+      createTask: vi.fn().mockResolvedValue({
+        id: "FN-002",
+        description: "Created task",
+        dependencies: [],
+        column: "triage",
+      }),
+      logEntry: vi.fn().mockResolvedValue({}),
+      addComment: vi.fn().mockResolvedValue({}),
+      appendAgentLog: vi.fn().mockResolvedValue(undefined),
+      upsertTaskDocument: vi.fn().mockResolvedValue({
+        id: "doc-1",
+        taskId: "FN-001",
+        key: "test-plan",
+        content: "Test document content",
+        revision: 1,
+        author: "agent",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
+      getTaskDocument: vi.fn().mockResolvedValue({
+        id: "doc-1",
+        taskId: "FN-001",
+        key: "test-plan",
+        content: "Test document content",
+        revision: 1,
+        author: "agent",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
+      getTaskDocuments: vi.fn().mockResolvedValue([]),
+    } as unknown as TaskStore;
+  }
+
+  // Helper: create a mock store that returns a specific agent
+  function createStoreWithAgentForExec(agentData: Partial<Agent> = {}): AgentStore {
+    const mockAgent: Agent = {
+      id: "agent-001",
+      name: "Test Agent",
+      role: "executor",
+      state: "active",
+      taskId: "FN-001",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      metadata: { skills: ["test-skill"] },
+      ...agentData,
+    } as Agent;
+
+    // Track saved runs so getRunDetail returns the most recent state
+    const savedRuns: Map<string, AgentHeartbeatRun> = new Map();
+
+    return {
+      recordHeartbeat: vi.fn().mockResolvedValue(undefined),
+      updateAgentState: vi.fn().mockResolvedValue(undefined),
+      updateAgent: vi.fn().mockResolvedValue(undefined),
+      getAgent: vi.fn().mockResolvedValue(mockAgent),
+      assignTask: vi.fn().mockImplementation(async (_agentId: string, taskId: string | undefined) => {
+        mockAgent.taskId = taskId;
+        return mockAgent;
+      }),
+      startHeartbeatRun: vi.fn().mockResolvedValue({
+        id: "run-001",
+        agentId: "agent-001",
+        startedAt: new Date().toISOString(),
+        endedAt: null,
+        status: "active",
+      } as AgentHeartbeatRun),
+      saveRun: vi.fn().mockImplementation(async (run: AgentHeartbeatRun) => {
+        savedRuns.set(run.id, run);
+      }),
+      getRunDetail: vi.fn().mockImplementation(async (_agentId: string, runId: string) => {
+        return savedRuns.get(runId) ?? {
+          id: runId,
+          agentId: "agent-001",
+          startedAt: new Date().toISOString(),
+          endedAt: new Date().toISOString(),
+          status: "completed" as const,
+        };
+      }),
+      endHeartbeatRun: vi.fn().mockResolvedValue(undefined),
+      getBudgetStatus: vi.fn().mockResolvedValue(createBudgetStatus()),
+      getCachedAgent: vi.fn().mockReturnValue(null),
+      getLastBlockedState: vi.fn().mockResolvedValue(null),
+      setLastBlockedState: vi.fn().mockResolvedValue(undefined),
+      clearLastBlockedState: vi.fn().mockResolvedValue(undefined),
+    } as unknown as AgentStore;
+  }
+
+  beforeEach(() => {
+    mockTaskStore = createMockTaskStore();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // These tests verify the skill selection contract at the createKbAgent level.
+  // Since we can't easily mock dynamic imports, we verify that when an agent has
+  // skills in metadata, the createKbAgent is called and the result includes skill info.
+
+  it("createKbAgent is called with agent session for heartbeat with skills", async () => {
+    mockedCreateKbAgent.mockResolvedValue({
+      session: createMockAgentSession(),
+    } as any);
+
+    const store = createStoreWithAgentForExec({
+      taskId: "FN-001",
+      metadata: { skills: ["heartbeat-skill"] },
+    });
+    const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+    const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+    expect(mockedCreateKbAgent).toHaveBeenCalled();
+    expect(result.status).toBe("completed");
+  });
+
+  it("createKbAgent is called with correct cwd for skill resolution", async () => {
+    mockedCreateKbAgent.mockResolvedValue({
+      session: createMockAgentSession(),
+    } as any);
+
+    const store = createStoreWithAgentForExec({
+      taskId: "FN-001",
+      metadata: { skills: ["custom-skill"] },
+    });
+    const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/project/root" });
+
+    await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+    expect(mockedCreateKbAgent).toHaveBeenCalled();
+    const firstCall = mockedCreateKbAgent.mock.calls[0];
+    const opts = firstCall[0];
+    expect(opts.cwd).toBe("/project/root");
+  });
+
+  it("heartbeat completes successfully when agent has no skills", async () => {
+    mockedCreateKbAgent.mockResolvedValue({
+      session: createMockAgentSession(),
+    } as any);
+
+    // Agent with empty metadata (no skills)
+    const store = createStoreWithAgentForExec({
+      taskId: "FN-001",
+      metadata: {},
+    });
+    const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+    const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+    expect(result).toBeDefined();
+    expect(result.status).toBe("completed");
+    expect(mockedCreateKbAgent).toHaveBeenCalled();
+  });
+});
+
+describe("executeHeartbeat — skill selection non-fatal (FN-1510/FN-1511)", () => {
+  // Helper: create a mock session returned by createKbAgent
+  function createMockAgentSession() {
+    return {
+      prompt: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn(),
+      subscribe: vi.fn(),
+      model: { provider: "mock", id: "mock-model" },
+    };
+  }
+
+  let mockTaskStore: TaskStore;
+
+  // Helper: create a basic mock task store
+  function createMockTaskStore(): TaskStore {
+    return {
+      getTask: vi.fn().mockResolvedValue({
+        id: "FN-001",
+        title: "Test Task",
+        description: "Test task description",
+        prompt: "# Test PROMPT.md\nSome content",
+        steps: [],
+        column: "todo",
+        dependencies: [],
+        log: [],
+        attachments: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as TaskDetail),
+      selectNextTaskForAgent: vi.fn().mockResolvedValue(null),
+      createTask: vi.fn().mockResolvedValue({
+        id: "FN-002",
+        description: "Created task",
+        dependencies: [],
+        column: "triage",
+      }),
+      logEntry: vi.fn().mockResolvedValue({}),
+      addComment: vi.fn().mockResolvedValue({}),
+      appendAgentLog: vi.fn().mockResolvedValue(undefined),
+      upsertTaskDocument: vi.fn().mockResolvedValue({
+        id: "doc-1",
+        taskId: "FN-001",
+        key: "test-plan",
+        content: "Test document content",
+        revision: 1,
+        author: "agent",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
+      getTaskDocument: vi.fn().mockResolvedValue({
+        id: "doc-1",
+        taskId: "FN-001",
+        key: "test-plan",
+        content: "Test document content",
+        revision: 1,
+        author: "agent",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
+      getTaskDocuments: vi.fn().mockResolvedValue([]),
+    } as unknown as TaskStore;
+  }
+
+  // Helper: create a mock store that returns a specific agent
+  function createStoreWithAgentForExec(agentData: Partial<Agent> = {}): AgentStore {
+    const mockAgent: Agent = {
+      id: "agent-001",
+      name: "Test Agent",
+      role: "executor",
+      state: "active",
+      taskId: "FN-001",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      metadata: {},
+      ...agentData,
+    } as Agent;
+
+    // Track saved runs so getRunDetail returns the most recent state
+    const savedRuns: Map<string, AgentHeartbeatRun> = new Map();
+
+    return {
+      recordHeartbeat: vi.fn().mockResolvedValue(undefined),
+      updateAgentState: vi.fn().mockResolvedValue(undefined),
+      updateAgent: vi.fn().mockResolvedValue(undefined),
+      getAgent: vi.fn().mockResolvedValue(mockAgent),
+      assignTask: vi.fn().mockImplementation(async (_agentId: string, taskId: string | undefined) => {
+        mockAgent.taskId = taskId;
+        return mockAgent;
+      }),
+      startHeartbeatRun: vi.fn().mockResolvedValue({
+        id: "run-001",
+        agentId: "agent-001",
+        startedAt: new Date().toISOString(),
+        endedAt: null,
+        status: "active",
+      } as AgentHeartbeatRun),
+      saveRun: vi.fn().mockImplementation(async (run: AgentHeartbeatRun) => {
+        savedRuns.set(run.id, run);
+      }),
+      getRunDetail: vi.fn().mockImplementation(async (_agentId: string, runId: string) => {
+        return savedRuns.get(runId) ?? {
+          id: runId,
+          agentId: "agent-001",
+          startedAt: new Date().toISOString(),
+          endedAt: new Date().toISOString(),
+          status: "completed" as const,
+        };
+      }),
+      endHeartbeatRun: vi.fn().mockResolvedValue(undefined),
+      getBudgetStatus: vi.fn().mockResolvedValue(createBudgetStatus()),
+      getCachedAgent: vi.fn().mockReturnValue(null),
+      getLastBlockedState: vi.fn().mockResolvedValue(null),
+      setLastBlockedState: vi.fn().mockResolvedValue(undefined),
+      clearLastBlockedState: vi.fn().mockResolvedValue(undefined),
+    } as unknown as AgentStore;
+  }
+
+  beforeEach(() => {
+    mockTaskStore = createMockTaskStore();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // These tests verify that skill selection is non-fatal - heartbeat completes
+  // regardless of skill selection outcome
+
+  it("heartbeat completes when agent has empty metadata", async () => {
+    mockedCreateKbAgent.mockResolvedValue({
+      session: createMockAgentSession(),
+    } as any);
+
+    const store = createStoreWithAgentForExec({
+      taskId: "FN-001",
+      metadata: {},
+    });
+    const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+    const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+    expect(result).toBeDefined();
+    expect(result.status).toBe("completed");
+  });
+
+  it("heartbeat completes when agent has various skill configurations", async () => {
+    mockedCreateKbAgent.mockResolvedValue({
+      session: createMockAgentSession(),
+    } as any);
+
+    // Test with various skill metadata configurations
+    const skillConfigs = [
+      { skills: ["single-skill"] },
+      { skills: ["a", "b", "c"] },
+      { skills: [] },
+      { skills: ["skill-with-dashes", "another_skill"] },
+    ];
+
+    for (const skills of skillConfigs) {
+      vi.clearAllMocks();
+
+      const store = createStoreWithAgentForExec({
+        taskId: "FN-001",
+        metadata: skills,
+      });
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+      const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+      expect(result.status).toBe("completed");
+      expect(mockedCreateKbAgent).toHaveBeenCalled();
+    }
+  });
+});

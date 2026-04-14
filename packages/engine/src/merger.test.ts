@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock external dependencies
 vi.mock("./pi.js", () => ({
@@ -3991,5 +3991,405 @@ describe("aiMergeTask — inferred test command execution", () => {
     // Merge should still succeed
     expect(result.merged).toBe(true);
     expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+  });
+});
+
+describe("aiMergeTask — skill selection resolver contract (FN-1510/FN-1511)", () => {
+  // Mock session-skill-context to control skill selection behavior
+  vi.mock("./session-skill-context.js", () => ({
+    buildSessionSkillContext: vi.fn(),
+  }));
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("passes skillSelection to createKbAgent when agentStore is provided", async () => {
+    const { buildSessionSkillContext } = await import("./session-skill-context.js");
+    vi.mocked(buildSessionSkillContext).mockResolvedValue({
+      skillSelectionContext: {
+        projectRootDir: "/tmp/root",
+        requestedSkillNames: ["merger"],
+        sessionPurpose: "merger",
+      },
+      resolvedSkillNames: ["merger"],
+      skillSource: "role-fallback",
+    });
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn(),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    setupHappyPathExecSync();
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+    });
+
+    const mockAgentStore = {
+      listAgents: vi.fn().mockResolvedValue([]),
+    };
+
+    await aiMergeTask(store, "/tmp/root", "FN-050", {
+      agentStore: mockAgentStore as any,
+    });
+
+    expect(mockedCreateHaiAgent).toHaveBeenCalled();
+    // Find the first createKbAgent call (main merger agent)
+    const firstCall = mockedCreateHaiAgent.mock.calls[0];
+    const opts = firstCall[0];
+    expect(opts.skillSelection).toBeDefined();
+    expect(opts.skillSelection!.projectRootDir).toBe("/tmp/root");
+    expect(opts.skillSelection!.requestedSkillNames).toEqual(["merger"]);
+    expect(opts.skillSelection!.sessionPurpose).toBe("merger");
+  });
+
+  it("uses assigned agent skills when available", async () => {
+    const { buildSessionSkillContext } = await import("./session-skill-context.js");
+    vi.mocked(buildSessionSkillContext).mockResolvedValue({
+      skillSelectionContext: {
+        projectRootDir: "/tmp/root",
+        requestedSkillNames: ["custom-skill", "another-skill"],
+        sessionPurpose: "merger",
+      },
+      resolvedSkillNames: ["custom-skill", "another-skill"],
+      skillSource: "assigned-agent",
+    });
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn(),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    setupHappyPathExecSync();
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", assignedAgentId: "agent-001" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+    });
+
+    const mockAgentStore = {
+      listAgents: vi.fn().mockResolvedValue([]),
+    };
+
+    await aiMergeTask(store, "/tmp/root", "FN-050", {
+      agentStore: mockAgentStore as any,
+    });
+
+    expect(mockedCreateHaiAgent).toHaveBeenCalled();
+    const firstCall = mockedCreateHaiAgent.mock.calls[0];
+    const opts = firstCall[0];
+    expect(opts.skillSelection).toBeDefined();
+    expect(opts.skillSelection!.requestedSkillNames).toEqual(["custom-skill", "another-skill"]);
+  });
+
+  it("does not pass skillSelection when buildSessionSkillContext returns undefined context", async () => {
+    const { buildSessionSkillContext } = await import("./session-skill-context.js");
+    vi.mocked(buildSessionSkillContext).mockResolvedValue({
+      skillSelectionContext: undefined,
+      resolvedSkillNames: [],
+      skillSource: "none",
+    });
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn(),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    setupHappyPathExecSync();
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+    });
+
+    const mockAgentStore = {
+      listAgents: vi.fn().mockResolvedValue([]),
+    };
+
+    await aiMergeTask(store, "/tmp/root", "FN-050", {
+      agentStore: mockAgentStore as any,
+    });
+
+    expect(mockedCreateHaiAgent).toHaveBeenCalled();
+    const firstCall = mockedCreateHaiAgent.mock.calls[0];
+    const opts = firstCall[0];
+    // skillSelection should not be present when context is undefined
+    expect("skillSelection" in opts).toBe(false);
+  });
+
+  it("does not pass skillSelection when agentStore is not provided", async () => {
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn(),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    setupHappyPathExecSync();
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+    });
+
+    // No agentStore provided
+    await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(mockedCreateHaiAgent).toHaveBeenCalled();
+    const firstCall = mockedCreateHaiAgent.mock.calls[0];
+    const opts = firstCall[0];
+    expect("skillSelection" in opts).toBe(false);
+  });
+
+  it("gracefully handles buildSessionSkillContext throwing", async () => {
+    const { buildSessionSkillContext } = await import("./session-skill-context.js");
+    vi.mocked(buildSessionSkillContext).mockRejectedValue(new Error("Agent not found"));
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn(),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    setupHappyPathExecSync();
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+    });
+
+    const mockAgentStore = {
+      listAgents: vi.fn().mockResolvedValue([]),
+    };
+
+    // Should not throw - graceful fallback
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050", {
+      agentStore: mockAgentStore as any,
+    });
+
+    expect(result.merged).toBe(true);
+    expect(mockedCreateHaiAgent).toHaveBeenCalled();
+    const firstCall = mockedCreateHaiAgent.mock.calls[0];
+    const opts = firstCall[0];
+    expect("skillSelection" in opts).toBe(false);
+  });
+
+  it("records resolved skill names in skill context result", async () => {
+    const { buildSessionSkillContext } = await import("./session-skill-context.js");
+    const resolvedNames = ["skill-a", "skill-b"];
+    vi.mocked(buildSessionSkillContext).mockResolvedValue({
+      skillSelectionContext: {
+        projectRootDir: "/tmp/root",
+        requestedSkillNames: resolvedNames,
+        sessionPurpose: "merger",
+      },
+      resolvedSkillNames: resolvedNames,
+      skillSource: "assigned-agent",
+    });
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn(),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    setupHappyPathExecSync();
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", assignedAgentId: "agent-001" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+    });
+
+    const mockAgentStore = {
+      listAgents: vi.fn().mockResolvedValue([]),
+    };
+
+    await aiMergeTask(store, "/tmp/root", "FN-050", {
+      agentStore: mockAgentStore as any,
+    });
+
+    expect(mockedCreateHaiAgent).toHaveBeenCalled();
+    const firstCall = mockedCreateHaiAgent.mock.calls[0];
+    const opts = firstCall[0];
+    expect(opts.skillSelection?.requestedSkillNames).toEqual(resolvedNames);
+  });
+
+  it("uses sessionPurpose='merger' in skill selection context", async () => {
+    const { buildSessionSkillContext } = await import("./session-skill-context.js");
+    vi.mocked(buildSessionSkillContext).mockResolvedValue({
+      skillSelectionContext: {
+        projectRootDir: "/tmp/root",
+        requestedSkillNames: ["merger"],
+        sessionPurpose: "merger",
+      },
+      resolvedSkillNames: ["merger"],
+      skillSource: "role-fallback",
+    });
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn(),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    setupHappyPathExecSync();
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+    });
+
+    const mockAgentStore = {
+      listAgents: vi.fn().mockResolvedValue([]),
+    };
+
+    await aiMergeTask(store, "/tmp/root", "FN-050", {
+      agentStore: mockAgentStore as any,
+    });
+
+    expect(mockedCreateHaiAgent).toHaveBeenCalled();
+    const firstCall = mockedCreateHaiAgent.mock.calls[0];
+    const opts = firstCall[0];
+    expect(opts.skillSelection?.sessionPurpose).toBe("merger");
+  });
+});
+
+describe("aiMergeTask — skill selection non-fatal diagnostics (FN-1510/FN-1511)", () => {
+  // Mock session-skill-context to control skill selection behavior
+  vi.mock("./session-skill-context.js", () => ({
+    buildSessionSkillContext: vi.fn(),
+  }));
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("merge continues when skill selection produces diagnostics", async () => {
+    const { buildSessionSkillContext } = await import("./session-skill-context.js");
+    // Simulate diagnostics being logged - the resolver would produce these
+    // when requested skills are not found or filtered
+    vi.mocked(buildSessionSkillContext).mockResolvedValue({
+      skillSelectionContext: {
+        projectRootDir: "/tmp/root",
+        requestedSkillNames: ["nonexistent-skill"],
+        sessionPurpose: "merger",
+      },
+      resolvedSkillNames: [],
+      skillSource: "none",
+    });
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn(),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    setupHappyPathExecSync();
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+    });
+
+    const mockAgentStore = {
+      listAgents: vi.fn().mockResolvedValue([]),
+    };
+
+    // Merge should succeed even when skill diagnostics are present
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050", {
+      agentStore: mockAgentStore as any,
+    });
+
+    expect(result.merged).toBe(true);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+  });
+
+  it("records skill source in context result for debugging", async () => {
+    const { buildSessionSkillContext } = await import("./session-skill-context.js");
+    vi.mocked(buildSessionSkillContext).mockResolvedValue({
+      skillSelectionContext: {
+        projectRootDir: "/tmp/root",
+        requestedSkillNames: ["custom-skill"],
+        sessionPurpose: "merger",
+      },
+      resolvedSkillNames: ["custom-skill"],
+      skillSource: "assigned-agent",
+    });
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn(),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    setupHappyPathExecSync();
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", assignedAgentId: "agent-001" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+    });
+
+    const mockAgentStore = {
+      listAgents: vi.fn().mockResolvedValue([]),
+    };
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050", {
+      agentStore: mockAgentStore as any,
+    });
+
+    // Result should be successful regardless of skill source
+    expect(result.merged).toBe(true);
+
+    // Verify skillSelection was passed with the custom skill
+    expect(mockedCreateHaiAgent).toHaveBeenCalled();
+    const firstCall = mockedCreateHaiAgent.mock.calls[0];
+    const opts = firstCall[0];
+    expect(opts.skillSelection?.requestedSkillNames).toEqual(["custom-skill"]);
   });
 });

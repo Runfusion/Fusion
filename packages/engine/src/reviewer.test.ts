@@ -535,3 +535,235 @@ describe("reviewStep — user comments in spec review", () => {
     expect(capturedPrompt).toContain(".fusion/memory.md");
   });
 });
+
+describe("reviewStep — skill selection resolver contract (FN-1510/FN-1511)", () => {
+  // Mock session-skill-context to control skill selection behavior
+  vi.mock("./session-skill-context.js", () => ({
+    buildSessionSkillContext: vi.fn(),
+  }));
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("passes skillSelection to createKbAgent when agentStore and rootDir are provided", async () => {
+    const { buildSessionSkillContext } = await import("./session-skill-context.js");
+    vi.mocked(buildSessionSkillContext).mockResolvedValue({
+      skillSelectionContext: {
+        projectRootDir: "/tmp/project",
+        requestedSkillNames: ["reviewer"],
+        sessionPurpose: "reviewer",
+      },
+      resolvedSkillNames: ["reviewer"],
+      skillSource: "role-fallback",
+    });
+
+    mockedCreateHaiAgent.mockResolvedValue(
+      createMockSession("### Verdict: APPROVE\n### Summary\nGood."),
+    );
+
+    const mockAgentStore = {
+      listAgents: vi.fn().mockResolvedValue([]),
+    };
+
+    await reviewStep(
+      "/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt",
+      undefined,
+      {
+        agentStore: mockAgentStore as any,
+        rootDir: "/tmp/project",
+      },
+    );
+
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
+    const opts = mockedCreateHaiAgent.mock.calls[0][0];
+    expect(opts.skillSelection).toBeDefined();
+    expect(opts.skillSelection!.projectRootDir).toBe("/tmp/project");
+    expect(opts.skillSelection!.requestedSkillNames).toEqual(["reviewer"]);
+    expect(opts.skillSelection!.sessionPurpose).toBe("reviewer");
+  });
+
+  it("uses assigned agent skills when available", async () => {
+    const { buildSessionSkillContext } = await import("./session-skill-context.js");
+    vi.mocked(buildSessionSkillContext).mockResolvedValue({
+      skillSelectionContext: {
+        projectRootDir: "/tmp/project",
+        requestedSkillNames: ["custom-skill", "another-skill"],
+        sessionPurpose: "reviewer",
+      },
+      resolvedSkillNames: ["custom-skill", "another-skill"],
+      skillSource: "assigned-agent",
+    });
+
+    mockedCreateHaiAgent.mockResolvedValue(
+      createMockSession("### Verdict: APPROVE\n### Summary\nGood."),
+    );
+
+    const mockAgentStore = {
+      listAgents: vi.fn().mockResolvedValue([]),
+    };
+
+    await reviewStep(
+      "/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt",
+      undefined,
+      {
+        task: { assignedAgentId: "agent-001" },
+        agentStore: mockAgentStore as any,
+        rootDir: "/tmp/project",
+      },
+    );
+
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
+    const opts = mockedCreateHaiAgent.mock.calls[0][0];
+    expect(opts.skillSelection).toBeDefined();
+    expect(opts.skillSelection!.requestedSkillNames).toEqual(["custom-skill", "another-skill"]);
+    expect(opts.skillSelection!.sessionPurpose).toBe("reviewer");
+  });
+
+  it("does not pass skillSelection when buildSessionSkillContext returns undefined context", async () => {
+    const { buildSessionSkillContext } = await import("./session-skill-context.js");
+    vi.mocked(buildSessionSkillContext).mockResolvedValue({
+      skillSelectionContext: undefined,
+      resolvedSkillNames: [],
+      skillSource: "none",
+    });
+
+    mockedCreateHaiAgent.mockResolvedValue(
+      createMockSession("### Verdict: APPROVE\n### Summary\nGood."),
+    );
+
+    const mockAgentStore = {
+      listAgents: vi.fn().mockResolvedValue([]),
+    };
+
+    await reviewStep(
+      "/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt",
+      undefined,
+      {
+        agentStore: mockAgentStore as any,
+        rootDir: "/tmp/project",
+      },
+    );
+
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
+    const opts = mockedCreateHaiAgent.mock.calls[0][0];
+    // skillSelection should not be present when context is undefined
+    expect("skillSelection" in opts).toBe(false);
+  });
+
+  it("does not pass skillSelection when agentStore or rootDir is missing", async () => {
+    // Without agentStore/rootDir, buildSessionSkillContext is never called
+    mockedCreateHaiAgent.mockResolvedValue(
+      createMockSession("### Verdict: APPROVE\n### Summary\nGood."),
+    );
+
+    await reviewStep(
+      "/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt",
+      undefined,
+      {
+        // No agentStore or rootDir
+      },
+    );
+
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
+    const opts = mockedCreateHaiAgent.mock.calls[0][0];
+    expect("skillSelection" in opts).toBe(false);
+  });
+
+  it("gracefully handles buildSessionSkillContext throwing", async () => {
+    const { buildSessionSkillContext } = await import("./session-skill-context.js");
+    vi.mocked(buildSessionSkillContext).mockRejectedValue(new Error("Agent not found"));
+
+    mockedCreateHaiAgent.mockResolvedValue(
+      createMockSession("### Verdict: APPROVE\n### Summary\nGood."),
+    );
+
+    const mockAgentStore = {
+      listAgents: vi.fn().mockResolvedValue([]),
+    };
+
+    // Should not throw - graceful fallback
+    await reviewStep(
+      "/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt",
+      undefined,
+      {
+        agentStore: mockAgentStore as any,
+        rootDir: "/tmp/project",
+      },
+    );
+
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
+    const opts = mockedCreateHaiAgent.mock.calls[0][0];
+    expect("skillSelection" in opts).toBe(false);
+  });
+
+  it("records resolved skill names in skill context result", async () => {
+    const { buildSessionSkillContext } = await import("./session-skill-context.js");
+    const resolvedNames = ["skill-a", "skill-b", "skill-c"];
+    vi.mocked(buildSessionSkillContext).mockResolvedValue({
+      skillSelectionContext: {
+        projectRootDir: "/tmp/project",
+        requestedSkillNames: resolvedNames,
+        sessionPurpose: "reviewer",
+      },
+      resolvedSkillNames: resolvedNames,
+      skillSource: "assigned-agent",
+    });
+
+    mockedCreateHaiAgent.mockResolvedValue(
+      createMockSession("### Verdict: APPROVE\n### Summary\nGood."),
+    );
+
+    const mockAgentStore = {
+      listAgents: vi.fn().mockResolvedValue([]),
+    };
+
+    await reviewStep(
+      "/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt",
+      undefined,
+      {
+        agentStore: mockAgentStore as any,
+        rootDir: "/tmp/project",
+      },
+    );
+
+    // Verify the resolved names are passed to createKbAgent
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
+    const opts = mockedCreateHaiAgent.mock.calls[0][0];
+    expect(opts.skillSelection?.requestedSkillNames).toEqual(resolvedNames);
+  });
+
+  it("uses sessionPurpose='reviewer' in skill selection context", async () => {
+    const { buildSessionSkillContext } = await import("./session-skill-context.js");
+    vi.mocked(buildSessionSkillContext).mockResolvedValue({
+      skillSelectionContext: {
+        projectRootDir: "/tmp/project",
+        requestedSkillNames: ["reviewer"],
+        sessionPurpose: "reviewer",
+      },
+      resolvedSkillNames: ["reviewer"],
+      skillSource: "role-fallback",
+    });
+
+    mockedCreateHaiAgent.mockResolvedValue(
+      createMockSession("### Verdict: APPROVE\n### Summary\nGood."),
+    );
+
+    const mockAgentStore = {
+      listAgents: vi.fn().mockResolvedValue([]),
+    };
+
+    await reviewStep(
+      "/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt",
+      undefined,
+      {
+        agentStore: mockAgentStore as any,
+        rootDir: "/tmp/project",
+      },
+    );
+
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
+    const opts = mockedCreateHaiAgent.mock.calls[0][0];
+    expect(opts.skillSelection?.sessionPurpose).toBe("reviewer");
+  });
+});
