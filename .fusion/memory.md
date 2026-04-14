@@ -1074,3 +1074,37 @@ The skill selection resolver (`packages/engine/src/skill-resolver.ts`) computes 
 - `mockFiles.set(path, content)` and `mockFiles.get(path)` for read/write
 - `mockFiles.clear()` in `beforeEach` to reset state between tests
 - `vi.resetModules()` when using `vi.doMock` inside tests
+
+## Cross-Node Architecture (FN-1833)
+
+### Proxy Architecture
+
+The cross-node system uses a **proxy-based model** where the local dashboard server forwards API requests to remote nodes:
+
+- **Frontend proxy infrastructure** exists: `proxyApi()` in `api.ts` (line 2176), `withNodeId()` (line 2162), `useRemoteNodeData()`, `useRemoteNodeEvents()`
+- **Backend proxy routes are missing**: `routes.ts` has NO `/api/proxy/:nodeId/*` handlers — this is the critical gap blocking remote node viewing
+- **URL rewriting pattern**: `proxyApi("/tasks", { nodeId })` rewrites to `/api/proxy/{nodeId}/tasks`
+- **SSE proxy**: `useRemoteNodeEvents()` opens `EventSource("/api/proxy/{nodeId}/events")` with 45s heartbeat timeout and 3s reconnect
+
+### Project-Node Assignment Model
+
+- `RegisteredProject.nodeId` — optional field pointing to a node in the registry
+- Local node: handles projects with matching nodeId AND unassigned projects
+- Remote node: handles only projects explicitly assigned to it
+- **Routing logic**: `isProjectRoutedToNode()` in `nodeProjectAssignment.ts`
+- **Critical gap**: `CentralCore.registerProject()` does NOT accept `nodeId` — must use separate `assignProjectToNode()` call
+
+### Background Services Not Wired
+
+- `PeerExchangeService` exists in `packages/engine/src/peer-exchange-service.ts` but is NOT instantiated in `serve.ts` or `dashboard.ts`
+- `CentralCore.startDiscovery()` exists but is NOT called in CLI commands
+- Peer exchange and mDNS discovery need to be wired in `InProcessRuntime.start()` and `runServe()`/`runDashboard()`
+
+### Dependency Chain for Cross-Node
+
+1. **FN-1802** — Generic proxy route (`/api/proxy/:nodeId/*`) — unblocks all remote viewing
+2. **FN-1806** — Specific proxy routes (health, projects, tasks, events) — alternative/complement to FN-1802
+3. **FN-1803** — Node-aware project registration and directory browsing
+4. **FN-1804** — Frontend node selector for project creation
+5. **FN-1805** — Wire peer exchange and discovery in runtimes
+6. **FN-1736** — Comprehensive project scoping review (SSE/WebSocket filtering)
