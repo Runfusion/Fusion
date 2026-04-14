@@ -704,6 +704,17 @@ Fusion supports pluggable memory backends, allowing you to choose how project me
 |---------|-------------|--------------|
 | `file` (default) | File-based storage in `.fusion/memory.md` | Read/Write, Atomic, Persistent |
 | `readonly` | Read-only access (external memory management) | Read only, Non-persistent |
+| `qmd` | QMD (Quantized Memory Distillation) CLI backend | Read/Write, Persistent |
+
+**QMD Backend**
+
+The QMD backend (`memoryBackendType: "qmd"`) routes memory operations through a QMD CLI tool, enabling advanced features like automatic summarization and structured querying. When QMD is unavailable (binary not found or command fails), it falls back to file-based storage automatically.
+
+**Fallback Behavior:**
+- QMD binary not found (exit code 127): Falls back to file backend
+- QMD command timeout (30 seconds): Falls back to file backend
+- QMD command fails with exit code 1: Falls back to file backend
+- QMD output malformed: Returns error, does not fall back
 
 **Using the dashboard API:**
 
@@ -721,7 +732,7 @@ curl http://localhost:4040/api/memory/backend
     "hasConflictResolution": false,
     "persistent": true
   },
-  "availableBackends": ["file", "readonly"]
+  "availableBackends": ["file", "readonly", "qmd"]
 }
 ```
 

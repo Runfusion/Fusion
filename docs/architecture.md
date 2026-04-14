@@ -181,6 +181,7 @@ Fusion includes a pluggable memory backend system for storing durable project le
 |---------|------|-------------|
 | `FileMemoryBackend` | `file` | Read/Write, Atomic writes, Persistent |
 | `ReadOnlyMemoryBackend` | `readonly` | Read only, Non-persistent |
+| `QmdMemoryBackend` | `qmd` | Read/Write, Persistent, CLI-based with file fallback |
 
 **Backend registration:**
 ```typescript
@@ -196,6 +197,13 @@ const backend = resolveMemoryBackend(settings);
 **Settings integration:**
 - `memoryEnabled`: Toggle controls whether memory instructions are injected into prompts
 - `memoryBackendType`: Select which backend to use (`file`, `readonly`, `qmd`, or custom). Unknown types are accepted and persisted verbatim; the system falls back to `file` at runtime.
+
+**QMD Backend Fallback Behavior:**
+The QMD backend (`qmd`) routes operations through the `qmd` CLI tool. When QMD is unavailable or fails:
+- Exit code 127 (binary not found): Falls back to file backend
+- Command timeout (30s): Falls back to file backend
+- Exit code 1 (general error): Falls back to file backend
+- Other exit codes: Throws error without fallback
 
 **Dashboard API:**
 - `GET /api/memory/backend` — Returns current backend status and capabilities

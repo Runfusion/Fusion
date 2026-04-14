@@ -490,6 +490,37 @@ The background memory summarization feature uses a three-layer architecture:
 - For CLI test suites with hoisted mocks (`vi.hoisted()`), helper functions like `triggerSignal` must be defined inside each `describe` block since they're not accessible from sibling blocks.
 - When testing settings-change handlers in CLI commands, emit events on the mock store instance stored in `taskStores[0]` to trigger the handler.
 
+## Pluggable Memory Backend Integration (FN-1769)
+
+The dashboard memory routes integrate with the pluggable memory backend system:
+
+**Backend-mediated routes:**
+- `GET /api/memory` uses `readMemory(rootDir, settings)` from `@fusion/core`
+- `PUT /api/memory` uses `writeMemory(rootDir, content, settings)` from `@fusion/core`
+- Error mapping: `MemoryBackendError` codes → HTTP status codes:
+  - `READ_ONLY`/`UNSUPPORTED`/`CONFLICT` → 409 Conflict
+  - `BACKEND_UNAVAILABLE` → 503 Service Unavailable
+  - `QUOTA_EXCEEDED` → 413 Payload Too Large
+  - Other errors → 500 Internal Server Error
+
+**Settings integration:**
+- `PUT /api/settings` validates `memoryBackendType` (must be string or null)
+- Unknown backend IDs are accepted and persisted verbatim
+- Fallback-to-file is runtime resolution behavior only
+
+**Available backends:**
+- `file` — Default backend, stores in `.fusion/memory.md`
+- `readonly` — Read-only backend, returns empty on write attempts
+- `qmd` — QMD (Quantized Memory Distillation) backend with QMD CLI integration
+- Custom backends — Registered at runtime via `registerMemoryBackend()`
+
+**Key exports from `@fusion/core`:**
+- `readMemory(rootDir, settings)` — Backend-aware memory read
+- `writeMemory(rootDir, content, settings)` — Backend-aware memory write
+- `MemoryBackendError` — Error class with code, message, and backend fields
+- `resolveMemoryBackend(settings)` — Resolve backend from settings
+- `listMemoryBackendTypes()` — List registered backend types
+
 ## FN-1719: Lint/Type/Test Baseline Restoration
 
 **ESLint flat config best practices:**

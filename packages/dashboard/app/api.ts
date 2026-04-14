@@ -299,6 +299,37 @@ export function saveMemory(content: string, projectId?: string): Promise<{ succe
   });
 }
 
+/**
+ * Memory backend capabilities returned by the backend status API.
+ */
+export interface MemoryBackendCapabilities {
+  readable: boolean;
+  writable: boolean;
+  supportsAtomicWrite: boolean;
+  hasConflictResolution: boolean;
+  persistent: boolean;
+}
+
+/**
+ * Memory backend status response from GET /api/memory/backend
+ */
+export interface MemoryBackendStatus {
+  /** The effective backend type after runtime resolution */
+  currentBackend: string;
+  /** Capabilities of the effective backend */
+  capabilities: MemoryBackendCapabilities;
+  /** List of registered backend types available */
+  availableBackends: string[];
+}
+
+/**
+ * Fetch the current memory backend status and capabilities.
+ * Use this to determine which backend is active and what operations it supports.
+ */
+export function fetchMemoryBackendStatus(projectId?: string): Promise<MemoryBackendStatus> {
+  return api<MemoryBackendStatus>(withProjectId("/memory/backend", projectId));
+}
+
 /** Fetch global (user-level) settings from ~/.pi/fusion/settings.json */
 export function fetchGlobalSettings(): Promise<GlobalSettings> {
   return api<GlobalSettings>("/settings/global");

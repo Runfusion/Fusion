@@ -52,6 +52,34 @@ vi.mock("../../api", () => ({
   saveMemory: vi.fn(() => Promise.resolve({ success: true })),
   fetchGlobalConcurrency: vi.fn(() => Promise.resolve({ globalMaxConcurrent: 4, currentUsage: 0 })),
   updateGlobalConcurrency: vi.fn(() => Promise.resolve({ globalMaxConcurrent: 4, currentUsage: 0 })),
+  fetchMemoryBackendStatus: vi.fn(() => Promise.resolve({
+    currentBackend: "file",
+    capabilities: {
+      readable: true,
+      writable: true,
+      supportsAtomicWrite: true,
+      hasConflictResolution: false,
+      persistent: true,
+    },
+    availableBackends: ["file", "readonly", "qmd"],
+  })),
+}));
+
+vi.mock("../../hooks/useMemoryBackendStatus", () => ({
+  useMemoryBackendStatus: vi.fn(() => ({
+    currentBackend: "file",
+    capabilities: {
+      readable: true,
+      writable: true,
+      supportsAtomicWrite: true,
+      hasConflictResolution: false,
+      persistent: true,
+    },
+    availableBackends: ["file", "readonly", "qmd"],
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+  })),
 }));
 
 import { fetchSettings } from "../../api";

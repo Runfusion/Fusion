@@ -45,6 +45,7 @@ import {
   fetchAgentRunAudit,
   fetchAgentRunTimeline,
   streamChatResponse,
+  fetchMemoryBackendStatus,
   type ProjectInfo,
   type ProjectHealth,
   type ActivityFeedEntry,
@@ -3339,5 +3340,161 @@ describe("streamChatResponse", () => {
         expect(callbacks.error).toEqual([]);
       },
     );
+  });
+});
+
+describe("fetchMemoryBackendStatus", () => {
+  const originalFetch = globalThis.fetch;
+
+  const mockBackendStatus = {
+    currentBackend: "file",
+    capabilities: {
+      readable: true,
+      writable: true,
+      supportsAtomicWrite: true,
+      hasConflictResolution: false,
+      persistent: true,
+    },
+    availableBackends: ["file", "readonly", "qmd"],
+  };
+
+  beforeEach(() => {
+    globalThis.fetch = vi.fn();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("fetches memory backend status without projectId", async () => {
+    const { fetchMemoryBackendStatus } = await import("./api");
+
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: {
+        get: (name: string) =>
+          name.toLowerCase() === "content-type" ? "application/json" : null,
+      },
+      json: () => Promise.resolve(mockBackendStatus),
+      text: () => Promise.resolve(JSON.stringify(mockBackendStatus)),
+    } as unknown as Response);
+
+    const result = await fetchMemoryBackendStatus();
+
+    expect(result).toEqual(mockBackendStatus);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[0]).toContain("/api/memory/backend");
+  });
+
+  it("fetches memory backend status with projectId", async () => {
+    const { fetchMemoryBackendStatus } = await import("./api");
+
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: {
+        get: (name: string) =>
+          name.toLowerCase() === "content-type" ? "application/json" : null,
+      },
+      json: () => Promise.resolve(mockBackendStatus),
+      text: () => Promise.resolve(JSON.stringify(mockBackendStatus)),
+    } as unknown as Response);
+
+    const result = await fetchMemoryBackendStatus("proj_abc");
+
+    expect(result).toEqual(mockBackendStatus);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[0]).toContain("/api/memory/backend");
+    expect(call[0]).toContain("projectId=proj_abc");
+  });
+
+  it("throws on error response", async () => {
+    const { fetchMemoryBackendStatus } = await import("./api");
+
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: "Internal Server Error",
+      headers: {
+        get: (name: string) =>
+          name.toLowerCase() === "content-type" ? "application/json" : null,
+      },
+      json: () => Promise.resolve({ error: "Server error" }),
+      text: () => Promise.resolve(JSON.stringify({ error: "Server error" })),
+    } as unknown as Response);
+
+    await expect(fetchMemoryBackendStatus()).rejects.toThrow("Server error");
+  });
+
+  it("handles readonly backend response", async () => {
+    const { fetchMemoryBackendStatus } = await import("./api");
+
+    const readonlyStatus = {
+      currentBackend: "readonly",
+      capabilities: {
+        readable: true,
+        writable: false,
+        supportsAtomicWrite: false,
+        hasConflictResolution: false,
+        persistent: false,
+      },
+      availableBackends: ["file", "readonly", "qmd"],
+    };
+
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: {
+        get: (name: string) =>
+          name.toLowerCase() === "content-type" ? "application/json" : null,
+      },
+      json: () => Promise.resolve(readonlyStatus),
+      text: () => Promise.resolve(JSON.stringify(readonlyStatus)),
+    } as unknown as Response);
+
+    const result = await fetchMemoryBackendStatus();
+
+    expect(result.currentBackend).toBe("readonly");
+    expect(result.capabilities.writable).toBe(false);
+  });
+
+  it("handles qmd backend response", async () => {
+    const { fetchMemoryBackendStatus } = await import("./api");
+
+    const qmdStatus = {
+      currentBackend: "qmd",
+      capabilities: {
+        readable: true,
+        writable: true,
+        supportsAtomicWrite: false,
+        hasConflictResolution: false,
+        persistent: true,
+      },
+      availableBackends: ["file", "readonly", "qmd"],
+    };
+
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: {
+        get: (name: string) =>
+          name.toLowerCase() === "content-type" ? "application/json" : null,
+      },
+      json: () => Promise.resolve(qmdStatus),
+      text: () => Promise.resolve(JSON.stringify(qmdStatus)),
+    } as unknown as Response);
+
+    const result = await fetchMemoryBackendStatus();
+
+    expect(result.currentBackend).toBe("qmd");
+    expect(result.capabilities.writable).toBe(true);
+    expect(result.capabilities.supportsAtomicWrite).toBe(false);
   });
 });

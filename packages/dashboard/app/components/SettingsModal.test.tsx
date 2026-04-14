@@ -21,6 +21,7 @@ const mockFetchMemory = vi.fn();
 const mockSaveMemory = vi.fn();
 const mockFetchGlobalConcurrency = vi.fn();
 const mockUpdateGlobalConcurrency = vi.fn();
+const mockFetchMemoryBackendStatus = vi.fn();
 
 vi.mock("../api", () => ({
   fetchSettings: (...args: unknown[]) => mockFetchSettings(...args),
@@ -39,6 +40,13 @@ vi.mock("../api", () => ({
   saveMemory: (...args: unknown[]) => mockSaveMemory(...args),
   fetchGlobalConcurrency: (...args: unknown[]) => mockFetchGlobalConcurrency(...args),
   updateGlobalConcurrency: (...args: unknown[]) => mockUpdateGlobalConcurrency(...args),
+  fetchMemoryBackendStatus: (...args: unknown[]) => mockFetchMemoryBackendStatus(...args),
+}));
+
+// Mock the hook
+const mockUseMemoryBackendStatus = vi.fn();
+vi.mock("../hooks/useMemoryBackendStatus", () => ({
+  useMemoryBackendStatus: (...args: unknown[]) => mockUseMemoryBackendStatus(...args),
 }));
 
 const noop = () => {};
@@ -79,6 +87,31 @@ describe("SettingsModal", () => {
     mockSaveMemory.mockResolvedValue({ success: true });
     mockFetchGlobalConcurrency.mockResolvedValue({ globalMaxConcurrent: 4, currentUsage: 0 });
     mockUpdateGlobalConcurrency.mockResolvedValue({ globalMaxConcurrent: 4, currentUsage: 0 });
+    mockFetchMemoryBackendStatus.mockResolvedValue({
+      currentBackend: "file",
+      capabilities: {
+        readable: true,
+        writable: true,
+        supportsAtomicWrite: true,
+        hasConflictResolution: false,
+        persistent: true,
+      },
+      availableBackends: ["file", "readonly", "qmd"],
+    });
+    mockUseMemoryBackendStatus.mockReturnValue({
+      currentBackend: "file",
+      capabilities: {
+        readable: true,
+        writable: true,
+        supportsAtomicWrite: true,
+        hasConflictResolution: false,
+        persistent: true,
+      },
+      availableBackends: ["file", "readonly", "qmd"],
+      loading: false,
+      error: null,
+      refresh: vi.fn(),
+    });
 
     // jsdom doesn't provide URL.createObjectURL — polyfill it
     if (!URL.createObjectURL) {

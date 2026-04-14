@@ -3,7 +3,8 @@ import { Globe, Folder } from "lucide-react";
 import { THINKING_LEVELS, PROMPT_KEY_CATALOG, isGlobalSettingsKey, isProjectSettingsKey } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent } from "@fusion/core";
 import { fetchSettings, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemory, saveMemory, fetchGlobalConcurrency, updateGlobalConcurrency } from "../api";
-import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData } from "../api";
+import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData, MemoryBackendCapabilities } from "../api";
+import { useMemoryBackendStatus } from "../hooks/useMemoryBackendStatus";
 import type { ToastType } from "../hooks/useToast";
 import { ThemeSelector } from "./ThemeSelector";
 import { CustomModelDropdown } from "./CustomModelDropdown";
@@ -1640,7 +1641,29 @@ export function SettingsModal({
             </div>
           </>
         );
-      case "memory":
+      case "memory": {
+        // Fetch backend status when memory section is active
+        const {
+          currentBackend,
+          capabilities,
+          availableBackends,
+          loading: backendLoading,
+          error: backendError,
+          refresh: refreshBackendStatus,
+        } = useMemoryBackendStatus({ projectId });
+
+        // Determine if editing is allowed
+        const isMemoryEnabled = form.memoryEnabled !== false;
+        const isBackendWritable = capabilities?.writable ?? true;
+        const isEditingAllowed = isMemoryEnabled && isBackendWritable;
+
+        // Backend display names
+        const backendNames: Record<string, string> = {
+          file: "File (.fusion/memory.md)",
+          readonly: "Read-Only",
+          qmd: "QMD (Quantized Memory Distillation)",
+        };
+
         return (
           <>
             {renderScopeBanner()}
@@ -1660,15 +1683,69 @@ export function SettingsModal({
               <small>When enabled, agents will consult and update .fusion/memory.md with durable project learnings</small>
             </div>
 
+            {/* Backend type selector */}
+            <div className="form-group">
+              <label htmlFor="memoryBackendType">Memory Backend</label>
+              <select
+                id="memoryBackendType"
+                value={form.memoryBackendType || "file"}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setForm((f) => ({
+                    ...f,
+                    memoryBackendType: value === "file" ? undefined : value,
+                  }));
+                }}
+                disabled={!isMemoryEnabled}
+              >
+                {availableBackends.map((backend) => (
+                  <option key={backend} value={backend}>
+                    {backendNames[backend] || backend}
+                  </option>
+                ))}
+              </select>
+              <small>Choose how project memory is stored. File backend uses .fusion/memory.md. QMD enables advanced memory features.</small>
+            </div>
+
+            {/* Backend capabilities info */}
+            {backendLoading ? (
+              <div className="form-group">
+                <small className="settings-muted">Loading backend status...</small>
+              </div>
+            ) : backendError ? (
+              <div className="form-group">
+                <small className="field-error">Failed to load backend status: {backendError}</small>
+              </div>
+            ) : currentBackend ? (
+              <div className="form-group">
+                <small className="settings-muted">
+                  Current backend: <strong>{backendNames[currentBackend] || currentBackend}</strong>
+                  {!isBackendWritable && " (read-only)"}
+                </small>
+                {isBackendWritable && capabilities && (
+                  <small className="settings-muted" style={{ display: "block", marginTop: "2px" }}>
+                    Supports: {capabilities.readable ? "read" : ""}{capabilities.readable && capabilities.writable ? ", " : ""}{capabilities.writable ? "write" : ""}{capabilities.supportsAtomicWrite ? ", atomic writes" : ""}{capabilities.persistent ? ", persistent" : ""}
+                  </small>
+                )}
+              </div>
+            ) : null}
+
             <div style={{ borderTop: "1px solid var(--border)", margin: "var(--space-lg) 0" }} />
 
             <div className="form-group">
               <small>This file stores durable project learnings that agents consult during triage and execution.</small>
             </div>
 
-            {form.memoryEnabled === false && (
+            {/* Read-only state warnings */}
+            {!isMemoryEnabled && (
               <div className="settings-empty-state" style={{ marginBottom: "var(--space-md)" }}>
                 Memory is currently disabled. You can view the file, but editing is read-only until memory is re-enabled.
+              </div>
+            )}
+            {isMemoryEnabled && !isBackendWritable && (
+              <div className="settings-empty-state" style={{ marginBottom: "var(--space-md)" }}>
+                The selected backend ({backendNames[currentBackend || "file"] || currentBackend || "file"}) is read-only.
+                You can view the file, but saving is disabled. Select a writable backend (File or QMD) to enable editing.
               </div>
             )}
 
@@ -1692,14 +1769,14 @@ export function SettingsModal({
                       setMemoryContent(content);
                       setMemoryDirty(true);
                     }}
-                    readOnly={form.memoryEnabled === false}
+                    readOnly={!isEditingAllowed}
                     filePath=".fusion/memory.md"
                   />
                 </div>
               </div>
             )}
 
-            {memoryDirty && (
+            {memoryDirty && isEditingAllowed && (
               <div className="form-group">
                 <button
                   type="button"
@@ -1710,8 +1787,14 @@ export function SettingsModal({
                 </button>
               </div>
             )}
+            {memoryDirty && !isEditingAllowed && (
+              <div className="form-group">
+                <small className="field-error">Cannot save: {isMemoryEnabled ? "Backend is read-only" : "Memory is disabled"}</small>
+              </div>
+            )}
           </>
         );
+      }
       case "backups":
         return (
           <>
