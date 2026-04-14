@@ -112,6 +112,7 @@ Follow this structure exactly:
 ### Step {N}: Documentation & Delivery
 
 - [ ] Update relevant documentation
+- [ ] Save documentation deliverables as task documents via \`task_document_write\` (key="docs", content=...)
 - [ ] Out-of-scope findings created as new tasks via \`task_create\` tool
 
 ## Documentation Requirements
@@ -217,6 +218,7 @@ When the planning conversation produces a structured plan, save it as a document
 - Be specific — name actual files, functions, and patterns from the codebase
 - Steps should express OUTCOMES, not micro-instructions (2-5 checkboxes per step)
 - Always include a testing step and a documentation step
+- For tasks whose primary deliverable is documentation (updating docs, writing README, API references), include an explicit step or checkbox instructing the executor to save the final documentation content via \`task_document_write\`
 - Include a "Do NOT" section with project-appropriate guardrails
 - Size assessment: S (<2h), M (2-4h), L (4-8h). Split if XL (8h+)
 - Review level scoring: Blast radius (0-2), Pattern novelty (0-2), Security (0-2), Reversibility (0-2)

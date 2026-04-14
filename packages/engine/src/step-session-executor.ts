@@ -28,6 +28,7 @@ import { AgentLogger } from "./agent-logger.js";
 import { createLogger } from "./logger.js";
 import { isContextLimitError } from "./context-limit-detector.js";
 import { checkSessionError } from "./usage-limit-detector.js";
+import { createTaskDocumentWriteTool, createTaskDocumentReadTool } from "./agent-tools.js";
 
 const stepExecLog = createLogger("step-session-executor");
 
@@ -402,6 +403,15 @@ export function buildStepPrompt(
     parts.push(gitSection, "");
   }
 
+  // Add document save guidance for the last step (delivery step)
+  if (isLastStep) {
+    parts.push(
+      "",
+      "**Document your deliverables:** When this task produces written output (documentation, specifications, reports, API references, README updates, guides, or any other content), save that content as a task document using `task_document_write(key='...', content='...')`. Use a key that describes the deliverable (e.g., key=\"readme\", key=\"api-docs\"). The document persists in the task for review even after the worktree is cleaned up.",
+      "",
+    );
+  }
+
   parts.push("After completing this step, commit your changes and call task_done(). Do NOT proceed to subsequent steps.");
 
   return parts.join("\n");
@@ -769,6 +779,14 @@ export class StepSessionExecutor {
           // Get plugin tools from plugin runner if available
           const pluginTools = this.options.pluginRunner?.getPluginTools() ?? [];
 
+          // Get document tools from task store if available
+          const documentTools = this.options.store
+            ? [
+                createTaskDocumentWriteTool(this.options.store, taskDetail.id),
+                createTaskDocumentReadTool(this.options.store, taskDetail.id),
+              ]
+            : [];
+
           // Create fresh agent session for this attempt
           const createResult = await createKbAgent({
             cwd: worktreePath,
@@ -776,7 +794,7 @@ export class StepSessionExecutor {
             defaultProvider: taskDetail.modelProvider,
             defaultModelId: taskDetail.modelId,
             defaultThinkingLevel: taskDetail.thinkingLevel,
-            customTools: pluginTools,
+            customTools: [...pluginTools, ...documentTools],
             onText: (delta) => {
               agentLogger.onText(delta);
               stuckTaskDetector?.recordActivity(trackingKey);
