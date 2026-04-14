@@ -887,6 +887,35 @@ function TaskCardComponent({
               )}
             </div>
           )}
+          {task.column === "in-review" && onMoveTask && (
+            <div className="card-send-back" ref={sendBackRef}>
+              <button
+                className="card-send-back-btn"
+                onClick={handleSendBackClick}
+                title="Move task"
+                aria-label="Move task"
+                aria-haspopup="menu"
+                aria-expanded={showSendBackMenu}
+              >
+                Move
+                <ChevronDown size={10} />
+              </button>
+              {showSendBackMenu && (
+                <div className="card-send-back-menu" role="menu">
+                  {VALID_TRANSITIONS["in-review"].map((col) => (
+                    <button
+                      key={col}
+                      className="card-send-back-menu-item"
+                      role="menuitem"
+                      onClick={(e) => handleSendBackOptionClick(e, col)}
+                    >
+                      {col === "done" ? "Done (no merge)" : COLUMN_LABELS[col]}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           {task.size && (
             <span className={`card-size-badge size-${task.size.toLowerCase()}`}>
               {task.size}

@@ -3625,12 +3625,96 @@ describe("TaskCard send-back functionality", () => {
     expect(screen.queryByRole("button", { name: /send back/i })).not.toBeInTheDocument();
   });
 
-  it("does not render send-back button when task is in in-review", () => {
+  it("renders Move button when task is in in-review and onMoveTask is provided", () => {
     const onMoveTask = vi.fn().mockResolvedValue({});
     const task = createTask({ column: "in-review" });
     render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} onMoveTask={onMoveTask} />);
 
+    expect(screen.getByRole("button", { name: /move task/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /send back/i })).not.toBeInTheDocument();
+  });
+
+  it("does not render Move button for in-review when onMoveTask is not provided", () => {
+    const task = createTask({ column: "in-review" });
+    render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: /move task/i })).not.toBeInTheDocument();
+  });
+
+  it("toggles Move dropdown when in-review Move button is clicked", () => {
+    const onMoveTask = vi.fn().mockResolvedValue({});
+    const task = createTask({ column: "in-review" });
+    render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} onMoveTask={onMoveTask} />);
+
+    // Initially, dropdown is not visible
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+    // Click the Move button
+    const btn = screen.getByRole("button", { name: /move task/i });
+    fireEvent.click(btn);
+
+    // Dropdown should now be visible
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+  });
+
+  it("in-review Move dropdown shows Done (no merge), In Progress, and Todo options", () => {
+    const onMoveTask = vi.fn().mockResolvedValue({});
+    const task = createTask({ column: "in-review" });
+    render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} onMoveTask={onMoveTask} />);
+
+    // Open the dropdown
+    fireEvent.click(screen.getByRole("button", { name: /move task/i }));
+
+    // Check menu is visible
+    const menu = screen.getByRole("menu");
+    expect(menu).toBeInTheDocument();
+
+    // Should show all three options
+    expect(screen.getByRole("menuitem", { name: /done \(no merge\)/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /in progress/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /todo/i })).toBeInTheDocument();
+  });
+
+  it("clicking Done (no merge) in in-review dropdown calls onMoveTask with done and closes menu", async () => {
+    const onMoveTask = vi.fn().mockResolvedValue({});
+    const addToast = vi.fn();
+    const task = createTask({ column: "in-review" });
+    render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={addToast} onMoveTask={onMoveTask} />);
+
+    // Open the dropdown
+    fireEvent.click(screen.getByRole("button", { name: /move task/i }));
+
+    // Click "Done (no merge)" option
+    fireEvent.click(screen.getByRole("menuitem", { name: /done \(no merge\)/i }));
+
+    // Should have called onMoveTask
+    await waitFor(() => {
+      expect(onMoveTask).toHaveBeenCalledWith("FN-001", "done");
+    });
+
+    // Dropdown should be closed
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+    // Toast should have been shown
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith("Moved FN-001 to Done", "success");
+    });
+  });
+
+  it("clicking outside closes in-review Move dropdown", () => {
+    const onMoveTask = vi.fn().mockResolvedValue({});
+    const task = createTask({ column: "in-review" });
+    render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} onMoveTask={onMoveTask} />);
+
+    // Open the dropdown
+    fireEvent.click(screen.getByRole("button", { name: /move task/i }));
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+
+    // Click outside (on the card itself, not inside the Move dropdown)
+    fireEvent.click(document.querySelector(".card")!);
+
+    // Dropdown should be closed
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 
   it("does not render send-back button when onMoveTask is not provided", () => {
