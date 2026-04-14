@@ -314,6 +314,14 @@ Key patterns:
 - Fetch handlers capture projectId at call time and compare at resolution time
 - Clear tasks immediately on project change, not after fetch completes
 
+**Extension to realtime hooks (FN-1764)**: This same pattern has been applied to:
+- `useAgentLogs` — Clears entries and rejects stale fetch/SSE on project/task switch
+- `useMultiAgentLogs` — Clears all state and rejects stale events on project switch
+- `useLiveTranscript` — Clears entries and rejects stale events on project/task switch
+- `AgentDetailView` — Adds context version tracking for logs tab SSE rejection
+
+Each hook uses a `contextVersionRef` incremented on context change, with stale rejection guards in SSE handlers and fetch callbacks.
+
 ## FN-1522: Task State Reconciliation Pattern
 
 Tasks can get into contradictory states (e.g., `column: "done"` with `status: "blocked"` in summary/log). This happens when agents mark tasks done without verifying actual completion. Reconciliation steps:

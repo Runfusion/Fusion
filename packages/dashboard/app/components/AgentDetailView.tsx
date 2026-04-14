@@ -95,6 +95,12 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
   const addToastRef = useRef(addToast);
   const agentRef = useRef<AgentDetail | null>(null);
 
+  // Track the context version to detect stale events after project/agent switches.
+  // Incremented whenever agentId or projectId changes, invalidating any in-flight SSE handlers.
+  const contextVersionRef = useRef(0);
+  const previousAgentIdRef = useRef(agentId);
+  const previousProjectIdRef = useRef(projectId);
+
   onCloseRef.current = onClose;
   addToastRef.current = addToast;
   agentRef.current = agent;
@@ -117,19 +123,36 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
   }, [agentId, projectId]);
 
   const loadLogs = useCallback(async () => {
+    // Capture context version at callback creation - stale responses will be rejected
+    const contextVersionAtCapture = contextVersionRef.current;
+    const currentAgentId = agentId;
+    const currentProjectId = projectId;
+
     // Agent logs are tied to tasks, not agents directly.
     // If the agent has a current task, we could show those logs.
     // For now, we'll show heartbeat runs as the "activity" for the agent.
     // If the agent is working on a task, we could show task logs.
     if (agent?.taskId) {
       try {
-        const data = await fetchAgentLogs(agent.taskId, projectId);
+        const data = await fetchAgentLogs(agent.taskId, currentProjectId);
+        // Reject stale response: check context version and current IDs
+        if (contextVersionRef.current !== contextVersionAtCapture ||
+            agentId !== currentAgentId ||
+            projectId !== currentProjectId) {
+          return;
+        }
         setLogs(data);
       } catch (err: any) {
+        // Reject stale error: check context version and current IDs
+        if (contextVersionRef.current !== contextVersionAtCapture ||
+            agentId !== currentAgentId ||
+            projectId !== currentProjectId) {
+          return;
+        }
         console.error("Failed to load task logs:", err);
       }
     }
-  }, [agent?.taskId, projectId]);
+  }, [agent?.taskId, agentId, projectId]);
 
   useEffect(() => {
     void loadAgent();
@@ -153,6 +176,19 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
     }
   }, [agent?.taskId, loadLogs]);
 
+  // Detect context changes (agentId or projectId) and invalidate stale handlers
+  useEffect(() => {
+    if (previousAgentIdRef.current !== agentId || previousProjectIdRef.current !== projectId) {
+      previousAgentIdRef.current = agentId;
+      previousProjectIdRef.current = projectId;
+      contextVersionRef.current++;
+
+      // Clear stale logs and streaming state immediately
+      setLogs([]);
+      setIsStreaming(false);
+    }
+  }, [agentId, projectId]);
+
   // Set up SSE for live log streaming when viewing logs tab with a task
   useEffect(() => {
     if (activeTab !== "logs" || !agent?.taskId) {
@@ -160,14 +196,22 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
       return;
     }
 
+    // Capture context version at effect start - stale events will be rejected
+    const contextVersionAtStart = contextVersionRef.current;
+    const currentTaskId = agent.taskId;
     const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
-    const es = new EventSource(`/api/tasks/${encodeURIComponent(agent.taskId)}/logs/stream${query}`);
+    const es = new EventSource(`/api/tasks/${encodeURIComponent(currentTaskId)}/logs/stream${query}`);
 
     const handleAgentLog = (e: MessageEvent) => {
+      // Reject events from stale contexts (agent/project switch)
+      if (contextVersionRef.current !== contextVersionAtStart) {
+        return;
+      }
+
       try {
         const entry: AgentLogEntry = JSON.parse(e.data);
         setLogs(prev => [entry, ...prev]);
-        
+
         // Auto-scroll to top for new entries
         const container = logContainerRef.current;
         if (container && container.scrollTop < 50) {
@@ -181,17 +225,27 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
     es.addEventListener("agent:log", handleAgentLog as EventListener);
 
     es.onerror = () => {
-      setIsStreaming(false);
+      // Only update streaming state if not stale
+      if (contextVersionRef.current === contextVersionAtStart) {
+        setIsStreaming(false);
+      }
     };
 
     es.onopen = () => {
-      setIsStreaming(true);
+      // Only update streaming state if not stale
+      if (contextVersionRef.current === contextVersionAtStart) {
+        setIsStreaming(true);
+      }
     };
 
     return () => {
       es.removeEventListener("agent:log", handleAgentLog as EventListener);
       es.close();
-      setIsStreaming(false);
+
+      // Only reset streaming state if not stale
+      if (contextVersionRef.current === contextVersionAtStart) {
+        setIsStreaming(false);
+      }
     };
   }, [agent?.taskId, activeTab, projectId]);
 

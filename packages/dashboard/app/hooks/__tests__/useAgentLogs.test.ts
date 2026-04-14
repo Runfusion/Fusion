@@ -243,4 +243,155 @@ describe("useAgentLogs", () => {
     expect(result.current.entries[0].detail).toBe(longDetail);
     expect(result.current.entries[0].detail!.length).toBe(5000);
   });
+
+  describe("projectId support", () => {
+    it("includes projectId in EventSource URL when provided", async () => {
+      mockFetchAgentLogs.mockResolvedValueOnce([]);
+
+      renderHook(() => useAgentLogs("FN-001", true, "proj-123"));
+
+      await waitFor(() => {
+        expect(MockEventSource.instances).toHaveLength(1);
+        expect(MockEventSource.instances[0].url).toBe("/api/tasks/FN-001/logs/stream?projectId=proj-123");
+      });
+    });
+
+    it("includes projectId in fetchAgentLogs call when provided", async () => {
+      mockFetchAgentLogs.mockResolvedValueOnce([]);
+
+      renderHook(() => useAgentLogs("FN-001", true, "proj-123"));
+
+      await waitFor(() => {
+        expect(mockFetchAgentLogs).toHaveBeenCalledWith("FN-001", "proj-123", { limit: 500 });
+      });
+    });
+
+    it("does not include projectId in URL when not provided", async () => {
+      mockFetchAgentLogs.mockResolvedValueOnce([]);
+
+      renderHook(() => useAgentLogs("FN-001", true));
+
+      await waitFor(() => {
+        expect(MockEventSource.instances).toHaveLength(1);
+        expect(MockEventSource.instances[0].url).toBe("/api/tasks/FN-001/logs/stream");
+      });
+    });
+
+    it("clears entries immediately when projectId changes", async () => {
+      // Set up mock to return different values based on projectId
+      mockFetchAgentLogs.mockImplementation((_taskId: string, projectId?: string) => {
+        if (projectId === "proj-A") {
+          return Promise.resolve([
+            { timestamp: "2026-01-01T00:00:00Z", taskId: "FN-001", text: "proj-A-log", type: "text" as const },
+          ]);
+        }
+        if (projectId === "proj-B") {
+          return Promise.resolve([
+            { timestamp: "2026-01-01T00:00:00Z", taskId: "FN-001", text: "proj-B-log", type: "text" as const },
+          ]);
+        }
+        return Promise.resolve([]);
+      });
+
+      // Create a hook that switches project
+      const { result, rerender } = renderHook(
+        ({ projectId }) => useAgentLogs("FN-001", true, projectId),
+        { initialProps: { projectId: "proj-A" } },
+      );
+
+      // Wait for initial entries to load
+      await waitFor(() => {
+        expect(result.current.entries).toHaveLength(1);
+        expect(result.current.entries[0].text).toBe("proj-A-log");
+      });
+
+      // Switch to proj-B
+      rerender({ projectId: "proj-B" });
+
+      // Entries should be cleared immediately after project switch
+      await waitFor(() => {
+        expect(result.current.entries).toHaveLength(0);
+      });
+
+      // New fetch should start for proj-B
+      await waitFor(() => {
+        expect(result.current.entries).toHaveLength(1);
+        expect(result.current.entries[0].text).toBe("proj-B-log");
+      });
+    });
+
+    it("rejects stale SSE events after project switch", async () => {
+      // Initial render with proj-A
+      mockFetchAgentLogs.mockResolvedValue([]);
+
+      const { result, rerender } = renderHook(
+        ({ projectId }) => useAgentLogs("FN-001", true, projectId),
+        { initialProps: { projectId: "proj-A" } },
+      );
+
+      await waitFor(() => {
+        expect(MockEventSource.instances).toHaveLength(1);
+      });
+
+      const es = MockEventSource.instances[0];
+
+      // Switch to proj-B
+      rerender({ projectId: "proj-B" });
+
+      // Wait for new connection to be established
+      await waitFor(() => {
+        expect(MockEventSource.instances.length).toBeGreaterThanOrEqual(1);
+      });
+
+      // Old connection should be closed
+      expect(es.close).toHaveBeenCalled();
+
+      // Wait for entries to be cleared
+      await waitFor(() => {
+        expect(result.current.entries).toHaveLength(0);
+      });
+
+      // Emit event on old connection (should be ignored)
+      act(() => {
+        es._emit("agent:log", {
+          timestamp: "2026-01-01T00:01:00Z",
+          taskId: "FN-001",
+          text: "stale-event",
+          type: "text",
+        });
+      });
+
+      // Stale event should not appear
+      expect(result.current.entries.find(e => e.text === "stale-event")).toBeUndefined();
+    });
+
+    it("creates new connection with new projectId on project switch", async () => {
+      mockFetchAgentLogs.mockResolvedValue([]);
+
+      const { rerender } = renderHook(
+        ({ projectId }) => useAgentLogs("FN-001", true, projectId),
+        { initialProps: { projectId: "proj-A" } },
+      );
+
+      await waitFor(() => {
+        expect(MockEventSource.instances.length).toBeGreaterThanOrEqual(1);
+      });
+
+      const initialCount = MockEventSource.instances.length;
+
+      // Switch to proj-B
+      rerender({ projectId: "proj-B" });
+
+      // Wait for new connection
+      await waitFor(() => {
+        expect(MockEventSource.instances.length).toBeGreaterThan(initialCount);
+      });
+
+      // New connection should have correct projectId
+      const newConnections = MockEventSource.instances.filter(
+        es => es.url.includes("proj-B")
+      );
+      expect(newConnections.length).toBeGreaterThan(0);
+    });
+  });
 });

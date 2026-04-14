@@ -34,6 +34,11 @@ interface InitState {
 /**
  * Hook that manages agent log fetching and live SSE streaming for multiple tasks.
  *
+ * Features project-context isolation to prevent cross-project log bleed:
+ * - Uses `{projectId, taskId}` identity for state isolation
+ * - Clears all state immediately on project switch
+ * - Rejects late fetch responses and SSE events from previous contexts
+ *
  * For each task ID in the provided array:
  * 1. Fetches recent historical logs via GET /api/tasks/:id/logs?limit=500
  * 2. Opens an EventSource to /api/tasks/:id/logs/stream for live updates
@@ -46,11 +51,38 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
   // Store state per task
   const [stateMap, setStateMap] = useState<Record<string, InitState>>({});
 
-  // Ref to track active EventSources
+  // Refs for state that needs to survive re-renders
   const sourcesRef = useRef<Record<string, EventSource>>({});
   const initializingRef = useRef<Set<string>>(new Set());
   const cancelledRef = useRef<Record<string, boolean>>({});
   const pendingLiveEntriesRef = useRef<Record<string, AgentLogEntry[]>>({});
+
+  // Track project context version to detect stale events after project switches.
+  // Incremented whenever projectId changes, invalidating any in-flight SSE handlers.
+  const projectContextVersionRef = useRef(0);
+
+  // Track previous projectId to detect project switches
+  const previousProjectIdRef = useRef<string | undefined>(projectId);
+
+  // Detect project switch and clear all state immediately
+  const projectSwitched = previousProjectIdRef.current !== projectId;
+  if (projectSwitched) {
+    previousProjectIdRef.current = projectId;
+    projectContextVersionRef.current++;
+
+    // Close all existing EventSources and reset state
+    for (const [taskId, es] of Object.entries(sourcesRef.current)) {
+      cancelledRef.current[taskId] = true;
+      es.close();
+    }
+    sourcesRef.current = {};
+    initializingRef.current.clear();
+    cancelledRef.current = {};
+    pendingLiveEntriesRef.current = {};
+
+    // Clear all state immediately to prevent stale data visibility
+    setStateMap({});
+  }
 
   // Create clear function for a specific task
   const createClearFn = useCallback((taskId: string) => {
@@ -78,6 +110,9 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
     const initializing = initializingRef.current;
     const cancelled = cancelledRef.current;
 
+    // Capture context version at effect start - stale events will be rejected
+    const contextVersionAtStart = projectContextVersionRef.current;
+
     // Track which task IDs need state initialization (not already in stateMap)
     const newTaskIds: string[] = [];
     for (const taskId of taskIds) {
@@ -85,7 +120,7 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
         newTaskIds.push(taskId);
       }
     }
-    
+
     // Only initialize state for new tasks that aren't already in stateMap
     if (newTaskIds.length > 0) {
       setStateMap((prev) => {
@@ -113,7 +148,7 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
         removedTaskIds.push(taskId);
       }
     }
-    
+
     // Only remove state for disconnected tasks if there are any
     if (removedTaskIds.length > 0) {
       setStateMap((prev) => {
@@ -159,7 +194,11 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
       sources[taskId] = es;
 
       const handleAgentLog = (e: MessageEvent) => {
-        if (cancelled[taskId]) return;
+        // Reject events from stale contexts (project/task switch)
+        if (cancelled[taskId] ||
+            projectContextVersionRef.current !== contextVersionAtStart) {
+          return;
+        }
 
         try {
           const entry: AgentLogEntry = JSON.parse(e.data);
@@ -199,7 +238,11 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
       // Fetch historical logs with projectId
       void fetchAgentLogs(taskId, projectId, { limit: MAX_LOG_ENTRIES })
         .then((historical) => {
-          if (cancelled[taskId]) return;
+          // Reject stale response from previous context
+          if (cancelled[taskId] ||
+              projectContextVersionRef.current !== contextVersionAtStart) {
+            return;
+          }
 
           const pendingLive = pendingLiveEntriesRef.current[taskId] ?? [];
           setStateMap((prev) => ({
@@ -212,7 +255,11 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
           }));
         })
         .catch(() => {
-          if (cancelled[taskId]) return;
+          // Reject stale error from previous context
+          if (cancelled[taskId] ||
+              projectContextVersionRef.current !== contextVersionAtStart) {
+            return;
+          }
 
           const pendingLive = pendingLiveEntriesRef.current[taskId] ?? [];
           setStateMap((prev) => ({
@@ -225,7 +272,7 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
           initializingRef.current.delete(taskId);
         });
     }
-    
+
     // Update previous task IDs ref for cleanup comparison
     const initialTaskIds = [...taskIds];
 
