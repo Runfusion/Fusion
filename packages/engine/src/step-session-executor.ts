@@ -20,6 +20,7 @@ import type { AgentSession } from "@mariozechner/pi-coding-agent";
 import type { TaskDetail, Settings, TaskStore } from "@fusion/core";
 
 import { createKbAgent, promptWithFallback, describeModel, compactSessionContext } from "./pi.js";
+import type { SkillSelectionContext } from "./skill-resolver.js";
 import { generateWorktreeName } from "./worktree-names.js";
 import { AgentSemaphore } from "./concurrency.js";
 import { StuckTaskDetector } from "./stuck-task-detector.js";
@@ -74,6 +75,8 @@ export interface StepSessionExecutorOptions {
   onStepStart?: (stepIndex: number) => void;
   /** Callback invoked when a step completes (success or failure). */
   onStepComplete?: (stepIndex: number, result: StepResult) => void;
+  /** Optional skill selection context for session creation. */
+  skillSelection?: SkillSelectionContext;
 }
 
 // ── File Scope Extraction ─────────────────────────────────────────────
@@ -789,6 +792,8 @@ export class StepSessionExecutor {
               agentLogger.onToolEnd(name, isError, result);
               stuckTaskDetector?.recordActivity(trackingKey);
             },
+            // Skill selection from step-session executor options
+            ...(this.options.skillSelection ? { skillSelection: this.options.skillSelection } : {}),
           });
           session = createResult.session;
 

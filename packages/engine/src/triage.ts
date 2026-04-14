@@ -14,6 +14,7 @@ import type {
 } from "@mariozechner/pi-coding-agent";
 import { createKbAgent, describeModel, promptWithFallback } from "./pi.js";
 import { reviewStep, type ReviewVerdict } from "./reviewer.js";
+import { buildSessionSkillContext } from "./session-skill-context.js";
 import { PRIORITY_SPECIFY, type AgentSemaphore } from "./concurrency.js";
 import { AgentLogger } from "./agent-logger.js";
 import { resolveAgentInstructions, buildSystemPromptWithInstructions } from "./agent-instructions.js";
@@ -632,6 +633,14 @@ export class TriageProcessor {
           triageInstructions,
         );
 
+        // Build skill selection context (assigned agent skills take precedence over role fallback)
+        const skillContext = await buildSessionSkillContext({
+          agentStore: this.options.agentStore!,
+          task,
+          sessionPurpose: "triage",
+          projectRootDir: this.rootDir,
+        });
+
         const { session } = await createKbAgent({
           cwd: this.rootDir,
           systemPrompt: triageSystemPrompt,
@@ -659,6 +668,8 @@ export class TriageProcessor {
             ? settings.planningFallbackModelId
             : settings.fallbackModelId,
           defaultThinkingLevel: settings.defaultThinkingLevel,
+          // Skill selection: use assigned agent skills if available, otherwise role fallback
+          ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
         });
 
         const modelDesc = describeModel(session);
@@ -1137,6 +1148,7 @@ export class TriageProcessor {
               defaultThinkingLevel: currentSettings.defaultThinkingLevel,
               store,
               taskId,
+              task: currentDetail,
               userComments: currentUserComments.length > 0 ? currentUserComments : undefined,
               agentStore: this.options.agentStore,
               rootDir,

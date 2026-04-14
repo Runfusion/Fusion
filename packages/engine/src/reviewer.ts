@@ -11,6 +11,7 @@
 import type { TaskStore, TaskComment, AgentPromptsConfig } from "@fusion/core";
 import { resolveAgentPrompt } from "@fusion/core";
 import { createKbAgent, describeModel, promptWithFallback } from "./pi.js";
+import { buildSessionSkillContext } from "./session-skill-context.js";
 import { AgentLogger } from "./agent-logger.js";
 import { reviewerLog } from "./logger.js";
 import { checkSessionError } from "./usage-limit-detector.js";
@@ -208,6 +209,8 @@ export interface ReviewOptions {
   store?: TaskStore;
   /** Task ID for agent log persistence. Required alongside `store`. */
   taskId?: string;
+  /** Task with optional assignedAgentId for skill selection. */
+  task?: { assignedAgentId?: string | null };
   /** User comments on the task (author === "user"). For spec reviews, the reviewer explicitly checks that every comment is addressed. */
   userComments?: TaskComment[];
   /** Agent prompt configuration for resolving custom reviewer prompts. */
@@ -283,6 +286,21 @@ export async function reviewStep(
     reviewerInstructions,
   );
 
+  // Build skill selection context (assigned agent skills take precedence over role fallback)
+  let skillContext = undefined;
+  if (options.agentStore && options.rootDir) {
+    try {
+      skillContext = await buildSessionSkillContext({
+        agentStore: options.agentStore,
+        task: options.task ?? {},
+        sessionPurpose: "reviewer",
+        projectRootDir: options.rootDir,
+      });
+    } catch {
+      // Graceful fallback - no skill selection
+    }
+  }
+
   // Spawn a reviewer agent with read-only tools
   const { session } = await createKbAgent({
     cwd,
@@ -297,6 +315,8 @@ export async function reviewStep(
     fallbackProvider: validatorFallbackProvider,
     fallbackModelId: validatorFallbackModelId,
     defaultThinkingLevel: options.defaultThinkingLevel,
+    // Skill selection: use assigned agent skills if available, otherwise role fallback
+    ...(skillContext?.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
   });
 
   reviewerLog.log(`${taskId}: reviewer using model ${describeModel(session)}`);

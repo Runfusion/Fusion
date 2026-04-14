@@ -905,6 +905,7 @@ export class HeartbeatMonitor {
 
         // Lazy-load createKbAgent and promptWithFallback
         const { createKbAgent, promptWithFallback } = await import("./pi.js");
+        const { buildSessionSkillContextSync } = await import("./session-skill-context.js");
 
         // Build tools with task creation tracking and run context for mutation correlation
         const heartbeatTools = this.createHeartbeatTools(agentId, taskStore, taskId, runContext, audit);
@@ -915,6 +916,9 @@ export class HeartbeatMonitor {
           taskId,
           agent: agent.role as AgentRole,
         });
+
+        // Build skill selection context for heartbeat session (uses waking agent's skills, no role fallback)
+        const skillContext = buildSessionSkillContextSync(agent, "heartbeat", rootDir);
 
         // Create agent session
         const { session } = await createKbAgent({
@@ -939,6 +943,8 @@ export class HeartbeatMonitor {
             toolCallCount++;
             agentLogger?.onToolEnd(name, isError, result);
           },
+          // Skill selection: use waking agent's skills (heartbeat has no role fallback)
+          ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
         });
 
         // Track for monitoring
