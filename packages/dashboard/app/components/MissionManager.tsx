@@ -202,6 +202,13 @@ function PlanStateIndicator({ state }: { state: "not_started" | "planned" | "nee
   );
 }
 
+/** Convert validation state snake_case to human-readable label */
+function formatValidationState(state?: string): string {
+  if (!state) return "Not started";
+  // Replace underscores with spaces and title-case the result
+  return state.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+}
+
 // Form types
 interface MissionFormData {
   title: string;
@@ -2065,7 +2072,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                             }}
                             title="Validation state"
                           >
-                            {validationRollupByMilestone.get(milestone.id)?.state || "not_started"}
+                            {formatValidationState(validationRollupByMilestone.get(milestone.id)?.state)}
                           </span>
                           {validationRollupByMilestone.get(milestone.id)!.totalAssertions > 0 && (
                             <div
@@ -2689,7 +2696,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                         : "var(--assertion-pending-text)",
                                   }}
                                 >
-                                  {validationRollupByMilestone.get(milestone.id)?.state || "not_started"}
+                                  {formatValidationState(validationRollupByMilestone.get(milestone.id)?.state)}
                                 </span>
                               )}
                               {/* Assertion coverage bar */}
