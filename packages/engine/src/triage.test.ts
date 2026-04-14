@@ -686,31 +686,6 @@ describe("TriageProcessor", () => {
     expect(store.on).toHaveBeenCalledWith("settings:updated", expect.any(Function));
   });
 
-  it("terminates active triage when the task is manually moved out of triage", () => {
-    const movedListeners: Array<(event: { task: Task; from: string; to: string }) => void> = [];
-    store = createMockStore();
-    (store.on as ReturnType<typeof vi.fn>).mockImplementation(
-      (event: any, cb: any) => {
-        if (event === "task:moved") movedListeners.push(cb);
-        return store;
-      },
-    );
-    processor = new TriageProcessor(store, rootDir);
-
-    const dispose = vi.fn();
-    (processor as any).processing.add("FN-001");
-    (processor as any).activeSessions.set("FN-001", { dispose });
-
-    movedListeners.forEach((listener) => listener({
-      task: { ...mockTaskDetail, id: "FN-001", column: "todo" },
-      from: "triage",
-      to: "todo",
-    }));
-
-    expect(dispose).toHaveBeenCalledTimes(1);
-    expect((processor as any).moveAborted.has("FN-001")).toBe(true);
-  });
-
   it("re-reads settings when review_spec runs so reviewer uses the latest validator model", async () => {
     const taskId = "FN-001";
     const testRootDir = await createTriageFixtureRoot("fusion-triage-review-spec-");

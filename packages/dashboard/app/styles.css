@@ -28560,13 +28560,15 @@ html .column.drag-over * {
 .plugin-manager-detail {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
 .plugin-manager-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
 }
 
 .plugin-manager-header h3 {
@@ -28583,10 +28585,10 @@ html .column.drag-over * {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px;
+  padding: 16px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-secondary, var(--card-bg));
+  border-radius: var(--radius-md);
+  background: var(--surface);
 }
 
 .plugin-install-hint {
@@ -28612,20 +28614,22 @@ html .column.drag-over * {
 .plugin-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 8px;
 }
 
 .plugin-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 10px;
-  border-radius: 6px;
-  transition: background 0.15s;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: border-color 0.15s;
 }
 
 .plugin-item:hover {
-  background: var(--bg-secondary, rgba(127, 127, 127, 0.08));
+  border-color: var(--text-dim);
 }
 
 .plugin-info {
@@ -28647,16 +28651,21 @@ html .column.drag-over * {
 }
 
 .plugin-state-badge {
-  font-size: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.04em;
+  background: color-mix(in srgb, currentColor 12%, transparent);
 }
 
 .plugin-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   flex-shrink: 0;
 }
 
@@ -28665,12 +28674,19 @@ html .column.drag-over * {
 .plugin-manager-detail-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
-.plugin-manager-detail-header h3 {
+.plugin-detail-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.plugin-detail-title h3 {
   margin: 0;
-  flex: 1;
 }
 
 .plugin-detail-content {
@@ -28679,31 +28695,116 @@ html .column.drag-over * {
   gap: 16px;
 }
 
-.plugin-detail-meta {
-  font-size: 0.9rem;
-}
-
-.plugin-detail-meta p {
-  margin: 4px 0;
-}
-
-.plugin-description {
-  color: var(--text-secondary, var(--text-muted));
-}
-
-.plugin-detail-section h4 {
-  margin: 0 0 8px;
-}
-
-.plugin-settings-form {
+.plugin-detail-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
+.plugin-description {
+  font-size: 0.95rem;
+  color: var(--text-secondary, var(--text-muted));
+  line-height: 1.5;
+}
+
+.plugin-detail-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.plugin-homepage a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-info);
+  font-size: 0.85rem;
+}
+
+.settings-section-heading {
+  margin: 0;
+}
+
+.plugin-settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 4px;
+}
+
+.plugin-settings-form .form-group {
+  padding: 0;
+  margin-top: 0;
+}
+
 .plugin-detail-actions {
   display: flex;
   gap: 8px;
-  padding-top: 8px;
+  padding-top: 12px;
   border-top: 1px solid var(--border);
+  justify-content: flex-end;
+}
+
+/* Empty and loading states */
+.plugin-manager .empty-state,
+.plugin-manager .loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+/* Mobile responsive overrides */
+@media (max-width: 768px) {
+  /* Detail view header */
+  .plugin-manager-detail-header {
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .plugin-detail-title {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  /* Detail cards */
+  .plugin-detail-card {
+    padding: 12px;
+    gap: 8px;
+  }
+
+  /* Plugin list items */
+  .plugin-list {
+    gap: 6px;
+  }
+
+  .plugin-item {
+    padding: 10px;
+  }
+
+  /* Action buttons inside list items */
+  .plugin-actions {
+    gap: 4px;
+  }
+
+  /* Detail actions footer — buttons stack on narrow screens */
+  .plugin-detail-actions {
+    flex-wrap: wrap;
+    justify-content: stretch;
+  }
+
+  .plugin-detail-actions button {
+    flex: 1 1 auto;
+    min-height: 36px;
+  }
 }

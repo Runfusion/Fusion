@@ -278,8 +278,6 @@ export class TriageProcessor {
   private activeSessions = new Map<string, { dispose: () => void }>();
   /** Tasks aborted due to globalPause (to avoid reporting as errors). */
   private pauseAborted = new Set<string>();
-  /** Tasks manually moved out of triage while specification was queued/running. */
-  private moveAborted = new Set<string>();
   /** Tasks killed by the stuck task detector (to avoid reporting as errors). */
   private stuckAborted = new Set<string>();
 
@@ -336,21 +334,6 @@ export class TriageProcessor {
     store.on("settings:updated", ({ settings, previous }) => {
       if (previous.enginePaused && !settings.enginePaused && this.running) {
         this.poll();
-      }
-    });
-
-    store.on("task:moved", ({ task, from, to }: { task: Task; from: string; to: string }) => {
-      if (from !== "triage" || to === "triage") return;
-      if (!this.processing.has(task.id) && !this.activeSessions.has(task.id)) return;
-
-      this.moveAborted.add(task.id);
-      this.options.stuckTaskDetector?.untrackTask(task.id);
-      const session = this.activeSessions.get(task.id);
-      if (session) {
-        triageLog.log(`Task moved ${from} → ${to} — terminating triage session for ${task.id}`);
-        session.dispose();
-      } else {
-        triageLog.log(`Task moved ${from} → ${to} — skipping queued triage for ${task.id}`);
       }
     });
   }
@@ -569,41 +552,11 @@ export class TriageProcessor {
     this.options.onSpecifyStart?.(task);
 
     try {
-      const detail = (await this.store.getTask(task.id)) ?? {
-        ...task,
-        prompt: "",
-        attachments: [],
-        comments: [],
-      };
+      const detail = await this.store.getTask(task.id);
       const settings = await this.store.getSettings();
       const promptPath = `.fusion/tasks/${task.id}/PROMPT.md`;
 
       const agentWork = async () => {
-        const hasLeftTriage = async (): Promise<boolean> => {
-          if (this.moveAborted.has(task.id)) return true;
-          try {
-            const latestTask = await this.store.getTask(task.id);
-            return latestTask ? latestTask.column !== "triage" : false;
-          } catch {
-            return false;
-          }
-        };
-
-        if (await hasLeftTriage()) return;
-
-        let currentTask = detail;
-        try {
-          currentTask = (await this.store.getTask(task.id)) ?? detail;
-        } catch {
-          currentTask = detail;
-        }
-        if (currentTask.column !== "triage") {
-          triageLog.log(
-            `${task.id} left triage before specification started — skipping`,
-          );
-          return;
-        }
-
         // Set status only after the semaphore slot has been acquired, so
         // tasks waiting in the queue don't appear as "specifying".
         await this.store.updateTask(task.id, { status: "specifying" });
@@ -730,8 +683,6 @@ export class TriageProcessor {
         stuckDetector?.recordActivity(task.id);
 
         try {
-          if (await hasLeftTriage()) return;
-
           // Read attachment contents for inlining in prompt
           const { attachmentContents, imageContents } =
             await readAttachmentContents(
@@ -773,8 +724,6 @@ export class TriageProcessor {
 
           // Re-raise errors that pi-coding-agent swallowed after exhausting retries.
           checkSessionError(session);
-
-          if (await hasLeftTriage()) return;
 
           if (createdSubtasksRef.current.length > 0) {
             const childTaskIds = createdSubtasksRef.current.join(", ");
@@ -873,9 +822,6 @@ export class TriageProcessor {
         // so the next poll can re-pick this task up.
         const restoreStatus = task.status === "needs-respecify" ? "needs-respecify" : null;
         await this.store.updateTask(task.id, { status: restoreStatus }).catch(() => {});
-      } else if (this.moveAborted.has(task.id)) {
-        this.moveAborted.delete(task.id);
-        triageLog.log(`${task.id} aborted because task left triage`);
       } else if (this.stuckAborted.has(task.id)) {
         // Stuck task detector killed this session — clear specifying status so the
         // next poll retries the task from scratch without reporting an error.
@@ -934,7 +880,6 @@ export class TriageProcessor {
         this.options.onSpecifyError?.(task, err);
       }
     } finally {
-      this.moveAborted.delete(task.id);
       this.processing.delete(task.id);
     }
   }

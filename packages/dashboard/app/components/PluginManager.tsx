@@ -11,7 +11,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Package, Settings, Trash2, Plus, X, RefreshCw, RotateCcw } from "lucide-react";
+import { Package, Settings, Trash2, Plus, X, RefreshCw, RotateCcw, ExternalLink } from "lucide-react";
 import { fetchPlugins, installPlugin, enablePlugin, disablePlugin, uninstallPlugin, fetchPluginSettings, updatePluginSettings, reloadPlugin } from "../api";
 import { DirectoryPicker } from "./DirectoryPicker";
 import type { PluginInstallation, PluginState } from "@fusion/core";
@@ -293,88 +293,105 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
     return (
       <div className="plugin-manager-detail">
         <div className="plugin-manager-detail-header">
-          <button className="btn-icon" onClick={() => setSelectedPlugin(null)} title="Back to list">
+          <button className="btn-icon" onClick={() => setSelectedPlugin(null)} aria-label="Back to plugin list">
             <X size={16} />
           </button>
-          <h3>{selectedPlugin.name}</h3>
-          <span className="plugin-state-badge" style={{ color: STATE_COLORS[selectedPlugin.state] || STATE_COLORS.installed }}>
-            {selectedPlugin.state}
-          </span>
+          <div className="plugin-detail-title">
+            <h3>{selectedPlugin.name}</h3>
+            <span className="plugin-state-badge" style={{ color: STATE_COLORS[selectedPlugin.state] || STATE_COLORS.installed }}>
+              {selectedPlugin.state}
+            </span>
+          </div>
         </div>
 
         <div className="plugin-detail-content">
-          <div className="plugin-detail-meta">
+          <div className="plugin-detail-card">
             {selectedPlugin.description && (
               <p className="plugin-description">{selectedPlugin.description}</p>
             )}
             {selectedPlugin.author && (
-              <p className="plugin-author">By {selectedPlugin.author}</p>
+              <p className="plugin-detail-meta-row">
+                <span className="text-muted">Author:</span>
+                {selectedPlugin.author}
+              </p>
             )}
             {selectedPlugin.homepage && (
-              <p className="plugin-homepage">
+              <p className="plugin-detail-meta-row plugin-homepage">
+                <span className="text-muted">Homepage:</span>
                 <a href={selectedPlugin.homepage} target="_blank" rel="noopener noreferrer">
                   {selectedPlugin.homepage}
+                  <ExternalLink size={12} />
                 </a>
               </p>
             )}
-            <p className="plugin-version">Version {selectedPlugin.version}</p>
+            <p className="plugin-detail-meta-row">
+              <span className="text-muted">Version:</span>
+              {selectedPlugin.version}
+            </p>
           </div>
 
-          <div className="plugin-detail-section">
-            <h4>Settings</h4>
+          <div className="plugin-detail-card">
+            <h4 className="settings-section-heading">Settings</h4>
             {settingsLoading ? (
-              <p>Loading...</p>
-            ) : selectedPlugin.settingsSchema ? (
+              <p className="text-muted">Loading...</p>
+            ) : selectedPlugin.settingsSchema && Object.keys(selectedPlugin.settingsSchema).length > 0 ? (
               <div className="plugin-settings-form">
-                {Object.entries(selectedPlugin.settingsSchema).map(([key, schema]) => (
-                  <div key={key} className="form-group">
-                    <label htmlFor={`setting-${key}`}>
-                      {schema.label || key}
-                      {schema.required && " *"}
-                    </label>
-                    {schema.type === "string" && (
-                      <input
-                        type="text"
-                        id={`setting-${key}`}
-                        value={(pluginSettings[key] as string) ?? ""}
-                        onChange={(e) => setPluginSettings({ ...pluginSettings, [key]: e.target.value })}
-                        placeholder={schema.description}
-                      />
-                    )}
-                    {schema.type === "number" && (
-                      <input
-                        type="number"
-                        id={`setting-${key}`}
-                        value={(pluginSettings[key] as number) ?? ""}
-                        onChange={(e) => setPluginSettings({ ...pluginSettings, [key]: Number(e.target.value) })}
-                      />
-                    )}
-                    {schema.type === "boolean" && (
-                      <label className="checkbox-label">
-                        <input
-                          type="checkbox"
-                          checked={(pluginSettings[key] as boolean) ?? false}
-                          onChange={(e) => setPluginSettings({ ...pluginSettings, [key]: e.target.checked })}
-                        />
-                        {schema.description}
+                {Object.entries(selectedPlugin.settingsSchema).map(([key, schema]) => {
+                  const helpId = `setting-${key}-help`;
+                  return (
+                    <div key={key} className="form-group">
+                      <label htmlFor={`setting-${key}`}>
+                        {schema.label || key}
+                        {schema.required && " *"}
                       </label>
-                    )}
-                    {schema.type === "enum" && (
-                      <select
-                        value={(pluginSettings[key] as string) ?? ""}
-                        onChange={(e) => setPluginSettings({ ...pluginSettings, [key]: e.target.value })}
-                      >
-                        <option value="">Select...</option>
-                        {schema.enumValues?.map((v) => (
-                          <option key={v} value={v}>{v}</option>
-                        ))}
-                      </select>
-                    )}
-                    {schema.description && !schema.required && (
-                      <span className="form-help">{schema.description}</span>
-                    )}
-                  </div>
-                ))}
+                      {schema.type === "string" && (
+                        <input
+                          type="text"
+                          id={`setting-${key}`}
+                          value={(pluginSettings[key] as string) ?? ""}
+                          onChange={(e) => setPluginSettings({ ...pluginSettings, [key]: e.target.value })}
+                          placeholder={schema.description}
+                          aria-describedby={schema.description && !schema.required ? helpId : undefined}
+                        />
+                      )}
+                      {schema.type === "number" && (
+                        <input
+                          type="number"
+                          id={`setting-${key}`}
+                          value={(pluginSettings[key] as number) ?? ""}
+                          onChange={(e) => setPluginSettings({ ...pluginSettings, [key]: Number(e.target.value) })}
+                          aria-describedby={schema.description && !schema.required ? helpId : undefined}
+                        />
+                      )}
+                      {schema.type === "boolean" && (
+                        <label className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={(pluginSettings[key] as boolean) ?? false}
+                            onChange={(e) => setPluginSettings({ ...pluginSettings, [key]: e.target.checked })}
+                          />
+                          {schema.description}
+                        </label>
+                      )}
+                      {schema.type === "enum" && (
+                        <select
+                          id={`setting-${key}`}
+                          value={(pluginSettings[key] as string) ?? ""}
+                          onChange={(e) => setPluginSettings({ ...pluginSettings, [key]: e.target.value })}
+                          aria-describedby={schema.description && !schema.required ? helpId : undefined}
+                        >
+                          <option value="">Select...</option>
+                          {schema.enumValues?.map((v) => (
+                            <option key={v} value={v}>{v}</option>
+                          ))}
+                        </select>
+                      )}
+                      {schema.description && !schema.required && (
+                        <span id={helpId} className="form-help">{schema.description}</span>
+                      )}
+                    </div>
+                  );
+                })}
                 <button className="btn-primary" onClick={handleSaveSettings}>
                   Save Settings
                 </button>

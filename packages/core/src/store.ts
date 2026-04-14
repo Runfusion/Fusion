@@ -1652,22 +1652,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         task.blockedBy = undefined;
       }
 
-      // Moving a task out of triage is a manual approval/override path. Clear
-      // triage-only control statuses so the todo card is ready for execution
-      // instead of continuing to look like an active specification job.
-      if (
-        fromColumn === "triage"
-        && toColumn === "todo"
-        && (
-          task.status === "specifying"
-          || task.status === "awaiting-approval"
-          || task.status === "needs-respecify"
-        )
-      ) {
-        task.status = undefined;
-        task.error = undefined;
-      }
-
       // Clear recovery metadata when task reaches in-review (successful completion)
       if (toColumn === "in-review") {
         task.recoveryRetryCount = undefined;

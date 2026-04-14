@@ -3450,28 +3450,6 @@ Task with acceptance criteria
       expect(moved.status).toBe("custom-status");
     });
 
-    it("clears triage control status when moving from triage to todo", async () => {
-      const task = await store.createTask({ description: "test specifying to todo" });
-      await store.updateTask(task.id, {
-        status: "specifying",
-        error: "still running",
-      });
-
-      const moved = await store.moveTask(task.id, "todo");
-      expect(moved.column).toBe("todo");
-      expect(moved.status).toBeUndefined();
-      expect(moved.error).toBeUndefined();
-    });
-
-    it("clears awaiting approval status when moving from triage to todo", async () => {
-      const task = await store.createTask({ description: "test awaiting approval to todo" });
-      await store.updateTask(task.id, { status: "awaiting-approval" });
-
-      const moved = await store.moveTask(task.id, "todo");
-      expect(moved.column).toBe("todo");
-      expect(moved.status).toBeUndefined();
-    });
-
     it("clears status, error, worktree, and blockedBy when moving from in-progress to done", async () => {
       const task = await store.createTask({ description: "test clear fields to done" });
       await store.moveTask(task.id, "todo");
