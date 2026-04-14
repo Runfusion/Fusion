@@ -55,6 +55,8 @@ export default tseslint.config(
       // with project conventions (argsIgnorePattern for underscore params, etc.)
       "plugins/examples/*/src/**/*.ts",
       "plugins/examples/*/src/**/*.tsx",
+      // Agent skill plugin templates — follow project conventions for underscore params
+      ".pi/agent/skills/create-fusion-plugin/templates/**/*.ts",
     ],
     plugins: {
       "@typescript-eslint": tseslint.plugin,

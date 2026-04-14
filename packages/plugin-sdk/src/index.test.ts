@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { definePlugin } from "./index.js";
 import type { FusionPlugin } from "../../core/src/plugin-types.js";
 import { validatePluginManifest } from "../../core/src/plugin-types.js";
+import type { TaskStore } from "../../core/src/store.js";
 
 let validateFn: typeof validatePluginManifest;
 
@@ -51,7 +52,7 @@ describe("Plugin SDK", () => {
             name: "my_tool",
             description: "A useful tool",
             parameters: {},
-            execute: async (params, ctx) => ({
+            execute: async (_params, _ctx) => ({
               content: [{ type: "text" as const, text: "Hello!" }],
             }),
           },
@@ -176,7 +177,7 @@ describe("Plugin SDK", () => {
     it("exports PluginContext type", () => {
       const ctx: import("../../core/src/plugin-types.js").PluginContext = {
         pluginId: "test",
-        taskStore: {} as any,
+        taskStore: {} as unknown as TaskStore,
         settings: {},
         logger: {
           info: () => {},
