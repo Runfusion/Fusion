@@ -1279,4 +1279,159 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
   });
+
+  describe("recoverOrphanedSpecifyingTasks", () => {
+    it("clears status for orphaned specifying tasks without approval", async () => {
+      const getSpecifying = vi.fn().mockReturnValue(new Set<string>());
+
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        getSpecifyingTaskIds: getSpecifying,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-200",
+          column: "triage",
+          status: "specifying",
+          paused: false,
+          log: [],
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ]);
+
+      vi.setSystemTime(new Date("2026-01-01T00:05:00.000Z"));
+
+      const result = await managerWithRecovery.recoverOrphanedSpecifyingTasks();
+
+      expect(result).toBe(1);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-200", { status: null });
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-200",
+        "Auto-recovered orphaned specifying task — agent session lost, cleared for re-specification",
+      );
+
+      managerWithRecovery.stop();
+    });
+
+    it("skips tasks that are still actively being specified", async () => {
+      const getSpecifying = vi.fn().mockReturnValue(new Set(["FN-201"]));
+
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        getSpecifyingTaskIds: getSpecifying,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-201",
+          column: "triage",
+          status: "specifying",
+          paused: false,
+          log: [],
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ]);
+
+      vi.setSystemTime(new Date("2026-01-01T00:05:00.000Z"));
+
+      const result = await managerWithRecovery.recoverOrphanedSpecifyingTasks();
+
+      expect(result).toBe(0);
+      expect(store.updateTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("skips tasks that have an approved spec (handled by recoverApprovedTriageTasks)", async () => {
+      const getSpecifying = vi.fn().mockReturnValue(new Set<string>());
+
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        getSpecifyingTaskIds: getSpecifying,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-202",
+          column: "triage",
+          status: "specifying",
+          paused: false,
+          log: [
+            { action: "Spec review requested" },
+            { action: "Spec review: APPROVE" },
+          ],
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ]);
+
+      vi.setSystemTime(new Date("2026-01-01T00:05:00.000Z"));
+
+      const result = await managerWithRecovery.recoverOrphanedSpecifyingTasks();
+
+      expect(result).toBe(0);
+      expect(store.updateTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("skips paused tasks", async () => {
+      const getSpecifying = vi.fn().mockReturnValue(new Set<string>());
+
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        getSpecifyingTaskIds: getSpecifying,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-203",
+          column: "triage",
+          status: "specifying",
+          paused: true,
+          log: [],
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ]);
+
+      vi.setSystemTime(new Date("2026-01-01T00:05:00.000Z"));
+
+      const result = await managerWithRecovery.recoverOrphanedSpecifyingTasks();
+
+      expect(result).toBe(0);
+      expect(store.updateTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("skips tasks within the grace period", async () => {
+      const getSpecifying = vi.fn().mockReturnValue(new Set<string>());
+
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        getSpecifyingTaskIds: getSpecifying,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-204",
+          column: "triage",
+          status: "specifying",
+          paused: false,
+          log: [],
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ]);
+
+      // Only 30s later — within the 60s grace period
+      vi.setSystemTime(new Date("2026-01-01T00:00:30.000Z"));
+
+      const result = await managerWithRecovery.recoverOrphanedSpecifyingTasks();
+
+      expect(result).toBe(0);
+      expect(store.updateTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+  });
 });

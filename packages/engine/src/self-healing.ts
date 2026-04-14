@@ -110,6 +110,7 @@ export class SelfHealingManager {
     await this.recoverMisclassifiedFailures();
     await this.recoverOrphanedExecutions();
     await this.recoverApprovedTriageTasks();
+    await this.recoverOrphanedSpecifyingTasks();
   }
 
   stop(): void {
@@ -350,6 +351,7 @@ export class SelfHealingManager {
       await this.recoverNoProgressNoTaskDoneFailures();
       await this.recoverOrphanedExecutions();
       await this.recoverApprovedTriageTasks();
+      await this.recoverOrphanedSpecifyingTasks();
       await this.archiveStaleDoneTasks();
 
       const elapsedMs = Date.now() - startMs;
@@ -821,6 +823,62 @@ export class SelfHealingManager {
       return recovered;
     } catch (err: any) {
       log.error(`Approved triage recovery failed: ${err.message}`);
+      return 0;
+    }
+  }
+
+  /**
+   * Recover triage tasks stuck in `status: "specifying"` whose agent session
+   * died before producing an approved spec.
+   *
+   * These tasks fall through two cracks:
+   * - The stuck task detector only monitors tasks with active tracked sessions.
+   *   If the session crashed or was never started, the task is never tracked.
+   * - `recoverApprovedTriageTasks` only handles tasks with an approved spec.
+   *
+   * Recovery clears the status back to `null` so the next triage poll picks
+   * them up for a fresh specification attempt.
+   */
+  async recoverOrphanedSpecifyingTasks(): Promise<number> {
+    try {
+      const tasks = await this.store.listTasks({ column: "triage" });
+      const specifyingIds = this.options.getSpecifyingTaskIds?.() ?? new Set<string>();
+      const now = Date.now();
+
+      const orphaned = tasks.filter((t) =>
+        t.column === "triage" &&
+        t.status === "specifying" &&
+        !t.paused &&
+        !specifyingIds.has(t.id) &&
+        now - new Date(t.updatedAt).getTime() >= APPROVED_TRIAGE_RECOVERY_GRACE_MS &&
+        !hasLatestSpecReviewApproval(t),
+      );
+
+      if (orphaned.length === 0) return 0;
+
+      log.warn(`Found ${orphaned.length} orphaned specifying triage task(s) without approval`);
+
+      let recovered = 0;
+      for (const task of orphaned) {
+        try {
+          log.log(`Recovering orphaned specifying task ${task.id}: ${task.title || task.description?.slice(0, 60) || "(untitled)"}`);
+          await this.store.updateTask(task.id, { status: null });
+          await this.store.logEntry(
+            task.id,
+            "Auto-recovered orphaned specifying task — agent session lost, cleared for re-specification",
+          );
+          recovered++;
+        } catch (err: any) {
+          log.error(`Failed to recover orphaned specifying task ${task.id}: ${err.message}`);
+        }
+      }
+
+      if (recovered > 0) {
+        log.log(`Recovered ${recovered} orphaned specifying task(s) — cleared for re-specification`);
+      }
+      return recovered;
+    } catch (err: any) {
+      log.error(`Orphaned specifying task recovery failed: ${err.message}`);
       return 0;
     }
   }
