@@ -17174,6 +17174,12 @@ html .column.drag-over * {
     gap: var(--space-xs);
   }
 
+  /* Close button: move before actions in visual order, pin to right edge */
+  .activity-log-header .modal-close {
+    order: -1;
+    margin-left: auto;
+  }
+
   /* Filter containers fill available width */
   .activity-log-filter,
   .activity-log-filter--project {

@@ -57,6 +57,23 @@ describe("activity-log-mobile-layout.css", () => {
     expect(cssContent).not.toMatch(/\.activity-log-close\s*\{/);
   });
 
+  it("keeps close button on top row with title via order:-1", () => {
+    // The .modal-close inside activity-log-header must appear before .activity-log-actions
+    // in visual order to stay on the first row with the title
+    expect(mobileCss).toMatch(/\.activity-log-header\s+\.modal-close\s*\{[^}]*order:\s*-1/);
+  });
+
+  it("pins close button to right edge via margin-left:auto", () => {
+    // The .modal-close inside activity-log-header must be pushed to the right edge
+    // of the first row using margin-left:auto
+    expect(mobileCss).toMatch(/\.activity-log-header\s+\.modal-close\s*\{[^}]*margin-left:\s*auto/);
+  });
+
+  it("title participates in top row via flex:1 1 auto", () => {
+    // The .activity-log-title should flex to fill available space in the top row
+    expect(mobileCss).toMatch(/\.activity-log-title\s*\{[^}]*flex:\s*1\s+1\s+auto/);
+  });
+
   // ── Modal header / actions ──────────────────────────────────────────
 
   it("has mobile rule for activity-log-header to wrap on narrow screens", () => {
@@ -73,6 +90,11 @@ describe("activity-log-mobile-layout.css", () => {
   it("has mobile rule for filter containers to fill available width", () => {
     expect(mobileCss).toMatch(/\.activity-log-filter/);
     expect(mobileCss).toMatch(/\.activity-log-filter--project/);
+  });
+
+  it("has mobile rule for project filter to fill available width", () => {
+    // Project filter selector must have mobile-specific width handling
+    expect(mobileCss).toMatch(/\.activity-log-filter--project\s*\{[^}]*flex:\s*1\s+1\s+0/);
   });
 
   it("has mobile rule for filter selects to fill width", () => {
