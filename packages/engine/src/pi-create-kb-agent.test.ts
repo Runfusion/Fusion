@@ -788,6 +788,7 @@ describe("createKbAgent", () => {
 
       const selection = {
         allowedSkillPaths: new Set(["/path/nonexistent"]),
+        excludedSkillPaths: new Set<string>(),
         diagnostics: [],
         filterActive: true,
       };

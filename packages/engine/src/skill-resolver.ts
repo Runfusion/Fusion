@@ -57,6 +57,13 @@ export interface SkillSelectionResult {
   allowedSkillPaths: Set<string>;
 
   /**
+   * Set of skill file paths that were explicitly excluded by project patterns.
+   * These paths were disabled via -prefix patterns.
+   * Used by skillsOverride to distinguish "disabled" (exists but excluded) from "missing" (doesn't exist).
+   */
+  excludedSkillPaths: Set<string>;
+
+  /**
    * Diagnostics about configured/requested skills.
    */
   diagnostics: SkillDiagnostic[];
@@ -200,12 +207,13 @@ export function resolveSessionSkills(context: SkillSelectionContext): SkillSelec
   if (!hasPatterns && !hasRequestedNames) {
     return {
       allowedSkillPaths: new Set<string>(),
+      excludedSkillPaths: new Set<string>(),
       diagnostics: [],
       filterActive: false,
     };
   }
 
-  // Build allowed set from patterns
+  // Build allowed and excluded sets from patterns
   // Last entry wins for duplicate paths: we track the "final decision" per path
   const finalDecisions = new Map<string, boolean>(); // true = allowed, false = excluded
 
@@ -215,11 +223,14 @@ export function resolveSessionSkills(context: SkillSelectionContext): SkillSelec
     finalDecisions.set(path, !isExclusion);
   }
 
-  // Build allowed set from final decisions
+  // Build allowed and excluded sets from final decisions
   const allowedSet = new Set<string>();
+  const excludedSet = new Set<string>();
   for (const [path, allowed] of finalDecisions) {
     if (allowed) {
       allowedSet.add(path);
+    } else {
+      excludedSet.add(path);
     }
   }
 
@@ -260,6 +271,7 @@ export function resolveSessionSkills(context: SkillSelectionContext): SkillSelec
 
   return {
     allowedSkillPaths: allowedSet,
+    excludedSkillPaths: excludedSet,
     diagnostics,
     filterActive,
   };
@@ -274,6 +286,8 @@ export function resolveSessionSkills(context: SkillSelectionContext): SkillSelec
 export interface SkillsOverrideOptions {
   /** Set of allowed skill paths */
   allowedSkillPaths: Set<string>;
+  /** Set of explicitly excluded skill paths (from -patterns). If not provided, defaults to empty set. */
+  excludedSkillPaths?: Set<string>;
   /** Whether filtering is active */
   filterActive: boolean;
   /** Requested skill names for diagnostic purposes */
@@ -293,7 +307,7 @@ export function createSkillsOverrideFromSelection(
   selection: SkillSelectionResult,
   options: Omit<SkillsOverrideOptions, "allowedSkillPaths" | "filterActive"> = {},
 ): (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => { skills: Skill[]; diagnostics: ResourceDiagnostic[] } {
-  const { allowedSkillPaths, filterActive } = selection;
+  const { allowedSkillPaths, excludedSkillPaths, filterActive } = selection;
   const { requestedSkillNames, sessionPurpose } = options;
 
   return (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
@@ -309,28 +323,54 @@ export function createSkillsOverrideFromSelection(
     const hasRequestedNames = Boolean(requestedSkillNames && requestedSkillNames.length > 0);
 
     // Filter skills
+    // Skills must match the inclusion criteria AND not be in the exclusion list
+    const hasExcluded = excludedSkillPaths.size > 0;
     let filteredSkills: Skill[];
     if (hasRequestedNames) {
       // Filter by requested names (case-insensitive match)
       const requestedNamesLower = new Set(requestedSkillNames!.map((n) => n.toLowerCase()));
-      filteredSkills = base.skills.filter((skill) => requestedNamesLower.has(skill.name.toLowerCase()));
+      filteredSkills = base.skills.filter(
+        (skill) => requestedNamesLower.has(skill.name.toLowerCase()) && !excludedSkillPaths.has(skill.filePath)
+      );
     } else if (hasPatterns) {
-      // Filter by file path
-      filteredSkills = base.skills.filter((skill) => allowedSkillPaths.has(skill.filePath));
+      // Filter by file path (in allowed set AND not in excluded set)
+      filteredSkills = base.skills.filter(
+        (skill) => allowedSkillPaths.has(skill.filePath) && !excludedSkillPaths.has(skill.filePath)
+      );
+    } else if (hasExcluded) {
+      // Only exclusions set - filter out excluded skills
+      filteredSkills = base.skills.filter((skill) => !excludedSkillPaths.has(skill.filePath));
     } else {
       // No filter criteria - this shouldn't happen if filterActive is true
       filteredSkills = base.skills;
     }
 
-    // Build diagnostics for missing skills
+    // Build diagnostics for missing and disabled skills
     const newDiagnostics: ResourceDiagnostic[] = [];
 
-    // Check for configured patterns that don't match any discovered skill
-    // Note: At this point, we have access to base.skills for validation
+    // Check for excluded paths that DO match a discovered skill (disabled)
+    // These are skills that exist but were explicitly excluded by project patterns
     const purpose = sessionPurpose ? ` [${sessionPurpose}]` : "";
+    const discoveredPaths = new Set(base.skills.map((s) => s.filePath));
+
+    for (const excludedPath of excludedSkillPaths) {
+      if (discoveredPaths.has(excludedPath)) {
+        // Skill exists but was disabled by project patterns
+        // Use "warning" type since ResourceDiagnostic only supports warning|error|collision
+        newDiagnostics.push({
+          type: "warning",
+          message: `Skill at '${excludedPath}' exists but is disabled by project execution settings${purpose}`,
+          path: excludedPath,
+        });
+      }
+      // If the path doesn't match any discovered skill, it's not a disabled skill - it's just not relevant
+    }
+
+    // Check for configured patterns (allowed paths) that don't match any discovered skill
+    // Note: At this point, we have access to base.skills for validation
     for (const allowedPath of allowedSkillPaths) {
-      const hasMatch = base.skills.some((skill) => skill.filePath === allowedPath);
-      if (!hasMatch) {
+      if (!discoveredPaths.has(allowedPath)) {
+        // Allowed path doesn't match any discovered skill - this is a missing/invalid pattern
         newDiagnostics.push({
           type: "warning",
           message: `Configured skill pattern '${allowedPath}' not found in discovered skills${purpose}`,
