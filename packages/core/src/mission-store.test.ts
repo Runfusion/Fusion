@@ -2457,8 +2457,8 @@ describe("MissionStore", () => {
   // ── Loop State & Validator Run Schema Tests ───────────────────────────
 
   describe("Loop State & Validator Run Schema (v31)", () => {
-    it("schema version is 31 after migration", () => {
-      expect(db.getSchemaVersion()).toBe(31);
+    it("schema version is 32 after migration", () => {
+      expect(db.getSchemaVersion()).toBe(32);
     });
 
     it("mission_features table has loop state columns", () => {

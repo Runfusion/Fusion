@@ -127,9 +127,10 @@ Concrete references:
   - SQLite (`node:sqlite`) with WAL mode + foreign keys
   - JSON helpers: `toJson`, `toJsonNullable`, `fromJson`
   - Tables: `tasks`, `config`, `activityLog`, `archivedTasks`, `automations`, `agents`, `agentHeartbeats`, mission hierarchy tables, `__meta`
-- **Standalone roadmap contracts**: `packages/core/src/roadmap-types.ts`, `roadmap-ordering.ts`
+- **Standalone roadmap contracts**: `packages/core/src/roadmap-types.ts`, `roadmap-ordering.ts`, `roadmap-store.ts`
   - Roadmap-first entity types (`Roadmap`, `RoadmapMilestone`, `RoadmapFeature`)
   - Pure ordering helpers for contiguous 0-based milestone/feature order and deterministic cross-milestone feature moves
+  - `RoadmapStore` for CRUD operations, deterministic ordering, and atomic reorder/move operations
   - Exported from `@fusion/core` for downstream persistence/API/UI work
 - **CentralCore**: `packages/core/src/central-core.ts`
   - Global project registry, health, central activity feed, global concurrency
@@ -139,7 +140,7 @@ Concrete references:
   - `MissionStore` (`mission-store.ts`) — mission/milestone/slice/feature hierarchy
   - `AutomationStore` (`automation-store.ts`) — scheduled jobs
   - `MessageStore` (`message-store.ts`) — mailbox/inbox/outbox messaging
-  - No `RoadmapStore` yet — roadmap work currently starts with shared domain contracts, with persistence/API tasks landing later
+  - `RoadmapStore` (`roadmap-store.ts`) — standalone roadmap CRUD with deterministic ordering and atomic reorder/move operations
 
 ### Standalone roadmap model
 
@@ -150,13 +151,25 @@ Fusion now has two planning models in core:
 
 The roadmap model is intentionally lightweight and independent from `MissionStore`/mission lifecycle semantics. It is meant for standalone planning, ordering, drag-and-drop moves, and future conversion flows into missions or tasks without coupling roadmap data to slice activation, autopilot, or mission status rollups.
 
+**Roadmap persistence (FN-1690):**
+- `RoadmapStore` provides CRUD operations with atomic reorder/move semantics
+- All list queries use deterministic ordering: `ORDER BY orderIndex ASC, createdAt ASC, id ASC`
+- Covering indexes ensure efficient ordered reads without temp B-tree sorts
+- Cross-milestone feature moves atomically renumber both source and destination milestone scopes
+- FK cascade integrity: deleting a roadmap removes milestones and features
+
 Key roadmap invariants:
 - milestone ordering is scoped to a single roadmap and must remain contiguous + 0-based
 - feature ordering is scoped to a single milestone and must remain contiguous + 0-based
 - repair/normalization uses deterministic tie-breakers: `orderIndex ASC`, `createdAt ASC`, `id ASC`
 - cross-milestone feature moves must renumber both the source and destination milestone deterministically
 
-At this stage the roadmap work in `@fusion/core` is contract-first: types, DTOs, handoff payloads, and pure ordering helpers are available from the public index, while persistence/API/dashboard tasks follow in the FN-1668+ roadmap chain.
+**Database schema:**
+- `roadmaps` — roadmap metadata (id, title, description, timestamps)
+- `roadmap_milestones` — milestone data with `roadmapId` FK
+- `roadmap_features` — feature data with `milestoneId` FK
+- `idxRoadmapMilestonesRoadmapOrder` — covering index for deterministic milestone ordering
+- `idxRoadmapFeaturesMilestoneOrder` — covering index for deterministic feature ordering
 
 ### Shared utilities
 From `packages/core/src/index.ts` exports:

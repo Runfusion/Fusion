@@ -10,6 +10,7 @@ import { Database, toJson, toJsonNullable, fromJson } from "./db.js";
 import { detectLegacyData, migrateFromLegacy } from "./db-migrate.js";
 import { MissionStore } from "./mission-store.js";
 import { PluginStore } from "./plugin-store.js";
+import { RoadmapStore } from "./roadmap-store.js";
 import { BackwardCompat, ProjectRequiredError } from "./migration.js";
 import { CentralCore } from "./central-core.js";
 import { getTaskMergeBlocker } from "./task-merge.js";
@@ -130,6 +131,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   private missionStore: MissionStore | null = null;
   /** Cached PluginStore instance */
   private pluginStore: PluginStore | null = null;
+  /** Cached RoadmapStore instance */
+  private roadmapStore: RoadmapStore | null = null;
 
   constructor(private rootDir: string, globalSettingsDir?: string) {
     super();
@@ -4527,6 +4530,17 @@ ${notificationsSection}`;
       this.pluginStore = new PluginStore(this.rootDir);
     }
     return this.pluginStore;
+  }
+
+  /**
+   * Get the RoadmapStore instance for standalone roadmap operations.
+   * Lazily initializes the RoadmapStore on first access.
+   */
+  getRoadmapStore(): RoadmapStore {
+    if (!this.roadmapStore) {
+      this.roadmapStore = new RoadmapStore(this.db);
+    }
+    return this.roadmapStore;
   }
 
   // ── Backward Compatibility (Multi-Project Support) ────────────────────────

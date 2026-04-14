@@ -273,6 +273,8 @@ export type {
 } from "./mission-types.js";
 export { MissionStore } from "./mission-store.js";
 export type { MissionStoreEvents, MissionSummary } from "./mission-store.js";
+export { RoadmapStore } from "./roadmap-store.js";
+export type { RoadmapStoreEvents } from "./roadmap-store.js";
 
 // ── Central Infrastructure (Multi-Project Support) ───────────────────────────
 
