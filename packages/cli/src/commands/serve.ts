@@ -19,7 +19,7 @@ import {
   processAndAuditInsightExtraction,
 } from "@fusion/core";
 import type { AutomationRunResult, ScheduledTask } from "@fusion/core";
-import { createServer, GitHubClient } from "@fusion/dashboard";
+import { createServer, GitHubClient, createSkillsAdapter, getProjectSettingsPath } from "@fusion/dashboard";
 import { ProjectEngineManager } from "@fusion/engine";
 import {
   AuthStorage,
@@ -34,7 +34,7 @@ import {
   processPullRequestMergeTask,
 } from "./task-lifecycle.js";
 import { promptForPort } from "./port-prompt.js";
-import { createReadOnlyProviderSettingsView } from "./provider-settings.js";
+import { createReadOnlyProviderSettingsView, createProjectSettingsPersistence } from "./provider-settings.js";
 import { wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
 
 const DIAGNOSTIC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
@@ -365,9 +365,11 @@ export async function runServe(
   const authStorage = AuthStorage.create();
   const modelRegistry = new ModelRegistry(authStorage);
 
+  // PackageManager may be used for skills adapter even if extension loading fails
+  let packageManager: DefaultPackageManager | undefined;
   try {
     const agentDir = getAgentDir();
-    const packageManager = new DefaultPackageManager({
+    packageManager = new DefaultPackageManager({
       cwd,
       agentDir,
       settingsManager: createReadOnlyProviderSettingsView(cwd, agentDir) as any,
@@ -491,6 +493,20 @@ export async function runServe(
 
   const dashboardAuthStorage = wrapAuthStorageWithApiKeyProviders(authStorage, modelRegistry);
 
+  // ── Skills adapter for skills discovery and execution toggling ─────────────
+  //
+  // Create the skills adapter using the same DefaultPackageManager instance
+  // that was set up earlier for extension resolution.
+  //
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  const skillsAdapter = packageManager
+    ? createSkillsAdapter({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        packageManager: packageManager as any,
+        getSettingsPath: (rootDir: string) => getProjectSettingsPath(rootDir),
+      })
+    : undefined;
+
   const app = createServer(store, {
     engine: cwdEngine,
     engineManager,
@@ -513,6 +529,7 @@ export async function runServe(
     pluginRunner: pluginLoader,
     onProjectFirstAccessed: (projectId: string) => engineManager.onProjectAccessed(projectId),
     headless: true,
+    skillsAdapter,
   });
 
   const server = app.listen(selectedPort, selectedHost);

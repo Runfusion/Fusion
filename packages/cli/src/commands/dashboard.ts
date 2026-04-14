@@ -1,6 +1,6 @@
 import type { AddressInfo } from "node:net";
 import { TaskStore, AutomationStore, CentralCore, AgentStore, PluginStore, PluginLoader, getTaskMergeBlocker } from "@fusion/core";
-import { createServer, GitHubClient } from "@fusion/dashboard";
+import { createServer, GitHubClient, createSkillsAdapter, getProjectSettingsPath } from "@fusion/dashboard";
 import { aiMergeTask, MissionAutopilot, MissionExecutionLoop, HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext, ProjectEngineManager } from "@fusion/engine";
 import { AuthStorage, DefaultPackageManager, ModelRegistry, discoverAndLoadExtensions, getAgentDir, createExtensionRuntime } from "@mariozechner/pi-coding-agent";
 import {
@@ -8,7 +8,7 @@ import {
   processPullRequestMergeTask,
 } from "./task-lifecycle.js";
 import { promptForPort } from "./port-prompt.js";
-import { createReadOnlyProviderSettingsView } from "./provider-settings.js";
+import { createReadOnlyProviderSettingsView, createProjectSettingsPersistence } from "./provider-settings.js";
 import { wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
 
 // Re-export for backward compatibility with tests
@@ -364,12 +364,14 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   const authStorage = AuthStorage.create();
   const modelRegistry = new ModelRegistry(authStorage);
 
+  // PackageManager may be used for skills adapter even if extension loading fails
+  let packageManager: DefaultPackageManager | undefined;
   try {
     // Resolve extension paths from pi settings packages (npm, git, local).
     // This picks up extensions like @howaboua/pi-glm-via-anthropic that
     // register custom providers (e.g. glm-5.1) via registerProvider().
     const agentDir = getAgentDir();
-    const packageManager = new DefaultPackageManager({
+    packageManager = new DefaultPackageManager({
       cwd,
       agentDir,
       settingsManager: createReadOnlyProviderSettingsView(cwd, agentDir) as any,
@@ -448,6 +450,20 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   }
 
   const dashboardAuthStorage = wrapAuthStorageWithApiKeyProviders(authStorage, modelRegistry);
+
+  // ── Skills adapter for skills discovery and execution toggling ─────────────
+  //
+  // Create the skills adapter using the same DefaultPackageManager instance
+  // that was set up earlier for extension resolution.
+  //
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  const skillsAdapter = packageManager
+    ? createSkillsAdapter({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        packageManager: packageManager as any,
+        getSettingsPath: (rootDir: string) => getProjectSettingsPath(rootDir),
+      })
+    : undefined;
 
   function dispose(): void {
     if (disposed) return;
@@ -543,6 +559,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       pluginLoader,
       pluginRunner: pluginLoader,
       onProjectFirstAccessed: (projectId: string) => engineManager.onProjectAccessed(projectId),
+      skillsAdapter,
     });
 
     const shutdown = async (signal: NodeJS.Signals) => {
@@ -677,6 +694,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       pluginStore,
       pluginLoader,
       pluginRunner: pluginLoader,
+      skillsAdapter,
     });
   }
 

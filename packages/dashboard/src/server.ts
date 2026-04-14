@@ -40,6 +40,7 @@ import {
   rehydrateFromStore as rehydrateMilestoneSliceSessions,
 } from "./milestone-slice-interview.js";
 import { ChatManager } from "./chat.js";
+import type { SkillsAdapter } from "./skills-adapter.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -155,6 +156,8 @@ export interface ServerOptions {
    * for projects that are accessed before the next reconciliation tick.
    */
   onProjectFirstAccessed?: (projectId: string) => void;
+  /** Optional SkillsAdapter for skills discovery, execution toggling, and catalog fetching */
+  skillsAdapter?: SkillsAdapter;
 }
 
 type DashboardExpressApp = ReturnType<typeof express> & {
@@ -574,7 +577,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   });
 
   // REST API
-  app.use("/api", createApiRoutes(store, { ...options, aiSessionStore, chatStore, chatManager }));
+  app.use("/api", createApiRoutes(store, { ...options, aiSessionStore, chatStore, chatManager, skillsAdapter: options?.skillsAdapter }));
 
   // API 404 Handler - Return JSON for unmatched API routes (instead of falling through to SPA)
   app.use("/api", (_req: express.Request, res: express.Response) => {

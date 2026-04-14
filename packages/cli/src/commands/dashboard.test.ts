@@ -248,6 +248,8 @@ vi.mock("@fusion/dashboard", () => ({
     getPrMergeStatus: mockGetPrMergeStatus,
     mergePr: mockMergePr,
   })),
+  createSkillsAdapter: vi.fn().mockReturnValue(undefined),
+  getProjectSettingsPath: vi.fn().mockReturnValue("/tmp/project/.fusion/settings.json"),
 }));
 
 // ── Mock node:readline ──────────────────────────────────────────────

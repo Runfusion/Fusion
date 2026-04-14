@@ -137,6 +137,8 @@ const MockGitHubClient = vi.fn().mockImplementation(() => ({
 vi.mock("@fusion/dashboard", () => ({
   createServer: vi.fn(() => ({ listen: mockListen })),
   GitHubClient: MockGitHubClient,
+  createSkillsAdapter: vi.fn().mockReturnValue(undefined),
+  getProjectSettingsPath: vi.fn().mockReturnValue("/tmp/project/.fusion/settings.json"),
 }));
 
 // ── Mock @fusion/engine ────────────────────────────────────────────────

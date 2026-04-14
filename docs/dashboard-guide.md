@@ -208,3 +208,145 @@ Click the chevron next to the status indicator to open the node selector dropdow
 ### Persistence
 
 The selected node persists across browser sessions via localStorage. If the selected remote node is unregistered, the dashboard automatically falls back to local mode.
+
+## Skills API
+
+The Skills API provides endpoints for managing execution skills. Skills are toggled via project-scoped settings in `.fusion/settings.json`.
+
+### GET /api/skills/discovered
+
+List all discovered skills with their enabled state.
+
+**Response:** `200 OK`
+```json
+{
+  "skills": [
+    {
+      "id": "npm%3A%40example%2Fskill::skills/foo/SKILL.md",
+      "name": "foo/SKILL.md",
+      "path": "/path/to/skills/foo/SKILL.md",
+      "relativePath": "skills/foo/SKILL.md",
+      "enabled": true,
+      "metadata": {
+        "source": "npm:@example/skill",
+        "scope": "project",
+        "origin": "package"
+      }
+    }
+  ]
+}
+```
+
+**Skill ID Format:** `encodeURIComponent(metadata.source) + "::" + relativePath`
+- Top-level skills use `source: "*"`
+- Package skills use the package source identifier
+
+**Error Response:** `404 Not Found`
+```json
+{
+  "error": "Skills adapter not configured",
+  "code": "adapter_not_configured"
+}
+```
+
+### PATCH /api/skills/execution
+
+Toggle a skill's enabled/disabled state.
+
+**Request Body:**
+```json
+{
+  "skillId": "npm%3A%40example%2Fskill::skills/foo/SKILL.md",
+  "enabled": true
+}
+```
+
+**Response:** `200 OK`
+```json
+{
+  "success": true,
+  "skillId": "npm%3A%40example%2Fskill::skills/foo/SKILL.md",
+  "enabled": true,
+  "persistence": {
+    "scope": "project",
+    "targetFile": "/path/to/.fusion/settings.json",
+    "settingsPath": "packages[].skills",
+    "pattern": "+skills/foo/SKILL.md"
+  }
+}
+```
+
+**Toggle Semantics:**
+- **Top-level skills** (`origin: "top-level"`): Mutate `settings.skills`
+  - Enable: ensures `+<relativePath>` exists, removes `-<relativePath>`
+  - Disable: ensures `-<relativePath>` exists, removes `+<relativePath>`
+- **Package skills** (`origin: "package"`): Mutate `settings.packages[].skills` for the matching `metadata.source`
+  - If the package entry is a string, it's converted to an object `{ source: <same>, skills: [] }`
+  - Other package fields (`extensions`, `prompts`, `themes`) are preserved
+
+**Error Responses:**
+- `400 Bad Request` — Invalid request body
+  ```json
+  { "error": "skillId is required", "code": "invalid_body" }
+  ```
+- `404 Not Found` — Adapter not configured
+  ```json
+  { "error": "Skills adapter not configured", "code": "adapter_not_configured" }
+  ```
+
+### GET /api/skills/catalog
+
+Fetch the skills.sh catalog with optional authentication.
+
+**Query Parameters:**
+- `limit` (optional): Number of results (default 20, max 100)
+- `q` (optional): Search query string
+
+**Response:** `200 OK`
+```json
+{
+  "entries": [
+    {
+      "id": "example-skill",
+      "slug": "example-skill",
+      "name": "Example Skill",
+      "description": "An example skill",
+      "tags": ["utility"],
+      "installs": 100,
+      "installation": {
+        "installed": true,
+        "matchingSkillIds": ["npm%3A%40example%2Fskill::skills/example/SKILL.md"],
+        "matchingPaths": ["skills/example/SKILL.md"]
+      }
+    }
+  ],
+  "auth": {
+    "mode": "unauthenticated",
+    "tokenPresent": false,
+    "fallbackUsed": false
+  }
+}
+```
+
+**Authentication Flow:**
+1. If `SKILLS_SH_TOKEN` env var is present, use authenticated request
+2. If authenticated request returns `401/403`, retry without authentication (fallback mode)
+3. If no token, use unauthenticated request directly
+
+**Auth Mode Values:**
+- `authenticated` — Request made with token
+- `unauthenticated` — Request made without token (no token available)
+- `fallback-unauthenticated` — Initial authenticated request failed with 401/403, retried without token
+
+**Error Response:** `502 Bad Gateway`
+```json
+{
+  "error": "Upstream request timed out",
+  "code": "upstream_timeout"
+}
+```
+
+Possible error codes:
+- `upstream_timeout` — Request timed out
+- `upstream_http_error` — Upstream returned an error status
+- `upstream_invalid_payload` — Upstream returned invalid response format

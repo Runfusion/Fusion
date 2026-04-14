@@ -3324,9 +3324,10 @@ describe("streamChatResponse", () => {
     );
   });
 
-  // TODO(FN-1719): This test exposes a pre-existing bug where the implementation
-  // doesn't flush pending events when the stream ends without a trailing newline.
-  // The condition `buffer.endsWith("\n")` should just be `buffer.length > 0`.
+  // TODO(FN-1719): Skipped because this test exposes a pre-existing bug where the
+  // implementation doesn't flush pending events when the stream ends without a
+  // trailing newline. The condition `buffer.endsWith("\n")` should just be
+  // `buffer.length > 0`. Also flaky in CI due to stream timing issues.
   it.skip("flushes a final complete event when the stream ends without a trailing blank line", async () => {
     await withStreamResult(
       [
