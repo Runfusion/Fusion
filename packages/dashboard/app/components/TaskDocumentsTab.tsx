@@ -269,15 +269,6 @@ export function TaskDocumentsTab({
       {documents.length === 0 && !showCreateForm ? (
         <div className="detail-log-empty">
           No documents yet.
-          {canEdit && (
-            <button
-              className="btn btn-link"
-              onClick={() => setShowCreateForm(true)}
-              style={{ marginLeft: "8px" }}
-            >
-              Create one
-            </button>
-          )}
         </div>
       ) : (
         <div className="task-documents-list">
