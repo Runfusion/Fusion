@@ -19231,6 +19231,126 @@ html .column.drag-over * {
   background: rgba(88, 166, 255, 0.1);
 }
 
+/* === Mobile Project Switch (logo-adjacent dropdown) === */
+.mobile-project-switch {
+  position: relative;
+  display: none; /* Hidden by default, shown on mobile via media query */
+}
+
+.mobile-project-switch-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 6px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.mobile-project-switch-trigger:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.mobile-project-switch-trigger--open {
+  color: var(--todo);
+  background: var(--card-hover);
+}
+
+.mobile-project-switch-chevron {
+  transition: transform var(--transition-fast);
+}
+
+.mobile-project-switch-chevron--open {
+  transform: rotate(180deg);
+}
+
+.mobile-project-switch-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 100;
+  min-width: 200px;
+  max-width: 280px;
+  padding: var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.mobile-project-switch-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 10px 12px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.mobile-project-switch-item:hover {
+  background: var(--card-hover);
+}
+
+.mobile-project-switch-item--current {
+  background: var(--card-hover);
+}
+
+.mobile-project-switch-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.mobile-project-switch-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mobile-project-switch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.mobile-project-switch-path {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-project-switch-check {
+  flex-shrink: 0;
+  color: var(--todo);
+}
+
+/* Mobile styles for mobile-project-switch */
+@media (max-width: 768px) {
+  .mobile-project-switch {
+    display: inline-flex;
+    align-items: center;
+  }
+}
+
 /* === Project Content Wrapper (footer-safe layout) === */
 
 /**

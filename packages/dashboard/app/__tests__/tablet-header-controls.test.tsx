@@ -399,6 +399,19 @@ describe("tablet header controls", () => {
     expect(btn.textContent).toContain("Projects");
   });
 
+  it("does not render mobile project switch trigger on tablet", () => {
+    const projects = [
+      { id: "1", name: "Project One", path: "/path/one", status: "active" as const },
+      { id: "2", name: "Project Two", path: "/path/two", status: "active" as const },
+    ];
+    renderTabletHeader({
+      projects,
+      currentProject: projects[0],
+      onSelectProject: vi.fn(),
+    });
+    expect(screen.queryByTestId("mobile-project-switch-trigger")).toBeNull();
+  });
+
   // ── Desktop still shows everything inline ──────────────────────
 
   describe("desktop regression (contrasted with tablet)", () => {

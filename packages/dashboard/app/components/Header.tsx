@@ -254,6 +254,7 @@ export function Header({
   const [isOverflowMenuOpen, setIsOverflowMenuOpen] = useState(false);
   const [isTerminalSubmenuOpen, setIsTerminalSubmenuOpen] = useState(false);
   const [isNodeSelectorOpen, setIsNodeSelectorOpen] = useState(false);
+  const [isMobileProjectSwitchOpen, setIsMobileProjectSwitchOpen] = useState(false);
   const [overflowScripts, setOverflowScripts] = useState<Record<string, string>>({});
   const [overflowScriptsLoading, setOverflowScriptsLoading] = useState(false);
   const overflowButtonRef = useRef<HTMLButtonElement>(null);
@@ -262,6 +263,7 @@ export function Header({
   const mobileSearchInputRef = useRef<HTMLInputElement>(null);
   const terminalSubmenuOpenRef = useRef(false);
   const nodeSelectorRef = useRef<HTMLDivElement>(null);
+  const mobileProjectSwitchRef = useRef<HTMLDivElement>(null);
   
   // Get remote nodes only (exclude local node type)
   const remoteNodes = useMemo(() => 
@@ -372,12 +374,30 @@ export function Header({
         setIsOverflowMenuOpen(false);
         setIsMobileSearchOpen(false);
         setIsNodeSelectorOpen(false);
+        setIsMobileProjectSwitchOpen(false);
       }
     };
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, []);
+
+  // Close mobile project switch on outside click
+  useEffect(() => {
+    if (!isMobileProjectSwitchOpen) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        mobileProjectSwitchRef.current &&
+        !mobileProjectSwitchRef.current.contains(e.target as Node)
+      ) {
+        setIsMobileProjectSwitchOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isMobileProjectSwitchOpen]);
 
   const handleMobileSearchToggle = useCallback(() => {
     setIsMobileSearchOpen((prev) => !prev);
@@ -437,6 +457,61 @@ export function Header({
           </svg>
           <h1 className="logo">Fusion</h1>
         </div>
+
+        {/* Mobile Project Switch - dropdown trigger next to logo when 2+ projects (mobile only) */}
+        {isMobile && projects.length > 1 && onSelectProject && (
+          <div className="mobile-project-switch" ref={mobileProjectSwitchRef}>
+            <button
+              className={`mobile-project-switch-trigger${isMobileProjectSwitchOpen ? " mobile-project-switch-trigger--open" : ""}`}
+              onClick={() => setIsMobileProjectSwitchOpen((prev) => !prev)}
+              title="Switch project"
+              aria-label="Switch project"
+              aria-expanded={isMobileProjectSwitchOpen}
+              aria-haspopup="listbox"
+              data-testid="mobile-project-switch-trigger"
+            >
+              <ChevronDown size={14} className={`mobile-project-switch-chevron${isMobileProjectSwitchOpen ? " mobile-project-switch-chevron--open" : ""}`} />
+            </button>
+            {isMobileProjectSwitchOpen && (
+              <div
+                className="mobile-project-switch-dropdown"
+                role="listbox"
+                aria-label="Select project"
+                data-testid="mobile-project-switch-dropdown"
+              >
+                {projects.map((project) => {
+                  const isCurrent = currentProject?.id === project.id;
+                  const statusColor = PROJECT_STATUS_CONFIG[project.status]?.color;
+                  return (
+                    <button
+                      key={project.id}
+                      className={`mobile-project-switch-item${isCurrent ? " mobile-project-switch-item--current" : ""}`}
+                      onClick={() => {
+                        onSelectProject(project);
+                        setIsMobileProjectSwitchOpen(false);
+                      }}
+                      role="option"
+                      aria-selected={isCurrent}
+                      data-testid={`mobile-project-switch-item-${project.id}`}
+                    >
+                      <span
+                        className="mobile-project-switch-dot"
+                        style={{ backgroundColor: statusColor || "var(--text-muted)" }}
+                      />
+                      <div className="mobile-project-switch-info">
+                        <span className="mobile-project-switch-name">{project.name}</span>
+                        <span className="mobile-project-switch-path">
+                          {project.path.split("/").slice(-2).join("/")}
+                        </span>
+                      </div>
+                      {isCurrent && <Check size={14} className="mobile-project-switch-check" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Project Selector - Back button when project selected, dropdown when 2+ projects (desktop only) */}
         {!isCompact && projects.length >= 1 && onViewAllProjects && (
