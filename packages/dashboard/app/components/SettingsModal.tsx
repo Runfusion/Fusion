@@ -70,6 +70,7 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "commands", label: "Commands", scope: "project" },
   { id: "merge", label: "Merge", scope: "project" },
   { id: "memory", label: "Memory", scope: "project" },
+  { id: "experimental", label: "Experimental Features", scope: "project" },
   { id: "prompts", label: "Prompts", scope: "project" },
   { id: "backups", label: "Backups", scope: "project" },
   { id: "plugins", label: "Plugins", scope: "project" },
@@ -1791,6 +1792,56 @@ export function SettingsModal({
             {memoryDirty && !isEditingAllowed && (
               <div className="form-group">
                 <small className="field-error">Cannot save: {isMemoryEnabled ? "Backend is read-only" : "Memory is disabled"}</small>
+              </div>
+            )}
+          </>
+        );
+      }
+      case "experimental": {
+        const experimentalFeatures = form.experimentalFeatures ?? {};
+        const featureFlags = Object.entries(experimentalFeatures).sort(([a], [b]) => a.localeCompare(b));
+
+        return (
+          <>
+            {renderScopeBanner()}
+            <h4 className="settings-section-heading">Experimental Features</h4>
+            <div className="form-group">
+              <small>
+                Experimental features are early capabilities that are not yet fully stable.
+                Enable them to test new functionality, but be aware they may change or be removed.
+              </small>
+            </div>
+
+            {featureFlags.length === 0 ? (
+              <div className="form-group">
+                <small className="settings-muted">
+                  No experimental features configured. Features will appear here once added by the system.
+                </small>
+              </div>
+            ) : (
+              <div className="form-group">
+                <label>Feature Flags</label>
+                <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}>
+                  {featureFlags.map(([key, enabled]) => (
+                    <label key={key} htmlFor={`experimental-${key}`} className="checkbox-label">
+                      <input
+                        id={`experimental-${key}`}
+                        type="checkbox"
+                        checked={enabled}
+                        onChange={(e) => {
+                          setForm((f) => ({
+                            ...f,
+                            experimentalFeatures: {
+                              ...(f.experimentalFeatures ?? {}),
+                              [key]: e.target.checked,
+                            },
+                          }));
+                        }}
+                      />
+                      <span>{key}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
             )}
           </>

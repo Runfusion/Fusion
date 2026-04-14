@@ -1160,6 +1160,136 @@ describe("TaskStore", () => {
     });
   });
 
+  // ── Experimental Features Tests ─────────────────────────────────
+
+  describe("experimentalFeatures settings", () => {
+    it("defaults to empty object {}", async () => {
+      const settings = await store.getSettings();
+      expect(settings.experimentalFeatures).toEqual({});
+    });
+
+    it("can set experimental features via updateSettings", async () => {
+      await store.updateSettings({
+        experimentalFeatures: { "my-feature": true, "another-feature": false },
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.experimentalFeatures).toEqual({ "my-feature": true, "another-feature": false });
+    });
+
+    it("can enable a single experimental feature", async () => {
+      await store.updateSettings({
+        experimentalFeatures: { "my-feature": true },
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.experimentalFeatures).toEqual({ "my-feature": true });
+    });
+
+    it("can update an existing experimental feature", async () => {
+      await store.updateSettings({
+        experimentalFeatures: { "my-feature": true },
+      });
+
+      await store.updateSettings({
+        experimentalFeatures: { "my-feature": false },
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.experimentalFeatures).toEqual({ "my-feature": false });
+    });
+
+    it("can add a new experimental feature without removing existing ones", async () => {
+      await store.updateSettings({
+        experimentalFeatures: { "feature-a": true },
+      });
+
+      await store.updateSettings({
+        experimentalFeatures: { "feature-b": true },
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.experimentalFeatures).toEqual({ "feature-a": true, "feature-b": true });
+    });
+
+    it("can remove an experimental feature by setting it to undefined (field stays)", async () => {
+      // Note: We cannot selectively remove a single key from experimentalFeatures
+      // since it's a simple Record<string, boolean> not a nested object with special handling.
+      // Users should replace the entire object if they need to remove specific keys.
+
+      await store.updateSettings({
+        experimentalFeatures: { "feature-a": true, "feature-b": true },
+      });
+
+      // Replace with only feature-b
+      await store.updateSettings({
+        experimentalFeatures: { "feature-b": true },
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.experimentalFeatures).toEqual({ "feature-b": true });
+    });
+
+    it("can clear experimentalFeatures with null (falls back to default {})", async () => {
+      await store.updateSettings({
+        experimentalFeatures: { "my-feature": true },
+      });
+
+      await store.updateSettings({
+        experimentalFeatures: null as unknown as undefined,
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.experimentalFeatures).toEqual({});
+    });
+
+    it("preserves other settings when experimentalFeatures changes", async () => {
+      await store.updateSettings({
+        maxConcurrent: 5,
+        autoMerge: false,
+      });
+
+      await store.updateSettings({
+        experimentalFeatures: { "my-feature": true },
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.maxConcurrent).toBe(5);
+      expect(settings.autoMerge).toBe(false);
+      expect(settings.experimentalFeatures).toEqual({ "my-feature": true });
+    });
+
+    it("preserves experimentalFeatures when updating other settings", async () => {
+      await store.updateSettings({
+        experimentalFeatures: { "feature-a": true, "feature-b": false },
+      });
+
+      await store.updateSettings({ maxConcurrent: 7 });
+
+      const settings = await store.getSettings();
+      expect(settings.maxConcurrent).toBe(7);
+      expect(settings.experimentalFeatures).toEqual({ "feature-a": true, "feature-b": false });
+    });
+
+    it("handles experimentalFeatures in getSettingsByScope", async () => {
+      await store.updateSettings({
+        experimentalFeatures: { "scoped-feature": true },
+      });
+
+      const { project } = await store.getSettingsByScope();
+      expect(project.experimentalFeatures).toEqual({ "scoped-feature": true });
+    });
+
+    it("handles experimentalFeatures in getSettingsFast", async () => {
+      await store.updateSettings({
+        experimentalFeatures: { "fast-feature": true },
+      });
+
+      const settings = await store.getSettingsFast();
+      expect(settings.experimentalFeatures).toEqual({ "fast-feature": true });
+    });
+  });
+
   // ── Concurrent stress test ───────────────────────────────────────
 
   describe("concurrent stress", () => {

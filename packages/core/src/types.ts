@@ -1200,6 +1200,20 @@ export interface ProjectSettings {
    *  When false, the FAB is hidden but chat remains accessible via the More menu.
    *  Default: false. */
   showQuickChatFAB?: boolean;
+  /** Project-scoped experimental feature toggles.
+   *  Each key is a feature flag name, and the value indicates whether it is enabled.
+   *  Features not present in this map are considered disabled (fallback to false).
+   *  This allows teams to explicitly mark capabilities as experimental and toggle
+   *  them on/off from the Settings dashboard.
+   *
+   *  Example shape:
+   *  {
+   *    "my-new-feature": true,
+   *    "another-experiment": false
+   *  }
+   *
+   *  Default: {} (empty object — no experimental features enabled). */
+  experimentalFeatures?: Record<string, boolean>;
 }
 
 /**

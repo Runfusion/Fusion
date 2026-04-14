@@ -394,4 +394,193 @@ describe("SettingsModal", () => {
       expect(editor.value).toBe("");
     });
   });
+
+  describe("Experimental Features section", () => {
+    it("renders the Experimental Features section in the sidebar", async () => {
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      expect(screen.getByText("Experimental Features")).toBeDefined();
+    });
+
+    it("shows empty state message when no experimental features are configured", async () => {
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      await userEvent.click(screen.getByText("Experimental Features"));
+
+      expect(screen.getByText(/No experimental features configured/i)).toBeInTheDocument();
+    });
+
+    it("shows feature flags when experimentalFeatures is set", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: { "my-feature": true, "another-feature": false },
+      });
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      await userEvent.click(screen.getByText("Experimental Features"));
+
+      expect(screen.getByText("my-feature")).toBeInTheDocument();
+      expect(screen.getByText("another-feature")).toBeInTheDocument();
+    });
+
+    it("feature flags are unchecked when value is false", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: { "my-feature": false },
+      });
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      await userEvent.click(screen.getByText("Experimental Features"));
+
+      const checkbox = screen.getByLabelText("my-feature") as HTMLInputElement;
+      expect(checkbox.checked).toBe(false);
+    });
+
+    it("feature flags are checked when value is true", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: { "my-feature": true },
+      });
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      await userEvent.click(screen.getByText("Experimental Features"));
+
+      const checkbox = screen.getByLabelText("my-feature") as HTMLInputElement;
+      expect(checkbox.checked).toBe(true);
+    });
+
+    it("toggling a feature flag updates the form state", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: { "my-feature": false },
+      });
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      await userEvent.click(screen.getByText("Experimental Features"));
+
+      const checkbox = screen.getByLabelText("my-feature") as HTMLInputElement;
+      expect(checkbox.checked).toBe(false);
+
+      // Toggle it
+      await userEvent.click(checkbox);
+      expect(checkbox.checked).toBe(true);
+    });
+
+    it("saving with toggled feature flag includes experimentalFeatures in payload", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: { "my-feature": false },
+      });
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      await userEvent.click(screen.getByText("Experimental Features"));
+
+      // Toggle the feature
+      const checkbox = screen.getByLabelText("my-feature") as HTMLInputElement;
+      await userEvent.click(checkbox);
+
+      // Save
+      await userEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+      });
+
+      const payload = mockUpdateSettings.mock.calls[0][0];
+      expect(payload.experimentalFeatures).toEqual({ "my-feature": true });
+    });
+
+    it("shows project scope banner in Experimental Features section", async () => {
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      await userEvent.click(screen.getByText("Experimental Features"));
+
+      // Should show project scope indicator
+      expect(screen.getByText(/only affect this project/i)).toBeInTheDocument();
+    });
+
+    it("handles undefined experimentalFeatures (falls back to empty)", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: undefined,
+      });
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      await userEvent.click(screen.getByText("Experimental Features"));
+
+      // Should show empty state since undefined falls back to {}
+      expect(screen.getByText(/No experimental features configured/i)).toBeInTheDocument();
+    });
+
+    it("saves experimentalFeatures with multiple toggled flags", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: { "feature-a": true, "feature-b": false },
+      });
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      await userEvent.click(screen.getByText("Experimental Features"));
+
+      // Toggle feature-b to true
+      const checkboxB = screen.getByLabelText("feature-b") as HTMLInputElement;
+      await userEvent.click(checkboxB);
+
+      // Save
+      await userEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+      });
+
+      const payload = mockUpdateSettings.mock.calls[0][0];
+      expect(payload.experimentalFeatures).toEqual({ "feature-a": true, "feature-b": true });
+    });
+  });
 });

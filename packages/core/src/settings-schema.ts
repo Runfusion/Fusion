@@ -109,6 +109,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   reflectionAfterTask: true,
   reviewHandoffPolicy: "disabled",
   showQuickChatFAB: false,
+  experimentalFeatures: {},
 } satisfies CompleteSettings<ProjectSettings>;
 
 /**

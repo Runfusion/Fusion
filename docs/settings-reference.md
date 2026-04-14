@@ -98,6 +98,7 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `requirePlanApproval` | `boolean` | `false` | Require manual approval before triage → todo. |
 | `reviewHandoffPolicy` | `"disabled" \| "comment-triggered" \| "always"` | `"disabled"` | Policy for agent-to-user review handoff. |
 | `showQuickChatFAB` | `boolean` | `false` | Show floating quick-chat button. Chat accessible from More menu when hidden. |
+| `experimentalFeatures` | `Record<string, boolean>` | `{}` | Project-scoped experimental feature toggles. Each key is a feature flag name, and the value indicates whether it is enabled. Features not present in this map are considered disabled. This allows teams to explicitly mark capabilities as experimental and toggle them on/off from the Settings dashboard. |
 | `taskStuckTimeoutMs` | `number` | `undefined` | Inactivity timeout for stuck-task recovery. |
 | `specStalenessEnabled` | `boolean` | `false` | Enable automatic re-triaging of tasks with stale specifications. |
 | `specStalenessMaxAgeMs` | `number` | `21600000` | Maximum age in ms before a specification (PROMPT.md) is considered stale and requires re-specification. Default: 6 hours. |
@@ -300,6 +301,42 @@ To clear all overrides, set `promptOverrides` to `null`:
 ```
 
 See also: [Workflow Steps](./workflow-steps.md) for how `scripts` and workflow model overrides are used.
+
+---
+
+## Experimental Features
+
+The `experimentalFeatures` setting provides a first-class mechanism for managing project-scoped experimental feature toggles. This allows teams to explicitly mark capabilities as experimental and toggle them on/off from a dedicated section in the Settings dashboard.
+
+### How It Works
+
+1. **Feature Registry**: Features are stored as key-value pairs where keys are feature names and values indicate enabled/disabled state.
+
+2. **Default Behavior**: Features not present in the map are considered disabled (fallback to `false`).
+
+3. **UI Integration**: The Experimental Features section in Settings provides toggle controls for each configured feature.
+
+4. **Consumption**: Engine code can read `experimentalFeatures[key]` to check if a feature is enabled.
+
+### Example JSON Shape
+
+```json
+{
+  "settings": {
+    "experimentalFeatures": {
+      "my-new-feature": true,
+      "another-experiment": false
+    }
+  }
+}
+```
+
+### Dashboard UI
+
+The Experimental Features section in Settings shows:
+- Feature name and enabled/disabled toggle for each configured feature
+- Project scope indicator (features are project-specific, not global)
+- Description explaining the purpose of experimental features
 
 ---
 
