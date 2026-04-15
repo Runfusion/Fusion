@@ -314,8 +314,12 @@ export type {
   PluginSyncEntry,
   PluginSyncAction,
   ProjectHealth,
+  ProviderAuthEntry,
   /** @deprecated Use RegisteredProject instead */
   ProjectInfo,
+  SettingsSyncPayload,
+  SettingsSyncState,
+  SettingsSyncResult,
   SystemMetrics,
   ProjectStatus,
   RegisteredProject,

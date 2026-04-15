@@ -23,7 +23,7 @@ export { toJson, toJsonNullable, fromJson };
 
 // ── Schema Definition ───────────────────────────────────────────────────
 
-const CENTRAL_SCHEMA_VERSION = 4;
+const CENTRAL_SCHEMA_VERSION = 5;
 
 const CENTRAL_SCHEMA_SQL = `
 -- Projects table (project registry)
@@ -122,6 +122,21 @@ CREATE TABLE IF NOT EXISTS peerNodes (
 );
 CREATE INDEX IF NOT EXISTS idxPeerNodesNodeId ON peerNodes(nodeId);
 
+-- Settings sync state tracking
+CREATE TABLE IF NOT EXISTS settingsSyncState (
+  nodeId TEXT NOT NULL,
+  remoteNodeId TEXT NOT NULL,
+  lastSyncedAt TEXT,
+  localChecksum TEXT,
+  remoteChecksum TEXT,
+  syncCount INTEGER NOT NULL DEFAULT 0,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  PRIMARY KEY (nodeId, remoteNodeId),
+  FOREIGN KEY (nodeId) REFERENCES nodes(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idxSettingsSyncNode ON settingsSyncState(nodeId);
+
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS __meta (
   key TEXT PRIMARY KEY,
@@ -172,6 +187,22 @@ const CENTRAL_SCHEMA_V3_CREATE_PEERS_SQL = CENTRAL_SCHEMA_V3_MIGRATION_SQL
 const CENTRAL_SCHEMA_V4_MIGRATION_SQL = `
 ALTER TABLE nodes ADD COLUMN versionInfo TEXT;
 ALTER TABLE nodes ADD COLUMN pluginVersions TEXT;
+`;
+
+const CENTRAL_SCHEMA_V5_MIGRATION_SQL = `
+CREATE TABLE IF NOT EXISTS settingsSyncState (
+  nodeId TEXT NOT NULL,
+  remoteNodeId TEXT NOT NULL,
+  lastSyncedAt TEXT,
+  localChecksum TEXT,
+  remoteChecksum TEXT,
+  syncCount INTEGER NOT NULL DEFAULT 0,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  PRIMARY KEY (nodeId, remoteNodeId),
+  FOREIGN KEY (nodeId) REFERENCES nodes(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idxSettingsSyncNode ON settingsSyncState(nodeId);
 `;
 
 // ── Central Database Class ────────────────────────────────────────────────
@@ -238,6 +269,11 @@ export class CentralDatabase {
       if (!this.hasColumn("nodes", "pluginVersions")) {
         this.db.exec("ALTER TABLE nodes ADD COLUMN pluginVersions TEXT");
       }
+      migrated = true;
+    }
+
+    if (currentVersion < 5) {
+      this.db.exec(CENTRAL_SCHEMA_V5_MIGRATION_SQL);
       migrated = true;
     }
 

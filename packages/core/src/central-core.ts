@@ -28,7 +28,7 @@
  */
 
 import { EventEmitter } from "node:events";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { isAbsolute, join, basename, resolve } from "node:path";
@@ -54,6 +54,11 @@ import type {
   NodeVersionInfoInput,
   PluginSyncResult,
   VersionCompatibilityResult,
+  SettingsSyncPayload,
+  SettingsSyncState,
+  SettingsSyncResult,
+  GlobalSettings,
+  ProviderAuthEntry,
 } from "./types.js";
 import { getAppVersion, parseSemver } from "./app-version.js";
 import { CentralDatabase, toJson, toJsonNullable, fromJson } from "./central-db.js";
@@ -110,6 +115,8 @@ export interface CentralCoreEvents {
   "node:version:updated": [payload: { nodeId: string; versionInfo: NodeVersionInfo }];
   /** Emitted when plugin sync comparison completes */
   "node:plugins:synced": [result: PluginSyncResult];
+  /** Emitted when settings sync between nodes completes */
+  "settings:sync:completed": [payload: { nodeId: string; remoteNodeId: string; state: SettingsSyncState }];
 }
 
 // ── CentralCore Class ─────────────────────────────────────────────────────
@@ -2532,6 +2539,262 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       remoteVersion: remote,
       status: "compatible",
       message: `Patch version difference only: local ${local} vs remote ${remote}`,
+    };
+  }
+
+  // ── Settings Sync API ─────────────────────────────────────────────────
+
+  /**
+   * Collect global settings, project settings, and provider auth into a sync payload.
+   *
+   * Note: CentralCore does NOT have access to GlobalSettingsStore or AuthStorage.
+   * The caller (dashboard route) must supply the global settings and auth data.
+   *
+   * @param globalSettings - Global settings snapshot from the caller
+   * @param options - Optional provider auth credentials
+   * @returns SettingsSyncPayload with checksum
+   */
+  async getSettingsForSync(
+    globalSettings: GlobalSettings,
+    options?: { providerAuth?: Record<string, ProviderAuthEntry> }
+  ): Promise<SettingsSyncPayload> {
+    this.ensureInitialized();
+
+    // Collect project settings keyed by project name (not ID, since paths differ between nodes)
+    const projects = await this.listProjects();
+    const projectSettings: Record<string, ProjectSettings> = {};
+    for (const project of projects) {
+      if (project.settings) {
+        projectSettings[project.name] = project.settings;
+      }
+    }
+
+    // Build the payload without checksum first
+    const exportedAt = new Date().toISOString();
+    const payloadWithoutChecksum: Omit<SettingsSyncPayload, "checksum"> = {
+      global: globalSettings,
+      projects: Object.keys(projectSettings).length > 0 ? projectSettings : undefined,
+      providerAuth: options?.providerAuth,
+      exportedAt,
+      version: 1,
+    };
+
+    // Compute checksum before adding it
+    const checksum = createHash("sha256")
+      .update(JSON.stringify(payloadWithoutChecksum))
+      .digest("hex");
+
+    return {
+      ...payloadWithoutChecksum,
+      checksum,
+    };
+  }
+
+  /**
+   * Apply incoming settings from a remote node.
+   *
+   * Merge semantics:
+   * - Global settings: shallow merge, local-wins (only applies remote values where local is undefined)
+   * - Project settings: matches by name, merges settings (local-wins), skips non-existent projects
+   * - Provider auth: NOT applied to local storage (caller handles auth application)
+   *
+   * @param payload - Settings sync payload from remote node
+   * @returns Sync result with counts of applied settings
+   */
+  async applyRemoteSettings(payload: SettingsSyncPayload): Promise<SettingsSyncResult> {
+    this.ensureInitialized();
+
+    // Validate version
+    if (payload.version !== 1) {
+      return {
+        success: false,
+        globalCount: 0,
+        projectCount: 0,
+        authCount: 0,
+        error: `Unsupported settings sync version: ${payload.version}`,
+      };
+    }
+
+    // Validate checksum
+    const payloadWithoutChecksum: Omit<SettingsSyncPayload, "checksum"> = {
+      global: payload.global,
+      projects: payload.projects,
+      providerAuth: payload.providerAuth,
+      exportedAt: payload.exportedAt,
+      version: payload.version,
+    };
+    const computedChecksum = createHash("sha256")
+      .update(JSON.stringify(payloadWithoutChecksum))
+      .digest("hex");
+
+    if (computedChecksum !== payload.checksum) {
+      return {
+        success: false,
+        globalCount: 0,
+        projectCount: 0,
+        authCount: 0,
+        error: "Checksum mismatch - payload may have been corrupted",
+      };
+    }
+
+    let globalCount = 0;
+    let projectCount = 0;
+    const authCount = payload.providerAuth ? Object.keys(payload.providerAuth).length : 0;
+
+    // Apply global settings (shallow merge, local-wins)
+    if (payload.global) {
+      // The actual application of global settings is handled by the caller (dashboard route)
+      // since CentralCore doesn't have access to GlobalSettingsStore.
+      // We simply count the number of global settings entries for reporting.
+      globalCount = Object.keys(payload.global).length;
+    }
+
+    // Apply project settings (match by name, local-wins merge)
+    if (payload.projects) {
+      const localProjects = await this.listProjects();
+      const projectsByName = new Map(localProjects.map((p) => [p.name, p]));
+
+      for (const [projectName, remoteSettings] of Object.entries(payload.projects)) {
+        const localProject = projectsByName.get(projectName);
+        if (localProject) {
+          // Merge settings: local values take precedence
+          const mergedSettings: ProjectSettings = {
+            ...remoteSettings,
+            ...localProject.settings,
+          };
+          await this.updateProject(localProject.id, { settings: mergedSettings });
+          projectCount++;
+        }
+      }
+    }
+
+    // Provider auth is transported but NOT applied here
+    // The caller (dashboard route) handles auth application
+
+    return {
+      success: true,
+      globalCount,
+      projectCount,
+      authCount,
+    };
+  }
+
+  /**
+   * Get settings sync state between local node and a remote node.
+   *
+   * @param remoteNodeId - Remote node ID
+   * @returns SettingsSyncState or null if no sync has occurred
+   */
+  async getSettingsSyncState(remoteNodeId: string): Promise<SettingsSyncState | null> {
+    this.ensureInitialized();
+
+    const localNode = await this.getLocalNode();
+    if (!localNode) {
+      throw new Error("Local node not found");
+    }
+
+    const row = this.db!.prepare(
+      "SELECT * FROM settingsSyncState WHERE nodeId = ? AND remoteNodeId = ?"
+    ).get(localNode.id, remoteNodeId) as
+      | {
+          nodeId: string;
+          remoteNodeId: string;
+          lastSyncedAt: string | null;
+          localChecksum: string | null;
+          remoteChecksum: string | null;
+          syncCount: number;
+          createdAt: string;
+          updatedAt: string;
+        }
+      | undefined;
+
+    if (!row) return null;
+
+    return this.rowToSettingsSyncState(row);
+  }
+
+  /**
+   * Update settings sync state between local node and a remote node.
+   * Creates a new row on first call, updates on subsequent calls.
+   * Auto-increments syncCount.
+   *
+   * @param remoteNodeId - Remote node ID
+   * @param updates - Fields to update
+   * @returns Updated SettingsSyncState
+   */
+  async updateSettingsSyncState(
+    remoteNodeId: string,
+    updates: Partial<Pick<SettingsSyncState, "lastSyncedAt" | "localChecksum" | "remoteChecksum" | "syncCount">>
+  ): Promise<SettingsSyncState> {
+    this.ensureInitialized();
+
+    const localNode = await this.getLocalNode();
+    if (!localNode) {
+      throw new Error("Local node not found");
+    }
+
+    const now = new Date().toISOString();
+    const existing = await this.getSettingsSyncState(remoteNodeId);
+
+    const syncCount = existing ? (updates.syncCount ?? existing.syncCount + 1) : 1;
+    const lastSyncedAt = updates.lastSyncedAt ?? existing?.lastSyncedAt ?? null;
+    const localChecksum = updates.localChecksum ?? existing?.localChecksum ?? null;
+    const remoteChecksum = updates.remoteChecksum ?? existing?.remoteChecksum ?? null;
+
+    if (existing) {
+      // Update existing row
+      this.db!.prepare(
+        `UPDATE settingsSyncState SET
+          lastSyncedAt = ?,
+          localChecksum = ?,
+          remoteChecksum = ?,
+          syncCount = ?,
+          updatedAt = ?
+         WHERE nodeId = ? AND remoteNodeId = ?`
+      ).run(lastSyncedAt, localChecksum, remoteChecksum, syncCount, now, localNode.id, remoteNodeId);
+    } else {
+      // Insert new row
+      this.db!.prepare(
+        `INSERT INTO settingsSyncState (nodeId, remoteNodeId, lastSyncedAt, localChecksum, remoteChecksum, syncCount, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(localNode.id, remoteNodeId, lastSyncedAt, localChecksum, remoteChecksum, syncCount, now, now);
+    }
+
+    this.db!.bumpLastModified();
+
+    const updated = await this.getSettingsSyncState(remoteNodeId);
+    if (!updated) {
+      throw new Error("Failed to retrieve updated settings sync state");
+    }
+
+    this.emit("settings:sync:completed", {
+      nodeId: localNode.id,
+      remoteNodeId,
+      state: updated,
+    });
+
+    return updated;
+  }
+
+  private rowToSettingsSyncState(row: {
+    nodeId: string;
+    remoteNodeId: string;
+    lastSyncedAt: string | null;
+    localChecksum: string | null;
+    remoteChecksum: string | null;
+    syncCount: number;
+    createdAt: string;
+    updatedAt: string;
+  }): SettingsSyncState {
+    return {
+      nodeId: row.nodeId,
+      remoteNodeId: row.remoteNodeId,
+      lastSyncedAt: row.lastSyncedAt,
+      localChecksum: row.localChecksum,
+      remoteChecksum: row.remoteChecksum,
+      syncCount: row.syncCount,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
     };
   }
 }

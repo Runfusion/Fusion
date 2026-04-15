@@ -1509,6 +1509,8 @@ export interface PeerSyncRequest {
   knownPeers: PeerInfo[];
   /** ISO timestamp of when this sync request was generated. */
   timestamp: string;
+  /** Optional settings sync payload included in the request. */
+  settings?: SettingsSyncPayload;
 }
 
 /** Response payload returned after a peer sync exchange. */
@@ -1523,6 +1525,73 @@ export interface PeerSyncResponse {
   newPeers: PeerInfo[];
   /** ISO timestamp of when this response was generated. */
   timestamp: string;
+  /** Optional settings sync payload included in the response. */
+  settings?: SettingsSyncPayload;
+}
+
+/** A single provider's authentication credential for sync transport. */
+export interface ProviderAuthEntry {
+  /** Credential type: "api_key" or "oauth". */
+  type: "api_key" | "oauth";
+  /** The API key value (for "api_key" type). Omitted for OAuth providers. */
+  key?: string;
+  /** OAuth access token (for "oauth" type). Omitted for API key providers. */
+  accessToken?: string;
+  /** Whether this credential has been validated. */
+  authenticated?: boolean;
+}
+
+/** Payload for synchronizing settings and model auth between nodes. */
+export interface SettingsSyncPayload {
+  /** Global settings (user-level preferences, model defaults). */
+  global?: GlobalSettings;
+  /** Map of project name → project settings for projects on this node.
+   *  Keyed by project name (not ID or path) since node paths differ. */
+  projects?: Record<string, ProjectSettings>;
+  /** Model provider auth credentials. Keys are provider IDs (e.g., "anthropic", "openai").
+   *  Values contain the credential type and key. Only transmitted over authenticated
+   *  node connections. */
+  providerAuth?: Record<string, ProviderAuthEntry>;
+  /** ISO timestamp when this snapshot was generated. */
+  exportedAt: string;
+  /** Checksum of the settings data for change detection (SHA-256 hex of JSON). */
+  checksum: string;
+  /** Version of the sync payload format. */
+  version: 1;
+}
+
+/** Tracks settings sync state between the local node and a remote node. */
+export interface SettingsSyncState {
+  /** Local node ID. */
+  nodeId: string;
+  /** Remote node ID. */
+  remoteNodeId: string;
+  /** ISO timestamp of the last successful settings sync. */
+  lastSyncedAt: string | null;
+  /** Checksum of local settings at last sync (for change detection). */
+  localChecksum: string | null;
+  /** Checksum of remote settings at last sync. */
+  remoteChecksum: string | null;
+  /** Number of settings syncs performed. */
+  syncCount: number;
+  /** ISO timestamp of creation. */
+  createdAt: string;
+  /** ISO timestamp of last update. */
+  updatedAt: string;
+}
+
+/** Result of a settings sync exchange. */
+export interface SettingsSyncResult {
+  /** Number of global settings applied. */
+  globalCount: number;
+  /** Number of project settings applied. */
+  projectCount: number;
+  /** Number of provider auth entries synced. */
+  authCount: number;
+  /** Whether the sync was successful. */
+  success: boolean;
+  /** Error message if sync failed. */
+  error?: string;
 }
 
 /** A runtime node that can host project execution (local machine or remote host) */
