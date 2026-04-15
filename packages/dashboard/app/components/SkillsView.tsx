@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Wrench, RefreshCw, X } from "lucide-react";
 import {
   fetchDiscoveredSkills,
   toggleExecutionSkill,
   fetchSkillsCatalog,
 } from "../api";
-import type { DiscoveredSkill, CatalogEntry, CatalogFetchResult } from "@fusion/dashboard";
+import type { DiscoveredSkill, CatalogEntry } from "@fusion/dashboard";
 import type { ToastType } from "../hooks/useToast";
 
 interface SkillsViewProps {
@@ -118,12 +118,6 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
     }
   }, [projectId, addToast]);
 
-  // Stats
-  const stats = useMemo(() => ({
-    discovered: discoveredSkills.length,
-    enabled: discoveredSkills.filter((s) => s.enabled).length,
-    catalogEntries: catalogEntries.length,
-  }), [discoveredSkills, catalogEntries]);
 
   return (
     <div className="skills-view" data-testid="skills-view">
