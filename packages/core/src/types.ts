@@ -1030,6 +1030,10 @@ export interface ProjectSettings {
   /** Maximum number of build retry attempts during merge when a build fails with a
    *  transient error. Default: 0 (no retry). Set to 1 to allow one retry. */
   buildRetryCount?: number;
+  /** Maximum number of times to attempt in-merge verification fixes when test/build
+   *  commands fail during merge. The fix agent runs on the main branch with the merged
+   *  code to resolve failures before aborting the merge. Default: 1. Set to 0 to disable. */
+  verificationFixRetries?: number;
   /** Timeout in milliseconds for build commands during merge. Default: 300000 (5 min). */
   buildTimeoutMs?: number;
   /** When enabled, AI-generated task specifications require manual approval

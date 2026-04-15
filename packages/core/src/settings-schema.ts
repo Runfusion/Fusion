@@ -67,6 +67,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   smartConflictResolution: true,
   strictScopeEnforcement: false,
   buildRetryCount: 0,
+  verificationFixRetries: 1,
   buildTimeoutMs: 300_000,
   requirePlanApproval: false,
   specStalenessEnabled: false,

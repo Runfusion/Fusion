@@ -1701,6 +1701,41 @@ The email used in the git `--author` flag for Fusion commits. Only used when `co
 - The committer identity (who physically makes the commit) remains unchanged — only the author metadata is affected
 - Configure or disable via Settings → Merge → Author attribution in the dashboard
 
+### `verificationFixRetries` (default: `1`)
+
+When deterministic verification (test/build commands) fails during a merge, this setting controls how many times the system attempts an in-merge fix before aborting the merge. The fix agent runs on the main branch with the merged code to resolve the failure directly, rather than sending the task back to `in-progress` for re-execution.
+
+**How it works:**
+- When verification fails, a fix agent is spawned on the main branch
+- The fix agent reads the error output, makes targeted fixes, and re-runs the verification command
+- If verification passes after the fix, the merge commit is amended to include the fixes
+- If verification still fails, the fix attempt is logged and the next attempt begins
+- After all fix attempts are exhausted, the system falls back to the existing behavior (moves task to `in-progress`)
+
+**Valid range:** 0 to 3 (maximum is capped at 3 to prevent runaway AI costs)
+
+**Configuration:**
+
+```json
+{
+  "settings": {
+    "verificationFixRetries": 1
+  }
+}
+```
+
+**Examples:**
+- `0` — Disable in-merge fix; use the existing fallback behavior (move to `in-progress`)
+- `1` — Allow one fix attempt (default)
+- `2` — Allow two fix attempts
+- `3` — Allow three fix attempts (maximum)
+
+**Notes:**
+- This setting does NOT affect the existing `buildRetryCount` setting for transient build errors
+- The fix agent uses the same model settings as the merger agent
+- When no verification commands are configured (`testCommand` or `buildCommand`), this setting has no effect
+- Fix attempts and outcomes are logged to the task's activity log
+
 ### `requirePlanApproval` (default: `false`)
 
 When enabled, AI-generated task specifications require manual approval before the task can move from "triage" to "todo". 

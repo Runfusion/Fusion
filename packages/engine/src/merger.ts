@@ -615,6 +615,165 @@ async function runVerificationCommand(
   return result;
 }
 
+/**
+ * Attempt an in-merge verification fix by spawning an AI agent on the main branch.
+ * Returns true if verification passes after the fix, false otherwise.
+ * Never throws — errors are caught and logged, and the function returns false.
+ */
+async function attemptInMergeVerificationFix(
+  store: TaskStore,
+  rootDir: string,
+  taskId: string,
+  failureContext: {
+    command: string;
+    exitCode: number | null;
+    output: string;
+    type: "test" | "build";
+  },
+  settings: Settings,
+  options: MergerOptions,
+  testCommand?: string,
+  buildCommand?: string,
+): Promise<boolean> {
+  try {
+    mergerLog.log(`${taskId}: spawning in-merge verification fix agent`);
+
+    // Build skill selection context
+    let skillContext = undefined;
+    if (options.agentStore) {
+      try {
+        const task = await store.getTask(taskId);
+        skillContext = await buildSessionSkillContext({
+          agentStore: options.agentStore,
+          task,
+          sessionPurpose: "merger",
+          projectRootDir: rootDir,
+        });
+      } catch {
+        // Graceful fallback - no skill selection
+      }
+    }
+
+    // Create the fix agent session
+    const { session } = await createKbAgent({
+      cwd: rootDir, // Runs on the main branch in the project root
+      systemPrompt: `You are a verification fix agent running during a merge on the main branch.
+
+A merge has been applied and the verification command failed. Your job is to fix the failing code directly in the working directory.
+
+## Rules
+1. Read the error output carefully to understand what's failing
+2. Make targeted fixes to the failing code
+3. After fixing, run the verification command to confirm the fix works
+4. Do NOT make any git commits — just fix the code
+5. Do NOT modify files unrelated to the failure
+6. If you cannot fix the issue, explain why`,
+      tools: "coding", // Agent needs read/write file access
+      defaultProvider: settings.defaultProvider,
+      defaultModelId: settings.defaultModelId,
+      defaultThinkingLevel: settings.defaultThinkingLevel,
+      // Skill selection: use assigned agent skills if available, otherwise role fallback
+      ...(skillContext?.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
+    });
+
+    try {
+      // Build the fix prompt
+      const fixPrompt = `Fix the failing ${failureContext.type} verification for task ${taskId}.
+
+## Failed command
+Command: \`${failureContext.command}\`
+Exit code: ${failureContext.exitCode}
+
+## Error output
+${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
+
+## Instructions
+1. Read the error output and identify the root cause
+2. Make targeted fixes to resolve the failure
+3. Run the verification command \`${failureContext.command}\` to confirm your fix works
+4. If the fix doesn't work, try a different approach
+5. Do NOT make any git commits`;
+
+      // Run the agent with rate limit retry
+      await withRateLimitRetry(async () => {
+        await promptWithFallback(session, fixPrompt);
+      }, {
+        onRetry: (attempt, delayMs, error) => {
+          const delaySec = Math.round(delayMs / 1000);
+          mergerLog.warn(`⏳ ${taskId} in-merge fix rate limited — retry ${attempt} in ${delaySec}s: ${error.message}`);
+        },
+      });
+
+      // Re-run the verification command that failed
+      const reRunResult = await runVerificationCommand(
+        store, rootDir, taskId, failureContext.command, failureContext.type,
+      );
+
+      return reRunResult.success;
+    } finally {
+      // Always dispose the session
+      await session.dispose();
+    }
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    mergerLog.warn(`${taskId}: in-merge fix agent error: ${errorMessage}`);
+    await store.logEntry(taskId, "In-merge verification fix agent encountered an error", errorMessage);
+    return false;
+  }
+}
+
+/**
+ * Stage any changes and amend the merge commit to include verification fixes.
+ * Returns true if changes were amended, false if no changes to amend.
+ * Never throws — errors are logged and the function returns false.
+ */
+async function amendMergeCommitWithFixes(
+  rootDir: string,
+  taskId: string,
+  authorArg: string,
+): Promise<boolean> {
+  try {
+    // Check for staged and unstaged changes
+    const { stdout: stagedFiles } = await execAsync("git diff --cached --name-only", {
+      cwd: rootDir,
+      encoding: "utf-8",
+    });
+    const { stdout: unstagedFiles } = await execAsync("git diff --name-only", {
+      cwd: rootDir,
+      encoding: "utf-8",
+    });
+
+    const hasChanges = stagedFiles.trim().length > 0 || unstagedFiles.trim().length > 0;
+    if (!hasChanges) {
+      mergerLog.log(`${taskId}: no changes to amend after verification fix`);
+      return false;
+    }
+
+    // Stage any unstaged changes
+    if (unstagedFiles.trim().length > 0) {
+      await execAsync("git add -A", { cwd: rootDir });
+    }
+
+    // Check if there are staged changes to amend
+    const { stdout: finalStaged } = await execAsync("git diff --cached --name-only", {
+      cwd: rootDir,
+      encoding: "utf-8",
+    });
+
+    if (finalStaged.trim().length > 0) {
+      await execAsync(`git commit --amend --no-edit${authorArg}`, { cwd: rootDir });
+      mergerLog.log(`${taskId}: amended merge commit with verification fixes`);
+      return true;
+    }
+
+    return false;
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    mergerLog.warn(`${taskId}: failed to amend merge commit: ${errorMessage}`);
+    return false;
+  }
+}
+
 // ── Pre-merge diffstat scope validation ──────────────────────────────
 
 interface DiffFileEntry {
@@ -1388,14 +1547,107 @@ export async function aiMergeTask(
       return false;
     } catch (error: any) {
       // Check if it's a deterministic verification failure (testCommand or buildCommand failed)
-      // VerificationError is fatal - don't retry, propagate immediately
+      // Try in-merge fix attempts before propagating
       if (error.name === "VerificationError") {
-        mergerLog.error(`${taskId}: deterministic verification failed — aborting merge`);
-        throw error; // Fatal - verification failures don't retry
+        const verificationErr = error as VerificationError;
+        const maxFixRetries = Math.min(settings.verificationFixRetries ?? 1, 3);
+
+        if (maxFixRetries > 0 && (verificationErr.verificationResult.testResult || verificationErr.verificationResult.buildResult)) {
+          mergerLog.log(`${taskId}: deterministic verification failed — attempting in-merge fix (up to ${maxFixRetries} attempts)`);
+          await store.logEntry(taskId, `Verification failed during merge — attempting in-merge fix (up to ${maxFixRetries} attempts)`);
+
+          // Extract failure context from the VerificationError
+          const failedResult = verificationErr.verificationResult.testResult?.success === false
+            ? verificationErr.verificationResult.testResult
+            : verificationErr.verificationResult.buildResult;
+          const failedType = verificationErr.verificationResult.testResult?.success === false
+            ? "test" as const
+            : "build" as const;
+
+          if (failedResult) {
+            let fixSuccess = false;
+            for (let fixAttempt = 1; fixAttempt <= maxFixRetries; fixAttempt++) {
+              mergerLog.log(`${taskId}: in-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`);
+              await store.logEntry(taskId, `In-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`);
+
+              fixSuccess = await attemptInMergeVerificationFix(
+                store, rootDir, taskId,
+                {
+                  command: failedResult.command,
+                  exitCode: failedResult.exitCode,
+                  output: summarizeVerificationOutput(failedResult.stderr || failedResult.stdout, failedType),
+                  type: failedType,
+                },
+                settings, options, effectiveTestCommand, effectiveBuildCommand,
+              );
+
+              if (fixSuccess) {
+                mergerLog.log(`${taskId}: in-merge verification fix succeeded on attempt ${fixAttempt}`);
+                await store.logEntry(taskId, `In-merge verification fix succeeded — verification now passes`);
+                break;
+              }
+
+              mergerLog.warn(`${taskId}: in-merge verification fix attempt ${fixAttempt} — verification still fails`);
+              await store.logEntry(taskId, `In-merge verification fix attempt ${fixAttempt} — verification still fails`);
+            }
+
+            if (fixSuccess) {
+              // Amend the merge commit to include the fixes
+              const authorArg = getCommitAuthorArg(settings);
+              await amendMergeCommitWithFixes(rootDir, taskId, authorArg);
+              return true; // Merge succeeds
+            }
+          }
+        }
+
+        // Fix attempts exhausted or disabled — fall back to existing behavior
+        mergerLog.error(`${taskId}: deterministic verification failed — aborting merge (in-merge fix exhausted or disabled)`);
+        throw error;
       }
 
       // Check if it's a build verification failure
       if (error.message?.includes("Build verification failed")) {
+        const maxFixRetries = Math.min(settings.verificationFixRetries ?? 1, 3);
+
+        // Try in-merge fix before falling back to build retry
+        if (maxFixRetries > 0 && (effectiveTestCommand || effectiveBuildCommand)) {
+          mergerLog.log(`${taskId}: build verification failed — attempting in-merge fix`);
+          await store.logEntry(taskId, `Build verification failed during merge — attempting in-merge fix`);
+
+          const fixCommand = effectiveBuildCommand || effectiveTestCommand!;
+          const fixType = effectiveBuildCommand ? "build" as const : "test" as const;
+
+          let fixSuccess = false;
+          for (let fixAttempt = 1; fixAttempt <= maxFixRetries; fixAttempt++) {
+            mergerLog.log(`${taskId}: in-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`);
+            await store.logEntry(taskId, `In-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`);
+
+            fixSuccess = await attemptInMergeVerificationFix(
+              store, rootDir, taskId,
+              {
+                command: fixCommand,
+                exitCode: 1,
+                output: error.message || "Build verification failed",
+                type: fixType,
+              },
+              settings, options, effectiveTestCommand, effectiveBuildCommand,
+            );
+
+            if (fixSuccess) {
+              mergerLog.log(`${taskId}: in-merge verification fix succeeded on attempt ${fixAttempt}`);
+              await store.logEntry(taskId, `In-merge verification fix succeeded`);
+              break;
+            }
+          }
+
+          if (fixSuccess) {
+            const authorArg = getCommitAuthorArg(settings);
+            await amendMergeCommitWithFixes(rootDir, taskId, authorArg);
+            return true; // Merge succeeds
+          }
+        }
+
+        // Fall through to existing buildRetryCount logic
         const buildRetryCount = settings.buildRetryCount ?? 0;
         if (buildRetryCount > 0 && !result._buildRetried) {
           // Allow one build retry — reset merge state and re-attempt same strategy

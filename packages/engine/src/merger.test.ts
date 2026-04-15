@@ -1989,6 +1989,7 @@ describe("aiMergeTask — build verification", () => {
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
       buildCommand: "pnpm build",
+      verificationFixRetries: 0, // Disable in-merge fix for this test
     });
 
     await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(
@@ -4451,5 +4452,291 @@ describe("aiMergeTask — skill selection non-fatal diagnostics (FN-1510/FN-1511
     const firstCall = mockedCreateHaiAgent.mock.calls[0];
     const opts = firstCall[0];
     expect(opts.skillSelection?.requestedSkillNames).toEqual(["custom-skill"]);
+  });
+});
+
+describe("aiMergeTask — in-merge verification fix", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mockedExistsSync.mockReturnValue(true);
+  });
+
+  it("verification fix is attempted when verification fails", async () => {
+    // Simple mock: always fail verification
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("vitest run")) {
+        const err = new Error("Test failed") as any;
+        err.status = 1;
+        err.stdout = "";
+        err.stderr = "";
+        throw err;
+      }
+      if (cmdStr.includes("diff --cached --quiet")) return "1" as any;
+      if (cmdStr.includes("diff --cached")) return "" as any;
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      if (cmdStr === "git rev-parse HEAD" || cmdStr.startsWith("git rev-parse HEAD ")) return "mergedcommit123";
+      return Buffer.from("");
+    });
+
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      const isFixAgent = opts.systemPrompt?.includes("verification fix agent");
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+        },
+      } as any;
+    });
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      testCommand: "vitest run",
+      verificationFixRetries: 1,
+    });
+
+    // With verificationFixRetries: 1, the merge should fail with VerificationError
+    // because the fix agent can't fix the verification (it's mocked to not actually fix anything)
+    await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toMatchObject({
+      name: "VerificationError",
+    });
+
+    // Verify that fix agent was spawned (2 calls: merger + fix)
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(2);
+
+    // Verify the fix agent was called with correct options
+    const fixAgentCall = mockedCreateHaiAgent.mock.calls[1];
+    expect(fixAgentCall[0].tools).toBe("coding");
+    expect(fixAgentCall[0].cwd).toBe("/tmp/root");
+  });
+
+  it("verification fix is skipped when verificationFixRetries is 0", async () => {
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("vitest run")) {
+        const err = new Error("Test failed") as any;
+        err.status = 1;
+        err.stdout = "";
+        err.stderr = "";
+        throw err;
+      }
+      if (cmdStr.includes("diff --cached --quiet")) return "1" as any;
+      if (cmdStr.includes("diff --cached")) return "" as any;
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      if (cmdStr === "git rev-parse HEAD" || cmdStr.startsWith("git rev-parse HEAD ")) return "mergedcommit123";
+      return Buffer.from("");
+    });
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      testCommand: "vitest run",
+      verificationFixRetries: 0,
+    });
+
+    await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toMatchObject({
+      name: "VerificationError",
+    });
+
+    // Verify fix agent was NOT spawned (only merger)
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
+
+    // Verify no fix attempt was logged
+    const logCalls = (store.logEntry as ReturnType<typeof vi.fn>).mock.calls;
+    const fixAttempts = logCalls.filter((call: any[]) =>
+      typeof call[1] === "string" && call[1].includes("in-merge verification fix"),
+    );
+    expect(fixAttempts).toHaveLength(0);
+  });
+
+  it("fix agent uses same model settings as merger", async () => {
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("vitest run")) {
+        const err = new Error("Test failed") as any;
+        err.status = 1;
+        err.stdout = "";
+        err.stderr = "";
+        throw err;
+      }
+      if (cmdStr.includes("diff --cached --quiet")) return "1" as any;
+      if (cmdStr.includes("diff --cached")) return "" as any;
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      if (cmdStr === "git rev-parse HEAD" || cmdStr.startsWith("git rev-parse HEAD ")) return "mergedcommit123";
+      return Buffer.from("");
+    });
+
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+        },
+      } as any;
+    });
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      testCommand: "vitest run",
+      verificationFixRetries: 1,
+      defaultProvider: "anthropic",
+      defaultModelId: "claude-sonnet-4-5",
+    });
+
+    await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toMatchObject({
+      name: "VerificationError",
+    });
+
+    // Verify fix agent uses same model settings
+    const fixAgentCall = mockedCreateHaiAgent.mock.calls[1];
+    expect(fixAgentCall[0].defaultProvider).toBe("anthropic");
+    expect(fixAgentCall[0].defaultModelId).toBe("claude-sonnet-4-5");
+  });
+
+  it("fix agent session is disposed", async () => {
+    const disposeMock = vi.fn();
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("vitest run")) {
+        const err = new Error("Test failed") as any;
+        err.status = 1;
+        err.stdout = "";
+        err.stderr = "";
+        throw err;
+      }
+      if (cmdStr.includes("diff --cached --quiet")) return "1" as any;
+      if (cmdStr.includes("diff --cached")) return "" as any;
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      if (cmdStr === "git rev-parse HEAD" || cmdStr.startsWith("git rev-parse HEAD ")) return "mergedcommit123";
+      return Buffer.from("");
+    });
+
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      const isFixAgent = opts.systemPrompt?.includes("verification fix agent");
+      if (isFixAgent) {
+        return {
+          session: {
+            prompt: vi.fn().mockResolvedValue(undefined),
+            dispose: disposeMock,
+          },
+        } as any;
+      }
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+        },
+      } as any;
+    });
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      testCommand: "vitest run",
+      verificationFixRetries: 1,
+    });
+
+    await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toMatchObject({
+      name: "VerificationError",
+    });
+
+    expect(disposeMock).toHaveBeenCalled();
+  });
+
+  it("max fix retries capped at 3", async () => {
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("vitest run")) {
+        const err = new Error("Test failed") as any;
+        err.status = 1;
+        err.stdout = "";
+        err.stderr = "";
+        throw err;
+      }
+      if (cmdStr.includes("diff --cached --quiet")) return "1" as any;
+      if (cmdStr.includes("diff --cached")) return "" as any;
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      if (cmdStr === "git rev-parse HEAD" || cmdStr.startsWith("git rev-parse HEAD ")) return "mergedcommit123";
+      return Buffer.from("");
+    });
+
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+        },
+      } as any;
+    });
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      testCommand: "vitest run",
+      verificationFixRetries: 10, // Exceeds max
+    });
+
+    await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toMatchObject({
+      name: "VerificationError",
+    });
+
+    // Should have 3 fix attempts (capped at 3) + 1 merger = 4 calls
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(4);
   });
 });
