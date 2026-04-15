@@ -216,6 +216,7 @@ function httpsRequest(
 /**
  * Decode JWT payload without verification
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- JWT payloads are untyped
 function decodeJwtPayload(token: string): any {
   try {
     const parts = token.split(".");
@@ -248,7 +249,9 @@ async function readAuthKeyFromFile(authPath: string, provider: string): Promise<
     if (entry && (entry.type === "api_key" || entry.type === "key") && entry.key) {
       return entry.key;
     }
-  } catch {}
+  } catch {
+    // No auth file or invalid format - fall through to return null
+  }
   return null;
 }
 
@@ -259,19 +262,25 @@ async function readAuthKeyFromFile(authPath: string, provider: string): Promise<
 async function readConfiguredApiKey(provider: string, authStorage?: AuthStorageLike): Promise<string | null> {
   try {
     authStorage?.reload();
-  } catch {}
+  } catch {
+    // Reload may fail if no storage - ignore
+  }
 
   try {
     const apiKey = await authStorage?.getApiKey?.(provider);
     if (apiKey) return apiKey;
-  } catch {}
+  } catch {
+    // getApiKey may not be implemented - ignore
+  }
 
   try {
     const entry = authStorage?.get?.(provider);
     if (entry && (entry.type === "api_key" || entry.type === "key") && entry.key) {
       return entry.key;
     }
-  } catch {}
+  } catch {
+    // get() may not be implemented - ignore
+  }
 
   for (const authPath of getAuthFileCandidates()) {
     const apiKey = await readAuthKeyFromFile(authPath, provider);
@@ -287,6 +296,7 @@ async function readConfiguredApiKey(provider: string, authStorage?: AuthStorageL
  * Read Claude credentials from macOS keychain.
  * Returns the parsed credentials object or null if not found/error.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped keychain data
 async function readClaudeKeychainCredentials(): Promise<any | null> {
   try {
     const { stdout } = await execFileAsync(
@@ -401,27 +411,36 @@ export function _resetSleepFn(): void {
 export function _stripClaudeAnsi(text: string): string {
   let clean = text
     // Cursor forward (CSI n C): replace with n spaces
+    // eslint-disable-next-line no-control-regex -- terminal ANSI escape sequence
     .replace(/\x1B\[(\d+)C/g, (_m, n) => " ".repeat(parseInt(n, 10)))
     // Cursor movement (up/down/back/position)
+    // eslint-disable-next-line no-control-regex -- terminal ANSI escape sequence
     .replace(/\x1B\[\d*[ABD]/g, "")
+    // eslint-disable-next-line no-control-regex -- terminal ANSI escape sequence
     .replace(/\x1B\[\d+;\d+[Hf]/g, "\n")
     // Remaining CSI sequences (colors, modes, etc.)
+    // eslint-disable-next-line no-control-regex -- terminal ANSI escape sequence
     .replace(/\x1B\[[0-9;?]*[A-Za-z@]/g, "")
     // OSC sequences
+    // eslint-disable-next-line no-control-regex -- terminal ANSI escape sequence
     .replace(/\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)?/g, "")
     // Other ESC sequences
+    // eslint-disable-next-line no-control-regex -- terminal ANSI escape sequence
     .replace(/\x1B[A-Za-z]/g, "")
     // Carriage returns
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n");
 
   // Handle backspaces
+  /* eslint-disable no-control-regex -- backspace control character */
   while (clean.includes("\x08")) {
     clean = clean.replace(/[^\x08]\x08/, "");
     clean = clean.replace(/^\x08+/, "");
   }
+  /* eslint-enable no-control-regex */
 
   // Strip remaining non-printable control characters (except newline)
+  // eslint-disable-next-line no-control-regex -- control character cleanup
   clean = clean.replace(/[\x00-\x08\x0B-\x1F\x7F]/g, "");
   return clean;
 }
@@ -585,7 +604,7 @@ async function fetchClaudeUsageViaCli(): Promise<ProviderUsage> {
       ? ["/c", "claude", "--add-dir", cwd]
       : ["-c", `claude --add-dir "${cwd}"`];
 
-    const ptyOptions: any = {
+    const ptyOptions: Record<string, unknown> = {
       name: "xterm-256color",
       cols: 120,
       rows: 30,
@@ -606,7 +625,9 @@ async function fetchClaudeUsageViaCli(): Promise<ProviderUsage> {
       const timeout = setTimeout(() => {
         if (settled) return;
         settled = true;
-        try { ptyProcess.kill(); } catch {}
+        try { ptyProcess.kill(); } catch {
+          // Kill may fail if process already exited - ignore
+        }
         // Return whatever we have if it contains usage data
         const clean = _stripClaudeAnsi(buf);
         if (clean.includes("Current session") || clean.includes("% left") || clean.includes("% used")) {
@@ -631,7 +652,9 @@ async function fetchClaudeUsageViaCli(): Promise<ProviderUsage> {
         ) {
           settled = true;
           clearTimeout(timeout);
-          try { ptyProcess.kill(); } catch {}
+          try { ptyProcess.kill(); } catch {
+            // Kill may fail if process already exited - ignore
+          }
           reject(new Error("Claude CLI auth error"));
           return;
         }
@@ -682,7 +705,9 @@ async function fetchClaudeUsageViaCli(): Promise<ProviderUsage> {
                 if (!settled) {
                   settled = true;
                   clearTimeout(timeout);
-                  try { ptyProcess.kill(); } catch {}
+                  try { ptyProcess.kill(); } catch {
+                    // Kill may fail if process already exited - ignore
+                  }
                   resolve(buf);
                 }
               }, 2000);
@@ -777,9 +802,9 @@ async function fetchClaudeUsageViaCli(): Promise<ProviderUsage> {
       usage.status = "error";
       usage.error = "Could not parse usage from CLI output";
     }
-  } catch (e: any) {
+  } catch (e: unknown) {
     usage.status = "error";
-    usage.error = e.message || "CLI fallback failed";
+    usage.error = e instanceof Error ? e.message : "CLI fallback failed";
   }
 
   return usage;
@@ -807,12 +832,15 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
     path.join(process.env.HOME || "~", ".config", "claude", ".credentials.json"),
   ];
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped credentials JSON
   let creds: any = null;
   for (const p of credPaths) {
     try {
       creds = JSON.parse(await readFile(p, "utf-8"));
       break;
-    } catch {}
+    } catch {
+      // File doesn't exist or invalid JSON - continue to next path
+    }
   }
 
   // Fallback to macOS keychain if file credentials not found
@@ -941,6 +969,7 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
      * Get a window data object from the API response, checking multiple possible keys
      * for backward compatibility (API may use `session` instead of `five_hour`).
      */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped API response
     const getWindowData = (primaryKey: string, fallbackKeys: string[] = []): any => {
       if (data[primaryKey] && typeof data[primaryKey] === "object") {
         return data[primaryKey];
@@ -999,9 +1028,9 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
     if (sevenDay) usage.windows.push(sevenDay);
     if (sonnet) usage.windows.push(sonnet);
     if (opus) usage.windows.push(opus);
-  } catch (e: any) {
+  } catch (e: unknown) {
     usage.status = "error";
-    usage.error = e.message || "Failed to fetch Claude usage";
+    usage.error = e instanceof Error ? e.message : "Failed to fetch Claude usage";
   }
 
   return usage;
@@ -1021,6 +1050,7 @@ async function fetchCodexUsage(): Promise<ProviderUsage> {
   const codexHome = process.env.CODEX_HOME || path.join(process.env.HOME || "~", ".codex");
   const authPath = path.join(codexHome, "auth.json");
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped auth JSON
   let auth: any = null;
   try {
     auth = JSON.parse(await readFile(authPath, "utf-8"));
@@ -1074,6 +1104,7 @@ async function fetchCodexUsage(): Promise<ProviderUsage> {
     if (data.email) usage.email = data.email;
     if (data.plan_type) usage.plan = data.plan_type.charAt(0).toUpperCase() + data.plan_type.slice(1);
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped API response
     const parseWindow = (win: any, label: string): UsageWindow | null => {
       if (!win || typeof win !== "object") return null;
       const pctUsed: number = win.used_percent ?? 0;
@@ -1112,9 +1143,9 @@ async function fetchCodexUsage(): Promise<ProviderUsage> {
       if (primary) usage.windows.push(primary);
       if (secondary) usage.windows.push(secondary);
     }
-  } catch (e: any) {
+  } catch (e: unknown) {
     usage.status = "error";
-    usage.error = e.message || "Failed to fetch";
+    usage.error = e instanceof Error ? e.message : "Failed to fetch";
   }
 
   return usage;
@@ -1132,6 +1163,7 @@ async function fetchGeminiUsage(): Promise<ProviderUsage> {
 
   // Load Gemini OAuth credentials
   const oauthPath = path.join(process.env.HOME || "~", ".gemini", "oauth_creds.json");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped OAuth JSON
   let oauthCreds: any = null;
   try {
     oauthCreds = JSON.parse(await readFile(oauthPath, "utf-8"));
@@ -1161,7 +1193,9 @@ async function fetchGeminiUsage(): Promise<ProviderUsage> {
       usage.error = `Unsupported auth type: ${authType} (need oauth-personal)`;
       return usage;
     }
-  } catch {}
+  } catch {
+    // Settings file doesn't exist or invalid JSON - continue
+  }
 
   try {
     const res = await httpsRequest(
@@ -1192,6 +1226,7 @@ async function fetchGeminiUsage(): Promise<ProviderUsage> {
     usage.status = "ok";
 
     // Parse buckets array
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped API response
     const buckets: any[] = data.buckets || [];
     if (Array.isArray(buckets) && buckets.length > 0) {
       // Group by model family, pick lowest remainingFraction per family
@@ -1250,9 +1285,9 @@ async function fetchGeminiUsage(): Promise<ProviderUsage> {
         });
       }
     }
-  } catch (e: any) {
+  } catch (e: unknown) {
     usage.status = "error";
-    usage.error = e.message || "Failed to fetch";
+    usage.error = e instanceof Error ? e.message : "Failed to fetch";
   }
 
   return usage;
@@ -1300,6 +1335,7 @@ async function fetchMinimaxUsage(authStorage?: AuthStorageLike): Promise<Provide
     usage.status = "ok";
 
     // Parse model_remains array — group by model family
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped API response
     const modelRemains: any[] = data?.model_remains || [];
     if (Array.isArray(modelRemains) && modelRemains.length > 0) {
       for (const model of modelRemains) {
@@ -1344,9 +1380,9 @@ async function fetchMinimaxUsage(authStorage?: AuthStorageLike): Promise<Provide
         }
       }
     }
-  } catch (e: any) {
+  } catch (e: unknown) {
     usage.status = "error";
-    usage.error = e.message || "Failed to fetch";
+    usage.error = e instanceof Error ? e.message : "Failed to fetch";
   }
 
   return usage;
@@ -1400,10 +1436,11 @@ async function fetchZaiUsage(authStorage?: AuthStorageLike): Promise<ProviderUsa
 
     usage.status = "ok";
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped API response
     const limits: any[] = data?.data?.limits || [];
 
     // Find TOKENS_LIMIT (5-hour rolling window)
-    const tokensLimit = limits.find((l: any) => l.type === "TOKENS_LIMIT");
+    const tokensLimit = limits.find((l) => l.type === "TOKENS_LIMIT");
     if (tokensLimit) {
       const percentage: number = tokensLimit.percentage ?? 0;
       // The percentage field represents percentage USED
@@ -1439,11 +1476,12 @@ async function fetchZaiUsage(authStorage?: AuthStorageLike): Promise<ProviderUsa
     }
 
     // Find TIME_LIMIT (MCP monthly search quota)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped API response
     const timeLimit = limits.find((l: any) => l.type === "TIME_LIMIT");
     if (timeLimit) {
       const total: number = timeLimit.usage ?? 0;
       const used: number = timeLimit.currentValue ?? 0;
-      const remaining: number = timeLimit.remaining ?? Math.max(0, total - used);
+      const _remaining: number = timeLimit.remaining ?? Math.max(0, total - used);
       const percentage: number = timeLimit.percentage ?? 0;
 
       let resetText: string | null = null;
@@ -1472,9 +1510,9 @@ async function fetchZaiUsage(authStorage?: AuthStorageLike): Promise<ProviderUsa
     if (data?.data?.level) {
       usage.plan = data.data.level.charAt(0).toUpperCase() + data.data.level.slice(1);
     }
-  } catch (e: any) {
+  } catch (e: unknown) {
     usage.status = "error";
-    usage.error = e.message || "Failed to fetch";
+    usage.error = e instanceof Error ? e.message : "Failed to fetch";
   }
 
   return usage;
@@ -1521,13 +1559,13 @@ export function withTimeout(
         clearTimeout(timer);
         resolve(result);
       })
-      .catch((err: any) => {
+      .catch((err: unknown) => {
         clearTimeout(timer);
         resolve({
           name: providerName,
           icon: "⏱️",
           status: "error",
-          error: err.message || "Failed",
+          error: err instanceof Error ? err.message : "Failed",
           windows: [],
         });
       });

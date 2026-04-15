@@ -50,7 +50,16 @@ export type SubtaskStreamCallback = (event: SubtaskStreamEvent, eventId?: number
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 
-const sessions = new Map<string, SubtaskSession & { updatedAt: Date; agent?: any; thinkingOutput: string }>();
+/** Minimal interface for the agent object created by createKbAgent */
+interface SubtaskAgent {
+  session: {
+    dispose?: () => void;
+    prompt: (input: string) => Promise<unknown>;
+    state: { messages: Array<{ role: string; content?: string | Array<{ type: string; text: string }> }> };
+  };
+}
+
+const sessions = new Map<string, SubtaskSession & { updatedAt: Date; agent?: SubtaskAgent; thinkingOutput: string }>();
 
 // ── AI Session Persistence ────────────────────────────────────────────────
 
@@ -69,7 +78,7 @@ export function setAiSessionStore(store: AiSessionStore): void {
   _aiSessionStore.on("ai_session:deleted", _aiSessionDeletedListener);
 }
 
-type SubtaskInternalSession = SubtaskSession & { updatedAt: Date; agent?: any; thinkingOutput: string; projectId?: string };
+type SubtaskInternalSession = SubtaskSession & { updatedAt: Date; agent?: SubtaskAgent; thinkingOutput: string; projectId?: string };
 
 function safeParseJson<T>(
   text: string | null,

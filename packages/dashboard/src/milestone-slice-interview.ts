@@ -21,7 +21,6 @@ import { EventEmitter } from "node:events";
 import type { AiSessionStore, AiSessionRow } from "./ai-session-store.js";
 import { SessionEventBuffer, type SessionBufferedEvent } from "./sse-buffer.js";
 import {
-  parseMissionAgentResponse,
   extractJsonCandidate,
   repairJson,
 } from "./mission-interview.js";
@@ -48,7 +47,7 @@ function parseTargetInterviewResponseImpl(text: string): TargetInterviewResponse
   let parsed: unknown;
   try {
     parsed = JSON.parse(candidate);
-  } catch (parseErr) {
+  } catch (_parseErr) {
     try {
       const repaired = repairJson(candidate);
       parsed = JSON.parse(repaired);

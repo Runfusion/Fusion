@@ -386,17 +386,6 @@ function extractPartsFromChannel(channel: string): { taskId: string | null; proj
   return { projectId: null, taskId: null };
 }
 
-/**
- * Extract taskId from any badge channel key (without knowing the projectId).
- * @deprecated Use extractPartsFromChannel instead
- */
-function extractTaskIdFromChannel(channel: string): string | null {
-  // Channel format: badge:{projectId}:{taskId}
-  // We need to find the taskId after the second colon
-  const match = channel.match(/^badge:[^:]+:(.+)$/);
-  return match ? match[1] : null;
-}
-
 function parseClientMessage(raw: WebSocket.RawData):
   | { ok: true; value: BadgeClientMessage }
   | { ok: false; error: string } {

@@ -1,8 +1,6 @@
 import { join, resolve, relative, dirname, basename } from "node:path";
 import { readdir, readFile as fsReadFile, writeFile as fsWriteFile, stat, copyFile as fsCopyFile, rename as fsRename, rm as fsRm, mkdir } from "node:fs/promises";
-import { existsSync, createReadStream, statSync } from "node:fs";
-import { pipeline } from "node:stream/promises";
-import { createGzip } from "node:zlib";
+import { existsSync } from "node:fs";
 import type { TaskStore } from "@fusion/core";
 
 /**
@@ -67,30 +65,6 @@ export class FileServiceError extends Error {
   }
 }
 
-/**
- * Text file extensions set.
- */
-const TEXT_EXTENSIONS = new Set([
-  ".txt", ".md", ".markdown",
-  ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
-  ".json", ".jsonc",
-  ".css", ".scss", ".sass", ".less",
-  ".html", ".htm", ".xml", ".svg",
-  ".yaml", ".yml",
-  ".toml",
-  ".ini", ".cfg", ".conf", ".config",
-  ".sh", ".bash", ".zsh", ".fish",
-  ".py", ".rb", ".php", ".pl", ".perl",
-  ".java", ".kt", ".scala", ".groovy",
-  ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh",
-  ".cs", ".fs", ".fsx",
-  ".go", ".rs", ".swift",
-  ".sql",
-  ".dockerfile", ".env", ".envrc", ".nvmrc",
-  ".gitignore", ".gitattributes", ".editorconfig",
-  ".lock", ".log",
-]);
-
 export type WorkspaceId = "project" | string;
 
 /**
@@ -107,8 +81,9 @@ async function getTaskBasePath(store: TaskStore, taskId: string): Promise<string
     // Fall back to task directory
     const rootDir = store.getRootDir();
     return resolve(join(rootDir, ".fusion", "tasks", taskId));
-  } catch (err: any) {
-    if (err.code === "ENOENT" || err.message?.includes("not found")) {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string };
+    if (error.code === "ENOENT" || (error.message && error.message.includes("not found"))) {
       throw new FileServiceError(`Task ${taskId} not found`, "ENOTASK");
     }
     throw err;
@@ -181,8 +156,9 @@ async function listFilesForBasePath(basePath: string, subPath?: string): Promise
   let stats;
   try {
     stats = await stat(targetPath);
-  } catch (err: any) {
-    if (err.code === "ENOENT") {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string };
+    if (error.code === "ENOENT") {
       throw new FileServiceError(`Directory not found: ${subPath || "."}`, "ENOENT");
     }
     throw err;
@@ -222,11 +198,12 @@ async function listFilesForBasePath(basePath: string, subPath?: string): Promise
       path: relativeBase || ".",
       entries: fileNodes,
     };
-  } catch (err: any) {
-    if (err.code === "ENOENT") {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string };
+    if (error.code === "ENOENT") {
       throw new FileServiceError(`Directory not found: ${subPath || "."}`, "ENOENT");
     }
-    if (err.code === "EACCES" || err.code === "EPERM") {
+    if (error.code === "EACCES" || error.code === "EPERM") {
       throw new FileServiceError(`Permission denied: ${subPath || "."}`, "EACCES");
     }
     throw err;
@@ -243,8 +220,9 @@ async function readFileForBasePath(basePath: string, filePath: string): Promise<
   let stats;
   try {
     stats = await stat(resolvedPath);
-  } catch (err: any) {
-    if (err.code === "ENOENT") {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string };
+    if (error.code === "ENOENT") {
       throw new FileServiceError(`File not found: ${filePath}`, "ENOENT");
     }
     throw err;
@@ -266,11 +244,12 @@ async function readFileForBasePath(basePath: string, filePath: string): Promise<
       mtime: stats.mtime.toISOString(),
       size: stats.size,
     };
-  } catch (err: any) {
-    if (err.code === "ENOENT") {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string };
+    if (error.code === "ENOENT") {
       throw new FileServiceError(`File not found: ${filePath}`, "ENOENT");
     }
-    if (err.code === "EACCES" || err.code === "EPERM") {
+    if (error.code === "EACCES" || error.code === "EPERM") {
       throw new FileServiceError(`Permission denied: ${filePath}`, "EACCES");
     }
     throw err;
@@ -294,8 +273,9 @@ async function writeFileForBasePath(basePath: string, filePath: string, content:
     if (stats.isDirectory()) {
       throw new FileServiceError(`Cannot write to directory: ${filePath}`, "EISDIR");
     }
-  } catch (err: any) {
-    if (err.code !== "ENOENT") {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string };
+    if (error.code !== "ENOENT") {
       throw err;
     }
   }
@@ -306,8 +286,9 @@ async function writeFileForBasePath(basePath: string, filePath: string, content:
     if (!parentStats.isDirectory()) {
       throw new FileServiceError(`Parent is not a directory: ${filePath}`, "ENOENT");
     }
-  } catch (err: any) {
-    if (err.code === "ENOENT") {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string };
+    if (error.code === "ENOENT") {
       throw new FileServiceError(`Parent directory does not exist: ${filePath}`, "ENOENT");
     }
     throw err;
@@ -322,11 +303,12 @@ async function writeFileForBasePath(basePath: string, filePath: string, content:
       mtime: stats.mtime.toISOString(),
       size: stats.size,
     };
-  } catch (err: any) {
-    if (err.code === "ENOENT") {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string };
+    if (error.code === "ENOENT") {
       throw new FileServiceError(`Parent directory does not exist: ${filePath}`, "ENOENT");
     }
-    if (err.code === "EACCES" || err.code === "EPERM") {
+    if (error.code === "EACCES" || error.code === "EPERM") {
       throw new FileServiceError(`Permission denied: ${filePath}`, "EACCES");
     }
     throw err;
@@ -527,8 +509,9 @@ export async function copyWorkspaceFile(
   let sourceStats;
   try {
     sourceStats = await stat(resolvedSource);
-  } catch (err: any) {
-    if (err.code === "ENOENT") {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string };
+    if (error.code === "ENOENT") {
       throw new FileServiceError(`Source not found: ${sourcePath}`, "ENOENT");
     }
     throw err;
@@ -538,8 +521,9 @@ export async function copyWorkspaceFile(
   try {
     await stat(resolvedDest);
     throw new FileServiceError(`Destination already exists: ${destinationPath}`, "EEXIST");
-  } catch (err: any) {
-    if (err.code !== "ENOENT") {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string };
+    if (error.code !== "ENOENT") {
       if (err instanceof FileServiceError) throw err;
     }
     // ENOENT is expected - destination should not exist
@@ -552,8 +536,9 @@ export async function copyWorkspaceFile(
     if (!parentStats.isDirectory()) {
       throw new FileServiceError("Destination parent is not a directory", "ENOTDIR");
     }
-  } catch (err: any) {
-    if (err.code === "ENOENT") {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string };
+    if (error.code === "ENOENT") {
       throw new FileServiceError("Destination parent directory does not exist", "ENOENT");
     }
     throw err;
@@ -566,9 +551,10 @@ export async function copyWorkspaceFile(
       await copyDirectoryRecursive(resolvedSource, resolvedDest);
     }
     return { success: true, message: `Copied "${sourcePath}" to "${destinationPath}"` };
-  } catch (err: any) {
-    if (err.code === "EACCES" || err.code === "EPERM") {
-      throw new FileServiceError(`Permission denied: ${err.message}`, "EACCES");
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string; message?: string };
+    if (error.code === "EACCES" || error.code === "EPERM") {
+      throw new FileServiceError(`Permission denied: ${error.message}`, "EACCES");
     }
     throw err;
   }
@@ -603,8 +589,9 @@ export async function moveWorkspaceFile(
   // Verify source exists
   try {
     await stat(resolvedSource);
-  } catch (err: any) {
-    if (err.code === "ENOENT") {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string };
+    if (error.code === "ENOENT") {
       throw new FileServiceError(`Source not found: ${sourcePath}`, "ENOENT");
     }
     throw err;
@@ -614,8 +601,9 @@ export async function moveWorkspaceFile(
   try {
     await stat(resolvedDest);
     throw new FileServiceError(`Destination already exists: ${destinationPath}`, "EEXIST");
-  } catch (err: any) {
-    if (err.code !== "ENOENT") {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string };
+    if (error.code !== "ENOENT") {
       if (err instanceof FileServiceError) throw err;
     }
   }
@@ -627,8 +615,9 @@ export async function moveWorkspaceFile(
     if (!parentStats.isDirectory()) {
       throw new FileServiceError("Destination parent is not a directory", "ENOTDIR");
     }
-  } catch (err: any) {
-    if (err.code === "ENOENT") {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string };
+    if (error.code === "ENOENT") {
       throw new FileServiceError("Destination parent directory does not exist", "ENOENT");
     }
     throw err;
@@ -637,11 +626,12 @@ export async function moveWorkspaceFile(
   try {
     await fsRename(resolvedSource, resolvedDest);
     return { success: true, message: `Moved "${sourcePath}" to "${destinationPath}"` };
-  } catch (err: any) {
-    if (err.code === "EACCES" || err.code === "EPERM") {
-      throw new FileServiceError(`Permission denied: ${err.message}`, "EACCES");
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string; message?: string };
+    if (error.code === "EACCES" || error.code === "EPERM") {
+      throw new FileServiceError(`Permission denied: ${error.message}`, "EACCES");
     }
-    if (err.code === "EXDEV") {
+    if (error.code === "EXDEV") {
       // Cross-device move: copy then delete
       await copyWorkspaceFile(store, workspace, sourcePath, destinationPath);
       await deleteWorkspaceFile(store, workspace, sourcePath);
@@ -683,8 +673,9 @@ export async function deleteWorkspaceFile(
   let stats;
   try {
     stats = await stat(resolvedPath);
-  } catch (err: any) {
-    if (err.code === "ENOENT") {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string };
+    if (error.code === "ENOENT") {
       throw new FileServiceError(`Not found: ${filePath}`, "ENOENT");
     }
     throw err;
@@ -697,8 +688,9 @@ export async function deleteWorkspaceFile(
       await fsRm(resolvedPath);
     }
     return { success: true, message: `Deleted "${filePath}"` };
-  } catch (err: any) {
-    if (err.code === "EACCES" || err.code === "EPERM") {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string };
+    if (error.code === "EACCES" || error.code === "EPERM") {
       throw new FileServiceError(`Permission denied: ${filePath}`, "EACCES");
     }
     throw err;
@@ -746,8 +738,9 @@ export async function renameWorkspaceFile(
   // Verify source exists
   try {
     await stat(resolvedPath);
-  } catch (err: any) {
-    if (err.code === "ENOENT") {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string };
+    if (error.code === "ENOENT") {
       throw new FileServiceError(`Not found: ${filePath}`, "ENOENT");
     }
     throw err;
@@ -770,8 +763,9 @@ export async function renameWorkspaceFile(
   try {
     await stat(destPath);
     throw new FileServiceError(`A file or directory named "${newName}" already exists`, "EEXIST");
-  } catch (err: any) {
-    if (err.code !== "ENOENT") {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string };
+    if (error.code !== "ENOENT") {
       if (err instanceof FileServiceError) throw err;
     }
   }
@@ -779,8 +773,9 @@ export async function renameWorkspaceFile(
   try {
     await fsRename(resolvedPath, destPath);
     return { success: true, message: `Renamed to "${newName}"` };
-  } catch (err: any) {
-    if (err.code === "EACCES" || err.code === "EPERM") {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string };
+    if (error.code === "EACCES" || error.code === "EPERM") {
       throw new FileServiceError(`Permission denied: ${filePath}`, "EACCES");
     }
     throw err;
@@ -818,8 +813,9 @@ export async function getWorkspaceFileForDownload(
   let stats;
   try {
     stats = await stat(resolvedPath);
-  } catch (err: any) {
-    if (err.code === "ENOENT") {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string };
+    if (error.code === "ENOENT") {
       throw new FileServiceError(`File not found: ${filePath}`, "ENOENT");
     }
     throw err;
@@ -870,8 +866,9 @@ export async function getWorkspaceFolderForZip(
   let stats;
   try {
     stats = await stat(resolvedPath);
-  } catch (err: any) {
-    if (err.code === "ENOENT") {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: string };
+    if (error.code === "ENOENT") {
       throw new FileServiceError(`Directory not found: ${dirPath}`, "ENOENT");
     }
     throw err;

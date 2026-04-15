@@ -19,7 +19,6 @@ import { Router, type Request, type Response } from "express";
 import { existsSync, statSync } from "node:fs";
 import { join, isAbsolute, dirname, basename } from "node:path";
 import type {
-  PluginInstallation,
   PluginLoader,
   PluginStore,
   PluginContext,
