@@ -34,6 +34,9 @@ export interface PushNotificationManagerOptions {
 
 type PushNotificationsModule = typeof import("@capacitor/push-notifications");
 
+/** Fallback listener type for untyped event handling */
+type FallbackListener = (...args: unknown[]) => void;
+
 export class PushNotificationManager extends EventEmitter {
   private deviceToken: string | undefined;
   private ntfyBaseUrl: string;
@@ -56,8 +59,8 @@ export class PushNotificationManager extends EventEmitter {
     eventName: K,
     listener: (payload: PushNotificationEventMap[K]) => void,
   ): this;
-  override on(eventName: string | symbol, listener: (...args: any[]) => void): this;
-  override on(eventName: string | symbol, listener: (...args: any[]) => void): this {
+  override on(eventName: string | symbol, listener: FallbackListener): this;
+  override on(eventName: string | symbol, listener: FallbackListener): this {
     return super.on(eventName, listener);
   }
 
@@ -65,8 +68,8 @@ export class PushNotificationManager extends EventEmitter {
     eventName: K,
     listener: (payload: PushNotificationEventMap[K]) => void,
   ): this;
-  override off(eventName: string | symbol, listener: (...args: any[]) => void): this;
-  override off(eventName: string | symbol, listener: (...args: any[]) => void): this {
+  override off(eventName: string | symbol, listener: FallbackListener): this;
+  override off(eventName: string | symbol, listener: FallbackListener): this {
     return super.off(eventName, listener);
   }
 

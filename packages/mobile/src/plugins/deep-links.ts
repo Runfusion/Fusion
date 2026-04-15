@@ -26,6 +26,9 @@ type AppListenerHandle = { remove: () => Promise<void> };
 
 type HashChangeEventHandler = (event: HashChangeEvent) => void;
 
+/** Fallback listener type for untyped event handling */
+type FallbackListener = (...args: unknown[]) => void;
+
 export class DeepLinkManager extends EventEmitter {
   private readonly scheme: string;
   private readonly universalLinkHosts: string[];
@@ -44,8 +47,8 @@ export class DeepLinkManager extends EventEmitter {
     event: K,
     listener: (payload: DeepLinkEventMap[K]) => void,
   ): this;
-  override on(event: string | symbol, listener: (...args: any[]) => void): this;
-  override on(event: string | symbol, listener: (...args: any[]) => void): this {
+  override on(event: string | symbol, listener: FallbackListener): this;
+  override on(event: string | symbol, listener: FallbackListener): this {
     return super.on(event, listener);
   }
 
@@ -53,8 +56,8 @@ export class DeepLinkManager extends EventEmitter {
     event: K,
     listener: (payload: DeepLinkEventMap[K]) => void,
   ): this;
-  override off(event: string | symbol, listener: (...args: any[]) => void): this;
-  override off(event: string | symbol, listener: (...args: any[]) => void): this {
+  override off(event: string | symbol, listener: FallbackListener): this;
+  override off(event: string | symbol, listener: FallbackListener): this {
     return super.off(event, listener);
   }
 
