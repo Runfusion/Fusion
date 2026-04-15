@@ -1,5 +1,5 @@
 import type { ProjectInfo } from "../api";
-import type { ColorTheme, Column, MergeResult, Task, TaskCreateInput, ThemeMode } from "@fusion/core";
+import type { ColorTheme, Column, MergeResult, Task, ThemeMode } from "@fusion/core";
 import type { UseProjectActionsResult } from "../hooks/useProjectActions";
 import type { ModalManager } from "../hooks/useModalManager";
 import type { UseTaskHandlersResult } from "../hooks/useTaskHandlers";

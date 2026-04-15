@@ -109,7 +109,7 @@ export function AddNodeModal({ isOpen, onClose, onSubmit, addToast }: AddNodeMod
 
     try {
       await onSubmit(input);
-      addToast(`Node \"${input.name}\" registered`, "success");
+      addToast(`Node "${input.name}" registered`, "success");
       closeModal();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to register node";

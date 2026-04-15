@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Globe, Folder } from "lucide-react";
-import { THINKING_LEVELS, PROMPT_KEY_CATALOG, isGlobalSettingsKey, isProjectSettingsKey } from "@fusion/core";
-import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent, PromptKey, AgentPromptsConfig } from "@fusion/core";
+import { THINKING_LEVELS, isGlobalSettingsKey, isProjectSettingsKey } from "@fusion/core";
+import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent, AgentPromptsConfig } from "@fusion/core";
 import { fetchSettings, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemory, saveMemory, fetchGlobalConcurrency, updateGlobalConcurrency } from "../api";
-import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData, MemoryBackendCapabilities } from "../api";
+import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData } from "../api";
 import { useMemoryBackendStatus } from "../hooks/useMemoryBackendStatus";
 import type { ToastType } from "../hooks/useToast";
 import { ThemeSelector } from "./ThemeSelector";

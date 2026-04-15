@@ -8,7 +8,7 @@ import type { ModelInfo } from "../api";
  * Preserves spaces (which serve as field/word boundaries) and alphanumeric chars.
  */
 function normalize(s: string): string {
-  return s.toLowerCase().replace(/[-_.\/]/g, "");
+  return s.toLowerCase().replace(/[-_./]/g, "");
 }
 
 /**

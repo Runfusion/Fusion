@@ -65,9 +65,10 @@ export function useFileEditor(
           setOriginalContent(response.content);
           setMtime(response.mtime);
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (!cancelled) {
-          setError(err.message || "Failed to load file");
+          const message = err instanceof Error ? err.message : String(err);
+          setError(message || "Failed to load file");
           setContentState("");
           setOriginalContent("");
           setMtime(null);
@@ -100,8 +101,9 @@ export function useFileEditor(
       const response: SaveFileResponse = await saveFileContent(taskId, filePath, content, projectId);
       setOriginalContent(content);
       setMtime(response.mtime);
-    } catch (err: any) {
-      setError(err.message || "Failed to save file");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message || "Failed to save file");
       throw err;
     } finally {
       setSaving(false);

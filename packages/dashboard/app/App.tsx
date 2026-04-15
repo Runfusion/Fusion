@@ -37,14 +37,13 @@ import { useRemoteNodeData } from "./hooks/useRemoteNodeData";
 import { useRemoteNodeEvents } from "./hooks/useRemoteNodeEvents";
 import { NodeProvider, useNodeContext } from "./context/NodeContext";
 import type { AiSessionSummary } from "./api";
-import { fetchAiSession } from "./api";
 
 function AppInner() {
   const { toasts, addToast, removeToast } = useToast();
   const isElectron = typeof window !== "undefined" && Boolean((window as Window & { electronAPI?: unknown }).electronAPI);
   
   // Project management hooks - MUST be called before any conditional logic
-  const { projects, loading: projectsLoading, error: projectsError, refresh: refreshProjects, register: registerProject, update: updateProjectHook, unregister: unregisterProjectHook } = useProjects();
+  const { projects, loading: projectsLoading, refresh: refreshProjects } = useProjects();
   const { nodes } = useNodes();
   const { currentProject, setCurrentProject, clearCurrentProject, loading: currentProjectLoading } = useCurrentProject(projects);
   
@@ -67,11 +66,10 @@ function AppInner() {
   
   // Remote node data and events when in remote mode (pass searchQuery for server-side filtering)
   const remoteData = useRemoteNodeData(currentNodeId, { projectId: currentProject?.id, searchQuery: searchQuery || undefined });
-  const remoteEvents = useRemoteNodeEvents(currentNodeId);
+  useRemoteNodeEvents(currentNodeId);
   
   // Use remote data when in remote mode, local data otherwise
   const effectiveProjects = isRemote && remoteData.projects.length > 0 ? remoteData.projects : projects;
-  const effectiveTasks = isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : [];
   
   // Tasks hook with project context and search query
   const { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, updateTask, duplicateTask, archiveTask, unarchiveTask, archiveAllDone, loadArchivedTasks, lastFetchTimeMs } = useTasks(
@@ -132,7 +130,6 @@ function AppInner() {
   // Settings state
   const {
     maxConcurrent,
-    rootDir,
     autoMerge,
     globalPaused,
     enginePaused,
@@ -152,7 +149,7 @@ function AppInner() {
     toggleFavoriteModel,
   } = useFavorites();
 
-  const { viewMode, setViewMode, taskView, handleChangeTaskView, handleToggleTheme } = useViewState({
+  const { viewMode, setViewMode, taskView, handleChangeTaskView } = useViewState({
     projectsLoading,
     currentProjectLoading,
     currentProject,
@@ -244,12 +241,6 @@ function AppInner() {
   const handleOpenNodes = useCallback(() => {
     setNodesOpen((prev) => !prev);
   }, []);
-
-  const handleOpenMissionsView = useCallback(() => {
-    setMissionTargetId(undefined);
-    setMissionResumeSessionId(undefined);
-    handleChangeTaskView("missions");
-  }, [handleChangeTaskView]);
 
   const handleOpenMission = useCallback((missionId: string) => {
     setMissionTargetId(missionId);

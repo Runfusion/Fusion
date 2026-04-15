@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, Fragment, useEffect, useRef } from "react";
-import { LayoutGrid, List as ListIcon, ArrowUpDown, ArrowUp, ArrowDown, Link, Columns3, EyeOff, Eye, ChevronRight } from "lucide-react";
+import { ArrowUpDown, ArrowUp, ArrowDown, Link, Columns3, EyeOff, Eye, ChevronRight } from "lucide-react";
 import type { Task, TaskDetail, Column, TaskStep, TaskCreateInput } from "@fusion/core";
 import { COLUMN_LABELS, COLUMNS } from "@fusion/core";
 import { batchUpdateTaskModels } from "../api";
@@ -122,8 +122,6 @@ interface ListViewProps {
   onTasksUpdated?: (updatedTasks: Task[]) => void;
   /** Project ID for multi-project context (optional) */
   projectId?: string;
-  /** Project name for display (optional) */
-  projectName?: string;
   /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
   taskStuckTimeoutMs?: number;
   /** External search query from header search (defaults to "") */
@@ -161,7 +159,6 @@ export function ListView({
   onSubtaskBreakdown,
   onTasksUpdated,
   projectId,
-  projectName,
   taskStuckTimeoutMs,
   searchQuery = "",
   lastFetchTimeMs,

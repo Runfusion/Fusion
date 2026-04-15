@@ -431,8 +431,6 @@ export function ScheduledTasksModal({ onClose, addToast }: ScheduledTasksModalPr
   // Determine if we're in "list" view for showing the "New" button
   const isShowingList =
     activeTab === "schedules" ? view === "list" && schedules.length > 0 : routineView === "list" && routines.length > 0;
-  const isShowingEmptyState =
-    activeTab === "schedules" ? view === "list" && schedules.length === 0 && !loading : routineView === "list" && routines.length === 0;
 
   return (
     <div className="modal-overlay open" onClick={handleOverlayClick}>

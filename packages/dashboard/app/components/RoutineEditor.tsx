@@ -3,7 +3,6 @@ import { Calendar, Webhook, Code, Zap } from "lucide-react";
 import type {
   Routine,
   RoutineCreateInput,
-  RoutineUpdateInput,
   RoutineTrigger,
   RoutineTriggerType,
   RoutineCronTrigger,
@@ -22,7 +21,7 @@ function isLikelyCron(expr: string): boolean {
   const parts = expr.trim().split(/\s+/);
   if (parts.length !== 5) return false;
   // Each field should contain digits, *, /, -, or ,
-  return parts.every((p) => /^[\d*,/\-]+$/.test(p));
+  return parts.every((p) => /^[\d*,/-]+$/.test(p));
 }
 
 /**

@@ -95,11 +95,6 @@ export function CustomModelDropdown({
   }, [favoriteModels, filteredModels]);
 
   // Sort providers: favorites first (in order), then alphabetically
-  // Exclude providers that are already favorited as models (they appear at top as pinned rows)
-  const favoritedProviderSet = new Set(favoriteModels.map((fullId) => {
-    const idx = fullId.indexOf("/");
-    return idx !== -1 ? fullId.slice(0, idx) : fullId;
-  }));
   const sortedProviderEntries = useMemo(() => {
     const entries = Object.entries(modelsByProvider);
     const favoritesSet = new Set(favoriteProviders);

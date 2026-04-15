@@ -65,9 +65,10 @@ export function useWorkspaceFileBrowser(
         if (!cancelled) {
           setEntries(response.entries);
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (!cancelled) {
-          setError(err.message || "Failed to load files");
+          const message = err instanceof Error ? err.message : String(err);
+          setError(message || "Failed to load files");
           setEntries([]);
         }
       } finally {

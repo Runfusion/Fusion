@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type { JSX } from "react";
-import { Plus, Play, Pause, Square, Activity, Heart, Trash2, RefreshCw, Bot, LayoutGrid, List, ChevronRight, ChevronDown, GitBranch, Filter, Upload, Network } from "lucide-react";
+import { Plus, Play, Pause, Square, Activity, Trash2, RefreshCw, Bot, LayoutGrid, List, ChevronRight, ChevronDown, GitBranch, Filter, Upload, Network } from "lucide-react";
 import type { Agent, AgentCapability, AgentState, OrgTreeNode } from "../api";
 import { fetchAgents, updateAgent, updateAgentState, deleteAgent, startAgentRun, fetchOrgTree } from "../api";
 import { AgentDetailView } from "./AgentDetailView";

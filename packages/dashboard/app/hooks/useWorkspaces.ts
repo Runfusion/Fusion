@@ -56,9 +56,10 @@ export function useWorkspaces(projectId?: string): UseWorkspacesReturn {
         setProjectName(getProjectName(response.project));
         setWorkspaces(response.tasks.map(mapTaskWorkspace));
         setError(null);
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (!cancelled) {
-          setError(err.message || "Failed to load workspaces");
+          const message = err instanceof Error ? err.message : String(err);
+          setError(message || "Failed to load workspaces");
         }
       } finally {
         if (!cancelled) {

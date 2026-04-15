@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type { JSX } from "react";
-import { X, Plus, Play, Pause, Square, Activity, Heart, Trash2, RefreshCw, Bot, LayoutGrid, List, Filter } from "lucide-react";
+import { X, Plus, Play, Pause, Square, Trash2, RefreshCw, Bot, LayoutGrid, List, Filter } from "lucide-react";
 import type { Agent, AgentCapability, AgentState } from "../api";
 import { fetchAgents, createAgent, updateAgent, updateAgentState, deleteAgent } from "../api";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
@@ -158,7 +158,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
     }
   };
 
-  const handleRoleKeyDown = (e: React.KeyboardEvent, agentId: string) => {
+  const handleRoleKeyDown = (e: React.KeyboardEvent, _agentId: string) => {
     if (e.key === "Escape") {
       setEditingRoleForAgent(null);
     }

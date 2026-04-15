@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { FileText, ChevronDown, ChevronUp, Plus, Trash2, History, X } from "lucide-react";
+import { FileText, ChevronDown, ChevronUp, Plus, Trash2, History } from "lucide-react";
 import type { Task, TaskDocument, TaskDocumentRevision } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import {
   fetchTaskDocuments,
-  fetchTaskDocument,
   fetchTaskDocumentRevisions,
   putTaskDocument,
   deleteTaskDocument,
