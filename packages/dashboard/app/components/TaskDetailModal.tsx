@@ -661,15 +661,17 @@ export function TaskDetailModal({
       });
   }, [task.id, onMergeTask, onClose, addToast]);
 
-  const handleRetry = useCallback(async () => {
+  const handleRetry = useCallback(() => {
     if (!onRetryTask) return;
-    try {
-      await onRetryTask(task.id);
-      onClose();
-      addToast(`Retrying ${task.id}...`, "info");
-    } catch (err: any) {
-      addToast(err.message, "error");
-    }
+    onClose();
+    addToast(`Retrying ${task.id}...`, "info");
+    onRetryTask(task.id)
+      .then(() => {
+        addToast(`Retry started for ${task.id}`, "success");
+      })
+      .catch((err: any) => {
+        addToast(err.message, "error");
+      });
   }, [task.id, onRetryTask, onClose, addToast]);
 
   const handleDuplicate = useCallback(async () => {

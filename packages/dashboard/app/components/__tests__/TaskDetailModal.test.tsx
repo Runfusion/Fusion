@@ -291,7 +291,41 @@ describe("TaskDetailModal", () => {
       expect(retryButtons).toHaveLength(1);
     });
 
-    it("shows 'Move to Todo' in Move dropdown for in-review tasks (not 'Retry')", () => {
+    it("closes modal immediately when Retry is clicked (before API call)", async () => {
+      const onClose = vi.fn();
+      const onRetryTask = vi.fn(async () => ({}) as Task);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ column: "in-review", status: "failed" })}
+          onClose={onClose}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          onRetryTask={onRetryTask}
+          addToast={noop}
+        />,
+      );
+
+      // Open Actions dropdown and click Retry
+      const actionsBtn = screen.getByRole("button", { name: /actions/i });
+      await act(async () => {
+        fireEvent.click(actionsBtn);
+      });
+
+      const retryBtn = screen.getByRole("menuitem", { name: "Retry" });
+      await act(async () => {
+        fireEvent.click(retryBtn);
+      });
+
+      // Modal should close immediately (optimistic close before API call)
+      expect(onClose).toHaveBeenCalledTimes(1);
+      // onRetryTask should still be called with the correct task ID
+      expect(onRetryTask).toHaveBeenCalledWith("FN-099");
+    });
+
+  it("shows 'Move to Todo' in Move dropdown for in-review tasks (not 'Retry')", () => {
       render(
         <TaskDetailModal
           task={makeTask({ column: "in-review" })}
