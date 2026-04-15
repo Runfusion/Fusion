@@ -629,7 +629,7 @@ function MilestoneCard({
                 <FeatureSuggestionCard
                   key={suggestion.id}
                   suggestion={suggestion}
-                  onUpdateDraft={(patch) => onUpdateFeatureSuggestionDraft?.(milestone.id, suggestion.id, patch as SuggestionDraftPatch)}
+                  onUpdateDraft={(patch) => onUpdateFeatureSuggestionDraft?.(milestone.id, suggestion.id, patch)}
                   onAccept={() => {
                     onAcceptFeatureSuggestion?.(milestone.id, suggestion.id);
                   }}
@@ -1993,7 +1993,7 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
                       featureSuggestions={featureSuggestionsByMilestoneId[milestone.id]}
                       isGeneratingFeatureSuggestions={isGeneratingFeatureSuggestions(milestone.id)}
                       onGenerateFeatureSuggestions={() => handleGenerateFeatureSuggestions(milestone.id)}
-                      onAcceptFeatureSuggestion={(draftId) => handleAcceptFeatureSuggestion(milestone.id, draftId)}
+                      onAcceptFeatureSuggestion={(index) => handleAcceptFeatureSuggestion(milestone.id, index)}
                       onAcceptAllFeatureSuggestions={() => handleAcceptAllFeatureSuggestions(milestone.id)}
                       onUpdateFeatureSuggestionDraft={(milestoneId, draftId, patch) => handleUpdateFeatureSuggestionDraft(milestoneId, draftId, patch)}
                       onClearFeatureSuggestions={() => handleClearFeatureSuggestions(milestone.id)}
