@@ -29902,6 +29902,22 @@ html .column.drag-over * {
   margin-top: 0;
 }
 
+.plugin-settings-array {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plugin-settings-array-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.plugin-settings-array-item input {
+  flex: 1;
+}
+
 .plugin-detail-actions {
   display: flex;
   gap: 8px;

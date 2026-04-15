@@ -138,10 +138,80 @@ const settingsSchema: Record<string, PluginSettingSchema> = {
 
 | Type | Description | Extra Fields |
 |------|-------------|--------------|
-| `"string"` | Text input | — |
+| `"string"` | Text input | `multiline?: boolean` (renders textarea) |
 | `"number"` | Numeric input | — |
 | `"boolean"` | Toggle switch | — |
 | `"enum"` | Dropdown select | `enumValues: string[]` |
+| `"password"` | Password input (hidden) | — |
+| `"array"` | Dynamic list with add/remove | `itemType: "string" \| "number"` |
+
+### Example: All Setting Types
+
+```typescript
+const settingsSchema: Record<string, PluginSettingSchema> = {
+  // Simple string input
+  username: {
+    type: "string",
+    label: "Username",
+    description: "Your username",
+  },
+  
+  // Multiline text area
+  message: {
+    type: "string",
+    label: "Message",
+    description: "Multi-line message",
+    multiline: true,
+    defaultValue: "Hello!",
+  },
+  
+  // Password input (hidden)
+  apiSecret: {
+    type: "password",
+    label: "API Secret",
+    description: "Your secret key",
+  },
+  
+  // Number input
+  maxRetries: {
+    type: "number",
+    label: "Max Retries",
+    defaultValue: 3,
+  },
+  
+  // Boolean toggle
+  enabled: {
+    type: "boolean",
+    label: "Enable Feature",
+    defaultValue: true,
+  },
+  
+  // Dropdown select
+  severity: {
+    type: "enum",
+    label: "Severity",
+    enumValues: ["debug", "info", "warn", "error"],
+    defaultValue: "info",
+  },
+  
+  // Array of strings
+  tags: {
+    type: "array",
+    label: "Tags",
+    description: "Tags to track",
+    itemType: "string",
+    defaultValue: ["bug", "feature"],
+  },
+  
+  // Array of numbers
+  thresholds: {
+    type: "array",
+    label: "Thresholds",
+    itemType: "number",
+    defaultValue: [10, 20, 30],
+  },
+};
+```
 
 ### Accessing Settings
 

@@ -110,6 +110,40 @@ describe("PluginStore", () => {
       expect(plugin.settingsSchema!.count.defaultValue).toBe(5);
     });
 
+    it("applies default values from settingsSchema when registering", async () => {
+      const manifest = makeManifest({
+        settingsSchema: {
+          apiKey: { type: "string", defaultValue: "default-key" },
+          count: { type: "number", defaultValue: 10 },
+          enabled: { type: "boolean", defaultValue: true },
+        },
+      });
+      const plugin = await store.registerPlugin({ manifest, path: "/path/to/plugin" });
+
+      // Defaults should be applied
+      expect(plugin.settings.apiKey).toBe("default-key");
+      expect(plugin.settings.count).toBe(10);
+      expect(plugin.settings.enabled).toBe(true);
+    });
+
+    it("overrides defaults with explicit settings", async () => {
+      const manifest = makeManifest({
+        settingsSchema: {
+          apiKey: { type: "string", defaultValue: "default-key" },
+          count: { type: "number", defaultValue: 10 },
+        },
+      });
+      const plugin = await store.registerPlugin({
+        manifest,
+        path: "/path/to/plugin",
+        settings: { apiKey: "custom-key", count: 20 },
+      });
+
+      // Explicit settings should win over defaults
+      expect(plugin.settings.apiKey).toBe("custom-key");
+      expect(plugin.settings.count).toBe(20);
+    });
+
     it("rejects missing manifest id", async () => {
       const manifest = makeManifest({ id: "" });
       await expect(
@@ -507,6 +541,83 @@ describe("PluginStore", () => {
       await expect(
         store.updatePluginSettings("test-plugin", { color: "yellow" }),
       ).rejects.toThrow('Setting "color" must be one of');
+    });
+
+    it("validates password type as string", async () => {
+      const manifest = makeManifest({
+        settingsSchema: {
+          apiSecret: { type: "password" },
+        },
+      });
+      await store.registerPlugin({
+        manifest,
+        path: "/path/to/plugin",
+        settings: {},
+      });
+
+      // Valid: string value for password
+      const plugin1 = await store.updatePluginSettings("test-plugin", {
+        apiSecret: "valid-secret",
+      });
+      expect(plugin1.settings.apiSecret).toBe("valid-secret");
+
+      // Invalid: non-string value for password
+      await expect(
+        store.updatePluginSettings("test-plugin", { apiSecret: 12345 }),
+      ).rejects.toThrow('Setting "apiSecret" must be a string');
+    });
+
+    it("validates array type", async () => {
+      const manifest = makeManifest({
+        settingsSchema: {
+          tags: { type: "array", itemType: "string" },
+        },
+      });
+      await store.registerPlugin({
+        manifest,
+        path: "/path/to/plugin",
+        settings: {},
+      });
+
+      // Valid: array of strings
+      const plugin1 = await store.updatePluginSettings("test-plugin", {
+        tags: ["bug", "feature"],
+      });
+      expect(plugin1.settings.tags).toEqual(["bug", "feature"]);
+
+      // Invalid: non-array value
+      await expect(
+        store.updatePluginSettings("test-plugin", { tags: "not-an-array" }),
+      ).rejects.toThrow('Setting "tags" must be an array');
+
+      // Invalid: array with wrong item type
+      await expect(
+        store.updatePluginSettings("test-plugin", { tags: [1, 2, 3] }),
+      ).rejects.toThrow('Setting "tags" must be an array of string');
+    });
+
+    it("validates number array type", async () => {
+      const manifest = makeManifest({
+        settingsSchema: {
+          scores: { type: "array", itemType: "number" },
+        },
+      });
+      await store.registerPlugin({
+        manifest,
+        path: "/path/to/plugin",
+        settings: {},
+      });
+
+      // Valid: array of numbers
+      const plugin1 = await store.updatePluginSettings("test-plugin", {
+        scores: [10, 20, 30],
+      });
+      expect(plugin1.settings.scores).toEqual([10, 20, 30]);
+
+      // Invalid: array with wrong item type
+      await expect(
+        store.updatePluginSettings("test-plugin", { scores: ["a", "b"] }),
+      ).rejects.toThrow('Setting "scores" must be an array of number');
     });
 
     it("emits plugin:updated event", async () => {

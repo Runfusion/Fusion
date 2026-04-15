@@ -344,9 +344,29 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
                         {schema.label || key}
                         {schema.required && " *"}
                       </label>
-                      {schema.type === "string" && (
+                      {schema.type === "string" && !schema.multiline && (
                         <input
                           type="text"
+                          id={`setting-${key}`}
+                          value={(pluginSettings[key] as string) ?? ""}
+                          onChange={(e) => setPluginSettings({ ...pluginSettings, [key]: e.target.value })}
+                          placeholder={schema.description}
+                          aria-describedby={schema.description && !schema.required ? helpId : undefined}
+                        />
+                      )}
+                      {schema.type === "string" && schema.multiline && (
+                        <textarea
+                          id={`setting-${key}`}
+                          rows={4}
+                          value={(pluginSettings[key] as string) ?? ""}
+                          onChange={(e) => setPluginSettings({ ...pluginSettings, [key]: e.target.value })}
+                          placeholder={schema.description}
+                          aria-describedby={schema.description && !schema.required ? helpId : undefined}
+                        />
+                      )}
+                      {schema.type === "password" && (
+                        <input
+                          type="password"
                           id={`setting-${key}`}
                           value={(pluginSettings[key] as string) ?? ""}
                           onChange={(e) => setPluginSettings({ ...pluginSettings, [key]: e.target.value })}
@@ -386,7 +406,48 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
                           ))}
                         </select>
                       )}
-                      {schema.description && !schema.required && (
+                      {schema.type === "array" && (
+                        <div className="plugin-settings-array">
+                          {(pluginSettings[key] as unknown[] | undefined)?.map((item, index) => (
+                            <div key={index} className="plugin-settings-array-item">
+                              <input
+                                type={schema.itemType === "number" ? "number" : "text"}
+                                value={(item as string | number) ?? ""}
+                                onChange={(e) => {
+                                  const newValue = e.target.value;
+                                  const current = (pluginSettings[key] as unknown[]) || [];
+                                  const updated = [...current];
+                                  updated[index] = schema.itemType === "number" ? Number(newValue) : newValue;
+                                  setPluginSettings({ ...pluginSettings, [key]: updated });
+                                }}
+                              />
+                              <button
+                                className="btn-icon"
+                                onClick={() => {
+                                  const current = (pluginSettings[key] as unknown[]) || [];
+                                  const updated = [...current];
+                                  updated.splice(index, 1);
+                                  setPluginSettings({ ...pluginSettings, [key]: updated });
+                                }}
+                                aria-label="Remove item"
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                          ))}
+                          <button
+                            className="btn-secondary"
+                            onClick={() => {
+                              const current = (pluginSettings[key] as unknown[]) || [];
+                              const defaultItem = schema.itemType === "number" ? 0 : "";
+                              setPluginSettings({ ...pluginSettings, [key]: [...current, defaultItem] });
+                            }}
+                          >
+                            <Plus size={14} /> Add Item
+                          </button>
+                        </div>
+                      )}
+                      {schema.description && !schema.required && !schema.multiline && (
                         <span id={helpId} className="form-help">{schema.description}</span>
                       )}
                     </div>

@@ -120,6 +120,8 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
       const expectedType = settingSchema.type;
       if (expectedType === "string" && typeof value !== "string") {
         errors.push(`Setting "${key}" must be a string`);
+      } else if (expectedType === "password" && typeof value !== "string") {
+        errors.push(`Setting "${key}" must be a string`);
       } else if (expectedType === "number" && typeof value !== "number") {
         errors.push(`Setting "${key}" must be a number`);
       } else if (expectedType === "boolean" && typeof value !== "boolean") {
@@ -129,6 +131,22 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
           errors.push(
             `Setting "${key}" must be one of: ${settingSchema.enumValues?.join(", ")}`,
           );
+        }
+      } else if (expectedType === "array") {
+        if (!Array.isArray(value)) {
+          errors.push(`Setting "${key}" must be an array`);
+        } else {
+          // Validate item types
+          const itemType = settingSchema.itemType;
+          for (const item of value) {
+            if (itemType === "string" && typeof item !== "string") {
+              errors.push(`Setting "${key}" must be an array of string`);
+              break;
+            } else if (itemType === "number" && typeof item !== "number") {
+              errors.push(`Setting "${key}" must be an array of number`);
+              break;
+            }
+          }
         }
       }
     }
@@ -172,6 +190,17 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
       });
     }
 
+    // Compute defaults from settingsSchema and merge with provided settings
+    const defaultSettings: Record<string, unknown> = {};
+    if (manifest.settingsSchema) {
+      for (const [key, schema] of Object.entries(manifest.settingsSchema)) {
+        if (schema.defaultValue !== undefined) {
+          defaultSettings[key] = schema.defaultValue;
+        }
+      }
+    }
+    const mergedSettings = { ...defaultSettings, ...settings };
+
     const now = new Date().toISOString();
     const plugin: PluginInstallation = {
       id: manifest.id,
@@ -183,7 +212,7 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
       path: path.trim(),
       enabled: true,
       state: "installed",
-      settings,
+      settings: mergedSettings,
       settingsSchema: manifest.settingsSchema,
       dependencies: manifest.dependencies || [],
       createdAt: now,

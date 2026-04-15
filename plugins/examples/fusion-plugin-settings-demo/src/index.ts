@@ -26,6 +26,18 @@ import type {
  * Users can configure these values via the dashboard Settings → Plugins UI.
  */
 const settingsSchema: Record<string, PluginSettingSchema> = {
+  webhookSecret: {
+    type: "password",
+    label: "Webhook Secret",
+    description: "Secret for webhook signatures",
+  },
+  customMessage: {
+    type: "string",
+    label: "Custom Message",
+    description: "Multi-line message shown on load",
+    multiline: true,
+    defaultValue: "Hello from Settings Demo!",
+  },
   greetingMessage: {
     type: "string",
     label: "Greeting Message",
@@ -50,6 +62,13 @@ const settingsSchema: Record<string, PluginSettingSchema> = {
     description: "Minimum log level to output",
     enumValues: ["debug", "info", "warn", "error"],
     defaultValue: "info",
+  },
+  priorityTags: {
+    type: "array",
+    label: "Priority Tags",
+    description: "Tags to prioritize in suggestions",
+    itemType: "string",
+    defaultValue: ["bug", "feature"],
   },
 };
 
@@ -184,16 +203,22 @@ const statusTool: PluginToolDefinition = {
     ctx: PluginContext,
   ): Promise<PluginToolResult> => {
     // Return raw settings values for status display
+    const webhookSecret = ctx.settings.webhookSecret as string | undefined;
+    const customMessage = ctx.settings.customMessage as string | undefined;
     const greetingMessage = ctx.settings.greetingMessage as string | undefined;
     const maxTags = ctx.settings.maxTags as number | undefined;
     const enableLogging = ctx.settings.enableLogging as boolean | undefined;
     const logLevel = ctx.settings.logLevel as string | undefined;
+    const priorityTags = ctx.settings.priorityTags as string[] | undefined;
 
     // Use resolved values for display text
+    const webhookConfigured = webhookSecret ? "configured" : "not configured";
+    const displayCustomMessage = customMessage || "Not configured";
     const greeting = greetingMessage || "Not configured";
     const displayMaxTags = maxTags ?? 3;
     const displayEnableLogging = enableLogging ?? true;
     const displayLogLevel = logLevel || "info";
+    const displayPriorityTags = priorityTags?.join(", ") || "bug, feature";
 
     return {
       content: [
@@ -201,18 +226,24 @@ const statusTool: PluginToolDefinition = {
           type: "text",
           text: [
             "Settings Demo Plugin Status:",
+            `- Webhook Secret: ${webhookConfigured}`,
+            `- Custom Message: ${displayCustomMessage}`,
             `- Greeting: ${greeting}`,
             `- Max Tags: ${displayMaxTags}`,
             `- Logging: ${displayEnableLogging ? "enabled" : "disabled"}`,
             `- Log Level: ${displayLogLevel}`,
+            `- Priority Tags: ${displayPriorityTags}`,
           ].join("\n"),
         },
       ],
       details: {
+        webhookSecret: webhookSecret ? "(configured)" : undefined,
+        customMessage,
         greetingMessage,
         maxTags,
         enableLogging,
         logLevel,
+        priorityTags,
       },
     };
   },
@@ -232,14 +263,22 @@ const plugin: FusionPlugin = definePlugin({
   tools: [suggestTagsTool, statusTool],
   hooks: {
     onLoad: (ctx: PluginContext) => {
+      const webhookSecret = ctx.settings.webhookSecret as string | undefined;
+      const customMessage =
+        (ctx.settings.customMessage as string) || "Hello from Settings Demo!";
       const greeting =
         (ctx.settings.greetingMessage as string) || "Hello from Settings Demo!";
       const enableLogging = (ctx.settings.enableLogging as boolean) ?? true;
       const logLevel = (ctx.settings.logLevel as string) || "info";
+      const priorityTags = (ctx.settings.priorityTags as string[] | undefined) || ["bug", "feature"];
 
       if (enableLogging && shouldLog(logLevel, "info")) {
-        ctx.logger.info(greeting);
+        if (webhookSecret) {
+          ctx.logger.info("Webhook secret is configured");
+        }
+        ctx.logger.info(customMessage);
         ctx.logger.info(`Plugin configured with maxTags: ${ctx.settings.maxTags || 3}`);
+        ctx.logger.info(`Priority tags: ${priorityTags.join(", ")}`);
       }
     },
 

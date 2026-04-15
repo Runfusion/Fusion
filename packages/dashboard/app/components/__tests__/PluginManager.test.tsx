@@ -653,4 +653,237 @@ describe("PluginManager", () => {
       expect(eventSourceInstance?.close).toHaveBeenCalled();
     });
   });
+
+  describe("new input types", () => {
+    const mockPluginWithNewTypes: PluginInstallation = {
+      id: "plugin-new-types",
+      name: "Plugin With New Types",
+      version: "1.0.0",
+      state: "started",
+      enabled: true,
+      description: "A plugin with password, multiline, and array settings",
+      settings: {
+        apiSecret: "secret123",
+        customMessage: "Hello\nWorld",
+        tags: ["bug", "feature"],
+        counts: [1, 2, 3],
+      },
+      settingsSchema: {
+        apiSecret: { type: "password", label: "API Secret" },
+        customMessage: { type: "string", label: "Custom Message", multiline: true },
+        tags: { type: "array", label: "Tags", itemType: "string" },
+        counts: { type: "array", label: "Counts", itemType: "number" },
+      },
+    };
+
+    it("renders password input for password type", async () => {
+      vi.mocked(fetchPlugins).mockResolvedValueOnce([mockPluginWithNewTypes]);
+      vi.mocked(fetchPluginSettings).mockResolvedValueOnce({
+        apiSecret: "secret123",
+      });
+
+      render(<PluginManager addToast={addToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Plugin With New Types")).toBeTruthy();
+      });
+
+      const settingsButtons = screen.getAllByTitle("Settings");
+      await userEvent.click(settingsButtons[0]);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("API Secret")).toBeTruthy();
+      });
+
+      const passwordInput = screen.getByLabelText("API Secret") as HTMLInputElement;
+      expect(passwordInput.type).toBe("password");
+    });
+
+    it("renders textarea for multiline string", async () => {
+      vi.mocked(fetchPlugins).mockResolvedValueOnce([mockPluginWithNewTypes]);
+      vi.mocked(fetchPluginSettings).mockResolvedValueOnce({
+        customMessage: "Hello\nWorld",
+      });
+
+      render(<PluginManager addToast={addToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Plugin With New Types")).toBeTruthy();
+      });
+
+      const settingsButtons = screen.getAllByTitle("Settings");
+      await userEvent.click(settingsButtons[0]);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Custom Message")).toBeTruthy();
+      });
+
+      const textarea = screen.getByLabelText("Custom Message") as HTMLTextAreaElement;
+      expect(textarea.rows).toBe(4);
+      expect(textarea.value).toBe("Hello\nWorld");
+    });
+
+    it("renders array items with input fields", async () => {
+      vi.mocked(fetchPlugins).mockResolvedValueOnce([mockPluginWithNewTypes]);
+      vi.mocked(fetchPluginSettings).mockResolvedValueOnce({
+        tags: ["bug", "feature"],
+      });
+
+      render(<PluginManager addToast={addToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Plugin With New Types")).toBeTruthy();
+      });
+
+      const settingsButtons = screen.getAllByTitle("Settings");
+      await userEvent.click(settingsButtons[0]);
+
+      await waitFor(() => {
+        expect(screen.getByText("Tags")).toBeTruthy();
+        expect(screen.getByDisplayValue("bug")).toBeTruthy();
+        expect(screen.getByDisplayValue("feature")).toBeTruthy();
+      });
+
+      // Check for "Add Item" buttons (there are two: one for Tags, one for Counts)
+      const addButtons = screen.getAllByRole("button", { name: /Add Item/i });
+      expect(addButtons.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("adds new item to array when Add Item is clicked", async () => {
+      vi.mocked(fetchPlugins).mockResolvedValueOnce([mockPluginWithNewTypes]);
+      vi.mocked(fetchPluginSettings).mockResolvedValueOnce({
+        tags: ["bug"],
+      });
+
+      render(<PluginManager addToast={addToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Plugin With New Types")).toBeTruthy();
+      });
+
+      const settingsButtons = screen.getAllByTitle("Settings");
+      await userEvent.click(settingsButtons[0]);
+
+      await waitFor(() => {
+        expect(screen.getByDisplayValue("bug")).toBeTruthy();
+      });
+
+      // Click the first Add Item button
+      const addButtons = screen.getAllByRole("button", { name: /Add Item/i });
+      await userEvent.click(addButtons[0]);
+
+      // Should now have more textboxes
+      const inputs = screen.getAllByRole("textbox");
+      expect(inputs.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("removes item from array when remove button is clicked", async () => {
+      vi.mocked(fetchPlugins).mockResolvedValueOnce([mockPluginWithNewTypes]);
+      vi.mocked(fetchPluginSettings).mockResolvedValueOnce({
+        tags: ["bug", "feature"],
+      });
+      vi.mocked(updatePluginSettings).mockResolvedValueOnce({
+        tags: ["bug"],
+      });
+
+      render(<PluginManager addToast={addToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Plugin With New Types")).toBeTruthy();
+      });
+
+      const settingsButtons = screen.getAllByTitle("Settings");
+      await userEvent.click(settingsButtons[0]);
+
+      await waitFor(() => {
+        expect(screen.getByDisplayValue("bug")).toBeTruthy();
+        expect(screen.getByDisplayValue("feature")).toBeTruthy();
+      });
+
+      // Find and click the first remove button
+      const removeButtons = screen.getAllByRole("button", { name: /Remove item/i });
+      await userEvent.click(removeButtons[0]);
+
+      // Save settings
+      const saveButton = screen.getByRole("button", { name: /Save Settings/i });
+      await userEvent.click(saveButton);
+
+      await waitFor(() => {
+        expect(updatePluginSettings).toHaveBeenCalledWith(
+          "plugin-new-types",
+          expect.objectContaining({ tags: ["feature"] }),
+          undefined
+        );
+      });
+    });
+
+    it("saves array settings with correct values", async () => {
+      vi.mocked(fetchPlugins).mockResolvedValueOnce([mockPluginWithNewTypes]);
+      vi.mocked(fetchPluginSettings).mockResolvedValueOnce({
+        tags: ["bug", "feature"],
+      });
+      vi.mocked(updatePluginSettings).mockResolvedValueOnce({
+        tags: ["bug", "feature", "docs"],
+      });
+
+      render(<PluginManager addToast={addToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Plugin With New Types")).toBeTruthy();
+      });
+
+      const settingsButtons = screen.getAllByTitle("Settings");
+      await userEvent.click(settingsButtons[0]);
+
+      await waitFor(() => {
+        expect(screen.getByDisplayValue("bug")).toBeTruthy();
+      });
+
+      // Add a new item (click the first Add Item button which is for Tags)
+      const addButtons = screen.getAllByRole("button", { name: /Add Item/i });
+      await userEvent.click(addButtons[0]);
+
+      // Type the new value in the last textbox
+      const textboxes = screen.getAllByRole("textbox");
+      const lastInput = textboxes[textboxes.length - 1];
+      await userEvent.clear(lastInput);
+      await userEvent.type(lastInput, "docs");
+
+      // Save settings
+      const saveButton = screen.getByRole("button", { name: /Save Settings/i });
+      await userEvent.click(saveButton);
+
+      await waitFor(() => {
+        expect(updatePluginSettings).toHaveBeenCalledWith(
+          "plugin-new-types",
+          expect.objectContaining({ tags: expect.arrayContaining(["bug", "feature", "docs"]) }),
+          undefined
+        );
+      });
+    });
+
+    it("renders number inputs for number array", async () => {
+      vi.mocked(fetchPlugins).mockResolvedValueOnce([mockPluginWithNewTypes]);
+      vi.mocked(fetchPluginSettings).mockResolvedValueOnce({
+        counts: [10, 20, 30],
+      });
+
+      render(<PluginManager addToast={addToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Plugin With New Types")).toBeTruthy();
+      });
+
+      const settingsButtons = screen.getAllByTitle("Settings");
+      await userEvent.click(settingsButtons[0]);
+
+      await waitFor(() => {
+        expect(screen.getByText("Counts")).toBeTruthy();
+      });
+
+      // Check for number inputs
+      const numberInputs = screen.getAllByRole("spinbutton");
+      expect(numberInputs.length).toBeGreaterThanOrEqual(3);
+    });
+  });
 });

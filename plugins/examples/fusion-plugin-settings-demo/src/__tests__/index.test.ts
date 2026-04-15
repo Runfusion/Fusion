@@ -24,10 +24,13 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
   return {
     pluginId: "fusion-plugin-settings-demo",
     settings: {
+      webhookSecret: undefined,
+      customMessage: "Hello from Settings Demo!",
       greetingMessage: "Hello from Settings Demo!",
       maxTags: 3,
       enableLogging: true,
       logLevel: "info",
+      priorityTags: ["bug", "feature"],
     },
     logger: {
       info: vi.fn(),
@@ -86,9 +89,20 @@ describe("settings demo plugin", () => {
       expect(plugin.manifest.version).toBe("0.1.0");
     });
 
-    it("should have settings schema defined with all four types", () => {
+    it("should have settings schema defined with all field types", () => {
       expect(plugin.manifest.settingsSchema).toBeDefined();
       const schema = plugin.manifest.settingsSchema!;
+
+      // Password type
+      expect(schema.webhookSecret).toBeDefined();
+      expect(schema.webhookSecret.type).toBe("password");
+      expect(schema.webhookSecret.label).toBe("Webhook Secret");
+
+      // String type with multiline
+      expect(schema.customMessage).toBeDefined();
+      expect(schema.customMessage.type).toBe("string");
+      expect(schema.customMessage.label).toBe("Custom Message");
+      expect(schema.customMessage.multiline).toBe(true);
 
       // String type
       expect(schema.greetingMessage).toBeDefined();
@@ -109,15 +123,23 @@ describe("settings demo plugin", () => {
       expect(schema.logLevel).toBeDefined();
       expect(schema.logLevel.type).toBe("enum");
       expect(schema.logLevel.enumValues).toEqual(["debug", "info", "warn", "error"]);
+
+      // Array type
+      expect(schema.priorityTags).toBeDefined();
+      expect(schema.priorityTags.type).toBe("array");
+      expect(schema.priorityTags.label).toBe("Priority Tags");
+      expect(schema.priorityTags.itemType).toBe("string");
     });
 
     it("should have default values in settings schema", () => {
       const schema = plugin.manifest.settingsSchema!;
 
+      expect(schema.customMessage.defaultValue).toBe("Hello from Settings Demo!");
       expect(schema.greetingMessage.defaultValue).toBe("Hello from Settings Demo!");
       expect(schema.maxTags.defaultValue).toBe(3);
       expect(schema.enableLogging.defaultValue).toBe(true);
       expect(schema.logLevel.defaultValue).toBe("info");
+      expect(schema.priorityTags.defaultValue).toEqual(["bug", "feature"]);
     });
 
     it("should have tools defined", () => {
@@ -140,18 +162,25 @@ describe("settings demo plugin", () => {
     it("should log greeting message when logging is enabled", async () => {
       const ctx = createMockContext({
         settings: {
+          webhookSecret: "secret123",
+          customMessage: "Custom Message",
           greetingMessage: "Custom Greeting",
           maxTags: 3,
           enableLogging: true,
           logLevel: "info",
+          priorityTags: ["urgent"],
         },
       });
 
       await plugin.hooks.onLoad?.(ctx as any);
 
-      expect(ctx.logger.info).toHaveBeenCalledWith("Custom Greeting");
+      expect(ctx.logger.info).toHaveBeenCalledWith("Webhook secret is configured");
+      expect(ctx.logger.info).toHaveBeenCalledWith("Custom Message");
       expect(ctx.logger.info).toHaveBeenCalledWith(
         expect.stringContaining("maxTags: 3"),
+      );
+      expect(ctx.logger.info).toHaveBeenCalledWith(
+        expect.stringContaining("Priority tags: urgent"),
       );
     });
 
@@ -379,10 +408,13 @@ describe("settings demo plugin", () => {
     it("should return current configuration status", async () => {
       const ctx = createMockContext({
         settings: {
+          webhookSecret: "secret123",
+          customMessage: "Custom Message",
           greetingMessage: "Custom Greeting",
           maxTags: 5,
           enableLogging: true,
           logLevel: "debug",
+          priorityTags: ["urgent", "critical"],
         },
       });
 
@@ -390,24 +422,33 @@ describe("settings demo plugin", () => {
       const result = await tool.execute({}, ctx as any);
 
       expect(result.content[0].text).toContain("Settings Demo Plugin Status:");
-      expect(result.content[0].text).toContain("Custom Greeting");
+      expect(result.content[0].text).toContain("Webhook Secret: configured");
+      expect(result.content[0].text).toContain("Custom Message: Custom Message");
+      expect(result.content[0].text).toContain("Greeting: Custom Greeting");
       expect(result.content[0].text).toContain("Max Tags: 5");
       expect(result.content[0].text).toContain("Logging: enabled");
       expect(result.content[0].text).toContain("Log Level: debug");
+      expect(result.content[0].text).toContain("Priority Tags: urgent, critical");
 
+      expect(result.details!.webhookSecret).toBe("(configured)");
+      expect(result.details!.customMessage).toBe("Custom Message");
       expect(result.details!.greetingMessage).toBe("Custom Greeting");
       expect(result.details!.maxTags).toBe(5);
       expect(result.details!.enableLogging).toBe(true);
       expect(result.details!.logLevel).toBe("debug");
+      expect(result.details!.priorityTags).toEqual(["urgent", "critical"]);
     });
 
     it("should return raw settings values including undefined", async () => {
       const ctx = createMockContext({
         settings: {
+          webhookSecret: undefined,
+          customMessage: "",
           greetingMessage: "",
           maxTags: undefined,
           enableLogging: undefined,
           logLevel: undefined,
+          priorityTags: undefined,
         },
       });
 
@@ -415,16 +456,42 @@ describe("settings demo plugin", () => {
       const result = await tool.execute({}, ctx as any);
 
       // Details returns raw values (not resolved defaults)
+      expect(result.details!.webhookSecret).toBeUndefined();
+      expect(result.details!.customMessage).toBe("");
       expect(result.details!.greetingMessage).toBe("");
       expect(result.details!.maxTags).toBeUndefined();
       expect(result.details!.enableLogging).toBeUndefined();
       expect(result.details!.logLevel).toBeUndefined();
+      expect(result.details!.priorityTags).toBeUndefined();
 
       // But display text uses resolved defaults
-      expect(result.content[0].text).toContain("Not configured");
+      expect(result.content[0].text).toContain("Webhook Secret: not configured");
+      expect(result.content[0].text).toContain("Custom Message: Not configured");
+      expect(result.content[0].text).toContain("Greeting: Not configured");
       expect(result.content[0].text).toContain("Max Tags: 3");
       expect(result.content[0].text).toContain("Logging: enabled");
       expect(result.content[0].text).toContain("Log Level: info");
+      expect(result.content[0].text).toContain("Priority Tags: bug, feature");
+    });
+
+    it("should verify priorityTags array default is used when not configured", async () => {
+      const ctx = createMockContext({
+        settings: {
+          webhookSecret: undefined,
+          customMessage: undefined,
+          greetingMessage: undefined,
+          maxTags: undefined,
+          enableLogging: false,
+          logLevel: undefined,
+          priorityTags: undefined,
+        },
+      });
+
+      const tool = plugin.tools!.find((t) => t.name === "settings_demo_status")!;
+      const result = await tool.execute({}, ctx as any);
+
+      // Priority tags should use the schema default
+      expect(result.content[0].text).toContain("Priority Tags: bug, feature");
     });
   });
 

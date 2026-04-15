@@ -6,6 +6,18 @@
   "author": "Fusion Team",
   "homepage": "https://github.com/gsxdsm/fusion",
   "settingsSchema": {
+    "webhookSecret": {
+      "type": "password",
+      "label": "Webhook Secret",
+      "description": "Secret for webhook signatures"
+    },
+    "customMessage": {
+      "type": "string",
+      "label": "Custom Message",
+      "description": "Multi-line message shown on load",
+      "multiline": true,
+      "defaultValue": "Hello from Settings Demo!"
+    },
     "greetingMessage": {
       "type": "string",
       "label": "Greeting Message",
@@ -30,6 +42,13 @@
       "description": "Minimum log level to output",
       "enumValues": ["debug", "info", "warn", "error"],
       "defaultValue": "info"
+    },
+    "priorityTags": {
+      "type": "array",
+      "label": "Priority Tags",
+      "description": "Tags to prioritize in suggestions",
+      "itemType": "string",
+      "defaultValue": ["bug", "feature"]
     }
   }
 }

@@ -41,7 +41,7 @@ export interface PluginManifest {
 
 // ── Plugin Setting Schema ──────────────────────────────────────────────
 
-export type PluginSettingType = "string" | "number" | "boolean" | "enum";
+export type PluginSettingType = "string" | "number" | "boolean" | "enum" | "password" | "array";
 
 /**
  * Schema for a single plugin setting.
@@ -55,6 +55,10 @@ export interface PluginSettingSchema {
   required?: boolean;
   /** Only when type is "enum" */
   enumValues?: string[];
+  /** Only when type is "string" - renders as textarea when true */
+  multiline?: boolean;
+  /** Only when type is "array" - type of items in the array */
+  itemType?: "string" | "number";
 }
 
 // ── Plugin Hooks ─────────────────────────────────────────────────────
@@ -250,11 +254,14 @@ export function validatePluginManifest(manifest: unknown): { valid: boolean; err
           continue;
         }
         const setting = schema as Record<string, unknown>;
-        if (!setting.type || !["string", "number", "boolean", "enum"].includes(setting.type as string)) {
-          errors.push(`settingsSchema.${key}.type must be one of: string, number, boolean, enum`);
+        if (!setting.type || !["string", "number", "boolean", "enum", "password", "array"].includes(setting.type as string)) {
+          errors.push(`settingsSchema.${key}.type must be one of: string, number, boolean, enum, password, array`);
         }
         if (setting.type === "enum" && (!Array.isArray(setting.enumValues) || setting.enumValues.length === 0)) {
           errors.push(`settingsSchema.${key}.enumValues is required and must be a non-empty array when type is enum`);
+        }
+        if (setting.type === "array" && (!setting.itemType || !["string", "number"].includes(setting.itemType as string))) {
+          errors.push(`settingsSchema.${key}.itemType is required and must be "string" or "number" when type is array`);
         }
       }
     }

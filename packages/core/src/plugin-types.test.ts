@@ -96,6 +96,36 @@ describe("validatePluginManifest", () => {
       const result = validatePluginManifest(manifest);
       expect(result.valid).toBe(true);
     });
+
+    it("accepts password and array types in settingsSchema", () => {
+      const manifest = {
+        id: "test",
+        name: "Test",
+        version: "1.0.0",
+        settingsSchema: {
+          apiSecret: { type: "password", label: "API Secret" },
+          tags: { type: "array", label: "Tags", itemType: "string" },
+          scores: { type: "array", label: "Scores", itemType: "number" },
+        },
+      };
+      const result = validatePluginManifest(manifest);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toEqual([]);
+    });
+
+    it("accepts string with multiline option", () => {
+      const manifest = {
+        id: "test",
+        name: "Test",
+        version: "1.0.0",
+        settingsSchema: {
+          description: { type: "string", label: "Description", multiline: true },
+        },
+      };
+      const result = validatePluginManifest(manifest);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toEqual([]);
+    });
   });
 
   // ── Missing Required Fields ─────────────────────────────────────────
@@ -301,7 +331,7 @@ describe("validatePluginManifest", () => {
       const result = validatePluginManifest(manifest);
       expect(result.valid).toBe(false);
       expect(result.errors).toContain(
-        "settingsSchema.setting1.type must be one of: string, number, boolean, enum",
+        "settingsSchema.setting1.type must be one of: string, number, boolean, enum, password, array",
       );
     });
 
@@ -330,6 +360,34 @@ describe("validatePluginManifest", () => {
       expect(result.valid).toBe(false);
       expect(result.errors).toContain(
         "settingsSchema.setting1.enumValues is required and must be a non-empty array when type is enum",
+      );
+    });
+
+    it("rejects array type without itemType", () => {
+      const manifest = {
+        id: "test",
+        name: "Test",
+        version: "1.0.0",
+        settingsSchema: { setting1: { type: "array" } },
+      };
+      const result = validatePluginManifest(manifest);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain(
+        "settingsSchema.setting1.itemType is required and must be \"string\" or \"number\" when type is array",
+      );
+    });
+
+    it("rejects array type with invalid itemType", () => {
+      const manifest = {
+        id: "test",
+        name: "Test",
+        version: "1.0.0",
+        settingsSchema: { setting1: { type: "array", itemType: "boolean" } },
+      };
+      const result = validatePluginManifest(manifest);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain(
+        "settingsSchema.setting1.itemType is required and must be \"string\" or \"number\" when type is array",
       );
     });
 
