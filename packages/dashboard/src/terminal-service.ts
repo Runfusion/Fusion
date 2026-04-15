@@ -77,7 +77,7 @@ async function loadPtyModule(): Promise<typeof import("node-pty")> {
       if (existsSync(nativePath)) {
         try {
           const nativeModule: { exports?: unknown } = { exports: {} };
-          // @ts-ignore - process.dlopen is Node internal
+          // process.dlopen is a Node internal API
           process.dlopen(nativeModule, nativePath);
           console.log("[terminal] Pre-loaded native module via dlopen");
         } catch (dlopenErr) {

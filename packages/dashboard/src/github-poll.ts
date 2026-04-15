@@ -29,7 +29,7 @@ export interface GitHubPollingServiceOptions {
   rateLimiter?: GitHubRateLimiter;
 }
 
-export interface GitHubPollingServiceEvents {}
+export type GitHubPollingServiceEvents = Record<string, never>;
 
 interface RepoBatchConsumer {
   taskId: string;
@@ -315,8 +315,9 @@ export class GitHubPollingService extends EventEmitter<GitHubPollingServiceEvent
     let task;
     try {
       task = await this.store.getTask(taskId);
-    } catch (err: any) {
-      if (err?.code === "ENOENT") {
+    } catch (err: unknown) {
+      const error = err as Error & { code?: string };
+      if (error.code === "ENOENT") {
         this.unwatchTask(taskId);
       }
       return;

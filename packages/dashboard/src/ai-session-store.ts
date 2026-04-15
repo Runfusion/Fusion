@@ -390,8 +390,8 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
         `UPDATE ai_sessions SET status = 'awaiting_input', updatedAt = ?
          WHERE status = 'generating' AND currentQuestion IS NOT NULL`,
       )
-      .run(now);
-    recovered += Number((withQuestion as any).changes ?? 0);
+      .run(now) as { changes?: number };
+    recovered += Number(withQuestion.changes ?? 0);
 
     // Sessions that were generating with no question — unrecoverable
     const withoutQuestion = this.db
@@ -399,8 +399,8 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
         `UPDATE ai_sessions SET status = 'error', error = 'Session interrupted — please restart', updatedAt = ?
          WHERE status = 'generating' AND currentQuestion IS NULL`,
       )
-      .run(now);
-    recovered += Number((withoutQuestion as any).changes ?? 0);
+      .run(now) as { changes?: number };
+    recovered += Number(withoutQuestion.changes ?? 0);
 
     if (recovered > 0) {
       console.log(`[ai-session-store] Recovered ${recovered} stale sessions after restart`);

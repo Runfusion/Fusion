@@ -41,8 +41,6 @@ const promptCatalogReadyPromise = initPromptCatalog();
 
 // Dynamic import for @fusion/engine to avoid resolution issues in test environment
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AgentResult = any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let createKbAgent: any;
 
 // Initialize the import (this runs in actual server, mocked in tests)

@@ -1,7 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { IssueInfo, PrInfo } from "@fusion/core";
-import { GitHubClient } from "./github.js";
 
 // Module-level cache for the GitHub App private key
 // undefined = not yet read, null = read failed, string = cached key

@@ -11,10 +11,10 @@ import { createSSE } from "./sse.js";
 import { rateLimit, RATE_LIMITS } from "./rate-limit.js";
 import { ApiError, sendErrorResponse } from "./api-error.js";
 import { getOrCreateProjectStore, evictAllProjectStores, setOnProjectFirstCreated } from "./project-store-resolver.js";
-import { getTerminalService, type TerminalSession, STALE_SESSION_THRESHOLD_MS } from "./terminal-service.js";
+import { getTerminalService, STALE_SESSION_THRESHOLD_MS } from "./terminal-service.js";
 import { WebSocketServer, type WebSocket } from "ws";
 import { terminalSessionManager } from "./terminal.js";
-import { parseBadgeUrl } from "./github.js";
+
 import { WebSocketManager, type BadgeSnapshot } from "./websocket.js";
 import type { BadgePubSub } from "./badge-pubsub.js";
 import { createBadgePubSub, type BadgePubSubMessage } from "./badge-pubsub.js";
@@ -361,8 +361,8 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       createSSE(scopedStore, scopedStore.getMissionStore(), aiSessionStore, scopedStore.getPluginStore(), {
         projectId,
       })(req, res);
-    } catch (err: any) {
-      sendErrorResponse(res, 500, err.message ?? "Failed to open project event stream");
+    } catch (err: unknown) {
+      sendErrorResponse(res, 500, err instanceof Error ? err.message : "Failed to open project event stream");
     }
   });
 
@@ -397,7 +397,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     let scopedStore: TaskStore;
     try {
       scopedStore = await resolveProjectScopedStore(projectId);
-    } catch (err) {
+    } catch {
       res.write(`event: error\ndata: ${JSON.stringify({ message: "Failed to resolve project store" })}\n\n`);
       res.end();
       return;

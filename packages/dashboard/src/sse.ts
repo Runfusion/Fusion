@@ -104,7 +104,7 @@ export interface PluginLifecyclePayload {
 function mapSourceEventToTransition(
   sourceEvent: string,
   plugin: PluginInstallation,
-  previousState?: PluginState,
+  _previousState?: PluginState,
 ): PluginLifecycleTransition {
   switch (sourceEvent) {
     case "plugin:registered":
@@ -198,7 +198,7 @@ export function createSSE(
     };
 
     // --- Event handler definitions ---
-
+    /* eslint-disable @typescript-eslint/no-explicit-any -- EventEmitter handlers receive untyped event data */
     const onCreated = (task: any) => {
       send(`event: task:created\ndata: ${JSON.stringify(stripTaskListHeavyFields(task))}\n\n`);
     };
@@ -286,6 +286,8 @@ export function createSSE(
     const onAiSessionDeleted = (data: any) => {
       send(`event: ai_session:deleted\ndata: ${JSON.stringify(data)}\n\n`);
     };
+
+    /* eslint-enable @typescript-eslint/no-explicit-any */
 
     // --- Unified plugin lifecycle handler ---
     // Instead of emitting individual plugin events, we normalize all plugin

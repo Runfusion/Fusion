@@ -19,8 +19,8 @@ import type {
 } from "@fusion/core";
 import { summarizeTitle } from "@fusion/core";
 import { EventEmitter } from "node:events";
-import type { Response } from "express";
-import { SessionEventBuffer, writeSSEEvent, safeWriteSSE, formatSSEEvent } from "./sse-buffer.js";
+
+import { SessionEventBuffer } from "./sse-buffer.js";
 
 // Dynamic import for @fusion/engine to avoid resolution issues in test environment
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -297,13 +297,13 @@ export class ChatManager {
     }
 
     // Persist user message
-    let userMessageId: string;
+    let _userMessageId: string;
     try {
       const userMessage = this.chatStore.addMessage(sessionId, {
         role: "user",
         content,
       });
-      userMessageId = userMessage.id;
+      _userMessageId = userMessage.id;
     } catch (err) {
       chatStreamManager.broadcast(sessionId, {
         type: "error",
@@ -332,7 +332,7 @@ export class ChatManager {
           if (title) {
             this.chatStore.updateSession(sessionId, { title });
           }
-        } catch (err) {
+        } catch {
           // Fallback on any error
           const fallback = content.trim().slice(0, 60).trim();
           if (fallback) {
