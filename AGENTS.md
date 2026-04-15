@@ -297,3 +297,242 @@ Events are tied to specific run IDs for end-to-end traceability. See [docs/archi
 Archived tasks can be cleaned up from the filesystem while preserving metadata. Restored tasks keep all metadata but lose attachments and agent logs.
 
 See [docs/task-management.md](./docs/task-management.md) for the archive and restore reference.
+
+## Dashboard UI Styling Guide
+
+This guide documents the dashboard's design system so that any AI agent or developer building new UI components follows established conventions automatically. All CSS lives in `packages/dashboard/app/styles.css` (≈60K lines). For deeper context on the theme system and known pitfalls, see `.fusion/memory.md`.
+
+---
+
+### Design Tokens
+
+All new CSS **must** use these token variables instead of hardcoded values. Tokens are defined at `:root` and adapted for light mode via `[data-theme="light"]`.
+
+| Token | Value | Purpose |
+|-------|-------|---------|
+| `--space-xs` | `4px` | Tight inline spacing |
+| `--space-sm` | `8px` | Small gaps |
+| `--space-md` | `12px` | Default gaps |
+| `--space-lg` | `16px` | Section padding |
+| `--space-xl` | `24px` | Large section padding |
+| `--space-2xl` | `32px` | Extra-large spacing |
+| `--radius-sm` | `4px` | Small corners |
+| `--radius-md` | `8px` | Default corners |
+| `--radius-lg` | `12px` | Card/modal corners |
+| `--radius-xl` | `16px` | Large corners |
+| `--radius-pill` | `10px` | Pill/badge corners |
+| `--shadow-sm` | `0 1px 2px rgba(0,0,0,0.1)` | Subtle lift |
+| `--shadow-md` | `0 4px 6px rgba(0,0,0,0.1)` | Standard lift |
+| `--shadow-lg` | `0 4px 24px rgba(0,0,0,0.4)` | Modals, dropdowns |
+| `--shadow-glow` | `0 0 8px rgba(88,166,255,0.3)` | Focus glow |
+| `--glow-success` | `0 0 8px rgba(46,160,67,0.3)` | Success state |
+| `--glow-danger` | `0 0 8px rgba(248,81,73,0.3)` | Danger state |
+| `--glow-warning` | `0 0 8px rgba(227,179,65,0.3)` | Warning state |
+| `--focus-ring` | `0 0 0 2px rgba(88,166,255,0.15)` | Subtle focus ring |
+| `--focus-ring-strong` | `0 0 0 2px rgba(88,166,255,0.3)` | Prominent focus ring |
+| `--transition-instant` | `0.1s ease` | Immediate |
+| `--transition-fast` | `0.15s ease` | Quick |
+| `--transition-normal` | `0.2s ease` | Default |
+| `--transition-slow` | `0.3s ease` | Smooth |
+| `--font-primary` | system font stack | Body font |
+| `--font-mono` | monospace stack | Code, IDs |
+| `--header-height` | `57px` | Fixed header height |
+| `--mobile-nav-height` | `44px` | Mobile nav bar |
+| `--standalone-bottom-gap` | `0px` / `8px` (PWA) | iOS home bar gap |
+| `--overlay-padding-top` | `10vh` | Modal vertical position |
+
+**Never** hardcode pixel values, colors, or durations in component CSS. Always reference a token. The sole exception is inside `:root` or theme blocks where tokens are *defined*.
+
+---
+
+### Color Variables
+
+Core palette (dark defaults at `:root`, overridden in `[data-theme="light"]`):
+
+| Variable | Purpose |
+|----------|---------|
+| `--bg` | Page background |
+| `--surface` | Elevated surface |
+| `--card` | Card background |
+| `--card-hover` | Card hover state |
+| `--border` | Borders and dividers |
+| `--text` | Primary text |
+| `--text-muted` | Secondary/muted text |
+| `--text-dim` | Tertiary/disabled text |
+
+Task status colors (semantic — consistent meaning across all 54 color themes):
+
+| Variable | Status |
+|----------|--------|
+| `--triage` | Triage |
+| `--todo` | Todo |
+| `--in-progress` | In Progress |
+| `--in-review` | In Review |
+| `--done` | Done |
+
+Semantic status colors:
+
+| Variable | Purpose |
+|----------|---------|
+| `--color-success` | Success green |
+| `--color-error` | Error red (light) |
+| `--color-error-dark` | Error red (dark) |
+| `--color-warning` | Warning amber |
+| `--color-info` | Info blue |
+| `--color-muted` | Muted gray |
+
+**Rule:** Never use raw hex or `rgba(...)` for colors in component styles. Use `var(--token)` or `color-mix(in srgb, var(--color) X%, transparent)` for translucent backgrounds. The only place hardcoded colors are acceptable is inside `:root` theme blocks defining tokens.
+
+Status background tokens already use `color-mix` for theme adaptability — reuse them rather than creating parallel variants:
+
+```
+--status-triage-bg, --status-todo-bg, --status-in-progress-bg,
+--status-in-review-bg, --status-done-bg, --status-archived-bg,
+--status-error-bg, --status-error-bg-deep
+```
+
+---
+
+### Theme System
+
+The dashboard supports **dark/light modes** (controlled by `data-theme` attribute) plus **54 color themes** (controlled by `data-color-theme` attribute). Theme blocks live in `packages/dashboard/app/public/theme-data.css` and are lazy-loaded when a non-default theme is active.
+
+**Token categories:**
+
+1. **Base tokens** (`--bg`, `--surface`, `--text`, etc.) — redefined in every theme block (dark + light for each of the 54 themes). Components using these tokens adapt automatically.
+2. **Semantic tokens** (tokens with consistent *meaning* across all themes, like `--autopilot-pulse`, `--event-error-text`, `--badge-mission-*`, `--fab-*`) — only need dark/light adaptation via `[data-theme="light"]`. They do NOT need per-color-theme overrides because the semantic meaning is always consistent.
+3. **Status tokens** (`--triage`, `--todo`, `--in-progress`, etc.) — redefined per theme block to match each theme's palette.
+
+**Adding theme-aware CSS custom properties:**
+- For **base** tokens: add to `:root`, `[data-theme="light"]`, and all 54 theme blocks (dark + light variants)
+- For **semantic** tokens: add to `:root` and `[data-theme="light"]` only
+- For **status** tokens: add to `:root` and all theme blocks
+
+The automated test in `status-colors-theme.test.ts` iterates all theme blocks to catch regressions.
+
+**New components must use `var(--token)` references** so themes apply without any per-component dark/light handling.
+
+---
+
+### Component Classes
+
+Reuse these existing CSS classes rather than creating parallel styles. They live in `styles.css`.
+
+#### Buttons
+
+| Class | Purpose |
+|-------|---------|
+| `.btn` | Base button |
+| `.btn-primary` | Primary CTA (uses `--cta-bg`) |
+| `.btn-danger` | Destructive action (red) |
+| `.btn-warning` | Warning action (amber) |
+| `.btn-sm` | Compact button (4px 10px padding, 12px font) |
+| `.btn-icon` | Icon-only button (square, icon fills) |
+| `.btn-icon--active` | Active icon button state |
+| `.btn-badge` | Notification badge on button |
+
+All buttons use `--btn-padding`, `--btn-border-width`, `--transition-fast`, and `--radius-md` tokens. All have `:focus-visible` using `--focus-ring-strong` and `:active` using `transform: scale(0.97)`.
+
+#### Modals
+
+| Class | Purpose |
+|-------|---------|
+| `.modal-overlay` | Backdrop; use with `.open` class |
+| `.modal-overlay.open` | Visible overlay (uses `backdrop-filter: blur(4px)`) |
+| `.modal` | Default modal (480px wide, `--radius-lg`, `--shadow-lg`) |
+| `.modal-lg` | Large modal (640px wide) |
+| `.modal-header` | Modal title bar (flex, space-between) |
+| `.modal-close` | Close button (× icon, hover color change) |
+| `.modal-actions` | Action bar at modal bottom |
+| `.modal-actions-left` | Left-aligned actions (use `margin-right: auto`) |
+| `.modal-actions-right` | Right-aligned actions |
+
+The overlay uses `position: fixed; inset: 0; z-index: 100;`. Pad the top with `--overlay-padding-top` (default 10vh) to center vertically.
+
+#### Forms
+
+| Class | Purpose |
+|-------|---------|
+| `.form-group` | Field container with `--space-xl` horizontal padding |
+| `.form-group label` | Uppercase label (12px, 0.5px letter-spacing) |
+| `.input` | Global input (surface bg, `--radius-sm`) |
+| `.select` | Global select (same style as `.input`) |
+| `.checkbox-label` | Checkbox label (flex, gap, no uppercase) |
+| `.form-error` | Error box (uses `color-mix`, `--color-error`) |
+
+Inputs and selects in `.form-group` get focus styles (`border-color: var(--todo)` + `--focus-ring`). Global `.input` and `.select` classes apply independently.
+
+#### Cards
+
+| Class | Purpose |
+|-------|---------|
+| `.card` | Task card base (grab cursor, `--card-padding`) |
+| `.card-header` | Card top row (flex, gap: 6px) |
+| `.card-id` | Monospace task ID (11px, `--text-muted`) |
+| `.card-title` | Card title (13px, break-word) |
+| `.card-meta` | Meta row (flex, gap, `--space-sm`) |
+| `.card-status-badge` | Status badge (pill shape, status-bg/text colors) |
+| `.card-status-badge--triage` | Triage badge variant |
+| `.card-status-badge--todo` | Todo badge variant |
+| `.card-status-badge--in-progress` | In-Progress badge variant |
+| `.card-status-badge--in-review` | In-Review badge variant |
+| `.card-status-badge--done` | Done badge variant |
+| `.card-status-badge--archived` | Archived badge variant |
+
+Cards have `--focus-ring-strong` focus style and `--card-hover` background on hover. Use `.card-status-badge--{status}` classes for column-color badges.
+
+#### Utility
+
+| Class | Purpose |
+|-------|---------|
+| `.touch-target` | 44px minimum touch target (Apple HIG / WCAG 2.5.8) |
+| `.visually-hidden` | Screen-reader-only (clip rect) |
+
+---
+
+### Mobile Responsive
+
+**Breakpoints** (use `@media (max-width: N)`):
+
+| Breakpoint | Value | Use |
+|------------|-------|-----|
+| Mobile | `768px` | Primary mobile breakpoint |
+| Tablet | `1024px` | `min-width: 769px and max-width: 1024px` |
+| Small | `640px` | Compact mobile |
+| XSmall | `480px` | Very narrow devices |
+
+**Mobile CSS placement:** All mobile overrides go in `@media (max-width: 768px)` blocks at the **bottom** of `styles.css`, after their base styles.
+
+**Bottom spacing:**
+- `--mobile-nav-height` (`44px`) controls mobile nav bar height
+- `--standalone-bottom-gap` (`0px` default, `8px` in PWA `display-mode: standalone`) adds iOS home indicator breathing room
+- All bottom-positioned elements use `calc(..., var(--mobile-nav-height), env(safe-area-inset-bottom, 0px), var(--standalone-bottom-gap))`
+
+**Touch targets:** All interactive elements must be at least **36px** on mobile. Use `.touch-target` for elements below this threshold (which sets `44px` minimum). Inside mobile media queries, individual component touch targets may be `36px`.
+
+**Safe area:** Use `max(var(--space-md), env(safe-area-inset-left, 0px))` pattern for content respecting device notches on mobile.
+
+---
+
+### Adding New CSS
+
+1. **Always use tokens** — `var(--space-md)`, `var(--text-muted)`, `var(--radius-md)`, `var(--transition-fast)`, etc. Never write `padding: 8px` or `color: #e6edf3` directly.
+2. **Section headers** — Mark new component sections with `/* === ComponentName === */` in `styles.css` so they are discoverable.
+3. **Reuse existing classes** — Don't create parallel button or form styles. Add states (`:hover`, `:focus-visible`, `:active`) to the existing `.btn`, `.card`, `.input` chains.
+4. **Theme-aware backgrounds** — Use `color-mix(in srgb, var(--color) X%, transparent)` instead of `rgba(...)`. For example, error backgrounds: `color-mix(in srgb, var(--color-error) 10%, transparent)`.
+5. **Accessibility** — Add `:focus-visible` styles using `var(--focus-ring-strong)` on every interactive component. Never suppress focus entirely.
+6. **Test both themes** — Verify new styles look correct in both dark and light modes before committing.
+7. **Mobile overrides** — Add mobile variants below the base styles, inside a `@media (max-width: 768px)` block.
+
+---
+
+### Common Pitfalls
+
+- **`--surface-hover` is undefined** — This token is referenced in several places but never defined in `:root` or theme blocks. Use a fallback: `var(--surface-hover, rgba(0,0,0,0.03))` or define the token explicitly.
+- **Hardcoded `rgba(...)` for error states** — Use `color-mix(in srgb, var(--color-error) 10%, transparent)` instead of `rgba(248, 81, 73, 0.1)`.
+- **`.form-error` style** — Should use `color-mix(in srgb, var(--color-error) 10%, transparent)` for the background, not hardcoded rgba.
+- **`lucide-react` icon changes** — When adding new icons, update test mocks (`vi.mock("lucide-react")`) immediately. Missing mock exports cascade into runtime failures.
+- **Light-theme overrides** — Components using `var(*)` tokens generally inherit correctly from `[data-theme="light"]` root redefinitions. Only add explicit `[data-theme="light"]` overrides where fine-tuning is needed (opacity, subtle shadows).
+- **CSS regex tests in test files** — When changing mobile CSS values (e.g., `min-height`), update both the CSS and the corresponding test assertions. Use non-greedy `[^}]*` patterns for block-scoped regex, not `[\s\S]*` which can bleed across block boundaries.
+- **BEM specificity conflicts** — When a container state class (`.quick-entry-box--expanded`) and an element modifier (`.quick-entry-input--expanded`) both target the same element, the container may win due to higher specificity. Use `:not(.modifier)` to scope container rules: `.quick-entry-box--expanded .quick-entry-input:not(.quick-entry-input--expanded)`.
+- **CSS in `@media` blocks** — Don't search backwards for the nearest `@media` to check if a rule is mobile-scoped. Track brace depth to confirm the line is inside the block. Many components are defined globally even if they only visually appear on mobile.
