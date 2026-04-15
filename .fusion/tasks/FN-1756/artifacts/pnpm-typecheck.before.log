@@ -1,0 +1,22 @@
+
+> fusion-workspace@0.0.0 typecheck /Users/eclipxe/Projects/kb/.worktrees/swift-finch
+> pnpm -r typecheck
+
+Scope: 12 of 13 workspace projects
+packages/core typecheck$ tsc --noEmit
+packages/desktop typecheck$ tsc --noEmit
+packages/mobile typecheck$ tsc --noEmit
+packages/mobile typecheck: Done
+packages/desktop typecheck: Done
+packages/core typecheck: Done
+packages/engine typecheck$ tsc --noEmit
+packages/plugin-sdk typecheck$ tsc --noEmit --skipLibCheck
+packages/tui typecheck$ tsc --noEmit
+packages/plugin-sdk typecheck: Done
+packages/tui typecheck: Done
+packages/engine typecheck: Done
+packages/dashboard typecheck$ tsc --noEmit && tsc --noEmit -p tsconfig.app.json
+packages/dashboard typecheck: Done
+packages/cli typecheck$ tsc --noEmit
+packages/cli typecheck: Done
+EXIT_CODE: 0
