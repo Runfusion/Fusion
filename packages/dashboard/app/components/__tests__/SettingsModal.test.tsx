@@ -3303,4 +3303,346 @@ describe("Prompts section", () => {
       expect(onReopenOnboarding).toHaveBeenCalledTimes(1);
     });
   });
+
+  /**
+   * Regression tests for FN-1712: Settings UI model-lane scope UX.
+   *
+   * These tests guard the scope-split behavior introduced in FN-1712:
+   * - Each model setting is rendered as a lane with dual controls (global baseline + project override)
+   * - Inheritance indicators show whether a lane is overridden or inherited
+   * - Save payloads are split by scope: global keys go to updateGlobalSettings, project keys to updateSettings
+   * - Reset/clear interactions use null-as-delete semantics
+   *
+   * DOM selectors used:
+   * - Project model lanes: id="${laneId}Model" (e.g., "planningModel", "validatorModel")
+   * - Lane badges: .settings-lane-badge--override or .settings-lane-badge--inherited
+   * - Badge text: "Override (Project)" or "Inherited (Global)"
+   * - Reset button: text "Reset" in lane
+   * - Fallback models: id="planningFallbackModel", id="validatorFallbackModel"
+   * - Global models: id="defaultModel", id="fallbackModel", id="defaultThinkingLevel"
+   */
+
+  describe("Model lane rendering (FN-1712 scope UX)", () => {
+    it("renders Project Models section with all three model lanes", async () => {
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      // Navigate to Project Models section
+      fireEvent.click(screen.getAllByText("Project Models")[0]);
+      await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+      // Verify all three model lanes are rendered with labels
+      expect(screen.getByLabelText("Planning Model")).toBeTruthy();
+      expect(screen.getByLabelText("Validator Model")).toBeTruthy();
+      expect(screen.getByLabelText("Title Summarization Model")).toBeTruthy();
+    });
+
+    it("renders Default Model and Fallback Model in global Models section", async () => {
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      // Navigate to Models section (global)
+      fireEvent.click(screen.getAllByText("Models")[0]);
+      await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+      // Verify default and fallback model dropdowns
+      expect(screen.getByLabelText("Default Model")).toBeTruthy();
+      expect(screen.getByLabelText("Fallback Model")).toBeTruthy();
+    });
+
+    it("renders Thinking Effort select in global Models section", async () => {
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      fireEvent.click(screen.getAllByText("Models")[0]);
+      await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+      // Thinking Effort is a native select
+      const select = screen.getByLabelText("Thinking Effort");
+      expect(select.tagName).toBe("SELECT");
+
+      // Verify expected options
+      const options = Array.from(select.querySelectorAll("option")).map((o) => o.textContent);
+      expect(options).toContain("Default");
+      expect(options).toContain("Off");
+      expect(options).toContain("Minimal");
+      expect(options).toContain("Low");
+      expect(options).toContain("Medium");
+      expect(options).toContain("High");
+    });
+
+    it("renders Planning Fallback and Validator Fallback in project Models section", async () => {
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      fireEvent.click(screen.getAllByText("Project Models")[0]);
+      await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+      // Verify fallback model dropdowns
+      expect(screen.getByLabelText("Planning Fallback Model")).toBeTruthy();
+      expect(screen.getByLabelText("Validator Fallback Model")).toBeTruthy();
+    });
+
+    it("shows Inherited badge when project override is not set", async () => {
+      // Mock fetchSettingsByScope to return project with no overrides
+      (fetchSettingsByScope as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        global: { themeMode: "dark", defaultProvider: "anthropic", defaultModelId: "claude-sonnet-4-5" },
+        project: {},
+      });
+
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitFor(() => expect(fetchSettingsByScope).toHaveBeenCalled());
+
+      fireEvent.click(screen.getAllByText("Project Models")[0]);
+      await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+      // Planning lane should show Inherited badge
+      const planningLabel = screen.getByLabelText("Planning Model").closest(".form-group");
+      expect(planningLabel?.querySelector(".settings-lane-badge--inherited")).toBeTruthy();
+      expect(planningLabel?.textContent).toContain("Inherited (Global)");
+    });
+
+    it("shows Override badge when project override is set", async () => {
+      // Mock fetchSettingsByScope to return project with override
+      (fetchSettingsByScope as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        global: { themeMode: "dark", defaultProvider: "anthropic", defaultModelId: "claude-sonnet-4-5" },
+        project: { planningProvider: "openai", planningModelId: "gpt-4o" },
+      });
+
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitFor(() => expect(fetchSettingsByScope).toHaveBeenCalled());
+
+      fireEvent.click(screen.getAllByText("Project Models")[0]);
+      await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+      // Planning lane should show Override badge
+      const planningLabel = screen.getByLabelText("Planning Model").closest(".form-group");
+      expect(planningLabel?.querySelector(".settings-lane-badge--override")).toBeTruthy();
+      expect(planningLabel?.textContent).toContain("Override (Project)");
+
+      // Should show Reset button when overridden
+      expect(planningLabel?.textContent).toContain("Reset");
+    });
+
+    it("shows fallback text when both global and project are unset (automatic selection)", async () => {
+      // Mock fetchSettingsByScope to return empty values
+      (fetchSettingsByScope as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        global: { themeMode: "dark" }, // No defaultProvider/defaultModelId set
+        project: {}, // No override set
+      });
+
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitFor(() => expect(fetchSettingsByScope).toHaveBeenCalled());
+
+      fireEvent.click(screen.getAllByText("Models")[0]);
+      await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+      // Default Model dropdown should show placeholder
+      const dropdown = screen.getByLabelText("Default Model");
+      expect(dropdown.textContent || dropdown.getAttribute("value")).toBeTruthy();
+    });
+  });
+
+  describe("Save payload scope-split (FN-1712)", () => {
+    it("global-only change calls updateGlobalSettings but not updateSettings for global keys", async () => {
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      fireEvent.click(screen.getAllByText("Models")[0]);
+      await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+      // Open the Default Model dropdown and select a model
+      const user = userEvent.setup();
+      const dropdownBtn = screen.getByRole("button", { name: /default model/i });
+      await user.click(dropdownBtn);
+
+      // Select a model from the dropdown
+      const option = await screen.findByRole("option", { name: /gpt-4o/i });
+      await user.click(option);
+
+      // Save
+      fireEvent.click(screen.getByText("Save"));
+      await waitFor(() => {
+        expect(updateGlobalSettings).toHaveBeenCalled();
+      });
+
+      // updateSettings should NOT be called with global keys
+      const updateSettingsCalls = (updateSettings as ReturnType<typeof vi.fn>).mock.calls;
+      const globalSettingsCalls = (updateGlobalSettings as ReturnType<typeof vi.fn>).mock.calls;
+
+      // Verify global settings was called with defaultProvider/defaultModelId
+      expect(globalSettingsCalls.length).toBeGreaterThan(0);
+      const globalPayload = globalSettingsCalls[globalSettingsCalls.length - 1][0];
+      expect(globalPayload).toHaveProperty("defaultProvider");
+      expect(globalPayload).toHaveProperty("defaultModelId");
+
+      // Verify project settings was NOT called with global keys (or check it doesn't contain them)
+      if (updateSettingsCalls.length > 0) {
+        const projectPayload = updateSettingsCalls[updateSettingsCalls.length - 1][0];
+        expect(projectPayload.defaultProvider).toBeUndefined();
+        expect(projectPayload.defaultModelId).toBeUndefined();
+      }
+    });
+
+    it("project-only change calls updateSettings but not updateGlobalSettings for project keys", async () => {
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      fireEvent.click(screen.getAllByText("Project Models")[0]);
+      await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+      // Open Planning Model dropdown
+      const user = userEvent.setup();
+      const dropdownBtn = screen.getByRole("button", { name: /planning model/i });
+      await user.click(dropdownBtn);
+
+      // Select a model
+      const option = await screen.findByRole("option", { name: /gpt-4o/i });
+      await user.click(option);
+
+      // Save
+      fireEvent.click(screen.getByText("Save"));
+      await waitFor(() => {
+        expect(updateSettings).toHaveBeenCalled();
+      });
+
+      // updateGlobalSettings should NOT be called with planning keys
+      const updateGlobalSettingsCalls = (updateGlobalSettings as ReturnType<typeof vi.fn>).mock.calls;
+      const updateSettingsCalls = (updateSettings as ReturnType<typeof vi.fn>).mock.calls;
+
+      // Verify project settings was called with planningProvider/planningModelId
+      expect(updateSettingsCalls.length).toBeGreaterThan(0);
+      const projectPayload = updateSettingsCalls[updateSettingsCalls.length - 1][0];
+      expect(projectPayload).toHaveProperty("planningProvider");
+      expect(projectPayload).toHaveProperty("planningModelId");
+
+      // Verify global settings was NOT called with planning keys
+      if (updateGlobalSettingsCalls.length > 0) {
+        const globalPayload = updateGlobalSettingsCalls[updateGlobalSettingsCalls.length - 1][0];
+        expect(globalPayload.planningProvider).toBeUndefined();
+        expect(globalPayload.planningModelId).toBeUndefined();
+      }
+    });
+
+    it("mixed global and project changes call both endpoints with correct subsets", async () => {
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      // Change global model
+      fireEvent.click(screen.getAllByText("Models")[0]);
+      await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+      let user = userEvent.setup();
+      let dropdownBtn = screen.getByRole("button", { name: /default model/i });
+      await user.click(dropdownBtn);
+      let option = await screen.findByRole("option", { name: /gpt-4o/i });
+      await user.click(option);
+
+      // Change project model
+      fireEvent.click(screen.getAllByText("Project Models")[0]);
+      await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+      dropdownBtn = screen.getByRole("button", { name: /planning model/i });
+      await user.click(dropdownBtn);
+      option = await screen.findByRole("option", { name: /claude/i });
+      await user.click(option);
+
+      // Save
+      fireEvent.click(screen.getByText("Save"));
+      await waitFor(() => {
+        expect(updateSettings).toHaveBeenCalled();
+        expect(updateGlobalSettings).toHaveBeenCalled();
+      });
+
+      const globalPayload = (updateGlobalSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const projectPayload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+      // Verify global payload contains only global keys
+      expect(globalPayload).toHaveProperty("defaultProvider");
+      expect(globalPayload).toHaveProperty("defaultModelId");
+      expect(globalPayload.planningProvider).toBeUndefined();
+      expect(globalPayload.planningModelId).toBeUndefined();
+
+      // Verify project payload contains only project keys
+      expect(projectPayload).toHaveProperty("planningProvider");
+      expect(projectPayload).toHaveProperty("planningModelId");
+      expect(projectPayload.defaultProvider).toBeUndefined();
+      expect(projectPayload.defaultModelId).toBeUndefined();
+    });
+  });
+
+  describe("Reset/clear null-as-delete semantics (FN-1712)", () => {
+    it("resetting a project override sends null to delete it", async () => {
+      // Mock fetchSettingsByScope to return project with override
+      (fetchSettingsByScope as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        global: { themeMode: "dark", planningGlobalProvider: "anthropic", planningGlobalModelId: "claude-sonnet-4-5" },
+        project: { planningProvider: "openai", planningModelId: "gpt-4o" },
+      });
+
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitFor(() => expect(fetchSettingsByScope).toHaveBeenCalled());
+
+      fireEvent.click(screen.getAllByText("Project Models")[0]);
+      await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+      // Should show Override badge and Reset button
+      const planningLabel = screen.getByLabelText("Planning Model").closest(".form-group");
+      expect(planningLabel?.textContent).toContain("Override (Project)");
+
+      // Click Reset button - find the button with "Reset" text within the planning lane
+      const resetBtn = screen.getByRole("button", { name: "Reset" });
+      expect(resetBtn).toBeTruthy();
+      fireEvent.click(resetBtn);
+
+      // Save
+      fireEvent.click(screen.getByText("Save"));
+      await waitFor(() => {
+        expect(updateSettings).toHaveBeenCalled();
+      });
+
+      // Verify null-as-delete: planningProvider and planningModelId should be null (not undefined)
+      const projectPayload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(projectPayload.planningProvider).toBeNull();
+      expect(projectPayload.planningModelId).toBeNull();
+    });
+
+    it("clearing a global setting sends null to delete it", async () => {
+      // Set up initial global settings with defaultProvider/defaultModelId set
+      (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ...defaultSettings,
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+      });
+
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      fireEvent.click(screen.getAllByText("Models")[0]);
+      await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+      // Open the Default Model dropdown
+      const user = userEvent.setup();
+      const dropdownBtn = screen.getByRole("button", { name: /default model/i });
+      await user.click(dropdownBtn);
+
+      // Select "Use default" option to clear
+      const useDefaultOption = await screen.findByRole("option", { name: /use default/i });
+      await user.click(useDefaultOption);
+
+      // Save
+      fireEvent.click(screen.getByText("Save"));
+      await waitFor(() => {
+        expect(updateGlobalSettings).toHaveBeenCalled();
+      });
+
+      // Verify null-as-delete: defaultProvider and defaultModelId should be null when clearing an existing value
+      const globalPayload = (updateGlobalSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(globalPayload.defaultProvider).toBeNull();
+      expect(globalPayload.defaultModelId).toBeNull();
+    });
+  });
 });

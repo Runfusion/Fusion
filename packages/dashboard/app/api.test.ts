@@ -3884,3 +3884,311 @@ describe("Roadmap API wrappers", () => {
     expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain("/api/roadmaps/milestones/RMS-001/features");
   });
 });
+
+/**
+ * Settings API wrapper tests for FN-1712 (scope-split settings UX).
+ * These tests verify the API contract for:
+ * - fetchSettingsByScope: Returns { global, project } scoped settings
+ * - updateGlobalSettings: PUT /api/settings/global
+ * - updateSettings: PUT /api/settings (project scope)
+ * - fetchGlobalSettings: GET /api/settings/global
+ */
+describe("Settings API wrappers", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  describe("fetchSettingsByScope", () => {
+    it("calls /api/settings/scopes with no query string when projectId is omitted", async () => {
+      const { fetchSettingsByScope } = await import("./api");
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "content-type" ? "application/json" : null,
+        },
+        json: () => Promise.resolve({ global: { themeMode: "dark" }, project: {} }),
+        text: () => Promise.resolve(JSON.stringify({ global: { themeMode: "dark" }, project: {} })),
+      } as unknown as Response);
+
+      await fetchSettingsByScope();
+
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/settings/scopes", expect.objectContaining({
+        headers: { "Content-Type": "application/json" },
+      }));
+      // GET is the default method, so method should not be specified
+      const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(call[1].method).toBeUndefined();
+    });
+
+    it("calls /api/settings/scopes?projectId=proj_123 when projectId is provided", async () => {
+      const { fetchSettingsByScope } = await import("./api");
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "content-type" ? "application/json" : null,
+        },
+        json: () => Promise.resolve({ global: { themeMode: "dark" }, project: {} }),
+        text: () => Promise.resolve(JSON.stringify({ global: { themeMode: "dark" }, project: {} })),
+      } as unknown as Response);
+
+      await fetchSettingsByScope("proj_123");
+
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/settings/scopes?projectId=proj_123", expect.objectContaining({
+        headers: { "Content-Type": "application/json" },
+      }));
+      // GET is the default method
+      const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(call[1].method).toBeUndefined();
+    });
+
+    it("returns the { global, project } shape", async () => {
+      const { fetchSettingsByScope } = await import("./api");
+      const mockResponse = {
+        global: { themeMode: "dark", defaultProvider: "anthropic", defaultModelId: "claude-sonnet-4-5" },
+        project: { planningProvider: "openai", planningModelId: "gpt-4o" },
+      };
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "content-type" ? "application/json" : null,
+        },
+        json: () => Promise.resolve(mockResponse),
+        text: () => Promise.resolve(JSON.stringify(mockResponse)),
+      } as unknown as Response);
+
+      const result = await fetchSettingsByScope();
+
+      expect(result).toHaveProperty("global");
+      expect(result).toHaveProperty("project");
+      expect(result.global.themeMode).toBe("dark");
+      expect(result.global.defaultProvider).toBe("anthropic");
+      expect(result.project.planningProvider).toBe("openai");
+    });
+
+    it("throws with server error message on failure", async () => {
+      const { fetchSettingsByScope } = await import("./api");
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: "Internal Server Error",
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "content-type" ? "application/json" : null,
+        },
+        json: () => Promise.resolve({ error: "Database connection failed" }),
+        text: () => Promise.resolve(JSON.stringify({ error: "Database connection failed" })),
+      } as unknown as Response);
+
+      await expect(fetchSettingsByScope()).rejects.toThrow("Database connection failed");
+    });
+  });
+
+  describe("updateGlobalSettings", () => {
+    it("sends PUT to /api/settings/global with the provided payload", async () => {
+      const { updateGlobalSettings } = await import("./api");
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "content-type" ? "application/json" : null,
+        },
+        json: () => Promise.resolve({ themeMode: "light" }),
+        text: () => Promise.resolve(JSON.stringify({ themeMode: "light" })),
+      } as unknown as Response);
+
+      await updateGlobalSettings({ themeMode: "light" });
+
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      const [url, options] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(url).toBe("/api/settings/global");
+      expect(options.method).toBe("PUT");
+      expect(JSON.parse(options.body as string)).toEqual({ themeMode: "light" });
+    });
+
+    it("returns the settings object on success", async () => {
+      const { updateGlobalSettings } = await import("./api");
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "content-type" ? "application/json" : null,
+        },
+        json: () => Promise.resolve({ themeMode: "light", defaultProvider: "anthropic" }),
+        text: () => Promise.resolve(JSON.stringify({ themeMode: "light", defaultProvider: "anthropic" })),
+      } as unknown as Response);
+
+      const result = await updateGlobalSettings({ defaultProvider: "anthropic" });
+
+      expect(result.themeMode).toBe("light");
+      expect(result.defaultProvider).toBe("anthropic");
+    });
+
+    it("throws with server error message on failure", async () => {
+      const { updateGlobalSettings } = await import("./api");
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "content-type" ? "application/json" : null,
+        },
+        json: () => Promise.resolve({ error: "Invalid settings format" }),
+        text: () => Promise.resolve(JSON.stringify({ error: "Invalid settings format" })),
+      } as unknown as Response);
+
+      await expect(updateGlobalSettings({})).rejects.toThrow("Invalid settings format");
+    });
+  });
+
+  describe("updateSettings scope rejection", () => {
+    it("forwards payload to PUT /api/settings and surfaces resulting 400 error", async () => {
+      const { updateSettings } = await import("./api");
+
+      // The backend rejects global keys on PUT /api/settings
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "content-type" ? "application/json" : null,
+        },
+        json: () => Promise.resolve({ error: "Global settings keys not allowed in project scope" }),
+        text: () => Promise.resolve(JSON.stringify({ error: "Global settings keys not allowed in project scope" })),
+      } as unknown as Response);
+
+      // This documents the client/server contract: sending global keys to project endpoint fails
+      await expect(updateSettings({ themeMode: "light" })).rejects.toThrow(
+        "Global settings keys not allowed in project scope"
+      );
+
+      const [url, options] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(url).toBe("/api/settings");
+      expect(options.method).toBe("PUT");
+    });
+
+    it("sends PUT to /api/settings with project-scoped payload on success", async () => {
+      const { updateSettings } = await import("./api");
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "content-type" ? "application/json" : null,
+        },
+        json: () => Promise.resolve({ planningProvider: "openai" }),
+        text: () => Promise.resolve(JSON.stringify({ planningProvider: "openai" })),
+      } as unknown as Response);
+
+      const result = await updateSettings({ planningProvider: "openai", planningModelId: "gpt-4o" });
+
+      expect(result.planningProvider).toBe("openai");
+      const [url, options] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(url).toBe("/api/settings");
+      expect(options.method).toBe("PUT");
+      expect(JSON.parse(options.body as string)).toEqual({
+        planningProvider: "openai",
+        planningModelId: "gpt-4o",
+      });
+    });
+  });
+
+  describe("fetchGlobalSettings", () => {
+    it("calls GET /api/settings/global with no query string", async () => {
+      const { fetchGlobalSettings } = await import("./api");
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "content-type" ? "application/json" : null,
+        },
+        json: () => Promise.resolve({ themeMode: "dark" }),
+        text: () => Promise.resolve(JSON.stringify({ themeMode: "dark" })),
+      } as unknown as Response);
+
+      await fetchGlobalSettings();
+
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/settings/global", expect.objectContaining({
+        headers: { "Content-Type": "application/json" },
+      }));
+      // GET is the default method
+      const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(call[1].method).toBeUndefined();
+    });
+
+    it("returns GlobalSettings with known keys like themeMode", async () => {
+      const { fetchGlobalSettings } = await import("./api");
+      const mockSettings = {
+        themeMode: "light",
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+      };
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "content-type" ? "application/json" : null,
+        },
+        json: () => Promise.resolve(mockSettings),
+        text: () => Promise.resolve(JSON.stringify(mockSettings)),
+      } as unknown as Response);
+
+      const result = await fetchGlobalSettings();
+
+      expect(result.themeMode).toBe("light");
+      expect(result.defaultProvider).toBe("anthropic");
+    });
+
+    it("throws with server error message on failure", async () => {
+      const { fetchGlobalSettings } = await import("./api");
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: "Internal Server Error",
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "content-type" ? "application/json" : null,
+        },
+        json: () => Promise.resolve({ error: "Settings file corrupted" }),
+        text: () => Promise.resolve(JSON.stringify({ error: "Settings file corrupted" })),
+      } as unknown as Response);
+
+      await expect(fetchGlobalSettings()).rejects.toThrow("Settings file corrupted");
+    });
+  });
+});
