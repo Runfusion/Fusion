@@ -3,10 +3,14 @@
  * new chat dialog, and input handling.
  */
 
+import fs from "node:fs";
+import path from "node:path";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { userEvent } from "@testing-library/user-event";
 import { ChatView } from "../ChatView";
+
+const stylesPath = path.resolve(__dirname, "../../styles.css");
 
 // Mock scrollIntoView for JSDOM
 Element.prototype.scrollIntoView = vi.fn();
@@ -446,5 +450,27 @@ describe("ChatView", () => {
     const sessionItem = screen.getByTestId("chat-session-session-001");
     // Should show the agent ID (truncated to 30 chars)
     expect(within(sessionItem).getByText("my-custom-agent")).toBeInTheDocument();
+  });
+});
+
+describe("ChatView CSS — nested flexbox scrolling fix", () => {
+  const css = fs.readFileSync(stylesPath, "utf-8");
+
+  it(".chat-session-list has min-height: 0 for proper vertical scrolling", () => {
+    const match = css.match(/\.chat-session-list\s*\{([^}]*)\}/);
+    expect(match).toBeTruthy();
+    expect(match![1]).toContain("min-height: 0");
+  });
+
+  it(".chat-thread has min-height: 0 for proper vertical scrolling", () => {
+    const match = css.match(/\.chat-thread\s*\{([^}]*)\}/);
+    expect(match).toBeTruthy();
+    expect(match![1]).toContain("min-height: 0");
+  });
+
+  it(".chat-messages has min-height: 0 for proper vertical scrolling", () => {
+    const match = css.match(/\.chat-messages\s*\{([^}]*)\}/);
+    expect(match).toBeTruthy();
+    expect(match![1]).toContain("min-height: 0");
   });
 });
