@@ -575,5 +575,58 @@ export function createRoadmapRouter(store: TaskStore): Router {
     }
   });
 
+  // ── Export / Handoff Endpoints ──────────────────────────────────────────
+
+  /**
+   * GET /api/roadmaps/:roadmapId/export
+   * Get a flat export bundle for the roadmap.
+   */
+  router.get("/:roadmapId/export", async (req, res) => {
+    try {
+      const roadmapStore = getScopedStore().getRoadmapStore();
+      const { roadmapId } = req.params;
+
+      const export_ = roadmapStore.getRoadmapExport(roadmapId);
+      res.json(export_);
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to export roadmap");
+    }
+  });
+
+  /**
+   * GET /api/roadmaps/:roadmapId/handoff/mission
+   * Get a mission planning handoff payload for the roadmap.
+   */
+  router.get("/:roadmapId/handoff/mission", async (req, res) => {
+    try {
+      const roadmapStore = getScopedStore().getRoadmapStore();
+      const { roadmapId } = req.params;
+
+      const handoff = roadmapStore.getRoadmapMissionHandoff(roadmapId);
+      res.json(handoff);
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to generate mission handoff");
+    }
+  });
+
+  /**
+   * GET /api/roadmaps/:roadmapId/milestones/:milestoneId/features/:featureId/handoff/task
+   * Get a task planning handoff payload for a single feature.
+   */
+  router.get("/:roadmapId/milestones/:milestoneId/features/:featureId/handoff/task", async (req, res) => {
+    try {
+      const roadmapStore = getScopedStore().getRoadmapStore();
+      const { roadmapId, milestoneId, featureId } = req.params;
+
+      const handoff = roadmapStore.getRoadmapFeatureHandoff(roadmapId, milestoneId, featureId);
+      res.json(handoff);
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to generate task handoff");
+    }
+  });
+
   return router;
 }

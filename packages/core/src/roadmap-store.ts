@@ -29,6 +29,10 @@ import type {
   RoadmapFeatureMoveInput,
   RoadmapMilestoneWithFeatures,
   RoadmapWithHierarchy,
+  RoadmapExportBundle,
+  RoadmapMissionPlanningHandoff,
+  RoadmapFeatureTaskPlanningHandoff,
+  RoadmapFeatureSourceRef,
 } from "./roadmap-types.js";
 import {
   normalizeRoadmapMilestoneOrder,
@@ -729,6 +733,140 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
         ...milestone,
         features: this.listFeatures(milestone.id),
       })),
+    };
+  }
+
+  // ── Export / Handoff Operations ────────────────────────────────────
+
+  /**
+   * Get a flat export bundle for a roadmap.
+   *
+   * Returns all roadmap data in a flat structure suitable for persistence,
+   * APIs, import/export, and sync jobs. Entities are separated so downstream
+   * persistence layers can upsert by table/collection.
+   *
+   * @param roadmapId - Roadmap ID
+   * @returns The export bundle with ordered entities
+   * @throws Error if roadmap not found
+   */
+  getRoadmapExport(roadmapId: string): RoadmapExportBundle {
+    const roadmap = this.getRoadmap(roadmapId);
+    if (!roadmap) {
+      throw new Error(`Roadmap ${roadmapId} not found`);
+    }
+
+    const milestones = this.listMilestones(roadmapId);
+    const allFeatures: RoadmapFeature[] = [];
+
+    for (const milestone of milestones) {
+      const features = this.listFeatures(milestone.id);
+      allFeatures.push(...features);
+    }
+
+    return {
+      roadmap,
+      milestones,
+      features: allFeatures,
+    };
+  }
+
+  /**
+   * Get a mission planning handoff payload for a roadmap.
+   *
+   * Converts the roadmap into a mission planning structure while preserving
+   * source IDs and deterministic order. Does not couple to MissionStore internals.
+   *
+   * @param roadmapId - Roadmap ID
+   * @returns The mission planning handoff payload
+   * @throws Error if roadmap not found
+   */
+  getRoadmapMissionHandoff(roadmapId: string): RoadmapMissionPlanningHandoff {
+    const roadmap = this.getRoadmap(roadmapId);
+    if (!roadmap) {
+      throw new Error(`Roadmap ${roadmapId} not found`);
+    }
+
+    const milestones = this.listMilestones(roadmapId);
+
+    return {
+      sourceRoadmapId: roadmap.id,
+      title: roadmap.title,
+      description: roadmap.description,
+      milestones: milestones.map((milestone) => {
+        const features = this.listFeatures(milestone.id);
+
+        return {
+          sourceMilestoneId: milestone.id,
+          title: milestone.title,
+          description: milestone.description,
+          orderIndex: milestone.orderIndex,
+          features: features.map((feature) => ({
+            sourceFeatureId: feature.id,
+            title: feature.title,
+            description: feature.description,
+            orderIndex: feature.orderIndex,
+          })),
+        };
+      }),
+    };
+  }
+
+  /**
+   * Get a task planning handoff payload for a single roadmap feature.
+   *
+   * Returns a self-contained handoff payload for converting a roadmap feature
+   * into task planning flows without coupling to MissionStore internals.
+   *
+   * @param roadmapId - Parent roadmap ID (for validation)
+   * @param milestoneId - Parent milestone ID (for validation)
+   * @param featureId - Feature ID to generate handoff for
+   * @returns The task planning handoff payload
+   * @throws Error if any entity is not found or if ownership validation fails
+   */
+  getRoadmapFeatureHandoff(
+    roadmapId: string,
+    milestoneId: string,
+    featureId: string,
+  ): RoadmapFeatureTaskPlanningHandoff {
+    // Validate roadmap exists
+    const roadmap = this.getRoadmap(roadmapId);
+    if (!roadmap) {
+      throw new Error(`Roadmap ${roadmapId} not found`);
+    }
+
+    // Validate milestone exists and belongs to roadmap
+    const milestone = this.getMilestone(milestoneId);
+    if (!milestone) {
+      throw new Error(`Milestone ${milestoneId} not found`);
+    }
+    if (milestone.roadmapId !== roadmapId) {
+      throw new Error(`Milestone ${milestoneId} does not belong to roadmap ${roadmapId}`);
+    }
+
+    // Validate feature exists and belongs to milestone
+    const feature = this.getFeature(featureId);
+    if (!feature) {
+      throw new Error(`Feature ${featureId} not found`);
+    }
+    if (feature.milestoneId !== milestoneId) {
+      throw new Error(`Feature ${featureId} does not belong to milestone ${milestoneId}`);
+    }
+
+    // Build the source reference with ordering context
+    const source: RoadmapFeatureSourceRef = {
+      roadmapId: roadmap.id,
+      milestoneId: milestone.id,
+      featureId: feature.id,
+      roadmapTitle: roadmap.title,
+      milestoneTitle: milestone.title,
+      milestoneOrderIndex: milestone.orderIndex,
+      featureOrderIndex: feature.orderIndex,
+    };
+
+    return {
+      source,
+      title: feature.title,
+      description: feature.description,
     };
   }
 }

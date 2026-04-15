@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import express from "express";
 import { get as performGet, request as performRequest } from "./test-request.js";
 import { createRoadmapRouter } from "./roadmap-routes.js";
+import { ApiError } from "./api-error.js";
 import type { Roadmap, RoadmapMilestone, RoadmapFeature, RoadmapStore } from "@fusion/core";
 
 vi.mock("./roadmap-suggestions.js", () => ({
@@ -119,6 +120,56 @@ function createMockRoadmapStore(): RoadmapStore {
       if (!roadmap) return undefined;
       const ms = Array.from(milestones.values()).filter((m) => m.roadmapId === id).sort((a, b) => a.orderIndex - b.orderIndex);
       return { ...roadmap, milestones: ms.map((m) => ({ ...m, features: [] })) };
+    }),
+    getRoadmapExport: vi.fn((roadmapId: string) => {
+      const roadmap = roadmaps.get(roadmapId);
+      if (!roadmap) throw new ApiError(500, "Roadmap " + roadmapId + " not found");
+      const ms = Array.from(milestones.values()).filter((m) => m.roadmapId === roadmapId).sort((a, b) => a.orderIndex - b.orderIndex);
+      const allFeatures = ms.flatMap((m) => Array.from(features.values()).filter((f) => f.milestoneId === m.id).sort((a, b) => a.orderIndex - b.orderIndex));
+      return { roadmap, milestones: ms, features: allFeatures };
+    }),
+    getRoadmapMissionHandoff: vi.fn((roadmapId: string) => {
+      const roadmap = roadmaps.get(roadmapId);
+      if (!roadmap) throw new ApiError(500, "Roadmap " + roadmapId + " not found");
+      const ms = Array.from(milestones.values()).filter((m) => m.roadmapId === roadmapId).sort((a, b) => a.orderIndex - b.orderIndex);
+      return {
+        sourceRoadmapId: roadmap.id,
+        title: roadmap.title,
+        description: roadmap.description,
+        milestones: ms.map((m) => {
+          const fs = Array.from(features.values()).filter((f) => f.milestoneId === m.id).sort((a, b) => a.orderIndex - b.orderIndex);
+          return {
+            sourceMilestoneId: m.id,
+            title: m.title,
+            description: m.description,
+            orderIndex: m.orderIndex,
+            features: fs.map((f) => ({ sourceFeatureId: f.id, title: f.title, description: f.description, orderIndex: f.orderIndex })),
+          };
+        }),
+      };
+    }),
+    getRoadmapFeatureHandoff: vi.fn((roadmapId: string, milestoneId: string, featureId: string) => {
+      const roadmap = roadmaps.get(roadmapId);
+      if (!roadmap) throw new ApiError(500, "Roadmap " + roadmapId + " not found");
+      const milestone = milestones.get(milestoneId);
+      if (!milestone) throw new ApiError(500, "Milestone " + milestoneId + " not found");
+      if (milestone.roadmapId !== roadmapId) throw new ApiError(500, "Milestone " + milestoneId + " does not belong to roadmap " + roadmapId);
+      const feature = features.get(featureId);
+      if (!feature) throw new ApiError(500, "Feature " + featureId + " not found");
+      if (feature.milestoneId !== milestoneId) throw new ApiError(500, "Feature " + featureId + " does not belong to milestone " + milestoneId);
+      return {
+        source: {
+          roadmapId: roadmap.id,
+          milestoneId: milestone.id,
+          featureId: feature.id,
+          roadmapTitle: roadmap.title,
+          milestoneTitle: milestone.title,
+          milestoneOrderIndex: milestone.orderIndex,
+          featureOrderIndex: feature.orderIndex,
+        },
+        title: feature.title,
+        description: feature.description,
+      };
     }),
   } as unknown as RoadmapStore;
 }
@@ -274,6 +325,58 @@ describe("Roadmap Routes", () => {
       const response = await performGet(app, "/api/roadmaps?projectId=test-project");
       expect(response.status).toBe(200);
       expect(mockGetOrCreateProjectStore).toHaveBeenCalledWith("test-project");
+    });
+  });
+
+  describe("GET /api/roadmaps/:roadmapId/export", () => {
+    it("returns export bundle with all entities", async () => {
+      const roadmap = mockRoadmapStore.createRoadmap({ title: "Export Test", description: "Test desc" });
+      const milestone = mockRoadmapStore.createMilestone(roadmap.id, { title: "MS1" });
+      const feature = mockRoadmapStore.createFeature(milestone.id, { title: "F1" });
+
+      const response = await performGet(app, "/api/roadmaps/" + roadmap.id + "/export");
+      expect(response.status).toBe(200);
+      expect(response.body.roadmap.id).toBe(roadmap.id);
+      expect(response.body.roadmap.title).toBe("Export Test");
+      expect(response.body.milestones.length).toBe(1);
+      expect(response.body.features.length).toBe(1);
+      expect(response.body.features[0].id).toBe(feature.id);
+    });
+  });
+
+  describe("GET /api/roadmaps/:roadmapId/handoff/mission", () => {
+    it("returns mission handoff payload", async () => {
+      const roadmap = mockRoadmapStore.createRoadmap({ title: "Mission Handoff", description: "Mission desc" });
+      const milestone = mockRoadmapStore.createMilestone(roadmap.id, { title: "Phase 1" });
+      const feature = mockRoadmapStore.createFeature(milestone.id, { title: "Feature A" });
+
+      const response = await performGet(app, "/api/roadmaps/" + roadmap.id + "/handoff/mission");
+      expect(response.status).toBe(200);
+      expect(response.body.sourceRoadmapId).toBe(roadmap.id);
+      expect(response.body.title).toBe("Mission Handoff");
+      expect(response.body.description).toBe("Mission desc");
+      expect(response.body.milestones.length).toBe(1);
+      expect(response.body.milestones[0].sourceMilestoneId).toBe(milestone.id);
+      expect(response.body.milestones[0].features.length).toBe(1);
+      expect(response.body.milestones[0].features[0].sourceFeatureId).toBe(feature.id);
+    });
+  });
+
+  describe("GET /api/roadmaps/:roadmapId/milestones/:milestoneId/features/:featureId/handoff/task", () => {
+    it("returns task handoff payload for feature", async () => {
+      const roadmap = mockRoadmapStore.createRoadmap({ title: "Feature Handoff" });
+      const milestone = mockRoadmapStore.createMilestone(roadmap.id, { title: "Phase 1" });
+      const feature = mockRoadmapStore.createFeature(milestone.id, { title: "Feature A", description: "Feature desc" });
+
+      const response = await performGet(app, "/api/roadmaps/" + roadmap.id + "/milestones/" + milestone.id + "/features/" + feature.id + "/handoff/task");
+      expect(response.status).toBe(200);
+      expect(response.body.source.roadmapId).toBe(roadmap.id);
+      expect(response.body.source.milestoneId).toBe(milestone.id);
+      expect(response.body.source.featureId).toBe(feature.id);
+      expect(response.body.source.roadmapTitle).toBe("Feature Handoff");
+      expect(response.body.source.milestoneTitle).toBe("Phase 1");
+      expect(response.body.title).toBe("Feature A");
+      expect(response.body.description).toBe("Feature desc");
     });
   });
 });

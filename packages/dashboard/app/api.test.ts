@@ -4372,4 +4372,146 @@ describe("Settings API wrappers", () => {
       expect(url).toContain("projectId=proj_abc");
     });
   });
+
+  describe("roadmap export/handoff APIs", () => {
+    it("exportRoadmap sends GET to export endpoint", async () => {
+      const { exportRoadmap } = await import("./api");
+      const exportData = {
+        roadmap: { id: "RM-001", title: "Test", createdAt: "2024-01-01", updatedAt: "2024-01-01" },
+        milestones: [],
+        features: [],
+      };
+
+      vi.spyOn(globalThis, "fetch").mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "content-type" ? "application/json" : null,
+        },
+        json: () => Promise.resolve(exportData),
+        text: () => Promise.resolve(JSON.stringify(exportData)),
+      } as unknown as Response);
+
+      const result = await exportRoadmap("RM-001");
+
+      expect(result.roadmap.id).toBe("RM-001");
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(url).toContain("/api/roadmaps/RM-001/export");
+    });
+
+    it("exportRoadmap includes projectId when provided", async () => {
+      const { exportRoadmap } = await import("./api");
+      const exportData = { roadmap: { id: "RM-001", title: "Test", createdAt: "2024-01-01", updatedAt: "2024-01-01" }, milestones: [], features: [] };
+
+      vi.spyOn(globalThis, "fetch").mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "content-type" ? "application/json" : null,
+        },
+        json: () => Promise.resolve(exportData),
+        text: () => Promise.resolve(JSON.stringify(exportData)),
+      } as unknown as Response);
+
+      await exportRoadmap("RM-001", "proj_abc");
+
+      const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(url).toContain("/api/roadmaps/RM-001/export");
+      expect(url).toContain("projectId=proj_abc");
+    });
+
+    it("getRoadmapMissionHandoff sends GET to mission handoff endpoint", async () => {
+      const { getRoadmapMissionHandoff } = await import("./api");
+      const handoffData = {
+        sourceRoadmapId: "RM-001",
+        title: "Test Roadmap",
+        milestones: [],
+      };
+
+      vi.spyOn(globalThis, "fetch").mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "content-type" ? "application/json" : null,
+        },
+        json: () => Promise.resolve(handoffData),
+        text: () => Promise.resolve(JSON.stringify(handoffData)),
+      } as unknown as Response);
+
+      const result = await getRoadmapMissionHandoff("RM-001");
+
+      expect(result.sourceRoadmapId).toBe("RM-001");
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(url).toContain("/api/roadmaps/RM-001/handoff/mission");
+    });
+
+    it("getRoadmapFeatureHandoff sends GET to feature handoff endpoint", async () => {
+      const { getRoadmapFeatureHandoff } = await import("./api");
+      const handoffData = {
+        source: {
+          roadmapId: "RM-001",
+          milestoneId: "RMS-001",
+          featureId: "RF-001",
+          roadmapTitle: "Test",
+          milestoneTitle: "Phase 1",
+          milestoneOrderIndex: 0,
+          featureOrderIndex: 0,
+        },
+        title: "Feature 1",
+      };
+
+      vi.spyOn(globalThis, "fetch").mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "content-type" ? "application/json" : null,
+        },
+        json: () => Promise.resolve(handoffData),
+        text: () => Promise.resolve(JSON.stringify(handoffData)),
+      } as unknown as Response);
+
+      const result = await getRoadmapFeatureHandoff("RM-001", "RMS-001", "RF-001");
+
+      expect(result.source.featureId).toBe("RF-001");
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(url).toContain("/api/roadmaps/RM-001/milestones/RMS-001/features/RF-001/handoff/task");
+    });
+
+    it("getRoadmapFeatureHandoff includes projectId when provided", async () => {
+      const { getRoadmapFeatureHandoff } = await import("./api");
+      const handoffData = {
+        source: { roadmapId: "RM-001", milestoneId: "RMS-001", featureId: "RF-001", roadmapTitle: "T", milestoneTitle: "M", milestoneOrderIndex: 0, featureOrderIndex: 0 },
+        title: "F",
+      };
+
+      vi.spyOn(globalThis, "fetch").mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "content-type" ? "application/json" : null,
+        },
+        json: () => Promise.resolve(handoffData),
+        text: () => Promise.resolve(JSON.stringify(handoffData)),
+      } as unknown as Response);
+
+      await getRoadmapFeatureHandoff("RM-001", "RMS-001", "RF-001", "proj_xyz");
+
+      const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(url).toContain("/api/roadmaps/RM-001/milestones/RMS-001/features/RF-001/handoff/task");
+      expect(url).toContain("projectId=proj_xyz");
+    });
+  });
 });

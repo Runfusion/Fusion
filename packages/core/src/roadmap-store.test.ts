@@ -742,4 +742,205 @@ describe("RoadmapStore", () => {
       expect(db.getSchemaVersion()).toBe(33);
     });
   });
+
+  describe("export / handoff", () => {
+    describe("getRoadmapExport", () => {
+      it("returns flat export bundle with all entities", () => {
+        const roadmap = store.createRoadmap({ title: "Export Test", description: "Test description" });
+        const m1 = store.createMilestone(roadmap.id, { title: "Milestone 1" });
+        const m2 = store.createMilestone(roadmap.id, { title: "Milestone 2" });
+        const f1 = store.createFeature(m1.id, { title: "Feature 1" });
+        const f2 = store.createFeature(m1.id, { title: "Feature 2" });
+        const f3 = store.createFeature(m2.id, { title: "Feature 3" });
+
+        const export_ = store.getRoadmapExport(roadmap.id);
+
+        expect(export_.roadmap.id).toBe(roadmap.id);
+        expect(export_.roadmap.title).toBe("Export Test");
+        expect(export_.milestones.length).toBe(2);
+        expect(export_.features.length).toBe(3);
+        expect(export_.features.map((f) => f.id)).toEqual([f1.id, f2.id, f3.id]);
+      });
+
+      it("returns milestones in deterministic order", () => {
+        const roadmap = store.createRoadmap({ title: "Order Test" });
+        // Create in reverse order to test deterministic sorting
+        const m2 = store.createMilestone(roadmap.id, { title: "Second" });
+        const m1 = store.createMilestone(roadmap.id, { title: "First" });
+
+        // m2 was created first (orderIndex 0), m1 was created second (orderIndex 1)
+        // Deterministic order: orderIndex ASC → m2 comes first
+        const export_ = store.getRoadmapExport(roadmap.id);
+
+        expect(export_.milestones[0].id).toBe(m2.id);
+        expect(export_.milestones[1].id).toBe(m1.id);
+      });
+
+      it("returns features grouped by milestone in deterministic order", () => {
+        const roadmap = store.createRoadmap({ title: "Features Order" });
+        const m1 = store.createMilestone(roadmap.id, { title: "M1" });
+        // Create in reverse order to test deterministic sorting
+        const f2 = store.createFeature(m1.id, { title: "F2" });
+        const f1 = store.createFeature(m1.id, { title: "F1" });
+
+        // f2 was created first (orderIndex 0), f1 was created second (orderIndex 1)
+        // Deterministic order: orderIndex ASC → f2 comes first
+        const export_ = store.getRoadmapExport(roadmap.id);
+
+        expect(export_.features.length).toBe(2);
+        expect(export_.features[0].id).toBe(f2.id);
+        expect(export_.features[1].id).toBe(f1.id);
+      });
+
+      it("throws for non-existent roadmap", () => {
+        expect(() => store.getRoadmapExport("RM-nonexistent")).toThrow("Roadmap RM-nonexistent not found");
+      });
+
+      it("returns empty arrays when roadmap has no milestones", () => {
+        const roadmap = store.createRoadmap({ title: "Empty" });
+        const export_ = store.getRoadmapExport(roadmap.id);
+
+        expect(export_.milestones).toEqual([]);
+        expect(export_.features).toEqual([]);
+      });
+    });
+
+    describe("getRoadmapMissionHandoff", () => {
+      it("returns mission planning handoff with source IDs preserved", () => {
+        const roadmap = store.createRoadmap({ title: "Mission Handoff", description: "Mission desc" });
+        const m1 = store.createMilestone(roadmap.id, { title: "Phase 1", description: "Phase 1 desc" });
+        const m2 = store.createMilestone(roadmap.id, { title: "Phase 2" });
+        const f1 = store.createFeature(m1.id, { title: "Task A", description: "Task A desc" });
+        const f2 = store.createFeature(m2.id, { title: "Task B" });
+
+        const handoff = store.getRoadmapMissionHandoff(roadmap.id);
+
+        expect(handoff.sourceRoadmapId).toBe(roadmap.id);
+        expect(handoff.title).toBe("Mission Handoff");
+        expect(handoff.description).toBe("Mission desc");
+        expect(handoff.milestones.length).toBe(2);
+        expect(handoff.milestones[0].sourceMilestoneId).toBe(m1.id);
+        expect(handoff.milestones[0].title).toBe("Phase 1");
+        expect(handoff.milestones[0].description).toBe("Phase 1 desc");
+        expect(handoff.milestones[0].features.length).toBe(1);
+        expect(handoff.milestones[0].features[0].sourceFeatureId).toBe(f1.id);
+        expect(handoff.milestones[0].features[0].title).toBe("Task A");
+        expect(handoff.milestones[1].features.length).toBe(1);
+        expect(handoff.milestones[1].features[0].sourceFeatureId).toBe(f2.id);
+      });
+
+      it("preserves deterministic ordering in handoff", () => {
+        const roadmap = store.createRoadmap({ title: "Order Check" });
+        const m1 = store.createMilestone(roadmap.id, { title: "M1" });
+        const f1 = store.createFeature(m1.id, { title: "First" });
+        const f2 = store.createFeature(m1.id, { title: "Second" });
+        const f3 = store.createFeature(m1.id, { title: "Third" });
+
+        const handoff = store.getRoadmapMissionHandoff(roadmap.id);
+
+        expect(handoff.milestones[0].features[0].sourceFeatureId).toBe(f1.id);
+        expect(handoff.milestones[0].features[1].sourceFeatureId).toBe(f2.id);
+        expect(handoff.milestones[0].features[2].sourceFeatureId).toBe(f3.id);
+      });
+
+      it("throws for non-existent roadmap", () => {
+        expect(() => store.getRoadmapMissionHandoff("RM-nonexistent")).toThrow("Roadmap RM-nonexistent not found");
+      });
+
+      it("includes orderIndex for milestones and features", () => {
+        const roadmap = store.createRoadmap({ title: "Index Test" });
+        const m1 = store.createMilestone(roadmap.id, { title: "First" });
+        const m2 = store.createMilestone(roadmap.id, { title: "Second" });
+        const f1 = store.createFeature(m1.id, { title: "F1" });
+        const f2 = store.createFeature(m2.id, { title: "F2" });
+
+        const handoff = store.getRoadmapMissionHandoff(roadmap.id);
+
+        // Milestones should be in deterministic order (m1 created first, so orderIndex 0)
+        expect(handoff.milestones[0].sourceMilestoneId).toBe(m1.id);
+        expect(handoff.milestones[0].orderIndex).toBeDefined();
+        expect(handoff.milestones[1].sourceMilestoneId).toBe(m2.id);
+        expect(handoff.milestones[1].orderIndex).toBeDefined();
+        // Features should be in deterministic order
+        expect(handoff.milestones[0].features[0].sourceFeatureId).toBe(f1.id);
+        expect(handoff.milestones[0].features[0].orderIndex).toBeDefined();
+        expect(handoff.milestones[1].features[0].sourceFeatureId).toBe(f2.id);
+        expect(handoff.milestones[1].features[0].orderIndex).toBeDefined();
+      });
+    });
+
+    describe("getRoadmapFeatureHandoff", () => {
+      it("returns task planning handoff for a feature", () => {
+        const roadmap = store.createRoadmap({ title: "Feature Handoff" });
+        const m1 = store.createMilestone(roadmap.id, { title: "Phase 1" });
+        const f1 = store.createFeature(m1.id, { title: "Feature A", description: "Feature A desc" });
+
+        const handoff = store.getRoadmapFeatureHandoff(roadmap.id, m1.id, f1.id);
+
+        expect(handoff.source.roadmapId).toBe(roadmap.id);
+        expect(handoff.source.milestoneId).toBe(m1.id);
+        expect(handoff.source.featureId).toBe(f1.id);
+        expect(handoff.source.roadmapTitle).toBe("Feature Handoff");
+        expect(handoff.source.milestoneTitle).toBe("Phase 1");
+        expect(handoff.source.milestoneOrderIndex).toBeDefined();
+        expect(handoff.source.featureOrderIndex).toBeDefined();
+        expect(handoff.title).toBe("Feature A");
+        expect(handoff.description).toBe("Feature A desc");
+      });
+
+      it("throws for non-existent roadmap", () => {
+        const roadmap = store.createRoadmap({ title: "Test" });
+        const m1 = store.createMilestone(roadmap.id, { title: "M1" });
+        const f1 = store.createFeature(m1.id, { title: "F1" });
+
+        expect(() => store.getRoadmapFeatureHandoff("RM-nonexistent", m1.id, f1.id)).toThrow("Roadmap RM-nonexistent not found");
+      });
+
+      it("throws for non-existent milestone", () => {
+        const roadmap = store.createRoadmap({ title: "Test" });
+
+        expect(() => store.getRoadmapFeatureHandoff(roadmap.id, "RMS-nonexistent", "RF-nonexistent")).toThrow("Milestone RMS-nonexistent not found");
+      });
+
+      it("throws when milestone does not belong to roadmap", () => {
+        const roadmap1 = store.createRoadmap({ title: "Roadmap 1" });
+        const roadmap2 = store.createRoadmap({ title: "Roadmap 2" });
+        const m2 = store.createMilestone(roadmap2.id, { title: "M2" });
+        const f2 = store.createFeature(m2.id, { title: "F2" });
+
+        expect(() => store.getRoadmapFeatureHandoff(roadmap1.id, m2.id, f2.id)).toThrow(`Milestone ${m2.id} does not belong to roadmap ${roadmap1.id}`);
+      });
+
+      it("throws for non-existent feature", () => {
+        const roadmap = store.createRoadmap({ title: "Test" });
+        const m1 = store.createMilestone(roadmap.id, { title: "M1" });
+
+        expect(() => store.getRoadmapFeatureHandoff(roadmap.id, m1.id, "RF-nonexistent")).toThrow("Feature RF-nonexistent not found");
+      });
+
+      it("throws when feature does not belong to milestone", () => {
+        const roadmap = store.createRoadmap({ title: "Test" });
+        const m1 = store.createMilestone(roadmap.id, { title: "M1" });
+        const m2 = store.createMilestone(roadmap.id, { title: "M2" });
+        const f2 = store.createFeature(m2.id, { title: "F2" });
+
+        expect(() => store.getRoadmapFeatureHandoff(roadmap.id, m1.id, f2.id)).toThrow(`Feature ${f2.id} does not belong to milestone ${m1.id}`);
+      });
+
+      it("includes order indices in source reference", () => {
+        const roadmap = store.createRoadmap({ title: "Order Test" });
+        const m1 = store.createMilestone(roadmap.id, { title: "First" });
+        const m2 = store.createMilestone(roadmap.id, { title: "Second" });
+        const f1 = store.createFeature(m1.id, { title: "F1" });
+        const f2 = store.createFeature(m2.id, { title: "F2" });
+
+        // M1 is created first so has orderIndex 0, M2 has orderIndex 1
+        const handoff1 = store.getRoadmapFeatureHandoff(roadmap.id, m1.id, f1.id);
+        const handoff2 = store.getRoadmapFeatureHandoff(roadmap.id, m2.id, f2.id);
+
+        // m1 was created first so it has lower orderIndex
+        expect(handoff1.source.milestoneOrderIndex).toBeLessThan(handoff2.source.milestoneOrderIndex);
+      });
+    });
+  });
 });

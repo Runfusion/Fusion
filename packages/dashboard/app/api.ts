@@ -47,6 +47,9 @@ import type {
   RoadmapFeatureCreateInput,
   RoadmapFeatureUpdateInput,
   RoadmapWithHierarchy,
+  RoadmapExportBundle,
+  RoadmapMissionPlanningHandoff,
+  RoadmapFeatureTaskPlanningHandoff,
 } from "@fusion/core";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 import type { ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult } from "@fusion/core";
@@ -4563,6 +4566,31 @@ export function moveRoadmapFeature(
     method: "POST",
     body: JSON.stringify({ targetMilestoneId, targetIndex }),
   });
+}
+
+/** Export a roadmap as a flat bundle for persistence/import/export */
+export function exportRoadmap(roadmapId: string, projectId?: string): Promise<RoadmapExportBundle> {
+  return api<RoadmapExportBundle>(withProjectId(`/roadmaps/${encodeURIComponent(roadmapId)}/export`, projectId));
+}
+
+/** Get mission planning handoff payload for a roadmap */
+export function getRoadmapMissionHandoff(roadmapId: string, projectId?: string): Promise<RoadmapMissionPlanningHandoff> {
+  return api<RoadmapMissionPlanningHandoff>(withProjectId(`/roadmaps/${encodeURIComponent(roadmapId)}/handoff/mission`, projectId));
+}
+
+/** Get task planning handoff payload for a single roadmap feature */
+export function getRoadmapFeatureHandoff(
+  roadmapId: string,
+  milestoneId: string,
+  featureId: string,
+  projectId?: string
+): Promise<RoadmapFeatureTaskPlanningHandoff> {
+  return api<RoadmapFeatureTaskPlanningHandoff>(
+    withProjectId(
+      `/roadmaps/${encodeURIComponent(roadmapId)}/milestones/${encodeURIComponent(milestoneId)}/features/${encodeURIComponent(featureId)}/handoff/task`,
+      projectId
+    )
+  );
 }
 
 /** Response from milestone suggestion generation */

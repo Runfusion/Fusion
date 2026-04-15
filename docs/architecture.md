@@ -152,18 +152,28 @@ Fusion now has two planning models in core:
 
 The roadmap model is intentionally lightweight and independent from `MissionStore`/mission lifecycle semantics. It is meant for standalone planning, ordering, drag-and-drop moves, and future conversion flows into missions or tasks without coupling roadmap data to slice activation, autopilot, or mission status rollups.
 
-**Roadmap persistence (FN-1690):**
+**Roadmap persistence (FN-1690/FN-1691):**
 - `RoadmapStore` provides CRUD operations with atomic reorder/move semantics
 - All list queries use deterministic ordering: `ORDER BY orderIndex ASC, createdAt ASC, id ASC`
 - Covering indexes ensure efficient ordered reads without temp B-tree sorts
 - Cross-milestone feature moves atomically renumber both source and destination milestone scopes
 - FK cascade integrity: deleting a roadmap removes milestones and features
+- Export/handoff DTO methods for integration with downstream systems:
+  - `getRoadmapExport()` → `RoadmapExportBundle` (flat export payload)
+  - `getRoadmapMissionHandoff()` → `RoadmapMissionPlanningHandoff` (mission conversion)
+  - `getRoadmapFeatureHandoff()` → `RoadmapFeatureTaskPlanningHandoff` (task planning)
 
 Key roadmap invariants:
 - milestone ordering is scoped to a single roadmap and must remain contiguous + 0-based
 - feature ordering is scoped to a single milestone and must remain contiguous + 0-based
 - repair/normalization uses deterministic tie-breakers: `orderIndex ASC`, `createdAt ASC`, `id ASC`
 - cross-milestone feature moves must renumber both the source and destination milestone deterministically
+
+**Roadmap REST API endpoints (`/api/roadmaps`):**
+- Roadmaps: `GET /`, `POST /`, `GET /:roadmapId`, `PATCH /:roadmapId`, `DELETE /:roadmapId`
+- Milestones: `GET /:roadmapId/milestones`, `POST /:roadmapId/milestones`, `PATCH /milestones/:milestoneId`, `DELETE /milestones/:milestoneId`, `POST /:roadmapId/milestones/reorder`
+- Features: `GET /milestones/:milestoneId/features`, `POST /milestones/:milestoneId/features`, `PATCH /features/:featureId`, `DELETE /features/:featureId`, `POST /milestones/:milestoneId/features/reorder`, `POST /features/:featureId/move`
+- Export/Handoff: `GET /:roadmapId/export`, `GET /:roadmapId/handoff/mission`, `GET /:roadmapId/milestones/:milestoneId/features/:featureId/handoff/task`
 
 **Database schema:**
 - `roadmaps` — roadmap metadata (id, title, description, timestamps)
