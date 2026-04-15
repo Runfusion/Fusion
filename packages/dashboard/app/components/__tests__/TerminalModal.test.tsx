@@ -936,6 +936,9 @@ describe("TerminalModal", () => {
 
       // WebGL addon constructor should NOT have been called
       expect(webglModule.WebglAddon).not.toHaveBeenCalled();
+
+      // loadAddon is called with fitAddon and webLinksAddon (not WebGL) — verified by
+      // the WebglAddon constructor not being called above
     });
   });
 
