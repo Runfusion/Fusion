@@ -728,6 +728,7 @@ export class Scheduler {
 
       const feature = this.resolveMissionFeatureForTask(missionStore, task);
       if (!feature) {
+        schedulerLog.log(`No linked feature found for task ${taskId} (sliceId=${task.sliceId ?? "none"}) — skipping mission status update`);
         return;
       }
 

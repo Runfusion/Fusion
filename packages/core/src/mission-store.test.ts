@@ -290,16 +290,17 @@ describe("MissionStore", () => {
     });
 
     it("returns correct summaries for multiple missions", () => {
-      // Mission 1: 2 milestones, 1 complete, 2 features, 1 done
+      // Mission 1: 2 milestones, 2 features (1 done after F2 is added to prevent premature milestone completion)
+      // Note: When F1 is set to done, SL1 becomes complete and ms1a becomes complete. Adding F2 after makes SL1 active again.
       const m1 = store.createMission({ title: "Mission 1" });
       const ms1a = store.addMilestone(m1.id, { title: "MS1a" });
       const ms1b = store.addMilestone(m1.id, { title: "MS1b" });
       store.updateMilestone(ms1b.id, { status: "complete" });
       const sl1 = store.addSlice(ms1a.id, { title: "SL1" });
       const f1 = store.addFeature(sl1.id, { title: "F1" });
-      store.updateFeature(f1.id, { status: "done" });
       const f2 = store.addFeature(sl1.id, { title: "F2" });
-      // f2 not done
+      // f2 not done - set f1 to done AFTER f2 is created to prevent premature completion
+      store.updateFeature(f1.id, { status: "done" });
 
       // Mission 2: 1 milestone, 0 features
       const m2 = store.createMission({ title: "Mission 2" });
@@ -1287,6 +1288,87 @@ describe("MissionStore", () => {
 
         const status = store.computeMissionStatus(mission.id);
         expect(status).toBe("active");
+      });
+    });
+
+    describe("updateFeature status cascade", () => {
+      it("updateFeature with status change triggers slice and milestone recompute", () => {
+        const mission = store.createMission({ title: "Mission" });
+        const milestone = store.addMilestone(mission.id, { title: "Milestone" });
+        const slice = store.addSlice(milestone.id, { title: "Slice" });
+        const feature = store.addFeature(slice.id, { title: "Feature" });
+
+        // Initially milestone should be "planning"
+        expect(store.computeMilestoneStatus(milestone.id)).toBe("planning");
+
+        // Update feature status to triaged (without taskId change)
+        store.updateFeature(feature.id, { status: "triaged" });
+
+        // Milestone should now be "active" since a feature has status triaged
+        expect(store.computeMilestoneStatus(milestone.id)).toBe("active");
+      });
+
+      it("updateFeature status change without taskId change still cascades to slice status", () => {
+        createTaskInDb(db, "FN-001");
+
+        const mission = store.createMission({ title: "Mission" });
+        const milestone = store.addMilestone(mission.id, { title: "Milestone" });
+        const slice = store.addSlice(milestone.id, { title: "Slice" });
+        const f1 = store.addFeature(slice.id, { title: "F1" });
+        const f2 = store.addFeature(slice.id, { title: "F2" });
+
+        // Link features to task (makes slice active)
+        store.linkFeatureToTask(f1.id, "FN-001");
+        createTaskInDb(db, "FN-002");
+        store.linkFeatureToTask(f2.id, "FN-002");
+
+        // Both slices should be active
+        expect(store.computeSliceStatus(slice.id)).toBe("active");
+        expect(store.computeMilestoneStatus(milestone.id)).toBe("active");
+
+        // Update f1 status to done (not changing taskId)
+        store.updateFeature(f1.id, { status: "done" });
+
+        // Slice should still be "active" (partial completion)
+        expect(store.computeSliceStatus(slice.id)).toBe("active");
+
+        // Update f2 status to done
+        store.updateFeature(f2.id, { status: "done" });
+
+        // Now slice should be "complete"
+        expect(store.computeSliceStatus(slice.id)).toBe("complete");
+        expect(store.computeMilestoneStatus(milestone.id)).toBe("complete");
+      });
+
+      it("milestone status transitions correctly through the full lifecycle", () => {
+        const mission = store.createMission({ title: "Mission" });
+        const milestone = store.addMilestone(mission.id, { title: "Milestone" });
+        const slice = store.addSlice(milestone.id, { title: "Slice" });
+        const f1 = store.addFeature(slice.id, { title: "F1" });
+        const f2 = store.addFeature(slice.id, { title: "F2" });
+        const f3 = store.addFeature(slice.id, { title: "F3" });
+
+        // Initially: milestone is "planning", slice is "pending"
+        expect(store.computeMilestoneStatus(milestone.id)).toBe("planning");
+        expect(store.computeSliceStatus(slice.id)).toBe("pending");
+
+        // Link first feature to task → milestone should become "active"
+        createTaskInDb(db, "FN-001");
+        store.linkFeatureToTask(f1.id, "FN-001");
+        expect(store.computeMilestoneStatus(milestone.id)).toBe("active");
+
+        // Link second feature to task → milestone stays "active"
+        createTaskInDb(db, "FN-002");
+        store.linkFeatureToTask(f2.id, "FN-002");
+        expect(store.computeMilestoneStatus(milestone.id)).toBe("active");
+
+        // Mark all features as "done" using updateFeature (not updateFeatureStatus)
+        // → milestone should become "complete"
+        store.updateFeature(f1.id, { status: "done" });
+        store.updateFeature(f2.id, { status: "done" });
+        store.updateFeature(f3.id, { status: "done" });
+
+        expect(store.computeMilestoneStatus(milestone.id)).toBe("complete");
       });
     });
   });

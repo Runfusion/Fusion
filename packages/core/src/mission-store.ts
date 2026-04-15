@@ -1590,8 +1590,10 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     this.db.bumpLastModified();
     this.emit("feature:updated", updated);
 
-    // Recompute slice status if task linkage changed
-    if (updates.taskId !== undefined && updates.taskId !== feature.taskId) {
+    // Recompute slice status if task linkage or status changed
+    const taskIdChanged = updates.taskId !== undefined && updates.taskId !== feature.taskId;
+    const statusChanged = updates.status !== undefined && updates.status !== feature.status;
+    if (taskIdChanged || statusChanged) {
       this.recomputeSliceStatus(updated.sliceId);
     }
 

@@ -805,6 +805,14 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       }
     };
 
+    const handleMilestoneUpdated = (_rawEvent: Event) => {
+      refreshHealth();
+      // Reload the selected mission detail to reflect updated milestone status
+      if (selectedMission) {
+        void loadMissionDetail(selectedMission.id);
+      }
+    };
+
     // Handler for validator run started - refresh feature loop state and validation runs
     const handleValidatorRunStarted = (rawEvent: Event) => {
       const messageEvent = rawEvent as MessageEvent<string>;
@@ -938,6 +946,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     eventSource.addEventListener("mission:updated", handleMissionUpdated);
     eventSource.addEventListener("slice:updated", handleSliceUpdated);
     eventSource.addEventListener("feature:updated", handleFeatureUpdated);
+    eventSource.addEventListener("milestone:updated", handleMilestoneUpdated);
     eventSource.addEventListener("mission:event", handleMissionEvent);
     // Validation events
     eventSource.addEventListener("validator-run:started", handleValidatorRunStarted);
@@ -954,6 +963,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       eventSource.removeEventListener("mission:updated", handleMissionUpdated);
       eventSource.removeEventListener("slice:updated", handleSliceUpdated);
       eventSource.removeEventListener("feature:updated", handleFeatureUpdated);
+      eventSource.removeEventListener("milestone:updated", handleMilestoneUpdated);
       eventSource.removeEventListener("mission:event", handleMissionEvent);
       eventSource.removeEventListener("validator-run:started", handleValidatorRunStarted);
       eventSource.removeEventListener("validator-run:completed", handleValidatorRunCompleted);
