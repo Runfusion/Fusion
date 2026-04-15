@@ -133,6 +133,7 @@ function createMockStore(overrides: Record<string, any> = {}) {
       return makeTask(id, col);
     }),
     logEntry: vi.fn().mockResolvedValue(undefined),
+    addTaskComment: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
     parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
@@ -498,15 +499,39 @@ describe("In-progress task resume after restart", () => {
       return "" as any;
     });
 
+    // Use fake timers to control the setTimeout in sendTaskBackForFix
+    vi.useFakeTimers();
+
     const executor = new TaskExecutor(store, "/tmp/test");
     const recovered = await executor.recoverCompletedTask(task);
 
     expect(recovered).toBe(true);
+    // Task should be cleared and reset for retry (not failed + in-review)
     expect(store.updateTask).toHaveBeenCalledWith("FN-963", {
-      status: "failed",
-      error: "Workflow step failed during recovery",
+      status: null,
+      error: null,
+      sessionFile: null,
+      workflowStepRetries: 0,
     });
-    expect(store.moveTask).toHaveBeenCalledWith("FN-963", "in-review");
+    // Should add a comment with failure feedback
+    expect(store.addTaskComment).toHaveBeenCalledWith(
+      "FN-963",
+      expect.stringContaining("Workflow step failed during recovery"),
+      "agent",
+    );
+    // Should reset all steps to pending
+    expect(store.updateStep).toHaveBeenCalledWith("FN-963", 0, "pending");
+
+    // Advance timers to trigger the setTimeout that moves task to todo then in-progress
+    vi.advanceTimersByTime(0);
+    // Run any pending microtasks (the async code in setTimeout)
+    await vi.runAllTimersAsync();
+
+    // Task should move to todo then in-progress (not in-review)
+    expect(store.moveTask).toHaveBeenCalledWith("FN-963", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-963", "in-progress");
+
+    vi.useRealTimers();
   });
 });
 

@@ -717,9 +717,8 @@ export class TaskExecutor {
         const workflowResult = await this.runWorkflowSteps(task, task.worktree, settings);
         if (!workflowResult.allPassed) {
           // For recovery path, treat any failure (including revision) as hard failure
-          await this.store.updateTask(task.id, { status: "failed", error: "Workflow step failed during recovery" });
-          await this.store.moveTask(task.id, "in-review");
-          executorLog.log(`✗ ${task.id} workflow step failed during recovery → in-review`);
+          // Send back to in-progress so executor can attempt to fix the issues
+          await this.sendTaskBackForFix(task, task.worktree!, workflowResult.feedback, workflowResult.stepName || "Unknown", "Workflow step failed during recovery");
           return true; // Still transitioned out of in-progress
         }
       }
@@ -1227,13 +1226,8 @@ export class TaskExecutor {
               if (retried) {
                 return; // Retry scheduled
               }
-              // Retries exhausted - hard failure
-              await this.store.updateTask(task.id, { status: "failed", error: "Workflow step failed" });
-              await this.store.moveTask(task.id, "in-review");
-              // Audit trail: record task move (FN-1404)
-              await audit.database({ type: "task:move", target: task.id, metadata: { to: "in-review" } });
-              executorLog.log(`✗ ${task.id} workflow step failed → in-review`);
-              this.options.onError?.(task, new Error("Workflow step failed"));
+              // Retries exhausted - send back to in-progress for remediation
+              await this.sendTaskBackForFix(task, worktreePath, workflowResult.feedback, workflowResult.stepName || "Unknown", "Workflow step failed");
               return;
             }
 
@@ -1661,11 +1655,8 @@ export class TaskExecutor {
               if (retried) {
                 return; // Retry scheduled
               }
-              // Retries exhausted - hard failure
-              await this.store.updateTask(task.id, { status: "failed", error: "Workflow step failed" });
-              await this.store.moveTask(task.id, "in-review");
-              executorLog.log(`✗ ${task.id} workflow step failed → in-review`);
-              this.options.onError?.(task, new Error("Workflow step failed"));
+              // Retries exhausted - send back to in-progress for remediation
+              await this.sendTaskBackForFix(task, worktreePath, workflowResult.feedback, workflowResult.stepName || "Unknown", "Workflow step failed");
               return;
             }
 
@@ -1761,11 +1752,8 @@ export class TaskExecutor {
                   await this.handleWorkflowRevisionRequest(task, worktreePath, workflowResult.feedback, workflowResult.stepName);
                   return;
                 }
-                // Hard failure
-                await this.store.updateTask(task.id, { status: "failed", error: "Workflow step failed" });
-                await this.store.moveTask(task.id, "in-review");
-                executorLog.log(`✗ ${task.id} workflow step failed on retry → in-review`);
-                this.options.onError?.(task, new Error("Workflow step failed"));
+                // Hard failure - send back to in-progress for remediation
+                await this.sendTaskBackForFix(task, worktreePath, workflowResult.feedback, workflowResult.stepName || "Unknown", "Workflow step failed on retry");
                 return;
               }
 
@@ -2700,6 +2688,68 @@ ${feedback}
     }, 0);
 
     return true;
+  }
+
+  /**
+   * Send a task back to in-progress after verification failure.
+   * Injects failure feedback into PROMPT.md, resets steps, clears session,
+   * and schedules a move to todo → in-progress after the executing guard clears.
+   */
+  private async sendTaskBackForFix(
+    task: Task,
+    worktreePath: string,
+    failureFeedback: string,
+    stepName: string,
+    reason: string,
+  ): Promise<void> {
+    const taskId = task.id;
+
+    // 1. Add a task comment explaining the failure
+    await this.store.addTaskComment(
+      taskId,
+      `${reason}. The failing workflow step was "${stepName}". ` +
+      `Feedback:\n${failureFeedback}\n\n` +
+      `Please fix the issues so the verification can pass on the next attempt.`,
+      "agent",
+    );
+
+    // 2. Log an entry explaining the task was sent back
+    await this.store.logEntry(
+      taskId,
+      `${reason} — moved back to in-progress for remediation`,
+    );
+
+    // 3. Inject failure feedback into PROMPT.md using the existing method
+    // Pass MAX_WORKFLOW_STEP_RETRIES to indicate retries are exhausted (shows "3/3 (0 remaining)")
+    await this.injectWorkflowStepFailureInstructions(task, failureFeedback, stepName, MAX_WORKFLOW_STEP_RETRIES);
+
+    // 4. Reset all steps to pending
+    const updatedTask = await this.store.getTask(taskId);
+    for (let i = 0; i < updatedTask.steps.length; i++) {
+      if (updatedTask.steps[i].status !== "pending") {
+        await this.store.updateStep(taskId, i, "pending");
+      }
+    }
+
+    // 5. Clear error/status/session fields and reset workflow step retries
+    await this.store.updateTask(taskId, {
+      status: null,
+      error: null,
+      sessionFile: null,
+      workflowStepRetries: 0,
+    });
+
+    // 6. Schedule the move after the guard unwinds (per guard-unwind requirement)
+    setTimeout(async () => {
+      try {
+        await this.store.moveTask(taskId, "todo");
+        await this.store.moveTask(taskId, "in-progress");
+        executorLog.log(`${taskId}: sent back to in-progress for remediation`);
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        executorLog.error(`${taskId}: failed to move back to in-progress: ${errorMessage}`);
+      }
+    }, 0);
   }
 
   /**

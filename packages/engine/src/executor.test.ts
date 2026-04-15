@@ -187,6 +187,7 @@ function createMockStore() {
     moveTask: vi.fn().mockResolvedValue({}),
     mergeTask: vi.fn().mockResolvedValue({}),
     logEntry: vi.fn().mockResolvedValue(undefined),
+    addTaskComment: vi.fn().mockResolvedValue(undefined),
     parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
     updateSettings: vi.fn().mockResolvedValue({}),
     getSettings: vi.fn().mockResolvedValue({
@@ -6851,7 +6852,7 @@ describe("Workflow Steps Execution", () => {
     expect(JSON.stringify(updatePayloads)).not.toContain("all tests passed");
   });
 
-  it("fails task when script-mode workflow step exits non-zero", async () => {
+  it("sends task back to in-progress when script-mode workflow step fails with exhausted retries", async () => {
     const store = createMockStore();
 
     store.getSettings.mockResolvedValue({
@@ -6860,20 +6861,30 @@ describe("Workflow Steps Execution", () => {
       scripts: { lint: "pnpm lint" },
     });
 
-    store.getTask.mockResolvedValue({
+    // Mutable task object to track step changes
+    const mutableTask = {
       id: "FN-001",
       title: "Test",
       description: "Test task",
-      column: "in-progress",
-      dependencies: [],
-      steps: [{ name: "Preflight", status: "pending" }],
+      column: "in-progress" as const,
+      dependencies: [] as string[],
+      steps: [{ name: "Preflight", status: "pending" as const }],
       currentStep: 0,
-      log: [],
+      log: [] as string[],
       enabledWorkflowSteps: ["WS-001"],
       workflowStepRetries: 3, // Exhaust retries so task fails immediately
       prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+    };
+    store.getTask.mockResolvedValue(mutableTask);
+
+    // Make updateStep track changes in the mutable task
+    store.updateStep.mockImplementation(async (taskId: string, stepIndex: number, status: string) => {
+      if (mutableTask.steps[stepIndex]) {
+        mutableTask.steps[stepIndex].status = status as any;
+      }
+      return {};
     });
 
     store.getWorkflowStep.mockResolvedValue({
@@ -6900,10 +6911,15 @@ describe("Workflow Steps Execution", () => {
       return Buffer.from("");
     });
 
+    // Use createAgentWithTaskDone to properly set up the agent mock
     createAgentWithTaskDone();
 
     const onComplete = vi.fn();
-    const executor = new TaskExecutor(store, "/tmp/test", { onComplete });
+    const onError = vi.fn();
+    const executor = new TaskExecutor(store, "/tmp/test", { onComplete, onError });
+
+    // Use fake timers to control the setTimeout in sendTaskBackForFix
+    vi.useFakeTimers();
 
     await executor.execute({
       id: "FN-001",
@@ -6921,29 +6937,63 @@ describe("Workflow Steps Execution", () => {
     });
 
     // Should record a failed result with exit code and stderr
+    // (This may not be the first call, so check if any call has workflowStepResults)
+    const updateTaskCalls = store.updateTask.mock.calls;
+    const hasWorkflowStepFailure = updateTaskCalls.some(
+      (call: any[]) =>
+        call[0] === "FN-001" &&
+        call[1]?.workflowStepResults?.some(
+          (r: any) =>
+            r.workflowStepId === "WS-001" &&
+            r.workflowStepName === "Lint Check" &&
+            r.status === "failed" &&
+            r.output?.includes("Exit code: 1")
+        )
+    );
+    expect(hasWorkflowStepFailure).toBe(true);
+
+    // Task should be cleared and reset for retry (not failed + in-review)
     expect(store.updateTask).toHaveBeenCalledWith(
       "FN-001",
-      expect.objectContaining({
-        workflowStepResults: expect.arrayContaining([
-          expect.objectContaining({
-            workflowStepId: "WS-001",
-            workflowStepName: "Lint Check",
-            status: "failed",
-            output: expect.stringContaining("Exit code: 1"),
-          }),
-        ]),
-      }),
+      expect.objectContaining({ status: null, error: null, sessionFile: null, workflowStepRetries: 0 }),
     );
 
-    // Task should move to in-review but with failed status
-    expect(store.updateTask).toHaveBeenCalledWith(
+    // Should add a comment with failure feedback
+    // This will fail if sendTaskBackForFix is not called
+    expect(store.addTaskComment).toHaveBeenCalledWith(
       "FN-001",
-      expect.objectContaining({ status: "failed", error: "Workflow step failed" }),
+      expect.stringContaining("Workflow step failed"),
+      "agent",
     );
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+
+    // Should reset all steps to pending
+    // Check that updateStep was called with "pending" for step 0
+    // (There may be multiple calls - first from task_done marking it done, second from sendTaskBackForFix resetting it)
+    const updateStepCalls = store.updateStep.mock.calls;
+    const hasResetToPending = updateStepCalls.some(
+      (call: any[]) => call[0] === "FN-001" && call[1] === 0 && call[2] === "pending"
+    );
+    expect(hasResetToPending).toBe(true);
+
+    // Advance timers to trigger the setTimeout that moves task to todo then in-progress
+    vi.advanceTimersByTime(0);
+    // Run any pending microtasks (the async code in setTimeout)
+    await vi.runAllTimersAsync();
+
+    // Task should move to todo then in-progress (not in-review)
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress");
+
+    // onComplete should NOT be called (task is being retried, not completed)
+    expect(onComplete).not.toHaveBeenCalled();
+
+    // onError should NOT be called (task is being retried, not permanently failed)
+    expect(onError).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
   });
 
-  it("fails step when script is missing from settings.scripts", async () => {
+  it("sends task back to in-progress when script is missing from settings.scripts", async () => {
     const store = createMockStore();
 
     store.getSettings.mockResolvedValue({
@@ -6952,20 +7002,30 @@ describe("Workflow Steps Execution", () => {
       scripts: { other: "echo other" },
     });
 
-    store.getTask.mockResolvedValue({
+    // Mutable task object to track step changes
+    const mutableTask = {
       id: "FN-001",
       title: "Test",
       description: "Test task",
-      column: "in-progress",
-      dependencies: [],
-      steps: [{ name: "Preflight", status: "pending" }],
+      column: "in-progress" as const,
+      dependencies: [] as string[],
+      steps: [{ name: "Preflight", status: "pending" as const }],
       currentStep: 0,
-      log: [],
+      log: [] as string[],
       enabledWorkflowSteps: ["WS-001"],
       workflowStepRetries: 3, // Exhaust retries so task fails immediately
       prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+    };
+    store.getTask.mockResolvedValue(mutableTask);
+
+    // Make updateStep track changes in the mutable task
+    store.updateStep.mockImplementation(async (taskId: string, stepIndex: number, status: string) => {
+      if (mutableTask.steps[stepIndex]) {
+        mutableTask.steps[stepIndex].status = status as any;
+      }
+      return {};
     });
 
     store.getWorkflowStep.mockResolvedValue({
@@ -6980,10 +7040,15 @@ describe("Workflow Steps Execution", () => {
       updatedAt: new Date().toISOString(),
     });
 
+    // Use createAgentWithTaskDone to properly set up the agent mock
     createAgentWithTaskDone();
 
     const onComplete = vi.fn();
-    const executor = new TaskExecutor(store, "/tmp/test", { onComplete });
+    const onError = vi.fn();
+    const executor = new TaskExecutor(store, "/tmp/test", { onComplete, onError });
+
+    // Use fake timers to control the setTimeout in sendTaskBackForFix
+    vi.useFakeTimers();
 
     await executor.execute({
       id: "FN-001",
@@ -7020,12 +7085,44 @@ describe("Workflow Steps Execution", () => {
       }),
     );
 
-    // Task should move to in-review but with failed status
+    // Task should be cleared and reset for retry (not failed + in-review)
     expect(store.updateTask).toHaveBeenCalledWith(
       "FN-001",
-      expect.objectContaining({ status: "failed", error: "Workflow step failed" }),
+      expect.objectContaining({ status: null, error: null, sessionFile: null, workflowStepRetries: 0 }),
     );
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+
+    // Should add a comment with failure feedback
+    expect(store.addTaskComment).toHaveBeenCalledWith(
+      "FN-001",
+      expect.stringContaining("Workflow step failed"),
+      "agent",
+    );
+
+    // Should reset all steps to pending
+    // Check that updateStep was called with "pending" for step 0
+    // (There may be multiple calls - first from task_done marking it done, second from sendTaskBackForFix resetting it)
+    const updateStepCalls = store.updateStep.mock.calls;
+    const hasResetToPending = updateStepCalls.some(
+      (call: any[]) => call[0] === "FN-001" && call[1] === 0 && call[2] === "pending"
+    );
+    expect(hasResetToPending).toBe(true);
+
+    // Advance timers to trigger the setTimeout that moves task to todo then in-progress
+    vi.advanceTimersByTime(0);
+    // Run any pending microtasks (the async code in setTimeout)
+    await vi.runAllTimersAsync();
+
+    // Task should move to todo then in-progress (not in-review)
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress");
+
+    // onComplete should NOT be called (task is being retried, not completed)
+    expect(onComplete).not.toHaveBeenCalled();
+
+    // onError should NOT be called (task is being retried, not permanently failed)
+    expect(onError).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
   });
 
   it("skips script-mode step when scriptName is missing", async () => {
@@ -7558,7 +7655,7 @@ describe("Workflow Steps Execution", () => {
     );
   });
 
-  it("hard failure workflow step moves task to in-review with failed status", async () => {
+  it("passing workflow step moves task to in-review normally", async () => {
     const store = createMockStore();
 
     store.getTask.mockResolvedValue({
@@ -9891,14 +9988,34 @@ describe("StepSessionExecutor integration", () => {
     const onError = vi.fn();
     const executor = new TaskExecutor(store, "/tmp/test", { onError });
 
+    // Use fake timers to control the setTimeout in sendTaskBackForFix
+    vi.useFakeTimers();
+
     // Exhaust retries so workflow step failure is immediate
     await executor.execute(createTaskWithSteps({ steps: [{ name: "Step 0", status: "pending" }], workflowStepRetries: 3, enabledWorkflowSteps: ["WS-001"] }));
 
     // Should have called getWorkflowStep to look up the workflow step
     expect(store.getWorkflowStep).toHaveBeenCalledWith("WS-001");
     // With script mode and no scripts configured, the step should fail (script not found)
-    // which should mark the task as failed with "Workflow step failed"
-    expect(onError).toHaveBeenCalled();
+    // Task should be sent back to in-progress for remediation, NOT call onError
+    expect(store.addTaskComment).toHaveBeenCalledWith(
+      "FN-200",
+      expect.stringContaining("Workflow step failed"),
+      "agent",
+    );
+    // onError should NOT be called (task is being retried, not permanently failed)
+    expect(onError).not.toHaveBeenCalled();
+
+    // Advance timers to trigger the setTimeout that moves task to todo then in-progress
+    vi.advanceTimersByTime(0);
+    // Run any pending microtasks (the async code in setTimeout)
+    await vi.runAllTimersAsync();
+
+    // Task should move to todo then in-progress (not in-review)
+    expect(store.moveTask).toHaveBeenCalledWith("FN-200", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-200", "in-progress");
+
+    vi.useRealTimers();
   });
 
   it("onStepStart callback updates step status to in-progress", async () => {
