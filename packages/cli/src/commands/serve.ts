@@ -17,6 +17,9 @@ import {
   getTaskMergeBlocker,
   INSIGHT_EXTRACTION_SCHEDULE_NAME,
   processAndAuditInsightExtraction,
+  DaemonTokenManager,
+  GlobalSettingsStore,
+  resolveGlobalDir,
 } from "@fusion/core";
 import type { AutomationRunResult, ScheduledTask } from "@fusion/core";
 import { createServer, GitHubClient, createSkillsAdapter, getProjectSettingsPath } from "@fusion/dashboard";
@@ -186,7 +189,7 @@ function ensureProcessDiagnostics(): void {
 
 export async function runServe(
   port: number,
-  opts: { interactive?: boolean; paused?: boolean; host?: string } = {},
+  opts: { interactive?: boolean; paused?: boolean; host?: string; daemon?: boolean } = {},
 ) {
   serveStartTime = Date.now();
   ensureProcessDiagnostics();
@@ -510,6 +513,34 @@ export async function runServe(
 
   const dashboardAuthStorage = wrapAuthStorageWithApiKeyProviders(authStorage, modelRegistry);
 
+  // ── Daemon token resolution ─────────────────────────────────────────────
+  //
+  // When --daemon flag is set, resolve the daemon token using the same
+  // priority as fn daemon: env var > stored token > generate new token.
+  //
+  let daemonToken: string | undefined;
+  if (opts.daemon) {
+    // 1. Check environment variable first
+    daemonToken = process.env.FUSION_DAEMON_TOKEN;
+
+    // 2. Check stored token in global settings
+    if (!daemonToken) {
+      const globalDir = resolveGlobalDir();
+      const settingsStore = new GlobalSettingsStore(globalDir);
+      const tokenManager = new DaemonTokenManager(settingsStore);
+      daemonToken = await tokenManager.getToken();
+    }
+
+    // 3. Generate and store a new token if none exists
+    if (!daemonToken) {
+      const globalDir = resolveGlobalDir();
+      const settingsStore = new GlobalSettingsStore(globalDir);
+      const tokenManager = new DaemonTokenManager(settingsStore);
+      daemonToken = await tokenManager.generateToken();
+      await tokenManager.storeToken(daemonToken);
+    }
+  }
+
   // ── Skills adapter for skills discovery and execution toggling ─────────────
   //
   // Create the skills adapter using the same DefaultPackageManager instance
@@ -547,6 +578,7 @@ export async function runServe(
     onProjectFirstAccessed: (projectId: string) => engineManager.onProjectAccessed(projectId),
     headless: true,
     skillsAdapter,
+    daemon: daemonToken ? { token: daemonToken } : undefined,
   });
 
   const server = app.listen(selectedPort, selectedHost);
@@ -610,15 +642,34 @@ export async function runServe(
     console.warn(`[serve] Failed to set local node online: ${message}`);
   }
 
+  // Import maskApiKey helper for token display
+  const { maskApiKey } = await import("./node.js");
+
   console.log();
-  console.log(`  Fusion Node`);
-  console.log(`  ────────────────────────`);
-  console.log(`  → http://${selectedHost}:${actualPort}`);
-  console.log();
-  console.log(`  Health:     GET /api/health`);
-  console.log(`  API:        /api/*`);
-  console.log(`  AI engine:  ✓ active`);
-  console.log(`  Press Ctrl+C to stop`);
+  if (daemonToken) {
+    console.log(`  Fusion Node (daemon mode)`);
+    console.log(`  ────────────────────────`);
+    console.log(`  → http://${selectedHost}:${actualPort}`);
+    console.log();
+    console.log(`  Token: fn_${maskApiKey(daemonToken)}`);
+    console.log();
+    console.log(`  Connect from another machine:`);
+    console.log(`    fn node connect <name> --url http://<host>:<port> --api-key ${daemonToken}`);
+    console.log();
+    console.log(`  Health:     GET /api/health`);
+    console.log(`  API:        /api/* (bearer token required)`);
+    console.log(`  AI engine:  ✓ active`);
+    console.log(`  Press Ctrl+C to stop`);
+  } else {
+    console.log(`  Fusion Node`);
+    console.log(`  ────────────────────────`);
+    console.log(`  → http://${selectedHost}:${actualPort}`);
+    console.log();
+    console.log(`  Health:     GET /api/health`);
+    console.log(`  API:        /api/*`);
+    console.log(`  AI engine:  ✓ active`);
+    console.log(`  Press Ctrl+C to stop`);
+  }
   console.log();
 
   let shuttingDown = false;

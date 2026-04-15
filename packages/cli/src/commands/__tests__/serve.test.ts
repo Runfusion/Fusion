@@ -459,6 +459,13 @@ vi.mock("@fusion/core", () => ({
   syncInsightExtractionAutomation: mocks.syncInsightExtractionAutomationMock,
   INSIGHT_EXTRACTION_SCHEDULE_NAME: "Memory Insight Extraction",
   processAndAuditInsightExtraction: mocks.processAndAuditInsightExtractionMock,
+  DaemonTokenManager: vi.fn().mockImplementation(() => ({
+    getToken: vi.fn().mockResolvedValue(null),
+    generateToken: vi.fn().mockResolvedValue("fn_generated1234567890"),
+    storeToken: vi.fn().mockResolvedValue(undefined),
+  })),
+  GlobalSettingsStore: vi.fn().mockImplementation(() => ({})),
+  resolveGlobalDir: vi.fn().mockReturnValue("/mock/global"),
 }));
 
 vi.mock("@fusion/dashboard", () => ({
@@ -1236,5 +1243,131 @@ describe("runServe — Peer exchange and discovery", () => {
 
     // Should have been called twice: once to set online, once to set offline
     expect(nodeCentral.updateNode).toHaveBeenCalledWith("node-local", { status: "offline" });
+  });
+});
+
+describe("runServe --daemon flag", () => {
+  const originalCwd = process.cwd;
+  const originalOn = process.on;
+  const originalExit = process.exit;
+  const originalEnv = process.env.FUSION_DAEMON_TOKEN;
+
+  let signalHandlers: Record<"SIGINT" | "SIGTERM", Array<() => void>>;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+  let processOnSpy: ReturnType<typeof vi.spyOn>;
+
+  async function triggerSignal(signal: "SIGINT" | "SIGTERM") {
+    const handlers = signalHandlers[signal];
+    expect(handlers.length).toBeGreaterThan(0);
+    handlers[handlers.length - 1]();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.reset();
+
+    signalHandlers = { SIGINT: [], SIGTERM: [] };
+
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    cwdSpy = vi.spyOn(process, "cwd").mockReturnValue("/repo");
+    processOnSpy = vi.spyOn(process, "on").mockImplementation(((event: string, listener: () => void) => {
+      if (event === "SIGINT" || event === "SIGTERM") {
+        signalHandlers[event].push(listener);
+      }
+      return process;
+    }) as typeof process.on);
+    process.exit = vi.fn() as never;
+
+    // Clear env var before each test
+    delete process.env.FUSION_DAEMON_TOKEN;
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    cwdSpy.mockRestore();
+    processOnSpy.mockRestore();
+    process.cwd = originalCwd;
+    process.on = originalOn;
+    process.exit = originalExit;
+
+    // Restore env var
+    if (originalEnv !== undefined) {
+      process.env.FUSION_DAEMON_TOKEN = originalEnv;
+    } else {
+      delete process.env.FUSION_DAEMON_TOKEN;
+    }
+  });
+
+  it("passes daemonToken to createServer when daemon: true", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+
+    await runServe(4040, { daemon: true });
+
+    expect(createServer).toHaveBeenCalledTimes(1);
+    const serverOpts = createServer.mock.calls[0][1];
+    expect(serverOpts.daemon).toBeDefined();
+    expect(serverOpts.daemon?.token).toBeDefined();
+    expect(typeof serverOpts.daemon?.token).toBe("string");
+    expect(serverOpts.daemon?.token).toMatch(/^fn_/);
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("shows '(daemon mode)' in startup banner when daemon: true", async () => {
+    await runServe(4040, { daemon: true });
+
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("(daemon mode)");
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("shows 'fn node connect' hint in startup banner when daemon: true", async () => {
+    await runServe(4040, { daemon: true });
+
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("fn node connect");
+    expect(output).toContain("--api-key");
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("resolves token from FUSION_DAEMON_TOKEN env var", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+    process.env.FUSION_DAEMON_TOKEN = "fn_envtest1234567890";
+
+    await runServe(4040, { daemon: true });
+
+    expect(createServer).toHaveBeenCalledTimes(1);
+    const serverOpts = createServer.mock.calls[0][1];
+    expect(serverOpts.daemon?.token).toBe("fn_envtest1234567890");
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("does not pass daemon to createServer when daemon: false", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+
+    await runServe(4040, { daemon: false });
+
+    expect(createServer).toHaveBeenCalledTimes(1);
+    const serverOpts = createServer.mock.calls[0][1];
+    expect(serverOpts.daemon).toBeUndefined();
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("does not pass daemon to createServer when daemon option is omitted", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+
+    await runServe(4040, {});
+
+    expect(createServer).toHaveBeenCalledTimes(1);
+    const serverOpts = createServer.mock.calls[0][1];
+    expect(serverOpts.daemon).toBeUndefined();
+
+    await triggerSignal("SIGINT");
   });
 });

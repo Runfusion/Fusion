@@ -328,6 +328,29 @@ describe("bin", () => {
       paused: true,
       interactive: true,
       host: "127.0.0.1",
+      daemon: false,
+    });
+  });
+
+  it("routes serve command with --daemon flag", async () => {
+    await runBin(["serve", "--daemon"]);
+
+    expect(runServe).toHaveBeenCalledWith(4040, {
+      paused: false,
+      interactive: false,
+      host: undefined,
+      daemon: true,
+    });
+  });
+
+  it("routes serve command with --daemon flag combined with other options", async () => {
+    await runBin(["serve", "--port", "6060", "--daemon", "--host", "0.0.0.0"]);
+
+    expect(runServe).toHaveBeenCalledWith(6060, {
+      paused: false,
+      interactive: false,
+      host: "0.0.0.0",
+      daemon: true,
     });
   });
 
@@ -403,7 +426,7 @@ describe("bin", () => {
     const help = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(help).toContain("fn project list | ls");
     expect(help).toContain("fn node list | ls");
-    expect(help).toContain("fn serve [--port <port>] [--host <host>] [--paused]");
+    expect(help).toContain("fn serve [--port <port>] [--host <host>] [--paused] [--daemon]");
     expect(help).toContain("fn task comments <id>");
     expect(help).toContain("--project, -P <name>");
   });

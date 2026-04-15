@@ -68,8 +68,9 @@ Usage:
   fn dashboard --paused               Start with automation paused
   fn dashboard --dev                  Start web UI only (no AI engine)
   fn dashboard --interactive          Start with interactive port selection
-  fn serve [--port <port>] [--host <host>] [--paused]
+  fn serve [--port <port>] [--host <host>] [--paused] [--daemon]
                                       Start Fusion as a headless node (API + engine, no UI)
+                                      Use --daemon to enable bearer token authentication
   fn daemon [--port <port>] [--host <host>] [--token <token>] [--paused] [--token-only]
                                       Start Fusion daemon (API + engine, auth required)
   fn desktop                          Launch the Fusion desktop app (Electron)
@@ -327,7 +328,8 @@ async function main() {
         const interactive = args.includes("--interactive");
         const hostIdx = args.indexOf("--host");
         const host = hostIdx !== -1 && hostIdx + 1 < args.length ? args[hostIdx + 1] : undefined;
-        await runServe(port, { paused, interactive, host });
+        const daemon = args.includes("--daemon");
+        await runServe(port, { paused, interactive, host, daemon });
         break;
       }
 

@@ -669,3 +669,136 @@ describe("node commands", () => {
     await expect(runNodeList()).rejects.toThrow();
   });
 });
+
+describe("daemon-aware node connect", () => {
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+    throw new Error("process.exit");
+  }) as never);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockListNodes.mockResolvedValue([]);
+    mockRegisterNode.mockResolvedValue(makeNode());
+    mockGetNode.mockResolvedValue(undefined);
+    mockGetNodeByName.mockResolvedValue(undefined);
+    mockUnregisterNode.mockResolvedValue(undefined);
+    mockCheckNodeHealth.mockResolvedValue("online");
+    mockListProjects.mockResolvedValue([]);
+    mockQuestion.mockResolvedValue("y");
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("shows '(authenticated)' when apiKey provided and health check succeeds", async () => {
+    mockRegisterNode.mockResolvedValue(
+      makeNode({
+        id: "node_remote",
+        name: "daemon-node",
+        type: "remote",
+        url: "https://daemon.example.com",
+      }),
+    );
+    mockCheckNodeHealth.mockResolvedValue("online");
+
+    await runNodeConnect("daemon-node", {
+      url: "https://daemon.example.com",
+      apiKey: "fn_daemontoken123456",
+    });
+
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("(authenticated)");
+    expect(output).toContain("daemon-node");
+  });
+
+  it("shows standard success message when no apiKey provided", async () => {
+    mockRegisterNode.mockResolvedValue(
+      makeNode({
+        id: "node_remote",
+        name: "regular-node",
+        type: "remote",
+        url: "https://regular.example.com",
+      }),
+    );
+    mockCheckNodeHealth.mockResolvedValue("online");
+
+    await runNodeConnect("regular-node", {
+      url: "https://regular.example.com",
+    });
+
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("Node connected successfully");
+    expect(output).not.toContain("(authenticated)");
+  });
+
+  it("shows auth failure hint when apiKey provided but node is offline", async () => {
+    mockRegisterNode.mockResolvedValue(
+      makeNode({
+        id: "node_remote",
+        name: "offline-daemon",
+        type: "remote",
+        url: "https://offline.example.com",
+      }),
+    );
+    mockCheckNodeHealth.mockResolvedValue("offline");
+
+    await runNodeConnect("offline-daemon", {
+      url: "https://offline.example.com",
+      apiKey: "fn_wrongtoken123456",
+    });
+
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("API key may be incorrect");
+    expect(output).toContain("offline");
+  });
+
+  it("shows auth failure hint when apiKey provided but health check returns error", async () => {
+    mockRegisterNode.mockResolvedValue(
+      makeNode({
+        id: "node_remote",
+        name: "error-daemon",
+        type: "remote",
+        url: "https://error.example.com",
+      }),
+    );
+    mockCheckNodeHealth.mockResolvedValue("error");
+
+    await runNodeConnect("error-daemon", {
+      url: "https://error.example.com",
+      apiKey: "fn_badtoken123456",
+    });
+
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("API key may be incorrect");
+    expect(output).toContain("error");
+  });
+
+  it("registers node with apiKey when connecting to daemon", async () => {
+    mockRegisterNode.mockResolvedValue(
+      makeNode({
+        id: "node_remote",
+        name: "auth-node",
+        type: "remote",
+        url: "https://auth.example.com",
+      }),
+    );
+    mockCheckNodeHealth.mockResolvedValue("online");
+
+    await runNodeConnect("auth-node", {
+      url: "https://auth.example.com",
+      apiKey: "fn_secret1234567890",
+      maxConcurrent: 3,
+    });
+
+    expect(mockRegisterNode).toHaveBeenCalledWith({
+      name: "auth-node",
+      type: "remote",
+      url: "https://auth.example.com",
+      apiKey: "fn_secret1234567890",
+      maxConcurrent: 3,
+    });
+  });
+});

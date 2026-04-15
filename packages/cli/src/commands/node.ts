@@ -288,7 +288,13 @@ export async function runNodeConnect(
     }
 
     console.log();
-    console.log("  ✓ Node connected successfully");
+    if (options.apiKey && status === "online") {
+      console.log(`  ✓ Node '${node.name}' connected (authenticated)`);
+    } else if (options.apiKey && (status === "offline" || status === "error")) {
+      console.log(`  ⚠ Node is offline — the API key may be incorrect or the node may be unreachable`);
+    } else {
+      console.log("  ✓ Node connected successfully");
+    }
     console.log();
   } finally {
     await central.close();
