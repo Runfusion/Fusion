@@ -705,6 +705,292 @@ describe("TaskStore", () => {
     });
   });
 
+  // ── Dual-Scope Lane Model Settings (FN-1710) ─────────────────────
+
+  describe("dual-scope lane model settings", () => {
+    // Legacy backward compatibility tests
+    it("legacy: project config with only planningProvider/planningModelId round-trips unchanged", async () => {
+      await store.updateSettings({
+        planningProvider: "anthropic",
+        planningModelId: "claude-sonnet-4-5",
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.planningProvider).toBe("anthropic");
+      expect(settings.planningModelId).toBe("claude-sonnet-4-5");
+
+      // Verify it's persisted correctly
+      const configRaw = await readFile(join(rootDir, ".fusion", "config.json"), "utf-8");
+      const config = JSON.parse(configRaw);
+      expect(config.settings.planningProvider).toBe("anthropic");
+      expect(config.settings.planningModelId).toBe("claude-sonnet-4-5");
+    });
+
+    it("legacy: project config with only validatorProvider/validatorModelId round-trips unchanged", async () => {
+      await store.updateSettings({
+        validatorProvider: "openai",
+        validatorModelId: "gpt-4o",
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.validatorProvider).toBe("openai");
+      expect(settings.validatorModelId).toBe("gpt-4o");
+
+      const configRaw = await readFile(join(rootDir, ".fusion", "config.json"), "utf-8");
+      const config = JSON.parse(configRaw);
+      expect(config.settings.validatorProvider).toBe("openai");
+      expect(config.settings.validatorModelId).toBe("gpt-4o");
+    });
+
+    it("legacy: project config with only titleSummarizerProvider/titleSummarizerModelId round-trips unchanged", async () => {
+      await store.updateSettings({
+        titleSummarizerProvider: "google",
+        titleSummarizerModelId: "gemini-2.5-pro",
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.titleSummarizerProvider).toBe("google");
+      expect(settings.titleSummarizerModelId).toBe("gemini-2.5-pro");
+
+      const configRaw = await readFile(join(rootDir, ".fusion", "config.json"), "utf-8");
+      const config = JSON.parse(configRaw);
+      expect(config.settings.titleSummarizerProvider).toBe("google");
+      expect(config.settings.titleSummarizerModelId).toBe("gemini-2.5-pro");
+    });
+
+    it("legacy: partial provider without modelId behaves correctly", async () => {
+      // Set provider only without modelId (partial legacy pair)
+      await store.updateSettings({
+        planningProvider: "anthropic",
+        // No planningModelId
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.planningProvider).toBe("anthropic");
+      expect(settings.planningModelId).toBeUndefined();
+    });
+
+    // New default override fields
+    it("persists defaultProviderOverride/defaultModelIdOverride via updateSettings", async () => {
+      await store.updateSettings({
+        defaultProviderOverride: "openai",
+        defaultModelIdOverride: "gpt-4o-mini",
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.defaultProviderOverride).toBe("openai");
+      expect(settings.defaultModelIdOverride).toBe("gpt-4o-mini");
+    });
+
+    it("defaultProviderOverride/defaultModelIdOverride appear in project scope", async () => {
+      await store.updateSettings({
+        defaultProviderOverride: "anthropic",
+        defaultModelIdOverride: "claude-3-5-sonnet",
+      });
+
+      const { project } = await store.getSettingsByScope();
+      expect(project.defaultProviderOverride).toBe("anthropic");
+      expect(project.defaultModelIdOverride).toBe("claude-3-5-sonnet");
+    });
+
+    it("defaultProviderOverride/defaultModelIdOverride default to undefined", async () => {
+      const settings = await store.getSettings();
+      expect(settings.defaultProviderOverride).toBeUndefined();
+      expect(settings.defaultModelIdOverride).toBeUndefined();
+    });
+
+    // New execution lane fields
+    it("persists executionProvider/executionModelId via updateSettings", async () => {
+      await store.updateSettings({
+        executionProvider: "anthropic",
+        executionModelId: "claude-opus-4",
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.executionProvider).toBe("anthropic");
+      expect(settings.executionModelId).toBe("claude-opus-4");
+    });
+
+    it("executionProvider/executionModelId appear in project scope", async () => {
+      await store.updateSettings({
+        executionProvider: "openai",
+        executionModelId: "gpt-4-turbo",
+      });
+
+      const { project } = await store.getSettingsByScope();
+      expect(project.executionProvider).toBe("openai");
+      expect(project.executionModelId).toBe("gpt-4-turbo");
+    });
+
+    it("executionProvider/executionModelId default to undefined", async () => {
+      const settings = await store.getSettings();
+      expect(settings.executionProvider).toBeUndefined();
+      expect(settings.executionModelId).toBeUndefined();
+    });
+
+    // Global lane fields via updateGlobalSettings
+    it("persists executionGlobalProvider/executionGlobalModelId via updateGlobalSettings", async () => {
+      await store.updateGlobalSettings({
+        executionGlobalProvider: "anthropic",
+        executionGlobalModelId: "claude-sonnet-4-5",
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.executionGlobalProvider).toBe("anthropic");
+      expect(settings.executionGlobalModelId).toBe("claude-sonnet-4-5");
+    });
+
+    it("persists planningGlobalProvider/planningGlobalModelId via updateGlobalSettings", async () => {
+      await store.updateGlobalSettings({
+        planningGlobalProvider: "google",
+        planningGlobalModelId: "gemini-2.5-pro",
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.planningGlobalProvider).toBe("google");
+      expect(settings.planningGlobalModelId).toBe("gemini-2.5-pro");
+    });
+
+    it("persists validatorGlobalProvider/validatorGlobalModelId via updateGlobalSettings", async () => {
+      await store.updateGlobalSettings({
+        validatorGlobalProvider: "openai",
+        validatorGlobalModelId: "gpt-4o",
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.validatorGlobalProvider).toBe("openai");
+      expect(settings.validatorGlobalModelId).toBe("gpt-4o");
+    });
+
+    it("persists titleSummarizerGlobalProvider/titleSummarizerGlobalModelId via updateGlobalSettings", async () => {
+      await store.updateGlobalSettings({
+        titleSummarizerGlobalProvider: "anthropic",
+        titleSummarizerGlobalModelId: "claude-haiku",
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.titleSummarizerGlobalProvider).toBe("anthropic");
+      expect(settings.titleSummarizerGlobalModelId).toBe("claude-haiku");
+    });
+
+    it("all *Global* lane fields default to undefined", async () => {
+      const settings = await store.getSettings();
+      expect(settings.executionGlobalProvider).toBeUndefined();
+      expect(settings.executionGlobalModelId).toBeUndefined();
+      expect(settings.planningGlobalProvider).toBeUndefined();
+      expect(settings.planningGlobalModelId).toBeUndefined();
+      expect(settings.validatorGlobalProvider).toBeUndefined();
+      expect(settings.validatorGlobalModelId).toBeUndefined();
+      expect(settings.titleSummarizerGlobalProvider).toBeUndefined();
+      expect(settings.titleSummarizerGlobalModelId).toBeUndefined();
+    });
+
+    // Mixed shape compatibility tests
+    it("mixed shape: project planningProvider + global planningGlobalProvider is stable", async () => {
+      // Set global baseline
+      await store.updateGlobalSettings({
+        planningGlobalProvider: "anthropic",
+        planningGlobalModelId: "claude-sonnet-4-5",
+      });
+
+      // Set project override
+      await store.updateSettings({
+        planningProvider: "openai",
+        planningModelId: "gpt-4o",
+      });
+
+      // Both should be readable with no crashes
+      const settings = await store.getSettings();
+      expect(settings.planningGlobalProvider).toBe("anthropic");
+      expect(settings.planningGlobalModelId).toBe("claude-sonnet-4-5");
+      expect(settings.planningProvider).toBe("openai");
+      expect(settings.planningModelId).toBe("gpt-4o");
+    });
+
+    it("mixed shape: project validatorProvider + global validatorGlobalProvider is stable", async () => {
+      await store.updateGlobalSettings({
+        validatorGlobalProvider: "google",
+        validatorGlobalModelId: "gemini-2.5-pro",
+      });
+
+      await store.updateSettings({
+        validatorProvider: "anthropic",
+        validatorModelId: "claude-opus-4",
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.validatorGlobalProvider).toBe("google");
+      expect(settings.validatorGlobalModelId).toBe("gemini-2.5-pro");
+      expect(settings.validatorProvider).toBe("anthropic");
+      expect(settings.validatorModelId).toBe("claude-opus-4");
+    });
+
+    it("mixed shape: project titleSummarizerProvider + global titleSummarizerGlobalProvider is stable", async () => {
+      await store.updateGlobalSettings({
+        titleSummarizerGlobalProvider: "openai",
+        titleSummarizerGlobalModelId: "gpt-4o-mini",
+      });
+
+      await store.updateSettings({
+        titleSummarizerProvider: "anthropic",
+        titleSummarizerModelId: "claude-haiku",
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.titleSummarizerGlobalProvider).toBe("openai");
+      expect(settings.titleSummarizerGlobalModelId).toBe("gpt-4o-mini");
+      expect(settings.titleSummarizerProvider).toBe("anthropic");
+      expect(settings.titleSummarizerModelId).toBe("claude-haiku");
+    });
+
+    // Global-only key filtering tests
+    it("updateSettings does not persist *Global* keys to project config", async () => {
+      // Attempt to set global keys through updateSettings (should be filtered)
+      await store.updateSettings({
+        executionGlobalProvider: "anthropic",
+        executionGlobalModelId: "claude-sonnet-4-5",
+        planningGlobalProvider: "openai",
+        planningGlobalModelId: "gpt-4o",
+      } as any);
+
+      // The global keys should be filtered out and not appear in merged settings
+      const settings = await store.getSettings();
+      expect(settings.executionGlobalProvider).toBeUndefined();
+      expect(settings.executionGlobalModelId).toBeUndefined();
+      expect(settings.planningGlobalProvider).toBeUndefined();
+      expect(settings.planningGlobalModelId).toBeUndefined();
+
+      // Verify they are NOT in the project config
+      const configRaw = await readFile(join(rootDir, ".fusion", "config.json"), "utf-8");
+      const config = JSON.parse(configRaw);
+      expect((config.settings as any).executionGlobalProvider).toBeUndefined();
+      expect((config.settings as any).planningGlobalProvider).toBeUndefined();
+    });
+
+    it("all global lane fields appear in global scope", async () => {
+      await store.updateGlobalSettings({
+        executionGlobalProvider: "anthropic",
+        executionGlobalModelId: "claude-sonnet-4-5",
+        planningGlobalProvider: "google",
+        planningGlobalModelId: "gemini-2.5-pro",
+        validatorGlobalProvider: "openai",
+        validatorGlobalModelId: "gpt-4o",
+        titleSummarizerGlobalProvider: "anthropic",
+        titleSummarizerGlobalModelId: "claude-haiku",
+      });
+
+      const { global } = await store.getSettingsByScope();
+      expect(global.executionGlobalProvider).toBe("anthropic");
+      expect(global.executionGlobalModelId).toBe("claude-sonnet-4-5");
+      expect(global.planningGlobalProvider).toBe("google");
+      expect(global.planningGlobalModelId).toBe("gemini-2.5-pro");
+      expect(global.validatorGlobalProvider).toBe("openai");
+      expect(global.validatorGlobalModelId).toBe("gpt-4o");
+      expect(global.titleSummarizerGlobalProvider).toBe("anthropic");
+      expect(global.titleSummarizerGlobalModelId).toBe("claude-haiku");
+    });
+  });
+
   // ── Global/Project Settings Merging ─────────────────────────────
 
   describe("global/project settings merging", () => {

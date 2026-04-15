@@ -45,6 +45,14 @@ Defaults from `DEFAULT_GLOBAL_SETTINGS`; key scope from `GLOBAL_SETTINGS_KEYS`.
 | `defaultProjectId` | `string` | `undefined` | Default project for multi-project commands. |
 | `openrouterModelSync` | `boolean` | `true` | Sync OpenRouter model catalog into pickers. |
 | `modelOnboardingComplete` | `boolean` | `undefined` | Whether model onboarding has been completed/dismissed. |
+| `executionGlobalProvider` | `string` | `undefined` | Global baseline AI provider for task execution. Project `executionProvider` overrides this. |
+| `executionGlobalModelId` | `string` | `undefined` | Global baseline AI model ID for task execution. |
+| `planningGlobalProvider` | `string` | `undefined` | Global baseline AI provider for planning/triage. Project `planningProvider` overrides this. |
+| `planningGlobalModelId` | `string` | `undefined` | Global baseline AI model ID for planning/triage. |
+| `validatorGlobalProvider` | `string` | `undefined` | Global baseline AI provider for validator/reviewer. Project `validatorProvider` overrides this. |
+| `validatorGlobalModelId` | `string` | `undefined` | Global baseline AI model ID for validator/reviewer. |
+| `titleSummarizerGlobalProvider` | `string` | `undefined` | Global baseline AI provider for title summarization. Project `titleSummarizerProvider` overrides this. |
+| `titleSummarizerGlobalModelId` | `string` | `undefined` | Global baseline AI model ID for title summarization. |
 
 ### Additional GlobalSettings fields
 
@@ -79,7 +87,11 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `worktreeNaming` | `"random" \| "task-id" \| "task-title"` | `"random"` | Naming mode for fresh worktree directories. |
 | `taskPrefix` | `string` | `"FN"` | Prefix for generated task IDs. |
 | `includeTaskIdInCommit` | `boolean` | `true` | Include task ID in commit message scope. |
-| `planningProvider` | `string` | `undefined` | AI provider for triage/spec generation. |
+| `defaultProviderOverride` | `string` | `undefined` | Project-level override for base default provider. Overrides global `defaultProvider`. |
+| `defaultModelIdOverride` | `string` | `undefined` | Project-level override for base default model ID. |
+| `executionProvider` | `string` | `undefined` | AI provider for task execution. Overrides `executionGlobalProvider`. |
+| `executionModelId` | `string` | `undefined` | AI model ID for task execution. |
+| `planningProvider` | `string` | `undefined` | AI provider for triage/spec generation. Overrides `planningGlobalProvider`. |
 | `planningModelId` | `string` | `undefined` | Model ID for triage/spec generation. |
 | `planningFallbackProvider` | `string` | `undefined` | Fallback provider for planning. |
 | `planningFallbackModelId` | `string` | `undefined` | Fallback model ID for planning. |
@@ -154,25 +166,45 @@ These exist in `ProjectSettings` but are not part of `PROJECT_SETTINGS_KEYS`.
 
 ## Model Selection Hierarchy
 
+Fusion uses a dual-scope model settings system with five lanes. Global settings provide baseline defaults, and project settings provide per-project overrides.
+
 ### Triage/specification model
 
 1. Per-task `planningModelProvider` + `planningModelId`
-2. Global/project `planningProvider` + `planningModelId`
-3. Global `defaultProvider` + `defaultModelId`
-4. Automatic provider/model resolution
+2. Project `planningProvider` + `planningModelId`
+3. Global `planningGlobalProvider` + `planningGlobalModelId`
+4. Project `defaultProviderOverride` + `defaultModelIdOverride`
+5. Global `defaultProvider` + `defaultModelId`
+6. Automatic provider/model resolution
 
 ### Executor model
 
 1. Per-task `modelProvider` + `modelId`
-2. Global `defaultProvider` + `defaultModelId`
-3. Automatic provider/model resolution
+2. Project `executionProvider` + `executionModelId`
+3. Global `executionGlobalProvider` + `executionGlobalModelId`
+4. Project `defaultProviderOverride` + `defaultModelIdOverride`
+5. Global `defaultProvider` + `defaultModelId`
+6. Automatic provider/model resolution
 
 ### Reviewer model
 
 1. Per-task `validatorModelProvider` + `validatorModelId`
-2. Global/project `validatorProvider` + `validatorModelId`
-3. Global `defaultProvider` + `defaultModelId`
-4. Automatic provider/model resolution
+2. Project `validatorProvider` + `validatorModelId`
+3. Global `validatorGlobalProvider` + `validatorGlobalModelId`
+4. Project `defaultProviderOverride` + `defaultModelIdOverride`
+5. Global `defaultProvider` + `defaultModelId`
+6. Automatic provider/model resolution
+
+### Title summarization model
+
+1. Project `titleSummarizerProvider` + `titleSummarizerModelId`
+2. Global `titleSummarizerGlobalProvider` + `titleSummarizerGlobalModelId`
+3. Project `planningProvider` + `planningModelId`
+4. Project `defaultProviderOverride` + `defaultModelIdOverride`
+5. Global `defaultProvider` + `defaultModelId`
+6. Automatic provider/model resolution
+
+> **Note:** Runtime fallback precedence logic is deferred to FN-1711. The hierarchy above reflects the schema contracts added in FN-1710.
 
 ---
 

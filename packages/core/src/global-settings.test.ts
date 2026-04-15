@@ -377,4 +377,128 @@ describe("GlobalSettingsStore", () => {
       expect(afterInvalidate.themeMode).toBe("system");
     });
   });
+
+  // ── Global Lane Model Settings (FN-1710) ──────────────────────────
+
+  describe("global lane model settings", () => {
+    it("all *Global* lane fields default to undefined", async () => {
+      const settings = await store.getSettings();
+      expect(settings.executionGlobalProvider).toBeUndefined();
+      expect(settings.executionGlobalModelId).toBeUndefined();
+      expect(settings.planningGlobalProvider).toBeUndefined();
+      expect(settings.planningGlobalModelId).toBeUndefined();
+      expect(settings.validatorGlobalProvider).toBeUndefined();
+      expect(settings.validatorGlobalModelId).toBeUndefined();
+      expect(settings.titleSummarizerGlobalProvider).toBeUndefined();
+      expect(settings.titleSummarizerGlobalModelId).toBeUndefined();
+    });
+
+    it("persists executionGlobalProvider/executionGlobalModelId", async () => {
+      await store.updateSettings({
+        executionGlobalProvider: "anthropic",
+        executionGlobalModelId: "claude-sonnet-4-5",
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.executionGlobalProvider).toBe("anthropic");
+      expect(settings.executionGlobalModelId).toBe("claude-sonnet-4-5");
+
+      // Verify persistence
+      const raw = JSON.parse(await readFile(join(dir, "settings.json"), "utf-8"));
+      expect(raw.executionGlobalProvider).toBe("anthropic");
+      expect(raw.executionGlobalModelId).toBe("claude-sonnet-4-5");
+    });
+
+    it("persists planningGlobalProvider/planningGlobalModelId", async () => {
+      await store.updateSettings({
+        planningGlobalProvider: "google",
+        planningGlobalModelId: "gemini-2.5-pro",
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.planningGlobalProvider).toBe("google");
+      expect(settings.planningGlobalModelId).toBe("gemini-2.5-pro");
+    });
+
+    it("persists validatorGlobalProvider/validatorGlobalModelId", async () => {
+      await store.updateSettings({
+        validatorGlobalProvider: "openai",
+        validatorGlobalModelId: "gpt-4o",
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.validatorGlobalProvider).toBe("openai");
+      expect(settings.validatorGlobalModelId).toBe("gpt-4o");
+    });
+
+    it("persists titleSummarizerGlobalProvider/titleSummarizerGlobalModelId", async () => {
+      await store.updateSettings({
+        titleSummarizerGlobalProvider: "anthropic",
+        titleSummarizerGlobalModelId: "claude-haiku",
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.titleSummarizerGlobalProvider).toBe("anthropic");
+      expect(settings.titleSummarizerGlobalModelId).toBe("claude-haiku");
+    });
+
+    it("persists all global lane fields together", async () => {
+      await store.updateSettings({
+        executionGlobalProvider: "anthropic",
+        executionGlobalModelId: "claude-opus-4",
+        planningGlobalProvider: "google",
+        planningGlobalModelId: "gemini-2.5-pro",
+        validatorGlobalProvider: "openai",
+        validatorGlobalModelId: "gpt-4-turbo",
+        titleSummarizerGlobalProvider: "anthropic",
+        titleSummarizerGlobalModelId: "claude-sonnet-4-5",
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.executionGlobalProvider).toBe("anthropic");
+      expect(settings.executionGlobalModelId).toBe("claude-opus-4");
+      expect(settings.planningGlobalProvider).toBe("google");
+      expect(settings.planningGlobalModelId).toBe("gemini-2.5-pro");
+      expect(settings.validatorGlobalProvider).toBe("openai");
+      expect(settings.validatorGlobalModelId).toBe("gpt-4-turbo");
+      expect(settings.titleSummarizerGlobalProvider).toBe("anthropic");
+      expect(settings.titleSummarizerGlobalModelId).toBe("claude-sonnet-4-5");
+    });
+
+    it("can clear global lane fields with null", async () => {
+      await store.updateSettings({
+        executionGlobalProvider: "anthropic",
+        executionGlobalModelId: "claude-sonnet-4-5",
+      });
+
+      // Clear them
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ executionGlobalProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ executionGlobalModelId: null });
+
+      const settings = await store.getSettings();
+      expect(settings.executionGlobalProvider).toBeUndefined();
+      expect(settings.executionGlobalModelId).toBeUndefined();
+    });
+
+    it("merges global lane fields without losing other fields", async () => {
+      await store.updateSettings({
+        executionGlobalProvider: "anthropic",
+        executionGlobalModelId: "claude-sonnet-4-5",
+      });
+
+      await store.updateSettings({
+        planningGlobalProvider: "google",
+        planningGlobalModelId: "gemini-2.5-pro",
+      });
+
+      const settings = await store.getSettings();
+      // Both should be present
+      expect(settings.executionGlobalProvider).toBe("anthropic");
+      expect(settings.executionGlobalModelId).toBe("claude-sonnet-4-5");
+      expect(settings.planningGlobalProvider).toBe("google");
+      expect(settings.planningGlobalModelId).toBe("gemini-2.5-pro");
+    });
+  });
 });

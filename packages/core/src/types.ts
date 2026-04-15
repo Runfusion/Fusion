@@ -899,6 +899,38 @@ export interface GlobalSettings {
    *  false/undefined, the dashboard will auto-open the onboarding modal.
    *  Also set to true when the user explicitly dismisses onboarding. */
   modelOnboardingComplete?: boolean;
+  /** Global baseline AI model provider for task execution (executor agent).
+   *  This is the global lane that project-level `executionProvider` can override.
+   *  Must be set together with `executionGlobalModelId`. Falls back to
+   *  `defaultProvider`/`defaultModelId` when undefined. */
+  executionGlobalProvider?: string;
+  /** Global baseline AI model ID for task execution.
+   *  Must be set together with `executionGlobalProvider`. */
+  executionGlobalModelId?: string;
+  /** Global baseline AI model provider for planning/triage (specification) agent.
+   *  This is the global lane that project-level `planningProvider` can override.
+   *  Must be set together with `planningGlobalModelId`. Falls back to
+   *  `defaultProvider`/`defaultModelId` when undefined. */
+  planningGlobalProvider?: string;
+  /** Global baseline AI model ID for planning/triage.
+   *  Must be set together with `planningGlobalProvider`. */
+  planningGlobalModelId?: string;
+  /** Global baseline AI model provider for validator/reviewer agent.
+   *  This is the global lane that project-level `validatorProvider` can override.
+   *  Must be set together with `validatorGlobalModelId`. Falls back to
+   *  `defaultProvider`/`defaultModelId` when undefined. */
+  validatorGlobalProvider?: string;
+  /** Global baseline AI model ID for validator/reviewer.
+   *  Must be set together with `validatorGlobalProvider`. */
+  validatorGlobalModelId?: string;
+  /** Global baseline AI model provider for title summarization.
+   *  This is the global lane that project-level `titleSummarizerProvider` can override.
+   *  Must be set together with `titleSummarizerGlobalModelId`. Falls back to
+   *  `defaultProvider`/`defaultModelId` when undefined. */
+  titleSummarizerGlobalProvider?: string;
+  /** Global baseline AI model ID for title summarization.
+   *  Must be set together with `titleSummarizerGlobalProvider`. */
+  titleSummarizerGlobalModelId?: string;
 }
 
 /**
@@ -993,6 +1025,28 @@ export interface ProjectSettings {
   /** Fallback model ID for planning/triage. When unset, falls back to the
    *  global fallback model. Must be set together with `planningFallbackProvider`. */
   planningFallbackModelId?: string;
+  /** Project-level override for the base default AI model provider.
+   *  When set, this overrides the global `defaultProvider`/`defaultModelId` baseline
+   *  for all lanes that don't have their own explicit project override.
+   *  Must be set together with `defaultModelIdOverride`.
+   *  NOTE: This is a schema/persistence contract only. Runtime fallback precedence
+   *  logic is deferred to FN-1711. */
+  defaultProviderOverride?: string;
+  /** Project-level override for the base default AI model ID.
+   *  Must be set together with `defaultProviderOverride`. */
+  defaultModelIdOverride?: string;
+  /** Project-level AI model provider for task execution (executor agent).
+   *  This is the execution lane that overrides the global `executionGlobalProvider`.
+   *  Must be set together with `executionModelId`. Falls back to
+   *  `executionGlobalProvider`/`executionGlobalModelId` or
+   *  `defaultProviderOverride`/`defaultModelIdOverride` or
+   *  `defaultProvider`/`defaultModelId` when undefined.
+   *  NOTE: This is a schema/persistence contract only. Runtime fallback precedence
+   *  logic is deferred to FN-1711. */
+  executionProvider?: string;
+  /** Project-level AI model ID for task execution.
+   *  Must be set together with `executionProvider`. */
+  executionModelId?: string;
   /** AI model provider for validator/reviewer agent.
    *  Must be set together with `validatorModelId`. When both are undefined,
    *  falls back to `defaultProvider`/`defaultModelId`. */

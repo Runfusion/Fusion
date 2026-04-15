@@ -29,6 +29,15 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   favoriteModels: undefined,
   openrouterModelSync: true,
   modelOnboardingComplete: undefined,
+  // Global baseline lanes for per-role model selection
+  executionGlobalProvider: undefined,
+  executionGlobalModelId: undefined,
+  planningGlobalProvider: undefined,
+  planningGlobalModelId: undefined,
+  validatorGlobalProvider: undefined,
+  validatorGlobalModelId: undefined,
+  titleSummarizerGlobalProvider: undefined,
+  titleSummarizerGlobalModelId: undefined,
 } satisfies CompleteSettings<GlobalSettings>;
 
 /** Default values for project-level settings. */
@@ -56,6 +65,11 @@ export const DEFAULT_PROJECT_SETTINGS = {
   planningModelId: undefined,
   planningFallbackProvider: undefined,
   planningFallbackModelId: undefined,
+  // Project-level default override and execution lane
+  defaultProviderOverride: undefined,
+  defaultModelIdOverride: undefined,
+  executionProvider: undefined,
+  executionModelId: undefined,
   validatorProvider: undefined,
   validatorModelId: undefined,
   validatorFallbackProvider: undefined,
