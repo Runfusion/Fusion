@@ -518,6 +518,7 @@ function AppInner() {
         onResumePlanning={modalManager.resumePlanning}
         activePlanningSessionCount={bgPlanningSessions.length}
         onOpenUsage={modalManager.openUsage}
+        onOpenNodes={handleOpenNodes}
         onViewAllProjects={handleViewAllProjects}
         onRunScript={modalManager.runScript}
         onOpenQuickChat={() => setQuickChatOpen(true)}

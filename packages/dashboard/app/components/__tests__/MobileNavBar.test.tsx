@@ -48,6 +48,7 @@ const createDefaultProps = () => ({
   onViewAllProjects: vi.fn(),
   onRunScript: vi.fn(),
   onOpenQuickChat: vi.fn(),
+  onOpenNodes: vi.fn(),
   projectId: "proj_1",
 });
 
@@ -142,6 +143,7 @@ describe("MobileNavBar", () => {
     expect(screen.getByTestId("mobile-more-item-mailbox")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-activity")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-git")).toBeDefined();
+    expect(screen.getByTestId("mobile-more-item-nodes")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-terminal")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-files")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-planning")).toBeDefined();
@@ -196,6 +198,17 @@ describe("MobileNavBar", () => {
 
     expect(container.querySelector(".mobile-more-sheet")).toBeNull();
     expect(props.onOpenQuickChat).toHaveBeenCalledOnce();
+  });
+
+  it("calls onOpenNodes from the Nodes more-sheet item", () => {
+    const props = createDefaultProps();
+    const { container } = render(<MobileNavBar {...props} />);
+
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    fireEvent.click(screen.getByTestId("mobile-more-item-nodes"));
+
+    expect(container.querySelector(".mobile-more-sheet")).toBeNull();
+    expect(props.onOpenNodes).toHaveBeenCalledOnce();
   });
 
   it("closes sheet on backdrop click", () => {
