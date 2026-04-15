@@ -127,10 +127,11 @@ Concrete references:
   - SQLite (`node:sqlite`) with WAL mode + foreign keys
   - JSON helpers: `toJson`, `toJsonNullable`, `fromJson`
   - Tables: `tasks`, `config`, `activityLog`, `archivedTasks`, `automations`, `agents`, `agentHeartbeats`, `agentRatings`, `ai_sessions`, `workflow_steps`, `messages`, `plugins`, `routines`, `runAuditEvents`, mission hierarchy tables (`missions`, `milestones`, `slices`, `mission_features`, `mission_events`), roadmap tables (`roadmaps`, `roadmap_milestones`, `roadmap_features`), `__meta`
-- **Standalone roadmap contracts**: `packages/core/src/roadmap-types.ts`, `roadmap-ordering.ts`, `roadmap-store.ts`
+- **Standalone roadmap model**: `packages/core/src/roadmap-types.ts`, `roadmap-ordering.ts`, `roadmap-store.ts`
   - Roadmap-first entity types (`Roadmap`, `RoadmapMilestone`, `RoadmapFeature`)
   - Pure ordering helpers for contiguous 0-based milestone/feature order and deterministic cross-milestone feature moves
   - `RoadmapStore` for CRUD operations, deterministic ordering, and atomic reorder/move operations
+  - Dashboard API routes in `packages/dashboard/src/roadmap-routes.ts`
   - Exported from `@fusion/core` for downstream persistence/API/UI work
 - **CentralCore**: `packages/core/src/central-core.ts`
   - Global project registry, health, central activity feed, global concurrency
