@@ -158,12 +158,12 @@ function getHandler<T = unknown>(
   return handler as (payload: unknown) => Promise<T>;
 }
 
-type SignalListener = (...args: unknown[]) => void;
-
 describe("child-process-worker", () => {
   const originalProcessSend = process.send;
-  let sigtermBaseline: SignalListener[] = [];
-  let sigintBaseline: SignalListener[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type -- Test mock
+  let sigtermBaseline: Function[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type -- Test mock
+  let sigintBaseline: Function[] = [];
 
   beforeEach(() => {
     vi.resetModules();
