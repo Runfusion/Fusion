@@ -17,6 +17,10 @@ vi.mock("../../api", () => ({
   updateChatSession: vi.fn(),
   deleteChatSession: vi.fn(),
   streamChatResponse: vi.fn(),
+  fetchAgents: vi.fn().mockResolvedValue([
+    { id: "agent-001", name: "Alpha", role: "executor", state: "idle", icon: undefined, createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z", metadata: {} },
+    { id: "agent-002", name: "Beta", role: "reviewer", state: "idle", icon: undefined, createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z", metadata: {} },
+  ]),
 }));
 
 const mockFetchChatSessions = vi.mocked(apiModule.fetchChatSessions);
@@ -25,6 +29,7 @@ const mockFetchChatMessages = vi.mocked(apiModule.fetchChatMessages);
 const mockUpdateChatSession = vi.mocked(apiModule.updateChatSession);
 const mockDeleteChatSession = vi.mocked(apiModule.deleteChatSession);
 const mockStreamChatResponse = vi.mocked(apiModule.streamChatResponse);
+const mockFetchAgents = vi.mocked(apiModule.fetchAgents);
 
 function makeSession(overrides: Partial<ChatSession> & Pick<ChatSession, "id" | "agentId">): ChatSession {
   return {
@@ -89,6 +94,21 @@ describe("useChat", () => {
 
     expect(result.current.sessions[0]?.id).toBe("session-001");
     expect(result.current.sessions[1]?.id).toBe("session-002");
+  });
+
+  it("populates agentsMap on mount", async () => {
+    const { result } = renderHook(() => useChat("proj-123"));
+
+    await waitFor(() => {
+      expect(mockFetchAgents).toHaveBeenCalled();
+    });
+
+    await waitFor(() => {
+      expect(result.current.agentsMap.size).toBe(2);
+    });
+
+    expect(result.current.agentsMap.get("agent-001")?.name).toBe("Alpha");
+    expect(result.current.agentsMap.get("agent-002")?.name).toBe("Beta");
   });
 
   it("selects a session and loads its messages", async () => {

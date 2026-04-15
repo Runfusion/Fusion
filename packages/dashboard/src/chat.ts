@@ -17,6 +17,7 @@ import type {
   ChatSession,
   ChatSessionCreateInput,
 } from "@fusion/core";
+import { summarizeTitle } from "@fusion/core";
 import { EventEmitter } from "node:events";
 import type { Response } from "express";
 import { SessionEventBuffer, writeSSEEvent, safeWriteSSE, formatSSEEvent } from "./sse-buffer.js";
@@ -311,9 +312,35 @@ export class ChatManager {
       return;
     }
 
-    // Use model from session if not overridden
+    // Use model from session if not overridden (needed for both AI response and title generation)
     const effectiveModelProvider = modelProvider ?? session.modelProvider ?? undefined;
     const effectiveModelId = modelId ?? session.modelId ?? undefined;
+
+    // Auto-generate chat title on first message if session has no title
+    const needsTitle = session.title === null || session.title === undefined || session.title.trim() === "";
+    if (needsTitle) {
+      // Fire-and-forget title generation (non-blocking)
+      (async () => {
+        try {
+          const generated = await summarizeTitle(
+            content.trim(),
+            this.rootDir,
+            effectiveModelProvider,
+            effectiveModelId,
+          );
+          const title = generated ?? content.trim().slice(0, 60).trim();
+          if (title) {
+            this.chatStore.updateSession(sessionId, { title });
+          }
+        } catch (err) {
+          // Fallback on any error
+          const fallback = content.trim().slice(0, 60).trim();
+          if (fallback) {
+            this.chatStore.updateSession(sessionId, { title: fallback });
+          }
+        }
+      })();
+    }
 
     let agentResult: AgentResult | undefined;
     let accumulatedThinking = "";

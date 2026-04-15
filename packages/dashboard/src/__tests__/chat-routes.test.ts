@@ -84,6 +84,10 @@ const mockAddMessage = vi.fn();
 const mockGetMessages = vi.fn();
 const mockGetMessage = vi.fn();
 
+// Mock AgentStore
+const mockAgentStoreInit = vi.fn().mockResolvedValue(undefined);
+const mockAgentStoreGetAgent = vi.fn();
+
 // Mock ChatStore class for vi.mock
 vi.mock("@fusion/core", () => {
   return {
@@ -97,6 +101,10 @@ vi.mock("@fusion/core", () => {
       addMessage = mockAddMessage;
       getMessages = mockGetMessages;
       getMessage = mockGetMessage;
+    },
+    AgentStore: class MockAgentStore {
+      init = mockAgentStoreInit;
+      getAgent = mockAgentStoreGetAgent;
     },
   };
 });
@@ -238,10 +246,26 @@ describe("Chat API Routes", () => {
     mockGetMessages.mockReset();
     mockGetMessage.mockReset();
     mockSendMessage.mockReset();
+    mockAgentStoreInit.mockResolvedValue(undefined);
+    mockAgentStoreGetAgent.mockReset();
 
     // Setup default mocks
     mockListSessions.mockReturnValue([]);
     mockGetMessages.mockReturnValue([]);
+
+    // Default agent mock - agent with model config
+    mockAgentStoreGetAgent.mockResolvedValue({
+      id: "agent-001",
+      name: "Alpha",
+      role: "executor",
+      state: "idle",
+      createdAt: "2026-04-08T00:00:00.000Z",
+      updatedAt: "2026-04-08T00:00:00.000Z",
+      metadata: {},
+      runtimeConfig: {
+        model: "anthropic/claude-sonnet-4-5",
+      },
+    });
 
     store = new MockStore();
     // Reset and use the shared mock instance
@@ -319,7 +343,7 @@ describe("Chat API Routes", () => {
   });
 
   describe("POST /api/chat/sessions", () => {
-    it("creates session with required fields", async () => {
+    it("creates session with required fields and resolves model from agent config", async () => {
       mockCreateSession.mockReturnValue(sampleSession);
 
       const response = await request(
@@ -332,15 +356,16 @@ describe("Chat API Routes", () => {
 
       expect(response.status).toBe(201);
       expect((response.body as any).session.id).toBe("chat-abc123");
+      // Model is resolved from agent's runtimeConfig.model
       expect(mockCreateSession).toHaveBeenCalledWith({
         agentId: "agent-001",
         title: null,
-        modelProvider: null,
-        modelId: null,
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
       });
     });
 
-    it("creates session with optional fields", async () => {
+    it("creates session with title and resolves model from agent config", async () => {
       const sessionWithOptions = {
         ...sampleSession,
         title: "Custom Title",
@@ -356,8 +381,6 @@ describe("Chat API Routes", () => {
         JSON.stringify({
           agentId: "agent-001",
           title: "Custom Title",
-          modelProvider: "anthropic",
-          modelId: "claude-sonnet-4-5",
         }),
         { "content-type": "application/json" },
       );
@@ -392,36 +415,52 @@ describe("Chat API Routes", () => {
       expect((response.body as any).error).toContain("agentId is required");
     });
 
-    it("returns 400 when modelProvider without modelId", async () => {
+    it("returns 404 when agent not found", async () => {
+      mockAgentStoreGetAgent.mockResolvedValueOnce(undefined);
+
       const response = await request(
         app,
         "POST",
         "/api/chat/sessions",
-        JSON.stringify({
-          agentId: "agent-001",
-          modelProvider: "anthropic",
-        }),
+        JSON.stringify({ agentId: "nonexistent" }),
         { "content-type": "application/json" },
       );
 
-      expect(response.status).toBe(400);
-      expect((response.body as any).error).toContain("both be provided or neither");
+      expect(response.status).toBe(404);
+      expect((response.body as any).error).toContain("not found");
     });
 
-    it("returns 400 when modelId without modelProvider", async () => {
+    it("creates session with default model when agent has no model config", async () => {
+      mockAgentStoreGetAgent.mockResolvedValueOnce({
+        id: "agent-002",
+        name: "Beta",
+        role: "reviewer",
+        state: "idle",
+        createdAt: "2026-04-08T00:00:00.000Z",
+        updatedAt: "2026-04-08T00:00:00.000Z",
+        metadata: {},
+        runtimeConfig: {},
+      });
+
+      const sessionNoModel = { ...sampleSession, agentId: "agent-002" };
+      mockCreateSession.mockReturnValue(sessionNoModel);
+
       const response = await request(
         app,
         "POST",
         "/api/chat/sessions",
-        JSON.stringify({
-          agentId: "agent-001",
-          modelId: "claude-sonnet-4-5",
-        }),
+        JSON.stringify({ agentId: "agent-002" }),
         { "content-type": "application/json" },
       );
 
-      expect(response.status).toBe(400);
-      expect((response.body as any).error).toContain("both be provided or neither");
+      expect(response.status).toBe(201);
+      // No model resolved from agent config
+      expect(mockCreateSession).toHaveBeenCalledWith({
+        agentId: "agent-002",
+        title: null,
+        modelProvider: null,
+        modelId: null,
+      });
     });
   });
 

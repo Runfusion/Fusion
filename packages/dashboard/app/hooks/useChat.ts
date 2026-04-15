@@ -6,8 +6,10 @@ import {
   updateChatSession,
   deleteChatSession,
   streamChatResponse,
+  fetchAgents,
   type ChatSessionListResponse,
 } from "../api";
+import type { Agent } from "@fusion/core";
 
 export interface ChatSessionInfo {
   id: string;
@@ -64,6 +66,9 @@ export interface UseChatReturn {
 
   // Refresh
   refreshSessions: () => Promise<void>;
+
+  // Agent name resolution
+  agentsMap: Map<string, Agent>;
 }
 
 export function useChat(projectId?: string): UseChatReturn {
@@ -85,8 +90,26 @@ export function useChat(projectId?: string): UseChatReturn {
   // Pagination
   const [hasMoreMessages, setHasMoreMessages] = useState(true);
 
+  // Agent name resolution map
+  const [agentsMap, setAgentsMap] = useState<Map<string, Agent>>(new Map());
+
   // Stream connection ref for cleanup
   const streamRef = useRef<{ close: () => void } | null>(null);
+
+  // Fetch agents on mount for name resolution
+  useEffect(() => {
+    fetchAgents()
+      .then((agents) => {
+        const map = new Map<string, Agent>();
+        for (const agent of agents) {
+          map.set(agent.id, agent);
+        }
+        setAgentsMap(map);
+      })
+      .catch(() => {
+        // Silently fail - keep empty map
+      });
+  }, []);
 
   // Fetch sessions
   const refreshSessions = useCallback(async () => {
@@ -347,5 +370,6 @@ export function useChat(projectId?: string): UseChatReturn {
     setSearchQuery,
     filteredSessions,
     refreshSessions,
+    agentsMap,
   };
 }

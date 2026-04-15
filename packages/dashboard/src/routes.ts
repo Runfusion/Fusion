@@ -7684,7 +7684,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   /**
    * POST /api/chat/sessions
    * Create a new chat session.
-   * Body: { agentId: string, title?: string, modelProvider?: string, modelId?: string }
+   * Body: { agentId: string, title?: string }
+   * The model is resolved from the agent's runtimeConfig.model setting.
    */
   router.post("/chat/sessions", rateLimit(RATE_LIMITS.mutation), async (req, res) => {
     try {
@@ -7693,29 +7694,38 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw internalError("Chat store not available");
       }
 
-      const { agentId, title, modelProvider, modelId } = req.body as {
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const { agentId, title } = req.body as {
         agentId?: string;
         title?: string;
-        modelProvider?: string;
-        modelId?: string;
       };
 
       if (!agentId || typeof agentId !== "string" || !agentId.trim()) {
         throw badRequest("agentId is required");
       }
 
-      // Validate optional model pair consistency
-      const normalizedProvider = validateOptionalModelField(modelProvider, "modelProvider");
-      const normalizedModelId = validateOptionalModelField(modelId, "modelId");
-      if ((normalizedProvider && !normalizedModelId) || (!normalizedProvider && normalizedModelId)) {
-        throw badRequest("modelProvider and modelId must both be provided or neither");
+      // Fetch the agent to resolve model configuration
+      const agent = await agentStore.getAgent(agentId);
+      if (!agent) {
+        throw notFound(`Agent ${agentId} not found`);
       }
+
+      // Parse the agent's model config from runtimeConfig.model
+      // Format: "provider/modelId" (e.g., "anthropic/claude-sonnet-4-5")
+      const runtimeModel = typeof agent.runtimeConfig?.model === "string" ? agent.runtimeConfig.model : "";
+      const slashIdx = runtimeModel.indexOf("/");
+      const resolvedProvider = slashIdx > 0 ? runtimeModel.slice(0, slashIdx) : undefined;
+      const resolvedModelId = slashIdx > 0 ? runtimeModel.slice(slashIdx + 1) : undefined;
 
       const session = chatStore.createSession({
         agentId: agentId.trim(),
         title: title?.trim() || null,
-        modelProvider: normalizedProvider ?? null,
-        modelId: normalizedModelId ?? null,
+        modelProvider: resolvedProvider ?? null,
+        modelId: resolvedModelId ?? null,
       });
 
       res.status(201).json({ session });

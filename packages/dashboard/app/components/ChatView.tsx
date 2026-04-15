@@ -11,9 +11,8 @@ import {
 } from "lucide-react";
 import { useChat } from "../hooks/useChat";
 import { useViewportMode } from "./Header";
-import { CustomModelDropdown } from "./CustomModelDropdown";
-import { fetchModels } from "../api";
-import type { ModelInfo } from "../api";
+import { fetchAgents } from "../api";
+import type { Agent } from "@fusion/core";
 
 export interface ChatViewProps {
   projectId?: string;
@@ -45,45 +44,34 @@ const KB_AGENT_ID = "__kb_agent__";
 
 interface NewChatDialogProps {
   onClose: () => void;
-  onCreate: (input: { agentId: string; modelProvider?: string; modelId?: string }) => void;
+  onCreate: (input: { agentId: string }) => void;
 }
 
 function NewChatDialog({ onClose, onCreate }: NewChatDialogProps) {
-  // Model selection state (single combined value: "provider/modelId" or "" for default)
-  const [modelValue, setModelValue] = useState("");
-  const [models, setModels] = useState<ModelInfo[]>([]);
-  const [modelsLoading, setModelsLoading] = useState(true);
-  const [favoriteProviders, setFavoriteProviders] = useState<string[]>([]);
-  const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [agentsLoading, setAgentsLoading] = useState(true);
+  const [selectedAgentId, setSelectedAgentId] = useState<string>("");
 
-  // Load models on mount
+  // Load agents on mount
   useEffect(() => {
-    setModelsLoading(true);
-    fetchModels()
+    setAgentsLoading(true);
+    fetchAgents()
       .then((response) => {
-        setModels(response.models);
-        setFavoriteProviders(response.favoriteProviders);
-        setFavoriteModels(response.favoriteModels);
+        setAgents(response);
       })
       .catch(() => {
-        // Silently fail - dropdown will show empty list
-        setModels([]);
+        // Silently fail - show empty list
+        setAgents([]);
       })
       .finally(() => {
-        setModelsLoading(false);
+        setAgentsLoading(false);
       });
   }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Parse modelValue into provider and modelId
-    const parsed = parseModelValue(modelValue);
-    // Always use the kb agent - agentId is metadata only
-    onCreate({
-      agentId: KB_AGENT_ID,
-      modelProvider: parsed.provider,
-      modelId: parsed.modelId,
-    });
+    if (!selectedAgentId) return;
+    onCreate({ agentId: selectedAgentId });
   };
 
   return (
@@ -92,37 +80,38 @@ function NewChatDialog({ onClose, onCreate }: NewChatDialogProps) {
         <h3>New Chat</h3>
         <form onSubmit={handleSubmit}>
           <label className="chat-new-dialog-model-label">
-            Model
-            <CustomModelDropdown
-              models={models}
-              value={modelValue}
-              onChange={setModelValue}
-              placeholder={modelsLoading ? "Loading models..." : "Select a model…"}
-              disabled={modelsLoading}
-              label="Chat model"
-              favoriteProviders={favoriteProviders}
-              favoriteModels={favoriteModels}
-              onToggleFavorite={(provider) => {
-                setFavoriteProviders((prev) =>
-                  prev.includes(provider)
-                    ? prev.filter((p) => p !== provider)
-                    : [provider, ...prev]
-                );
-              }}
-              onToggleModelFavorite={(modelId) => {
-                setFavoriteModels((prev) =>
-                  prev.includes(modelId)
-                    ? prev.filter((m) => m !== modelId)
-                    : [modelId, ...prev]
-                );
-              }}
-            />
+            Agent
+            {agentsLoading ? (
+              <div className="chat-new-dialog-loading">Loading agents...</div>
+            ) : agents.length === 0 ? (
+              <div className="chat-new-dialog-empty">No agents available</div>
+            ) : (
+              <div className="chat-new-dialog-agent-list">
+                {agents.map((agent) => (
+                  <button
+                    key={agent.id}
+                    type="button"
+                    className={`chat-new-dialog-agent-item${selectedAgentId === agent.id ? " chat-new-dialog-agent-item--selected" : ""}`}
+                    onClick={() => setSelectedAgentId(agent.id)}
+                    data-testid={`agent-option-${agent.id}`}
+                  >
+                    <Bot size={16} />
+                    <span className="chat-new-dialog-agent-name">{agent.name}</span>
+                    <span className="chat-new-dialog-agent-role">{agent.role}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </label>
           <div className="chat-new-dialog-actions">
             <button type="button" className="btn btn-sm" onClick={onClose}>
               Cancel
             </button>
-            <button type="submit" className="btn btn-sm btn-primary">
+            <button
+              type="submit"
+              className="btn btn-sm btn-primary"
+              disabled={!selectedAgentId}
+            >
               Create
             </button>
           </div>
@@ -132,19 +121,7 @@ function NewChatDialog({ onClose, onCreate }: NewChatDialogProps) {
   );
 }
 
-/**
- * Parse a combined model value ("provider/modelId") into its components.
- * Returns undefined for both fields if the value is empty or malformed.
- */
-function parseModelValue(value: string): { provider?: string; modelId?: string } {
-  if (!value) return {};
-  const slashIdx = value.indexOf("/");
-  if (slashIdx === -1) return {};
-  return {
-    provider: value.slice(0, slashIdx),
-    modelId: value.slice(slashIdx + 1),
-  };
-}
+
 
 export function ChatView({ projectId, addToast }: ChatViewProps) {
   const {
@@ -170,6 +147,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
   const [contextMenu, setContextMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [agentsMap, setAgentsMap] = useState<Map<string, Agent>>(new Map());
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -191,9 +169,24 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
     }
   }, [contextMenu]);
 
+  // Fetch agents on mount for name resolution
+  useEffect(() => {
+    fetchAgents()
+      .then((agents) => {
+        const map = new Map<string, Agent>();
+        for (const agent of agents) {
+          map.set(agent.id, agent);
+        }
+        setAgentsMap(map);
+      })
+      .catch(() => {
+        // Silently fail - keep empty map
+      });
+  }, []);
+
   // Handle create session
   const handleCreateSession = useCallback(
-    async (input: { agentId: string; modelProvider?: string; modelId?: string }) => {
+    async (input: { agentId: string }) => {
       try {
         await createSession(input);
         setShowNewDialog(false);
@@ -357,7 +350,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                   {session.lastMessagePreview || "No messages"}
                 </div>
                 <div className="chat-session-meta">
-                  <span>{session.agentId === KB_AGENT_ID ? "AI Assistant" : session.agentId.slice(0, 30)}</span>
+                  <span>{agentsMap.get(session.agentId)?.name || (session.agentId === KB_AGENT_ID ? "AI Assistant" : session.agentId.slice(0, 30))}</span>
                   <span>{session.updatedAt ? formatRelativeTime(session.updatedAt) : ""}</span>
                 </div>
               </div>
@@ -427,7 +420,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
           )}
           <Bot size={16} />
           <span className="chat-thread-header-title">
-            {activeSession?.title || activeSession?.agentId || "Chat"}
+            {activeSession?.title || agentsMap.get(activeSession?.agentId ?? "")?.name || activeSession?.agentId || "Chat"}
           </span>
         </div>
 

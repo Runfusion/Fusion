@@ -6,6 +6,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ChatManager, __setCreateKbAgent, __resetChatState } from "../chat.js";
 
+// ── Mock Setup ──────────────────────────────────────────────────────────────
+
+// Mock summarizeTitle using vi.hoisted so it's available at module hoisting time
+const { mockSummarizeTitle } = vi.hoisted(() => ({
+  mockSummarizeTitle: vi.fn(),
+}));
+
+vi.mock("@fusion/core", () => ({
+  summarizeTitle: mockSummarizeTitle,
+}));
+
 // ── Mock Store ──────────────────────────────────────────────────────────────
 
 const mockChatStore = {
@@ -13,6 +24,7 @@ const mockChatStore = {
   createSession: vi.fn(),
   addMessage: vi.fn(),
   getMessages: vi.fn(),
+  updateSession: vi.fn(),
 };
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -250,5 +262,111 @@ describe("ChatManager.sendMessage", () => {
     // Assistant message is persisted second
     expect(calls[1][0]).toBe("chat-001");
     expect(calls[1][1].role).toBe("assistant");
+  });
+
+  it("generates title when session has no title", async () => {
+    mockSummarizeTitle.mockResolvedValue("Short Title");
+
+    __setCreateKbAgent(async (options: any) => {
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            if (options.onText) options.onText("Response");
+          }),
+          dispose: vi.fn(),
+          state: { messages: [] },
+        },
+      };
+    });
+
+    const chatManager = new ChatManager(
+      mockChatStore as any,
+      "/tmp/test",
+    );
+
+    await chatManager.sendMessage("chat-001", "This is a long message that needs to be summarized");
+
+    // Wait for the async title generation
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Assert - summarizeTitle was called with the message content and model params
+    expect(mockSummarizeTitle).toHaveBeenCalledWith(
+      "This is a long message that needs to be summarized",
+      "/tmp/test",
+      undefined,
+      undefined,
+    );
+
+    // Assert - session was updated with the generated title
+    expect(mockChatStore.updateSession).toHaveBeenCalledWith("chat-001", { title: "Short Title" });
+  });
+
+  it("uses truncated content when summarizeTitle returns null", async () => {
+    mockSummarizeTitle.mockResolvedValue(null);
+
+    __setCreateKbAgent(async (options: any) => {
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            if (options.onText) options.onText("Response");
+          }),
+          dispose: vi.fn(),
+          state: { messages: [] },
+        },
+      };
+    });
+
+    const chatManager = new ChatManager(
+      mockChatStore as any,
+      "/tmp/test",
+    );
+
+    const longMessage = "A".repeat(300);
+    await chatManager.sendMessage("chat-001", longMessage);
+
+    // Wait for the async title generation
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Assert - summarizeTitle was called
+    expect(mockSummarizeTitle).toHaveBeenCalled();
+
+    // Assert - session was updated with truncated content (first 60 chars)
+    expect(mockChatStore.updateSession).toHaveBeenCalledWith("chat-001", { title: "A".repeat(60) });
+  });
+
+  it("does not generate title when session already has a title", async () => {
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-001",
+      agentId: "agent-001",
+      status: "active",
+      title: "Existing Title",
+    });
+
+    __setCreateKbAgent(async (options: any) => {
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            if (options.onText) options.onText("Response");
+          }),
+          dispose: vi.fn(),
+          state: { messages: [] },
+        },
+      };
+    });
+
+    const chatManager = new ChatManager(
+      mockChatStore as any,
+      "/tmp/test",
+    );
+
+    await chatManager.sendMessage("chat-001", "This is a long message");
+
+    // Wait for potential async operations
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Assert - summarizeTitle was NOT called
+    expect(mockSummarizeTitle).not.toHaveBeenCalled();
+    // Assert - updateSession was NOT called
+    expect(mockChatStore.updateSession).not.toHaveBeenCalled();
   });
 });

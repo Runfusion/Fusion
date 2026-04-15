@@ -35,7 +35,7 @@ vi.mock("lucide-react", async (importOriginal) => {
   };
 });
 
-// Mock CustomModelDropdown as a simple test double
+// Mock CustomModelDropdown - no longer used but kept for other tests
 vi.mock("../CustomModelDropdown", () => ({
   CustomModelDropdown: ({
     value,
@@ -59,7 +59,7 @@ vi.mock("../CustomModelDropdown", () => ({
   ),
 }));
 
-// Mock fetchModels
+// Mock fetchAgents for new chat dialog
 vi.mock("../../api", () => ({
   fetchModels: vi.fn().mockResolvedValue({
     models: [
@@ -69,6 +69,10 @@ vi.mock("../../api", () => ({
     favoriteProviders: [],
     favoriteModels: [],
   }),
+  fetchAgents: vi.fn().mockResolvedValue([
+    { id: "agent-001", name: "Alpha", role: "executor", state: "idle", icon: undefined, createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z", metadata: {} },
+    { id: "agent-002", name: "Beta", role: "reviewer", state: "idle", icon: undefined, createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z", metadata: {} },
+  ]),
 }));
 
 const defaultChatState = {
@@ -173,12 +177,12 @@ describe("ChatView", () => {
     // Dialog should be open - check for dialog content
     const dialog = document.querySelector(".chat-new-dialog");
     expect(dialog).toBeInTheDocument();
-    // Should show Model label (not Agent)
-    expect(within(dialog!).getByText("Model")).toBeInTheDocument();
+    // Should show Agent label
+    expect(within(dialog!).getByText("Agent")).toBeInTheDocument();
   });
 
   it("creates session without model selection (uses default)", async () => {
-    const createSession = vi.fn().mockResolvedValue({ id: "session-new", agentId: "__kb_agent__" });
+    const createSession = vi.fn().mockResolvedValue({ id: "session-new", agentId: "agent-001" });
     setupMockChat({ sessions: [], filteredSessions: [], createSession });
 
     render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
@@ -187,23 +191,27 @@ describe("ChatView", () => {
 
     const dialog = document.querySelector(".chat-new-dialog");
 
-    // Select "Use default" (the first option)
-    const select = within(dialog!).getByTestId("mock-model-dropdown") as HTMLSelectElement;
-    expect(select.value).toBe("");
+    // Create button should be disabled initially (no agent selected)
+    const createBtn = within(dialog!).getByText("Create") as HTMLButtonElement;
+    expect(createBtn).toBeDisabled();
+
+    // Click on an agent to select it
+    await userEvent.click(within(dialog!).getByTestId("agent-option-agent-001"));
+
+    // Create button should now be enabled
+    expect(createBtn).not.toBeDisabled();
 
     await userEvent.click(within(dialog!).getByText("Create"));
 
     await waitFor(() => {
       expect(createSession).toHaveBeenCalledWith({
-        agentId: "__kb_agent__",
-        modelProvider: undefined,
-        modelId: undefined,
+        agentId: "agent-001",
       });
     });
   });
 
-  it("creates session with model selection", async () => {
-    const createSession = vi.fn().mockResolvedValue({ id: "session-new", agentId: "__kb_agent__" });
+  it("creates session with agent selection", async () => {
+    const createSession = vi.fn().mockResolvedValue({ id: "session-new", agentId: "agent-002" });
     setupMockChat({ sessions: [], filteredSessions: [], createSession });
 
     render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
@@ -211,16 +219,15 @@ describe("ChatView", () => {
     await userEvent.click(screen.getByTestId("chat-new-btn"));
 
     const dialog = document.querySelector(".chat-new-dialog");
-    const select = within(dialog!).getByTestId("mock-model-dropdown") as HTMLSelectElement;
-    await userEvent.selectOptions(select, "anthropic/claude-sonnet-4-5");
+
+    // Click on a different agent
+    await userEvent.click(within(dialog!).getByTestId("agent-option-agent-002"));
 
     await userEvent.click(within(dialog!).getByText("Create"));
 
     await waitFor(() => {
       expect(createSession).toHaveBeenCalledWith({
-        agentId: "__kb_agent__",
-        modelProvider: "anthropic",
-        modelId: "claude-sonnet-4-5",
+        agentId: "agent-002",
       });
     });
   });
