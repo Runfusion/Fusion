@@ -33,6 +33,7 @@ import {
   createSkillsOverrideFromSelection,
   type SkillSelectionContext,
 } from "./skill-resolver.js";
+import { isContextLimitError } from "./context-limit-detector.js";
 
 export interface AgentResult {
   session: AgentSession;
@@ -54,12 +55,42 @@ export async function promptWithFallback(session: AgentSession, prompt: string, 
   }
 
   console.error(`[pi] promptWithFallback: calling session.prompt (prompt length=${prompt.length})`);
-  if (options === undefined) {
-    await session.prompt(prompt);
-  } else {
-    await (session.prompt as any)(prompt, options);
+  try {
+    if (options === undefined) {
+      await session.prompt(prompt);
+    } else {
+      await (session.prompt as any)(prompt, options);
+    }
+    console.error(`[pi] promptWithFallback: prompt completed`);
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    if (!isContextLimitError(errorMessage)) {
+      console.error(`[pi] promptWithFallback: non-context error — propagating: ${errorMessage}`);
+      throw err;
+    }
+
+    // Context limit error — attempt auto-compaction and retry once
+    console.error(`[pi] promptWithFallback: context limit error — attempting auto-compaction`);
+    const compactResult = await compactSessionContext(session);
+    if (!compactResult) {
+      console.error(`[pi] promptWithFallback: compaction unavailable — propagating original error`);
+      throw err;
+    }
+
+    console.error(`[pi] promptWithFallback: compaction succeeded (${compactResult.tokensBefore} tokens) — retrying prompt`);
+    try {
+      if (options === undefined) {
+        await session.prompt(prompt);
+      } else {
+        await (session.prompt as any)(prompt, options);
+      }
+      console.error(`[pi] promptWithFallback: prompt completed after auto-compaction`);
+    } catch (retryErr: unknown) {
+      const retryErrorMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
+      console.error(`[pi] promptWithFallback: retry after auto-compaction failed: ${retryErrorMessage}`);
+      throw err; // Throw original error to preserve original context
+    }
   }
-  console.error(`[pi] promptWithFallback: prompt completed`);
 }
 
 /**
@@ -564,7 +595,33 @@ export async function createKbAgent(options: AgentOptions): Promise<AgentResult>
       }
       return;
     } catch (err: any) {
-      if (!fallbackModel || usingFallback || !isRetryableModelSelectionError(err?.message || "")) {
+      const errorMessage = err?.message || "";
+      if (isContextLimitError(errorMessage)) {
+        // Context limit error — attempt auto-compaction and retry once
+        console.error(`[pi] promptWithFallback: context limit error — attempting auto-compaction`);
+        const compactResult = await compactSessionContext(session);
+        if (compactResult) {
+          console.error(`[pi] promptWithFallback: compaction succeeded (${compactResult.tokensBefore} tokens) — retrying prompt`);
+          try {
+            if (promptOptions === undefined) {
+              await session.prompt(prompt);
+            } else {
+              await (session.prompt as any)(prompt, promptOptions);
+            }
+            return;
+          } catch (retryErr: any) {
+            const retryErrorMessage = retryErr?.message || "";
+            console.error(`[pi] promptWithFallback: retry after auto-compaction failed: ${retryErrorMessage}`);
+            // Throw original error to preserve original context
+            throw err;
+          }
+        } else {
+          console.error(`[pi] promptWithFallback: compaction unavailable — propagating original error`);
+          throw err;
+        }
+      }
+
+      if (!fallbackModel || usingFallback || !isRetryableModelSelectionError(errorMessage)) {
         throw err;
       }
 
@@ -603,10 +660,39 @@ export async function createKbAgent(options: AgentOptions): Promise<AgentResult>
       Object.assign(promptableSession, fallbackSession);
       promptableSession.promptWithFallback = fallbackSession.promptWithFallback ?? promptableSession.promptWithFallback;
 
-      if (promptOptions === undefined) {
-        await fallbackSession.prompt(prompt);
-      } else {
-        await (fallbackSession.prompt as any)(prompt, promptOptions);
+      // Retry with fallback model, also with auto-compaction support
+      try {
+        if (promptOptions === undefined) {
+          await fallbackSession.prompt(prompt);
+        } else {
+          await (fallbackSession.prompt as any)(prompt, promptOptions);
+        }
+        return;
+      } catch (fallbackErr: any) {
+        const fallbackErrorMessage = fallbackErr?.message || "";
+        if (isContextLimitError(fallbackErrorMessage)) {
+          console.error(`[pi] promptWithFallback: fallback session context limit error — attempting auto-compaction`);
+          const compactResult = await compactSessionContext(fallbackSession);
+          if (compactResult) {
+            console.error(`[pi] promptWithFallback: fallback compaction succeeded (${compactResult.tokensBefore} tokens) — retrying`);
+            try {
+              if (promptOptions === undefined) {
+                await fallbackSession.prompt(prompt);
+              } else {
+                await (fallbackSession.prompt as any)(prompt, promptOptions);
+              }
+              return;
+            } catch (retryErr: any) {
+              const retryErrorMessage = retryErr?.message || "";
+              console.error(`[pi] promptWithFallback: fallback retry after auto-compaction failed: ${retryErrorMessage}`);
+              throw fallbackErr; // Throw original fallback error
+            }
+          } else {
+            console.error(`[pi] promptWithFallback: fallback compaction unavailable — propagating original error`);
+            throw fallbackErr;
+          }
+        }
+        throw fallbackErr;
       }
     }
   };

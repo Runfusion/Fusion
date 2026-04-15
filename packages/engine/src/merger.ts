@@ -2358,71 +2358,45 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
         },
       });
     } catch (err: unknown) {
-      // Context-limit error: try compact-and-retry recovery.
+      // Context-limit error after promptWithFallback's auto-compaction already attempted recovery.
+      // Try truncated prompt retry as second-level fallback.
       // This detects when the LLM rejects the prompt due to context-window overflow.
       const errorMessage = err instanceof Error ? err.message : String(err);
       if (isContextLimitError(errorMessage)) {
-        mergerLog.warn(`${taskId}: context limit hit in merge agent — attempting compaction recovery`);
-        await store.logEntry(taskId, "Context limit reached during merge — compacting session and retrying");
+        mergerLog.warn(`${taskId}: context limit hit after auto-compaction — retrying with minimal merge prompt`);
+        await store.logEntry(taskId, "Context limit reached during merge after auto-compaction — retrying with reduced prompt");
 
-        // Attempt to compress conversation history to free context space.
-        const compactResult = await compactSessionContext(session);
-        if (compactResult) {
-          // Compaction succeeded: retry with the compressed session.
-          mergerLog.log(`${taskId}: context compacted at ${compactResult.tokensBefore} tokens — retrying`);
-          await store.logEntry(taskId, `Session compacted at ${compactResult.tokensBefore} tokens — retrying merge`);
+        // Build minimal prompt: omit diff stat, use placeholder for commit log
+        const truncatedPrompt = buildMergePrompt({
+          taskId,
+          branch,
+          commitLog: "(see git log)", // Minimal placeholder instead of full commit log
+          diffStat: "", // Omit diff stat entirely
+          hasConflicts,
+          simplifiedContext: true, // Also skip detailed context
+          testCommand,
+          buildCommand,
+          authorArg,
+        });
 
-          // Retry the prompting after compaction
+        try {
           await withRateLimitRetry(async () => {
-            await promptWithFallback(session, prompt);
+            await promptWithFallback(session, truncatedPrompt);
             checkSessionError(session);
           }, {
             onRetry: (attempt, delayMs, error) => {
               const delaySec = Math.round(delayMs / 1000);
-              mergerLog.warn(`⏳ ${taskId} rate limited after compaction — retry ${attempt} in ${delaySec}s: ${error.message}`);
+              mergerLog.warn(`⏳ ${taskId} rate limited during truncated retry — retry ${attempt} in ${delaySec}s: ${error.message}`);
             },
           });
-        } else {
-          // Compaction unavailable or failed (fresh session has nothing to compact):
-          // Retry with a minimal prompt that omits diff stat and uses placeholder commit log.
-          // Use truncatedRetryAttempted flag to prevent infinite loops.
-          let truncatedRetryAttempted = false;
-          mergerLog.warn(`${taskId}: compaction unavailable — retrying with minimal merge prompt`);
-          await store.logEntry(taskId, "Context limit reached — retrying with reduced prompt");
-
-          // Build minimal prompt: omit diff stat, use placeholder for commit log
-          const truncatedPrompt = buildMergePrompt({
-            taskId,
-            branch,
-            commitLog: "(see git log)", // Minimal placeholder instead of full commit log
-            diffStat: "", // Omit diff stat entirely
-            hasConflicts,
-            simplifiedContext: true, // Also skip detailed context
-            testCommand,
-            buildCommand,
-            authorArg,
-          });
-
-          try {
-            await withRateLimitRetry(async () => {
-              await promptWithFallback(session, truncatedPrompt);
-              checkSessionError(session);
-              truncatedRetryAttempted = true;
-            }, {
-              onRetry: (attempt, delayMs, error) => {
-                const delaySec = Math.round(delayMs / 1000);
-                mergerLog.warn(`⏳ ${taskId} rate limited during truncated retry — retry ${attempt} in ${delaySec}s: ${error.message}`);
-              },
-            });
-          } catch (retryErr: unknown) {
-            // Truncated retry also failed: propagate original error
-            const retryErrorMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
-            if (isContextLimitError(retryErrorMessage) && truncatedRetryAttempted) {
-              mergerLog.error(`${taskId}: truncated retry also hit context limit — propagating original error`);
-              throw err; // Throw original error with original context
-            }
-            throw retryErr; // Non-context error or other failure
+        } catch (retryErr: unknown) {
+          // Truncated retry also failed: propagate original error
+          const retryErrorMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
+          if (isContextLimitError(retryErrorMessage)) {
+            mergerLog.error(`${taskId}: truncated retry also hit context limit — propagating original error`);
+            throw err; // Throw original error with original context
           }
+          throw retryErr; // Non-context error or other failure
         }
       } else {
         // Non-context error (network, rate limit, build failure): propagate immediately.

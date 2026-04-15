@@ -19,7 +19,7 @@ import { join } from "node:path";
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
 import type { TaskDetail, Settings, TaskStore } from "@fusion/core";
 
-import { createKbAgent, promptWithFallback, describeModel, compactSessionContext } from "./pi.js";
+import { createKbAgent, promptWithFallback, describeModel } from "./pi.js";
 import type { SkillSelectionContext } from "./skill-resolver.js";
 import { generateWorktreeName } from "./worktree-names.js";
 import { AgentSemaphore } from "./concurrency.js";
@@ -868,101 +868,47 @@ export class StepSessionExecutor {
             `Step ${stepIndex} attempt ${attempt + 1} failed: ${errorMessage}`,
           );
 
-          // Check for context-limit error and attempt bounded recovery
+          // Context-limit error after promptWithFallback's auto-compaction already attempted recovery.
+          // Try reduced-prompt retry as second-level fallback.
           // Recovery is bounded to prevent infinite loops (MAX_STEP_RETRIES recovery)
           if (isContextLimitError(errorMessage) && recoveryAttempts < MAX_STEP_RETRIES && session) {
             stepExecLog.log(
-              `Step ${stepIndex} context limit error — attempting bounded recovery ` +
+              `Step ${stepIndex} context limit error after auto-compaction — attempting reduced-prompt retry ` +
               `(recoveryAttempt=${recoveryAttempts + 1}/${MAX_STEP_RETRIES})`,
             );
             await this.store.appendAgentLog(
               taskDetail.id,
-              `[step-exec] Context limit error on step ${stepIndex}: ${errorMessage}`,
+              `[step-exec] Context limit error after auto-compaction on step ${stepIndex}: ${errorMessage}`,
               "tool_error",
             );
 
-            // Try compact-and-resume first
-            const compactResult = await compactSessionContext(session);
-            if (compactResult) {
-              stepExecLog.log(
-                `Step ${stepIndex} context compaction succeeded (${compactResult.tokensBefore} tokens) — resuming`,
+            recoveryAttempts++;
+            try {
+              stuckTaskDetector?.recordActivity(trackingKey);
+              await promptWithFallback(session, reducedStepPrompt);
+              checkSessionError(session);
+              stepExecLog.log(`Step ${stepIndex} reduced-prompt recovery succeeded`);
+              await this.store.appendAgentLog(
+                taskDetail.id,
+                `[step-exec] Reduced-prompt recovery succeeded for step ${stepIndex}`,
+                "text",
+              );
+              const result: StepResult = { stepIndex, success: true, retries };
+              this.options.onStepComplete?.(stepIndex, result);
+              return result;
+            } catch (reducedErr: unknown) {
+              const reducedErrorMessage = typeof reducedErr === "string"
+                ? reducedErr
+                : (reducedErr as { message?: string })?.message ?? String(reducedErr);
+              stepExecLog.warn(
+                `Step ${stepIndex} reduced-prompt retry also failed: ${reducedErrorMessage}`,
               );
               await this.store.appendAgentLog(
                 taskDetail.id,
-                `[step-exec] Context compaction succeeded at ${compactResult.tokensBefore} tokens — resuming step ${stepIndex}`,
-                "text",
+                `[step-exec] Reduced-prompt recovery failed for step ${stepIndex}: ${reducedErrorMessage}`,
+                "tool_error",
               );
-              recoveryAttempts++;
-
-              // Attempt resume with original prompt
-              try {
-                stuckTaskDetector?.recordActivity(trackingKey);
-                await promptWithFallback(session, stepPrompt);
-                checkSessionError(session);
-                stepExecLog.log(`Step ${stepIndex} compact-and-resume succeeded`);
-                await this.store.appendAgentLog(
-                  taskDetail.id,
-                  `[step-exec] Compact-and-resume succeeded for step ${stepIndex}`,
-                  "text",
-                );
-                const result: StepResult = { stepIndex, success: true, retries };
-                this.options.onStepComplete?.(stepIndex, result);
-                return result;
-              } catch (resumeErr: unknown) {
-                const resumeErrorMessage = typeof resumeErr === "string"
-                  ? resumeErr
-                  : (resumeErr as { message?: string })?.message ?? String(resumeErr);
-                stepExecLog.warn(
-                  `Step ${stepIndex} resume after compaction failed: ${resumeErrorMessage}`,
-                );
-                await this.store.appendAgentLog(
-                  taskDetail.id,
-                  `[step-exec] Resume after compaction failed for step ${stepIndex}: ${resumeErrorMessage}`,
-                  "tool_error",
-                );
-                // Fall through to reduced-prompt retry
-              }
-            } else {
-              stepExecLog.log(
-                `Step ${stepIndex} context compaction unavailable — attempting reduced-prompt retry`,
-              );
-              await this.store.appendAgentLog(
-                taskDetail.id,
-                `[step-exec] Context compaction unavailable for step ${stepIndex} — attempting reduced-prompt recovery`,
-                "text",
-              );
-            }
-
-            // Compact returned null OR resume failed — try reduced-prompt retry
-            if (recoveryAttempts < MAX_STEP_RETRIES) {
-              recoveryAttempts++;
-              try {
-                stuckTaskDetector?.recordActivity(trackingKey);
-                await promptWithFallback(session, reducedStepPrompt);
-                checkSessionError(session);
-                stepExecLog.log(`Step ${stepIndex} reduced-prompt recovery succeeded`);
-                await this.store.appendAgentLog(
-                  taskDetail.id,
-                  `[step-exec] Reduced-prompt recovery succeeded for step ${stepIndex}`,
-                  "text",
-                );
-                const result: StepResult = { stepIndex, success: true, retries };
-                this.options.onStepComplete?.(stepIndex, result);
-                return result;
-              } catch (reducedErr: unknown) {
-                const reducedErrorMessage = typeof reducedErr === "string"
-                  ? reducedErr
-                  : (reducedErr as { message?: string })?.message ?? String(reducedErr);
-                stepExecLog.warn(
-                  `Step ${stepIndex} reduced-prompt retry also failed: ${reducedErrorMessage}`,
-                );
-                await this.store.appendAgentLog(
-                  taskDetail.id,
-                  `[step-exec] Reduced-prompt recovery failed for step ${stepIndex}: ${reducedErrorMessage}`,
-                  "tool_error",
-                );
-                // Fall through to normal retry or failure
-              }
+              // Fall through to normal retry or failure
             }
           }
 

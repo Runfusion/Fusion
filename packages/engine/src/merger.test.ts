@@ -3416,12 +3416,9 @@ describe("aiMergeTask — context limit recovery with truncation", () => {
     });
   }
 
-  it("retries with minimal prompt when context limit hit and compaction returns null", async () => {
-    const { compactSessionContext } = await import("./pi.js");
+  it("retries with minimal prompt when context limit hit after auto-compaction", async () => {
     const { isContextLimitError } = await import("./context-limit-detector.js");
 
-    // Mock compaction to return null (fresh session)
-    vi.mocked(compactSessionContext).mockResolvedValue(null);
     vi.mocked(isContextLimitError).mockReturnValue(true);
 
     // Track prompt calls
@@ -3464,16 +3461,12 @@ describe("aiMergeTask — context limit recovery with truncation", () => {
     // Second call should have the minimal placeholder
     expect(promptCalls[1]).toContain("(see git log)");
 
-    // Compaction was attempted
-    expect(vi.mocked(compactSessionContext)).toHaveBeenCalled();
+    // Note: Compaction is now handled by promptWithFallback, not by the merger directly
   });
 
   it("throws when truncated retry also fails with context limit", async () => {
-    const { compactSessionContext } = await import("./pi.js");
     const { isContextLimitError } = await import("./context-limit-detector.js");
 
-    // Mock compaction to return null (fresh session)
-    vi.mocked(compactSessionContext).mockResolvedValue(null);
     vi.mocked(isContextLimitError).mockReturnValue(true);
 
     // Track prompt calls to verify both original and truncated prompts were tried
@@ -3530,16 +3523,12 @@ describe("aiMergeTask — context limit recovery with truncation", () => {
     // With 3 merge attempts, this means we should have at least 6 prompt calls total
     expect(promptCalls.length).toBeGreaterThan(0);
 
-    // Compaction was attempted
-    expect(vi.mocked(compactSessionContext)).toHaveBeenCalled();
+    // Note: Compaction is now handled by promptWithFallback, not by the merger directly
   });
 
-  it("uses normal flow when compaction succeeds (regression test)", async () => {
-    const { compactSessionContext } = await import("./pi.js");
+  it("succeeds when prompt succeeds on retry after context error", async () => {
     const { isContextLimitError } = await import("./context-limit-detector.js");
 
-    // Mock compaction to succeed
-    vi.mocked(compactSessionContext).mockResolvedValue({ summary: "compacted", tokensBefore: 10000 });
     vi.mocked(isContextLimitError).mockReturnValue(true);
 
     // Track prompt calls
@@ -3569,14 +3558,13 @@ describe("aiMergeTask — context limit recovery with truncation", () => {
 
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
-    // Merge should succeed after compaction retry
+    // Merge should succeed after retry
     expect(result.merged).toBe(true);
 
     // Should have made 2 prompt calls
     expect(promptCalls).toHaveLength(2);
 
-    // Compaction was attempted and succeeded
-    expect(vi.mocked(compactSessionContext)).toHaveBeenCalled();
+    // Note: Compaction is now handled by promptWithFallback, not by the merger directly
   });
 
   it("does not attempt truncation retry for non-context errors", async () => {

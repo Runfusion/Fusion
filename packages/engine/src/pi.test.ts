@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { describeModel, compactSessionContext, COMPACTION_FALLBACK_INSTRUCTIONS, createKbAgent, type AgentOptions } from "./pi.js";
+import { describeModel, compactSessionContext, COMPACTION_FALLBACK_INSTRUCTIONS, createKbAgent, promptWithFallback, type AgentOptions } from "./pi.js";
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
 
 // Mock skill resolver functions - define inside factory to avoid hoisting issues
@@ -308,5 +308,152 @@ describe("createKbAgent skills parameter", () => {
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       expect.stringContaining("warning")
     );
+  });
+});
+
+describe("promptWithFallback auto-compaction", () => {
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleErrorSpy.mockRestore();
+    vi.clearAllMocks();
+  });
+
+  it("auto-compacts on context error, then retries successfully", async () => {
+    // Mock session that throws context error on first prompt, succeeds on retry
+    const mockPrompt = vi.fn()
+      .mockRejectedValueOnce(new Error("prompt is too long: 210000 tokens > 200000 maximum"))
+      .mockResolvedValueOnce(undefined);
+    const mockCompact = vi.fn().mockResolvedValue({ summary: "compacted", tokensBefore: 210000 });
+    const session = { prompt: mockPrompt, compact: mockCompact } as unknown as AgentSession;
+
+    await promptWithFallback(session, "test prompt");
+
+    // Verify compact was called once
+    expect(mockCompact).toHaveBeenCalledTimes(1);
+    // Verify prompt was called twice (first throw, second success)
+    expect(mockPrompt).toHaveBeenCalledTimes(2);
+    expect(mockPrompt.mock.calls[0]).toEqual(["test prompt"]);
+    expect(mockPrompt.mock.calls[1]).toEqual(["test prompt"]);
+  });
+
+  it("auto-compacts when compact returns null (session doesn't support it)", async () => {
+    // Mock session that throws context error, compact not available
+    const mockPrompt = vi.fn().mockRejectedValue(new Error("prompt is too long: 210000 tokens > 200000 maximum"));
+    const session = { prompt: mockPrompt } as unknown as AgentSession; // No compact method
+
+    await expect(promptWithFallback(session, "test prompt")).rejects.toThrow("prompt is too long: 210000 tokens > 200000 maximum");
+
+    // Verify prompt was called only once (no retry since compaction unavailable)
+    expect(mockPrompt).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates original error when retry after compaction also fails", async () => {
+    // Mock session that always throws context error
+    const mockPrompt = vi.fn().mockRejectedValue(new Error("prompt is too long: 210000 tokens > 200000 maximum"));
+    const mockCompact = vi.fn().mockResolvedValue({ summary: "compacted", tokensBefore: 200000 });
+    const session = { prompt: mockPrompt, compact: mockCompact } as unknown as AgentSession;
+
+    await expect(promptWithFallback(session, "test prompt")).rejects.toThrow("prompt is too long: 210000 tokens > 200000 maximum");
+
+    // Verify prompt was called exactly twice (original + 1 retry)
+    expect(mockPrompt).toHaveBeenCalledTimes(2);
+    // Verify compact was called once
+    expect(mockCompact).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates non-context errors without attempting compaction", async () => {
+    // Mock session that throws non-context error
+    const mockPrompt = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
+    const mockCompact = vi.fn();
+    const session = { prompt: mockPrompt, compact: mockCompact } as unknown as AgentSession;
+
+    await expect(promptWithFallback(session, "test prompt")).rejects.toThrow("ECONNREFUSED");
+
+    // Verify compact was NOT called
+    expect(mockCompact).not.toHaveBeenCalled();
+    // Verify prompt was called only once
+    expect(mockPrompt).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not compact when prompt succeeds on first try", async () => {
+    // Mock session that succeeds on first prompt
+    const mockPrompt = vi.fn().mockResolvedValue(undefined);
+    const mockCompact = vi.fn();
+    const session = { prompt: mockPrompt, compact: mockCompact } as unknown as AgentSession;
+
+    await promptWithFallback(session, "test prompt");
+
+    // Verify compact was NOT called
+    expect(mockCompact).not.toHaveBeenCalled();
+    // Verify prompt was called once
+    expect(mockPrompt).toHaveBeenCalledTimes(1);
+  });
+
+  it("auto-compacts with options parameter and passes options to retry", async () => {
+    // Mock session that throws context error on first prompt, succeeds on retry
+    const mockPrompt = vi.fn()
+      .mockRejectedValueOnce(new Error("prompt is too long: 210000 tokens > 200000 maximum"))
+      .mockResolvedValueOnce(undefined);
+    const mockCompact = vi.fn().mockResolvedValue({ summary: "compacted", tokensBefore: 210000 });
+    const session = { prompt: mockPrompt, compact: mockCompact } as unknown as AgentSession;
+    // Use a simple options object (AbortSignal cannot be constructed in test env)
+    const options = { timeout: 60000 };
+
+    await promptWithFallback(session, "test prompt", options);
+
+    // Verify compact was called once
+    expect(mockCompact).toHaveBeenCalledTimes(1);
+    // Verify prompt was called twice with options
+    expect(mockPrompt).toHaveBeenCalledTimes(2);
+    expect(mockPrompt.mock.calls[0]).toEqual(["test prompt", options]);
+    expect(mockPrompt.mock.calls[1]).toEqual(["test prompt", options]);
+  });
+
+  it("delegates to session.promptWithFallback when available", async () => {
+    // Mock session with promptWithFallback method
+    const mockSessionPromptWithFallback = vi.fn().mockResolvedValue(undefined);
+    const mockPrompt = vi.fn();
+    const mockCompact = vi.fn();
+    const session = {
+      prompt: mockPrompt,
+      compact: mockCompact,
+      promptWithFallback: mockSessionPromptWithFallback,
+    } as unknown as AgentSession;
+
+    await promptWithFallback(session, "test prompt");
+
+    // Verify session.promptWithFallback was called (auto-compaction handled by session)
+    expect(mockSessionPromptWithFallback).toHaveBeenCalledTimes(1);
+    // Verify direct prompt was NOT called
+    expect(mockPrompt).not.toHaveBeenCalled();
+  });
+
+  it("handles context error patterns from various providers", async () => {
+    const contextErrorPatterns = [
+      "prompt is too long: 210000 tokens > 200000 maximum", // Anthropic
+      "exceeds the context window", // OpenAI
+      "input token count exceeds the maximum", // Google Gemini
+      "maximum prompt length is 100000 but request contains 150000", // xAI
+      "reduce the length of the messages", // Groq
+      "too many tokens", // Generic
+    ];
+
+    for (const errorMessage of contextErrorPatterns) {
+      const mockPrompt = vi.fn()
+        .mockRejectedValueOnce(new Error(errorMessage))
+        .mockResolvedValueOnce(undefined);
+      const mockCompact = vi.fn().mockResolvedValue({ summary: "compacted", tokensBefore: 150000 });
+      const session = { prompt: mockPrompt, compact: mockCompact } as unknown as AgentSession;
+
+      await promptWithFallback(session, "test prompt");
+
+      // Verify compaction was triggered for each error pattern
+      expect(mockCompact).toHaveBeenCalled();
+    }
   });
 });
