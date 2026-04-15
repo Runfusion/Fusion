@@ -1,19 +1,19 @@
 /**
- * MessageStore - Filesystem-based persistence for the messaging system.
+ * MessageStore - SQLite-based persistence for the messaging system.
  *
- * Messages are stored at `.fusion/messages/{messageId}.json` with their metadata.
- * An index file at `.fusion/messages/index.json` provides efficient mailbox lookups.
+ * Messages are stored in the `messages` table with indexed lookups
+ * for inbox/outbox/conversation queries.
  *
- * File Structure:
- * - messages/{messageId}.json: Individual message data
- * - messages/index.json: Owner-to-message index for inbox/outbox queries
+ * Follows the same patterns as ChatStore:
+ * - EventEmitter for change notifications
+ * - SQLite for structured data storage (synchronous)
+ * - JSON columns for optional metadata
  */
 
-import { mkdir, readFile, writeFile, readdir, unlink, rename } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { randomUUID } from "node:crypto";
+import type { Database } from "./db.js";
+import { fromJson, toJsonNullable } from "./db.js";
 import type {
   Message,
   MessageCreateInput,
@@ -23,67 +23,109 @@ import type {
   ParticipantType,
 } from "./types.js";
 
+// ── Event Types ─────────────────────────────────────────────────────
+
 /** Events emitted by MessageStore */
 export interface MessageStoreEvents {
   /** Emitted when a new message is created and sent */
-  "message:sent": (message: Message) => void;
+  "message:sent": [message: Message];
   /** Emitted when a message is received by a participant */
-  "message:received": (message: Message) => void;
+  "message:received": [message: Message];
   /** Emitted when a message is marked as read */
-  "message:read": (message: Message) => void;
+  "message:read": [message: Message];
   /** Emitted when a message is deleted */
-  "message:deleted": (messageId: string) => void;
+  "message:deleted": [messageId: string];
 }
+
+// ── Options Types ────────────────────────────────────────────────────
 
 /** Options for MessageStore constructor */
 export interface MessageStoreOptions {
-  /** Root directory for fn data (default: .fusion) */
-  rootDir?: string;
   /** Optional hook invoked when a message is addressed to an agent */
   onMessageToAgent?: (message: Message) => void;
 }
 
-/** Index structure for mailbox lookups */
-interface MessageIndex {
-  /** Map of "type:id" -> { inbox: [msgId, ...], outbox: [msgId, ...] } */
-  byOwner: Record<string, { inbox: string[]; outbox: string[] }>;
-}
+// ── MessageStore Class ───────────────────────────────────────────────
 
 /**
  * MessageStore manages messages between agents, users, and the system.
- * Uses filesystem-based persistence following the AgentStore pattern.
+ * Uses SQLite for persistent storage with efficient indexed queries.
  */
-export class MessageStore extends EventEmitter {
-  private rootDir: string;
-  private messagesDir: string;
-  private indexPath: string;
+export class MessageStore extends EventEmitter<MessageStoreEvents> {
   private onMessageToAgent?: (message: Message) => void;
 
-  constructor(options: MessageStoreOptions = {}) {
+  // Prepared statements for frequently-run queries
+  private stmtInsert!: ReturnType<Database["prepare"]>;
+  private stmtGetById!: ReturnType<Database["prepare"]>;
+  private stmtUpdateRead!: ReturnType<Database["prepare"]>;
+  private stmtDelete!: ReturnType<Database["prepare"]>;
+  private stmtCountUnread!: ReturnType<Database["prepare"]>;
+  private stmtGetLastMessage!: ReturnType<Database["prepare"]>;
+
+  constructor(
+    private db: Database,
+    options?: MessageStoreOptions,
+  ) {
     super();
-    this.rootDir = options.rootDir ?? ".fusion";
-    this.messagesDir = join(this.rootDir, "messages");
-    this.indexPath = join(this.messagesDir, "index.json");
-    this.onMessageToAgent = options.onMessageToAgent;
+    this.setMaxListeners(100);
+    this.onMessageToAgent = options?.onMessageToAgent;
+
+    // Prepare frequently-run statements
+    this.stmtInsert = this.db.prepare(`
+      INSERT INTO messages (id, fromId, fromType, toId, toType, content, type, read, metadata, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    this.stmtGetById = this.db.prepare(`
+      SELECT * FROM messages WHERE id = ?
+    `);
+
+    this.stmtUpdateRead = this.db.prepare(`
+      UPDATE messages SET read = 1, updatedAt = ? WHERE id = ?
+    `);
+
+    this.stmtDelete = this.db.prepare(`
+      DELETE FROM messages WHERE id = ?
+    `);
+
+    this.stmtCountUnread = this.db.prepare(`
+      SELECT COUNT(*) as count FROM messages WHERE toId = ? AND toType = ? AND read = 0
+    `);
+
+    this.stmtGetLastMessage = this.db.prepare(`
+      SELECT * FROM messages WHERE toId = ? AND toType = ? ORDER BY createdAt DESC, rowid DESC LIMIT 1
+    `);
   }
 
+  // ── Row-to-Object Converters ───────────────────────────────────────
+
   /**
-   * Initialize the store by creating necessary directories and index file.
-   * Should be called before other operations.
+   * Convert a database row to a Message object.
    */
-  async init(): Promise<void> {
-    await mkdir(this.messagesDir, { recursive: true });
-    if (!existsSync(this.indexPath)) {
-      await this.writeIndex({ byOwner: {} });
-    }
+  private rowToMessage(row: any): Message {
+    return {
+      id: row.id,
+      fromId: row.fromId,
+      fromType: row.fromType as ParticipantType,
+      toId: row.toId,
+      toType: row.toType as ParticipantType,
+      content: row.content,
+      type: row.type as MessageType,
+      read: row.read === 1,
+      metadata: fromJson<Record<string, unknown>>(row.metadata),
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
   }
+
+  // ── Public API ────────────────────────────────────────────────────
 
   /**
    * Create and store a new message.
    * @param input - Message creation parameters
    * @returns The created message
    */
-  async sendMessage(input: MessageCreateInput): Promise<Message> {
+  sendMessage(input: MessageCreateInput): Message {
     const now = new Date().toISOString();
     const messageId = `msg-${randomUUID().slice(0, 8)}`;
 
@@ -104,12 +146,21 @@ export class MessageStore extends EventEmitter {
       updatedAt: now,
     };
 
-    // Write message file
-    await this.writeMessageFile(message);
+    this.stmtInsert.run(
+      message.id,
+      message.fromId,
+      message.fromType,
+      message.toId,
+      message.toType,
+      message.content,
+      message.type,
+      message.read ? 1 : 0,
+      toJsonNullable(message.metadata),
+      message.createdAt,
+      message.updatedAt,
+    );
 
-    // Update index
-    await this.addToIndex(message);
-
+    this.db.bumpLastModified();
     this.emit("message:sent", message);
     this.emit("message:received", message);
 
@@ -125,17 +176,10 @@ export class MessageStore extends EventEmitter {
    * @param id - The message ID
    * @returns The message, or null if not found
    */
-  async getMessage(id: string): Promise<Message | null> {
-    try {
-      const path = join(this.messagesDir, `${id}.json`);
-      const content = await readFile(path, "utf-8");
-      return JSON.parse(content) as Message;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        return null;
-      }
-      throw err;
-    }
+  getMessage(id: string): Message | null {
+    const row = this.stmtGetById.get(id);
+    if (!row) return null;
+    return this.rowToMessage(row);
   }
 
   /**
@@ -145,17 +189,36 @@ export class MessageStore extends EventEmitter {
    * @param filter - Optional filter criteria
    * @returns Array of messages (newest first)
    */
-  async getInbox(
+  getInbox(
     ownerId: string,
     ownerType: ParticipantType,
     filter?: MessageFilter,
-  ): Promise<Message[]> {
-    const index = await this.readIndex();
-    const key = `${ownerType}:${ownerId}`;
-    const inboxIds = index.byOwner[key]?.inbox ?? [];
+  ): Message[] {
+    const whereClauses: string[] = ["toId = ?", "toType = ?"];
+    const params: (string | number)[] = [ownerId, ownerType];
 
-    const messages = await this.loadMessagesByIds(inboxIds);
-    return this.applyFilter(messages, filter);
+    if (filter?.type) {
+      whereClauses.push("type = ?");
+      params.push(filter.type);
+    }
+
+    if (filter?.read !== undefined) {
+      whereClauses.push("read = ?");
+      params.push(filter.read ? 1 : 0);
+    }
+
+    const whereSql = whereClauses.join(" AND ");
+    const limit = filter?.limit ?? 100;
+    const offset = filter?.offset ?? 0;
+
+    const rows = this.db.prepare(`
+      SELECT * FROM messages
+      WHERE ${whereSql}
+      ORDER BY createdAt DESC, rowid DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, limit, offset);
+
+    return (rows as any[]).map((row) => this.rowToMessage(row));
   }
 
   /**
@@ -165,17 +228,36 @@ export class MessageStore extends EventEmitter {
    * @param filter - Optional filter criteria
    * @returns Array of messages (newest first)
    */
-  async getOutbox(
+  getOutbox(
     ownerId: string,
     ownerType: ParticipantType,
     filter?: MessageFilter,
-  ): Promise<Message[]> {
-    const index = await this.readIndex();
-    const key = `${ownerType}:${ownerId}`;
-    const outboxIds = index.byOwner[key]?.outbox ?? [];
+  ): Message[] {
+    const whereClauses: string[] = ["fromId = ?", "fromType = ?"];
+    const params: (string | number)[] = [ownerId, ownerType];
 
-    const messages = await this.loadMessagesByIds(outboxIds);
-    return this.applyFilter(messages, filter);
+    if (filter?.type) {
+      whereClauses.push("type = ?");
+      params.push(filter.type);
+    }
+
+    if (filter?.read !== undefined) {
+      whereClauses.push("read = ?");
+      params.push(filter.read ? 1 : 0);
+    }
+
+    const whereSql = whereClauses.join(" AND ");
+    const limit = filter?.limit ?? 100;
+    const offset = filter?.offset ?? 0;
+
+    const rows = this.db.prepare(`
+      SELECT * FROM messages
+      WHERE ${whereSql}
+      ORDER BY createdAt DESC, rowid DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, limit, offset);
+
+    return (rows as any[]).map((row) => this.rowToMessage(row));
   }
 
   /**
@@ -184,24 +266,22 @@ export class MessageStore extends EventEmitter {
    * @returns The updated message
    * @throws Error if message not found
    */
-  async markAsRead(messageId: string): Promise<Message> {
-    const message = await this.getMessage(messageId);
-    if (!message) {
+  markAsRead(messageId: string): Message {
+    // First check if the message exists
+    const existing = this.getMessage(messageId);
+    if (!existing) {
       throw new Error(`Message ${messageId} not found`);
     }
 
-    if (message.read) return message;
+    if (existing.read) return existing;
 
-    const updated: Message = {
-      ...message,
-      read: true,
-      updatedAt: new Date().toISOString(),
-    };
+    const now = new Date().toISOString();
+    this.stmtUpdateRead.run(now, messageId);
+    this.db.bumpLastModified();
 
-    await this.writeMessageFile(updated);
-    this.emit("message:read", updated);
-
-    return updated;
+    const updated = this.getMessage(messageId);
+    this.emit("message:read", updated!);
+    return updated!;
   }
 
   /**
@@ -210,19 +290,23 @@ export class MessageStore extends EventEmitter {
    * @param ownerType - The participant type
    * @returns Number of messages marked as read
    */
-  async markAllAsRead(
+  markAllAsRead(
     ownerId: string,
     ownerType: ParticipantType,
-  ): Promise<number> {
-    const inbox = await this.getInbox(ownerId, ownerType);
-    const unread = inbox.filter((m) => !m.read);
+  ): number {
+    const now = new Date().toISOString();
+    // Get count of unread messages before updating
+    const unreadRow = this.db.prepare(`
+      SELECT COUNT(*) as count FROM messages WHERE toId = ? AND toType = ? AND read = 0
+    `).get(ownerId, ownerType) as { count: number } | undefined;
+    const count = unreadRow?.count ?? 0;
 
-    let count = 0;
-    for (const message of unread) {
-      await this.markAsRead(message.id);
-      count++;
-    }
+    // Mark all as read
+    this.db.prepare(`
+      UPDATE messages SET read = 1, updatedAt = ? WHERE toId = ? AND toType = ? AND read = 0
+    `).run(now, ownerId, ownerType);
 
+    this.db.bumpLastModified();
     return count;
   }
 
@@ -231,19 +315,15 @@ export class MessageStore extends EventEmitter {
    * @param id - The message ID
    * @throws Error if message not found
    */
-  async deleteMessage(id: string): Promise<void> {
-    const message = await this.getMessage(id);
-    if (!message) {
+  deleteMessage(id: string): void {
+    // First check if the message exists
+    const existing = this.getMessage(id);
+    if (!existing) {
       throw new Error(`Message ${id} not found`);
     }
 
-    // Remove message file
-    const path = join(this.messagesDir, `${id}.json`);
-    await unlink(path);
-
-    // Remove from index
-    await this.removeFromIndex(message);
-
+    this.stmtDelete.run(id);
+    this.db.bumpLastModified();
     this.emit("message:deleted", id);
   }
 
@@ -253,28 +333,28 @@ export class MessageStore extends EventEmitter {
    * @param participantB - Second participant
    * @returns Array of messages (oldest first for conversation ordering)
    */
-  async getConversation(
+  getConversation(
     participantA: { id: string; type: ParticipantType },
     participantB: { id: string; type: ParticipantType },
-  ): Promise<Message[]> {
-    const index = await this.readIndex();
-    const keyA = `${participantA.type}:${participantA.id}`;
-    const keyB = `${participantB.type}:${participantB.id}`;
+  ): Message[] {
+    // Find messages where either participant is sender or receiver
+    // This captures all messages between the two participants
+    const rows = this.db.prepare(`
+      SELECT * FROM messages
+      WHERE (
+        (fromId = ? AND fromType = ? AND toId = ? AND toType = ?)
+        OR
+        (fromId = ? AND fromType = ? AND toId = ? AND toType = ?)
+      )
+      ORDER BY createdAt ASC
+    `).all(
+      participantA.id, participantA.type,
+      participantB.id, participantB.type,
+      participantB.id, participantB.type,
+      participantA.id, participantA.type,
+    );
 
-    const aInbox = index.byOwner[keyA]?.inbox ?? [];
-    const aOutbox = index.byOwner[keyA]?.outbox ?? [];
-    const allA = new Set([...aInbox, ...aOutbox]);
-
-    const bInbox = index.byOwner[keyB]?.inbox ?? [];
-    const bOutbox = index.byOwner[keyB]?.outbox ?? [];
-    const allB = new Set([...bInbox, ...bOutbox]);
-
-    // Find intersection: messages both participants have
-    const conversationIds = [...allA].filter((id) => allB.has(id));
-
-    const messages = await this.loadMessagesByIds(conversationIds);
-    // Conversation order: oldest first
-    return [...messages].reverse();
+    return (rows as any[]).map((row) => this.rowToMessage(row));
   }
 
   /**
@@ -283,13 +363,15 @@ export class MessageStore extends EventEmitter {
    * @param ownerType - The participant type
    * @returns Mailbox summary with unread count and last message
    */
-  async getMailbox(
+  getMailbox(
     ownerId: string,
     ownerType: ParticipantType,
-  ): Promise<Mailbox> {
-    const inbox = await this.getInbox(ownerId, ownerType);
-    const unreadCount = inbox.filter((m) => !m.read).length;
-    const lastMessage = inbox.length > 0 ? inbox[0] : undefined;
+  ): Mailbox {
+    const unreadRow = this.stmtCountUnread.get(ownerId, ownerType) as { count: number } | undefined;
+    const unreadCount = unreadRow?.count ?? 0;
+
+    const lastRow = this.stmtGetLastMessage.get(ownerId, ownerType);
+    const lastMessage = lastRow ? this.rowToMessage(lastRow) : undefined;
 
     return {
       ownerId,
@@ -304,101 +386,5 @@ export class MessageStore extends EventEmitter {
    */
   setMessageToAgentHook(hook: (message: Message) => void): void {
     this.onMessageToAgent = hook;
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Private helpers
-  // ─────────────────────────────────────────────────────────────────────────
-
-  private async writeMessageFile(message: Message): Promise<void> {
-    const path = join(this.messagesDir, `${message.id}.json`);
-    const tempPath = `${path}.tmp.${Date.now()}`;
-    await writeFile(tempPath, JSON.stringify(message, null, 2));
-    await rename(tempPath, path);
-  }
-
-  private async readIndex(): Promise<MessageIndex> {
-    try {
-      const content = await readFile(this.indexPath, "utf-8");
-      return JSON.parse(content) as MessageIndex;
-    } catch {
-      return { byOwner: {} };
-    }
-  }
-
-  private async writeIndex(index: MessageIndex): Promise<void> {
-    const tempPath = `${this.indexPath}.tmp.${Date.now()}`;
-    await writeFile(tempPath, JSON.stringify(index, null, 2));
-    await rename(tempPath, this.indexPath);
-  }
-
-  private async addToIndex(message: Message): Promise<void> {
-    const index = await this.readIndex();
-
-    // Add to recipient's inbox
-    const toKey = `${message.toType}:${message.toId}`;
-    if (!index.byOwner[toKey]) {
-      index.byOwner[toKey] = { inbox: [], outbox: [] };
-    }
-    index.byOwner[toKey].inbox.unshift(message.id);
-
-    // Add to sender's outbox
-    const fromKey = `${message.fromType}:${message.fromId}`;
-    if (!index.byOwner[fromKey]) {
-      index.byOwner[fromKey] = { inbox: [], outbox: [] };
-    }
-    index.byOwner[fromKey].outbox.unshift(message.id);
-
-    await this.writeIndex(index);
-  }
-
-  private async removeFromIndex(message: Message): Promise<void> {
-    const index = await this.readIndex();
-
-    // Remove from recipient's inbox
-    const toKey = `${message.toType}:${message.toId}`;
-    if (index.byOwner[toKey]) {
-      index.byOwner[toKey].inbox = index.byOwner[toKey].inbox.filter((id) => id !== message.id);
-      index.byOwner[toKey].outbox = index.byOwner[toKey].outbox.filter((id) => id !== message.id);
-    }
-
-    // Remove from sender's outbox
-    const fromKey = `${message.fromType}:${message.fromId}`;
-    if (index.byOwner[fromKey]) {
-      index.byOwner[fromKey].inbox = index.byOwner[fromKey].inbox.filter((id) => id !== message.id);
-      index.byOwner[fromKey].outbox = index.byOwner[fromKey].outbox.filter((id) => id !== message.id);
-    }
-
-    await this.writeIndex(index);
-  }
-
-  private async loadMessagesByIds(ids: string[]): Promise<Message[]> {
-    const messages: Message[] = [];
-    for (const id of ids) {
-      const message = await this.getMessage(id);
-      if (message) {
-        messages.push(message);
-      }
-    }
-    return messages;
-  }
-
-  private applyFilter(messages: Message[], filter?: MessageFilter): Message[] {
-    let result = messages;
-
-    if (filter?.type) {
-      result = result.filter((m) => m.type === filter.type);
-    }
-
-    if (filter?.read !== undefined) {
-      result = result.filter((m) => m.read === filter.read);
-    }
-
-    // Apply pagination
-    const offset = filter?.offset ?? 0;
-    const limit = filter?.limit ?? result.length;
-    result = result.slice(offset, offset + limit);
-
-    return result;
   }
 }

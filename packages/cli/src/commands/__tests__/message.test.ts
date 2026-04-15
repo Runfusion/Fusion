@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ── Mock MessageStore ────────────────────────────────────────────────
 
-const mockInit = vi.fn().mockResolvedValue(undefined);
 const mockGetInbox = vi.fn();
 const mockGetOutbox = vi.fn();
 const mockGetMailbox = vi.fn();
@@ -11,18 +10,24 @@ const mockSendMessage = vi.fn();
 const mockMarkAsRead = vi.fn();
 const mockDeleteMessage = vi.fn();
 
-vi.mock("@fusion/core", () => ({
-  MessageStore: vi.fn().mockImplementation(() => ({
-    init: mockInit,
-    getInbox: mockGetInbox,
-    getOutbox: mockGetOutbox,
-    getMailbox: mockGetMailbox,
-    getMessage: mockGetMessage,
-    sendMessage: mockSendMessage,
-    markAsRead: mockMarkAsRead,
-    deleteMessage: mockDeleteMessage,
-  })),
-}));
+vi.mock("@fusion/core", () => {
+  const mockDb = {
+    init: vi.fn(),
+    close: vi.fn(),
+  };
+  return {
+    createDatabase: vi.fn().mockReturnValue(mockDb),
+    MessageStore: vi.fn().mockImplementation(() => ({
+      getInbox: mockGetInbox,
+      getOutbox: mockGetOutbox,
+      getMailbox: mockGetMailbox,
+      getMessage: mockGetMessage,
+      sendMessage: mockSendMessage,
+      markAsRead: mockMarkAsRead,
+      deleteMessage: mockDeleteMessage,
+    })),
+  };
+});
 
 // ── Mock project-context ─────────────────────────────────────────────
 
@@ -36,7 +41,7 @@ vi.mock("../project-context.js", () => ({
   }),
 }));
 
-// ── Spies ────────────────────────────────────────────────────────────
+// ── Spies ───────────────────────────────────────────────────────────
 
 const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
   throw new Error("process.exit");
@@ -78,12 +83,12 @@ const mockReadMessage = {
   content: "This is read",
 };
 
-// ── Tests ────────────────────────────────────────────────────────────
+// ── Tests ───────────────────────────────────────────────────────────
 
 describe("runMessageInbox", () => {
   beforeEach(() => {
-    mockGetMailbox.mockResolvedValue({ unreadCount: 2, ownerId: "cli", ownerType: "user" });
-    mockGetInbox.mockResolvedValue([mockMessage, mockReadMessage]);
+    mockGetMailbox.mockReturnValue({ unreadCount: 2, ownerId: "cli", ownerType: "user" });
+    mockGetInbox.mockReturnValue([mockMessage, mockReadMessage]);
   });
 
   afterEach(() => {
@@ -99,8 +104,8 @@ describe("runMessageInbox", () => {
   });
 
   it("should show 'No messages' when inbox is empty", async () => {
-    mockGetMailbox.mockResolvedValue({ unreadCount: 0, ownerId: "cli", ownerType: "user" });
-    mockGetInbox.mockResolvedValue([]);
+    mockGetMailbox.mockReturnValue({ unreadCount: 0, ownerId: "cli", ownerType: "user" });
+    mockGetInbox.mockReturnValue([]);
 
     await runMessageInbox();
 
@@ -114,11 +119,11 @@ describe("runMessageInbox", () => {
   });
 
   it("should truncate long messages", async () => {
-    mockGetInbox.mockResolvedValue([{
+    mockGetInbox.mockReturnValue([{
       ...mockMessage,
       content: "A".repeat(200),
     }]);
-    mockGetMailbox.mockResolvedValue({ unreadCount: 1, ownerId: "cli", ownerType: "user" });
+    mockGetMailbox.mockReturnValue({ unreadCount: 1, ownerId: "cli", ownerType: "user" });
 
     await runMessageInbox();
 
@@ -129,7 +134,7 @@ describe("runMessageInbox", () => {
 
 describe("runMessageOutbox", () => {
   beforeEach(() => {
-    mockGetOutbox.mockResolvedValue([]);
+    mockGetOutbox.mockReturnValue([]);
   });
 
   afterEach(() => {
@@ -145,7 +150,7 @@ describe("runMessageOutbox", () => {
       toType: "agent" as const,
       type: "user-to-agent" as const,
     };
-    mockGetOutbox.mockResolvedValue([sentMessage]);
+    mockGetOutbox.mockReturnValue([sentMessage]);
 
     await runMessageOutbox();
 
@@ -155,7 +160,7 @@ describe("runMessageOutbox", () => {
   });
 
   it("should show 'No sent messages' when outbox is empty", async () => {
-    mockGetOutbox.mockResolvedValue([]);
+    mockGetOutbox.mockReturnValue([]);
 
     await runMessageOutbox();
 
@@ -165,7 +170,7 @@ describe("runMessageOutbox", () => {
 
 describe("runMessageSend", () => {
   beforeEach(() => {
-    mockSendMessage.mockResolvedValue(mockMessage);
+    mockSendMessage.mockReturnValue(mockMessage);
   });
 
   afterEach(() => {
@@ -197,8 +202,8 @@ describe("runMessageSend", () => {
 
 describe("runMessageRead", () => {
   beforeEach(() => {
-    mockGetMessage.mockResolvedValue(mockMessage);
-    mockMarkAsRead.mockResolvedValue({ ...mockMessage, read: true });
+    mockGetMessage.mockReturnValue(mockMessage);
+    mockMarkAsRead.mockReturnValue({ ...mockMessage, read: true });
   });
 
   afterEach(() => {
@@ -222,7 +227,7 @@ describe("runMessageRead", () => {
   });
 
   it("should not mark as read if already read", async () => {
-    mockGetMessage.mockResolvedValue(mockReadMessage);
+    mockGetMessage.mockReturnValue(mockReadMessage);
 
     await runMessageRead("msg-002");
 
@@ -230,7 +235,7 @@ describe("runMessageRead", () => {
   });
 
   it("should exit with error for missing message", async () => {
-    mockGetMessage.mockResolvedValue(null);
+    mockGetMessage.mockReturnValue(null);
 
     await expect(runMessageRead("msg-nonexistent")).rejects.toThrow("process.exit");
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("not found"));
@@ -240,7 +245,7 @@ describe("runMessageRead", () => {
 
 describe("runMessageDelete", () => {
   beforeEach(() => {
-    mockDeleteMessage.mockResolvedValue(undefined);
+    mockDeleteMessage.mockReturnValue(undefined);
   });
 
   afterEach(() => {
@@ -257,8 +262,8 @@ describe("runMessageDelete", () => {
 
 describe("runAgentMailbox", () => {
   beforeEach(() => {
-    mockGetMailbox.mockResolvedValue({ unreadCount: 1, ownerId: "agent-001", ownerType: "agent" });
-    mockGetInbox.mockResolvedValue([mockMessage]);
+    mockGetMailbox.mockReturnValue({ unreadCount: 1, ownerId: "agent-001", ownerType: "agent" });
+    mockGetInbox.mockReturnValue([mockMessage]);
   });
 
   afterEach(() => {
@@ -275,8 +280,8 @@ describe("runAgentMailbox", () => {
   });
 
   it("should show 'No messages' when agent mailbox is empty", async () => {
-    mockGetMailbox.mockResolvedValue({ unreadCount: 0, ownerId: "agent-001", ownerType: "agent" });
-    mockGetInbox.mockResolvedValue([]);
+    mockGetMailbox.mockReturnValue({ unreadCount: 0, ownerId: "agent-001", ownerType: "agent" });
+    mockGetInbox.mockReturnValue([]);
 
     await runAgentMailbox("agent-001");
 

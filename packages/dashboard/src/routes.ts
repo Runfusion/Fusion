@@ -14707,8 +14707,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     const rootDir = scopedStore.getRootDir();
     let msgStore = messageStoreCache.get(rootDir);
     if (!msgStore) {
-      msgStore = new MessageStore({ rootDir: join(rootDir, ".fusion") });
-      await msgStore.init();
+      const db = scopedStore.getDatabase();
+      msgStore = new MessageStore(db);
       messageStoreCache.set(rootDir, msgStore);
     }
     return msgStore;

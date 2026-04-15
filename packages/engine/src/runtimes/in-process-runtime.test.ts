@@ -28,12 +28,20 @@ const {
 vi.mock("@fusion/core", async () => {
   const actual = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
   
+  // Mock database object for MessageStore
+  const mockDatabase = {
+    prepare: vi.fn().mockReturnValue({ run: vi.fn(), get: vi.fn(), all: vi.fn() }),
+    bumpLastModified: vi.fn(),
+    close: vi.fn(),
+  };
+  
   return {
     ...actual,
     TaskStore: vi.fn().mockImplementation(function(this: TaskStore, rootDir: string) {
       const self = this as unknown as Record<string, unknown>;
       self.getRootDir = () => rootDir;
       self.getFusionDir = () => rootDir + "/.fusion";
+      self.getDatabase = vi.fn().mockReturnValue(mockDatabase);
       self.init = vi.fn().mockResolvedValue(undefined);
       self.listTasks = vi.fn().mockResolvedValue([]);
       self.getSettings = vi.fn().mockResolvedValue({});

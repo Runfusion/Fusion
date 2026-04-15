@@ -1,5 +1,5 @@
-import { MessageStore } from "@fusion/core";
-import type { ParticipantType } from "@fusion/core";
+import { MessageStore, createDatabase } from "@fusion/core";
+import type { Database, ParticipantType } from "@fusion/core";
 import { resolveProject } from "../project-context.js";
 
 /**
@@ -21,13 +21,16 @@ async function getProjectPath(projectName?: string): Promise<string> {
 }
 
 /**
- * Create an initialized MessageStore for the given project.
+ * Create a MessageStore for the given project.
+ * Returns both the store and database for proper cleanup.
  */
-async function createMessageStore(projectName?: string): Promise<MessageStore> {
+async function createMessageStore(projectName?: string): Promise<{ store: MessageStore; db: Database }> {
   const projectPath = await getProjectPath(projectName);
-  const msgStore = new MessageStore({ rootDir: projectPath + "/.fusion" });
-  await msgStore.init();
-  return msgStore;
+  const kbDir = projectPath + "/.fusion";
+  const db = createDatabase(kbDir);
+  db.init();
+  const store = new MessageStore(db);
+  return { store, db };
 }
 
 /** User ID for CLI-originated messages */
@@ -37,28 +40,32 @@ const CLI_USER_ID = "cli";
  * List inbox messages.
  */
 export async function runMessageInbox(projectName?: string): Promise<void> {
-  const store = await createMessageStore(projectName);
-  const mailbox = await store.getMailbox(CLI_USER_ID, "user");
-  const messages = await store.getInbox(CLI_USER_ID, "user", { limit: 20 });
+  const { store, db } = await createMessageStore(projectName);
+  try {
+    const mailbox = store.getMailbox(CLI_USER_ID, "user");
+    const messages = store.getInbox(CLI_USER_ID, "user", { limit: 20 });
 
-  console.log();
-  console.log(`  📬 Inbox (${mailbox.unreadCount} unread)`);
-  console.log();
-
-  if (messages.length === 0) {
-    console.log("  No messages");
     console.log();
-    return;
-  }
-
-  for (const msg of messages) {
-    const readMarker = msg.read ? "  " : "● ";
-    const fromLabel = msg.fromType === "agent" ? `Agent ${msg.fromId}` : msg.fromId;
-    const timeStr = formatTime(msg.createdAt);
-    const preview = msg.content.length > 80 ? msg.content.slice(0, 80) + "…" : msg.content;
-    console.log(`  ${readMarker}${fromLabel} — ${timeStr}`);
-    console.log(`    ${preview}`);
+    console.log(`  📬 Inbox (${mailbox.unreadCount} unread)`);
     console.log();
+
+    if (messages.length === 0) {
+      console.log("  No messages");
+      console.log();
+      return;
+    }
+
+    for (const msg of messages) {
+      const readMarker = msg.read ? "  " : "● ";
+      const fromLabel = msg.fromType === "agent" ? `Agent ${msg.fromId}` : msg.fromId;
+      const timeStr = formatTime(msg.createdAt);
+      const preview = msg.content.length > 80 ? msg.content.slice(0, 80) + "…" : msg.content;
+      console.log(`  ${readMarker}${fromLabel} — ${timeStr}`);
+      console.log(`    ${preview}`);
+      console.log();
+    }
+  } finally {
+    db.close();
   }
 }
 
@@ -66,26 +73,30 @@ export async function runMessageInbox(projectName?: string): Promise<void> {
  * List sent messages.
  */
 export async function runMessageOutbox(projectName?: string): Promise<void> {
-  const store = await createMessageStore(projectName);
-  const messages = await store.getOutbox(CLI_USER_ID, "user", { limit: 20 });
+  const { store, db } = await createMessageStore(projectName);
+  try {
+    const messages = store.getOutbox(CLI_USER_ID, "user", { limit: 20 });
 
-  console.log();
-  console.log("  📤 Outbox");
-  console.log();
-
-  if (messages.length === 0) {
-    console.log("  No sent messages");
     console.log();
-    return;
-  }
-
-  for (const msg of messages) {
-    const toLabel = msg.toType === "agent" ? `Agent ${msg.toId}` : msg.toId;
-    const timeStr = formatTime(msg.createdAt);
-    const preview = msg.content.length > 80 ? msg.content.slice(0, 80) + "…" : msg.content;
-    console.log(`  To: ${toLabel} — ${timeStr}`);
-    console.log(`    ${preview}`);
+    console.log("  📤 Outbox");
     console.log();
+
+    if (messages.length === 0) {
+      console.log("  No sent messages");
+      console.log();
+      return;
+    }
+
+    for (const msg of messages) {
+      const toLabel = msg.toType === "agent" ? `Agent ${msg.toId}` : msg.toId;
+      const timeStr = formatTime(msg.createdAt);
+      const preview = msg.content.length > 80 ? msg.content.slice(0, 80) + "…" : msg.content;
+      console.log(`  To: ${toLabel} — ${timeStr}`);
+      console.log(`    ${preview}`);
+      console.log();
+    }
+  } finally {
+    db.close();
   }
 }
 
@@ -93,92 +104,108 @@ export async function runMessageOutbox(projectName?: string): Promise<void> {
  * Send a message to an agent.
  */
 export async function runMessageSend(toId: string, content: string, projectName?: string): Promise<void> {
-  const store = await createMessageStore(projectName);
-  const message = await store.sendMessage({
-    fromId: CLI_USER_ID,
-    fromType: "user",
-    toId,
-    toType: "agent",
-    content,
-    type: "user-to-agent",
-  });
+  const { store, db } = await createMessageStore(projectName);
+  try {
+    const message = store.sendMessage({
+      fromId: CLI_USER_ID,
+      fromType: "user",
+      toId,
+      toType: "agent",
+      content,
+      type: "user-to-agent",
+    });
 
-  console.log();
-  console.log(`  ✓ Message sent: ${message.id}`);
-  console.log(`    To: Agent ${toId}`);
-  console.log();
+    console.log();
+    console.log(`  ✓ Message sent: ${message.id}`);
+    console.log(`    To: Agent ${toId}`);
+    console.log();
+  } finally {
+    db.close();
+  }
 }
 
 /**
  * Read and display a specific message.
  */
 export async function runMessageRead(id: string, projectName?: string): Promise<void> {
-  const store = await createMessageStore(projectName);
-  const message = await store.getMessage(id);
+  const { store, db } = await createMessageStore(projectName);
+  try {
+    const message = store.getMessage(id);
 
-  if (!message) {
-    console.error(`Message ${id} not found`);
-    process.exit(1);
+    if (!message) {
+      console.error(`Message ${id} not found`);
+      process.exit(1);
+    }
+
+    // Mark as read
+    if (!message.read) {
+      store.markAsRead(id);
+    }
+
+    const fromLabel = formatParticipant(message.fromId, message.fromType);
+    const toLabel = formatParticipant(message.toId, message.toType);
+    const timeStr = new Date(message.createdAt).toLocaleString();
+
+    console.log();
+    console.log(`  Message: ${message.id}`);
+    console.log(`  Type:    ${message.type}`);
+    console.log(`  From:    ${fromLabel}`);
+    console.log(`  To:      ${toLabel}`);
+    console.log(`  Time:    ${timeStr}`);
+    console.log();
+    console.log(`  ${message.content}`);
+    console.log();
+  } finally {
+    db.close();
   }
-
-  // Mark as read
-  if (!message.read) {
-    await store.markAsRead(id);
-  }
-
-  const fromLabel = formatParticipant(message.fromId, message.fromType);
-  const toLabel = formatParticipant(message.toId, message.toType);
-  const timeStr = new Date(message.createdAt).toLocaleString();
-
-  console.log();
-  console.log(`  Message: ${message.id}`);
-  console.log(`  Type:    ${message.type}`);
-  console.log(`  From:    ${fromLabel}`);
-  console.log(`  To:      ${toLabel}`);
-  console.log(`  Time:    ${timeStr}`);
-  console.log();
-  console.log(`  ${message.content}`);
-  console.log();
 }
 
 /**
  * Delete a message.
  */
 export async function runMessageDelete(id: string, projectName?: string): Promise<void> {
-  const store = await createMessageStore(projectName);
-  await store.deleteMessage(id);
+  const { store, db } = await createMessageStore(projectName);
+  try {
+    store.deleteMessage(id);
 
-  console.log();
-  console.log(`  ✓ Message ${id} deleted`);
-  console.log();
+    console.log();
+    console.log(`  ✓ Message ${id} deleted`);
+    console.log();
+  } finally {
+    db.close();
+  }
 }
 
 /**
  * View an agent's mailbox.
  */
 export async function runAgentMailbox(agentId: string, projectName?: string): Promise<void> {
-  const store = await createMessageStore(projectName);
-  const mailbox = await store.getMailbox(agentId, "agent");
-  const messages = await store.getInbox(agentId, "agent", { limit: 20 });
+  const { store, db } = await createMessageStore(projectName);
+  try {
+    const mailbox = store.getMailbox(agentId, "agent");
+    const messages = store.getInbox(agentId, "agent", { limit: 20 });
 
-  console.log();
-  console.log(`  🤖 Agent Mailbox: ${agentId} (${mailbox.unreadCount} unread)`);
-  console.log();
-
-  if (messages.length === 0) {
-    console.log("  No messages");
     console.log();
-    return;
-  }
-
-  for (const msg of messages) {
-    const readMarker = msg.read ? "  " : "● ";
-    const fromLabel = formatParticipant(msg.fromId, msg.fromType);
-    const timeStr = formatTime(msg.createdAt);
-    const preview = msg.content.length > 80 ? msg.content.slice(0, 80) + "…" : msg.content;
-    console.log(`  ${readMarker}From: ${fromLabel} — ${timeStr}`);
-    console.log(`    ${preview}`);
+    console.log(`  🤖 Agent Mailbox: ${agentId} (${mailbox.unreadCount} unread)`);
     console.log();
+
+    if (messages.length === 0) {
+      console.log("  No messages");
+      console.log();
+      return;
+    }
+
+    for (const msg of messages) {
+      const readMarker = msg.read ? "  " : "● ";
+      const fromLabel = formatParticipant(msg.fromId, msg.fromType);
+      const timeStr = formatTime(msg.createdAt);
+      const preview = msg.content.length > 80 ? msg.content.slice(0, 80) + "…" : msg.content;
+      console.log(`  ${readMarker}From: ${fromLabel} — ${timeStr}`);
+      console.log(`    ${preview}`);
+      console.log();
+    }
+  } finally {
+    db.close();
   }
 }
 

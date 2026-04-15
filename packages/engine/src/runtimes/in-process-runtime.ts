@@ -346,8 +346,7 @@ export class InProcessRuntime
         await this.agentStore.init();
 
         // Initialize MessageStore for wake-on-message behavior
-        this.messageStore = new MessageStoreClass({ rootDir: this.taskStore.getFusionDir() });
-        await this.messageStore.init();
+        this.messageStore = new MessageStoreClass(this.taskStore.getDatabase());
 
         this.heartbeatMonitor = new HeartbeatMonitor({
           store: this.agentStore,
