@@ -6,6 +6,37 @@ import type { ScheduledTask } from "@fusion/core";
 // Mock @fusion/core to provide type-only exports (no runtime values needed)
 vi.mock("@fusion/core", () => ({}));
 
+// Mock api
+vi.mock("../api", () => ({
+  fetchModels: vi.fn().mockResolvedValue({
+    models: [
+      { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
+      { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet", reasoning: false, contextWindow: 200000 },
+    ],
+    favoriteProviders: [],
+    favoriteModels: [],
+  }),
+}));
+
+// Mock CustomModelDropdown
+vi.mock("../CustomModelDropdown", () => ({
+  CustomModelDropdown: ({ value, onChange, disabled, models }: any) => (
+    <select
+      data-testid="model-dropdown"
+      value={value || ""}
+      onChange={(e) => onChange(e.target.value)}
+      disabled={disabled}
+    >
+      <option value="">Use default</option>
+      {models?.map((m: any) => (
+        <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
+          {m.name}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
 function makeSchedule(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
   return {
     id: "test-id",

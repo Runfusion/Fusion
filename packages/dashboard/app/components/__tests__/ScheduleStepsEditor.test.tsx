@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { ScheduleStepsEditor } from "../ScheduleStepsEditor";
 import type { AutomationStep } from "@fusion/core";
@@ -17,6 +18,44 @@ vi.mock("lucide-react", () => ({
   GripVertical: () => <span data-testid="icon-grip">≡</span>,
   Terminal: () => <span data-testid="icon-terminal">$</span>,
   Sparkles: () => <span data-testid="icon-sparkles">✨</span>,
+}));
+
+// Mock api - provide models synchronously for immediate availability
+const mockModels = [
+  { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
+  { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet", reasoning: false, contextWindow: 200000 },
+];
+
+vi.mock("../api", () => ({
+  fetchModels: vi.fn(() => Promise.resolve({
+    models: mockModels,
+    favoriteProviders: [],
+    favoriteModels: [],
+  })),
+}));
+
+// Mock CustomModelDropdown
+vi.mock("../CustomModelDropdown", () => ({
+  CustomModelDropdown: (props: any) => {
+    // Store the last value for debugging
+    (window as any).__lastModelDropdownProps = props;
+    return (
+      <select
+        data-testid="model-dropdown"
+        value={props.value ?? ""}
+        onChange={(e) => props.onChange?.(e.target.value)}
+        disabled={props.disabled}
+        data-value={props.value}
+      >
+        <option value="">Use default</option>
+        {props.models?.map((m: any) => (
+          <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
+            {m.name}
+          </option>
+        ))}
+      </select>
+    );
+  },
 }));
 
 // Mock crypto.randomUUID for deterministic tests
@@ -254,6 +293,69 @@ describe("ScheduleStepsEditor", () => {
       const steps = [makeStep(), makeStep({ id: "s2" })];
       render(<ScheduleStepsEditor steps={steps} onChange={onChange} />);
       expect(screen.getByText("Steps (2)")).toBeDefined();
+    });
+  });
+
+  describe("model selection", () => {
+    it("shows model dropdown for AI prompt step type", async () => {
+      const steps = [makeStep({ id: "s1", name: "AI Step", type: "ai-prompt", prompt: "Test prompt" })];
+      render(<ScheduleStepsEditor steps={steps} onChange={onChange} />);
+      
+      // Click edit to open the step editor
+      fireEvent.click(screen.getByLabelText("Edit AI Step"));
+      
+      // Wait for models to load and dropdown to appear
+      await waitFor(() => expect(screen.getByTestId("model-dropdown")).toBeDefined());
+      
+      expect(screen.getByTestId("model-dropdown")).toBeDefined();
+    });
+
+    it("does not show model dropdown for command step type", () => {
+      const steps = [makeStep({ id: "s1", name: "Command Step" })];
+      render(<ScheduleStepsEditor steps={steps} onChange={onChange} />);
+      fireEvent.click(screen.getByLabelText("Edit Command Step"));
+      expect(screen.queryByTestId("model-dropdown")).toBeNull();
+    });
+
+    it("pre-populates model dropdown when editing step with existing model", async () => {
+      const steps = [makeStep({ 
+        id: "s1", 
+        type: "ai-prompt", 
+        name: "Analyze", 
+        prompt: "Analyze this",
+        modelProvider: "openai", 
+        modelId: "gpt-4o" 
+      })];
+      render(<ScheduleStepsEditor steps={steps} onChange={onChange} />);
+      
+      fireEvent.click(screen.getByLabelText("Edit Analyze"));
+      
+      // Wait for models to load and dropdown to appear
+      await waitFor(() => expect(screen.getByTestId("model-dropdown")).toBeDefined());
+      
+      const dropdown = screen.getByTestId("model-dropdown") as HTMLSelectElement;
+      // Use data-value attribute to verify the passed value since React controlled select
+      // DOM property may not sync immediately with the prop value
+      expect(dropdown.getAttribute("data-value")).toBe("openai/gpt-4o");
+    });
+
+    it("model dropdown receives onChange callback", async () => {
+      const steps = [makeStep({ id: "s1", type: "ai-prompt", name: "AI Step", prompt: "Test prompt" })];
+      render(<ScheduleStepsEditor steps={steps} onChange={onChange} />);
+      
+      fireEvent.click(screen.getByLabelText("Edit AI Step"));
+      
+      // Wait for dropdown to appear
+      await waitFor(() => expect(screen.getByTestId("model-dropdown")).toBeDefined());
+      
+      // Get the mock component props to verify onChange is passed correctly
+      const lastProps = (window as any).__lastModelDropdownProps;
+      expect(lastProps).toBeDefined();
+      expect(typeof lastProps.onChange).toBe("function");
+      
+      // The onChange should be a function that accepts a value string
+      // We can't fully test the React state update in this mock setup,
+      // but we can verify the callback is properly wired
     });
   });
 

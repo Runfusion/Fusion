@@ -2,6 +2,9 @@ import { useState, useCallback, useEffect } from "react";
 import { Plus, Trash2, ChevronUp, ChevronDown, Pencil, GripVertical } from "lucide-react";
 import type { AutomationStep, AutomationStepType } from "@fusion/core";
 import { StepTypeBadge } from "./StepTypeBadge";
+import { CustomModelDropdown } from "./CustomModelDropdown";
+import { fetchModels } from "../api";
+import type { ModelInfo } from "../api";
 
 interface ScheduleStepsEditorProps {
   steps: AutomationStep[];
@@ -48,6 +51,37 @@ function StepEditor({ step, onSave, onCancel }: StepEditorProps) {
   const [timeoutMs, setTimeoutMs] = useState<number | undefined>(step.timeoutMs);
   const [continueOnFailure, setContinueOnFailure] = useState(step.continueOnFailure ?? false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+
+  // Fetch models on mount
+  useEffect(() => {
+    let cancelled = false;
+    setModelsLoading(true);
+    setModelsError(null);
+
+    fetchModels()
+      .then((response) => {
+        if (!cancelled) {
+          setModels(response.models);
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setModelsError(err instanceof Error ? err.message : "Failed to load models");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setModelsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const validate = useCallback((): boolean => {
     const e: Record<string, string> = {};
@@ -57,12 +91,26 @@ function StepEditor({ step, onSave, onCancel }: StepEditorProps) {
     if (timeoutMs !== undefined && timeoutMs < 1000) {
       e.timeoutMs = "Timeout must be at least 1 second (1000ms)";
     }
-    if ((modelProvider && !modelId) || (!modelProvider && modelId)) {
-      e.model = "Both model provider and model ID must be set, or both empty";
-    }
     setErrors(e);
     return Object.keys(e).length === 0;
-  }, [name, type, command, prompt, timeoutMs, modelProvider, modelId]);
+  }, [name, type, command, prompt, timeoutMs]);
+
+  // Compute combined model value from separate fields
+  const modelValue = (modelProvider && modelId) ? `${modelProvider}/${modelId}` : "";
+
+  // Handle model selection from the dropdown
+  const handleModelChange = useCallback((value: string) => {
+    if (!value) {
+      setModelProvider("");
+      setModelId("");
+    } else {
+      const slashIdx = value.indexOf("/");
+      if (slashIdx !== -1) {
+        setModelProvider(value.slice(0, slashIdx));
+        setModelId(value.slice(slashIdx + 1));
+      }
+    }
+  }, []);
 
   const handleSave = useCallback(() => {
     if (!validate()) return;
@@ -136,29 +184,20 @@ function StepEditor({ step, onSave, onCancel }: StepEditorProps) {
             {errors.prompt && <small className="field-error">{errors.prompt}</small>}
           </div>
 
-          <div className="form-group form-group-row">
-            <div className="form-group">
-              <label htmlFor={`step-provider-${step.id}`}>Model Provider (optional)</label>
-              <input
-                id={`step-provider-${step.id}`}
-                type="text"
-                placeholder="e.g. anthropic"
-                value={modelProvider}
-                onChange={(e) => setModelProvider(e.target.value)}
-              />
-            </div>
-            <div className="form-group">
-              <label htmlFor={`step-model-${step.id}`}>Model ID (optional)</label>
-              <input
-                id={`step-model-${step.id}`}
-                type="text"
-                placeholder="e.g. claude-sonnet-4-5"
-                value={modelId}
-                onChange={(e) => setModelId(e.target.value)}
-              />
-            </div>
+          <div className="form-group">
+            <label htmlFor={`step-model-${step.id}`}>Model (optional)</label>
+            <CustomModelDropdown
+              id={`step-model-${step.id}`}
+              label="Model"
+              models={models}
+              value={modelValue}
+              onChange={handleModelChange}
+              placeholder="Use default"
+              disabled={modelsLoading}
+            />
+            {modelsError && <small className="field-error">{modelsError}</small>}
+            <small>AI model for this step. Uses default if not selected.</small>
           </div>
-          {errors.model && <small className="field-error">{errors.model}</small>}
         </>
       )}
 
