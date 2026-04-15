@@ -234,13 +234,23 @@ Roadmaps View includes one-click AI-powered milestone generation to help you qui
 2. In the "Generate Milestone Ideas" section, describe your roadmap goal in the text area
 3. Click **Generate Milestones** to create AI suggestions
 4. Review the suggested milestones:
+   - Click the **pencil icon** to edit a suggestion before accepting
    - Click the **check icon** on any suggestion to accept it as a milestone
    - Click **Accept All** to add all suggestions as milestones (in order)
    - Click the **X** button to clear all suggestions
 
+**Editing Suggestions:**
+
+- Click the **pencil icon** on any suggestion to open the inline editor
+- Modify the title and/or description
+- Click **check** to save your changes or **X** to cancel
+- Changes are reflected immediately and used when accepting
+
 **Key features:**
 
 - Suggestions are generated using AI and include both titles and descriptions
+- Suggestions are editable before acceptance - click the pencil icon to modify
+- Empty or whitespace-only titles are not accepted (validation enforced)
 - Accepted milestones appear immediately in your roadmap
 - Milestones are created in the order displayed in the suggestion list
 - Suggestions are ephemeral (in-memory only) and don't persist to the database
@@ -256,14 +266,24 @@ Within each milestone, you can generate AI-powered feature suggestions to quickl
 2. Find the milestone you want to add features to
 3. Click the **AI Suggestions** button in the milestone's action bar
 4. Review the suggested features:
+   - Click the **pencil icon** to edit a suggestion before accepting
    - Click the **check icon** on any suggestion to accept it as a feature
    - Click **Accept All** to add all suggestions as features (in order)
    - Click **Clear** to discard all suggestions
+
+**Editing Suggestions:**
+
+- Click the **pencil icon** on any feature suggestion to open the inline editor
+- Modify the title and/or description
+- Click **check** to save your changes or **X** to cancel
+- Changes are reflected immediately and used when accepting
 
 **Key features:**
 
 - Features are generated using AI based on the milestone's context
 - Suggestions include existing features to avoid duplication
+- Suggestions are editable before acceptance - click the pencil icon to modify
+- Empty or whitespace-only titles are not accepted (validation enforced)
 - Accepted features appear immediately in the milestone
 - Features are created in the order displayed in the suggestion list
 - Suggestion state is scoped to each milestone (no cross-milestone leakage)

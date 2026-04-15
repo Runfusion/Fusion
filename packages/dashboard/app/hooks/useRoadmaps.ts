@@ -13,17 +13,35 @@ import type {
 } from "@fusion/core";
 import * as api from "../api";
 
-/** A suggested milestone from AI generation */
+/**
+ * A suggested milestone from AI generation with a stable local draft ID.
+ * Draft IDs enable stable identity when drafts are reordered or edited.
+ * Drafts are ephemeral and NOT persisted until explicit acceptance.
+ */
 export interface MilestoneSuggestion {
+  /** Stable local draft ID for UI binding and identity */
+  id: string;
   title: string;
   description?: string;
 }
 
-/** A suggested feature from AI generation */
+/**
+ * A suggested feature from AI generation with a stable local draft ID.
+ * Draft IDs enable stable identity when drafts are reordered or edited.
+ * Drafts are ephemeral and NOT persisted until explicit acceptance.
+ */
 export interface FeatureSuggestion {
+  /** Stable local draft ID for UI binding and identity */
+  id: string;
   title: string;
   description?: string;
 }
+
+/** Patch type for updating a suggestion draft */
+export type SuggestionDraftPatch = {
+  title?: string;
+  description?: string;
+};
 
 export interface UseRoadmapsOptions {
   /** When provided, fetches roadmaps for this project */
@@ -89,9 +107,11 @@ export interface UseRoadmapsResult {
   isGeneratingSuggestions: boolean;
   /** Generate milestone suggestions from a goal prompt */
   generateMilestoneSuggestions: (goalPrompt: string, count?: number, opts?: { onSuccess?: () => void; onError?: (err: Error) => void }) => Promise<void>;
+  /** Update a milestone suggestion draft before acceptance */
+  updateMilestoneSuggestionDraft: (draftId: string, patch: SuggestionDraftPatch) => void;
   /** Accept a single milestone suggestion and create it as a milestone */
-  acceptMilestoneSuggestion: (index: number, opts?: { onSuccess?: () => void; onError?: (err: Error) => void }) => Promise<void>;
-  /** Accept all milestone suggestions and create them as milestones (sequentially) */
+  acceptMilestoneSuggestion: (draftId: string, opts?: { onSuccess?: () => void; onError?: (err: Error) => void }) => Promise<void>;
+  /** Accept all milestone suggestions and create them as milestones (sequentially, in draft order) */
   acceptAllMilestoneSuggestions: (opts?: { onSuccess?: () => void; onError?: (err: Error) => void }) => Promise<void>;
   /** Clear all pending milestone suggestions */
   clearMilestoneSuggestions: () => void;
@@ -103,9 +123,11 @@ export interface UseRoadmapsResult {
   isGeneratingFeatureSuggestions: (milestoneId: string) => boolean;
   /** Generate feature suggestions for a specific milestone */
   generateFeatureSuggestions: (milestoneId: string, input?: { prompt?: string; count?: number }, opts?: { onSuccess?: () => void; onError?: (err: Error) => void }) => Promise<void>;
+  /** Update a feature suggestion draft before acceptance */
+  updateFeatureSuggestionDraft: (milestoneId: string, draftId: string, patch: SuggestionDraftPatch) => void;
   /** Accept a single feature suggestion and create it as a feature */
-  acceptFeatureSuggestion: (milestoneId: string, index: number, opts?: { onSuccess?: () => void; onError?: (err: Error) => void }) => Promise<void>;
-  /** Accept all feature suggestions for a milestone (sequentially) */
+  acceptFeatureSuggestion: (milestoneId: string, draftId: string, opts?: { onSuccess?: () => void; onError?: (err: Error) => void }) => Promise<void>;
+  /** Accept all feature suggestions for a milestone (sequentially, in draft order) */
   acceptAllFeatureSuggestions: (milestoneId: string, opts?: { onSuccess?: () => void; onError?: (err: Error) => void }) => Promise<void>;
   /** Clear pending feature suggestions for a specific milestone */
   clearFeatureSuggestions: (milestoneId: string) => void;
@@ -135,9 +157,11 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
   // Refs for feature suggestion state
   const featureSuggestionsByMilestoneIdRef = useRef(featureSuggestionsByMilestoneId);
   const generatingFeatureSuggestionsRef = useRef(generatingFeatureSuggestions);
+  const milestoneSuggestionsRef = useRef(milestoneSuggestions);
 
   featureSuggestionsByMilestoneIdRef.current = featureSuggestionsByMilestoneId;
   generatingFeatureSuggestionsRef.current = generatingFeatureSuggestions;
+  milestoneSuggestionsRef.current = milestoneSuggestions;
 
   // Track previous projectId to detect changes
   const previousProjectIdRef = useRef<string | undefined>(projectId);
@@ -572,6 +596,18 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
 
   // ── Milestone Suggestion Actions (Ephemeral) ───────────────────────────────────
 
+  /**
+   * Generate a stable draft ID for suggestions.
+   * Uses crypto.randomUUID() for browser environments with a counter fallback.
+   */
+  function generateDraftId(): string {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    // Fallback for environments without crypto.randomUUID
+    return `draft-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+  }
+
   const generateMilestoneSuggestions = useCallback(async (
     goalPrompt: string,
     count: number = 5,
@@ -604,7 +640,13 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
         return;
       }
 
-      setMilestoneSuggestions(response.suggestions);
+      // Assign stable draft IDs to suggestions for UI binding and identity
+      const suggestionsWithIds: MilestoneSuggestion[] = response.suggestions.map((s) => ({
+        id: generateDraftId(),
+        title: s.title,
+        description: s.description,
+      }));
+      setMilestoneSuggestions(suggestionsWithIds);
       opts?.onSuccess?.();
     } catch (err) {
       // Check for stale response
@@ -624,8 +666,14 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
     }
   }, []);
 
+  const updateMilestoneSuggestionDraft = useCallback((draftId: string, patch: SuggestionDraftPatch) => {
+    setMilestoneSuggestions((prev) =>
+      prev.map((s) => (s.id === draftId ? { ...s, ...patch } : s))
+    );
+  }, []);
+
   const acceptMilestoneSuggestion = useCallback(async (
-    index: number,
+    draftId: string,
     opts?: { onSuccess?: () => void; onError?: (err: Error) => void }
   ) => {
     const currentRoadmapId = selectedRoadmapIdRef.current;
@@ -637,18 +685,27 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
 
     // Capture state for stale-response protection
     const contextVersionAtStart = projectContextVersionRef.current;
-    const currentSuggestions = milestoneSuggestions;
+    const currentSuggestions = milestoneSuggestionsRef.current;
 
-    if (index < 0 || index >= currentSuggestions.length) {
-      const error = new Error("Invalid suggestion index");
+    // Find the suggestion by draft ID
+    const index = currentSuggestions.findIndex((s) => s.id === draftId);
+    if (index === -1) {
+      const error = new Error("Suggestion draft not found");
       opts?.onError?.(error);
       throw error;
     }
 
     const suggestion = currentSuggestions[index];
 
+    // Validate: title must not be empty/whitespace-only
+    if (!suggestion.title.trim()) {
+      const error = new Error("Title cannot be empty");
+      opts?.onError?.(error);
+      throw error;
+    }
+
     // Optimistic update: remove from suggestions immediately
-    setMilestoneSuggestions((prev) => prev.filter((_, i) => i !== index));
+    setMilestoneSuggestions((prev) => prev.filter((s) => s.id !== draftId));
 
     try {
       await api.createRoadmapMilestone(
@@ -686,7 +743,7 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
       opts?.onError?.(error);
       throw error;
     }
-  }, [milestoneSuggestions, fetchSelectedRoadmap]);
+  }, [fetchSelectedRoadmap]);
 
   const acceptAllMilestoneSuggestions = useCallback(async (
     opts?: { onSuccess?: () => void; onError?: (err: Error) => void }
@@ -699,9 +756,18 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
     }
 
     // Capture current suggestions (they will be cleared sequentially)
-    const suggestionsToAccept = [...milestoneSuggestions];
+    // Order is deterministic: follows the current draft display order
+    const suggestionsToAccept = [...milestoneSuggestionsRef.current];
     if (suggestionsToAccept.length === 0) {
       return;
+    }
+
+    // Validate all titles before accepting any
+    const emptyTitleIndex = suggestionsToAccept.findIndex((s) => !s.title.trim());
+    if (emptyTitleIndex !== -1) {
+      const error = new Error(`Title cannot be empty at position ${emptyTitleIndex + 1}`);
+      opts?.onError?.(error);
+      throw error;
     }
 
     // Clear suggestions immediately (optimistic)
@@ -745,12 +811,7 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
     }
 
     opts?.onSuccess?.();
-  }, [milestoneSuggestions, fetchSelectedRoadmap]);
-
-  const clearMilestoneSuggestions = useCallback(() => {
-    setMilestoneSuggestions([]);
-    setIsGeneratingSuggestions(false);
-  }, []);
+  }, [fetchSelectedRoadmap]);
 
   // ── Feature Suggestion Actions (Ephemeral, Milestone-Scoped) ───────────────────────────────────
 
@@ -783,9 +844,15 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
         return;
       }
 
+      // Assign stable draft IDs to suggestions for UI binding and identity
+      const suggestionsWithIds: FeatureSuggestion[] = response.suggestions.map((s) => ({
+        id: generateDraftId(),
+        title: s.title,
+        description: s.description,
+      }));
       setFeatureSuggestionsByMilestoneId((prev) => ({
         ...prev,
-        [milestoneId]: response.suggestions,
+        [milestoneId]: suggestionsWithIds,
       }));
       opts?.onSuccess?.();
     } catch (err) {
@@ -806,31 +873,44 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
     }
   }, []);
 
+  const updateFeatureSuggestionDraft = useCallback((milestoneId: string, draftId: string, patch: SuggestionDraftPatch) => {
+    setFeatureSuggestionsByMilestoneId((prev) => ({
+      ...prev,
+      [milestoneId]: prev[milestoneId]?.map((s) => (s.id === draftId ? { ...s, ...patch } : s)) || [],
+    }));
+  }, []);
+
   const acceptFeatureSuggestion = useCallback(async (
     milestoneId: string,
-    index: number,
+    draftId: string,
     opts?: { onSuccess?: () => void; onError?: (err: Error) => void }
   ) => {
     // Capture state for stale-response protection
     const contextVersionAtStart = projectContextVersionRef.current;
     const currentSuggestions = featureSuggestionsByMilestoneIdRef.current[milestoneId] || [];
 
-    if (index < 0 || index >= currentSuggestions.length) {
-      const error = new Error("Invalid suggestion index");
+    // Find the suggestion by draft ID
+    const index = currentSuggestions.findIndex((s) => s.id === draftId);
+    if (index === -1) {
+      const error = new Error("Suggestion draft not found");
       opts?.onError?.(error);
       throw error;
     }
 
     const suggestion = currentSuggestions[index];
 
+    // Validate: title must not be empty/whitespace-only
+    if (!suggestion.title.trim()) {
+      const error = new Error("Title cannot be empty");
+      opts?.onError?.(error);
+      throw error;
+    }
+
     // Optimistic update: remove from suggestions immediately
-    setFeatureSuggestionsByMilestoneId((prev) => {
-      const milestoneSuggestions = prev[milestoneId] || [];
-      return {
-        ...prev,
-        [milestoneId]: milestoneSuggestions.filter((_, i) => i !== index),
-      };
-    });
+    setFeatureSuggestionsByMilestoneId((prev) => ({
+      ...prev,
+      [milestoneId]: prev[milestoneId]?.filter((s) => s.id !== draftId) || [],
+    }));
 
     try {
       await api.createRoadmapFeature(
@@ -877,9 +957,18 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
     opts?: { onSuccess?: () => void; onError?: (err: Error) => void }
   ) => {
     // Capture current suggestions (they will be cleared sequentially)
+    // Order is deterministic: follows the current draft display order
     const suggestionsToAccept = [...(featureSuggestionsByMilestoneIdRef.current[milestoneId] || [])];
     if (suggestionsToAccept.length === 0) {
       return;
+    }
+
+    // Validate all titles before accepting any
+    const emptyTitleIndex = suggestionsToAccept.findIndex((s) => !s.title.trim());
+    if (emptyTitleIndex !== -1) {
+      const error = new Error(`Title cannot be empty at position ${emptyTitleIndex + 1}`);
+      opts?.onError?.(error);
+      throw error;
     }
 
     // Capture state for stale-response protection
@@ -928,6 +1017,11 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
     opts?.onSuccess?.();
   }, [fetchSelectedRoadmap]);
 
+  const clearMilestoneSuggestions = useCallback(() => {
+    setMilestoneSuggestions([]);
+    setIsGeneratingSuggestions(false);
+  }, []);
+
   const clearFeatureSuggestions = useCallback((milestoneId: string) => {
     setFeatureSuggestionsByMilestoneId((prev) => {
       const updated = { ...prev };
@@ -972,12 +1066,14 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
     milestoneSuggestions,
     isGeneratingSuggestions,
     generateMilestoneSuggestions,
+    updateMilestoneSuggestionDraft,
     acceptMilestoneSuggestion,
     acceptAllMilestoneSuggestions,
     clearMilestoneSuggestions,
     featureSuggestionsByMilestoneId,
     isGeneratingFeatureSuggestions,
     generateFeatureSuggestions,
+    updateFeatureSuggestionDraft,
     acceptFeatureSuggestion,
     acceptAllFeatureSuggestions,
     clearFeatureSuggestions,

@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { Plus, Pencil, Trash2, Check, X, GripVertical, Sparkles } from "lucide-react";
 import type { ToastType } from "../hooks/useToast";
-import { useRoadmaps, type FeatureSuggestion } from "../hooks/useRoadmaps";
+import { useRoadmaps, type FeatureSuggestion, type MilestoneSuggestion, type SuggestionDraftPatch } from "../hooks/useRoadmaps";
 import type {
   Roadmap,
   RoadmapMilestone,
@@ -184,6 +184,7 @@ function MilestoneCard({
   onGenerateFeatureSuggestions,
   onAcceptFeatureSuggestion,
   onAcceptAllFeatureSuggestions,
+  onUpdateFeatureSuggestionDraft,
   onClearFeatureSuggestions,
 }: {
   milestone: RoadmapMilestone;
@@ -226,7 +227,8 @@ function MilestoneCard({
   featureSuggestions?: FeatureSuggestion[];
   isGeneratingFeatureSuggestions?: boolean;
   onGenerateFeatureSuggestions?: () => void;
-  onAcceptFeatureSuggestion?: (index: number) => void;
+  onUpdateFeatureSuggestionDraft?: (milestoneId: string, draftId: string, patch: SuggestionDraftPatch) => void;
+  onAcceptFeatureSuggestion?: (milestoneId: string, draftId: string) => void;
   onAcceptAllFeatureSuggestions?: () => void;
   onClearFeatureSuggestions?: () => void;
 }) {
@@ -623,32 +625,278 @@ function MilestoneCard({
               </div>
             </div>
             <div className="roadmap-suggestion-list">
-              {featureSuggestions.map((suggestion, index) => (
-                <div
-                  key={`suggestion-${index}`}
-                  className="roadmap-suggestion-card"
-                  data-testid={`feature-suggestion-${milestone.id}-${index}`}
-                >
-                  <div className="roadmap-suggestion-content">
-                    <span className="roadmap-suggestion-card-title">{suggestion.title}</span>
-                    {suggestion.description && (
-                      <p className="roadmap-suggestion-card-desc">{suggestion.description}</p>
-                    )}
-                  </div>
-                  <button
-                    className="roadmap-suggestion-accept-btn"
-                    onClick={() => onAcceptFeatureSuggestion?.(index)}
-                    title="Accept this suggestion"
-                    aria-label="Accept"
-                    data-testid={`accept-feature-${milestone.id}-${index}`}
-                  >
-                    <Check size={12} />
-                  </button>
-                </div>
+              {featureSuggestions.map((suggestion) => (
+                <FeatureSuggestionCard
+                  key={suggestion.id}
+                  suggestion={suggestion}
+                  onUpdateDraft={(patch) => onUpdateFeatureSuggestionDraft?.(milestone.id, suggestion.id, patch as SuggestionDraftPatch)}
+                  onAccept={() => {
+                    onAcceptFeatureSuggestion?.(milestone.id, suggestion.id);
+                  }}
+                  testIdPrefix={`feature-suggestion-${milestone.id}`}
+                />
               ))}
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── Feature Suggestion Card ───────────────────────────────────────────
+
+interface FeatureSuggestionCardProps {
+  suggestion: FeatureSuggestion;
+  onUpdateDraft: (patch: SuggestionDraftPatch) => void;
+  onAccept: () => void;
+  testIdPrefix: string;
+}
+
+function FeatureSuggestionCard({
+  suggestion,
+  onUpdateDraft,
+  onAccept,
+  testIdPrefix,
+}: FeatureSuggestionCardProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState(suggestion.title);
+  const [editDescription, setEditDescription] = useState(suggestion.description || "");
+
+  const handleStartEdit = () => {
+    setEditTitle(suggestion.title);
+    setEditDescription(suggestion.description || "");
+    setIsEditing(true);
+  };
+
+  const handleSaveEdit = () => {
+    onUpdateDraft({
+      title: editTitle.trim(),
+      description: editDescription.trim() || undefined,
+    });
+    setIsEditing(false);
+  };
+
+  const handleCancelEdit = () => {
+    setEditTitle(suggestion.title);
+    setEditDescription(suggestion.description || "");
+    setIsEditing(false);
+  };
+
+  const handleAccept = () => {
+    if (!suggestion.title.trim()) {
+      return; // Don't accept empty titles
+    }
+    onAccept();
+  };
+
+  const isValid = suggestion.title.trim().length > 0;
+
+  if (isEditing) {
+    return (
+      <div className="roadmap-suggestion-card roadmap-suggestion-card--editing">
+        <div className="roadmap-suggestion-edit-form">
+          <input
+            type="text"
+            className="roadmap-suggestion-input"
+            value={editTitle}
+            onChange={(e) => setEditTitle(e.target.value)}
+            placeholder="Feature title"
+            autoFocus
+            data-testid={`${testIdPrefix}-${suggestion.id}-title-input`}
+          />
+          <textarea
+            className="roadmap-suggestion-textarea"
+            value={editDescription}
+            onChange={(e) => setEditDescription(e.target.value)}
+            placeholder="Description (optional)"
+            rows={2}
+            data-testid={`${testIdPrefix}-${suggestion.id}-desc-input`}
+          />
+          <div className="roadmap-suggestion-edit-actions">
+            <button
+              className="roadmap-suggestion-save-btn"
+              onClick={handleSaveEdit}
+              disabled={!editTitle.trim()}
+              title="Save"
+              data-testid={`${testIdPrefix}-${suggestion.id}-save`}
+            >
+              <Check size={12} />
+            </button>
+            <button
+              className="roadmap-suggestion-cancel-btn"
+              onClick={handleCancelEdit}
+              title="Cancel"
+              data-testid={`${testIdPrefix}-${suggestion.id}-cancel`}
+            >
+              <X size={12} />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="roadmap-suggestion-card"
+      data-testid={`${testIdPrefix}-${suggestion.id}`}
+    >
+      <div className="roadmap-suggestion-content">
+        <span className="roadmap-suggestion-card-title">{suggestion.title}</span>
+        {suggestion.description && (
+          <p className="roadmap-suggestion-card-desc">{suggestion.description}</p>
+        )}
+      </div>
+      <div className="roadmap-suggestion-card-actions">
+        <button
+          className="roadmap-suggestion-edit-btn"
+          onClick={handleStartEdit}
+          title="Edit suggestion"
+          aria-label="Edit"
+          data-testid={`${testIdPrefix}-${suggestion.id}-edit`}
+        >
+          <Pencil size={12} />
+        </button>
+        <button
+          className="roadmap-suggestion-accept-btn"
+          onClick={handleAccept}
+          disabled={!isValid}
+          title="Accept this suggestion"
+          aria-label="Accept"
+          data-testid={`${testIdPrefix}-${suggestion.id}-accept`}
+        >
+          <Check size={12} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Milestone Suggestion Card ────────────────────────────────────────
+
+interface MilestoneSuggestionCardProps {
+  suggestion: MilestoneSuggestion;
+  onUpdateDraft: (patch: SuggestionDraftPatch) => void;
+  onAccept: () => void;
+  testIdPrefix: string;
+}
+
+function MilestoneSuggestionCard({
+  suggestion,
+  onUpdateDraft,
+  onAccept,
+  testIdPrefix,
+}: MilestoneSuggestionCardProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState(suggestion.title);
+  const [editDescription, setEditDescription] = useState(suggestion.description || "");
+
+  const handleStartEdit = () => {
+    setEditTitle(suggestion.title);
+    setEditDescription(suggestion.description || "");
+    setIsEditing(true);
+  };
+
+  const handleSaveEdit = () => {
+    onUpdateDraft({
+      title: editTitle.trim(),
+      description: editDescription.trim() || undefined,
+    });
+    setIsEditing(false);
+  };
+
+  const handleCancelEdit = () => {
+    setEditTitle(suggestion.title);
+    setEditDescription(suggestion.description || "");
+    setIsEditing(false);
+  };
+
+  const handleAccept = () => {
+    if (!suggestion.title.trim()) {
+      return; // Don't accept empty titles
+    }
+    onAccept();
+  };
+
+  const isValid = suggestion.title.trim().length > 0;
+
+  if (isEditing) {
+    return (
+      <div className="roadmap-suggestion-card roadmap-suggestion-card--editing">
+        <div className="roadmap-suggestion-edit-form">
+          <input
+            type="text"
+            className="roadmap-suggestion-input"
+            value={editTitle}
+            onChange={(e) => setEditTitle(e.target.value)}
+            placeholder="Milestone title"
+            autoFocus
+            data-testid={`${testIdPrefix}-${suggestion.id}-title-input`}
+          />
+          <textarea
+            className="roadmap-suggestion-textarea"
+            value={editDescription}
+            onChange={(e) => setEditDescription(e.target.value)}
+            placeholder="Description (optional)"
+            rows={2}
+            data-testid={`${testIdPrefix}-${suggestion.id}-desc-input`}
+          />
+          <div className="roadmap-suggestion-edit-actions">
+            <button
+              className="roadmap-suggestion-save-btn"
+              onClick={handleSaveEdit}
+              disabled={!editTitle.trim()}
+              title="Save"
+              data-testid={`${testIdPrefix}-${suggestion.id}-save`}
+            >
+              <Check size={12} />
+            </button>
+            <button
+              className="roadmap-suggestion-cancel-btn"
+              onClick={handleCancelEdit}
+              title="Cancel"
+              data-testid={`${testIdPrefix}-${suggestion.id}-cancel`}
+            >
+              <X size={12} />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="roadmap-suggestion-card"
+      data-testid={`${testIdPrefix}-${suggestion.id}`}
+    >
+      <div className="roadmap-suggestion-content">
+        <span className="roadmap-suggestion-card-title">{suggestion.title}</span>
+        {suggestion.description && (
+          <p className="roadmap-suggestion-card-desc">{suggestion.description}</p>
+        )}
+      </div>
+      <div className="roadmap-suggestion-card-actions">
+        <button
+          className="roadmap-suggestion-edit-btn"
+          onClick={handleStartEdit}
+          title="Edit suggestion"
+          aria-label="Edit"
+          data-testid={`${testIdPrefix}-${suggestion.id}-edit`}
+        >
+          <Pencil size={12} />
+        </button>
+        <button
+          className="roadmap-suggestion-accept-btn"
+          onClick={handleAccept}
+          disabled={!isValid}
+          title="Accept this suggestion"
+          aria-label="Accept"
+          data-testid={`${testIdPrefix}-${suggestion.id}-accept`}
+        >
+          <Check size={12} />
+        </button>
       </div>
     </div>
   );
@@ -868,12 +1116,14 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
     milestoneSuggestions,
     isGeneratingSuggestions,
     generateMilestoneSuggestions,
+    updateMilestoneSuggestionDraft,
     acceptMilestoneSuggestion,
     acceptAllMilestoneSuggestions,
     clearMilestoneSuggestions,
     featureSuggestionsByMilestoneId,
     isGeneratingFeatureSuggestions,
     generateFeatureSuggestions,
+    updateFeatureSuggestionDraft,
     acceptFeatureSuggestion,
     acceptAllFeatureSuggestions,
     clearFeatureSuggestions,
@@ -1345,9 +1595,9 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
   );
 
   const handleAcceptSuggestion = useCallback(
-    async (index: number) => {
+    async (draftId: string) => {
       try {
-        await acceptMilestoneSuggestion(index, {
+        await acceptMilestoneSuggestion(draftId, {
           onError: (err) => addToast(err.message, "error"),
         });
         addToast("Milestone added", "success");
@@ -1393,9 +1643,9 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
   );
 
   const handleAcceptFeatureSuggestion = useCallback(
-    async (milestoneId: string, index: number) => {
+    async (milestoneId: string, draftId: string) => {
       try {
-        await acceptFeatureSuggestion(milestoneId, index, {
+        await acceptFeatureSuggestion(milestoneId, draftId, {
           onError: (err) => addToast(err.message, "error"),
         });
         addToast("Feature added", "success");
@@ -1404,6 +1654,13 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
       }
     },
     [acceptFeatureSuggestion, addToast]
+  );
+
+  const handleUpdateFeatureSuggestionDraft = useCallback(
+    (milestoneId: string, draftId: string, patch: SuggestionDraftPatch) => {
+      updateFeatureSuggestionDraft(milestoneId, draftId, patch);
+    },
+    [updateFeatureSuggestionDraft]
   );
 
   const handleAcceptAllFeatureSuggestions = useCallback(
@@ -1642,26 +1899,14 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
               {/* Suggestion Cards */}
               {milestoneSuggestions.length > 0 && (
                 <div className="roadmap-suggestion-list">
-                  {milestoneSuggestions.map((suggestion, index) => (
-                    <div key={index} className="roadmap-suggestion-card" data-testid={`suggestion-card-${index}`}>
-                      <div className="roadmap-suggestion-card-content">
-                        <span className="roadmap-suggestion-card-title">{suggestion.title}</span>
-                        {suggestion.description && (
-                          <span className="roadmap-suggestion-card-desc">{suggestion.description}</span>
-                        )}
-                      </div>
-                      <div className="roadmap-suggestion-card-actions">
-                        <button
-                          className="roadmap-suggestion-accept-btn"
-                          onClick={() => handleAcceptSuggestion(index)}
-                          title="Accept this milestone"
-                          aria-label="Accept this milestone"
-                          data-testid={`accept-suggestion-${index}`}
-                        >
-                          <Check size={14} />
-                        </button>
-                      </div>
-                    </div>
+                  {milestoneSuggestions.map((suggestion) => (
+                    <MilestoneSuggestionCard
+                      key={suggestion.id}
+                      suggestion={suggestion}
+                      onUpdateDraft={(patch) => updateMilestoneSuggestionDraft(suggestion.id, patch)}
+                      onAccept={() => handleAcceptSuggestion(suggestion.id)}
+                      testIdPrefix="suggestion"
+                    />
                   ))}
                 </div>
               )}
@@ -1748,8 +1993,9 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
                       featureSuggestions={featureSuggestionsByMilestoneId[milestone.id]}
                       isGeneratingFeatureSuggestions={isGeneratingFeatureSuggestions(milestone.id)}
                       onGenerateFeatureSuggestions={() => handleGenerateFeatureSuggestions(milestone.id)}
-                      onAcceptFeatureSuggestion={(index) => handleAcceptFeatureSuggestion(milestone.id, index)}
+                      onAcceptFeatureSuggestion={(draftId) => handleAcceptFeatureSuggestion(milestone.id, draftId)}
                       onAcceptAllFeatureSuggestions={() => handleAcceptAllFeatureSuggestions(milestone.id)}
+                      onUpdateFeatureSuggestionDraft={(milestoneId, draftId, patch) => handleUpdateFeatureSuggestionDraft(milestoneId, draftId, patch)}
                       onClearFeatureSuggestions={() => handleClearFeatureSuggestions(milestone.id)}
                     />
                   ))}

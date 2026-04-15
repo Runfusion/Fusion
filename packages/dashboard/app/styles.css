@@ -31202,6 +31202,116 @@ html .column.drag-over * {
   transform: scale(0.95);
 }
 
+.roadmap-suggestion-accept-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.roadmap-suggestion-edit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: var(--surface-elevated);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.roadmap-suggestion-edit-btn:hover {
+  background: var(--surface-hover, rgba(0, 0, 0, 0.03));
+  color: var(--text-primary);
+}
+
+.roadmap-suggestion-card--editing {
+  background: var(--surface-elevated);
+  border-color: var(--accent);
+}
+
+.roadmap-suggestion-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  flex: 1;
+  min-width: 0;
+}
+
+.roadmap-suggestion-textarea {
+  width: 100%;
+  padding: var(--space-sm);
+  background: var(--bg);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+  font-family: inherit;
+  resize: vertical;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.roadmap-suggestion-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.roadmap-suggestion-textarea::placeholder {
+  color: var(--text-dim);
+}
+
+.roadmap-suggestion-edit-actions {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.roadmap-suggestion-save-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: var(--color-success);
+  color: white;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.roadmap-suggestion-save-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.roadmap-suggestion-save-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.roadmap-suggestion-cancel-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: var(--surface-elevated);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.roadmap-suggestion-cancel-btn:hover {
+  background: var(--surface-hover, rgba(0, 0, 0, 0.03));
+  color: var(--text-primary);
+}
+
 /* Mobile responsive */
 @media (max-width: 768px) {
   .roadmaps-view__sidebar {
