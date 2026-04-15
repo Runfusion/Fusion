@@ -10,10 +10,27 @@ export type OnboardingStep = "ai-setup" | "github" | "first-task" | "complete";
 interface OnboardingState {
   currentStep: OnboardingStep | string; // string allows for future unknown steps
   updatedAt: string; // ISO-8601 timestamp
-  completedAt?: string; // ISO-8601 timestamp when onboarding was marked complete (distinct from dismissed)
+  /** Steps that have been completed (visited and passed) */
+  completedSteps: OnboardingStep[];
+  /** Whether the user explicitly dismissed the modal without finishing */
+  dismissed: boolean;
+  /** Whether the user finished all steps and completed onboarding */
+  completed: boolean;
+  /** Per-step data for restoring UI state on reopen */
+  stepData: Partial<Record<OnboardingStep, Record<string, unknown>>>;
+  /** Legacy field: ISO-8601 timestamp when onboarding was marked complete */
+  completedAt?: string;
 }
 
 const STORAGE_KEY = "fusion_model_onboarding_state";
+
+/**
+ * Default values for backward compatibility with partial state objects
+ */
+const DEFAULT_COMPLETED_STEPS: OnboardingStep[] = [];
+const DEFAULT_DISMISSED = false;
+const DEFAULT_COMPLETED = false;
+const DEFAULT_STEP_DATA: Partial<Record<OnboardingStep, Record<string, unknown>>> = {};
 
 /**
  * Step labels for display in the resume card.
@@ -28,6 +45,7 @@ export const ONBOARDING_STEP_LABELS: Record<OnboardingStep, string> = {
 
 /**
  * Get the currently persisted onboarding state, or null if none exists.
+ * Applies defaults for backward compatibility with partial/legacy state objects.
  */
 export function getOnboardingState(): OnboardingState | null {
   if (typeof window === "undefined") return null;
@@ -44,8 +62,8 @@ export function getOnboardingState(): OnboardingState | null {
       typeof (parsed as Record<string, unknown>).currentStep === "string"
     ) {
       const state = parsed as OnboardingState;
-      // Return state as-is; getOnboardingResumeStep handles fallback labels for unknown steps
-      return state;
+      // Apply defaults for backward compatibility with partial state objects
+      return applyStateDefaults(state);
     }
     return null;
   } catch {
@@ -55,19 +73,139 @@ export function getOnboardingState(): OnboardingState | null {
 }
 
 /**
+ * Apply default values for backward compatibility with partial/legacy state objects.
+ */
+function applyStateDefaults(state: OnboardingState): OnboardingState {
+  return {
+    ...state,
+    completedSteps: state.completedSteps ?? DEFAULT_COMPLETED_STEPS,
+    dismissed: state.dismissed ?? DEFAULT_DISMISSED,
+    completed: state.completed ?? DEFAULT_COMPLETED,
+    stepData: state.stepData ?? DEFAULT_STEP_DATA,
+  };
+}
+
+/**
  * Persist the current onboarding step state.
  * Call this when the user dismisses the modal without completing.
  * @param step - The current step (known OnboardingStep or unknown string for future steps)
+ * @param options - Optional rich payload for extended state tracking
  */
-export function saveOnboardingState(step: OnboardingStep | string): void {
+export function saveOnboardingState(
+  step: OnboardingStep | string,
+  options?: {
+    completedSteps?: OnboardingStep[];
+    dismissed?: boolean;
+    completed?: boolean;
+    stepData?: Partial<Record<OnboardingStep, Record<string, unknown>>>;
+  }
+): void {
   if (typeof window === "undefined") return;
 
-  const state: OnboardingState = {
-    currentStep: step,
-    updatedAt: new Date().toISOString(),
-  };
+  // If no options provided, use simple overwrite (backward compatible)
+  if (!options) {
+    const state: OnboardingState = {
+      currentStep: step,
+      updatedAt: new Date().toISOString(),
+      completedSteps: DEFAULT_COMPLETED_STEPS,
+      dismissed: DEFAULT_DISMISSED,
+      completed: DEFAULT_COMPLETED,
+      stepData: DEFAULT_STEP_DATA,
+    };
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch {
+      // Storage quota exceeded or private browsing - fail silently
+    }
+    return;
+  }
+
+  // With options, merge with existing state
+  try {
+    const existing = getOnboardingState();
+    const now = new Date().toISOString();
+
+    // Determine completed and dismissed flags
+    // completed takes precedence over dismissed
+    let completed = options.completed ?? DEFAULT_COMPLETED;
+    let dismissed = options.dismissed ?? DEFAULT_DISMISSED;
+
+    // If completed is true, dismissed should be false
+    if (completed) {
+      dismissed = false;
+    }
+
+    // Merge completedSteps
+    const completedSteps = options.completedSteps ?? existing?.completedSteps ?? DEFAULT_COMPLETED_STEPS;
+
+    // Merge stepData per-step key
+    const stepData: Partial<Record<OnboardingStep, Record<string, unknown>>> = {
+      ...(existing?.stepData ?? DEFAULT_STEP_DATA),
+    };
+    if (options.stepData) {
+      for (const [stepKey, data] of Object.entries(options.stepData)) {
+        if (data !== undefined) {
+          stepData[stepKey as OnboardingStep] = {
+            ...(stepData[stepKey as OnboardingStep] ?? {}),
+            ...data,
+          };
+        }
+      }
+    }
+
+    const state: OnboardingState = {
+      currentStep: step,
+      updatedAt: now,
+      completedSteps,
+      dismissed,
+      completed,
+      stepData,
+    };
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // Storage quota exceeded or private browsing - fail silently
+  }
+}
+
+/**
+ * Mark a specific step as completed.
+ * Reads current state, adds step to completedSteps (deduped), and saves.
+ * If no state exists, initializes a fresh state with completedSteps containing only this step.
+ * @param step - The step to mark as completed
+ */
+export function markStepCompleted(step: OnboardingStep): void {
+  if (typeof window === "undefined") return;
 
   try {
+    const existing = getOnboardingState();
+    const now = new Date().toISOString();
+
+    if (!existing) {
+      // Initialize fresh state with this step completed
+      const state: OnboardingState = {
+        currentStep: step,
+        updatedAt: now,
+        completedSteps: [step],
+        dismissed: DEFAULT_DISMISSED,
+        completed: DEFAULT_COMPLETED,
+        stepData: DEFAULT_STEP_DATA,
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      return;
+    }
+
+    // Add step to completedSteps (deduped)
+    const completedSteps = existing.completedSteps.includes(step)
+      ? existing.completedSteps
+      : [...existing.completedSteps, step];
+
+    const state: OnboardingState = {
+      ...existing,
+      completedSteps,
+      updatedAt: now,
+    };
+
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
     // Storage quota exceeded or private browsing - fail silently
@@ -77,12 +215,47 @@ export function saveOnboardingState(step: OnboardingStep | string): void {
 /**
  * Clear the persisted onboarding state.
  * Call this when onboarding is fully completed.
+ * @param options - Optional options for clearing behavior
+ * @param options.preserveProgress - If true, sets completed=true while preserving completedSteps and stepData
  */
-export function clearOnboardingState(): void {
+export function clearOnboardingState(options?: { preserveProgress?: boolean }): void {
   if (typeof window === "undefined") return;
 
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    // Default behavior: remove the key entirely (backward compatible)
+    if (!options?.preserveProgress) {
+      localStorage.removeItem(STORAGE_KEY);
+      return;
+    }
+
+    // With preserveProgress: set completed=true while preserving progress data
+    const existing = getOnboardingState();
+    const now = new Date().toISOString();
+
+    if (!existing) {
+      // No existing state - create minimal completed state
+      const state: OnboardingState = {
+        currentStep: "complete",
+        updatedAt: now,
+        completedSteps: DEFAULT_COMPLETED_STEPS,
+        dismissed: false,
+        completed: true,
+        stepData: DEFAULT_STEP_DATA,
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      return;
+    }
+
+    // Preserve existing progress data but mark as completed
+    const state: OnboardingState = {
+      ...existing,
+      currentStep: "complete",
+      updatedAt: now,
+      dismissed: false,
+      completed: true,
+    };
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
     // Fail silently
   }
@@ -93,15 +266,25 @@ export function clearOnboardingState(): void {
  * Unlike clearOnboardingState(), this preserves the state so the completion
  * timestamp can be queried later. Call this when user completes onboarding
  * (via Finish Setup, Create Task, or Import from GitHub).
+ * @deprecated Use clearOnboardingState({ preserveProgress: true }) for new code
  */
 export function markOnboardingCompleted(): void {
   if (typeof window === "undefined") return;
 
   try {
     const existing = getOnboardingState();
+    const now = new Date().toISOString();
     const state: OnboardingState = existing
-      ? { ...existing, completedAt: new Date().toISOString() }
-      : { currentStep: "complete", updatedAt: new Date().toISOString(), completedAt: new Date().toISOString() };
+      ? { ...existing, completedAt: now, completed: true, dismissed: false, updatedAt: now }
+      : {
+          currentStep: "complete",
+          updatedAt: now,
+          completedAt: now,
+          completedSteps: DEFAULT_COMPLETED_STEPS,
+          dismissed: false,
+          completed: true,
+          stepData: DEFAULT_STEP_DATA,
+        };
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
@@ -111,18 +294,26 @@ export function markOnboardingCompleted(): void {
 
 /**
  * Check if onboarding has been marked as completed.
- * Returns true only when the persisted state exists AND completedAt is set.
+ * Returns true when either:
+ * - The `completed` boolean is true (new format)
+ * - The `completedAt` timestamp is set (legacy format)
  * A dismissed (but not completed) onboarding returns false.
  */
 export function isOnboardingCompleted(): boolean {
   const state = getOnboardingState();
   if (!state) return false;
+
+  // Check new boolean field first
+  if (state.completed === true) return true;
+
+  // Fall back to legacy timestamp field
   return typeof state.completedAt === "string" && state.completedAt.length > 0;
 }
 
 /**
  * Get the ISO-8601 timestamp when onboarding was marked complete.
  * Returns null if onboarding has not been completed or no state exists.
+ * @deprecated Use isOnboardingCompleted() and getOnboardingState().completed instead
  */
 export function getOnboardingCompletedAt(): string | null {
   const state = getOnboardingState();
@@ -133,13 +324,15 @@ export function getOnboardingCompletedAt(): string | null {
 /**
  * Determine if onboarding can be resumed.
  * Returns true only when persisted state exists, currentStep is not "complete",
- * and onboarding has not been marked as completed.
+ * and onboarding has not been completed (either via `completed` boolean or `completedAt` timestamp).
  */
 export function isOnboardingResumable(): boolean {
   const state = getOnboardingState();
   if (!state) return false;
-  // Reject if completed (completed onboarding is not resumable, only revisitable)
+
+  // Reject if completed (either new boolean or legacy timestamp)
   if (isOnboardingCompleted()) return false;
+
   // Reject if currentStep is "complete" or not a valid step identifier
   return state.currentStep !== "complete";
 }
@@ -163,6 +356,27 @@ export function getOnboardingResumeStep(): { currentStep: string; label: string 
     currentStep: state.currentStep,
     label,
   };
+}
+
+/**
+ * Get the list of completed steps from stored state.
+ * Returns empty array if no state exists or completedSteps is missing.
+ */
+export function getCompletedSteps(): OnboardingStep[] {
+  const state = getOnboardingState();
+  if (!state) return DEFAULT_COMPLETED_STEPS;
+  return state.completedSteps;
+}
+
+/**
+ * Get stored per-step data for a specific step.
+ * Returns null if no state exists or the step has no data.
+ * @param step - The step to get data for
+ */
+export function getStepData(step: OnboardingStep): Record<string, unknown> | null {
+  const state = getOnboardingState();
+  if (!state || !state.stepData) return null;
+  return state.stepData[step] ?? null;
 }
 
 /**
