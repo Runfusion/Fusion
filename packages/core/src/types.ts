@@ -826,6 +826,20 @@ export interface TaskCreateInput {
 export type SettingsScope = "global" | "project";
 
 /**
+ * Settings for daemon mode authentication token and server configuration.
+ * Stored in global settings alongside user preferences.
+ */
+export interface DaemonTokenSettings {
+  /** The daemon authentication token (format: fn_<32 hex chars>).
+   *  Used for authenticating CLI clients to the daemon server. */
+  daemonToken?: string;
+  /** Port for daemon mode server binding. Default: 4040. */
+  daemonPort?: number;
+  /** Host for daemon mode server binding. Default: "0.0.0.0" (all interfaces). */
+  daemonHost?: string;
+}
+
+/**
  * Global (user-level) settings stored in `~/.pi/fusion/settings.json`.
  *
  * These are user preferences that persist across all fn projects.
@@ -931,6 +945,13 @@ export interface GlobalSettings {
   /** Global baseline AI model ID for title summarization.
    *  Must be set together with `titleSummarizerGlobalProvider`. */
   titleSummarizerGlobalModelId?: string;
+  /** The daemon authentication token (format: fn_<32 hex chars>).
+   *  Used for authenticating CLI clients to the daemon server. */
+  daemonToken?: string;
+  /** Port for daemon mode server binding. Default: 4040. */
+  daemonPort?: number;
+  /** Host for daemon mode server binding. Default: "0.0.0.0" (all interfaces). */
+  daemonHost?: string;
 }
 
 /**

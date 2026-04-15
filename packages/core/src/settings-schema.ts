@@ -38,6 +38,10 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   validatorGlobalModelId: undefined,
   titleSummarizerGlobalProvider: undefined,
   titleSummarizerGlobalModelId: undefined,
+  // Daemon mode settings
+  daemonToken: undefined,
+  daemonPort: 4040,
+  daemonHost: "0.0.0.0",
 } satisfies CompleteSettings<GlobalSettings>;
 
 /** Default values for project-level settings. */
