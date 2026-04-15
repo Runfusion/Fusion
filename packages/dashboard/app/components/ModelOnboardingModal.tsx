@@ -33,8 +33,6 @@ export interface ModelOnboardingModalProps {
   onOpenGitHubImport?: () => void;
 }
 
-
-
 /**
  * Multi-step onboarding modal that guides users through:
  * 1. AI Setup - Provider credential setup (OAuth login or API key entry) and default model selection
