@@ -13,53 +13,71 @@ vi.mock("node:fs", async () => {
   };
 });
 
-// Mock CentralCore before importing routes
-const mockListProjects = vi.fn().mockResolvedValue([]);
-const mockGetProject = vi.fn().mockResolvedValue(null);
-const mockRegisterProject = vi.fn().mockResolvedValue({
-  id: "proj_test123",
-  name: "Test Project",
-  path: "/test/path",
-  status: "initializing",
-  isolationMode: "in-process",
-  createdAt: "2026-01-01T00:00:00.000Z",
-  updatedAt: "2026-01-01T00:00:00.000Z",
-});
-const mockUpdateProject = vi.fn().mockResolvedValue({
-  id: "proj_test123",
-  name: "Test Project",
-  path: "/test/path",
-  status: "active",
-  isolationMode: "in-process",
-  createdAt: "2026-01-01T00:00:00.000Z",
-  updatedAt: "2026-01-01T00:00:00.000Z",
-});
-const mockUnregisterProject = vi.fn().mockResolvedValue(undefined);
-const mockGetProjectHealth = vi.fn().mockResolvedValue({
-  projectId: "proj_test123",
-  status: "active",
-  activeTaskCount: 5,
-  inFlightAgentCount: 2,
-  totalTasksCompleted: 10,
-  totalTasksFailed: 1,
-  updatedAt: "2026-01-01T00:00:00.000Z",
-});
-const mockGetRecentActivity = vi.fn().mockResolvedValue([]);
-const mockGetGlobalConcurrencyState = vi.fn().mockResolvedValue({
-  globalMaxConcurrent: 4,
-  currentlyActive: 2,
-  queuedCount: 0,
-  projectsActive: { proj_test123: 2 },
-});
-const mockUpdateGlobalConcurrency = vi.fn().mockResolvedValue({
-  globalMaxConcurrent: 10,
-  currentlyActive: 2,
-  queuedCount: 0,
-  projectsActive: { proj_test123: 2 },
-});
-const mockInit = vi.fn().mockResolvedValue(undefined);
-const mockClose = vi.fn().mockResolvedValue(undefined);
-const mockReconcileProjectStatuses = vi.fn().mockResolvedValue([]);
+// Use vi.hoisted() for mock functions that need to be accessible in hoisted vi.mock calls
+const {
+  mockListProjects,
+  mockGetProject,
+  mockRegisterProject,
+  mockUpdateProject,
+  mockUnregisterProject,
+  mockGetProjectHealth,
+  mockGetRecentActivity,
+  mockGetGlobalConcurrencyState,
+  mockUpdateGlobalConcurrency,
+  mockInit,
+  mockClose,
+  mockReconcileProjectStatuses,
+  mockGetOrCreateProjectStore,
+} = vi.hoisted(() => ({
+  mockListProjects: vi.fn().mockResolvedValue([]),
+  mockGetProject: vi.fn().mockResolvedValue(null),
+  mockRegisterProject: vi.fn().mockResolvedValue({
+    id: "proj_test123",
+    name: "Test Project",
+    path: "/test/path",
+    status: "initializing",
+    isolationMode: "in-process",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  }),
+  mockUpdateProject: vi.fn().mockResolvedValue({
+    id: "proj_test123",
+    name: "Test Project",
+    path: "/test/path",
+    status: "active",
+    isolationMode: "in-process",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  }),
+  mockUnregisterProject: vi.fn().mockResolvedValue(undefined),
+  mockGetProjectHealth: vi.fn().mockResolvedValue({
+    projectId: "proj_test123",
+    status: "active",
+    activeTaskCount: 5,
+    inFlightAgentCount: 2,
+    totalTasksCompleted: 10,
+    totalTasksFailed: 1,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  }),
+  mockGetRecentActivity: vi.fn().mockResolvedValue([]),
+  mockGetGlobalConcurrencyState: vi.fn().mockResolvedValue({
+    globalMaxConcurrent: 4,
+    currentlyActive: 2,
+    queuedCount: 0,
+    projectsActive: { proj_test123: 2 },
+  }),
+  mockUpdateGlobalConcurrency: vi.fn().mockResolvedValue({
+    globalMaxConcurrent: 10,
+    currentlyActive: 2,
+    queuedCount: 0,
+    projectsActive: { proj_test123: 2 },
+  }),
+  mockInit: vi.fn().mockResolvedValue(undefined),
+  mockClose: vi.fn().mockResolvedValue(undefined),
+  mockReconcileProjectStatuses: vi.fn().mockResolvedValue([]),
+  // Mock store registry - can be configured per-test to return specific stores per project ID
+  mockGetOrCreateProjectStore: vi.fn(),
+}));
 
 vi.mock("@fusion/core", async () => {
   const actual = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
@@ -81,6 +99,12 @@ vi.mock("@fusion/core", async () => {
     })),
   };
 });
+
+// Mock project-store-resolver for multi-project health tests
+vi.mock("../project-store-resolver.js", () => ({
+  getOrCreateProjectStore: mockGetOrCreateProjectStore,
+  invalidateAllGlobalSettingsCaches: vi.fn(),
+}));
 
 // Import after mocking - just import the types and verify the routes exist
 import { 
@@ -644,5 +668,250 @@ describe("PUT /api/global-concurrency route handler", () => {
     expect(res.status).toBe(200);
     expect(mockUpdateGlobalConcurrency).toHaveBeenCalledWith({ globalMaxConcurrent: 10 });
     expect((res.body as any).globalMaxConcurrent).toBe(10);
+  });
+});
+
+// ── GET /api/projects/:id/health Route Tests ─────────────────────────────────
+// Regression tests for multi-project health resolution (FN-1662)
+
+describe("GET /api/projects/:id/health route handler", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Reset mock to default behavior - returns new MockStoreForRoutes by default
+    mockGetOrCreateProjectStore.mockReset();
+    mockGetOrCreateProjectStore.mockImplementation(async () => new MockStoreForRoutes());
+  });
+
+  // Helper to create a mock store with specific tasks
+  function createMockStoreWithTasks(tasks: Array<{ id: string; column: string }>): MockStoreForRoutes & { listTasks: ReturnType<typeof vi.fn> } {
+    const mockStore = new MockStoreForRoutes() as MockStoreForRoutes & { listTasks: ReturnType<typeof vi.fn> };
+    mockStore.listTasks = vi.fn().mockResolvedValue(tasks);
+    return mockStore;
+  }
+
+  it("returns project-specific task counts when using project-scoped store", async () => {
+    // Create a store with specific tasks
+    const projectATasks = [
+      { id: "FN-1", column: "triage" },
+      { id: "FN-2", column: "todo" },
+      { id: "FN-3", column: "in-progress" },
+      { id: "FN-4", column: "in-review" },
+      { id: "FN-5", column: "done" },
+      { id: "FN-6", column: "archived" },
+    ];
+
+    const storeA = createMockStoreWithTasks(projectATasks);
+    mockGetOrCreateProjectStore.mockResolvedValue(storeA);
+
+    // Setup: Project A
+    mockGetProject.mockResolvedValue({
+      id: "proj_a",
+      name: "Project A",
+      path: "/projects/a",
+      status: "active",
+      isolationMode: "in-process",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    
+    // Central health returns stale data (common scenario)
+    mockGetProjectHealth.mockResolvedValue({
+      projectId: "proj_a",
+      status: "active",
+      activeTaskCount: 999, // Stale value
+      inFlightAgentCount: 999, // Stale value
+      totalTasksCompleted: 999, // Stale value
+      totalTasksFailed: 0,
+      updatedAt: "2020-01-01T00:00:00.000Z", // Very old timestamp
+    });
+
+    const defaultStore = new MockStoreForRoutes();
+    const app = createServer(defaultStore as any);
+
+    const res = await request(app, "GET", "/api/projects/proj_a/health");
+
+    expect(res.status).toBe(200);
+    const health = res.body as Record<string, unknown>;
+    
+    // Should have computed counts from project-scoped store, not stale central data
+    expect(health.projectId).toBe("proj_a");
+    expect(health.activeTaskCount).toBe(4); // triage + todo + in-progress + in-review
+    expect(health.inFlightAgentCount).toBe(1); // only in-progress
+    expect(health.totalTasksCompleted).toBe(2); // done + archived
+    expect(health.status).toBe("active");
+  });
+
+  it("does not bleed counts between different projects", async () => {
+    // Project A has 3 tasks
+    const projectATasks = [
+      { id: "FN-1", column: "triage" },
+      { id: "FN-2", column: "in-progress" },
+      { id: "FN-3", column: "done" },
+    ];
+    // Project B has 5 tasks
+    const projectBTasks = [
+      { id: "FN-10", column: "todo" },
+      { id: "FN-11", column: "todo" },
+      { id: "FN-12", column: "in-progress" },
+      { id: "FN-13", column: "in-review" },
+      { id: "FN-14", column: "archived" },
+    ];
+
+    const storeA = createMockStoreWithTasks(projectATasks);
+    const storeB = createMockStoreWithTasks(projectBTasks);
+
+    // Configure mock to return different stores per project
+    mockGetOrCreateProjectStore.mockImplementation(async (projectId: string) => {
+      if (projectId === "proj_a") return storeA;
+      if (projectId === "proj_b") return storeB;
+      return new MockStoreForRoutes();
+    });
+
+    const defaultStore = new MockStoreForRoutes();
+    const app = createServer(defaultStore as any);
+
+    // Request health for project A
+    mockGetProject.mockResolvedValue({
+      id: "proj_a",
+      name: "Project A",
+      path: "/projects/a",
+      status: "active",
+      isolationMode: "in-process",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    mockGetProjectHealth.mockResolvedValue({
+      projectId: "proj_a",
+      status: "active",
+      activeTaskCount: 100,
+      inFlightAgentCount: 50,
+      totalTasksCompleted: 25,
+      totalTasksFailed: 0,
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    });
+
+    const resA = await request(app, "GET", "/api/projects/proj_a/health");
+
+    expect(resA.status).toBe(200);
+    const healthA = resA.body as Record<string, unknown>;
+    
+    // Project A: 1 triage + 1 in-progress + 1 done = 3 tasks total, 2 active, 1 in-flight
+    expect(healthA.activeTaskCount).toBe(2); // triage + in-progress
+    expect(healthA.inFlightAgentCount).toBe(1); // in-progress
+    expect(healthA.totalTasksCompleted).toBe(1); // done
+
+    // Request health for project B
+    mockGetProject.mockResolvedValue({
+      id: "proj_b",
+      name: "Project B",
+      path: "/projects/b",
+      status: "active",
+      isolationMode: "in-process",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    mockGetProjectHealth.mockResolvedValue({
+      projectId: "proj_b",
+      status: "active",
+      activeTaskCount: 200,
+      inFlightAgentCount: 100,
+      totalTasksCompleted: 50,
+      totalTasksFailed: 0,
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    });
+
+    const resB = await request(app, "GET", "/api/projects/proj_b/health");
+
+    expect(resB.status).toBe(200);
+    const healthB = resB.body as Record<string, unknown>;
+    
+    // Project B: 2 todo + 1 in-progress + 1 in-review = 4 active, 1 in-flight
+    expect(healthB.activeTaskCount).toBe(4); // 2 todo + 1 in-progress + 1 in-review
+    expect(healthB.inFlightAgentCount).toBe(1); // in-progress
+    expect(healthB.totalTasksCompleted).toBe(1); // archived
+
+    // Verify no bleed-through: project A counts should not equal project B counts
+    expect(healthA.activeTaskCount).not.toBe(healthB.activeTaskCount);
+  });
+
+  it("returns valid health response when central health row is missing but project exists", async () => {
+    // No central health row for this project
+    mockGetProjectHealth.mockResolvedValue(null);
+
+    const tasks = [
+      { id: "FN-1", column: "todo" },
+      { id: "FN-2", column: "in-progress" },
+      { id: "FN-3", column: "in-progress" },
+      { id: "FN-4", column: "done" },
+    ];
+
+    const mockStore = createMockStoreWithTasks(tasks);
+    mockGetOrCreateProjectStore.mockResolvedValue(mockStore);
+
+    mockGetProject.mockResolvedValue({
+      id: "proj_new",
+      name: "New Project",
+      path: "/projects/new",
+      status: "active",
+      isolationMode: "in-process",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    const defaultStore = new MockStoreForRoutes();
+    const app = createServer(defaultStore as any);
+
+    // Should NOT return 404 - should synthesize valid health from project store
+    const res = await request(app, "GET", "/api/projects/proj_new/health");
+
+    expect(res.status).toBe(200);
+    const health = res.body as Record<string, unknown>;
+    
+    // Should have computed counts from project store
+    expect(health.projectId).toBe("proj_new");
+    expect(health.activeTaskCount).toBe(3); // todo + 2 in-progress
+    expect(health.inFlightAgentCount).toBe(2); // 2 in-progress
+    expect(health.totalTasksCompleted).toBe(1); // done
+    expect(health.status).toBe("active");
+  });
+
+  it("uses slim tasks when computing counts", async () => {
+    const mockStore = createMockStoreWithTasks([
+      { id: "FN-1", column: "todo" },
+      { id: "FN-2", column: "in-progress" },
+    ]);
+    mockGetOrCreateProjectStore.mockResolvedValue(mockStore);
+
+    mockGetProject.mockResolvedValue({
+      id: "proj_test",
+      name: "Test",
+      path: "/test",
+      status: "active",
+      isolationMode: "in-process",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    mockGetProjectHealth.mockResolvedValue({
+      projectId: "proj_test",
+      status: "active",
+      activeTaskCount: 100,
+      inFlightAgentCount: 50,
+      totalTasksCompleted: 25,
+      totalTasksFailed: 0,
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    });
+
+    const defaultStore = new MockStoreForRoutes();
+    const app = createServer(defaultStore as any);
+
+    const res = await request(app, "GET", "/api/projects/proj_test/health");
+
+    expect(res.status).toBe(200);
+    
+    // Verify that listTasks was called with { slim: true }
+    expect(mockStore.listTasks).toHaveBeenCalledWith({ slim: true });
   });
 });

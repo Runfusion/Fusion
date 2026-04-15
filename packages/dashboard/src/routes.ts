@@ -13208,12 +13208,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   /**
    * GET /api/projects/:id/health
    * Get health metrics for a specific project.
+   * Computes live task counts from the project-scoped task store to ensure
+   * accurate stats for all projects, not just the default/first project.
    * Returns: ProjectHealth
    */
   router.get("/projects/:id/health", async (req, res) => {
     try {
       const { CentralCore } = await import("@fusion/core");
-      const { realpath } = await import("node:fs/promises");
       const central = new CentralCore();
       await central.init();
 
@@ -13223,39 +13224,39 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw notFound("Project not found");
       }
 
-      const health = await central.getProjectHealth(req.params.id);
+      // Use the project-scoped store resolver to get the correct store for
+      // this project. This ensures we compute counts from the right project,
+      // regardless of which project is the dashboard's default.
+      const projectStore = await getOrCreateProjectStore(req.params.id);
+
+      // Compute live task counts from the project-specific store
+      const tasks = await projectStore.listTasks({ slim: true });
+      const activeCols = new Set(["triage", "todo", "in-progress", "in-review"]);
+      const activeTaskCount = tasks.filter((t) => activeCols.has(t.column)).length;
+      const inFlightAgentCount = tasks.filter((t) => t.column === "in-progress").length;
+      const totalTasksCompleted = tasks.filter((t) => t.column === "done" || t.column === "archived").length;
+
+      // Get central health metadata (if available) to preserve non-count fields
+      const centralHealth = await central.getProjectHealth(req.params.id);
       await central.close();
-      
-      if (!health) {
-        throw notFound("Project health not found");
-      }
 
-      // If this dashboard serves the requested project, compute live counts
-      // from the task store instead of relying on cached central DB values.
-      try {
-        const storePath = await realpath(store.getRootDir());
-        const projectPath = await realpath(project.path);
+      // Build response: use central health as base if available, otherwise synthesize
+      const healthBase = centralHealth ?? {
+        projectId: req.params.id,
+        status: project.status ?? "active",
+        activeTaskCount: 0,
+        inFlightAgentCount: 0,
+        totalTasksCompleted: 0,
+        totalTasksFailed: 0,
+        updatedAt: new Date().toISOString(),
+      };
 
-        if (storePath === projectPath) {
-          const tasks = await store.listTasks({ slim: true });
-          const activeCols = new Set(["triage", "todo", "in-progress", "in-review"]);
-          const activeTaskCount = tasks.filter((t) => activeCols.has(t.column)).length;
-          const inFlightAgentCount = tasks.filter((t) => t.column === "in-progress").length;
-          const totalTasksCompleted = tasks.filter((t) => t.column === "done" || t.column === "archived").length;
-
-          res.json({
-            ...health,
-            activeTaskCount,
-            inFlightAgentCount,
-            totalTasksCompleted,
-          });
-          return;
-        }
-      } catch {
-        // realpath may fail if a path doesn't exist; fall through to cached data
-      }
-
-      res.json(health);
+      res.json({
+        ...healthBase,
+        activeTaskCount,
+        inFlightAgentCount,
+        totalTasksCompleted,
+      });
     } catch (err: any) {
       if (err instanceof ApiError) {
         throw err;
