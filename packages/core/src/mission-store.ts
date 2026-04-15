@@ -1667,10 +1667,17 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
 
     const linkage = this.resolveTaskLinkage(feature.sliceId);
 
+    // When first linking (loopState is idle or falsy), transition to implementing
+    const shouldTransitionLoop = !feature.loopState || feature.loopState === "idle";
+    const loopStateUpdates: Partial<MissionFeature> = shouldTransitionLoop
+      ? { loopState: "implementing", implementationAttemptCount: 1 }
+      : {};
+
     const updated = this.db.transaction(() => {
       const featureUpdate = this.updateFeature(featureId, {
         taskId,
         status: "triaged",
+        ...loopStateUpdates,
       });
 
       // Also update the task's mission/slice linkage for bidirectional linking.

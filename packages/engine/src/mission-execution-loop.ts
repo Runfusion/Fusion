@@ -755,6 +755,16 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
         );
         loopLog.log(`Created fix feature ${fixFeature.id} for ${featureId}`);
 
+        // Auto-triage the fix feature so the retry loop can continue
+        try {
+          await this.missionStore.triageFeature(fixFeature.id);
+          loopLog.log(`Auto-triaged fix feature ${fixFeature.id}`);
+        } catch (triageErr) {
+          const triageMessage = triageErr instanceof Error ? triageErr.message : String(triageErr);
+          loopLog.error(`Error triaging fix feature ${fixFeature.id}:`, triageMessage);
+          // Continue even if triage fails - the fix feature was created and can be triaged manually
+        }
+
         this.emit("validation:failed", {
           featureId,
           runId,

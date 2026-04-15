@@ -1044,6 +1044,8 @@ describe("MissionStore", () => {
 
       expect(linked.taskId).toBe("FN-001");
       expect(linked.status).toBe("triaged");
+      expect(linked.loopState).toBe("implementing");
+      expect(linked.implementationAttemptCount).toBe(1);
       expect(taskRow.missionId).toBe(mission.id);
       expect(taskRow.sliceId).toBe(slice.id);
     });
@@ -1542,6 +1544,8 @@ describe("MissionStore", () => {
       // Feature should be triaged with a taskId
       expect(triaged.status).toBe("triaged");
       expect(triaged.taskId).toBeTruthy();
+      expect(triaged.loopState).toBe("implementing");
+      expect(triaged.implementationAttemptCount).toBe(1);
 
       // Task should exist with correct properties
       const task = await ts.getTask(triaged.taskId!);

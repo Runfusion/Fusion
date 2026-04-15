@@ -220,6 +220,14 @@ function createMockMissionStore() {
 
       return fixFeature;
     }),
+    triageFeature: vi.fn(async (featureId: string) => {
+      const feature = features.get(featureId);
+      if (!feature) throw new Error(`Feature ${featureId} not found`);
+      // Simulate triage by updating the feature
+      const updated = { ...feature, status: "triaged" as const, updatedAt: new Date().toISOString() };
+      features.set(featureId, updated);
+      return updated;
+    }),
 
     // Event emitter
     on: vi.fn(),
@@ -821,6 +829,11 @@ describe("MissionExecutionLoop", () => {
         expect.arrayContaining(["CA-1"]),
       );
 
+      // triageFeature called for the fix feature
+      expect(missionStore.triageFeature).toHaveBeenCalledWith(
+        expect.stringContaining("FIX-"),
+      );
+
       // validation:failed event emitted
       expect(emitSpy).toHaveBeenCalledWith(
         "validation:failed",
@@ -829,6 +842,68 @@ describe("MissionExecutionLoop", () => {
           failures: expect.arrayContaining([
             expect.objectContaining({ assertionId: "CA-1" }),
           ]),
+        }),
+      );
+    });
+
+    it("should emit validation:failed even if triageFeature throws", async () => {
+      const assertions: MissionContractAssertion[] = [
+        {
+          id: "CA-1",
+          milestoneId: "MS-001",
+          title: "Test assertion",
+          assertion: "Should work",
+          status: "pending",
+          orderIndex: 0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ];
+
+      const feature = createMockFeature({
+        loopState: "implementing",
+        taskId: "FN-001",
+        id: "F-001",
+        implementationAttemptCount: 1,
+      });
+      missionStore._setFeature(feature);
+      missionStore.getFeatureByTaskId = vi.fn().mockReturnValue(feature);
+      missionStore.listAssertionsForFeature = vi.fn().mockReturnValue(assertions);
+
+      // Mock AI to return fail response
+      const failResponse = JSON.stringify({
+        status: "fail",
+        assertions: [{ assertionId: "CA-1", passed: false, message: "Failed", expected: "ok", actual: "not ok" }],
+        summary: "Assertion failed",
+      });
+      mockSessionHolder.session.state.messages = [
+        { role: "user", content: "Validate this" },
+        { role: "assistant", content: failResponse },
+      ];
+
+      // Make triageFeature throw an error
+      missionStore.triageFeature = vi.fn().mockRejectedValue(new Error("Triage failed"));
+
+      taskStore._setTask({ id: "FN-001", title: "Test", description: "Implementation", log: [] });
+
+      loop = new MissionExecutionLoop({
+        taskStore: taskStore as any,
+        missionStore: missionStore as any,
+        rootDir: "/tmp",
+      });
+      const emitSpy = vi.spyOn(loop, "emit");
+      loop.start();
+
+      await loop.processTaskOutcome("FN-001");
+
+      // triageFeature was called but threw
+      expect(missionStore.triageFeature).toHaveBeenCalledWith(expect.stringContaining("FIX-"));
+
+      // validation:failed event should still be emitted
+      expect(emitSpy).toHaveBeenCalledWith(
+        "validation:failed",
+        expect.objectContaining({
+          featureId: "F-001",
         }),
       );
     });
