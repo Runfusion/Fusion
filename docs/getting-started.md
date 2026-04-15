@@ -44,13 +44,13 @@ fn dashboard
 
 On first launch, Fusion automatically opens the **onboarding wizard**. It guides you through three steps:
 
-1. **AI Setup** — Connect an AI provider and choose a default model. Authenticate via OAuth login or enter an API key.
+1. **AI Setup** — Connect an AI provider and choose a default model. Authenticate via OAuth login (for supported providers like OpenAI Codex) or enter an API key directly.
 
 2. **GitHub (Optional)** — Connect GitHub to import issues and manage pull requests. This step is optional — you can continue without GitHub.
 
 3. **First Task** — Get started by creating your first task or importing from GitHub.
 
-**The onboarding wizard is dismissible and non-blocking.** If you skip setup, you can complete it later:
+**The onboarding wizard is dismissible and non-blocking.** If you skip setup, you can complete it later — and you can always update your AI provider authentication anytime via **Settings → Authentication** in the dashboard:
 - Click **Skip for now** to dismiss the wizard — the dashboard remains fully usable
 - After dismissing, a **Continue Setup** banner appears at the top of the dashboard, letting you resume from where you left off
 - Re-open onboarding anytime from **Settings → Authentication → Reopen onboarding guide**

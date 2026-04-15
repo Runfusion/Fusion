@@ -126,6 +126,14 @@ In **Triage**, an AI agent reads your project, understands context, and writes a
 - **Multi-Project** — Manage multiple projects from a single installation with project isolation
 - **Inter-Agent Messaging** — Built-in messaging for coordination between agents and users
 
+### Provider Authentication
+
+Fusion supports OAuth-based authentication for AI providers configured via **Settings → Authentication**. When the dashboard is accessed via a non-localhost host (remote node, LAN host/IP, or reverse proxy), provider login URLs are automatically rewritten to route OAuth callbacks through a bridge endpoint (`/api/auth/openai-codex/callback`), ensuring the redirect reaches the active browser session.
+
+- **OpenAI Codex** — Authenticates via Settings OAuth flow with secure state validation
+- **Other providers** — Authenticate via API key entry in Settings
+- **pi authentication** — Handled separately via the `pi` CLI (`/login`) or `ANTHROPIC_API_KEY` environment variable
+
 ### Model System
 
 Fusion uses a dual-scope model hierarchy with five independent lanes. Global settings define baseline defaults, and project settings provide per-project overrides.

@@ -417,6 +417,102 @@ CREATE TABLE IF NOT EXISTS routines (
 );
 CREATE INDEX IF NOT EXISTS idxRoutinesNextRunAt ON routines(nextRunAt);
 CREATE INDEX IF NOT EXISTS idxRoutinesEnabled ON routines(enabled);
+
+-- Roadmap persistence tables (FN-1690)
+-- Standalone roadmap: Roadmap → RoadmapMilestone → RoadmapFeature
+-- with deterministic ordering indexes and FK cascade integrity
+
+-- Roadmaps table
+CREATE TABLE IF NOT EXISTS roadmaps (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
+);
+
+-- Roadmap milestones table
+CREATE TABLE IF NOT EXISTS roadmap_milestones (
+  id TEXT PRIMARY KEY,
+  roadmapId TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  orderIndex INTEGER NOT NULL,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  FOREIGN KEY (roadmapId) REFERENCES roadmaps(id) ON DELETE CASCADE
+);
+
+-- Roadmap features table
+CREATE TABLE IF NOT EXISTS roadmap_features (
+  id TEXT PRIMARY KEY,
+  milestoneId TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  orderIndex INTEGER NOT NULL,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  FOREIGN KEY (milestoneId) REFERENCES roadmap_milestones(id) ON DELETE CASCADE
+);
+
+-- Covering index for deterministic milestone ordering within a roadmap
+CREATE INDEX IF NOT EXISTS idxRoadmapMilestonesRoadmapOrder
+  ON roadmap_milestones(roadmapId, orderIndex, createdAt, id);
+
+-- Covering index for deterministic feature ordering within a milestone
+CREATE INDEX IF NOT EXISTS idxRoadmapFeaturesMilestoneOrder
+  ON roadmap_features(milestoneId, orderIndex, createdAt, id);
+
+-- Insight persistence tables (FN-1877)
+-- Normalized insight entities and insight-generation run records
+
+-- project_insights: normalized insight entities
+CREATE TABLE IF NOT EXISTS project_insights (
+  id TEXT PRIMARY KEY,
+  projectId TEXT NOT NULL,
+  title TEXT NOT NULL,
+  content TEXT,
+  category TEXT NOT NULL,
+  status TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  provenance TEXT,
+  lastRunId TEXT,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
+);
+
+-- project_insight_runs: insight-generation run records
+CREATE TABLE IF NOT EXISTS project_insight_runs (
+  id TEXT PRIMARY KEY,
+  projectId TEXT NOT NULL,
+  trigger TEXT NOT NULL,
+  status TEXT NOT NULL,
+  summary TEXT,
+  error TEXT,
+  insightsCreated INTEGER NOT NULL DEFAULT 0,
+  insightsUpdated INTEGER NOT NULL DEFAULT 0,
+  inputMetadata TEXT,
+  outputMetadata TEXT,
+  createdAt TEXT NOT NULL,
+  startedAt TEXT,
+  completedAt TEXT
+);
+
+-- Index for filtering insights by projectId
+CREATE INDEX IF NOT EXISTS idxProjectInsightsProjectId
+  ON project_insights(projectId);
+
+-- Index for fingerprint-based upsert dedupe
+CREATE INDEX IF NOT EXISTS idxProjectInsightsFingerprint
+  ON project_insights(projectId, fingerprint);
+
+-- Index for filtering insights by category
+CREATE INDEX IF NOT EXISTS idxProjectInsightsCategory
+  ON project_insights(category);
+
+-- Index for filtering runs by projectId
+CREATE INDEX IF NOT EXISTS idxInsightRunsProjectId
+  ON project_insight_runs(projectId);
 `;
 
 // ── Database Class ───────────────────────────────────────────────────
