@@ -501,4 +501,185 @@ describe("GlobalSettingsStore", () => {
       expect(settings.planningGlobalModelId).toBe("gemini-2.5-pro");
     });
   });
+
+  // ── Model Baseline/Fallback Round-Trip Regression (FN-1729) ──────────────
+
+  describe("model baseline/fallback round-trip regression (FN-1729)", () => {
+    it("defaultProvider/defaultModelId round-trips with defaults + persisted values", async () => {
+      // Persist default baseline
+      await store.updateSettings({
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+      });
+
+      let settings = await store.getSettings();
+      expect(settings.defaultProvider).toBe("anthropic");
+      expect(settings.defaultModelId).toBe("claude-sonnet-4-5");
+
+      // Verify persistence
+      const raw = JSON.parse(await readFile(join(dir, "settings.json"), "utf-8"));
+      expect(raw.defaultProvider).toBe("anthropic");
+      expect(raw.defaultModelId).toBe("claude-sonnet-4-5");
+    });
+
+    it("fallbackProvider/fallbackModelId round-trips with defaults + persisted values", async () => {
+      await store.updateSettings({
+        fallbackProvider: "openai",
+        fallbackModelId: "gpt-4o",
+      });
+
+      let settings = await store.getSettings();
+      expect(settings.fallbackProvider).toBe("openai");
+      expect(settings.fallbackModelId).toBe("gpt-4o");
+
+      // Verify persistence
+      const raw = JSON.parse(await readFile(join(dir, "settings.json"), "utf-8"));
+      expect(raw.fallbackProvider).toBe("openai");
+      expect(raw.fallbackModelId).toBe("gpt-4o");
+    });
+
+    it("all global model lanes round-trip correctly", async () => {
+      await store.updateSettings({
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+        fallbackProvider: "openai",
+        fallbackModelId: "gpt-4o",
+        executionGlobalProvider: "google",
+        executionGlobalModelId: "gemini-2.5-pro",
+        planningGlobalProvider: "anthropic",
+        planningGlobalModelId: "claude-opus-4",
+        validatorGlobalProvider: "openai",
+        validatorGlobalModelId: "gpt-4-turbo",
+        titleSummarizerGlobalProvider: "anthropic",
+        titleSummarizerGlobalModelId: "claude-haiku",
+      });
+
+      // Verify all values
+      let settings = await store.getSettings();
+      expect(settings.defaultProvider).toBe("anthropic");
+      expect(settings.defaultModelId).toBe("claude-sonnet-4-5");
+      expect(settings.fallbackProvider).toBe("openai");
+      expect(settings.fallbackModelId).toBe("gpt-4o");
+      expect(settings.executionGlobalProvider).toBe("google");
+      expect(settings.executionGlobalModelId).toBe("gemini-2.5-pro");
+      expect(settings.planningGlobalProvider).toBe("anthropic");
+      expect(settings.planningGlobalModelId).toBe("claude-opus-4");
+      expect(settings.validatorGlobalProvider).toBe("openai");
+      expect(settings.validatorGlobalModelId).toBe("gpt-4-turbo");
+      expect(settings.titleSummarizerGlobalProvider).toBe("anthropic");
+      expect(settings.titleSummarizerGlobalModelId).toBe("claude-haiku");
+
+      // Verify persistence
+      const raw = JSON.parse(await readFile(join(dir, "settings.json"), "utf-8"));
+      expect(raw.defaultProvider).toBe("anthropic");
+      expect(raw.defaultModelId).toBe("claude-sonnet-4-5");
+      expect(raw.fallbackProvider).toBe("openai");
+      expect(raw.fallbackModelId).toBe("gpt-4o");
+      expect(raw.executionGlobalProvider).toBe("google");
+      expect(raw.executionGlobalModelId).toBe("gemini-2.5-pro");
+      expect(raw.planningGlobalProvider).toBe("anthropic");
+      expect(raw.planningGlobalModelId).toBe("claude-opus-4");
+      expect(raw.validatorGlobalProvider).toBe("openai");
+      expect(raw.validatorGlobalModelId).toBe("gpt-4-turbo");
+      expect(raw.titleSummarizerGlobalProvider).toBe("anthropic");
+      expect(raw.titleSummarizerGlobalModelId).toBe("claude-haiku");
+
+      // Clear and verify empty
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ defaultProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ defaultModelId: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ fallbackProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ fallbackModelId: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ executionGlobalProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ executionGlobalModelId: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ planningGlobalProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ planningGlobalModelId: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ validatorGlobalProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ validatorGlobalModelId: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ titleSummarizerGlobalProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ titleSummarizerGlobalModelId: null });
+
+      settings = await store.getSettings();
+      expect(settings.defaultProvider).toBeUndefined();
+      expect(settings.defaultModelId).toBeUndefined();
+      expect(settings.fallbackProvider).toBeUndefined();
+      expect(settings.fallbackModelId).toBeUndefined();
+      expect(settings.executionGlobalProvider).toBeUndefined();
+      expect(settings.executionGlobalModelId).toBeUndefined();
+      expect(settings.planningGlobalProvider).toBeUndefined();
+      expect(settings.planningGlobalModelId).toBeUndefined();
+      expect(settings.validatorGlobalProvider).toBeUndefined();
+      expect(settings.validatorGlobalModelId).toBeUndefined();
+      expect(settings.titleSummarizerGlobalProvider).toBeUndefined();
+      expect(settings.titleSummarizerGlobalModelId).toBeUndefined();
+
+      // Verify cleared from persistence
+      const rawAfter = JSON.parse(await readFile(join(dir, "settings.json"), "utf-8"));
+      expect(rawAfter.defaultProvider).toBeUndefined();
+      expect(rawAfter.defaultModelId).toBeUndefined();
+      expect(rawAfter.fallbackProvider).toBeUndefined();
+      expect(rawAfter.fallbackModelId).toBeUndefined();
+      expect(rawAfter.executionGlobalProvider).toBeUndefined();
+      expect(rawAfter.executionGlobalModelId).toBeUndefined();
+      expect(rawAfter.planningGlobalProvider).toBeUndefined();
+      expect(rawAfter.planningGlobalModelId).toBeUndefined();
+      expect(rawAfter.validatorGlobalProvider).toBeUndefined();
+      expect(rawAfter.validatorGlobalModelId).toBeUndefined();
+      expect(rawAfter.titleSummarizerGlobalProvider).toBeUndefined();
+      expect(rawAfter.titleSummarizerGlobalModelId).toBeUndefined();
+    });
+
+    it("model baseline/fallback defaults do not persist until explicitly set", async () => {
+      // Initialize the store to create settings file with defaults
+      await store.init();
+
+      // Don't set any model settings
+      const settings = await store.getSettings();
+
+      // All should be undefined (not default values)
+      expect(settings.defaultProvider).toBeUndefined();
+      expect(settings.defaultModelId).toBeUndefined();
+      expect(settings.fallbackProvider).toBeUndefined();
+      expect(settings.fallbackModelId).toBeUndefined();
+
+      // Settings file should exist with defaults but no model fields persisted
+      const raw = JSON.parse(await readFile(join(dir, "settings.json"), "utf-8"));
+      // Only default theme fields should be present
+      expect(raw.themeMode).toBe("dark");
+      expect(raw.colorTheme).toBe("default");
+      // Model fields should not be persisted
+      expect(raw.defaultProvider).toBeUndefined();
+      expect(raw.defaultModelId).toBeUndefined();
+      expect(raw.fallbackProvider).toBeUndefined();
+      expect(raw.fallbackModelId).toBeUndefined();
+    });
+
+    it("partial provider without modelId is valid and persists correctly", async () => {
+      // Set provider without modelId
+      await store.updateSettings({
+        defaultProvider: "anthropic",
+        // defaultModelId intentionally omitted
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.defaultProvider).toBe("anthropic");
+      expect(settings.defaultModelId).toBeUndefined();
+
+      // Verify partial pair persisted
+      const raw = JSON.parse(await readFile(join(dir, "settings.json"), "utf-8"));
+      expect(raw.defaultProvider).toBe("anthropic");
+      expect(raw.defaultModelId).toBeUndefined();
+    });
+  });
 });

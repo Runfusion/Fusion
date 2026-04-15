@@ -58,3 +58,103 @@ describe("settings key parity", () => {
     expect(overlap).toEqual([]);
   });
 });
+
+// ── Model Lane Key Parity Regression Tests (FN-1729) ────────────────────────
+
+describe("model lane key parity regression (FN-1729)", () => {
+  // All model lane provider/modelId pairs that should exist
+  const allModelLanePairs = [
+    // Default baseline (global only)
+    { provider: "defaultProvider", modelId: "defaultModelId", expectedScope: "global" },
+    // Fallback baseline (global only)
+    { provider: "fallbackProvider", modelId: "fallbackModelId", expectedScope: "global" },
+    // Execution lane
+    { provider: "executionProvider", modelId: "executionModelId", expectedScope: "project" },
+    { provider: "executionGlobalProvider", modelId: "executionGlobalModelId", expectedScope: "global" },
+    // Planning lane
+    { provider: "planningProvider", modelId: "planningModelId", expectedScope: "project" },
+    { provider: "planningGlobalProvider", modelId: "planningGlobalModelId", expectedScope: "global" },
+    { provider: "planningFallbackProvider", modelId: "planningFallbackModelId", expectedScope: "project" },
+    // Validator lane
+    { provider: "validatorProvider", modelId: "validatorModelId", expectedScope: "project" },
+    { provider: "validatorGlobalProvider", modelId: "validatorGlobalModelId", expectedScope: "global" },
+    { provider: "validatorFallbackProvider", modelId: "validatorFallbackModelId", expectedScope: "project" },
+    // Summarizer lane
+    { provider: "titleSummarizerProvider", modelId: "titleSummarizerModelId", expectedScope: "project" },
+    { provider: "titleSummarizerGlobalProvider", modelId: "titleSummarizerGlobalModelId", expectedScope: "global" },
+    { provider: "titleSummarizerFallbackProvider", modelId: "titleSummarizerFallbackModelId", expectedScope: "project" },
+  ] as const;
+
+  it.each(allModelLanePairs)(
+    "$provider/$modelId is correctly classified as $expectedScope scope",
+    ({ provider, modelId, expectedScope }) => {
+      if (expectedScope === "global") {
+        expect(isGlobalSettingsKey(provider)).toBe(true);
+        expect(isGlobalSettingsKey(modelId)).toBe(true);
+        expect(isProjectSettingsKey(provider)).toBe(false);
+        expect(isProjectSettingsKey(modelId)).toBe(false);
+      } else {
+        expect(isProjectSettingsKey(provider)).toBe(true);
+        expect(isProjectSettingsKey(modelId)).toBe(true);
+        expect(isGlobalSettingsKey(provider)).toBe(false);
+        expect(isGlobalSettingsKey(modelId)).toBe(false);
+      }
+    },
+  );
+
+  it("model lane keys appear in exactly one scope key list", () => {
+    const globalKeys = new Set(GLOBAL_SETTINGS_KEYS as readonly string[]);
+    const projectKeys = new Set(PROJECT_SETTINGS_KEYS as readonly string[]);
+
+    for (const { provider, modelId } of allModelLanePairs) {
+      const inGlobal = globalKeys.has(provider) && globalKeys.has(modelId);
+      const inProject = projectKeys.has(provider) && projectKeys.has(modelId);
+
+      // Each pair must appear in exactly one scope
+      expect(inGlobal || inProject).toBe(true);
+      expect(inGlobal && inProject).toBe(false);
+    }
+  });
+
+  it("all global model lane keys are in GLOBAL_SETTINGS_KEYS", () => {
+    const globalKeys = new Set(GLOBAL_SETTINGS_KEYS as readonly string[]);
+
+    const globalLanes = allModelLanePairs
+      .filter((p) => p.expectedScope === "global")
+      .flatMap((p) => [p.provider, p.modelId]);
+
+    for (const key of globalLanes) {
+      expect(globalKeys.has(key)).toBe(true);
+    }
+  });
+
+  it("all project model lane keys are in PROJECT_SETTINGS_KEYS", () => {
+    const projectKeys = new Set(PROJECT_SETTINGS_KEYS as readonly string[]);
+
+    const projectLanes = allModelLanePairs
+      .filter((p) => p.expectedScope === "project")
+      .flatMap((p) => [p.provider, p.modelId]);
+
+    for (const key of projectLanes) {
+      expect(projectKeys.has(key)).toBe(true);
+    }
+  });
+
+  it("default override keys are in project scope", () => {
+    expect(isProjectSettingsKey("defaultProviderOverride")).toBe(true);
+    expect(isProjectSettingsKey("defaultModelIdOverride")).toBe(true);
+    expect(isGlobalSettingsKey("defaultProviderOverride")).toBe(false);
+    expect(isGlobalSettingsKey("defaultModelIdOverride")).toBe(false);
+  });
+
+  it("no model lane provider exists without its corresponding modelId key", () => {
+    const allKeys = new Set([...GLOBAL_SETTINGS_KEYS, ...PROJECT_SETTINGS_KEYS]);
+
+    for (const { provider, modelId } of allModelLanePairs) {
+      // Both must exist or neither should exist
+      const hasProvider = allKeys.has(provider);
+      const hasModelId = allKeys.has(modelId);
+      expect(hasProvider).toBe(hasModelId);
+    }
+  });
+});

@@ -991,6 +991,939 @@ describe("TaskStore", () => {
     });
   });
 
+  // ── Model Lane Persistence Regression Tests (FN-1729) ─────────────────────
+
+  describe("model lane persistence regression", () => {
+    // Table-driven test matrix: verifies all model lane fields persist correctly
+    // Fields are split by their correct scope (global or project)
+    const projectModelLanePairs = [
+      // Execution lane (project override)
+      { provider: "executionProvider", modelId: "executionModelId" },
+      // Planning lane (project override + fallback)
+      { provider: "planningProvider", modelId: "planningModelId" },
+      { provider: "planningFallbackProvider", modelId: "planningFallbackModelId" },
+      // Validator lane (project override + fallback)
+      { provider: "validatorProvider", modelId: "validatorModelId" },
+      { provider: "validatorFallbackProvider", modelId: "validatorFallbackModelId" },
+      // Summarizer lane (project override + fallback)
+      { provider: "titleSummarizerProvider", modelId: "titleSummarizerModelId" },
+      { provider: "titleSummarizerFallbackProvider", modelId: "titleSummarizerFallbackModelId" },
+      // Default override (project-level override of global defaults)
+      { provider: "defaultProviderOverride", modelId: "defaultModelIdOverride" },
+    ] as const;
+
+    const globalModelLanePairs = [
+      // Default baseline
+      { provider: "defaultProvider", modelId: "defaultModelId" },
+      // Fallback baseline
+      { provider: "fallbackProvider", modelId: "fallbackModelId" },
+      // Execution lane (global baseline)
+      { provider: "executionGlobalProvider", modelId: "executionGlobalModelId" },
+      // Planning lane (global baseline)
+      { provider: "planningGlobalProvider", modelId: "planningGlobalModelId" },
+      // Validator lane (global baseline)
+      { provider: "validatorGlobalProvider", modelId: "validatorGlobalModelId" },
+      // Summarizer lane (global baseline)
+      { provider: "titleSummarizerGlobalProvider", modelId: "titleSummarizerGlobalModelId" },
+    ] as const;
+
+    it.each(projectModelLanePairs)(
+      "persists project $provider/$modelId via updateSettings",
+      async ({ provider, modelId }) => {
+        const patch: Record<string, string> = {};
+        patch[provider] = "anthropic";
+        patch[modelId] = "claude-opus-4";
+        await store.updateSettings(patch);
+
+        const settings = await store.getSettings();
+        expect((settings as any)[provider]).toBe("anthropic");
+        expect((settings as any)[modelId]).toBe("claude-opus-4");
+      },
+    );
+
+    it.each(globalModelLanePairs)(
+      "persists global $provider/$modelId via updateGlobalSettings",
+      async ({ provider, modelId }) => {
+        const patch: Record<string, string> = {};
+        patch[provider] = "openai";
+        patch[modelId] = "gpt-4o";
+        await store.updateGlobalSettings(patch);
+
+        const settings = await store.getSettings();
+        expect((settings as any)[provider]).toBe("openai");
+        expect((settings as any)[modelId]).toBe("gpt-4o");
+      },
+    );
+
+    it.each(projectModelLanePairs)(
+      "project $provider/$modelId default to undefined",
+      async ({ provider, modelId }) => {
+        const settings = await store.getSettings();
+        expect((settings as any)[provider]).toBeUndefined();
+        expect((settings as any)[modelId]).toBeUndefined();
+      },
+    );
+
+    it.each(globalModelLanePairs)(
+      "global $provider/$modelId default to undefined",
+      async ({ provider, modelId }) => {
+        const settings = await store.getSettings();
+        expect((settings as any)[provider]).toBeUndefined();
+        expect((settings as any)[modelId]).toBeUndefined();
+      },
+    );
+
+    it.each(projectModelLanePairs)(
+      "project $provider/$modelId persist to project config file",
+      async ({ provider, modelId }) => {
+        const patch: Record<string, string> = {};
+        patch[provider] = "google";
+        patch[modelId] = "gemini-2.5-pro";
+
+        await store.updateSettings(patch);
+
+        const configRaw = await readFile(join(rootDir, ".fusion", "config.json"), "utf-8");
+        const config = JSON.parse(configRaw);
+
+        // Project fields should appear in project config
+        expect((config.settings as any)[provider]).toBe("google");
+        expect((config.settings as any)[modelId]).toBe("gemini-2.5-pro");
+      },
+    );
+
+    it.each(globalModelLanePairs)(
+      "global $provider/$modelId do NOT persist to project config file",
+      async ({ provider, modelId }) => {
+        const patch: Record<string, string> = {};
+        patch[provider] = "google";
+        patch[modelId] = "gemini-2.5-pro";
+
+        await store.updateGlobalSettings(patch);
+
+        const configRaw = await readFile(join(rootDir, ".fusion", "config.json"), "utf-8");
+        const config = JSON.parse(configRaw);
+
+        // Global fields should NOT appear in project config
+        expect((config.settings as any)[provider]).toBeUndefined();
+        expect((config.settings as any)[modelId]).toBeUndefined();
+      },
+    );
+  });
+
+  // ── Scope Separation Regression Tests (FN-1729) ───────────────────────────
+
+  describe("scope separation regression", () => {
+    it("getSettingsByScope: global lane keys never appear in project scope", async () => {
+      await store.updateGlobalSettings({
+        executionGlobalProvider: "anthropic",
+        executionGlobalModelId: "claude-sonnet-4-5",
+        planningGlobalProvider: "google",
+        planningGlobalModelId: "gemini-2.5-pro",
+        validatorGlobalProvider: "openai",
+        validatorGlobalModelId: "gpt-4o",
+        titleSummarizerGlobalProvider: "anthropic",
+        titleSummarizerGlobalModelId: "claude-haiku",
+      });
+
+      const { project } = await store.getSettingsByScope();
+
+      // All global lane keys must be absent from project scope
+      expect((project as any).executionGlobalProvider).toBeUndefined();
+      expect((project as any).executionGlobalModelId).toBeUndefined();
+      expect((project as any).planningGlobalProvider).toBeUndefined();
+      expect((project as any).planningGlobalModelId).toBeUndefined();
+      expect((project as any).validatorGlobalProvider).toBeUndefined();
+      expect((project as any).validatorGlobalModelId).toBeUndefined();
+      expect((project as any).titleSummarizerGlobalProvider).toBeUndefined();
+      expect((project as any).titleSummarizerGlobalModelId).toBeUndefined();
+    });
+
+    it("getSettingsByScope: project override keys never appear in global scope", async () => {
+      await store.updateSettings({
+        executionProvider: "anthropic",
+        executionModelId: "claude-opus-4",
+        planningProvider: "openai",
+        planningModelId: "gpt-4o",
+        planningFallbackProvider: "google",
+        planningFallbackModelId: "gemini-2.5-pro",
+        validatorProvider: "anthropic",
+        validatorModelId: "claude-sonnet-4-5",
+        validatorFallbackProvider: "openai",
+        validatorFallbackModelId: "gpt-4o-mini",
+        titleSummarizerProvider: "google",
+        titleSummarizerModelId: "gemini-2.5-pro",
+        titleSummarizerFallbackProvider: "anthropic",
+        titleSummarizerFallbackModelId: "claude-haiku",
+      });
+
+      const { global } = await store.getSettingsByScope();
+
+      // Project lane keys must be absent from global scope
+      expect((global as any).executionProvider).toBeUndefined();
+      expect((global as any).executionModelId).toBeUndefined();
+      expect((global as any).planningProvider).toBeUndefined();
+      expect((global as any).planningModelId).toBeUndefined();
+      expect((global as any).planningFallbackProvider).toBeUndefined();
+      expect((global as any).planningFallbackModelId).toBeUndefined();
+      expect((global as any).validatorProvider).toBeUndefined();
+      expect((global as any).validatorModelId).toBeUndefined();
+      expect((global as any).validatorFallbackProvider).toBeUndefined();
+      expect((global as any).validatorFallbackModelId).toBeUndefined();
+      expect((global as any).titleSummarizerProvider).toBeUndefined();
+      expect((global as any).titleSummarizerModelId).toBeUndefined();
+      expect((global as any).titleSummarizerFallbackProvider).toBeUndefined();
+      expect((global as any).titleSummarizerFallbackModelId).toBeUndefined();
+    });
+
+    it("getSettingsByScope: default baseline keys appear in global scope", async () => {
+      await store.updateGlobalSettings({
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+        fallbackProvider: "openai",
+        fallbackModelId: "gpt-4o",
+      });
+
+      const { global } = await store.getSettingsByScope();
+
+      expect(global.defaultProvider).toBe("anthropic");
+      expect(global.defaultModelId).toBe("claude-sonnet-4-5");
+      expect(global.fallbackProvider).toBe("openai");
+      expect(global.fallbackModelId).toBe("gpt-4o");
+    });
+
+    it("getSettingsByScope: default override keys appear in project scope", async () => {
+      await store.updateSettings({
+        defaultProviderOverride: "anthropic",
+        defaultModelIdOverride: "claude-opus-4",
+      });
+
+      const { project } = await store.getSettingsByScope();
+
+      expect(project.defaultProviderOverride).toBe("anthropic");
+      expect(project.defaultModelIdOverride).toBe("claude-opus-4");
+    });
+
+    it("getSettingsByScope: mixed global and project keys are separated correctly", async () => {
+      await store.updateGlobalSettings({
+        defaultProvider: "openai",
+        defaultModelId: "gpt-4o",
+        fallbackProvider: "google",
+        fallbackModelId: "gemini-2.5-pro",
+        planningGlobalProvider: "anthropic",
+        planningGlobalModelId: "claude-sonnet-4-5",
+      });
+
+      await store.updateSettings({
+        planningProvider: "anthropic",
+        planningModelId: "claude-opus-4",
+        planningFallbackProvider: "openai",
+        planningFallbackModelId: "gpt-4o-mini",
+        executionProvider: "google",
+        executionModelId: "gemini-2.5-pro",
+      });
+
+      const { global, project } = await store.getSettingsByScope();
+
+      // Global scope
+      expect(global.defaultProvider).toBe("openai");
+      expect(global.defaultModelId).toBe("gpt-4o");
+      expect(global.fallbackProvider).toBe("google");
+      expect(global.fallbackModelId).toBe("gemini-2.5-pro");
+      expect(global.planningGlobalProvider).toBe("anthropic");
+      expect(global.planningGlobalModelId).toBe("claude-sonnet-4-5");
+
+      // Project scope
+      expect(project.planningProvider).toBe("anthropic");
+      expect(project.planningModelId).toBe("claude-opus-4");
+      expect(project.planningFallbackProvider).toBe("openai");
+      expect(project.planningFallbackModelId).toBe("gpt-4o-mini");
+      expect(project.executionProvider).toBe("google");
+      expect(project.executionModelId).toBe("gemini-2.5-pro");
+
+      // Verify no cross-contamination
+      expect((global as any).planningProvider).toBeUndefined();
+      expect((global as any).planningFallbackProvider).toBeUndefined();
+      expect((global as any).executionProvider).toBeUndefined();
+      expect((project as any).planningGlobalProvider).toBeUndefined();
+      expect((project as any).defaultProvider).toBeUndefined();
+    });
+  });
+
+  // ── Settings Parity Regression Tests (FN-1729) ────────────────────────────
+
+  describe("settings parity regression", () => {
+    it("getSettings() and getSettingsFast() return equivalent merged snapshots", async () => {
+      // Set up various settings across scopes
+      await store.updateGlobalSettings({
+        themeMode: "light",
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+        fallbackProvider: "openai",
+        fallbackModelId: "gpt-4o",
+        planningGlobalProvider: "google",
+        planningGlobalModelId: "gemini-2.5-pro",
+        executionGlobalProvider: "anthropic",
+        executionGlobalModelId: "claude-opus-4",
+      });
+
+      await store.updateSettings({
+        maxConcurrent: 5,
+        autoMerge: false,
+        planningProvider: "anthropic",
+        planningModelId: "claude-sonnet-4-5",
+        planningFallbackProvider: "openai",
+        planningFallbackModelId: "gpt-4o-mini",
+        executionProvider: "google",
+        executionModelId: "gemini-2.5-pro",
+        validatorProvider: "anthropic",
+        validatorModelId: "claude-haiku",
+      });
+
+      const fast = await store.getSettingsFast();
+      const regular = await store.getSettings();
+
+      // Verify parity for all model settings
+      expect(fast.defaultProvider).toBe(regular.defaultProvider);
+      expect(fast.defaultModelId).toBe(regular.defaultModelId);
+      expect(fast.fallbackProvider).toBe(regular.fallbackProvider);
+      expect(fast.fallbackModelId).toBe(regular.fallbackModelId);
+      expect(fast.planningGlobalProvider).toBe(regular.planningGlobalProvider);
+      expect(fast.planningGlobalModelId).toBe(regular.planningGlobalModelId);
+      expect(fast.planningProvider).toBe(regular.planningProvider);
+      expect(fast.planningModelId).toBe(regular.planningModelId);
+      expect(fast.planningFallbackProvider).toBe(regular.planningFallbackProvider);
+      expect(fast.planningFallbackModelId).toBe(regular.planningFallbackModelId);
+      expect(fast.executionGlobalProvider).toBe(regular.executionGlobalProvider);
+      expect(fast.executionGlobalModelId).toBe(regular.executionGlobalModelId);
+      expect(fast.executionProvider).toBe(regular.executionProvider);
+      expect(fast.executionModelId).toBe(regular.executionModelId);
+      expect(fast.validatorProvider).toBe(regular.validatorProvider);
+      expect(fast.validatorModelId).toBe(regular.validatorModelId);
+      expect(fast.validatorFallbackProvider).toBe(regular.validatorFallbackProvider);
+      expect(fast.validatorFallbackModelId).toBe(regular.validatorFallbackModelId);
+      expect(fast.titleSummarizerProvider).toBe(regular.titleSummarizerProvider);
+      expect(fast.titleSummarizerModelId).toBe(regular.titleSummarizerModelId);
+      expect(fast.titleSummarizerGlobalProvider).toBe(regular.titleSummarizerGlobalProvider);
+      expect(fast.titleSummarizerGlobalModelId).toBe(regular.titleSummarizerGlobalModelId);
+      expect(fast.titleSummarizerFallbackProvider).toBe(regular.titleSummarizerFallbackProvider);
+      expect(fast.titleSummarizerFallbackModelId).toBe(regular.titleSummarizerFallbackModelId);
+
+      // Also verify non-model settings parity
+      expect(fast.themeMode).toBe(regular.themeMode);
+      expect(fast.maxConcurrent).toBe(regular.maxConcurrent);
+      expect(fast.autoMerge).toBe(regular.autoMerge);
+
+      // The entire objects should be equal
+      expect(fast).toEqual(regular);
+    });
+
+    it("getSettings() and getSettingsFast() are equivalent on empty state", async () => {
+      const fast = await store.getSettingsFast();
+      const regular = await store.getSettings();
+
+      expect(fast).toEqual(regular);
+    });
+
+    it("getSettingsFast() includes all model lane fields", async () => {
+      await store.updateGlobalSettings({
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+        fallbackProvider: "openai",
+        fallbackModelId: "gpt-4o",
+        planningGlobalProvider: "google",
+        planningGlobalModelId: "gemini-2.5-pro",
+        executionGlobalProvider: "anthropic",
+        executionGlobalModelId: "claude-opus-4",
+        validatorGlobalProvider: "openai",
+        validatorGlobalModelId: "gpt-4-turbo",
+        titleSummarizerGlobalProvider: "anthropic",
+        titleSummarizerGlobalModelId: "claude-haiku",
+      });
+
+      await store.updateSettings({
+        planningProvider: "anthropic",
+        planningModelId: "claude-sonnet-4-5",
+        planningFallbackProvider: "openai",
+        planningFallbackModelId: "gpt-4o-mini",
+        executionProvider: "google",
+        executionModelId: "gemini-2.5-pro",
+        validatorProvider: "anthropic",
+        validatorModelId: "claude-opus-4",
+        validatorFallbackProvider: "openai",
+        validatorFallbackModelId: "gpt-4o",
+        titleSummarizerProvider: "google",
+        titleSummarizerModelId: "gemini-2.5-pro",
+        titleSummarizerFallbackProvider: "anthropic",
+        titleSummarizerFallbackModelId: "claude-haiku",
+      });
+
+      const settings = await store.getSettingsFast();
+
+      // Verify all fields are present
+      expect(settings.defaultProvider).toBe("anthropic");
+      expect(settings.defaultModelId).toBe("claude-sonnet-4-5");
+      expect(settings.fallbackProvider).toBe("openai");
+      expect(settings.fallbackModelId).toBe("gpt-4o");
+      expect(settings.planningGlobalProvider).toBe("google");
+      expect(settings.planningGlobalModelId).toBe("gemini-2.5-pro");
+      expect(settings.planningProvider).toBe("anthropic");
+      expect(settings.planningModelId).toBe("claude-sonnet-4-5");
+      expect(settings.planningFallbackProvider).toBe("openai");
+      expect(settings.planningFallbackModelId).toBe("gpt-4o-mini");
+      expect(settings.executionGlobalProvider).toBe("anthropic");
+      expect(settings.executionGlobalModelId).toBe("claude-opus-4");
+      expect(settings.executionProvider).toBe("google");
+      expect(settings.executionModelId).toBe("gemini-2.5-pro");
+      expect(settings.validatorProvider).toBe("anthropic");
+      expect(settings.validatorModelId).toBe("claude-opus-4");
+      expect(settings.validatorFallbackProvider).toBe("openai");
+      expect(settings.validatorFallbackModelId).toBe("gpt-4o");
+      expect(settings.titleSummarizerProvider).toBe("google");
+      expect(settings.titleSummarizerModelId).toBe("gemini-2.5-pro");
+      expect(settings.titleSummarizerGlobalProvider).toBe("anthropic");
+      expect(settings.titleSummarizerGlobalModelId).toBe("claude-haiku");
+      expect(settings.titleSummarizerFallbackProvider).toBe("anthropic");
+      expect(settings.titleSummarizerFallbackModelId).toBe("claude-haiku");
+    });
+  });
+
+  // ── Model Precedence Regression Tests (FN-1729) ──────────────────────────
+
+  describe("model precedence regression", () => {
+    it("project override pair present → effective value uses project pair", async () => {
+      // Set global baseline
+      await store.updateGlobalSettings({
+        planningGlobalProvider: "anthropic",
+        planningGlobalModelId: "claude-sonnet-4-5",
+      });
+
+      // Set project override
+      await store.updateSettings({
+        planningProvider: "openai",
+        planningModelId: "gpt-4o",
+      });
+
+      const settings = await store.getSettings();
+
+      // Project pair should win
+      expect(settings.planningProvider).toBe("openai");
+      expect(settings.planningModelId).toBe("gpt-4o");
+
+      // Global should still be readable
+      expect(settings.planningGlobalProvider).toBe("anthropic");
+      expect(settings.planningGlobalModelId).toBe("claude-sonnet-4-5");
+    });
+
+    it("project override missing + global lane pair present → uses global lane pair", async () => {
+      // Set only global baseline
+      await store.updateGlobalSettings({
+        planningGlobalProvider: "anthropic",
+        planningGlobalModelId: "claude-sonnet-4-5",
+      });
+
+      const settings = await store.getSettings();
+
+      // Should fall back to global lane
+      expect(settings.planningProvider).toBeUndefined();
+      expect(settings.planningModelId).toBeUndefined();
+      expect(settings.planningGlobalProvider).toBe("anthropic");
+      expect(settings.planningGlobalModelId).toBe("claude-sonnet-4-5");
+    });
+
+    it("lane pair missing + default pair present → falls back to default pair", async () => {
+      // Set only default baseline (no planning lane at all)
+      await store.updateGlobalSettings({
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+      });
+
+      const settings = await store.getSettings();
+
+      // Planning lane should be empty
+      expect(settings.planningProvider).toBeUndefined();
+      expect(settings.planningModelId).toBeUndefined();
+
+      // Default baseline should be available
+      expect(settings.defaultProvider).toBe("anthropic");
+      expect(settings.defaultModelId).toBe("claude-sonnet-4-5");
+    });
+
+    it("execution lane precedence: project → global → default", async () => {
+      // Set default baseline
+      await store.updateGlobalSettings({
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+      });
+
+      // Set execution global lane
+      await store.updateGlobalSettings({
+        executionGlobalProvider: "google",
+        executionGlobalModelId: "gemini-2.5-pro",
+      });
+
+      // Set execution project override
+      await store.updateSettings({
+        executionProvider: "openai",
+        executionModelId: "gpt-4o",
+      });
+
+      const settings = await store.getSettings();
+
+      // Project override should win
+      expect(settings.executionProvider).toBe("openai");
+      expect(settings.executionModelId).toBe("gpt-4o");
+
+      // Global should still be accessible
+      expect(settings.executionGlobalProvider).toBe("google");
+      expect(settings.executionGlobalModelId).toBe("gemini-2.5-pro");
+
+      // Default should still be accessible
+      expect(settings.defaultProvider).toBe("anthropic");
+      expect(settings.defaultModelId).toBe("claude-sonnet-4-5");
+    });
+
+    it("all lanes simultaneously with different providers", async () => {
+      await store.updateGlobalSettings({
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+        fallbackProvider: "openai",
+        fallbackModelId: "gpt-4o",
+        executionGlobalProvider: "google",
+        executionGlobalModelId: "gemini-2.5-pro",
+        planningGlobalProvider: "anthropic",
+        planningGlobalModelId: "claude-opus-4",
+        validatorGlobalProvider: "openai",
+        validatorGlobalModelId: "gpt-4-turbo",
+        titleSummarizerGlobalProvider: "anthropic",
+        titleSummarizerGlobalModelId: "claude-haiku",
+      });
+
+      await store.updateSettings({
+        executionProvider: "openai",
+        executionModelId: "gpt-4o-mini",
+        planningProvider: "google",
+        planningModelId: "gemini-2.5-flash",
+        planningFallbackProvider: "anthropic",
+        planningFallbackModelId: "claude-sonnet-4-5",
+        validatorProvider: "google",
+        validatorModelId: "gemini-2.5-pro",
+        validatorFallbackProvider: "anthropic",
+        validatorFallbackModelId: "claude-opus-4",
+        titleSummarizerProvider: "openai",
+        titleSummarizerModelId: "gpt-4o",
+        titleSummarizerFallbackProvider: "google",
+        titleSummarizerFallbackModelId: "gemini-2.5-flash",
+      });
+
+      const settings = await store.getSettings();
+
+      // All lanes should coexist independently
+      expect(settings.defaultProvider).toBe("anthropic");
+      expect(settings.defaultModelId).toBe("claude-sonnet-4-5");
+      expect(settings.fallbackProvider).toBe("openai");
+      expect(settings.fallbackModelId).toBe("gpt-4o");
+
+      expect(settings.executionProvider).toBe("openai");
+      expect(settings.executionModelId).toBe("gpt-4o-mini");
+      expect(settings.executionGlobalProvider).toBe("google");
+      expect(settings.executionGlobalModelId).toBe("gemini-2.5-pro");
+
+      expect(settings.planningProvider).toBe("google");
+      expect(settings.planningModelId).toBe("gemini-2.5-flash");
+      expect(settings.planningGlobalProvider).toBe("anthropic");
+      expect(settings.planningGlobalModelId).toBe("claude-opus-4");
+      expect(settings.planningFallbackProvider).toBe("anthropic");
+      expect(settings.planningFallbackModelId).toBe("claude-sonnet-4-5");
+
+      expect(settings.validatorProvider).toBe("google");
+      expect(settings.validatorModelId).toBe("gemini-2.5-pro");
+      expect(settings.validatorGlobalProvider).toBe("openai");
+      expect(settings.validatorGlobalModelId).toBe("gpt-4-turbo");
+      expect(settings.validatorFallbackProvider).toBe("anthropic");
+      expect(settings.validatorFallbackModelId).toBe("claude-opus-4");
+
+      expect(settings.titleSummarizerProvider).toBe("openai");
+      expect(settings.titleSummarizerModelId).toBe("gpt-4o");
+      expect(settings.titleSummarizerGlobalProvider).toBe("anthropic");
+      expect(settings.titleSummarizerGlobalModelId).toBe("claude-haiku");
+      expect(settings.titleSummarizerFallbackProvider).toBe("google");
+      expect(settings.titleSummarizerFallbackModelId).toBe("gemini-2.5-flash");
+    });
+  });
+
+  // ── Compatibility & Null-Clear Regression Tests (FN-1729) ────────────────
+
+  describe("canonical vs legacy compatibility regression", () => {
+    it("canonical executionProvider + legacy planningProvider coexist without conflict", async () => {
+      // Set canonical execution lane (new FN-1710 format)
+      await store.updateGlobalSettings({
+        executionGlobalProvider: "anthropic",
+        executionGlobalModelId: "claude-sonnet-4-5",
+      });
+
+      // Set legacy planning format
+      await store.updateSettings({
+        planningProvider: "openai",
+        planningModelId: "gpt-4o",
+      });
+
+      const settings = await store.getSettings();
+
+      // Both should coexist
+      expect(settings.executionGlobalProvider).toBe("anthropic");
+      expect(settings.executionGlobalModelId).toBe("claude-sonnet-4-5");
+      expect(settings.planningProvider).toBe("openai");
+      expect(settings.planningModelId).toBe("gpt-4o");
+    });
+
+    it("mixed legacy canonical shapes resolve deterministically", async () => {
+      // Legacy format
+      await store.updateSettings({
+        planningProvider: "anthropic",
+        planningModelId: "claude-sonnet-4-5",
+        validatorProvider: "openai",
+        validatorModelId: "gpt-4o",
+        titleSummarizerProvider: "google",
+        titleSummarizerModelId: "gemini-2.5-pro",
+      });
+
+      // Canonical format
+      await store.updateSettings({
+        executionProvider: "anthropic",
+        executionModelId: "claude-opus-4",
+        executionGlobalProvider: undefined,
+        executionGlobalModelId: undefined,
+      });
+
+      // Also set global canonical fields
+      await store.updateGlobalSettings({
+        planningGlobalProvider: "anthropic",
+        planningGlobalModelId: "claude-haiku",
+        validatorGlobalProvider: "openai",
+        validatorGlobalModelId: "gpt-4o-mini",
+      });
+
+      const settings = await store.getSettings();
+
+      // Legacy shapes preserved
+      expect(settings.planningProvider).toBe("anthropic");
+      expect(settings.planningModelId).toBe("claude-sonnet-4-5");
+      expect(settings.validatorProvider).toBe("openai");
+      expect(settings.validatorModelId).toBe("gpt-4o");
+      expect(settings.titleSummarizerProvider).toBe("google");
+      expect(settings.titleSummarizerModelId).toBe("gemini-2.5-pro");
+
+      // Canonical shapes preserved
+      expect(settings.executionProvider).toBe("anthropic");
+      expect(settings.executionModelId).toBe("claude-opus-4");
+
+      // Global canonical shapes preserved
+      expect(settings.planningGlobalProvider).toBe("anthropic");
+      expect(settings.planningGlobalModelId).toBe("claude-haiku");
+      expect(settings.validatorGlobalProvider).toBe("openai");
+      expect(settings.validatorGlobalModelId).toBe("gpt-4o-mini");
+    });
+
+    it("legacy format: planningProvider without planningModelId is valid partial pair", async () => {
+      await store.updateSettings({
+        planningProvider: "anthropic",
+        // planningModelId intentionally omitted
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.planningProvider).toBe("anthropic");
+      expect(settings.planningModelId).toBeUndefined();
+    });
+
+    it("legacy format: validatorProvider without validatorModelId is valid partial pair", async () => {
+      await store.updateSettings({
+        validatorProvider: "openai",
+        // validatorModelId intentionally omitted
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.validatorProvider).toBe("openai");
+      expect(settings.validatorModelId).toBeUndefined();
+    });
+
+    it("canonical format: executionProvider without executionModelId is valid partial pair", async () => {
+      await store.updateSettings({
+        executionProvider: "google",
+        // executionModelId intentionally omitted
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.executionProvider).toBe("google");
+      expect(settings.executionModelId).toBeUndefined();
+    });
+
+    it("mixed: full pair + partial pair coexist in same lane", async () => {
+      // Set full planning pair
+      await store.updateSettings({
+        planningProvider: "anthropic",
+        planningModelId: "claude-sonnet-4-5",
+      });
+
+      // Set partial validator pair (only provider)
+      await store.updateSettings({
+        validatorProvider: "openai",
+        // validatorModelId intentionally omitted
+      });
+
+      // Set full execution pair
+      await store.updateSettings({
+        executionProvider: "google",
+        executionModelId: "gemini-2.5-pro",
+      });
+
+      const settings = await store.getSettings();
+
+      expect(settings.planningProvider).toBe("anthropic");
+      expect(settings.planningModelId).toBe("claude-sonnet-4-5");
+      expect(settings.validatorProvider).toBe("openai");
+      expect(settings.validatorModelId).toBeUndefined();
+      expect(settings.executionProvider).toBe("google");
+      expect(settings.executionModelId).toBe("gemini-2.5-pro");
+    });
+  });
+
+  describe("null-as-delete regression for model settings", () => {
+    it("clears planningProvider/planningModelId with null via updateSettings", async () => {
+      // First set the values
+      await store.updateSettings({
+        planningProvider: "anthropic",
+        planningModelId: "claude-sonnet-4-5",
+      });
+
+      let settings = await store.getSettings();
+      expect(settings.planningProvider).toBe("anthropic");
+      expect(settings.planningModelId).toBe("claude-sonnet-4-5");
+
+      // Clear with null
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ planningProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ planningModelId: null });
+
+      settings = await store.getSettings();
+      expect(settings.planningProvider).toBeUndefined();
+      expect(settings.planningModelId).toBeUndefined();
+    });
+
+    it("clears validatorProvider/validatorModelId with null", async () => {
+      await store.updateSettings({
+        validatorProvider: "openai",
+        validatorModelId: "gpt-4o",
+      });
+
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ validatorProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ validatorModelId: null });
+
+      const settings = await store.getSettings();
+      expect(settings.validatorProvider).toBeUndefined();
+      expect(settings.validatorModelId).toBeUndefined();
+    });
+
+    it("clears executionProvider/executionModelId with null", async () => {
+      await store.updateSettings({
+        executionProvider: "google",
+        executionModelId: "gemini-2.5-pro",
+      });
+
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ executionProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ executionModelId: null });
+
+      const settings = await store.getSettings();
+      expect(settings.executionProvider).toBeUndefined();
+      expect(settings.executionModelId).toBeUndefined();
+    });
+
+    it("clears titleSummarizerProvider/titleSummarizerModelId with null", async () => {
+      await store.updateSettings({
+        titleSummarizerProvider: "anthropic",
+        titleSummarizerModelId: "claude-haiku",
+      });
+
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ titleSummarizerProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ titleSummarizerModelId: null });
+
+      const settings = await store.getSettings();
+      expect(settings.titleSummarizerProvider).toBeUndefined();
+      expect(settings.titleSummarizerModelId).toBeUndefined();
+    });
+
+    it("clears fallback model fields with null", async () => {
+      await store.updateSettings({
+        planningFallbackProvider: "anthropic",
+        planningFallbackModelId: "claude-sonnet-4-5",
+        validatorFallbackProvider: "openai",
+        validatorFallbackModelId: "gpt-4o",
+        titleSummarizerFallbackProvider: "google",
+        titleSummarizerFallbackModelId: "gemini-2.5-pro",
+      });
+
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ planningFallbackProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ planningFallbackModelId: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ validatorFallbackProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ validatorFallbackModelId: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ titleSummarizerFallbackProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ titleSummarizerFallbackModelId: null });
+
+      const settings = await store.getSettings();
+      expect(settings.planningFallbackProvider).toBeUndefined();
+      expect(settings.planningFallbackModelId).toBeUndefined();
+      expect(settings.validatorFallbackProvider).toBeUndefined();
+      expect(settings.validatorFallbackModelId).toBeUndefined();
+      expect(settings.titleSummarizerFallbackProvider).toBeUndefined();
+      expect(settings.titleSummarizerFallbackModelId).toBeUndefined();
+    });
+
+    it("clears global default model fields with null", async () => {
+      await store.updateGlobalSettings({
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+        fallbackProvider: "openai",
+        fallbackModelId: "gpt-4o",
+      });
+
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateGlobalSettings({ defaultProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateGlobalSettings({ defaultModelId: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateGlobalSettings({ fallbackProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateGlobalSettings({ fallbackModelId: null });
+
+      const settings = await store.getSettings();
+      expect(settings.defaultProvider).toBeUndefined();
+      expect(settings.defaultModelId).toBeUndefined();
+      expect(settings.fallbackProvider).toBeUndefined();
+      expect(settings.fallbackModelId).toBeUndefined();
+    });
+
+    it("clears global lane model fields with null", async () => {
+      await store.updateGlobalSettings({
+        executionGlobalProvider: "anthropic",
+        executionGlobalModelId: "claude-sonnet-4-5",
+        planningGlobalProvider: "openai",
+        planningGlobalModelId: "gpt-4o",
+        validatorGlobalProvider: "google",
+        validatorGlobalModelId: "gemini-2.5-pro",
+        titleSummarizerGlobalProvider: "anthropic",
+        titleSummarizerGlobalModelId: "claude-haiku",
+      });
+
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateGlobalSettings({ executionGlobalProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateGlobalSettings({ executionGlobalModelId: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateGlobalSettings({ planningGlobalProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateGlobalSettings({ planningGlobalModelId: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateGlobalSettings({ validatorGlobalProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateGlobalSettings({ validatorGlobalModelId: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateGlobalSettings({ titleSummarizerGlobalProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateGlobalSettings({ titleSummarizerGlobalModelId: null });
+
+      const settings = await store.getSettings();
+      expect(settings.executionGlobalProvider).toBeUndefined();
+      expect(settings.executionGlobalModelId).toBeUndefined();
+      expect(settings.planningGlobalProvider).toBeUndefined();
+      expect(settings.planningGlobalModelId).toBeUndefined();
+      expect(settings.validatorGlobalProvider).toBeUndefined();
+      expect(settings.validatorGlobalModelId).toBeUndefined();
+      expect(settings.titleSummarizerGlobalProvider).toBeUndefined();
+      expect(settings.titleSummarizerGlobalModelId).toBeUndefined();
+    });
+
+    it("null clear of one field in pair preserves the other", async () => {
+      await store.updateSettings({
+        planningProvider: "anthropic",
+        planningModelId: "claude-sonnet-4-5",
+      });
+
+      // Clear only provider, keep modelId
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ planningProvider: null });
+
+      const settings = await store.getSettings();
+      expect(settings.planningProvider).toBeUndefined();
+      expect(settings.planningModelId).toBe("claude-sonnet-4-5"); // Preserved
+    });
+
+    it("cleared model settings fall back to undefined (not default values)", async () => {
+      // Set global defaults first
+      await store.updateGlobalSettings({
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+      });
+
+      // Set planning override
+      await store.updateSettings({
+        planningProvider: "openai",
+        planningModelId: "gpt-4o",
+      });
+
+      // Clear planning override
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ planningProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ planningModelId: null });
+
+      const settings = await store.getSettings();
+
+      // Planning should be undefined (no fallback to default in settings layer)
+      expect(settings.planningProvider).toBeUndefined();
+      expect(settings.planningModelId).toBeUndefined();
+
+      // Default should still be accessible
+      expect(settings.defaultProvider).toBe("anthropic");
+      expect(settings.defaultModelId).toBe("claude-sonnet-4-5");
+    });
+
+    it("cleared model settings removed from persisted config", async () => {
+      await store.updateSettings({
+        planningProvider: "anthropic",
+        planningModelId: "claude-sonnet-4-5",
+      });
+
+      // Verify persisted
+      let configRaw = await readFile(join(rootDir, ".fusion", "config.json"), "utf-8");
+      let config = JSON.parse(configRaw);
+      expect((config.settings as any).planningProvider).toBe("anthropic");
+
+      // Clear with null
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ planningProvider: null });
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ planningModelId: null });
+
+      // Verify removed from persisted config
+      configRaw = await readFile(join(rootDir, ".fusion", "config.json"), "utf-8");
+      config = JSON.parse(configRaw);
+      expect((config.settings as any).planningProvider).toBeUndefined();
+      expect((config.settings as any).planningModelId).toBeUndefined();
+    });
+  });
+
   // ── Global/Project Settings Merging ─────────────────────────────
 
   describe("global/project settings merging", () => {
