@@ -926,7 +926,6 @@ describe("TerminalModal", () => {
 
       // Import WebGL addon mock to get reference for assertions
       const webglModule = await import("@xterm/addon-webgl");
-      const loadAddonSpy = vi.spyOn(mockTerminalInstance, "loadAddon");
 
       render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
@@ -938,8 +937,8 @@ describe("TerminalModal", () => {
       // WebGL addon constructor should NOT have been called
       expect(webglModule.WebglAddon).not.toHaveBeenCalled();
 
-      // loadAddon should NOT have been called with WebGL addon
-      expect(loadAddonSpy).not.toHaveBeenCalledWith(expect.any(Object));
+      // loadAddon is called with fitAddon and webLinksAddon (not WebGL) — verified by
+      // the WebglAddon constructor not being called above
     });
   });
 
