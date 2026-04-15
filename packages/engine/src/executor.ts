@@ -2896,6 +2896,16 @@ ${failureFeedback}
 
       const startedAt = new Date().toISOString();
 
+      // Push pending entry BEFORE execution so dashboard can show live status
+      results.push({
+        workflowStepId: ws.id,
+        workflowStepName: ws.name,
+        phase: stepPhase,
+        status: "pending",
+        startedAt,
+      });
+      await this.store.updateTask(task.id, { workflowStepResults: results });
+
       try {
         const result: WorkflowStepOutcome = stepMode === "script"
           ? await this.executeScriptWorkflowStep(task, ws, worktreePath, settings)
@@ -2905,15 +2915,16 @@ ${failureFeedback}
         if (result.success) {
           await this.store.logEntry(task.id, `[pre-merge] Workflow step completed: ${ws.name}`);
           executorLog.log(`${task.id} — [pre-merge] workflow step passed: ${ws.name}`);
-          results.push({
-            workflowStepId: ws.id,
-            workflowStepName: ws.name,
-            phase: stepPhase,
-            status: "passed",
-            output: result.output,
-            startedAt,
-            completedAt,
-          });
+          // Update existing pending entry in place
+          const existingIdx = results.findIndex(r => r.workflowStepId === ws.id);
+          if (existingIdx >= 0) {
+            results[existingIdx] = {
+              ...results[existingIdx],
+              status: "passed",
+              output: result.output,
+              completedAt,
+            };
+          }
           await this.store.updateTask(task.id, { workflowStepResults: results });
         } else if (result.revisionRequested) {
           // Revision requested — this is a structured outcome that routes back to executor
@@ -2923,15 +2934,16 @@ ${failureFeedback}
             result.output,
           );
           executorLog.log(`${task.id} — [pre-merge] workflow step requested revision: ${ws.name}`);
-          results.push({
-            workflowStepId: ws.id,
-            workflowStepName: ws.name,
-            phase: stepPhase,
-            status: "failed",
-            output: result.output || "Revision requested",
-            startedAt,
-            completedAt,
-          });
+          // Update existing pending entry in place
+          const existingIdx = results.findIndex(r => r.workflowStepId === ws.id);
+          if (existingIdx >= 0) {
+            results[existingIdx] = {
+              ...results[existingIdx],
+              status: "failed",
+              output: result.output || "Revision requested",
+              completedAt,
+            };
+          }
           await this.store.updateTask(task.id, { workflowStepResults: results });
           return {
             allPassed: false,
@@ -2947,15 +2959,16 @@ ${failureFeedback}
             result.error || "Unknown error",
           );
           executorLog.error(`${task.id} — [pre-merge] workflow step failed: ${ws.name}; output captured in task log`);
-          results.push({
-            workflowStepId: ws.id,
-            workflowStepName: ws.name,
-            phase: stepPhase,
-            status: "failed",
-            output: result.error || "Workflow step failed",
-            startedAt,
-            completedAt,
-          });
+          // Update existing pending entry in place
+          const existingIdx = results.findIndex(r => r.workflowStepId === ws.id);
+          if (existingIdx >= 0) {
+            results[existingIdx] = {
+              ...results[existingIdx],
+              status: "failed",
+              output: result.error || "Workflow step failed",
+              completedAt,
+            };
+          }
           await this.store.updateTask(task.id, { workflowStepResults: results });
           return {
             allPassed: false,
@@ -2972,15 +2985,16 @@ ${failureFeedback}
           err.message || "Unknown error",
         );
         executorLog.error(`${task.id} — [pre-merge] workflow step error: ${ws.name} — ${err.message}`);
-        results.push({
-          workflowStepId: ws.id,
-          workflowStepName: ws.name,
-          phase: stepPhase,
-          status: "failed",
-          output: err.message || "Workflow step error",
-          startedAt,
-          completedAt,
-        });
+        // Update existing pending entry in place
+        const existingIdx = results.findIndex(r => r.workflowStepId === ws.id);
+        if (existingIdx >= 0) {
+          results[existingIdx] = {
+            ...results[existingIdx],
+            status: "failed",
+            output: err.message || "Workflow step error",
+            completedAt,
+          };
+        }
         await this.store.updateTask(task.id, { workflowStepResults: results });
         return {
           allPassed: false,

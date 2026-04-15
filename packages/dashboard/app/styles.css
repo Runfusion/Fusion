@@ -22729,6 +22729,58 @@ html .column.drag-over * {
   overflow-y: auto;
 }
 
+/* ===== Workflow Live Log ===== */
+
+.workflow-live-log {
+  margin-top: var(--space-sm, 8px);
+  padding: var(--space-sm, 8px);
+  background: var(--surface-elevated, #161b22);
+  border: 1px solid var(--border, #30363d);
+  border-radius: var(--radius-sm, 4px);
+  max-height: 200px;
+  overflow-y: auto;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.workflow-live-log-empty {
+  color: var(--text-muted, #8b949e);
+  font-style: italic;
+}
+
+.workflow-live-log-text {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text, #e6edf3);
+}
+
+.workflow-live-log-tool {
+  color: var(--accent, #58a6ff);
+  padding: 2px 0;
+}
+
+.workflow-live-log-tool-result {
+  color: var(--success, #3fb950);
+  padding: 2px 0 2px 8px;
+}
+
+.workflow-live-log-tool-error {
+  color: var(--error, #f85149);
+  padding: 2px 0 2px 8px;
+}
+
+.workflow-live-log-thinking {
+  color: var(--text-muted, #8b949e);
+  font-style: italic;
+  padding: 2px 0;
+}
+
+.workflow-live-log-detail {
+  color: var(--text-muted, #8b949e);
+}
+
 /* ===== Model Onboarding Modal ===== */
 
 .model-onboarding-modal {

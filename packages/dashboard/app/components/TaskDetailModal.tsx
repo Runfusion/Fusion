@@ -368,6 +368,33 @@ export function TaskDetailModal({
     return () => { cancelled = true; };
   }, [activeTab, task.id, projectId, addToast]);
 
+  // Subscribe to SSE for real-time workflow result updates while workflow tab is active
+  useEffect(() => {
+    if (activeTab !== "workflow") return;
+
+    const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    const es = new EventSource(`/api/events${query}`);
+
+    const handleTaskUpdated = (e: MessageEvent) => {
+      try {
+        const updatedTask = JSON.parse(e.data);
+        // Only update if this is for our task and has workflow step results
+        if (updatedTask.id === task.id && Array.isArray(updatedTask.workflowStepResults)) {
+          setWorkflowResults(updatedTask.workflowStepResults);
+        }
+      } catch {
+        // Skip malformed events
+      }
+    };
+
+    es.addEventListener("task:updated", handleTaskUpdated);
+
+    return () => {
+      es.removeEventListener("task:updated", handleTaskUpdated);
+      es.close();
+    };
+  }, [activeTab, task.id, projectId]);
+
   // Reset dependency search when dropdown closes
   useEffect(() => {
     if (!showDepDropdown) {
@@ -1136,6 +1163,7 @@ export function TaskDetailModal({
                 enabledWorkflowSteps={workflowEnabledSteps}
                 canEdit={canEdit}
                 projectId={projectId}
+                isTaskInProgress={task.column === "in-progress" && task.status !== "paused"}
                 onWorkflowStepsChange={handleWorkflowStepsChange}
               />
             </div>

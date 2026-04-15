@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, ChevronUp, Maximize2, Pencil, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { WorkflowStep, WorkflowStepResult } from "@fusion/core";
+import type { AgentLogEntry, WorkflowStep, WorkflowStepResult } from "@fusion/core";
 import { fetchWorkflowSteps } from "../api";
+import { useAgentLogs } from "../hooks/useAgentLogs";
 import type { Components } from "react-markdown";
 
 // Markdown rendering components for workflow output
@@ -42,6 +43,7 @@ interface WorkflowResultsTabProps {
   enabledWorkflowSteps?: string[];
   canEdit?: boolean;
   projectId?: string;
+  isTaskInProgress?: boolean;
   onWorkflowStepsChange?: (steps: string[]) => void;
 }
 
@@ -105,6 +107,92 @@ function phaseBadge(phase: "pre-merge" | "post-merge", id: string, prefix: strin
   );
 }
 
+/**
+ * Renders live agent log output for a running (pending) workflow step.
+ * Filters entries to show only those timestamped on or after the step's startedAt.
+ */
+function LiveAgentLogOutput({
+  entries,
+  startedAt,
+  stepId,
+}: {
+  entries: AgentLogEntry[];
+  startedAt: string;
+  stepId: string;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const startedAtMs = new Date(startedAt).getTime();
+
+  // Filter entries to only show those from this step's time window
+  const stepEntries = entries.filter((entry) => {
+    const entryMs = new Date(entry.timestamp).getTime();
+    return entryMs >= startedAtMs;
+  });
+
+  // Auto-scroll to bottom as new entries arrive
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
+  }, [stepEntries.length]);
+
+  if (entries.length === 0) {
+    return (
+      <div className="workflow-live-log" data-testid={`workflow-live-log-${stepId}`}>
+        <div className="workflow-live-log-empty">Waiting for agent output…</div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      ref={containerRef}
+      className="workflow-live-log"
+      data-testid={`workflow-live-log-${stepId}`}
+    >
+      {stepEntries.map((entry, i) => {
+        if (entry.type === "tool") {
+          return (
+            <div key={i} className="workflow-live-log-tool">
+              ⚡ {entry.text}
+              {entry.detail && <span className="workflow-live-log-detail"> — {entry.detail}</span>}
+            </div>
+          );
+        }
+        if (entry.type === "tool_result") {
+          return (
+            <div key={i} className="workflow-live-log-tool-result">
+              ✓ {entry.text}
+              {entry.detail && <span className="workflow-live-log-detail"> — {entry.detail}</span>}
+            </div>
+          );
+        }
+        if (entry.type === "tool_error") {
+          return (
+            <div key={i} className="workflow-live-log-tool-error">
+              ✗ {entry.text}
+              {entry.detail && <span className="workflow-live-log-detail"> — {entry.detail}</span>}
+            </div>
+          );
+        }
+        if (entry.type === "thinking") {
+          return (
+            <div key={i} className="workflow-live-log-thinking">
+              {entry.text}
+            </div>
+          );
+        }
+        // Default: text entries
+        return (
+          <span key={i} className="workflow-live-log-text">
+            {entry.text}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 export function WorkflowResultsTab({
   taskId,
   results,
@@ -112,6 +200,7 @@ export function WorkflowResultsTab({
   enabledWorkflowSteps,
   canEdit,
   projectId,
+  isTaskInProgress,
   onWorkflowStepsChange,
 }: WorkflowResultsTabProps) {
   const [expandedOutputs, setExpandedOutputs] = useState<Record<string, boolean>>({});
@@ -119,6 +208,16 @@ export function WorkflowResultsTab({
   const [expandedViewStepId, setExpandedViewStepId] = useState<string | null>(null);
   const [allWorkflowSteps, setAllWorkflowSteps] = useState<WorkflowStep[]>([]);
   const [isEditing, setIsEditing] = useState(false);
+
+  // Check if any result has pending status
+  const hasPendingStep = results.some((r) => r.status === "pending");
+
+  // Subscribe to live agent logs when task is in progress and has a pending step
+  const { entries: liveLogEntries } = useAgentLogs(
+    taskId,
+    !!isTaskInProgress && hasPendingStep,
+    projectId,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -412,7 +511,14 @@ export function WorkflowResultsTab({
                 )}
               </div>
 
-              {result.output && (
+              {/* Show live agent logs for pending steps, static output for completed steps */}
+              {result.status === "pending" && result.startedAt ? (
+                <LiveAgentLogOutput
+                  entries={liveLogEntries}
+                  startedAt={result.startedAt}
+                  stepId={result.workflowStepId}
+                />
+              ) : result.output ? (
                 <div className="workflow-result-output-section">
                   <div className="workflow-result-output-header">
                     <span className="workflow-result-output-label">Output:</span>
@@ -471,7 +577,7 @@ export function WorkflowResultsTab({
                     </div>
                   )}
                 </div>
-              )}
+              ) : null}
             </div>
           );
         })}
