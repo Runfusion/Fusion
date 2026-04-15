@@ -880,7 +880,6 @@ import { ActivityLogModal } from "./ActivityLogModal";
 import { GitManagerModal } from "./GitManagerModal";
 import { WorkflowStepManager } from "./WorkflowStepManager";
 import { AgentListModal } from "./AgentListModal";
-import { MailboxModal } from "./MailboxModal";
 import { SetupWizardModal } from "./SetupWizardModal";
 import { ToastContainer } from "./ToastContainer";
 
@@ -1104,14 +1103,6 @@ export function AppModals({
         onClose={modalManager.closeAgents}
         addToast={addToast}
         projectId={projectId}
-      />
-
-      <MailboxModal
-        isOpen={modalManager.mailboxOpen}
-        onClose={modalManager.closeMailbox}
-        projectId={projectId}
-        addToast={addToast}
-        agents={modalManager.mailboxAgents}
       />
 
       {modalManager.setupWizardOpen && (

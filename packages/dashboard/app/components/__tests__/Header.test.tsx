@@ -361,6 +361,72 @@ describe("Header", () => {
     expect(skillsBtn.getAttribute("aria-pressed")).toBe("false");
   });
 
+  // ── Chat View Toggle ─────────────────────────────────────────
+
+  it("renders chat view button in view toggle when onChangeView is provided", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="board" onChangeView={onChangeView} />);
+    const chatBtn = screen.getByTitle("Chat view");
+    expect(chatBtn).toBeDefined();
+  });
+
+  it("calls onChangeView with 'chat' when chat view button is clicked", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="board" onChangeView={onChangeView} />);
+    const chatBtn = screen.getByTitle("Chat view");
+    fireEvent.click(chatBtn);
+    expect(onChangeView).toHaveBeenCalledWith("chat");
+  });
+
+  it("marks chat view button as active when view is 'chat'", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="chat" onChangeView={onChangeView} />);
+    const chatBtn = screen.getByTitle("Chat view");
+    expect(chatBtn.className).toContain("active");
+    expect(chatBtn.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("does not mark chat view button as active when view is 'board'", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="board" onChangeView={onChangeView} />);
+    const chatBtn = screen.getByTitle("Chat view");
+    expect(chatBtn.className).not.toContain("active");
+    expect(chatBtn.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  // ── Mailbox View Toggle ─────────────────────────────────────
+
+  it("renders mailbox view button in view toggle when onChangeView is provided", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="board" onChangeView={onChangeView} />);
+    const mailboxBtn = screen.getByTitle("Mailbox view");
+    expect(mailboxBtn).toBeDefined();
+  });
+
+  it("calls onChangeView with 'mailbox' when mailbox view button is clicked", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="board" onChangeView={onChangeView} />);
+    const mailboxBtn = screen.getByTitle("Mailbox view");
+    fireEvent.click(mailboxBtn);
+    expect(onChangeView).toHaveBeenCalledWith("mailbox");
+  });
+
+  it("marks mailbox view button as active when view is 'mailbox'", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="mailbox" onChangeView={onChangeView} />);
+    const mailboxBtn = screen.getByTitle("Mailbox view");
+    expect(mailboxBtn.className).toContain("active");
+    expect(mailboxBtn.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("does not mark mailbox view button as active when view is 'board'", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="board" onChangeView={onChangeView} />);
+    const mailboxBtn = screen.getByTitle("Mailbox view");
+    expect(mailboxBtn.className).not.toContain("active");
+    expect(mailboxBtn.getAttribute("aria-pressed")).toBe("false");
+  });
+
   // ── Roadmaps View Toggle ───────────────────────────────────────
 
   it("renders roadmaps view button in view toggle when onChangeView is provided", () => {
@@ -542,6 +608,42 @@ describe("Header", () => {
     );
     expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
     expect(screen.queryByTestId("desktop-header-search-btn")).toBeNull();
+  });
+
+  // ── Mailbox Button ────────────────────────────────────────────
+
+  it("renders mailbox button with correct title", () => {
+    const onOpenMailbox = vi.fn();
+    render(<Header onOpenMailbox={onOpenMailbox} />);
+    const btn = screen.getByTestId("header-mailbox-btn");
+    expect(btn).toBeDefined();
+  });
+
+  it("calls onOpenMailbox when mailbox button is clicked", () => {
+    const onOpenMailbox = vi.fn();
+    render(<Header onOpenMailbox={onOpenMailbox} />);
+    const btn = screen.getByTestId("header-mailbox-btn");
+    fireEvent.click(btn);
+    expect(onOpenMailbox).toHaveBeenCalledOnce();
+  });
+
+  it("shows unread badge when mailboxUnreadCount > 0", () => {
+    render(<Header mailboxUnreadCount={5} onOpenMailbox={vi.fn()} />);
+    const badge = screen.getByTestId("header-mailbox-badge");
+    expect(badge).toBeDefined();
+    expect(badge.textContent).toBe("5");
+  });
+
+  it("shows 9+ when unread count exceeds 9", () => {
+    render(<Header mailboxUnreadCount={15} onOpenMailbox={vi.fn()} />);
+    const badge = screen.getByTestId("header-mailbox-badge");
+    expect(badge.textContent).toBe("9+");
+  });
+
+  it("does not show badge when unread count is 0", () => {
+    render(<Header mailboxUnreadCount={0} onOpenMailbox={vi.fn()} />);
+    const badge = screen.queryByTestId("header-mailbox-badge");
+    expect(badge).toBeNull();
   });
 
   // ── Terminal Button ─────────────────────────────────────────────

@@ -2,15 +2,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { Task, TaskDetail } from "@fusion/core";
 import { useModalManager } from "../useModalManager";
-import * as api from "../../api";
-
-vi.mock("../../api", () => ({
-  fetchUnreadCount: vi.fn(),
-  fetchAgents: vi.fn(),
-}));
-
-const mockFetchUnreadCount = vi.mocked(api.fetchUnreadCount);
-const mockFetchAgents = vi.mocked(api.fetchAgents);
 
 function createTaskDetail(id: string): TaskDetail {
   return {
@@ -56,14 +47,6 @@ function createTask(id: string): Task {
 describe("useModalManager", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFetchUnreadCount.mockResolvedValue({ unreadCount: 3 });
-    mockFetchAgents.mockResolvedValue([
-      {
-        id: "agent-1",
-        role: "executor",
-        state: "active",
-      },
-    ] as never);
   });
 
   it("manages open/close state for basic modals", () => {
@@ -134,25 +117,6 @@ describe("useModalManager", () => {
     expect(result.current.scriptsOpen).toBe(false);
     expect(result.current.terminalOpen).toBe(true);
     expect(result.current.terminalInitialCommand).toBe("pnpm build");
-  });
-
-  it("loads unread count and agents when mailbox opens", async () => {
-    const { result } = renderHook(() =>
-      useModalManager({ projectId: "proj_1", planningSessions: [] }),
-    );
-
-    act(() => {
-      result.current.openMailbox();
-    });
-
-    expect(result.current.mailboxOpen).toBe(true);
-    expect(mockFetchUnreadCount).toHaveBeenCalledWith("proj_1");
-    expect(mockFetchAgents).toHaveBeenCalledWith(undefined, "proj_1");
-
-    await waitFor(() => {
-      expect(result.current.mailboxUnreadCount).toBe(3);
-      expect(result.current.mailboxAgents).toHaveLength(1);
-    });
   });
 
   it("tracks detail task state and supports tab-specific opens", () => {

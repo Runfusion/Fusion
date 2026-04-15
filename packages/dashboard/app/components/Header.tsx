@@ -162,7 +162,7 @@ export interface HeaderProps {
   activePlanningSessionCount?: number;
   onOpenUsage?: () => void;
   onOpenActivityLog?: () => void;
-  /** Opens the mailbox modal */
+  /** Opens the mailbox view */
   onOpenMailbox?: () => void;
   /** Unread message count for badge display */
   mailboxUnreadCount?: number;
@@ -180,8 +180,8 @@ export interface HeaderProps {
   enginePaused?: boolean;
   onToggleGlobalPause?: () => void;
   onToggleEnginePause?: () => void;
-  view?: "board" | "list" | "agents" | "missions" | "chat" | "roadmaps" | "skills";
-  onChangeView?: (view: "board" | "list" | "agents" | "missions" | "chat" | "roadmaps" | "skills") => void;
+  view?: "board" | "list" | "agents" | "missions" | "chat" | "roadmaps" | "skills" | "mailbox";
+  onChangeView?: (view: "board" | "list" | "agents" | "missions" | "chat" | "roadmaps" | "skills" | "mailbox") => void;
   searchQuery?: string;
   onSearchChange?: (query: string) => void;
   /** Multi-project props */
@@ -674,6 +674,15 @@ export function Header({
               aria-pressed={view === "chat"}
             >
               <MessageSquare size={16} />
+            </button>
+            <button
+              className={`view-toggle-btn${view === "mailbox" ? " active" : ""}`}
+              onClick={() => onChangeView("mailbox")}
+              title="Mailbox view"
+              aria-label="Mailbox view"
+              aria-pressed={view === "mailbox"}
+            >
+              <Mail size={16} />
             </button>
             <button
               className={`view-toggle-btn${view === "skills" ? " active" : ""}`}

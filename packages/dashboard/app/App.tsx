@@ -10,6 +10,7 @@ import { NodesView } from "./components/NodesView";
 import { ChatView } from "./components/ChatView";
 import { RoadmapsView } from "./components/RoadmapsView";
 import { SkillsView } from "./components/SkillsView";
+import { MailboxView } from "./components/MailboxView";
 import { PageErrorBoundary } from "./components/ErrorBoundary";
 import { AppModals } from "./components/AppModals";
 import { DashboardLoader, type DashboardLoaderStage } from "./components/DashboardLoader";
@@ -39,7 +40,7 @@ import { useRemoteNodeData } from "./hooks/useRemoteNodeData";
 import { useRemoteNodeEvents } from "./hooks/useRemoteNodeEvents";
 import { NodeProvider, useNodeContext } from "./context/NodeContext";
 import type { AiSessionSummary } from "./api";
-import { fetchAiSession } from "./api";
+import { fetchAiSession, fetchUnreadCount } from "./api";
 
 function AppInner() {
   const { toasts, addToast, removeToast } = useToast();
@@ -123,6 +124,18 @@ function AppInner() {
     projectId: currentProject?.id,
     planningSessions: bgPlanningSessions,
   });
+
+  // App-level mailbox unread count state (used for header badge)
+  const [mailboxUnreadCount, setMailboxUnreadCount] = useState(0);
+
+  // Initial fetch of mailbox unread count
+  useEffect(() => {
+    fetchUnreadCount(currentProject?.id)
+      .then((data: { unreadCount: number }) => {
+        setMailboxUnreadCount(data.unreadCount);
+      })
+      .catch(() => {});
+  }, [currentProject?.id]);
 
   // Nodes management is an overlay view (not a modal), so it stays local to App.
   const [nodesOpen, setNodesOpen] = useState(false);
@@ -335,6 +348,18 @@ function AppInner() {
       );
     }
 
+    if (taskView === "mailbox") {
+      return (
+        <PageErrorBoundary>
+          <MailboxView
+            projectId={currentProject?.id}
+            addToast={addToast}
+            onUnreadCountChange={setMailboxUnreadCount}
+          />
+        </PageErrorBoundary>
+      );
+    }
+
     if (taskView === "roadmaps") {
       return (
         <PageErrorBoundary>
@@ -463,8 +488,8 @@ function AppInner() {
         activePlanningSessionCount={bgPlanningSessions.length}
         onOpenUsage={modalManager.openUsage}
         onOpenActivityLog={modalManager.openActivityLog}
-        onOpenMailbox={modalManager.openMailbox}
-        mailboxUnreadCount={modalManager.mailboxUnreadCount}
+        onOpenMailbox={() => handleTaskViewChange("mailbox")}
+        mailboxUnreadCount={mailboxUnreadCount}
         onOpenSchedules={modalManager.openSchedules}
         onOpenGitManager={modalManager.openGitManager}
         onOpenNodes={handleOpenNodes}
@@ -536,8 +561,8 @@ function AppInner() {
         modalOpen={modalManager.anyModalOpen}
         onOpenSettings={handleOpenSettings}
         onOpenActivityLog={modalManager.openActivityLog}
-        onOpenMailbox={modalManager.openMailbox}
-        mailboxUnreadCount={modalManager.mailboxUnreadCount}
+        onOpenMailbox={() => handleTaskViewChange("mailbox")}
+        mailboxUnreadCount={mailboxUnreadCount}
         onOpenGitManager={modalManager.openGitManager}
         onOpenWorkflowSteps={modalManager.openWorkflowSteps}
         onOpenSchedules={modalManager.openSchedules}
@@ -554,7 +579,7 @@ function AppInner() {
         onOpenQuickChat={() => setQuickChatOpen(true)}
         projectId={currentProject?.id}
       />
-      {viewMode === "project" && currentProject && taskView !== "chat" && (
+      {viewMode === "project" && currentProject && taskView !== "chat" && taskView !== "mailbox" && (
         <QuickChatFAB
           projectId={currentProject.id}
           addToast={addToast}

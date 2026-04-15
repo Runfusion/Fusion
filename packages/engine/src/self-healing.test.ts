@@ -1435,3 +1435,123 @@ describe("SelfHealingManager", () => {
     });
   });
 });
+
+describe("stale triage processing eviction before recovery", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("calls evictStaleTriageProcessing before recoverApprovedTriageTasks", async () => {
+    const store = createMockStore();
+    const evictFn = vi.fn().mockReturnValue(new Set<string>());
+    const recoverFn = vi.fn().mockResolvedValue(true);
+    const getSpecifying = vi.fn().mockReturnValue(new Set(["FN-100"]));
+
+    const manager = new SelfHealingManager(store, {
+      rootDir: "/tmp/test-project",
+      recoverApprovedTriageTask: recoverFn,
+      getSpecifyingTaskIds: getSpecifying,
+      evictStaleTriageProcessing: evictFn,
+    });
+
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: "FN-100",
+        column: "triage",
+        status: "specifying",
+        paused: false,
+        log: [{ action: "Spec review: APPROVE" }],
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    vi.setSystemTime(new Date("2026-01-01T00:05:00.000Z"));
+
+    // FN-100 is in specifyingIds — would normally be skipped.
+    // But evictStaleTriageProcessing was called first (even though it evicted nothing here).
+    await manager.recoverApprovedTriageTasks();
+
+    // Eviction was called before the recovery check
+    expect(evictFn).toHaveBeenCalledTimes(1);
+
+    manager.stop();
+  });
+
+  it("recovers approved task after eviction removes it from specifyingIds", async () => {
+    const store = createMockStore();
+    let specifyingIds = new Set(["FN-100"]);
+    const evictFn = vi.fn().mockImplementation(() => {
+      // Simulate eviction removing FN-100 from the processing set
+      specifyingIds = new Set<string>();
+      return new Set(["FN-100"]);
+    });
+    const recoverFn = vi.fn().mockResolvedValue(true);
+    const getSpecifying = vi.fn().mockImplementation(() => specifyingIds);
+
+    const manager = new SelfHealingManager(store, {
+      rootDir: "/tmp/test-project",
+      recoverApprovedTriageTask: recoverFn,
+      getSpecifyingTaskIds: getSpecifying,
+      evictStaleTriageProcessing: evictFn,
+    });
+
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: "FN-100",
+        column: "triage",
+        status: "specifying",
+        paused: false,
+        log: [{ action: "Spec review: APPROVE" }],
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    vi.setSystemTime(new Date("2026-01-01T00:05:00.000Z"));
+
+    const result = await manager.recoverApprovedTriageTasks();
+
+    // After eviction cleared the specifying set, the task was recovered
+    expect(result).toBe(1);
+    expect(recoverFn).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "FN-100" }),
+    );
+
+    manager.stop();
+  });
+
+  it("calls evictStaleTriageProcessing before recoverOrphanedSpecifyingTasks", async () => {
+    const store = createMockStore();
+    const evictFn = vi.fn().mockReturnValue(new Set<string>());
+    const getSpecifying = vi.fn().mockReturnValue(new Set(["FN-101"]));
+
+    const manager = new SelfHealingManager(store, {
+      rootDir: "/tmp/test-project",
+      getSpecifyingTaskIds: getSpecifying,
+      evictStaleTriageProcessing: evictFn,
+    });
+
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: "FN-101",
+        column: "triage",
+        status: "specifying",
+        paused: false,
+        log: [{ action: "Spec review: REVISE" }],
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    vi.setSystemTime(new Date("2026-01-01T00:05:00.000Z"));
+
+    await manager.recoverOrphanedSpecifyingTasks();
+
+    expect(evictFn).toHaveBeenCalledTimes(1);
+
+    manager.stop();
+  });
+});

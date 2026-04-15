@@ -63,6 +63,17 @@ Fusion reuses your existing pi authentication.
 
 For Capacitor + PWA workflow, see [MOBILE.md](./MOBILE.md).
 
+## Mailbox
+
+Fusion includes a **Mailbox** feature for async messaging between users and agents. Unlike the realtime chat view, Mailbox provides email-like asynchronous messaging:
+
+- **Inbox** — View messages grouped by conversation with unread indicators
+- **Outbox** — Track sent messages
+- **Agents** — Send messages directly to agents
+- **Unread Badge** — Header shows unread count without opening Mailbox
+
+Navigate to Mailbox via the header view toggle or mobile bottom nav tab.
+
 ## Workflow
 
 ```mermaid

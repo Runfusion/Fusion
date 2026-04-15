@@ -2737,7 +2737,7 @@ ${failureFeedback}
 
 **Retry:** ${retryCount}/${MAX_WORKFLOW_STEP_RETRIES} (${remainingRetries} remaining)
 
-**Important:** This is a workflow step failure — fix the issues above by making the necessary code changes. The task will be retried automatically. If all ${MAX_WORKFLOW_STEP_RETRIES} retries are exhausted, the task will be moved to in-review for manual inspection.
+**Important:** This is a workflow step failure — fix the issues above by making the necessary code changes. The task has been sent back to in-progress for remediation. The executor will attempt to fix the issues on the next pass.
 
 `;
 

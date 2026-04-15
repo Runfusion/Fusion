@@ -25923,6 +25923,49 @@ html .column.drag-over * {
   margin-top: 6px;
 }
 
+/* Conversation grouping */
+.mailbox-conversations {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mailbox-conversation-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.1s;
+  position: relative;
+}
+
+.mailbox-conversation-group:hover {
+  background: var(--card-hover);
+}
+
+.mailbox-conversation-group.unread {
+  background: color-mix(in srgb, var(--todo) 10%, transparent);
+  font-weight: 500;
+}
+
+.mailbox-group-unread-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--todo);
+  color: #fff;
+  border-radius: 10px;
+  flex-shrink: 0;
+  margin-top: 6px;
+}
+
 /* Message detail view */
 .mailbox-message-detail {
   display: flex;
@@ -28086,6 +28129,22 @@ html .column.drag-over * {
   font-size: 10px;
   line-height: 1.2;
   white-space: nowrap;
+}
+
+.mobile-nav-tab-badge {
+  position: absolute;
+  top: 2px;
+  right: calc(50% - 12px);
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  background: var(--color-error);
+  color: #fff;
+  border-radius: 8px;
 }
 
 /* === Mobile More Sheet (Bottom Drawer) === */

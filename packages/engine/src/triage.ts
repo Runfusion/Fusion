@@ -276,6 +276,8 @@ export class TriageProcessor {
   /** The interval (ms) of the currently active `setInterval` timer. */
   private activePollMs: number | null = null;
   private processing = new Set<string>();
+  /** Timestamps when tasks entered the `processing` set, for staleness detection. */
+  private processingSince = new Map<string, number>();
   private wasGlobalPaused = false;
   private wasEnginePaused = false;
   /** Active agent sessions per task, used to terminate on pause. */
@@ -401,6 +403,47 @@ export class TriageProcessor {
    */
   getProcessingTaskIds(): Set<string> {
     return new Set(this.processing);
+  }
+
+  /**
+   * Maximum time a task can remain in the `processing` set before it's
+   * considered stale (30 minutes). By this point the stuck detector
+   * (default 20-min timeout) should have already killed the session
+   * and the `finally` block should have cleaned up. If it hasn't,
+   * the promise is hung (e.g., `promptWithFallback` never settled
+   * after dispose) and self-healing recovery needs to force-evict it.
+   */
+  private static readonly STALE_PROCESSING_THRESHOLD_MS = 30 * 60 * 1000;
+
+  /**
+   * Evict tasks from the `processing` set that have been there longer than
+   * the staleness threshold. This handles the case where a stuck-kill
+   * disposes the session but the `specifyTask` promise never settles
+   * (hung `promptWithFallback`), leaving the task in `processing` forever
+   * and blocking self-healing recovery.
+   *
+   * @returns the set of evicted task IDs
+   */
+  evictStaleProcessing(): Set<string> {
+    const now = Date.now();
+    const threshold = TriageProcessor.STALE_PROCESSING_THRESHOLD_MS;
+    const evicted = new Set<string>();
+
+    for (const [taskId, since] of this.processingSince) {
+      if (now - since >= threshold) {
+        triageLog.warn(
+          `${taskId} has been in processing for ${Math.round((now - since) / 60_000)}min ` +
+          `(threshold: ${Math.round(threshold / 60_000)}min) — evicting (likely hung promise)`,
+        );
+        this.processing.delete(taskId);
+        this.processingSince.delete(taskId);
+        this.activeSessions.delete(taskId);
+        this.stuckAborted.delete(taskId);
+        evicted.add(taskId);
+      }
+    }
+
+    return evicted;
   }
 
   /**
@@ -549,6 +592,7 @@ export class TriageProcessor {
   async specifyTask(task: Task): Promise<void> {
     if (this.processing.has(task.id)) return;
     this.processing.add(task.id);
+    this.processingSince.set(task.id, Date.now());
 
     triageLog.log(
       `Specifying ${task.id}: ${task.title || task.description.slice(0, 60)}`,
@@ -896,6 +940,7 @@ export class TriageProcessor {
       }
     } finally {
       this.processing.delete(task.id);
+      this.processingSince.delete(task.id);
     }
   }
 

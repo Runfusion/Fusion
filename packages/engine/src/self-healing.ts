@@ -53,6 +53,12 @@ export interface SelfHealingOptions {
    * Used to avoid recovering active triage sessions.
    */
   getSpecifyingTaskIds?: () => Set<string>;
+  /**
+   * Evict tasks from the triage processor's `processing` set that have been
+   * there longer than the staleness threshold (hung promises from stuck kills).
+   * Called before recovery checks so stale entries don't block recovery.
+   */
+  evictStaleTriageProcessing?: () => Set<string>;
 }
 
 const APPROVED_TRIAGE_RECOVERY_GRACE_MS = 60_000;
@@ -795,6 +801,11 @@ export class SelfHealingManager {
     if (!recoverFn) return 0;
 
     try {
+      // Evict stale entries from the triage processor's in-memory set before
+      // checking — tasks with hung promises (from stuck kills) would otherwise
+      // block recovery indefinitely.
+      this.options.evictStaleTriageProcessing?.();
+
       const tasks = await this.store.listTasks({ column: "triage" });
       const specifyingIds = this.options.getSpecifyingTaskIds?.() ?? new Set<string>();
       const now = Date.now();
@@ -843,6 +854,11 @@ export class SelfHealingManager {
    */
   async recoverOrphanedSpecifyingTasks(): Promise<number> {
     try {
+      // Evict stale entries from the triage processor's in-memory set before
+      // checking — tasks with hung promises (from stuck kills) would otherwise
+      // block recovery indefinitely.
+      this.options.evictStaleTriageProcessing?.();
+
       const tasks = await this.store.listTasks({ column: "triage" });
       const specifyingIds = this.options.getSpecifyingTaskIds?.() ?? new Set<string>();
       const now = Date.now();

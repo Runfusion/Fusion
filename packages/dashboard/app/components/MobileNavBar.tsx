@@ -28,9 +28,9 @@ import { useViewportMode } from "./Header";
 
 export interface MobileNavBarProps {
   /** Current task view mode */
-  view: "board" | "list" | "agents" | "missions" | "chat" | "roadmaps" | "skills";
+  view: "board" | "list" | "agents" | "missions" | "chat" | "roadmaps" | "skills" | "mailbox";
   /** Change task view handler */
-  onChangeView: (view: "board" | "list" | "agents" | "missions" | "chat" | "roadmaps" | "skills") => void;
+  onChangeView: (view: "board" | "list" | "agents" | "missions" | "chat" | "roadmaps" | "skills" | "mailbox") => void;
   /** Whether the ExecutorStatusBar footer is visible */
   footerVisible: boolean;
   /** Whether any full-screen modal is currently open (hides the tab bar) */
@@ -227,6 +227,21 @@ export function MobileNavBar({
         >
           <MessageSquare />
           <span className="mobile-nav-tab-label">Chat</span>
+        </button>
+
+        <button
+          type="button"
+          className={`mobile-nav-tab${view === "mailbox" ? " mobile-nav-tab--active" : ""}`}
+          data-testid="mobile-nav-tab-mailbox"
+          role="tab"
+          aria-selected={view === "mailbox"}
+          onClick={() => onChangeView("mailbox")}
+        >
+          <Mail />
+          <span className="mobile-nav-tab-label">Mailbox</span>
+          {mailboxUnreadCount > 0 && (
+            <span className="mobile-nav-tab-badge">{formatCount(mailboxUnreadCount)}</span>
+          )}
         </button>
 
         <button

@@ -2437,3 +2437,107 @@ describe("TriageProcessor skillSelection regression (FN-1511)", () => {
     });
   });
 });
+
+describe("evictStaleProcessing", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("evicts tasks that have been in processing longer than 30 minutes", () => {
+    const store = createMockStore();
+    const processor = new TriageProcessor(store, "/tmp/root");
+
+    // Simulate a task that entered processing 31 minutes ago
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    (processor as any).processing.add("FN-001");
+    (processor as any).processingSince.set("FN-001", Date.now());
+
+    // Advance time 31 minutes
+    vi.setSystemTime(new Date("2026-01-01T00:31:00.000Z"));
+
+    const evicted = processor.evictStaleProcessing();
+
+    expect(evicted).toEqual(new Set(["FN-001"]));
+    expect(processor.getProcessingTaskIds().has("FN-001")).toBe(false);
+  });
+
+  it("does not evict tasks that have been in processing less than 30 minutes", () => {
+    const store = createMockStore();
+    const processor = new TriageProcessor(store, "/tmp/root");
+
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    (processor as any).processing.add("FN-001");
+    (processor as any).processingSince.set("FN-001", Date.now());
+
+    // Advance time 29 minutes — not stale yet
+    vi.setSystemTime(new Date("2026-01-01T00:29:00.000Z"));
+
+    const evicted = processor.evictStaleProcessing();
+
+    expect(evicted.size).toBe(0);
+    expect(processor.getProcessingTaskIds().has("FN-001")).toBe(true);
+  });
+
+  it("cleans up activeSessions and stuckAborted when evicting", () => {
+    const store = createMockStore();
+    const processor = new TriageProcessor(store, "/tmp/root");
+
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    (processor as any).processing.add("FN-001");
+    (processor as any).processingSince.set("FN-001", Date.now());
+    (processor as any).activeSessions.set("FN-001", { dispose: vi.fn() });
+    (processor as any).stuckAborted.add("FN-001");
+
+    vi.setSystemTime(new Date("2026-01-01T00:31:00.000Z"));
+
+    const evicted = processor.evictStaleProcessing();
+
+    expect(evicted).toEqual(new Set(["FN-001"]));
+    expect((processor as any).activeSessions.has("FN-001")).toBe(false);
+    expect((processor as any).stuckAborted.has("FN-001")).toBe(false);
+  });
+
+  it("returns empty set when no tasks are stale", () => {
+    const store = createMockStore();
+    const processor = new TriageProcessor(store, "/tmp/root");
+
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    (processor as any).processing.add("FN-001");
+    (processor as any).processingSince.set("FN-001", Date.now());
+
+    // Only 5 minutes — well within threshold
+    vi.setSystemTime(new Date("2026-01-01T00:05:00.000Z"));
+
+    const evicted = processor.evictStaleProcessing();
+
+    expect(evicted.size).toBe(0);
+    expect(processor.getProcessingTaskIds().has("FN-001")).toBe(true);
+  });
+
+  it("evicts multiple stale tasks while keeping fresh ones", () => {
+    const store = createMockStore();
+    const processor = new TriageProcessor(store, "/tmp/root");
+
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    (processor as any).processing.add("FN-001");
+    (processor as any).processingSince.set("FN-001", Date.now());
+
+    vi.setSystemTime(new Date("2026-01-01T00:15:00.000Z"));
+    (processor as any).processing.add("FN-002");
+    (processor as any).processingSince.set("FN-002", Date.now());
+
+    // FN-001 entered at 00:00, FN-002 at 00:15
+    vi.setSystemTime(new Date("2026-01-01T00:35:00.000Z"));
+
+    const evicted = processor.evictStaleProcessing();
+
+    // FN-001 has been in for 35min → evicted. FN-002 for 20min → not stale.
+    expect(evicted).toEqual(new Set(["FN-001"]));
+    expect(processor.getProcessingTaskIds().has("FN-001")).toBe(false);
+    expect(processor.getProcessingTaskIds().has("FN-002")).toBe(true);
+  });
+});

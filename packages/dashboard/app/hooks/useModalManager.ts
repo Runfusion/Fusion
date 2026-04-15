@@ -1,6 +1,5 @@
 import { useCallback, useState } from "react";
 import type { Task, TaskDetail } from "@fusion/core";
-import { fetchAgents, fetchUnreadCount, type Agent } from "../api";
 import type { SectionId } from "../components/SettingsModal";
 import type { ToastType } from "./useToast";
 
@@ -42,9 +41,6 @@ export interface ModalManager {
   filesOpen: boolean;
   fileBrowserWorkspace: string;
   activityLogOpen: boolean;
-  mailboxOpen: boolean;
-  mailboxUnreadCount: number;
-  mailboxAgents: Agent[];
   gitManagerOpen: boolean;
   workflowStepsOpen: boolean;
   agentsOpen: boolean;
@@ -93,9 +89,6 @@ export interface ModalManager {
 
   openActivityLog: () => void;
   closeActivityLog: () => void;
-
-  openMailbox: () => void;
-  closeMailbox: () => void;
 
   openGitManager: () => void;
   closeGitManager: () => void;
@@ -150,9 +143,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const [filesOpen, setFilesOpen] = useState(false);
   const [fileBrowserWorkspace, setFileBrowserWorkspace] = useState("project");
   const [activityLogOpen, setActivityLogOpen] = useState(false);
-  const [mailboxOpen, setMailboxOpen] = useState(false);
-  const [mailboxUnreadCount, setMailboxUnreadCount] = useState(0);
-  const [mailboxAgents, setMailboxAgents] = useState<Agent[]>([]);
   const [gitManagerOpen, setGitManagerOpen] = useState(false);
   const [workflowStepsOpen, setWorkflowStepsOpen] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(false);
@@ -169,7 +159,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
       terminalOpen ||
       filesOpen ||
       activityLogOpen ||
-      mailboxOpen ||
       gitManagerOpen ||
       workflowStepsOpen ||
       scriptsOpen ||
@@ -269,23 +258,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const openActivityLog = useCallback(() => setActivityLogOpen(true), []);
   const closeActivityLog = useCallback(() => setActivityLogOpen(false), []);
 
-  const openMailbox = useCallback(() => {
-    setMailboxOpen(true);
-
-    fetchUnreadCount(projectId)
-      .then((data) => {
-        setMailboxUnreadCount(data.unreadCount);
-      })
-      .catch(() => {});
-
-    fetchAgents(undefined, projectId)
-      .then((agents) => {
-        setMailboxAgents(agents);
-      })
-      .catch(() => {});
-  }, [projectId]);
-  const closeMailbox = useCallback(() => setMailboxOpen(false), []);
-
   const openGitManager = useCallback(() => setGitManagerOpen(true), []);
   const closeGitManager = useCallback(() => setGitManagerOpen(false), []);
 
@@ -349,9 +321,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     filesOpen,
     fileBrowserWorkspace,
     activityLogOpen,
-    mailboxOpen,
-    mailboxUnreadCount,
-    mailboxAgents,
     gitManagerOpen,
     workflowStepsOpen,
     agentsOpen,
@@ -388,8 +357,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     setFileWorkspace,
     openActivityLog,
     closeActivityLog,
-    openMailbox,
-    closeMailbox,
     openGitManager,
     closeGitManager,
     openWorkflowSteps,
