@@ -82,14 +82,19 @@ function makeProject(overrides: Record<string, unknown> = {}) {
 }
 
 describe("node commands", () => {
-  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-  const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-    throw new Error("process.exit");
-  }) as never);
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  let exitSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
+
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit");
+    }) as never);
+
     mockListNodes.mockResolvedValue([]);
     mockRegisterNode.mockResolvedValue(makeNode());
     mockGetNode.mockResolvedValue(undefined);
@@ -101,7 +106,9 @@ describe("node commands", () => {
   });
 
   afterEach(() => {
-    vi.clearAllMocks();
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+    exitSpy.mockRestore();
   });
 
   // ── Helper Function Tests ──────────────────────────────────────────────────
@@ -671,14 +678,21 @@ describe("node commands", () => {
 });
 
 describe("daemon-aware node connect", () => {
-  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-  const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-    throw new Error("process.exit");
-  }) as never);
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  let exitSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
+
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit");
+    }) as never);
+
+    // Reset mockInit to resolve (it might have been set to reject in previous tests)
+    mockInit.mockResolvedValue(undefined);
     mockListNodes.mockResolvedValue([]);
     mockRegisterNode.mockResolvedValue(makeNode());
     mockGetNode.mockResolvedValue(undefined);
@@ -690,7 +704,9 @@ describe("daemon-aware node connect", () => {
   });
 
   afterEach(() => {
-    vi.clearAllMocks();
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+    exitSpy.mockRestore();
   });
 
   it("shows '(authenticated)' when apiKey provided and health check succeeds", async () => {
