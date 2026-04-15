@@ -17,7 +17,7 @@ import {
   getOnboardingState,
   saveOnboardingState,
   clearOnboardingState,
-  type OnboardingStepId,
+  type OnboardingStep,
 } from "./model-onboarding-state";
 import type { SectionId } from "./SettingsModal";
 
@@ -32,7 +32,7 @@ export interface ModelOnboardingModalProps {
   onOpenGitHubImport?: () => void;
 }
 
-type OnboardingStep = "ai-setup" | "github" | "first-task" | "complete";
+
 
 /**
  * Multi-step onboarding modal that guides users through:
@@ -51,7 +51,7 @@ export function ModelOnboardingModal({
   // Initialize from persisted state if available (allows resume from last step)
   const persistedState = getOnboardingState();
   const initialStep: OnboardingStep = persistedState && persistedState.currentStep !== "complete"
-    ? persistedState.currentStep
+    ? persistedState.currentStep as OnboardingStep
     : "ai-setup";
 
   const [isOpen, setIsOpen] = useState(true);
@@ -79,7 +79,7 @@ export function ModelOnboardingModal({
   // Persist step state whenever it changes (for resume functionality)
   useEffect(() => {
     if (step !== "complete") {
-      saveOnboardingState({ currentStep: step as OnboardingStepId });
+      saveOnboardingState(step);
     }
   }, [step]);
 
