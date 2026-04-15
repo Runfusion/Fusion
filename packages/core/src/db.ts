@@ -59,7 +59,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 32;
+const SCHEMA_VERSION = 33;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -1233,6 +1233,72 @@ export class Database {
         this.db.exec(`
           CREATE INDEX IF NOT EXISTS idxRoadmapFeaturesMilestoneOrder
             ON roadmap_features(milestoneId, orderIndex, createdAt, id)
+        `);
+      });
+    }
+
+    // Insight persistence tables (FN-1877)
+    // Normalized insight entities and insight-generation run records
+    if (version < 33) {
+      this.applyMigration(33, () => {
+        // project_insights: normalized insight entities
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS project_insights (
+            id TEXT PRIMARY KEY,
+            projectId TEXT NOT NULL,
+            title TEXT NOT NULL,
+            content TEXT,
+            category TEXT NOT NULL,
+            status TEXT NOT NULL,
+            fingerprint TEXT NOT NULL,
+            provenance TEXT,
+            lastRunId TEXT,
+            createdAt TEXT NOT NULL,
+            updatedAt TEXT NOT NULL
+          )
+        `);
+
+        // project_insight_runs: insight-generation run records
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS project_insight_runs (
+            id TEXT PRIMARY KEY,
+            projectId TEXT NOT NULL,
+            trigger TEXT NOT NULL,
+            status TEXT NOT NULL,
+            summary TEXT,
+            error TEXT,
+            insightsCreated INTEGER NOT NULL DEFAULT 0,
+            insightsUpdated INTEGER NOT NULL DEFAULT 0,
+            inputMetadata TEXT,
+            outputMetadata TEXT,
+            createdAt TEXT NOT NULL,
+            startedAt TEXT,
+            completedAt TEXT
+          )
+        `);
+
+        // Index for filtering insights by projectId
+        this.db.exec(`
+          CREATE INDEX IF NOT EXISTS idxProjectInsightsProjectId
+            ON project_insights(projectId)
+        `);
+
+        // Index for fingerprint-based upsert dedupe
+        this.db.exec(`
+          CREATE INDEX IF NOT EXISTS idxProjectInsightsFingerprint
+            ON project_insights(projectId, fingerprint)
+        `);
+
+        // Index for filtering insights by category
+        this.db.exec(`
+          CREATE INDEX IF NOT EXISTS idxProjectInsightsCategory
+            ON project_insights(category)
+        `);
+
+        // Index for filtering runs by projectId
+        this.db.exec(`
+          CREATE INDEX IF NOT EXISTS idxInsightRunsProjectId
+            ON project_insight_runs(projectId)
         `);
       });
     }
