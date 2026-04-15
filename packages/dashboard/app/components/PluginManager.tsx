@@ -39,12 +39,12 @@ interface PluginManagerProps {
   projectId?: string;
 }
 
-const STATE_COLORS: Record<string, string> = {
-  started: "var(--color-success, #22c55e)",
-  loaded: "var(--color-warning, #eab308)",
-  error: "var(--color-error, #ef4444)",
-  stopped: "var(--color-muted, #6b7280)",
-  installed: "var(--color-info, #3b82f6)",
+export const STATE_COLORS: Record<string, string> = {
+  started: "var(--color-success)",
+  loaded: "var(--color-warning)",
+  error: "var(--color-error)",
+  stopped: "var(--color-muted)",
+  installed: "var(--color-info)",
 };
 
 export function PluginManager({ addToast, projectId }: PluginManagerProps) {

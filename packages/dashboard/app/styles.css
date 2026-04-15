@@ -122,6 +122,7 @@
   --color-error-dark: #da3633;
   --color-muted: #8b949e;
   --color-info: #1f6feb;
+  --color-warning: #ca8a04;
 
   /* Workflow Step type / state colors */
   --ws-pre-merge: #3b82f6;
@@ -10270,6 +10271,7 @@ html .column.drag-over * {
   --color-success: #1a7f37;
   --color-error: #cf222e;
   --color-muted: #6e7781;
+  --color-warning: #9a6700;
 
   /* Executor status bar state accents (lower intensity for light backgrounds) */
   --executor-status-error-bg: color-mix(in srgb, var(--color-error) 6%, transparent);
@@ -29974,7 +29976,7 @@ html .column.drag-over * {
 
 .plugin-settings-form .form-group {
   padding: 0;
-  margin-top: 0;
+  margin-bottom: 0;
 }
 
 .plugin-settings-array {
@@ -30057,6 +30059,46 @@ html .column.drag-over * {
     flex: 1 1 auto;
     min-height: 36px;
   }
+}
+
+/* Plugin toggle switch */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  cursor: pointer;
+}
+
+.toggle-switch input {
+  display: none;
+}
+
+.toggle-switch .toggle-slider {
+  width: 36px;
+  height: 20px;
+  background: var(--border);
+  border-radius: var(--radius-md);
+  transition: background var(--transition-normal);
+  position: relative;
+}
+
+.toggle-switch .toggle-slider::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: var(--card);
+  border-radius: 50%;
+  transition: transform var(--transition-normal);
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: var(--in-review);
+}
+
+.toggle-switch input:checked + .toggle-slider::after {
+  transform: translateX(16px);
 }
 
 

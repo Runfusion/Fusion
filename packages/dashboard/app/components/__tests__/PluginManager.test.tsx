@@ -81,7 +81,7 @@ vi.mock("../../api", () => ({
 }));
 
 // Import after vi.mock so the mock is in place
-import { PluginManager } from "../PluginManager";
+import { PluginManager, STATE_COLORS } from "../PluginManager";
 import {
   fetchPlugins,
   installPlugin,
@@ -884,6 +884,54 @@ describe("PluginManager", () => {
       // Check for number inputs
       const numberInputs = screen.getAllByRole("spinbutton");
       expect(numberInputs.length).toBeGreaterThanOrEqual(3);
+    });
+  });
+
+  describe("toggle switch rendering", () => {
+    it("renders enabled toggle switch inside .toggle-switch label", async () => {
+      vi.mocked(fetchPlugins).mockResolvedValueOnce([{ ...mockPlugins[0], enabled: true }]);
+
+      render(<PluginManager addToast={addToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Test Plugin A")).toBeTruthy();
+      });
+
+      // Find the toggle-switch label
+      const toggleSwitch = screen.getByText("Test Plugin A").closest(".plugin-item")?.querySelector(".toggle-switch");
+      expect(toggleSwitch).toBeTruthy();
+
+      // Find the checkbox inside
+      const checkbox = toggleSwitch?.querySelector('input[type="checkbox"]');
+      expect(checkbox).toBeTruthy();
+      expect(checkbox?.checked).toBe(true);
+    });
+
+    it("renders disabled toggle switch inside .toggle-switch label", async () => {
+      vi.mocked(fetchPlugins).mockResolvedValueOnce([{ ...mockPlugins[0], enabled: false }]);
+
+      render(<PluginManager addToast={addToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Test Plugin A")).toBeTruthy();
+      });
+
+      // Find the toggle-switch label
+      const toggleSwitch = screen.getByText("Test Plugin A").closest(".plugin-item")?.querySelector(".toggle-switch");
+      expect(toggleSwitch).toBeTruthy();
+
+      // Find the checkbox inside
+      const checkbox = toggleSwitch?.querySelector('input[type="checkbox"]');
+      expect(checkbox).toBeTruthy();
+      expect(checkbox?.checked).toBe(false);
+    });
+  });
+
+  describe("STATE_COLORS", () => {
+    it("contains only CSS variable references with no hardcoded hex values", () => {
+      const values = Object.values(STATE_COLORS);
+      const allUseCssVars = values.every((v) => /^var\(--[a-z-]+\)$/.test(v));
+      expect(allUseCssVars).toBe(true);
     });
   });
 });
