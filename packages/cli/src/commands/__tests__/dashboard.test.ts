@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
 
+// Use vi.hoisted to define mocks that need to be referenced in vi.mock
+const { centralInstances } = vi.hoisted(() => {
+  const centralInstances: any[] = [];
+  return { centralInstances };
+});
+
 // ── Capture arguments ───────────────────────────────────────────────
 
 // Minimal mock store backed by EventEmitter so `store.on` works
@@ -56,17 +62,27 @@ const mockProcessAndAudit = vi.fn().mockResolvedValue({
 
 vi.mock("@fusion/core", () => ({
   TaskStore: vi.fn().mockImplementation(() => makeMockStore()),
-  CentralCore: vi.fn().mockImplementation(() => ({
-    init: vi.fn().mockResolvedValue(undefined),
-    close: vi.fn().mockResolvedValue(undefined),
-    getProjectByPath: vi.fn().mockResolvedValue({ id: "project-1" }),
-    getProject: vi.fn().mockImplementation((id: string) =>
-      Promise.resolve({ id, name: `Project ${id}`, path: process.cwd(), status: "active", isolationMode: "in-process", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }),
-    ),
-    listProjects: vi.fn().mockResolvedValue([
-      { id: "project-1", name: "Test Project", path: process.cwd(), status: "active", isolationMode: "in-process", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-    ]),
-  })),
+  CentralCore: vi.fn().mockImplementation(() => {
+    const instance = {
+      init: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      getProjectByPath: vi.fn().mockResolvedValue({ id: "project-1" }),
+      getProject: vi.fn().mockImplementation((id: string) =>
+        Promise.resolve({ id, name: `Project ${id}`, path: process.cwd(), status: "active", isolationMode: "in-process", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }),
+      ),
+      listProjects: vi.fn().mockResolvedValue([
+        { id: "project-1", name: "Test Project", path: process.cwd(), status: "active", isolationMode: "in-process", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+      ]),
+      listNodes: vi.fn().mockResolvedValue([
+        { id: "node-local", name: "local", type: "local", status: "offline" },
+      ]),
+      updateNode: vi.fn().mockResolvedValue(undefined),
+      startDiscovery: vi.fn().mockResolvedValue({}),
+      stopDiscovery: vi.fn(),
+    };
+    centralInstances.push(instance);
+    return instance;
+  }),
   AutomationStore: vi.fn().mockImplementation(() => ({
     init: vi.fn().mockResolvedValue(undefined),
     listSchedules: vi.fn().mockResolvedValue([]),
@@ -243,6 +259,10 @@ vi.mock("@fusion/engine", async (importOriginal) => {
       getRuntime: vi.fn().mockReturnValue(undefined),
       addProject: vi.fn().mockResolvedValue({}),
       stopAll: vi.fn().mockResolvedValue(undefined),
+    })),
+    PeerExchangeService: vi.fn().mockImplementation(() => ({
+      start: vi.fn(),
+      stop: vi.fn().mockResolvedValue(undefined),
     })),
   };
 });
@@ -603,6 +623,62 @@ describe("runDashboard — per-project engine manager (multi-project)", () => {
     await runDashboard(0, { dev: true });
 
     expect(ProjectEngine).not.toHaveBeenCalled();
+  });
+});
+
+describe("runDashboard — Peer exchange and discovery", () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    centralInstances.length = 0;
+    mockDiscoverAndLoadExtensions.mockResolvedValue({
+      runtime: { pendingProviderRegistrations: [] },
+      errors: [],
+    });
+    const { TaskStore } = await import("@fusion/core");
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
+  });
+
+  it("creates PeerExchangeService with CentralCore and calls start() in non-dev mode", async () => {
+    const { PeerExchangeService } = await import("@fusion/engine");
+
+    await runDashboard(0, {});
+
+    expect(PeerExchangeService).toHaveBeenCalledTimes(1);
+    const peerExchangeInstance = PeerExchangeService.mock.results[0]?.value;
+    expect(peerExchangeInstance.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates CentralCore with startDiscovery and updateNode methods in non-dev mode", async () => {
+    await runDashboard(0, {});
+
+    // Verify CentralCore was created with the required methods
+    expect(centralInstances.length).toBeGreaterThanOrEqual(1);
+    const meshCentral = centralInstances[0];
+    expect(meshCentral).toBeDefined();
+    expect(typeof meshCentral.startDiscovery).toBe("function");
+    expect(typeof meshCentral.updateNode).toBe("function");
+  });
+
+  it("creates CentralCore and PeerExchangeService in dev mode", async () => {
+    const { PeerExchangeService: PeerExchangeServiceEngine } = await import("@fusion/engine");
+
+    await runDashboard(0, { dev: true });
+
+    // In dev mode, we create a separate CentralCore for mesh
+    expect(centralInstances.length).toBeGreaterThanOrEqual(1);
+    expect(PeerExchangeServiceEngine).toHaveBeenCalledTimes(1);
+    const peerExchangeInstance = PeerExchangeServiceEngine.mock.results[0]?.value;
+    expect(peerExchangeInstance.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates CentralCore with startDiscovery and updateNode methods in dev mode", async () => {
+    await runDashboard(0, { dev: true });
+
+    expect(centralInstances.length).toBeGreaterThanOrEqual(1);
+    const meshCentral = centralInstances[0];
+    expect(meshCentral).toBeDefined();
+    expect(typeof meshCentral.startDiscovery).toBe("function");
+    expect(typeof meshCentral.updateNode).toBe("function");
   });
 });
 

@@ -116,6 +116,8 @@ const mocks = vi.hoisted(() => {
         { id: "node-local", name: "local", type: "local", status: "offline" },
       ]),
       updateNode: vi.fn().mockResolvedValue(undefined),
+      startDiscovery: vi.fn().mockResolvedValue({}),
+      stopDiscovery: vi.fn(),
     };
     centralInstances.push(instance);
     return instance;
@@ -496,6 +498,10 @@ vi.mock("@fusion/engine", () => ({
       startReconciliation: vi.fn(),
     };
   }),
+  PeerExchangeService: vi.fn().mockImplementation(() => ({
+    start: vi.fn(),
+    stop: vi.fn().mockResolvedValue(undefined),
+  })),
   TriageProcessor: mocks.triageCtor,
   TaskExecutor: mocks.executorCtor,
   Scheduler: mocks.schedulerCtor,
@@ -1089,5 +1095,146 @@ describe("runServe — Semaphore boundary (task lanes only)", () => {
     // the same instance used by triage/executor/scheduler above
 
     await triggerSignal("SIGINT");
+  });
+});
+
+describe("runServe — Peer exchange and discovery", () => {
+  const originalCwd = process.cwd;
+  const originalOn = process.on;
+  const originalExit = process.exit;
+
+  let signalHandlers: Record<"SIGINT" | "SIGTERM", Array<() => void>>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+  let processOnSpy: ReturnType<typeof vi.spyOn>;
+
+  async function triggerSignal(signal: "SIGINT" | "SIGTERM") {
+    const handlers = signalHandlers[signal];
+    expect(handlers.length).toBeGreaterThan(0);
+    handlers[handlers.length - 1]();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.reset();
+
+    signalHandlers = { SIGINT: [], SIGTERM: [] };
+
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    cwdSpy = vi.spyOn(process, "cwd").mockReturnValue("/repo");
+    processOnSpy = vi.spyOn(process, "on").mockImplementation(((event: string, listener: () => void) => {
+      if (event === "SIGINT" || event === "SIGTERM") {
+        signalHandlers[event].push(listener);
+      }
+      return process;
+    }) as typeof process.on);
+    process.exit = vi.fn() as never;
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+    cwdSpy.mockRestore();
+    processOnSpy.mockRestore();
+    process.cwd = originalCwd;
+    process.on = originalOn;
+    process.exit = originalExit;
+  });
+
+  it("creates PeerExchangeService with CentralCore and calls start()", async () => {
+    const { PeerExchangeService } = await import("@fusion/engine");
+
+    await runServe(4040, {});
+
+    expect(PeerExchangeService).toHaveBeenCalledTimes(1);
+    const peerExchangeInstance = PeerExchangeService.mock.results[0]?.value;
+    expect(peerExchangeInstance.start).toHaveBeenCalledTimes(1);
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("calls centralCore.startDiscovery() with correct config after server starts", async () => {
+    await runServe(4040, {});
+
+    // Find the central core instance that was used
+    const nodeCentral = mocks.centralInstances.find((instance) => instance.listNodes.mock.calls.length > 0);
+    expect(nodeCentral).toBeDefined();
+
+    // startDiscovery should have been called with broadcast, listen, and correct port
+    expect(nodeCentral.startDiscovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        broadcast: true,
+        listen: true,
+        serviceType: "_fusion._tcp",
+        port: 4040,
+        staleTimeoutMs: 300_000,
+      }),
+    );
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("starts discovery with port 5050 when port 0 is requested", async () => {
+    await runServe(0, {});
+
+    const nodeCentral = mocks.centralInstances.find((instance) => instance.listNodes.mock.calls.length > 0);
+    expect(nodeCentral).toBeDefined();
+
+    // Port 0 maps to 5050 in the mock
+    expect(nodeCentral.startDiscovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        port: 5050,
+      }),
+    );
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("calls peerExchangeService.stop() on shutdown before engineManager.stopAll()", async () => {
+    const { PeerExchangeService } = await import("@fusion/engine");
+
+    await runServe(4040, {});
+
+    // Get the peer exchange instance
+    const peerExchangeInstance = PeerExchangeService.mock.results[0]?.value;
+    expect(peerExchangeInstance).toBeDefined();
+
+    // Reset mocks to isolate shutdown behavior
+    peerExchangeInstance.stop.mockClear();
+
+    await triggerSignal("SIGTERM");
+
+    // stop() should have been called
+    expect(peerExchangeInstance.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls centralCore.stopDiscovery() on shutdown before closing", async () => {
+    await runServe(4040, {});
+
+    const nodeCentral = mocks.centralInstances.find((instance) => instance.listNodes.mock.calls.length > 0);
+    expect(nodeCentral).toBeDefined();
+
+    // Reset to isolate shutdown behavior
+    nodeCentral.stopDiscovery.mockClear();
+
+    await triggerSignal("SIGTERM");
+
+    // stopDiscovery should have been called
+    expect(nodeCentral.stopDiscovery).toHaveBeenCalledTimes(1);
+  });
+
+  it("sets local node to offline on shutdown", async () => {
+    await runServe(4040, {});
+
+    const nodeCentral = mocks.centralInstances.find((instance) => instance.listNodes.mock.calls.length > 0);
+    expect(nodeCentral).toBeDefined();
+
+    // Reset to isolate shutdown behavior
+    nodeCentral.updateNode.mockClear();
+
+    await triggerSignal("SIGTERM");
+
+    // Should have been called twice: once to set online, once to set offline
+    expect(nodeCentral.updateNode).toHaveBeenCalledWith("node-local", { status: "offline" });
   });
 });

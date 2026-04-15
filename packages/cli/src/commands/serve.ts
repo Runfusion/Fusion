@@ -20,7 +20,7 @@ import {
 } from "@fusion/core";
 import type { AutomationRunResult, ScheduledTask } from "@fusion/core";
 import { createServer, GitHubClient, createSkillsAdapter, getProjectSettingsPath } from "@fusion/dashboard";
-import { ProjectEngineManager } from "@fusion/engine";
+import { ProjectEngineManager, PeerExchangeService } from "@fusion/engine";
 import {
   AuthStorage,
   DefaultPackageManager,
@@ -310,6 +310,23 @@ export async function runServe(
   // required for correctness — reconciliation handles all cases.
   engineManager.startReconciliation();
 
+  // ── PeerExchangeService: gossip protocol for mesh peer discovery ──────
+  //
+  // Periodically exchanges peer information with connected remote nodes
+  // to keep the mesh state up-to-date across all nodes.
+  // Uses sharedCentralCore since it's the CentralCore instance available at this point.
+  //
+  let peerExchangeService: PeerExchangeService | null = null;
+  if (sharedCentralCore) {
+    peerExchangeService = new PeerExchangeService(sharedCentralCore);
+    try {
+      peerExchangeService.start();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[serve] Failed to start peer exchange service: ${message}`);
+    }
+  }
+
   // Get the cwd project's engine and store for the HTTP layer.
   // serve.ts needs a store for plugin setup, diagnostics, and the server.
   const cwdEngine = ntfyProjectId ? engineManager.getEngine(ntfyProjectId) : undefined;
@@ -541,6 +558,27 @@ export async function runServe(
 
   const actualPort = (server.address() as AddressInfo).port;
 
+  // ── mDNS discovery: broadcast presence and listen for other nodes ───────
+  //
+  // Advertises this node on the local network and discovers other Fusion nodes
+  // without requiring manual configuration.
+  // Uses sharedCentralCore since it's the CentralCore instance available at this point.
+  //
+  if (sharedCentralCore) {
+    try {
+      await sharedCentralCore.startDiscovery({
+        broadcast: true,
+        listen: true,
+        serviceType: "_fusion._tcp",
+        port: actualPort,
+        staleTimeoutMs: 300_000,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[serve] Failed to start mDNS discovery: ${message}`);
+    }
+  }
+
   // ── CentralCore: node registration ────────────────────────────────────
   //
   // Reuse the shared CentralCore instance created earlier (for ntfyProjectId).
@@ -610,6 +648,16 @@ export async function runServe(
     // Stop all project engines uniformly
     await engineManager.stopAll();
 
+    // Stop peer exchange service
+    if (peerExchangeService) {
+      try {
+        await peerExchangeService.stop();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[serve] Failed to stop peer exchange service: ${message}`);
+      }
+    }
+
     if (centralCore && localNodeId) {
       try {
         await centralCore.updateNode(localNodeId, { status: "offline" });
@@ -620,6 +668,14 @@ export async function runServe(
     }
 
     if (centralCore) {
+      // Stop mDNS discovery
+      try {
+        centralCore.stopDiscovery();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[serve] Failed to stop mDNS discovery: ${message}`);
+      }
+
       await centralCore.close().catch(() => {
         // best-effort
       });

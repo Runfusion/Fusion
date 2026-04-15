@@ -1,7 +1,7 @@
 import type { AddressInfo } from "node:net";
 import { TaskStore, AutomationStore, CentralCore, AgentStore, PluginStore, PluginLoader, getTaskMergeBlocker } from "@fusion/core";
 import { createServer, GitHubClient, createSkillsAdapter, getProjectSettingsPath } from "@fusion/dashboard";
-import { aiMergeTask, MissionAutopilot, MissionExecutionLoop, HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext, ProjectEngineManager } from "@fusion/engine";
+import { aiMergeTask, MissionAutopilot, MissionExecutionLoop, HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext, ProjectEngineManager, PeerExchangeService } from "@fusion/engine";
 import { AuthStorage, DefaultPackageManager, ModelRegistry, discoverAndLoadExtensions, getAgentDir, createExtensionRuntime } from "@mariozechner/pi-coding-agent";
 import {
   getMergeStrategy,
@@ -486,6 +486,16 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   //
   let app: ReturnType<typeof createServer>;
 
+  // ── Mesh networking: peer exchange + mDNS discovery ──────────────────
+  //
+  // peerExchangeService: periodically syncs peer info with connected nodes
+  // centralCoreForMesh: CentralCore for discovery/node lifecycle (may differ from centralCoreForEngine)
+  // localNodeIdForMesh: tracks the local node ID for cleanup on shutdown
+  //
+  let peerExchangeService: PeerExchangeService | null = null;
+  let centralCoreForMesh: CentralCore | null = null;
+  let localNodeIdForMesh: string | undefined;
+
   // Start the AI engine (unless in dev mode)
   if (!opts.dev) {
     // ── ProjectEngineManager: uniform engine lifecycle for all projects ──
@@ -520,6 +530,21 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     // fallback for immediate engine startup on project access, but it is NOT
     // required for correctness — reconciliation handles all cases.
     engineManager.startReconciliation();
+
+    // ── PeerExchangeService: gossip protocol for mesh peer discovery ──────
+    //
+    // Reuse centralCoreForEngine for peer exchange since it handles all mesh ops.
+    //
+    peerExchangeService = new PeerExchangeService(centralCoreForEngine);
+    try {
+      peerExchangeService.start();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[dashboard] Failed to start peer exchange service: ${message}`);
+    }
+
+    // Use the same CentralCore instance for mesh operations
+    centralCoreForMesh = centralCoreForEngine;
 
     // Resolve the cwd project's engine for the dashboard's HTTP layer defaults.
     // The engine for the cwd project provides onMerge, automationStore, etc.
@@ -590,6 +615,33 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
 
       // Stop all project engines uniformly
       await engineManager.stopAll();
+
+      // Stop peer exchange service
+      if (peerExchangeService) {
+        try {
+          await peerExchangeService.stop();
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[dashboard] Failed to stop peer exchange service: ${message}`);
+        }
+      }
+
+      // Stop mDNS discovery and set local node offline
+      if (centralCoreForMesh && localNodeIdForMesh) {
+        try {
+          centralCoreForMesh.stopDiscovery();
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[dashboard] Failed to stop mDNS discovery: ${message}`);
+        }
+        try {
+          await centralCoreForMesh.updateNode(localNodeIdForMesh, { status: "offline" });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[dashboard] Failed to set local node offline: ${message}`);
+        }
+      }
+
       await centralCoreForEngine.close().catch(() => {});
 
       store.close();
@@ -607,6 +659,23 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     });
   } else {
   // Dev mode: create HeartbeatMonitor + TriggerScheduler inline (engine not started)
+
+    // ── Mesh networking for dev mode ─────────────────────────────────────
+    //
+    // In dev mode we don't use the engine's CentralCore, so create a separate
+    // instance for peer exchange and mDNS discovery.
+    //
+    try {
+      centralCoreForMesh = new CentralCore();
+      await centralCoreForMesh.init();
+
+      peerExchangeService = new PeerExchangeService(centralCoreForMesh);
+      peerExchangeService.start();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[dashboard] Failed to initialize mesh networking: ${message}`);
+    }
+
     try {
       heartbeatMonitorImpl = new HeartbeatMonitor({
         store: agentStore,
@@ -727,6 +796,37 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       stopDiagnosticInterval();
       if (triggerScheduler) triggerScheduler.stop();
       if (heartbeatMonitorImpl) heartbeatMonitorImpl.stop();
+
+      // Stop peer exchange service
+      if (peerExchangeService) {
+        try {
+          await peerExchangeService.stop();
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[dashboard] Failed to stop peer exchange service: ${message}`);
+        }
+      }
+
+      // Stop mDNS discovery and set local node offline
+      if (centralCoreForMesh && localNodeIdForMesh) {
+        try {
+          centralCoreForMesh.stopDiscovery();
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[dashboard] Failed to stop mDNS discovery: ${message}`);
+        }
+        try {
+          await centralCoreForMesh.updateNode(localNodeIdForMesh, { status: "offline" });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[dashboard] Failed to set local node offline: ${message}`);
+        }
+      }
+
+      if (centralCoreForMesh) {
+        await centralCoreForMesh.close().catch(() => {});
+      }
+
       store.close();
       process.exit(0);
     };
@@ -750,11 +850,49 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     }
   });
 
-  server.on("listening", () => {
+  server.on("listening", async () => {
     const actualPort = (server.address() as AddressInfo).port;
 
     if (actualPort !== selectedPort) {
       console.log(`⚠ Port ${selectedPort} in use, using ${actualPort} instead`);
+    }
+
+    // ── mDNS discovery: broadcast presence and listen for other nodes ───────
+    //
+    // Advertises this node on the local network and discovers other Fusion nodes
+    // without requiring manual configuration.
+    //
+    if (centralCoreForMesh) {
+      try {
+        await centralCoreForMesh.startDiscovery({
+          broadcast: true,
+          listen: true,
+          serviceType: "_fusion._tcp",
+          port: actualPort,
+          staleTimeoutMs: 300_000,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[dashboard] Failed to start mDNS discovery: ${message}`);
+      }
+    }
+
+    // ── CentralCore: set local node online ─────────────────────────────────
+    //
+    // Find the local node and mark it as online now that we know the port.
+    //
+    if (centralCoreForMesh) {
+      try {
+        const nodes = await centralCoreForMesh.listNodes();
+        const localNode = nodes.find((node) => node.type === "local");
+        if (localNode) {
+          localNodeIdForMesh = localNode.id;
+          await centralCoreForMesh.updateNode(localNode.id, { status: "online" });
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[dashboard] Failed to set local node online: ${message}`);
+      }
     }
 
     console.log();
