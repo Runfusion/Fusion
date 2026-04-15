@@ -159,11 +159,10 @@ function getHandler<T = unknown>(
 }
 
 describe("child-process-worker", () => {
+  type SignalListener = (...args: unknown[]) => void;
   const originalProcessSend = process.send;
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type -- Test mock
-  let sigtermBaseline: Function[] = [];
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type -- Test mock
-  let sigintBaseline: Function[] = [];
+  let sigtermBaseline: SignalListener[] = [];
+  let sigintBaseline: SignalListener[] = [];
 
   beforeEach(() => {
     vi.resetModules();
@@ -172,8 +171,8 @@ describe("child-process-worker", () => {
     mockState.ipcWorkers.length = 0;
     mockState.runtimes.length = 0;
 
-    sigtermBaseline = process.listeners("SIGTERM");
-    sigintBaseline = process.listeners("SIGINT");
+    sigtermBaseline = process.listeners("SIGTERM") as unknown as SignalListener[];
+    sigintBaseline = process.listeners("SIGINT") as unknown as SignalListener[];
 
     (process as NodeJS.Process & { send?: (...args: unknown[]) => unknown }).send = vi.fn(() => true);
     vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
@@ -181,14 +180,14 @@ describe("child-process-worker", () => {
 
   afterEach(() => {
     for (const listener of process.listeners("SIGTERM")) {
-      if (!sigtermBaseline.includes(listener)) {
-        process.removeListener("SIGTERM", listener as (...args: any[]) => void);
+      if (!sigtermBaseline.some((l) => l === listener)) {
+        process.removeListener("SIGTERM", listener as unknown as SignalListener);
       }
     }
 
     for (const listener of process.listeners("SIGINT")) {
-      if (!sigintBaseline.includes(listener)) {
-        process.removeListener("SIGINT", listener as (...args: any[]) => void);
+      if (!sigintBaseline.some((l) => l === listener)) {
+        process.removeListener("SIGINT", listener as unknown as SignalListener);
       }
     }
 
