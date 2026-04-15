@@ -71,6 +71,7 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
       lastRunResult: fromJson<AutomationRunResult>(row.lastRunResult),
       runCount: row.runCount || 0,
       runHistory: fromJson<AutomationRunResult[]>(row.runHistory) || [],
+      scope: (row.scope as "global" | "project") || "project",
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -81,8 +82,8 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
       INSERT OR REPLACE INTO automations (
         id, name, description, scheduleType, cronExpression, command,
         enabled, timeoutMs, steps, nextRunAt, lastRunAt, lastRunResult,
-        runCount, runHistory, createdAt, updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        runCount, runHistory, scope, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       schedule.id,
       schedule.name,
@@ -98,6 +99,7 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
       schedule.lastRunResult ? JSON.stringify(schedule.lastRunResult) : null,
       schedule.runCount || 0,
       JSON.stringify(schedule.runHistory || []),
+      schedule.scope ?? "project",
       schedule.createdAt,
       schedule.updatedAt,
     );
@@ -237,6 +239,7 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
       timeoutMs: input.timeoutMs,
       steps: hasSteps ? input.steps : undefined,
       nextRunAt: enabled ? this.computeNextRun(cronExpression) : undefined,
+      scope: input.scope ?? "project",
       createdAt: now,
       updatedAt: now,
     };
@@ -406,8 +409,21 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
 
   /**
    * Get all schedules that are due to run (nextRunAt <= now and enabled).
+   * Filters by scope: "global" or "project".
    */
-  async getDueSchedules(): Promise<ScheduledTask[]> {
+  async getDueSchedules(scope: "global" | "project"): Promise<ScheduledTask[]> {
+    const now = new Date().toISOString();
+    const rows = this.db.prepare(
+      'SELECT * FROM automations WHERE enabled = 1 AND nextRunAt IS NOT NULL AND nextRunAt <= ? AND scope = ?'
+    ).all(now, scope) as any[];
+    return rows.map((row) => this.rowToSchedule(row));
+  }
+
+  /**
+   * Get all schedules that are due to run (nextRunAt <= now and enabled) for both scopes.
+   * Returns schedules from both "global" and "project" scopes.
+   */
+  async getDueSchedulesAllScopes(): Promise<ScheduledTask[]> {
     const now = new Date().toISOString();
     const rows = this.db.prepare(
       'SELECT * FROM automations WHERE enabled = 1 AND nextRunAt IS NOT NULL AND nextRunAt <= ?'

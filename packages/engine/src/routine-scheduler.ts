@@ -1,12 +1,23 @@
 /**
  * RoutineScheduler — polls for due routines and triggers their execution via RoutineRunner.
  *
+ * UTILITY PATH: This component runs on the utility lane and does NOT receive the
+ * task-lane semaphore. Routine execution is independent of task execution concurrency.
+ *
  * Handles:
  * - Polling interval with configurable interval
  * - Re-entrance guard (prevents overlapping polls)
  * - Pause awareness (globalPause / enginePaused)
  * - Catch-up execution before normal due execution
  * - Per-routine failure isolation
+ * - Scope-aware polling: "global", "project", or "all" (both scopes)
+ *
+ * SCOPED POLLING SEMANTICS:
+ * - scope="project" (default): Only polls routines scoped to this project
+ * - scope="global": Only polls global/shared routines
+ * - scope="all": Polls both scopes with deterministic de-duplication by routine ID
+ *
+ * Each ProjectEngine instance runs with scope="project", ensuring project isolation.
  */
 
 import { CronExpressionParser } from "cron-parser";
@@ -28,6 +39,13 @@ export interface RoutineSchedulerOptions {
   routineRunner: RoutineRunner;
   /** Polling interval in milliseconds. Default: 60000 (60s). Minimum: 10000 (10s). */
   pollIntervalMs?: number;
+  /**
+   * Scope to poll for due routines.
+   * - "project": Only poll routines scoped to this project (default)
+   * - "global": Only poll global/shared routines
+   * - "all": Poll both project and global scopes
+   */
+  scope?: "global" | "project" | "all";
 }
 
 /**
@@ -38,6 +56,8 @@ export class RoutineScheduler {
   private routineStore: RoutineStore;
   private routineRunner: RoutineRunner;
   private pollIntervalMs: number;
+  /** Scope to poll: "global", "project", or "all". */
+  private scope: "global" | "project" | "all";
 
   private running: boolean = false;
   private ticking: boolean = false;
@@ -48,6 +68,7 @@ export class RoutineScheduler {
     this.routineStore = options.routineStore;
     this.routineRunner = options.routineRunner;
     this.pollIntervalMs = Math.max(10000, options.pollIntervalMs ?? 60000);
+    this.scope = options.scope ?? "project";
   }
 
   /**
@@ -60,7 +81,7 @@ export class RoutineScheduler {
     }
 
     this.running = true;
-    logger.log(`RoutineScheduler started with ${this.pollIntervalMs}ms poll interval`);
+    logger.log(`RoutineScheduler started with ${this.pollIntervalMs}ms poll interval (scope: ${this.scope})`);
 
     // Run first tick immediately
     void this.tick();
@@ -119,16 +140,42 @@ export class RoutineScheduler {
         return;
       }
 
-      // Get due routines
-      const dueRoutines = await this.getDueRoutines();
+      // Get due routines based on configured scope
+      let dueRoutines: Routine[];
+      if (this.scope === "all") {
+        // Poll both scopes and deduplicate by ID
+        dueRoutines = await this.routineStore.getDueRoutinesAllScopes();
+      } else {
+        dueRoutines = await this.routineStore.getDueRoutines(this.scope);
+      }
+
       if (dueRoutines.length === 0) {
         return;
       }
 
-      logger.log(`Found ${dueRoutines.length} due routines`);
+      logger.log(`Found ${dueRoutines.length} due routines (scope: ${this.scope})`);
+
+      // Track executed routine IDs to prevent double-execution when polling all scopes
+      const executedIds = new Set<string>();
 
       // Process each routine
       for (const routine of dueRoutines) {
+        // Skip if already executed this tick (de-duplication across scopes)
+        if (executedIds.has(routine.id)) {
+          logger.log(`[${routine.id}] Skipped: already executed from another scope this tick`);
+          continue;
+        }
+        executedIds.add(routine.id);
+
+        // Log which scope this routine is from
+        const routineScope = routine.scope ?? "project";
+        if (routineScope !== this.scope && this.scope !== "all") {
+          logger.log(`[${routine.id}] Skipped: belongs to ${routineScope} scope, not polling`);
+          continue;
+        }
+
+        logger.log(`[${routine.id}] Processing [scope: ${routineScope}]`);
+
         // Re-check pause state (may have changed mid-loop)
         const currentSettings = await this.taskStore.getSettings();
         if (currentSettings.globalPause || currentSettings.enginePaused) {
@@ -175,18 +222,6 @@ export class RoutineScheduler {
       } catch (err) {
         logger.error(`[${routineId}] Failed to calculate next run: ${err}`);
       }
-    }
-  }
-
-  /**
-   * Get routines that are due for execution.
-   */
-  private async getDueRoutines(): Promise<Routine[]> {
-    try {
-      return await this.routineStore.getDueRoutines();
-    } catch (err) {
-      logger.error(`Failed to get due routines: ${err}`);
-      return [];
     }
   }
 

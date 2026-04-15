@@ -59,7 +59,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 33;
+const SCHEMA_VERSION = 34;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -1396,6 +1396,20 @@ export class Database {
           CREATE INDEX IF NOT EXISTS idxInsightRunsProjectId
             ON project_insight_runs(projectId)
         `);
+      });
+    }
+
+    // Scope columns for automations and routines (FN-1714)
+    // Enables dual-lane execution: global scope (shared) and project scope (isolated)
+    if (version < 34) {
+      this.applyMigration(34, () => {
+        // Add scope column to automations table
+        this.addColumnIfMissing("automations", "scope", "TEXT DEFAULT 'project'");
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxAutomationsScope ON automations(scope)`);
+
+        // Add scope column to routines table
+        this.addColumnIfMissing("routines", "scope", "TEXT DEFAULT 'project'");
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxRoutinesScope ON routines(scope)`);
       });
     }
   }

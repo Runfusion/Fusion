@@ -165,6 +165,7 @@ export class ProjectEngine {
       this.cronRunner = new CronRunner(store, this.automationStore, {
         aiPromptExecutor,
         onScheduleRunProcessed: this.buildInsightRunHandler(cwd),
+        scope: "project", // Project-scoped execution — global schedules run separately
       });
 
       // Sync insight extraction automation on startup

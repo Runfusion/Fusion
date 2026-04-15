@@ -520,7 +520,7 @@ describe("RoutineStore", () => {
 
   describe("getDueRoutines", () => {
     it("returns empty array when no routines", async () => {
-      const due = await store.getDueRoutines();
+      const due = await store.getDueRoutines("project");
       expect(due).toEqual([]);
     });
 
@@ -532,7 +532,7 @@ describe("RoutineStore", () => {
         enabled: false,
       });
 
-      const due = await store.getDueRoutines();
+      const due = await store.getDueRoutines("project");
       expect(due.some((d) => d.id === routine.id)).toBe(false);
     });
 
@@ -544,7 +544,7 @@ describe("RoutineStore", () => {
       });
 
       // nextRunAt is in the future by default
-      const due = await store.getDueRoutines();
+      const due = await store.getDueRoutines("project");
       expect(due.some((d) => d.id === routine.id)).toBe(false);
     });
 
@@ -564,7 +564,7 @@ describe("RoutineStore", () => {
       ).run(pastDate, routine.id);
 
       // Now getDueRoutines should include it
-      const due = await store.getDueRoutines();
+      const due = await store.getDueRoutines("project");
       expect(due.some((d) => d.id === routine.id)).toBe(true);
     });
   });

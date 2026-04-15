@@ -111,6 +111,8 @@ export interface ScheduledTask {
   timeoutMs?: number;
   /** History of recent run results (most recent first, capped at 50). */
   runHistory: AutomationRunResult[];
+  /** Scope of this schedule: "global" (shared) or "project" (isolated). */
+  scope?: "global" | "project";
   /** ISO-8601 timestamp of when this schedule was created. */
   createdAt: string;
   /** ISO-8601 timestamp of when this schedule was last updated. */
@@ -130,6 +132,8 @@ export interface ScheduledTaskCreateInput {
   timeoutMs?: number;
   /** Multi-step workflow. When provided, `command` is ignored in favor of sequential step execution. */
   steps?: AutomationStep[];
+  /** Scope of this schedule: "global" (shared) or "project" (isolated). Default: "project". */
+  scope?: "global" | "project";
 }
 
 /** Input for updating an existing scheduled task. */
@@ -143,6 +147,8 @@ export interface ScheduledTaskUpdateInput {
   timeoutMs?: number;
   /** Multi-step workflow. When provided, `command` is ignored in favor of sequential step execution. */
   steps?: AutomationStep[];
+  /** Scope of this schedule: "global" (shared) or "project" (isolated). */
+  scope?: "global" | "project";
 }
 
 /** Maximum number of run history entries to retain per schedule. */

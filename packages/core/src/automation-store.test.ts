@@ -507,7 +507,7 @@ describe("AutomationStore", () => {
       // Let's just test that getDueSchedules works with disabled/enabled correctly.
       
       // For the actual due test, verify the schedule is NOT due (nextRunAt is in the future)
-      const due = await store.getDueSchedules();
+      const due = await store.getDueSchedules("project");
       // The schedule's nextRunAt is in the future after recordRun, so it shouldn't be due
       // Instead, let's verify it returns enabled schedules only
       expect(Array.isArray(due)).toBe(true);
@@ -523,7 +523,7 @@ describe("AutomationStore", () => {
         enabled: false,
       });
 
-      const due = await store.getDueSchedules();
+      const due = await store.getDueSchedules("project");
       expect(due.some((d) => d.id === schedule.id)).toBe(false);
     });
 
@@ -535,7 +535,7 @@ describe("AutomationStore", () => {
       });
 
       // nextRunAt is in the future by default
-      const due = await store.getDueSchedules();
+      const due = await store.getDueSchedules("project");
       expect(due.some((d) => d.id === schedule.id)).toBe(false);
     });
   });

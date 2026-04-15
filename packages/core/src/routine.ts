@@ -135,6 +135,8 @@ export interface Routine {
   catchUpLimit?: number;
   /** Optional cron expression stored directly for due-routine queries (derived from trigger). */
   cronExpression?: string;
+  /** Scope of this routine: "global" (shared) or "project" (isolated). */
+  scope?: "global" | "project";
   /** ISO-8601 timestamp of when this routine was created. */
   createdAt: string;
   /** ISO-8601 timestamp of when this routine was last updated. */
@@ -159,6 +161,8 @@ export interface RoutineCreateInput {
   executionPolicy?: RoutineExecutionPolicy;
   /** Whether enabled. Default: true. */
   enabled?: boolean;
+  /** Scope of this routine: "global" (shared) or "project" (isolated). Default: "project". */
+  scope?: "global" | "project";
 }
 
 /** Input for updating an existing routine. */
@@ -175,6 +179,8 @@ export interface RoutineUpdateInput {
   executionPolicy?: RoutineExecutionPolicy;
   /** Whether enabled. */
   enabled?: boolean;
+  /** Scope of this routine: "global" (shared) or "project" (isolated). */
+  scope?: "global" | "project";
 }
 
 // ── Constants ─────────────────────────────────────────────────────────

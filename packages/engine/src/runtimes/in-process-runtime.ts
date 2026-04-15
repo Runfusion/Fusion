@@ -463,6 +463,7 @@ export class InProcessRuntime
               routineStore,
               routineRunner: this.routineRunner,
               pollIntervalMs: 60000,
+              scope: "project", // Project-scoped execution — global routines run separately
             });
             this.routineScheduler.start();
             runtimeLog.log("RoutineScheduler initialized and started");

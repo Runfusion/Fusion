@@ -54,15 +54,37 @@ export interface CronRunnerOptions {
     schedule: ScheduledTask,
     result: AutomationRunResult,
   ) => void | Promise<void>;
+  /**
+   * Scope to poll for due schedules.
+   * - "project": Only poll schedules scoped to this project (default)
+   * - "global": Only poll global/shared schedules
+   * - "all": Poll both project and global scopes
+   *
+   * When polling "all", the runner executes schedules from both scopes but
+   * deduplicates by schedule ID to prevent double-execution.
+   */
+  scope?: "global" | "project" | "all";
 }
 
 /**
  * CronRunner polls the AutomationStore for due schedules and executes them.
  *
+ * UTILITY PATH: This component runs on the utility lane and does NOT receive the
+ * task-lane semaphore. Automation execution is independent of task execution concurrency.
+ *
  * - Respects `globalPause` and `enginePaused` settings — skips execution when either is true.
  * - Prevents concurrent runs of the same schedule.
  * - Enforces per-schedule timeouts and output size limits.
  * - Uses a re-entrance guard like Scheduler to prevent overlapping ticks.
+ * - Supports scope-aware polling: "global", "project", or "all" (both scopes).
+ *
+ * SCOPED POLLING SEMANTICS:
+ * - scope="project" (default): Only polls schedules scoped to this project
+ * - scope="global": Only polls global/shared schedules (e.g., memory insight extraction)
+ * - scope="all": Polls both scopes with deterministic de-duplication by schedule ID
+ *
+ * Each ProjectEngine instance runs with scope="project", ensuring project isolation.
+ * A separate global engine (FN-1714) runs with scope="global" for shared schedules.
  */
 export class CronRunner {
   private running = false;
@@ -73,6 +95,8 @@ export class CronRunner {
   private onScheduleRunProcessed?: CronRunnerOptions["onScheduleRunProcessed"];
   /** Schedule IDs currently being executed — prevents concurrent runs of the same schedule. */
   private inFlight = new Set<string>();
+  /** Scope to poll: "global", "project", or "all" (both scopes). */
+  private scope: "global" | "project" | "all";
 
   constructor(
     private store: TaskStore,
@@ -85,13 +109,14 @@ export class CronRunner {
     );
     this.aiPromptExecutor = options.aiPromptExecutor;
     this.onScheduleRunProcessed = options.onScheduleRunProcessed;
+    this.scope = options.scope ?? "project";
   }
 
   /** Start the polling loop. */
   start(): void {
     if (this.running) return;
     this.running = true;
-    log.log(`Started (poll every ${this.pollIntervalMs / 1000}s)`);
+    log.log(`Started (poll every ${this.pollIntervalMs / 1000}s, scope: ${this.scope})`);
 
     // Run first tick immediately
     void this.tick();
@@ -127,8 +152,19 @@ export class CronRunner {
         return;
       }
 
-      const dueSchedules = await this.automationStore.getDueSchedules();
+      // Get due schedules based on configured scope
+      let dueSchedules: ScheduledTask[];
+      if (this.scope === "all") {
+        // Poll both scopes and deduplicate by ID
+        dueSchedules = await this.automationStore.getDueSchedulesAllScopes();
+      } else {
+        dueSchedules = await this.automationStore.getDueSchedules(this.scope);
+      }
+
       if (dueSchedules.length === 0) return;
+
+      // Track executed schedule IDs to prevent double-execution when polling all scopes
+      const executedIds = new Set<string>();
 
       for (const schedule of dueSchedules) {
         // Skip if already in-flight (prevents concurrent runs of same schedule)
@@ -136,6 +172,22 @@ export class CronRunner {
           log.warn(`Skipping ${schedule.name} (${schedule.id}) — still running from previous tick`);
           continue;
         }
+
+        // Skip if already executed this tick (de-duplication across scopes)
+        if (executedIds.has(schedule.id)) {
+          log.log(`Skipping ${schedule.name} (${schedule.id}) — already executed from another scope this tick`);
+          continue;
+        }
+        executedIds.add(schedule.id);
+
+        // Log which scope this schedule is from
+        const scheduleScope = schedule.scope ?? "project";
+        if (scheduleScope !== this.scope && this.scope !== "all") {
+          log.log(`Skipping ${schedule.name} (${schedule.id}) — belongs to ${scheduleScope} scope, not polling`);
+          continue;
+        }
+
+        log.log(`Executing ${schedule.name} (${schedule.id}) [scope: ${scheduleScope}]`);
 
         // Re-check pause on each schedule (may have changed mid-loop)
         const currentSettings = await this.store.getSettings();

@@ -119,6 +119,7 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
       runHistory: fromJson<RoutineExecutionResult[]>(row.runHistory) || [],
       catchUpLimit: row.catchUpLimit ?? 5,
       cronExpression: isCronTrigger(trigger) ? trigger.cronExpression : undefined,
+      scope: (row.scope as "global" | "project") || "project",
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -149,8 +150,8 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
         id, agentId, name, description, triggerType, triggerConfig,
         catchUpPolicy, executionPolicy, catchUpLimit, enabled,
         lastRunAt, lastRunResult, nextRunAt,
-        runCount, runHistory, createdAt, updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        runCount, runHistory, scope, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       routine.id,
       routine.agentId,
@@ -167,6 +168,7 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
       routine.nextRunAt ?? null,
       routine.runCount || 0,
       JSON.stringify(routine.runHistory || []),
+      routine.scope ?? "project",
       routine.createdAt,
       routine.updatedAt,
     );
@@ -257,6 +259,7 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
       enabled,
       runCount: 0,
       runHistory: [],
+      scope: input.scope ?? "project",
       createdAt: now,
       updatedAt: now,
     };
@@ -450,8 +453,21 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
 
   /**
    * Get all routines that are due to run (nextRunAt <= now and enabled).
+   * Filters by scope: "global" or "project".
    */
-  async getDueRoutines(): Promise<Routine[]> {
+  async getDueRoutines(scope: "global" | "project"): Promise<Routine[]> {
+    const now = new Date().toISOString();
+    const rows = this.db.prepare(
+      "SELECT * FROM routines WHERE enabled = 1 AND nextRunAt IS NOT NULL AND nextRunAt <= ? AND scope = ?"
+    ).all(now, scope) as any[];
+    return rows.map((row) => this.rowToRoutine(row));
+  }
+
+  /**
+   * Get all routines that are due to run (nextRunAt <= now and enabled) for both scopes.
+   * Returns routines from both "global" and "project" scopes.
+   */
+  async getDueRoutinesAllScopes(): Promise<Routine[]> {
     const now = new Date().toISOString();
     const rows = this.db.prepare(
       "SELECT * FROM routines WHERE enabled = 1 AND nextRunAt IS NOT NULL AND nextRunAt <= ?"
