@@ -1026,10 +1026,10 @@ export function SettingsModal({
         const presetOptions = presets.map((preset) => ({ id: preset.id, name: preset.name }));
         const inUsePresetIds = new Set(Object.values(form.defaultPresetBySize || {}).filter(Boolean));
 
-        // Filter model lanes to show in project scope (planning, validator, summarization)
-        // Default and execution lanes are global-only
+        // Filter model lanes to show in project scope (execution, planning, validator, summarization)
+        // Default lane is global-only
         const projectModelLanes = MODEL_LANES.filter(
-          (lane) => lane.laneId === "planning" || lane.laneId === "validator" || lane.laneId === "summarization",
+          (lane) => lane.laneId === "execution" || lane.laneId === "planning" || lane.laneId === "validator" || lane.laneId === "summarization",
         );
 
         return (

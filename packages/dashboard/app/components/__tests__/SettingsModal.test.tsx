@@ -923,6 +923,29 @@ describe("SettingsModal", () => {
     expect(projectPayload.validatorModelId).toBe("gpt-4o");
   });
 
+  it("saving in Project Models section updates project settings with execution model", async () => {
+    const user = userEvent.setup();
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    // Click on "Project Models" (project-scoped models section)
+    fireEvent.click(screen.getByText("Project Models"));
+    await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+    // Select execution model
+    const executionTrigger = screen.getByLabelText("Execution Model");
+    await user.click(executionTrigger);
+    await user.click(screen.getByText("Claude Sonnet 4.5"));
+
+    fireEvent.click(screen.getByText("Save"));
+
+    // Verify execution settings are saved as project settings
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+    const projectPayload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(projectPayload.executionProvider).toBe("anthropic");
+    expect(projectPayload.executionModelId).toBe("claude-sonnet-4-5");
+  });
+
   it("saving in Project Models section updates planning and validator fallback models", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
