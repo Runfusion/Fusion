@@ -45,7 +45,11 @@ export type InsightCategory =
   | "documentation"  // Docs, comments, clarity
   | "dependency"     // Third-party deps, versions, updates
   | "workflow"       // Process, tooling, developer experience
-  | "other";        // Uncategorized / general
+  | "other"          // Uncategorized / general
+  | "features"      // Product feature opportunities
+  | "competitive_analysis" // Competitive landscape analysis
+  | "research"      // Market and user research insights
+  | "trends";       // Industry and technology trends
 
 // ── Insight Lifecycle ─────────────────────────────────────────────────
 

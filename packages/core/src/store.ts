@@ -11,6 +11,7 @@ import { detectLegacyData, migrateFromLegacy } from "./db-migrate.js";
 import { MissionStore } from "./mission-store.js";
 import { PluginStore } from "./plugin-store.js";
 import { RoadmapStore } from "./roadmap-store.js";
+import { InsightStore } from "./insight-store.js";
 import { BackwardCompat, ProjectRequiredError } from "./migration.js";
 import { CentralCore } from "./central-core.js";
 import { getTaskMergeBlocker } from "./task-merge.js";
@@ -133,6 +134,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   private pluginStore: PluginStore | null = null;
   /** Cached RoadmapStore instance */
   private roadmapStore: RoadmapStore | null = null;
+  /** Cached InsightStore instance */
+  private insightStore: InsightStore | null = null;
 
   constructor(private rootDir: string, globalSettingsDir?: string) {
     super();
@@ -4623,6 +4626,17 @@ ${notificationsSection}`;
       this.roadmapStore = new RoadmapStore(this.db);
     }
     return this.roadmapStore;
+  }
+
+  /**
+   * Get the InsightStore instance for project insights operations.
+   * Lazily initializes the InsightStore on first access.
+   */
+  getInsightStore(): InsightStore {
+    if (!this.insightStore) {
+      this.insightStore = new InsightStore(this.db);
+    }
+    return this.insightStore;
   }
 
   // ── Backward Compatibility (Multi-Project Support) ────────────────────────

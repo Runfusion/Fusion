@@ -971,3 +971,91 @@ import type {
   TimelineEntry,
 } from "./api";
 ```
+
+## Insights View
+
+The Insights View (`InsightsView.tsx`) displays AI-generated insights organized by category, providing actionable recommendations for your project.
+
+### Features
+
+- **Five insight categories**: Features, Architecture, Competitive Analysis, Research, Trends
+- **Manual insight generation**: Trigger new insight analysis on demand
+- **Per-insight actions**: Dismiss insights you don't need, or convert them to tasks
+- **Real-time feedback**: Inline status messages and toast notifications for all actions
+- **Loading and error states**: Clear visual feedback during data loading and action execution
+
+### User Flows
+
+#### Manual Run
+1. Click "Generate Insights" button in the header
+2. Status message shows "Generating insights..."
+3. Toast notification confirms "Insight generation started"
+4. Latest run info shows progress and completion status
+
+#### Dismiss Insight
+1. Click the X button on any insight item
+2. The insight is removed from the list
+3. Toast notification confirms dismissal
+
+#### Create Task from Insight
+1. Click the + button on any insight item
+2. The insight data is extracted (title and description)
+3. Callback `onCreateTask(title, description)` is invoked
+4. Parent component handles task creation
+
+### Loading States
+
+- **Initial load**: Shows "Loading insights..." with spinner
+- **Empty state**: Shows "No insights yet" with CTA to generate first insights
+- **Error state**: Shows error message with retry button
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/insights` | GET | List all insights |
+| `/api/insights/:id` | GET | Get single insight |
+| `/api/insights/:id` | PATCH | Update insight |
+| `/api/insights/:id` | DELETE | Delete insight |
+| `/api/insights/:id/dismiss` | POST | Dismiss insight |
+| `/api/insights/run` | POST | Trigger manual run |
+| `/api/insights/runs` | GET | List runs |
+| `/api/insights/runs/:id` | GET | Get run details |
+| `/api/insights/:id/create-task` | POST | Get task creation data |
+
+### Hook API
+
+```typescript
+import { useInsights } from "./hooks/useInsights";
+
+const {
+  sections,           // Array of InsightSection with category, label, items
+  loading,           // Boolean loading state
+  error,             // Error message if fetch failed
+  latestRun,         // Most recent InsightRun
+  isRunInFlight,     // True while generation is running
+  runError,          // Error from latest run
+  refresh,           // () => Promise<void>
+  runInsights,       // () => Promise<void>
+  dismiss,           // (id: string) => Promise<void>
+  createTask,        // (id: string) => Promise<{ title, description } | null>
+  dismissStates,     // Map of id => { running, error }
+  createTaskStates,  // Map of id => { running, error }
+  totalCount,        // Total non-dismissed insights
+} = useInsights(projectId?: string);
+```
+
+### Component Usage
+
+```tsx
+import { InsightsView } from "./components/InsightsView";
+
+<InsightsView
+  projectId="project-123"
+  addToast={(message, type) => console.log(message)}
+  onClose={() => setShowInsights(false)}
+  onCreateTask={(title, description) => {
+    // Handle task creation
+  }}
+/>
+```

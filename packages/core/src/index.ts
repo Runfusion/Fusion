@@ -426,6 +426,29 @@ export { MemoryBackendError } from "./memory-backend.js";
 
 export type { MemoryBackendCapabilities } from "./memory-backend.js";
 
+// ── Project Insights ──────────────────────────────────────────────────────
+
+export { InsightStore, computeInsightFingerprint } from "./insight-store.js";
+export type {
+  InsightCategory,
+  InsightStatus,
+  InsightProvenance,
+  Insight,
+  InsightCreateInput,
+  InsightUpdateInput,
+  InsightUpsertInput,
+  InsightListOptions,
+  InsightRun,
+  InsightRunStatus,
+  InsightRunTrigger,
+  InsightRunInputMetadata,
+  InsightRunOutputMetadata,
+  InsightRunCreateInput,
+  InsightRunUpdateInput,
+  InsightRunListOptions,
+  InsightStoreEvents,
+} from "./insight-types.js";
+
 // ── Agent Companies Types ──────────────────────────────────
 
 export type {

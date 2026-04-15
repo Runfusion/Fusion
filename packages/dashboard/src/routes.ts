@@ -28,6 +28,7 @@ import {
 } from "./github-webhooks.js";
 import { createMissionRouter } from "./mission-routes.js";
 import { createRoadmapRouter } from "./roadmap-routes.js";
+import { createInsightsRouter } from "./insights-routes.js";
 import { getOrCreateProjectStore, invalidateAllGlobalSettingsCaches } from "./project-store-resolver.js";
 import { AiSessionStore, SESSION_CLEANUP_DEFAULT_MAX_AGE_MS } from "./ai-session-store.js";
 import { getSession as getPlanningSession, cleanupSession as cleanupPlanningSession } from "./planning.js";
@@ -12146,6 +12147,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   // ── Roadmap Routes ─────────────────────────────────────────────────────────
   // Mount roadmap routes at /api/roadmaps
   router.use("/roadmaps", createRoadmapRouter(store));
+
+  // ── Insights Routes ─────────────────────────────────────────────────────────
+  // Mount insights routes at /api/insights
+  // Uses projectId from query/body for scoping
+  router.use("/insights", createInsightsRouter(store));
 
   // ── Plugin Routes ─────────────────────────────────────────────────────────
   // Plugin management endpoints with projectId scoping support.
