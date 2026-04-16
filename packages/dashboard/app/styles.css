@@ -6897,6 +6897,22 @@ body {
     padding: 0 14px;
   }
 
+  .settings-scope-banner {
+    padding: 8px 14px;
+  }
+
+  .settings-empty-state {
+    padding: 12px 14px;
+  }
+
+  .settings-description {
+    padding: 0 14px;
+  }
+
+  .theme-selector {
+    padding: 0 14px 14px;
+  }
+
   .settings-content .btn,
   .auth-provider-row .btn {
     min-height: 36px;
