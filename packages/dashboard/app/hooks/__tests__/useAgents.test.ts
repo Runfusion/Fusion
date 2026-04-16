@@ -107,7 +107,7 @@ describe("useAgents", () => {
       await result.current.loadAgents({ state: "active", role: "executor" });
     });
 
-    expect(mockFetchAgents).toHaveBeenLastCalledWith({ state: "active", role: "executor" }, undefined);
+    expect(mockFetchAgents).toHaveBeenLastCalledWith({ state: "active", role: "executor", includeSystem: false }, undefined);
   });
 
   it("handles fetchAgents rejection gracefully", async () => {
@@ -187,7 +187,7 @@ describe("useAgents", () => {
     renderHook(() => useAgents(projectId));
 
     await waitFor(() => {
-      expect(mockFetchAgents).toHaveBeenCalledWith(undefined, projectId);
+      expect(mockFetchAgents).toHaveBeenCalledWith({ includeSystem: false }, projectId);
       expect(mockFetchAgentStats).toHaveBeenCalledWith(projectId);
     });
 

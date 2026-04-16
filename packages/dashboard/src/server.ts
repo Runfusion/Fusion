@@ -359,7 +359,11 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     const engineManager = options?.engineManager;
 
     if (!projectId) {
-      createSSE(store, store.getMissionStore(), aiSessionStore, store.getPluginStore())(req, res);
+      // Create AgentStore for default project SSE
+      const { AgentStore: AgentStoreClass } = await import("@fusion/core");
+      const defaultAgentStore = new AgentStoreClass({ rootDir: store.getFusionDir() });
+      await defaultAgentStore.init();
+      createSSE(store, store.getMissionStore(), aiSessionStore, store.getPluginStore(), undefined, defaultAgentStore)(req, res);
       return;
     }
 
@@ -368,15 +372,24 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       // attach to the same EventEmitter instance that the engine writes to,
       // rather than a separate store created by getOrCreateProjectStore.
       let scopedStore: TaskStore;
+      let agentStore;
       if (engineManager) {
         const engine = engineManager.getEngine(projectId);
         scopedStore = engine?.getTaskStore() ?? await getOrCreateProjectStore(projectId);
+        // Use the engine's AgentStore if available
+        agentStore = engine?.getAgentStore();
       } else {
         scopedStore = await getOrCreateProjectStore(projectId);
       }
+      // Fallback: create AgentStore if engine doesn't have one
+      if (!agentStore) {
+        const { AgentStore: AgentStoreClass } = await import("@fusion/core");
+        agentStore = new AgentStoreClass({ rootDir: scopedStore.getFusionDir() });
+        await agentStore.init();
+      }
       createSSE(scopedStore, scopedStore.getMissionStore(), aiSessionStore, scopedStore.getPluginStore(), {
         projectId,
-      })(req, res);
+      }, agentStore)(req, res);
     } catch (err: unknown) {
       sendErrorResponse(res, 500, err instanceof Error ? err.message : "Failed to open project event stream");
     }

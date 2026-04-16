@@ -10597,7 +10597,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
 
-      const tree = await agentStore.getOrgTree();
+      const includeSystem = req.query.includeSystem === "true";
+      const tree = await agentStore.getOrgTree({ includeSystem });
       res.json(tree);
     } catch (err: unknown) {
       if (err instanceof ApiError) {

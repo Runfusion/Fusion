@@ -306,7 +306,7 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
 
     let cancelled = false;
     setIsOrgTreeLoading(true);
-    fetchOrgTree(projectId)
+    fetchOrgTree(projectId, { includeSystem: showSystemAgents })
       .then((data) => {
         if (!cancelled) {
           setOrgTree(data);
@@ -327,7 +327,7 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
     return () => {
       cancelled = true;
     };
-  }, [agentView, projectId, addToast]);
+  }, [agentView, projectId, showSystemAgents, addToast]);
 
   // Refresh agent list on SSE events (independent from useAgents hook state)
   useEffect(() => {

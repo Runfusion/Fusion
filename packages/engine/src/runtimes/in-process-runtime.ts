@@ -711,6 +711,14 @@ export class InProcessRuntime
   }
 
   /**
+   * Get the AgentStore instance (if initialized).
+   * Returns undefined before start() or if init fails.
+   */
+  getAgentStore(): import("@fusion/core").AgentStore | undefined {
+    return this.agentStore;
+  }
+
+  /**
    * Get the project's Scheduler instance.
    * @throws Error if runtime has not been started
    */

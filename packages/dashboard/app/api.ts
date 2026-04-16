@@ -2615,8 +2615,12 @@ export function fetchChainOfCommand(agentId: string, projectId?: string): Promis
 }
 
 /** Fetch the full org tree as nested nodes */
-export function fetchOrgTree(projectId?: string): Promise<OrgTreeNode[]> {
-  return api<OrgTreeNode[]>(withProjectId("/agents/org-tree", projectId));
+export function fetchOrgTree(projectId?: string, options?: { includeSystem?: boolean }): Promise<OrgTreeNode[]> {
+  const params = new URLSearchParams();
+  if (projectId) params.set("projectId", projectId);
+  if (options?.includeSystem) params.set("includeSystem", "true");
+  const query = params.toString();
+  return api<OrgTreeNode[]>(`/agents/org-tree${query ? `?${query}` : ""}`);
 }
 
 /** Resolve an agent by shortname or ID */

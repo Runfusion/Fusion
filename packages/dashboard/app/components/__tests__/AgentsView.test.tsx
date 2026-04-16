@@ -121,7 +121,7 @@ describe("AgentsView", () => {
     it("passes projectId to agent fetches", async () => {
       render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
       await waitFor(() => {
-        expect(mockFetchAgents).toHaveBeenCalledWith(undefined, projectId);
+        expect(mockFetchAgents).toHaveBeenCalledWith({ includeSystem: false }, projectId);
       });
     });
 
@@ -341,7 +341,7 @@ describe("AgentsView", () => {
       });
 
       await waitFor(() => {
-        expect(mockFetchOrgTree).toHaveBeenCalledWith(projectId);
+        expect(mockFetchOrgTree).toHaveBeenCalledWith(projectId, { includeSystem: false });
       });
     });
 

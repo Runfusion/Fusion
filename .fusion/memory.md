@@ -9,6 +9,13 @@
   - `agent.metadata?.managedBy === "task-executor"` — executor-managed agents
   - Default: `includeSystem: false` excludes these from the agents page UI
 
+- **`FN-1776 Agent SSE Event Forwarding`**: Agent lifecycle events are now forwarded through the SSE pipeline:
+  - `createSSE()` accepts an optional `AgentStore` parameter for forwarding `agent:created`, `agent:updated`, `agent:deleted`, and `agent:stateChanged` events
+  - `getOrgTree()` accepts `{ includeSystem?: boolean }` filter matching `listAgents()` pattern
+  - `GET /api/agents/org-tree` supports `includeSystem` query parameter
+  - `useAgents` hook passes `includeSystem: false` by default, excluding ephemeral agents
+  - Server SSE endpoint resolves `AgentStore` from engine via `getAgentStore()` for project-scoped streams
+
 - **`FN-1736 Multi-Project Scoping Audit`**: Comprehensive audit of project-scoping across the Fusion stack found:
   - SSE/WebSocket endpoints (`/api/tasks/:id/logs/stream`, `/api/events`, `/api/ws`) already use `resolveProjectScopedStore()` or `getProjectContext()` correctly
   - Badge WebSocket (`setupBadgeWebSocket`) properly scopes per-project with listeners on scoped stores

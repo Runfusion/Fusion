@@ -1500,10 +1500,11 @@ export class AgentStore extends EventEmitter {
 
   /**
    * Build the recursive org tree for all agents.
+   * @param filter - Optional filter for listing agents
    * @returns Root nodes with nested children
    */
-  async getOrgTree(): Promise<OrgTreeNode[]> {
-    const agents = await this.listAgents();
+  async getOrgTree(filter?: { includeSystem?: boolean }): Promise<OrgTreeNode[]> {
+    const agents = await this.listAgents(filter);
     if (agents.length === 0) {
       return [];
     }

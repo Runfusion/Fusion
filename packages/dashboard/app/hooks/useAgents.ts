@@ -10,7 +10,7 @@ export function useAgents(projectId?: string) {
   const loadAgents = useCallback(async (filter?: { state?: AgentState; role?: AgentCapability }) => {
     setIsLoading(true);
     try {
-      const data = await fetchAgents(filter, projectId);
+      const data = await fetchAgents({ ...filter, includeSystem: false }, projectId);
       setAgents(data);
     } catch (err) {
       console.error("Failed to load agents:", err);

@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import type { TaskStore, MissionStore, PluginStore, PluginInstallation, PluginState } from "@fusion/core";
+import type { TaskStore, MissionStore, PluginStore, PluginInstallation, PluginState, AgentStore } from "@fusion/core";
 import type { AiSessionStore } from "./ai-session-store.js";
 
 let activeConnections = 0;
@@ -172,6 +172,7 @@ export function createSSE(
   aiSessionStore?: AiSessionStore,
   pluginStore?: PluginStore,
   options?: CreateSSEOptions,
+  agentStore?: AgentStore,
 ) {
   const { projectId } = options ?? {};
 
@@ -324,6 +325,23 @@ export function createSSE(
       send(`event: plugin:lifecycle\ndata: ${JSON.stringify(payload)}\n\n`);
     };
 
+    // --- Agent lifecycle event handlers ---
+    const onAgentCreated = (agent: any) => {
+      send(`event: agent:created\ndata: ${JSON.stringify(agent)}\n\n`);
+    };
+
+    const onAgentUpdated = (agent: any) => {
+      send(`event: agent:updated\ndata: ${JSON.stringify(agent)}\n\n`);
+    };
+
+    const onAgentDeleted = (agentId: string) => {
+      send(`event: agent:deleted\ndata: ${JSON.stringify({ id: agentId })}\n\n`);
+    };
+
+    const onAgentStateChanged = (agentId: string, fromState: string, toState: string) => {
+      send(`event: agent:stateChanged\ndata: ${JSON.stringify({ id: agentId, from: fromState, to: toState })}\n\n`);
+    };
+
     // --- Cleanup (all handlers are defined above, safe to reference) ---
 
     let cleaned = false;
@@ -372,6 +390,12 @@ export function createSSE(
         pluginStore.off("plugin:disabled", onPluginDisabled);
         pluginStore.off("plugin:stateChanged", onPluginStateChanged);
       }
+      if (agentStore) {
+        agentStore.off("agent:created", onAgentCreated);
+        agentStore.off("agent:updated", onAgentUpdated);
+        agentStore.off("agent:deleted", onAgentDeleted);
+        agentStore.off("agent:stateChanged", onAgentStateChanged);
+      }
     };
 
     // --- Subscribe ---
@@ -418,6 +442,13 @@ export function createSSE(
       pluginStore.on("plugin:enabled", onPluginEnabled);
       pluginStore.on("plugin:disabled", onPluginDisabled);
       pluginStore.on("plugin:stateChanged", onPluginStateChanged);
+    }
+
+    if (agentStore) {
+      agentStore.on("agent:created", onAgentCreated);
+      agentStore.on("agent:updated", onAgentUpdated);
+      agentStore.on("agent:deleted", onAgentDeleted);
+      agentStore.on("agent:stateChanged", onAgentStateChanged);
     }
 
     // Heartbeat every 30s to keep connection alive.
