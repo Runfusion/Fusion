@@ -276,6 +276,31 @@ describe("Roadmap Routes", () => {
       expect(response.status).toBe(201);
       expect(response.body.title).toBe("New Roadmap");
     });
+
+    it("returns 400 when title is missing", async () => {
+      const response = await performRequest(app, "POST", "/api/roadmaps", JSON.stringify({}), { "Content-Type": "application/json" });
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain("title is required");
+    });
+
+    it("returns 400 when title is empty", async () => {
+      const response = await performRequest(app, "POST", "/api/roadmaps", JSON.stringify({ title: "" }), { "Content-Type": "application/json" });
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain("title is required");
+    });
+
+    it("returns 400 when title is whitespace-only", async () => {
+      const response = await performRequest(app, "POST", "/api/roadmaps", JSON.stringify({ title: "   " }), { "Content-Type": "application/json" });
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain("title is required");
+    });
+
+    it("returns 400 when title exceeds 200 characters", async () => {
+      const longTitle = "A".repeat(201);
+      const response = await performRequest(app, "POST", "/api/roadmaps", JSON.stringify({ title: longTitle }), { "Content-Type": "application/json" });
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain("200 characters");
+    });
   });
 
   describe("GET /api/roadmaps/:roadmapId", () => {
@@ -325,6 +350,20 @@ describe("Roadmap Routes", () => {
       const response = await performRequest(app, "POST", "/api/roadmaps/" + roadmap.id + "/milestones/reorder", JSON.stringify({ orderedMilestoneIds: [m2.id, m1.id] }), { "Content-Type": "application/json" });
       expect(response.status).toBe(204);
     });
+
+    it("returns 400 when orderedMilestoneIds is not an array", async () => {
+      const roadmap = mockRoadmapStore.createRoadmap({ title: "Test" });
+      const response = await performRequest(app, "POST", "/api/roadmaps/" + roadmap.id + "/milestones/reorder", JSON.stringify({ orderedMilestoneIds: "not-an-array" }), { "Content-Type": "application/json" });
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain("must be an array");
+    });
+
+    it("returns 400 when orderedMilestoneIds contains non-strings", async () => {
+      const roadmap = mockRoadmapStore.createRoadmap({ title: "Test" });
+      const response = await performRequest(app, "POST", "/api/roadmaps/" + roadmap.id + "/milestones/reorder", JSON.stringify({ orderedMilestoneIds: ["id1", 123, "id3"] }), { "Content-Type": "application/json" });
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain("must be an array of strings");
+    });
   });
 
   describe("PATCH /api/roadmaps/milestones/:milestoneId", () => {
@@ -353,6 +392,32 @@ describe("Roadmap Routes", () => {
       const response = await performRequest(app, "POST", "/api/roadmaps/milestones/" + milestone.id + "/features", JSON.stringify({ title: "New Feature" }), { "Content-Type": "application/json" });
       expect(response.status).toBe(201);
       expect(response.body.title).toBe("New Feature");
+    });
+
+    it("returns 400 when title is missing", async () => {
+      const roadmap = mockRoadmapStore.createRoadmap({ title: "Test" });
+      const milestone = mockRoadmapStore.createMilestone(roadmap.id, { title: "MS" });
+      const response = await performRequest(app, "POST", "/api/roadmaps/milestones/" + milestone.id + "/features", JSON.stringify({}), { "Content-Type": "application/json" });
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain("title is required");
+    });
+  });
+
+  describe("POST /api/roadmaps/milestones/:milestoneId/features/reorder", () => {
+    it("returns 400 when orderedFeatureIds is not an array", async () => {
+      const roadmap = mockRoadmapStore.createRoadmap({ title: "Test" });
+      const milestone = mockRoadmapStore.createMilestone(roadmap.id, { title: "MS" });
+      const response = await performRequest(app, "POST", "/api/roadmaps/milestones/" + milestone.id + "/features/reorder", JSON.stringify({ orderedFeatureIds: "not-an-array" }), { "Content-Type": "application/json" });
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain("must be an array");
+    });
+
+    it("returns 400 when orderedFeatureIds contains non-strings", async () => {
+      const roadmap = mockRoadmapStore.createRoadmap({ title: "Test" });
+      const milestone = mockRoadmapStore.createMilestone(roadmap.id, { title: "MS" });
+      const response = await performRequest(app, "POST", "/api/roadmaps/milestones/" + milestone.id + "/features/reorder", JSON.stringify({ orderedFeatureIds: [123, "id2"] }), { "Content-Type": "application/json" });
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain("must be an array of strings");
     });
   });
 

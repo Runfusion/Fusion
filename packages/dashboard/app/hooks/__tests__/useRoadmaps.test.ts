@@ -21,6 +21,7 @@ vi.mock("../../api", () => ({
   moveRoadmapFeature: vi.fn(),
   generateMilestoneSuggestions: vi.fn(),
   generateFeatureSuggestions: vi.fn(),
+  fetchRoadmapHandoff: vi.fn(),
 }));
 
 const mockRoadmaps = [
@@ -555,7 +556,24 @@ describe("useRoadmaps", () => {
   });
 
   describe("reorderFeatures", () => {
-    it("reorders features within a milestone", async () => {
+    it("reorders features within a milestone with optimistic update", async () => {
+      // This test requires multiple features to meaningfully test reordering
+      // We'll create a custom hierarchy with multiple features
+      const multiFeatureHierarchy: import("@fusion/core").RoadmapWithHierarchy = {
+        ...mockRoadmapHierarchy,
+        milestones: [
+          {
+            ...mockRoadmapHierarchy.milestones[0],
+            features: [
+              { id: "RF-001", milestoneId: "RMS-001", title: "Feature 1", orderIndex: 0, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+              { id: "RF-002", milestoneId: "RMS-001", title: "Feature 2", orderIndex: 1, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+            ],
+          },
+          mockRoadmapHierarchy.milestones[1],
+        ],
+      };
+
+      (api.fetchRoadmap as ReturnType<typeof vi.fn>).mockResolvedValue(multiFeatureHierarchy);
       (api.reorderRoadmapFeatures as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
       const { result } = renderHook(() => useRoadmaps());
@@ -569,18 +587,34 @@ describe("useRoadmaps", () => {
         expect(result.current.selectedRoadmapId).toBe("RM-001");
       });
 
-      // Reorder features in RMS-001: already has RF-001 at orderIndex 0
-      await result.current.reorderFeatures("RMS-001", ["RF-001"]);
+      // Reorder features in RMS-001: swap RF-001 and RF-002
+      await result.current.reorderFeatures("RMS-001", ["RF-002", "RF-001"]);
 
       expect(api.reorderRoadmapFeatures).toHaveBeenCalledWith(
         "RMS-001",
-        ["RF-001"],
+        ["RF-002", "RF-001"],
         undefined
       );
       expect(api.fetchRoadmap).toHaveBeenCalled();
     });
 
     it("rolls back on failure", async () => {
+      // This test requires multiple features
+      const multiFeatureHierarchy: import("@fusion/core").RoadmapWithHierarchy = {
+        ...mockRoadmapHierarchy,
+        milestones: [
+          {
+            ...mockRoadmapHierarchy.milestones[0],
+            features: [
+              { id: "RF-001", milestoneId: "RMS-001", title: "Feature 1", orderIndex: 0, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+              { id: "RF-002", milestoneId: "RMS-001", title: "Feature 2", orderIndex: 1, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+            ],
+          },
+          mockRoadmapHierarchy.milestones[1],
+        ],
+      };
+
+      (api.fetchRoadmap as ReturnType<typeof vi.fn>).mockResolvedValue(multiFeatureHierarchy);
       const reorderError = new Error("Feature reorder failed");
       (api.reorderRoadmapFeatures as ReturnType<typeof vi.fn>).mockRejectedValue(reorderError);
 
@@ -599,7 +633,7 @@ describe("useRoadmaps", () => {
       const onError = vi.fn();
 
       try {
-        await result.current.reorderFeatures("RMS-001", ["RF-001"], { onError });
+        await result.current.reorderFeatures("RMS-001", ["RF-002", "RF-001"], { onError });
       } catch {
         // Expected to throw
       }
@@ -1459,6 +1493,241 @@ describe("useRoadmaps", () => {
 
       // Suggestions should be cleared
       expect(result.current.milestoneSuggestions).toHaveLength(0);
+    });
+  });
+
+  describe("Handoff / Export", () => {
+    const mockHandoffPayload = {
+      mission: {
+        sourceRoadmapId: "RM-001",
+        title: "Q2 Roadmap",
+        description: "Q2 product roadmap",
+        milestones: [
+          {
+            sourceMilestoneId: "RMS-001",
+            title: "Milestone 1",
+            description: "First milestone",
+            orderIndex: 0,
+            features: [
+              { sourceFeatureId: "RF-001", title: "Feature 1", description: "First feature", orderIndex: 0 },
+            ],
+          },
+        ],
+      },
+      features: [
+        {
+          source: { roadmapId: "RM-001", milestoneId: "RMS-001", featureId: "RF-001", roadmapTitle: "Q2 Roadmap", milestoneTitle: "Milestone 1", milestoneOrderIndex: 0, featureOrderIndex: 0 },
+          title: "Feature 1",
+          description: "First feature",
+        },
+      ],
+    };
+
+    beforeEach(() => {
+      // Reset fetchHandoff mock for each test
+      (api.fetchRoadmapHandoff as ReturnType<typeof vi.fn>).mockReset();
+    });
+
+    it("fetches handoff payload for a roadmap", async () => {
+      (api.fetchRoadmapHandoff as ReturnType<typeof vi.fn>).mockResolvedValue(mockHandoffPayload);
+
+      const { result } = renderHook(() => useRoadmaps());
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      // Clear any stale handoff state from previous tests
+      result.current.clearHandoff();
+
+      result.current.selectRoadmap("RM-001");
+      await waitFor(() => {
+        expect(result.current.selectedRoadmapId).toBe("RM-001");
+      });
+
+      await result.current.fetchHandoff("RM-001");
+
+      await waitFor(() => {
+        expect(result.current.handoffPayload).toEqual(mockHandoffPayload);
+        expect(result.current.isFetchingHandoff).toBe(false);
+        expect(result.current.handoffError).toBeNull();
+      });
+    });
+
+    it("handles fetchHandoff error", async () => {
+      (api.fetchRoadmapHandoff as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("Failed to fetch handoff")
+      );
+
+      const { result } = renderHook(() => useRoadmaps());
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      // Clear any stale handoff state
+      result.current.clearHandoff();
+
+      await result.current.fetchHandoff("RM-001");
+
+      await waitFor(() => {
+        expect(result.current.handoffError).toBeDefined();
+        expect(result.current.handoffPayload).toBeNull();
+        expect(result.current.isFetchingHandoff).toBe(false);
+      });
+    });
+
+    it("clears handoff state with clearHandoff", async () => {
+      (api.fetchRoadmapHandoff as ReturnType<typeof vi.fn>).mockResolvedValue(mockHandoffPayload);
+
+      const { result, rerender } = renderHook(() => useRoadmaps());
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      // Clear any stale handoff state
+      result.current.clearHandoff();
+
+      await result.current.fetchHandoff("RM-001");
+
+      await waitFor(() => {
+        expect(result.current.handoffPayload).toEqual(mockHandoffPayload);
+      });
+
+      // Call clearHandoff and rerender to get fresh state
+      result.current.clearHandoff();
+      rerender();
+
+      expect(result.current.handoffPayload).toBeNull();
+      expect(result.current.handoffError).toBeNull();
+      expect(result.current.isFetchingHandoff).toBe(false);
+    });
+
+    it("clears handoff payload when project changes", async () => {
+      (api.fetchRoadmapHandoff as ReturnType<typeof vi.fn>).mockResolvedValue(mockHandoffPayload);
+
+      const { result, rerender } = renderHook(
+        ({ projectId }: { projectId?: string }) => useRoadmaps({ projectId }),
+        { initialProps: { projectId: "proj-1" } }
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      // Clear any stale handoff state
+      result.current.clearHandoff();
+
+      await result.current.fetchHandoff("RM-001");
+
+      await waitFor(() => {
+        expect(result.current.handoffPayload).toEqual(mockHandoffPayload);
+      });
+
+      // Change project
+      rerender({ projectId: "proj-2" });
+
+      // Handoff should be cleared
+      expect(result.current.handoffPayload).toBeNull();
+      expect(result.current.handoffError).toBeNull();
+    });
+
+    it("sends correct projectId when fetching handoff", async () => {
+      (api.fetchRoadmapHandoff as ReturnType<typeof vi.fn>).mockResolvedValue(mockHandoffPayload);
+
+      const { result } = renderHook(() => useRoadmaps({ projectId: "proj-test" }));
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      // Clear any stale handoff state
+      result.current.clearHandoff();
+
+      await result.current.fetchHandoff("RM-001");
+
+      await waitFor(() => {
+        expect(api.fetchRoadmapHandoff).toHaveBeenCalledWith("RM-001", "proj-test");
+      });
+    });
+
+    it("does not set stale handoff response after project change", async () => {
+      const { result, rerender } = renderHook(
+        ({ projectId }: { projectId?: string }) => useRoadmaps({ projectId }),
+        { initialProps: { projectId: "proj-1" } }
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      // Clear any stale handoff state
+      result.current.clearHandoff();
+
+      // Start fetch but don't resolve yet
+      let resolveHandoff: ((value: typeof mockHandoffPayload) => void) | null = null;
+      (api.fetchRoadmapHandoff as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
+        return new Promise((resolve) => {
+          resolveHandoff = resolve;
+        });
+      });
+
+      const fetchPromise = result.current.fetchHandoff("RM-001");
+
+      // Change project before promise resolves
+      rerender({ projectId: "proj-2" });
+
+      // Resolve the promise
+      if (resolveHandoff) {
+        resolveHandoff(mockHandoffPayload);
+      }
+      await fetchPromise;
+
+      // Handoff should NOT be set because we're in a different project now
+      expect(result.current.handoffPayload).toBeNull();
+    });
+  });
+
+  describe("No-op suppression", () => {
+    it("skips API call when reordering features to same order", async () => {
+      const { result } = renderHook(() => useRoadmaps());
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      result.current.selectRoadmap("RM-001");
+      await waitFor(() => {
+        expect(result.current.selectedRoadmapId).toBe("RM-001");
+      });
+
+      // Try to reorder with same order as current
+      const currentFeatureIds = result.current.featuresByMilestoneId["RMS-001"]?.map((f) => f.id) || [];
+
+      await result.current.reorderFeatures("RMS-001", currentFeatureIds);
+
+      // API should NOT have been called
+      expect(api.reorderRoadmapFeatures).not.toHaveBeenCalled();
+    });
+
+    it("skips API call when moving feature to same position in same milestone", async () => {
+      const { result } = renderHook(() => useRoadmaps());
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      result.current.selectRoadmap("RM-001");
+      await waitFor(() => {
+        expect(result.current.selectedRoadmapId).toBe("RM-001");
+      });
+
+      // The feature RF-001 is already at index 0, try to move it to index 0
+      await result.current.moveFeature("RF-001", "RMS-001", 0);
+
+      // API should NOT have been called
+      expect(api.moveRoadmapFeature).not.toHaveBeenCalled();
     });
   });
 });

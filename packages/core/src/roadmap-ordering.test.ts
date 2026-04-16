@@ -248,5 +248,87 @@ describe("roadmap-ordering", () => {
         "Feature RF-2 is outside the affected milestone scope (RMS-SOURCE → RMS-TARGET)",
       );
     });
+
+    it("clamps negative targetOrderIndex to 0", () => {
+      const features = [
+        createFeature("RF-1", "RMS-1", 0, "2026-04-13T00:00:00.000Z"),
+        createFeature("RF-2", "RMS-1", 1, "2026-04-13T00:00:01.000Z"),
+      ];
+
+      const result = moveRoadmapFeature(features, {
+        roadmapId: "RM-1",
+        featureId: "RF-2",
+        fromMilestoneId: "RMS-1",
+        toMilestoneId: "RMS-1",
+        targetOrderIndex: -5,
+      });
+
+      // RF-2 should be moved to index 0, RF-1 to index 1
+      expect(result.movedFeature.orderIndex).toBe(0);
+      expect(result.sourceMilestoneFeatures.map((f) => f.id)).toEqual(["RF-2", "RF-1"]);
+    });
+
+    it("clamps NaN targetOrderIndex to end", () => {
+      const features = [
+        createFeature("RF-1", "RMS-1", 0, "2026-04-13T00:00:00.000Z"),
+        createFeature("RF-2", "RMS-1", 1, "2026-04-13T00:00:01.000Z"),
+      ];
+
+      const result = moveRoadmapFeature(features, {
+        roadmapId: "RM-1",
+        featureId: "RF-1",
+        fromMilestoneId: "RMS-1",
+        toMilestoneId: "RMS-1",
+        targetOrderIndex: NaN,
+      });
+
+      // NaN is clamped to the end (length of the remaining list)
+      expect(result.movedFeature.orderIndex).toBe(1);
+    });
+
+    it("clamps Infinity targetOrderIndex to end", () => {
+      const features = [
+        createFeature("RF-1", "RMS-1", 0, "2026-04-13T00:00:00.000Z"),
+        createFeature("RF-2", "RMS-1", 1, "2026-04-13T00:00:01.000Z"),
+      ];
+
+      const result = moveRoadmapFeature(features, {
+        roadmapId: "RM-1",
+        featureId: "RF-1",
+        fromMilestoneId: "RMS-1",
+        toMilestoneId: "RMS-1",
+        targetOrderIndex: Infinity,
+      });
+
+      // Infinity is clamped to the end
+      expect(result.movedFeature.orderIndex).toBe(1);
+    });
+
+    it("produces strictly contiguous orderIndex values after move", () => {
+      const features = [
+        createFeature("RF-1", "RMS-SOURCE", 0, "2026-04-13T00:00:00.000Z"),
+        createFeature("RF-2", "RMS-SOURCE", 1, "2026-04-13T00:00:01.000Z"),
+        createFeature("RF-3", "RMS-SOURCE", 2, "2026-04-13T00:00:02.000Z"),
+        createFeature("RF-4", "RMS-TARGET", 0, "2026-04-13T00:00:03.000Z"),
+      ];
+
+      const result = moveRoadmapFeature(features, {
+        roadmapId: "RM-1",
+        featureId: "RF-2",
+        fromMilestoneId: "RMS-SOURCE",
+        toMilestoneId: "RMS-TARGET",
+        targetOrderIndex: 0,
+      });
+
+      // Verify contiguous orderIndex for source
+      const sourceOrderIndices = result.sourceMilestoneFeatures.map((f) => f.orderIndex);
+      expect(sourceOrderIndices).toEqual([0, 1]);
+      expect(new Set(sourceOrderIndices).size).toBe(sourceOrderIndices.length);
+
+      // Verify contiguous orderIndex for target
+      const targetOrderIndices = result.targetMilestoneFeatures.map((f) => f.orderIndex);
+      expect(targetOrderIndices).toEqual([0, 1]);
+      expect(new Set(targetOrderIndices).size).toBe(targetOrderIndices.length);
+    });
   });
 });

@@ -277,7 +277,7 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
     opts?: { onSuccess?: () => void; onError?: (err: Error) => void }
   ) => {
     try {
-      const newRoadmap = await api.createRoadmap(input, projectId);
+      const newRoadmap = await api.createRoadmap(input, projectIdRef.current);
       setRoadmaps((prev) => [...prev, newRoadmap]);
       opts?.onSuccess?.();
     } catch (err) {
@@ -285,7 +285,7 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
       opts?.onError?.(error);
       throw error;
     }
-  }, [projectId]);
+  }, []); // No dependencies needed - uses refs
 
   const updateRoadmap = useCallback(async (
     roadmapId: string,
@@ -293,7 +293,7 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
     opts?: { onSuccess?: () => void; onError?: (err: Error) => void }
   ) => {
     try {
-      const updated = await api.updateRoadmap(roadmapId, updates, projectId);
+      const updated = await api.updateRoadmap(roadmapId, updates, projectIdRef.current);
       setRoadmaps((prev) => prev.map((r) => (r.id === roadmapId ? updated : r)));
       if (selectedRoadmapIdRef.current === roadmapId) {
         setSelectedRoadmap((prev) => prev ? { ...prev, ...updated } : null);
@@ -304,14 +304,14 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
       opts?.onError?.(error);
       throw error;
     }
-  }, [projectId]);
+  }, []); // No dependencies needed - uses refs
 
   const deleteRoadmap = useCallback(async (
     roadmapId: string,
     opts?: { onSuccess?: () => void; onError?: (err: Error) => void }
   ) => {
     try {
-      await api.deleteRoadmap(roadmapId, projectId);
+      await api.deleteRoadmap(roadmapId, projectIdRef.current);
       setRoadmaps((prev) => prev.filter((r) => r.id !== roadmapId));
       if (selectedRoadmapIdRef.current === roadmapId) {
         setSelectedRoadmapId(null);
@@ -325,7 +325,7 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
       opts?.onError?.(error);
       throw error;
     }
-  }, [projectId]);
+  }, []); // No dependencies needed - uses refs
 
   const selectRoadmap = useCallback((roadmapId: string | null) => {
     setSelectedRoadmapId(roadmapId);
@@ -364,7 +364,7 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
     opts?: { onSuccess?: () => void; onError?: (err: Error) => void }
   ) => {
     try {
-      const updated = await api.updateRoadmapMilestone(milestoneId, updates, projectId);
+      const updated = await api.updateRoadmapMilestone(milestoneId, updates, projectIdRef.current);
       setMilestones((prev) => prev.map((m) => (m.id === milestoneId ? updated : m)));
       if (selectedRoadmapIdRef.current) {
         void fetchSelectedRoadmap(selectedRoadmapIdRef.current);
@@ -375,14 +375,14 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
       opts?.onError?.(error);
       throw error;
     }
-  }, [fetchSelectedRoadmap, projectId]);
+  }, [fetchSelectedRoadmap]); // Uses refs internally
 
   const deleteMilestone = useCallback(async (
     milestoneId: string,
     opts?: { onSuccess?: () => void; onError?: (err: Error) => void }
   ) => {
     try {
-      await api.deleteRoadmapMilestone(milestoneId, projectId);
+      await api.deleteRoadmapMilestone(milestoneId, projectIdRef.current);
       setMilestones((prev) => prev.filter((m) => m.id !== milestoneId));
       setFeaturesByMilestoneId((prev) => {
         const updated = { ...prev };
@@ -398,7 +398,7 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
       opts?.onError?.(error);
       throw error;
     }
-  }, [fetchSelectedRoadmap, projectId]);
+  }, [fetchSelectedRoadmap]); // Uses refs internally
 
   // Feature CRUD
   const createFeature = useCallback(async (
@@ -407,7 +407,7 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
     opts?: { onSuccess?: () => void; onError?: (err: Error) => void }
   ) => {
     try {
-      const newFeature = await api.createRoadmapFeature(milestoneId, input, projectId);
+      const newFeature = await api.createRoadmapFeature(milestoneId, input, projectIdRef.current);
       setFeaturesByMilestoneId((prev) => ({
         ...prev,
         [milestoneId]: [...(prev[milestoneId] || []), newFeature],
@@ -421,7 +421,7 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
       opts?.onError?.(error);
       throw error;
     }
-  }, [fetchSelectedRoadmap, projectId]);
+  }, [fetchSelectedRoadmap]); // Uses refs internally
 
   const updateFeature = useCallback(async (
     featureId: string,
@@ -429,7 +429,7 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
     opts?: { onSuccess?: () => void; onError?: (err: Error) => void }
   ) => {
     try {
-      const updated = await api.updateRoadmapFeature(featureId, updates, projectId);
+      const updated = await api.updateRoadmapFeature(featureId, updates, projectIdRef.current);
       setFeaturesByMilestoneId((prev) => {
         const updatedMap: Record<string, RoadmapFeature[]> = {};
         for (const [milestoneId, features] of Object.entries(prev)) {
@@ -446,14 +446,14 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
       opts?.onError?.(error);
       throw error;
     }
-  }, [fetchSelectedRoadmap, projectId]);
+  }, [fetchSelectedRoadmap]); // Uses refs internally
 
   const deleteFeature = useCallback(async (
     featureId: string,
     opts?: { onSuccess?: () => void; onError?: (err: Error) => void }
   ) => {
     try {
-      await api.deleteRoadmapFeature(featureId, projectId);
+      await api.deleteRoadmapFeature(featureId, projectIdRef.current);
       setFeaturesByMilestoneId((prev) => {
         const updatedMap: Record<string, RoadmapFeature[]> = {};
         for (const [milestoneId, features] of Object.entries(prev)) {
@@ -470,7 +470,7 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
       opts?.onError?.(error);
       throw error;
     }
-  }, [fetchSelectedRoadmap, projectId]);
+  }, [fetchSelectedRoadmap]); // Uses refs internally
 
   // Milestone ordering
   const reorderMilestones = useCallback(async (
@@ -490,7 +490,7 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
     setMilestones(reordered);
 
     try {
-      await api.reorderRoadmapMilestones(roadmapId, orderedMilestoneIds, projectId);
+      await api.reorderRoadmapMilestones(roadmapId, orderedMilestoneIds, projectIdRef.current);
       // Refresh to get server state
       if (selectedRoadmapIdRef.current) {
         void fetchSelectedRoadmap(selectedRoadmapIdRef.current);
@@ -503,7 +503,7 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
       opts?.onError?.(error);
       throw error;
     }
-  }, [fetchSelectedRoadmap, projectId]);
+  }, [fetchSelectedRoadmap]); // Uses refs internally
 
   // Feature ordering
   const reorderFeatures = useCallback(async (
@@ -511,9 +511,16 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
     orderedFeatureIds: string[],
     opts?: { onSuccess?: () => void; onError?: (err: Error) => void }
   ) => {
+    // No-op suppression: if IDs are already in the same order, skip API call
+    const currentFeatures = featuresByMilestoneIdRef.current[milestoneId] || [];
+    const currentIds = currentFeatures.map((f) => f.id);
+    if (JSON.stringify(currentIds) === JSON.stringify(orderedFeatureIds)) {
+      opts?.onSuccess?.();
+      return;
+    }
+
     // Save snapshot for rollback
     const snapshot = featuresByMilestoneIdRef.current;
-    const currentFeatures = snapshot[milestoneId] || [];
 
     // Optimistic update
     const reordered = orderedFeatureIds
@@ -527,7 +534,7 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
     }));
 
     try {
-      await api.reorderRoadmapFeatures(milestoneId, orderedFeatureIds, projectId);
+      await api.reorderRoadmapFeatures(milestoneId, orderedFeatureIds, projectIdRef.current);
       // Refresh to get server state
       if (selectedRoadmapIdRef.current) {
         void fetchSelectedRoadmap(selectedRoadmapIdRef.current);
@@ -540,7 +547,7 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
       opts?.onError?.(error);
       throw error;
     }
-  }, [fetchSelectedRoadmap, projectId]);
+  }, [fetchSelectedRoadmap]); // Uses refs internally
 
   const moveFeature = useCallback(async (
     featureId: string,
@@ -564,6 +571,17 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
       const error = new Error("Feature not found");
       opts?.onError?.(error);
       throw error;
+    }
+
+    // No-op suppression: if already at target position in same milestone, skip
+    if (sourceMilestoneId === targetMilestoneId) {
+      const currentFeatures = snapshot[sourceMilestoneId] || [];
+      const clampedIndex = Math.max(0, Math.min(targetIndex, currentFeatures.length - 1));
+      const currentIndex = currentFeatures.findIndex((f) => f.id === featureId);
+      if (currentIndex === clampedIndex) {
+        opts?.onSuccess?.();
+        return;
+      }
     }
 
     // Optimistic update

@@ -942,5 +942,372 @@ describe("RoadmapStore", () => {
         expect(handoff1.source.milestoneOrderIndex).toBeLessThan(handoff2.source.milestoneOrderIndex);
       });
     });
+
+    describe("getMissionPlanningHandoff", () => {
+      it("is an alias for getRoadmapMissionHandoff with same behavior", () => {
+        const roadmap = store.createRoadmap({ title: "Alias Test" });
+        const m1 = store.createMilestone(roadmap.id, { title: "M1" });
+        const f1 = store.createFeature(m1.id, { title: "F1" });
+
+        const result1 = store.getRoadmapMissionHandoff(roadmap.id);
+        const result2 = store.getMissionPlanningHandoff(roadmap.id);
+
+        // Both should return equivalent results
+        expect(result1.sourceRoadmapId).toBe(result2.sourceRoadmapId);
+        expect(result1.title).toBe(result2.title);
+        expect(result1.description).toBe(result2.description);
+        expect(result1.milestones.length).toBe(result2.milestones.length);
+        expect(result1.milestones[0].sourceMilestoneId).toBe(result2.milestones[0].sourceMilestoneId);
+      });
+    });
+
+    describe("listFeatureTaskPlanningHandoffs", () => {
+      it("returns empty array for roadmap with no milestones", () => {
+        const roadmap = store.createRoadmap({ title: "Empty" });
+        const handoffs = store.listFeatureTaskPlanningHandoffs(roadmap.id);
+        expect(handoffs).toEqual([]);
+      });
+
+      it("returns empty array for roadmap with milestones but no features", () => {
+        const roadmap = store.createRoadmap({ title: "No Features" });
+        store.createMilestone(roadmap.id, { title: "M1" });
+        store.createMilestone(roadmap.id, { title: "M2" });
+
+        const handoffs = store.listFeatureTaskPlanningHandoffs(roadmap.id);
+        expect(handoffs).toEqual([]);
+      });
+
+      it("returns flattened feature handoffs in deterministic order", () => {
+        const roadmap = store.createRoadmap({ title: "Flat Test" });
+        const m1 = store.createMilestone(roadmap.id, { title: "M1" });
+        const m2 = store.createMilestone(roadmap.id, { title: "M2" });
+        const f1 = store.createFeature(m1.id, { title: "F1", description: "Desc 1" });
+        const f2 = store.createFeature(m1.id, { title: "F2", description: "Desc 2" });
+        const f3 = store.createFeature(m2.id, { title: "F3" });
+
+        const handoffs = store.listFeatureTaskPlanningHandoffs(roadmap.id);
+
+        expect(handoffs).toHaveLength(3);
+        // Milestone order: m1 (orderIndex 0), m2 (orderIndex 1)
+        // Feature order within milestone: f1 (orderIndex 0), f2 (orderIndex 1)
+        // Flattened: f1, f2, f3
+        expect(handoffs[0].source.featureId).toBe(f1.id);
+        expect(handoffs[0].title).toBe("F1");
+        expect(handoffs[0].description).toBe("Desc 1");
+        expect(handoffs[1].source.featureId).toBe(f2.id);
+        expect(handoffs[1].title).toBe("F2");
+        expect(handoffs[2].source.featureId).toBe(f3.id);
+      });
+
+      it("preserves source lineage in each handoff", () => {
+        const roadmap = store.createRoadmap({ title: "Lineage Test", description: "Roadmap desc" });
+        const m1 = store.createMilestone(roadmap.id, { title: "Milestone Title" });
+        const f1 = store.createFeature(m1.id, { title: "Feature Title", description: "Feature desc" });
+
+        const handoffs = store.listFeatureTaskPlanningHandoffs(roadmap.id);
+
+        expect(handoffs).toHaveLength(1);
+        expect(handoffs[0].source.roadmapId).toBe(roadmap.id);
+        expect(handoffs[0].source.roadmapTitle).toBe("Lineage Test");
+        expect(handoffs[0].source.milestoneId).toBe(m1.id);
+        expect(handoffs[0].source.milestoneTitle).toBe("Milestone Title");
+        expect(handoffs[0].source.featureId).toBe(f1.id);
+        expect(handoffs[0].source.milestoneOrderIndex).toBe(0);
+        expect(handoffs[0].source.featureOrderIndex).toBe(0);
+      });
+
+      it("throws for non-existent roadmap", () => {
+        expect(() => store.listFeatureTaskPlanningHandoffs("RM-nonexistent")).toThrow("Roadmap RM-nonexistent not found");
+      });
+    });
+  });
+
+  describe("persistence re-instantiation", () => {
+    // These tests manage their own setup/teardown to avoid conflicts with shared afterEach
+    it("survives store re-instantiation with all entities intact", async () => {
+      // Create own temp directory for this test
+      const persistTmpDir = makeTmpDir();
+      try {
+        const persistDb = new Database(join(persistTmpDir, ".fusion"));
+        persistDb.init();
+        const persistStore = new RoadmapStore(persistDb);
+
+        // Create a roadmap, milestones, and features
+        const roadmap = persistStore.createRoadmap({ title: "Persistence Test", description: "Test description" });
+        const m1 = persistStore.createMilestone(roadmap.id, { title: "Milestone 1", description: "M1 desc" });
+        const m2 = persistStore.createMilestone(roadmap.id, { title: "Milestone 2" });
+        const f1 = persistStore.createFeature(m1.id, { title: "Feature 1", description: "F1 desc" });
+        const f2 = persistStore.createFeature(m1.id, { title: "Feature 2" });
+        const f3 = persistStore.createFeature(m2.id, { title: "Feature 3" });
+
+        // Close and reopen the store from the same database
+        persistDb.close();
+
+        const reopenedDb = new Database(join(persistTmpDir, ".fusion"));
+        reopenedDb.init();
+        const reopenedStore = new RoadmapStore(reopenedDb);
+
+        // Verify all data persisted correctly
+        const persistedRoadmap = reopenedStore.getRoadmap(roadmap.id);
+        expect(persistedRoadmap).toBeDefined();
+        expect(persistedRoadmap!.title).toBe("Persistence Test");
+        expect(persistedRoadmap!.description).toBe("Test description");
+
+        const persistedMilestones = reopenedStore.listMilestones(roadmap.id);
+        expect(persistedMilestones).toHaveLength(2);
+        expect(persistedMilestones[0].title).toBe("Milestone 1");
+        expect(persistedMilestones[1].title).toBe("Milestone 2");
+
+        const persistedFeaturesM1 = reopenedStore.listFeatures(m1.id);
+        expect(persistedFeaturesM1).toHaveLength(2);
+        expect(persistedFeaturesM1[0].title).toBe("Feature 1");
+
+        const persistedFeaturesM2 = reopenedStore.listFeatures(m2.id);
+        expect(persistedFeaturesM2).toHaveLength(1);
+        expect(persistedFeaturesM2[0].title).toBe("Feature 3");
+
+        reopenedDb.close();
+      } finally {
+        await rm(persistTmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("survives re-instantiation with reordered entities", async () => {
+      const persistTmpDir = makeTmpDir();
+      try {
+        const persistDb = new Database(join(persistTmpDir, ".fusion"));
+        persistDb.init();
+        const persistStore = new RoadmapStore(persistDb);
+
+        const roadmap = persistStore.createRoadmap({ title: "Reorder Persistence" });
+        const m1 = persistStore.createMilestone(roadmap.id, { title: "M1" });
+        const m2 = persistStore.createMilestone(roadmap.id, { title: "M2" });
+        const m3 = persistStore.createMilestone(roadmap.id, { title: "M3" });
+        const f1 = persistStore.createFeature(m1.id, { title: "F1" });
+        const f2 = persistStore.createFeature(m1.id, { title: "F2" });
+
+        // Reorder milestones
+        persistStore.reorderMilestones({
+          roadmapId: roadmap.id,
+          orderedMilestoneIds: [m3.id, m1.id, m2.id],
+        });
+
+        // Reorder features
+        persistStore.reorderFeatures({
+          roadmapId: roadmap.id,
+          milestoneId: m1.id,
+          orderedFeatureIds: [f2.id, f1.id],
+        });
+
+        // Close and reopen
+        persistDb.close();
+
+        const reopenedDb = new Database(join(persistTmpDir, ".fusion"));
+        reopenedDb.init();
+        const reopenedStore = new RoadmapStore(reopenedDb);
+
+        // Verify reorder persisted
+        const milestones = reopenedStore.listMilestones(roadmap.id);
+        expect(milestones.map((m) => m.id)).toEqual([m3.id, m1.id, m2.id]);
+        expect(milestones.map((m) => m.orderIndex)).toEqual([0, 1, 2]); // Contiguous
+
+        const features = reopenedStore.listFeatures(m1.id);
+        expect(features.map((f) => f.id)).toEqual([f2.id, f1.id]);
+        expect(features.map((f) => f.orderIndex)).toEqual([0, 1]); // Contiguous
+
+        reopenedDb.close();
+      } finally {
+        await rm(persistTmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("survives re-instantiation with cross-milestone moves", async () => {
+      const persistTmpDir = makeTmpDir();
+      try {
+        const persistDb = new Database(join(persistTmpDir, ".fusion"));
+        persistDb.init();
+        const persistStore = new RoadmapStore(persistDb);
+
+        const roadmap = persistStore.createRoadmap({ title: "Move Persistence" });
+        const m1 = persistStore.createMilestone(roadmap.id, { title: "M1" });
+        const m2 = persistStore.createMilestone(roadmap.id, { title: "M2" });
+        const f1 = persistStore.createFeature(m1.id, { title: "F1" });
+        const f2 = persistStore.createFeature(m1.id, { title: "F2" });
+        const f3 = persistStore.createFeature(m2.id, { title: "F3" });
+
+        // Move f2 from m1 to m2
+        persistStore.moveFeature({
+          roadmapId: roadmap.id,
+          featureId: f2.id,
+          fromMilestoneId: m1.id,
+          toMilestoneId: m2.id,
+          targetOrderIndex: 0,
+        });
+
+        // Close and reopen
+        persistDb.close();
+
+        const reopenedDb = new Database(join(persistTmpDir, ".fusion"));
+        reopenedDb.init();
+        const reopenedStore = new RoadmapStore(reopenedDb);
+
+        // Verify move persisted
+        const f2Persisted = reopenedStore.getFeature(f2.id);
+        expect(f2Persisted!.milestoneId).toBe(m2.id);
+        expect(f2Persisted!.orderIndex).toBe(0);
+
+        // Verify m1 renumbered correctly
+        const m1Features = reopenedStore.listFeatures(m1.id);
+        expect(m1Features).toHaveLength(1);
+        expect(m1Features[0].id).toBe(f1.id);
+        expect(m1Features[0].orderIndex).toBe(0);
+
+        // Verify m2 renumbered correctly
+        const m2Features = reopenedStore.listFeatures(m2.id);
+        expect(m2Features).toHaveLength(2);
+        expect(m2Features[0].id).toBe(f2.id);
+        expect(m2Features[0].orderIndex).toBe(0);
+        expect(m2Features[1].id).toBe(f3.id);
+        expect(m2Features[1].orderIndex).toBe(1);
+
+        reopenedDb.close();
+      } finally {
+        await rm(persistTmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("cascade-deletes persist after re-instantiation", async () => {
+      const persistTmpDir = makeTmpDir();
+      try {
+        const persistDb = new Database(join(persistTmpDir, ".fusion"));
+        persistDb.init();
+        const persistStore = new RoadmapStore(persistDb);
+
+        const roadmap = persistStore.createRoadmap({ title: "Cascade Test" });
+        const m1 = persistStore.createMilestone(roadmap.id, { title: "M1" });
+        const m2 = persistStore.createMilestone(roadmap.id, { title: "M2" });
+        const f1 = persistStore.createFeature(m1.id, { title: "F1" });
+        const f2 = persistStore.createFeature(m2.id, { title: "F2" });
+
+        // Delete m1 (should cascade delete f1)
+        persistStore.deleteMilestone(m1.id);
+
+        // Close and reopen
+        persistDb.close();
+
+        const reopenedDb = new Database(join(persistTmpDir, ".fusion"));
+        reopenedDb.init();
+        const reopenedStore = new RoadmapStore(reopenedDb);
+
+        // Verify cascade delete persisted
+        expect(reopenedStore.getMilestone(m1.id)).toBeUndefined();
+        expect(reopenedStore.getFeature(f1.id)).toBeUndefined();
+
+        // Verify other data intact
+        expect(reopenedStore.getMilestone(m2.id)).toBeDefined();
+        expect(reopenedStore.getFeature(f2.id)).toBeDefined();
+
+        reopenedDb.close();
+      } finally {
+        await rm(persistTmpDir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("negative ordering tests", () => {
+    it("rejects reorder milestones with wrong roadmapId", () => {
+      const roadmap1 = store.createRoadmap({ title: "R1" });
+      const roadmap2 = store.createRoadmap({ title: "R2" });
+      const m1 = store.createMilestone(roadmap1.id, { title: "M1" });
+      const m2 = store.createMilestone(roadmap1.id, { title: "M2" });
+
+      // Try to reorder with wrong roadmapId
+      expect(() =>
+        store.reorderMilestones({
+          roadmapId: roadmap2.id, // Wrong roadmap!
+          orderedMilestoneIds: [m2.id, m1.id],
+        }),
+      ).toThrow(); // Should fail because m1 and m2 belong to roadmap1
+    });
+
+    it("rejects reorder features with wrong roadmapId", () => {
+      const roadmap = store.createRoadmap({ title: "R1" });
+      const m1 = store.createMilestone(roadmap.id, { title: "M1" });
+      const f1 = store.createFeature(m1.id, { title: "F1" });
+      const f2 = store.createFeature(m1.id, { title: "F2" });
+
+      // Try to reorder with wrong roadmapId
+      expect(() =>
+        store.reorderFeatures({
+          roadmapId: "RM-wrong", // Wrong roadmap!
+          milestoneId: m1.id,
+          orderedFeatureIds: [f2.id, f1.id],
+        }),
+      ).toThrow();
+    });
+
+    it("rejects move feature with wrong fromMilestoneId", () => {
+      const roadmap = store.createRoadmap({ title: "R1" });
+      const m1 = store.createMilestone(roadmap.id, { title: "M1" });
+      const m2 = store.createMilestone(roadmap.id, { title: "M2" });
+      const f1 = store.createFeature(m1.id, { title: "F1" });
+
+      // Try to move with wrong fromMilestoneId
+      expect(() =>
+        store.moveFeature({
+          roadmapId: roadmap.id,
+          featureId: f1.id,
+          fromMilestoneId: m2.id, // Wrong! f1 belongs to m1
+          toMilestoneId: m2.id,
+          targetOrderIndex: 0,
+        }),
+      ).toThrow(); // The feature is not found in the affected scope
+    });
+
+    it("produces contiguous orderIndex after milestone reorder", () => {
+      const roadmap = store.createRoadmap({ title: "Contiguous Test" });
+      const m1 = store.createMilestone(roadmap.id, { title: "M1" });
+      const m2 = store.createMilestone(roadmap.id, { title: "M2" });
+      const m3 = store.createMilestone(roadmap.id, { title: "M3" });
+
+      // Reorder to different positions
+      store.reorderMilestones({
+        roadmapId: roadmap.id,
+        orderedMilestoneIds: [m2.id, m3.id, m1.id],
+      });
+
+      const milestones = store.listMilestones(roadmap.id);
+      const orderIndices = milestones.map((m) => m.orderIndex);
+
+      // Verify contiguous [0, 1, 2]
+      expect(orderIndices).toEqual([0, 1, 2]);
+      // Verify no gaps or duplicates
+      const uniqueIndices = new Set(orderIndices);
+      expect(uniqueIndices.size).toBe(orderIndices.length);
+    });
+
+    it("produces contiguous orderIndex after feature reorder", () => {
+      const roadmap = store.createRoadmap({ title: "Contiguous Feature" });
+      const m1 = store.createMilestone(roadmap.id, { title: "M1" });
+      const f1 = store.createFeature(m1.id, { title: "F1" });
+      const f2 = store.createFeature(m1.id, { title: "F2" });
+      const f3 = store.createFeature(m1.id, { title: "F3" });
+
+      // Reorder to different positions
+      store.reorderFeatures({
+        roadmapId: roadmap.id,
+        milestoneId: m1.id,
+        orderedFeatureIds: [f3.id, f1.id, f2.id],
+      });
+
+      const features = store.listFeatures(m1.id);
+      const orderIndices = features.map((f) => f.orderIndex);
+
+      // Verify contiguous [0, 1, 2]
+      expect(orderIndices).toEqual([0, 1, 2]);
+      // Verify no gaps or duplicates
+      const uniqueIndices = new Set(orderIndices);
+      expect(uniqueIndices.size).toBe(orderIndices.length);
+    });
   });
 });

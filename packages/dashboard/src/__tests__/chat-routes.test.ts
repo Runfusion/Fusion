@@ -357,12 +357,39 @@ describe("Chat API Routes", () => {
       expect(response.status).toBe(201);
       expect((response.body as any).session.id).toBe("chat-abc123");
       // Model is resolved from agent's runtimeConfig.model
+      // projectId is null when no projectId query param is provided
       expect(mockCreateSession).toHaveBeenCalledWith({
         agentId: "agent-001",
         title: null,
+        projectId: null,
         modelProvider: "anthropic",
         modelId: "claude-sonnet-4-5",
       });
+    });
+
+    it("creates session with projectId when projectId query param is provided", async () => {
+      const sessionWithProject = {
+        ...sampleSession,
+        projectId: "proj-001",
+      };
+      mockCreateSession.mockReturnValue(sessionWithProject);
+
+      const response = await request(
+        app,
+        "POST",
+        "/api/chat/sessions?projectId=proj-001",
+        JSON.stringify({ agentId: "agent-001" }),
+        { "content-type": "application/json" },
+      );
+
+      expect(response.status).toBe(201);
+      expect((response.body as any).session.projectId).toBe("proj-001");
+      // Verify projectId is passed to createSession
+      expect(mockCreateSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: "proj-001",
+        }),
+      );
     });
 
     it("creates session with title and resolves model from agent config", async () => {
@@ -387,6 +414,13 @@ describe("Chat API Routes", () => {
 
       expect(response.status).toBe(201);
       expect((response.body as any).session.title).toBe("Custom Title");
+      // projectId is null when no projectId query param is provided
+      expect(mockCreateSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Custom Title",
+          projectId: null,
+        }),
+      );
     });
 
     it("returns 400 when agentId is missing", async () => {
@@ -455,9 +489,11 @@ describe("Chat API Routes", () => {
 
       expect(response.status).toBe(201);
       // No model resolved from agent config
+      // projectId is null when no projectId query param is provided
       expect(mockCreateSession).toHaveBeenCalledWith({
         agentId: "agent-002",
         title: null,
+        projectId: null,
         modelProvider: null,
         modelId: null,
       });

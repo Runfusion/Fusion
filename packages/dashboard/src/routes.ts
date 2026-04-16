@@ -7817,6 +7817,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * Create a new chat session.
    * Body: { agentId: string, title?: string }
    * The model is resolved from the agent's runtimeConfig.model setting.
+   * The session is scoped to the project identified by projectId query param or header.
    */
   router.post("/chat/sessions", rateLimit(RATE_LIMITS.mutation), async (req, res) => {
     try {
@@ -7825,7 +7826,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw internalError("Chat store not available");
       }
 
-      const scopedStore = await getScopedStore(req);
+      // Get project context to scope the session and resolve agent from the correct store
+      const { store: scopedStore, projectId } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
       const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
@@ -7852,9 +7854,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const resolvedProvider = slashIdx > 0 ? runtimeModel.slice(0, slashIdx) : undefined;
       const resolvedModelId = slashIdx > 0 ? runtimeModel.slice(slashIdx + 1) : undefined;
 
+      // Create the chat session with projectId for multi-project scoping
       const session = chatStore.createSession({
         agentId: agentId.trim(),
         title: title?.trim() || null,
+        projectId: projectId ?? null,
         modelProvider: resolvedProvider ?? null,
         modelId: resolvedModelId ?? null,
       });

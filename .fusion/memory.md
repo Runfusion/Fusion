@@ -2,6 +2,16 @@
 
 ## Architecture
 
+- **`FN-1736 Multi-Project Scoping Audit`**: Comprehensive audit of project-scoping across the Fusion stack found:
+  - SSE/WebSocket endpoints (`/api/tasks/:id/logs/stream`, `/api/events`, `/api/ws`) already use `resolveProjectScopedStore()` or `getProjectContext()` correctly
+  - Badge WebSocket (`setupBadgeWebSocket`) properly scopes per-project with listeners on scoped stores
+  - Terminal WebSocket properly scopes per-project via `projectId` query param
+  - All frontend EventSource connections (`useMultiAgentLogs`, `AgentDetailView`, `MissionManager`, etc.) pass `projectId` correctly
+  - CLI commands (`mission.ts`, `plugin.ts`, `backup.ts`, etc.) use `resolveProject()`/`getStore()` properly
+  - **Fixed**: Chat session creation (`POST /api/chat/sessions`) was NOT passing `projectId` to `createSession()` — now uses `getProjectContext(req)` and passes `projectId ?? null`
+  - AI sessions are intentionally global (shared across projects) — `AiSessionStore` uses single DB
+  - Session locks (`useSessionLock`) are intentionally global — they prevent concurrent AI session access across projects
+
 - `TaskExecutor` terminates active agent sessions (single and step) when tasks are moved away from `in-progress` via the `task:moved` event handler. This prevents zombie sessions when users manually send tasks back to todo/triage from the board UI.
 - **Centralized Context-Window Auto-Compaction (FN-1877)**: The `promptWithFallback()` function in `packages/engine/src/pi.ts` automatically catches context-window overflow errors, runs `compactSessionContext()`, and retries once. This centralizes recovery for ALL agent types (executor, step-session, merger, triage, heartbeat, reviewer, mission-execution-loop). Callers that previously had duplicate compact-and-resume logic (executor, step-session-executor, merger) have been simplified to use `promptWithFallback`'s auto-compaction as first-level recovery, with their own reduced-prompt fallbacks as second-level recovery. This eliminates code duplication and ensures consistent recovery behavior.
 - **Workflow Step Revision Loop (FN-1499)**: Workflow steps can request implementation revisions via "REQUEST REVISION" output. The flow:

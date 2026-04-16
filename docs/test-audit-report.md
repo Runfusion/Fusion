@@ -257,3 +257,99 @@ Created from this audit:
 - [ ] `FN-1281` — Close major dashboard route/service coverage gaps (`mission-routes.ts`, `subtask-breakdown.ts`, `script-store.ts`).
 - [ ] `FN-1282` — Add tests for untested dashboard agent workflow hooks/components (`useAgents`, `useProjectHealth`, file hooks, agent modals, mission interview modal).
 - [ ] `FN-1283` — Improve CLI test effectiveness (`settings-import.ts`, `settings-export.ts`, `project-resolver.ts`, `bin.ts` fallback paths).
+
+---
+
+# FN-1675 Roadmap Regression Test Coverage
+
+_Date: 2026-04-16_
+
+## Summary
+
+Added comprehensive regression test coverage for the standalone roadmap feature set across core persistence, dashboard API routes, and frontend hook/component layers.
+
+## Coverage Matrix
+
+### Core Persistence (`packages/core/src/`)
+
+| Test File | Tests | Coverage Areas |
+|-----------|-------|---------------|
+| `roadmap-store.test.ts` | 86 | CRUD operations, reorder (milestone/feature), cross-milestone move, hierarchy operations, export/handoff, **persistence re-instantiation**, **negative ordering tests** |
+| `roadmap-ordering.test.ts` | 14 | Pure ordering helpers, deterministic tie-breaker resolution, **boundary tests (negative/NaN/Infinity targetOrderIndex)**, **contiguous orderIndex verification** |
+| `roadmap-handoff.test.ts` | 20 | Handoff mapping functions, source lineage preservation, deterministic ordering |
+
+**Key additions:**
+- Persistence re-instantiation tests verifying data survives database close/reopen
+- Boundary tests for `targetOrderIndex` clamping (negative, NaN, Infinity)
+- Negative tests for roadmapId/fromMilestoneId mismatches
+- Explicit contiguous orderIndex assertions for all reorder/move operations
+
+### Dashboard Routes (`packages/dashboard/src/`)
+
+| Test File | Tests | Coverage Areas |
+|-----------|-------|---------------|
+| `roadmap-routes.routes.test.ts` | 30 | CRUD endpoints, reorder/move, suggestions (mocked), handoff, project scoping, **validation error (400) tests** |
+| `roadmap-suggestions.test.ts` | 65 | Input validation, AI output normalization, failure behavior |
+
+**Key additions:**
+- 400 validation error tests for roadmap/milestone/feature creation
+- 400 validation error tests for reorder payloads
+
+### Dashboard Hooks (`packages/dashboard/app/hooks/`)
+
+| Test File | Tests | Coverage Areas |
+|-----------|-------|---------------|
+| `useRoadmaps.test.ts` | 52 | State management, CRUD, reorder/move with optimistic updates, rollback on failure, **handoff/fetch**, **stale async guard**, **no-op suppression** |
+
+**Key additions:**
+- Handoff/fetch tests (fetchHandoff, clearHandoff, project-context clearing)
+- Stale async response rejection for handoff fetches
+- No-op suppression tests for reorder/move operations
+
+### Dashboard API Wrapper (`packages/dashboard/app/`)
+
+| Test File | Tests | Coverage Areas |
+|-----------|-------|---------------|
+| `api.test.ts` | 14 (roadmap-specific) | Roadmap API wrappers, 204 void handling, projectId propagation, reorder/move/suggestion/handoff endpoints |
+
+## Test Quality Notes
+
+- **Persistence tests** use isolated temp directories with proper cleanup
+- **Stale async guard** tests use version-ref pattern matching `useTasks` patterns
+- **No-op suppression** prevents unnecessary API calls for no-position-change operations
+- **Validation tests** cover both happy-path and error-path assertions
+- **Boundary tests** cover edge cases (negative, NaN, Infinity indices)
+
+## Files Modified
+
+### Core (`packages/core/src/`)
+- `roadmap-store.test.ts` — +349 lines (persistence, negative ordering, listFeatureTaskPlanningHandoffs, getMissionPlanningHandoff)
+- `roadmap-ordering.test.ts` — +4 tests (boundary conditions)
+
+### Dashboard Routes (`packages/dashboard/src/`)
+- `roadmap-routes.routes.test.ts` — +65 lines (400 validation tests)
+
+### Dashboard Hooks (`packages/dashboard/app/hooks/`)
+- `useRoadmaps.ts` — Fixed stale closure bug (use `projectIdRef.current`)
+- `useRoadmaps.test.ts` — +313 lines (handoff tests, no-op suppression tests)
+
+## Test Execution
+
+```bash
+# Core roadmap tests
+pnpm --filter @fusion/core exec vitest run src/roadmap-store.test.ts src/roadmap-ordering.test.ts src/roadmap-handoff.test.ts
+
+# Dashboard route tests
+pnpm --filter @fusion/dashboard exec vitest run src/roadmap-routes.routes.test.ts src/roadmap-suggestions.test.ts
+
+# Dashboard hook tests
+pnpm --filter @fusion/dashboard exec vitest run app/hooks/__tests__/useRoadmaps.test.ts
+
+# All roadmap tests (combined)
+pnpm --filter @fusion/core exec vitest run src/roadmap
+pnpm --filter @fusion/dashboard exec vitest run src/roadmap app/api.test.ts -t roadmap
+```
+
+## Coverage Verification
+
+All 120 core roadmap tests pass, 95 dashboard route/suggestion tests pass, 52 hook tests pass.
