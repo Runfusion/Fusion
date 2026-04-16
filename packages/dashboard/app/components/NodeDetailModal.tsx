@@ -5,6 +5,10 @@ import type { ToastType } from "../hooks/useToast";
 import { getProjectsForNode } from "../utils/nodeProjectAssignment";
 import type { ComputedNodeSyncStatus } from "../hooks/useNodeSettingsSync";
 import { formatRelativeTime, getSyncStateColor } from "../hooks/useNodeSettingsSync";
+import { SettingsSyncLog } from "./SettingsSyncLog";
+import type { SyncLogEntry } from "./SettingsSyncLog";
+import { SettingsSyncConflictModal } from "./SettingsSyncConflictModal";
+import type { SettingsConflictEntry, ConflictResolutionResult } from "./SettingsSyncConflictModal";
 
 interface NodeDetailModalProps {
   isOpen: boolean;
@@ -18,6 +22,10 @@ interface NodeDetailModalProps {
   onPushSettings?: (nodeId: string) => Promise<unknown>;
   onPullSettings?: (nodeId: string) => Promise<unknown>;
   onSyncAuth?: (nodeId: string) => Promise<unknown>;
+  /** Sync history entries for this node */
+  syncHistory?: SyncLogEntry[];
+  /** Called when sync conflicts need resolution */
+  onResolveConflicts?: (resolutions: ConflictResolutionResult[]) => Promise<void>;
 }
 
 function formatTimestamp(value?: string): string {
@@ -39,6 +47,8 @@ export function NodeDetailModal({
   onPushSettings,
   onPullSettings,
   onSyncAuth,
+  syncHistory = [],
+  onResolveConflicts,
 }: NodeDetailModalProps) {
   const [editMode, setEditMode] = useState(false);
   const [name, setName] = useState("");
@@ -52,6 +62,10 @@ export function NodeDetailModal({
   const [isPulling, setIsPulling] = useState(false);
   const [isSyncingAuth, setIsSyncingAuth] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+
+  // Conflict resolution modal state
+  const [showConflictModal, setShowConflictModal] = useState(false);
+  const [conflicts, setConflicts] = useState<SettingsConflictEntry[]>([]);
 
   useEffect(() => {
     if (!node || !isOpen) {
@@ -411,6 +425,18 @@ export function NodeDetailModal({
               )}
             </section>
           )}
+
+          {/* Sync History section — only for remote nodes */}
+          {node.type === "remote" && (
+            <section className="node-detail-modal__section">
+              <h4>Sync History</h4>
+              <SettingsSyncLog
+                nodeId={node.id}
+                entries={syncHistory}
+                singleNode={true}
+              />
+            </section>
+          )}
         </div>
 
         <div className="modal-actions node-detail-modal__actions">
@@ -421,6 +447,19 @@ export function NodeDetailModal({
           <button className="btn btn-sm" onClick={onClose}>Close</button>
         </div>
       </div>
+
+      {/* Conflict resolution modal — rendered outside main modal container */}
+      {node.type === "remote" && (
+        <SettingsSyncConflictModal
+          isOpen={showConflictModal}
+          onClose={() => setShowConflictModal(false)}
+          onResolve={onResolveConflicts ?? (async () => {})}
+          conflicts={conflicts}
+          localNodeName="Local"
+          remoteNodeName={node.name}
+          addToast={addToast}
+        />
+      )}
     </div>
   );
 }

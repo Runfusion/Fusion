@@ -12,6 +12,7 @@ vi.mock("lucide-react", () => ({
   Shield: () => <span data-testid="shield-icon">shield</span>,
   Upload: () => <span data-testid="upload-icon">upload</span>,
   X: () => <span data-testid="x-icon">x</span>,
+  ChevronDown: () => <span data-testid="chevron-down">chevron</span>,
 }));
 
 vi.mock("../../hooks/useNodeSettingsSync", () => ({
