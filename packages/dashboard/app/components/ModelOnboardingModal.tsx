@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { X, Loader2, CheckCircle, Key, Zap, GitPullRequest, Rocket, Plus } from "lucide-react";
+import { X, Loader2, CheckCircle, Key, Zap, GitPullRequest, Rocket, Plus, ChevronRight } from "lucide-react";
 import type { AuthProvider, ModelInfo } from "../api";
 import {
   fetchAuthStatus,
@@ -31,6 +31,45 @@ const PROVIDER_INFO: Record<string, { description: string }> = {
 
 /** Fallback description for providers not in the map */
 const PROVIDER_INFO_FALLBACK = { description: "AI provider — connect to start using AI models" };
+
+/** Props for OnboardingDisclosure component */
+interface OnboardingDisclosureProps {
+  summary: string;
+  children: React.ReactNode;
+  className?: string;
+}
+
+/**
+ * Progressive disclosure component that reveals additional content on click.
+ * Used to hide technical details behind expandable "Learn more" sections.
+ */
+function OnboardingDisclosure({ summary, children, className = "" }: OnboardingDisclosureProps) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <div className={`onboarding-disclosure ${className}`}>
+      <button
+        className="onboarding-disclosure-trigger"
+        onClick={() => setIsOpen(!isOpen)}
+        aria-expanded={isOpen}
+        type="button"
+      >
+        <ChevronRight
+          size={14}
+          className="onboarding-disclosure-chevron"
+          aria-hidden="true"
+        />
+        <span>{summary}</span>
+      </button>
+      {isOpen && (
+        <div className="onboarding-disclosure-content">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
 import {
   getOnboardingState,
   saveOnboardingState,
@@ -664,6 +703,15 @@ export function ModelOnboardingModal({
                 service or enter an API key.
               </p>
 
+              {/* Provider explanation disclosure */}
+              <OnboardingDisclosure summary="What are AI providers?">
+                <p className="onboarding-helper-text">
+                  AI providers like OpenAI and Anthropic power the AI capabilities in Fusion.
+                  Connecting a provider lets Fusion's agents use AI models to help with your tasks.
+                  You only need one provider to get started.
+                </p>
+              </OnboardingDisclosure>
+
               {/* Show helper text when providers exist but none are authenticated */}
               {authProviders.length > 0 && !authProviders.some((p) => p.authenticated) && (
                 <p className="onboarding-helper-text">
@@ -684,7 +732,9 @@ export function ModelOnboardingModal({
               ) : (
                 <>
                   {/* OAuth Providers */}
-                  {aiOauthProviders.map((provider) => (
+                  {aiOauthProviders.length > 0 && (
+                    <>
+                      {aiOauthProviders.map((provider) => (
                     <div
                       key={provider.id}
                       className={`onboarding-provider-card${provider.authenticated ? " onboarding-provider-card--connected" : ""}`}
@@ -752,7 +802,20 @@ export function ModelOnboardingModal({
                     </div>
                   ))}
 
-                  {/* API Key Providers */}
+                  {/* OAuth login disclosure */}
+                  <OnboardingDisclosure summary="How does login work?">
+                    <p className="onboarding-helper-text">
+                      Clicking Login opens the provider's website in a new tab where you sign in.
+                      Once you authorize Fusion, this page will automatically detect the connection.
+                      Your credentials are never stored in Fusion.
+                    </p>
+                  </OnboardingDisclosure>
+                </>
+              )}
+
+              {/* API Key Providers */}
+              {aiApiKeyProviders.length > 0 && (
+                <>
                   {aiApiKeyProviders.map((provider) => (
                     <div
                       key={provider.id}
@@ -832,8 +895,19 @@ export function ModelOnboardingModal({
                       </div>
                     </div>
                   ))}
+
+                  {/* API key disclosure */}
+                  <OnboardingDisclosure summary="What is an API key?">
+                    <p className="onboarding-helper-text">
+                      An API key is a secret token that authenticates Fusion with the provider.
+                      You can find your key in the provider's dashboard under API settings.
+                      Keys are stored securely on your machine.
+                    </p>
+                  </OnboardingDisclosure>
                 </>
               )}
+            </>
+            )}
 
               {/* Model Selection */}
               <div className="onboarding-model-section">
@@ -844,6 +918,14 @@ export function ModelOnboardingModal({
                   Pick a default model for AI tasks, or leave this blank to choose
                   later. Models vary in speed, capability, and cost.
                 </p>
+
+                <OnboardingDisclosure summary="How do I choose a model?">
+                  <p className="onboarding-helper-text">
+                    Models vary in speed, capability, and cost. A good default is usually
+                    the latest model from your connected provider. You can always change this
+                    later in Settings.
+                  </p>
+                </OnboardingDisclosure>
 
                 {availableModels.length === 0 ? (
                   <div className="model-onboarding-empty">
@@ -881,6 +963,14 @@ export function ModelOnboardingModal({
                 requests in sync with your work. This is entirely optional —
                 Fusion works without it.
               </p>
+
+              <OnboardingDisclosure summary="What does GitHub integration do?">
+                <p className="onboarding-helper-text">
+                  Connecting GitHub lets you import issues as tasks, track pull requests,
+                  and link code changes to your work. This is optional — you can create
+                  tasks manually without it.
+                </p>
+              </OnboardingDisclosure>
 
               {!hasGithubProvider ? (
                 <div className="model-onboarding-github-optional">
@@ -973,6 +1063,14 @@ export function ModelOnboardingModal({
               <p className="model-onboarding-description">
                 Your workspace is ready. Here's how to get started:
               </p>
+
+              <OnboardingDisclosure summary="What happens when I create a task?">
+                <p className="onboarding-helper-text">
+                  A task describes something you want done. Fusion's AI agents will read
+                  your description and work on implementing it. You can track progress on
+                  the board and review the results.
+                </p>
+              </OnboardingDisclosure>
 
               <div className="onboarding-cta-options">
                 <button

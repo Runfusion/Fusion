@@ -63,6 +63,23 @@ vi.mock("../ProviderIcon", () => ({
   ),
 }));
 
+// Mock lucide-react icons - preserve actual icons for other components
+vi.mock("lucide-react", async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    X: () => <span data-testid="icon-x">X</span>,
+    Loader2: ({ className }: { className?: string }) => <span data-testid="icon-loader" className={className}>Loader2</span>,
+    CheckCircle: () => <span data-testid="icon-check-circle">CheckCircle</span>,
+    Key: () => <span data-testid="icon-key">Key</span>,
+    Zap: () => <span data-testid="icon-zap">Zap</span>,
+    GitPullRequest: () => <span data-testid="icon-git-pull-request">GitPullRequest</span>,
+    Rocket: () => <span data-testid="icon-rocket">Rocket</span>,
+    Plus: () => <span data-testid="icon-plus">Plus</span>,
+    ChevronRight: () => <span data-testid="icon-chevron-right">ChevronRight</span>,
+  };
+});
+
 const defaultAuthProviders: AuthProvider[] = [
   { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
   { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
@@ -1631,6 +1648,136 @@ describe("ModelOnboardingModal", () => {
       expect(screen.queryByText("Cancel")).toBeNull();
 
       vi.useRealTimers();
+    });
+  });
+});
+
+describe("ModelOnboardingModal progressive disclosure", () => {
+  describe("AI Setup step disclosures", () => {
+    it("renders all 4 disclosure trigger buttons in AI Setup step", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Set Up AI")).toBeTruthy();
+      });
+
+      // Verify all 4 disclosures are present
+      expect(screen.getByText("What are AI providers?")).toBeTruthy();
+      expect(screen.getByText("How does login work?")).toBeTruthy();
+      expect(screen.getByText("What is an API key?")).toBeTruthy();
+      expect(screen.getByText("How do I choose a model?")).toBeTruthy();
+    });
+
+    it("clicking disclosure trigger expands content", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("What are AI providers?")).toBeTruthy();
+      });
+
+      const trigger = screen.getByRole("button", { name: /What are AI providers\?/ });
+      expect(trigger.getAttribute("aria-expanded")).toBe("false");
+
+      fireEvent.click(trigger);
+
+      await waitFor(() => {
+        expect(trigger.getAttribute("aria-expanded")).toBe("true");
+        expect(screen.getByText(/AI providers like OpenAI and Anthropic/)).toBeTruthy();
+      });
+    });
+
+    it("clicking disclosure trigger again collapses content", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("What are AI providers?")).toBeTruthy();
+      });
+
+      const trigger = screen.getByRole("button", { name: /What are AI providers\?/ });
+
+      // Open
+      fireEvent.click(trigger);
+      await waitFor(() => {
+        expect(trigger.getAttribute("aria-expanded")).toBe("true");
+      });
+
+      // Close
+      fireEvent.click(trigger);
+      await waitFor(() => {
+        expect(trigger.getAttribute("aria-expanded")).toBe("false");
+        expect(screen.queryByText(/AI providers like OpenAI and Anthropic/)).toBeNull();
+      });
+    });
+
+    it("multiple disclosures are independent", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("What are AI providers?")).toBeTruthy();
+        expect(screen.getByText("What is an API key?")).toBeTruthy();
+      });
+
+      const trigger1 = screen.getByRole("button", { name: /What are AI providers\?/ });
+      const trigger2 = screen.getByRole("button", { name: /What is an API key\?/ });
+
+      // Open first disclosure
+      fireEvent.click(trigger1);
+      await waitFor(() => {
+        expect(trigger1.getAttribute("aria-expanded")).toBe("true");
+        expect(trigger2.getAttribute("aria-expanded")).toBe("false");
+        expect(screen.getByText(/AI providers like OpenAI and Anthropic/)).toBeTruthy();
+      });
+
+      // Open second disclosure
+      fireEvent.click(trigger2);
+      await waitFor(() => {
+        expect(trigger1.getAttribute("aria-expanded")).toBe("true");
+        expect(trigger2.getAttribute("aria-expanded")).toBe("true");
+        expect(screen.getByText(/An API key is a secret token/)).toBeTruthy();
+      });
+    });
+  });
+
+  describe("GitHub step disclosures", () => {
+    it("renders GitHub integration disclosure in GitHub step", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToGitHubStep();
+
+      expect(screen.getByText("What does GitHub integration do?")).toBeTruthy();
+    });
+  });
+
+  describe("First Task step disclosures", () => {
+    it("renders task creation disclosure in First Task step", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToFirstTaskStep();
+
+      expect(screen.getByText("What happens when I create a task?")).toBeTruthy();
+    });
+  });
+
+  describe("Complete step disclosures", () => {
+    it("does not render any disclosure triggers in complete step", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToFirstTaskStep();
+
+      // Click Finish Setup
+      fireEvent.click(screen.getByText("Finish Setup"));
+
+      await waitFor(() => {
+        expect(screen.getByText("All Set!")).toBeTruthy();
+      });
+
+      // Verify no disclosure triggers exist
+      expect(screen.queryByText("What are AI providers?")).toBeNull();
+      expect(screen.queryByText("How does login work?")).toBeNull();
+      expect(screen.queryByText("What is an API key?")).toBeNull();
+      expect(screen.queryByText("How do I choose a model?")).toBeNull();
+      expect(screen.queryByText("What does GitHub integration do?")).toBeNull();
+      expect(screen.queryByText("What happens when I create a task?")).toBeNull();
     });
   });
 });
