@@ -1,4 +1,11 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
+
+// Extend Express Request to include rawBody property set by webhook middleware
+declare module "express" {
+  interface Request {
+    rawBody?: Buffer;
+  }
+}
 import multer from "multer";
 import { createReadStream, createWriteStream, existsSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
@@ -11,13 +18,13 @@ import * as nodeFs from "node:fs";
 
 import { promisify } from "node:util";
 import type { TaskStore, Column, ScheduleType, ActivityEventType, ModelPreset, MessageType, ParticipantType, RoutineTriggerType } from "@fusion/core";
-import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, getCurrentRepo, isGhAuthenticated, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupAutomation, exportSettings, importSettings, validateImportData, MessageStore, MEMORY_FILE_PATH, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes, readMemory, writeMemory, MemoryBackendError } from "@fusion/core";
+import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, getCurrentRepo, isGhAuthenticated, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupAutomation, exportSettings, importSettings, validateImportData, MessageStore, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes, readMemory, writeMemory, MemoryBackendError } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
 import { GitHubClient, parseBadgeUrl } from "./github.js";
 import { githubRateLimiter } from "./github-poll.js";
 import { terminalSessionManager } from "./terminal.js";
 import { getTerminalService } from "./terminal-service.js";
-import { listFiles, readFile, writeFile, listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, copyWorkspaceFile, moveWorkspaceFile, deleteWorkspaceFile, renameWorkspaceFile, getWorkspaceFileForDownload, getWorkspaceFolderForZip, readProjectFile, writeProjectFile, FileServiceError } from "./file-service.js";
+import { listFiles, readFile, writeFile, listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, copyWorkspaceFile, moveWorkspaceFile, deleteWorkspaceFile, renameWorkspaceFile, getWorkspaceFileForDownload, getWorkspaceFolderForZip, FileServiceError } from "./file-service.js";
 import { clearUsageCache, fetchAllProviderUsage } from "./usage.js";
 import {
   getGitHubAppConfig,
@@ -100,6 +107,17 @@ export interface AuthStorageLike {
   get?(providerId: string): { type?: string; key?: string } | null | undefined;
 }
 
+/**
+ * Extended session interface for workflow step refinement.
+ * The AgentSession from @mariozechner/pi-coding-agent has on() and prompt() methods
+ * but the local AgentSession type is minimal.
+ */
+interface RefineAgentSession {
+  on(event: "text", listener: (delta: string) => void): void;
+  prompt(text: string): Promise<void>;
+  dispose(): void;
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
@@ -108,8 +126,7 @@ const upload = multer({
 const execFileAsync = promisify(execFile);
 
 // Dynamic import fallback for @fusion/engine with injectable override for tests.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let createKbAgentForRefine: any;
+let createKbAgentForRefine: typeof import("@fusion/engine").createKbAgent | undefined;
 
 /** @internal Inject a mock createKbAgent function for workflow-step refine route tests. */
 export function __setCreateKbAgentForRefine(mock: typeof createKbAgentForRefine): void {
@@ -1192,7 +1209,7 @@ async function fetchGitRemote(remote: string = "origin", cwd?: string): Promise<
   try {
     const output = await runGitCommand(["fetch", remote], cwd, 30000);
     return { fetched: true, message: output.trim() || "Fetch completed" };
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (err instanceof ApiError) {
       throw err;
     }
@@ -1218,7 +1235,7 @@ async function pullGitBranch(cwd?: string): Promise<GitPullResult> {
   try {
     const output = await runGitCommand(["pull"], cwd, 30000);
     return { success: true, message: output.trim() };
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (err instanceof ApiError) {
       throw err;
     }
@@ -1243,7 +1260,7 @@ async function pushGitBranch(cwd?: string): Promise<GitPushResult> {
   try {
     const output = await runGitCommand(["push"], cwd, 30000);
     return { success: true, message: output.trim() || "Push completed" };
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (err instanceof ApiError) {
       throw err;
     }
@@ -1340,7 +1357,7 @@ async function addGitRemote(name: string, url: string, cwd?: string): Promise<vo
   }
   try {
     await runGitCommand(["remote", "add", name, url], cwd, 10000);
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (err instanceof ApiError) {
       throw err;
     }
@@ -1361,7 +1378,7 @@ async function removeGitRemote(name: string, cwd?: string): Promise<void> {
   }
   try {
     await runGitCommand(["remote", "remove", name], cwd, 10000);
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (err instanceof ApiError) {
       throw err;
     }
@@ -1385,7 +1402,7 @@ async function renameGitRemote(oldName: string, newName: string, cwd?: string): 
   }
   try {
     await runGitCommand(["remote", "rename", oldName, newName], cwd, 10000);
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (err instanceof ApiError) {
       throw err;
     }
@@ -1412,7 +1429,7 @@ async function setGitRemoteUrl(name: string, url: string, cwd?: string): Promise
   }
   try {
     await runGitCommand(["remote", "set-url", name, url], cwd, 10000);
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (err instanceof ApiError) {
       throw err;
     }
@@ -1886,7 +1903,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    *
    * @throws ApiError(503) if the runner is unavailable for the requested scope
    */
-  function resolveRoutineRunner(req: Request, scope: ScopeValue | undefined): NonNullable<ServerOptions["routineRunner"]> {
+  function resolveRoutineRunner(_req: Request, _scope: ScopeValue | undefined): NonNullable<ServerOptions["routineRunner"]> {
     const runner = options?.routineRunner;
 
     if (!runner) {
@@ -2047,7 +2064,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         ...settings,
         githubTokenConfigured: Boolean(githubToken),
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -2108,14 +2125,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       
       res.json(settings);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = typeof err?.message === "string" && (
-        err.message.includes("modelPresets") || err.message.includes("must include both provider and modelId")
+      const status = typeof (err instanceof Error ? err.message : String(err)) === "string" && (
+        (err instanceof Error ? err.message : String(err)).includes("modelPresets") || (err instanceof Error ? err.message : String(err)).includes("must include both provider and modelId")
       ) ? 400 : 500;
-      throw new ApiError(status, err.message);
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -2138,7 +2155,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Use backend-aware memory read
       const result = await readMemory(rootDir, settings);
       res.json({ content: result.content });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -2179,7 +2196,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Use backend-aware memory write with explicit error mapping
       await writeMemory(rootDir, content, settings);
       res.json({ success: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -2191,22 +2208,22 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           case "READ_ONLY":
           case "UNSUPPORTED":
           case "CONFLICT":
-            throw new ApiError(409, `Memory operation failed: ${err.message}`, details);
+            throw new ApiError(409, `Memory operation failed: ${err instanceof Error ? err.message : String(err)}`, details);
           case "BACKEND_UNAVAILABLE":
             res.status(503).json({
-              error: `Memory backend unavailable: ${err.message}`,
+              error: `Memory backend unavailable: ${err instanceof Error ? err.message : String(err)}`,
               ...details,
             });
             return;
           case "QUOTA_EXCEEDED":
             res.status(413).json({
-              error: `Memory quota exceeded: ${err.message}`,
+              error: `Memory quota exceeded: ${err instanceof Error ? err.message : String(err)}`,
               ...details,
             });
             return;
           default:
             // READ_FAILED, WRITE_FAILED, NOT_FOUND, etc.
-            throw new ApiError(500, `Memory operation failed: ${err.message}`, details);
+            throw new ApiError(500, `Memory operation failed: ${err instanceof Error ? err.message : String(err)}`, details);
         }
       }
 
@@ -2242,7 +2259,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         capabilities,
         availableBackends,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -2302,7 +2319,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await writeMemory(rootDir, compacted, settings);
 
       res.json({ content: compacted });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -2314,21 +2331,21 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           case "READ_ONLY":
           case "UNSUPPORTED":
           case "CONFLICT":
-            throw new ApiError(409, `Memory operation failed: ${err.message}`, details);
+            throw new ApiError(409, `Memory operation failed: ${err instanceof Error ? err.message : String(err)}`, details);
           case "BACKEND_UNAVAILABLE":
             res.status(503).json({
-              error: `Memory backend unavailable: ${err.message}`,
+              error: `Memory backend unavailable: ${err instanceof Error ? err.message : String(err)}`,
               ...details,
             });
             return;
           default:
             // READ_FAILED, WRITE_FAILED, NOT_FOUND, etc.
-            throw new ApiError(500, `Memory operation failed: ${err.message}`, details);
+            throw new ApiError(500, `Memory operation failed: ${err instanceof Error ? err.message : String(err)}`, details);
         }
       }
 
       // Map AI service errors to 503
-      if (err?.name === "AiServiceError") {
+      if (err instanceof Error && err.name === "AiServiceError") {
         throw new ApiError(503, err.message || "AI service temporarily unavailable");
       }
 
@@ -2348,7 +2365,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const globalStore = store.getGlobalSettingsStore();
       const settings = await globalStore.getSettings();
       res.json(settings);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -2369,7 +2386,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // than returning a stale per-project cache.
       invalidateAllGlobalSettingsCaches();
       res.json(settings);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -2387,7 +2404,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: scopedStore } = await getProjectContext(req);
       const scopes = await scopedStore.getSettingsByScope();
       res.json(scopes);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -2435,7 +2452,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json({ success: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -2461,7 +2478,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const exportData = await exportSettings(scopedStore, { scope });
       res.json(exportData);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -2501,7 +2518,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         globalCount: result.globalCount,
         projectCount: result.projectCount,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -2541,7 +2558,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         maxConcurrent: settings.maxConcurrent ?? 2,
         lastActivityAt,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -2571,7 +2588,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         count: backups.length,
         totalSize,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -2600,7 +2617,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       } else {
         throw new ApiError(500, result.output);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -2638,7 +2655,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         tasks = await scopedStore.listTasks({ limit, offset, slim: true, includeArchived });
       }
       res.json(tasks);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -2755,12 +2772,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         { onSummarize, settings: { autoSummarizeTitles: settings.autoSummarizeTitles } }
       );
       res.status(201).json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.message?.includes("must be a string") || err.message?.includes("must be an array of strings") ? 400 : 500;
-      throw new ApiError(status, err.message);
+      const status = (err instanceof Error ? err.message : String(err)).includes("must be a string") || (err instanceof Error ? err.message : String(err)).includes("must be an array of strings") ? 400 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -2774,12 +2791,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       const task = await scopedStore.moveTask(req.params.id, column as Column);
       res.json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.message.includes("Invalid transition") ? 400 : 500;
-      throw new ApiError(status, err.message);
+      const status = (err instanceof Error ? err.message : String(err)).includes("Invalid transition") ? 400 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -2793,14 +2810,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         : options?.onMerge ?? ((id: string) => scopedStore.mergeTask(id));
       const result = await merge(req.params.id);
       res.json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.message.includes("Cannot merge") ? 400
-        : err.message.includes("conflict") ? 409
+      const status = (err instanceof Error ? err.message : String(err)).includes("Cannot merge") ? 400
+        : (err instanceof Error ? err.message : String(err)).includes("conflict") ? 409
         : 500;
-      throw new ApiError(status, err.message);
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -2866,7 +2883,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await scopedStore.logEntry(req.params.id, "Retry requested from dashboard (stuck kill budget reset)");
       const updated = await scopedStore.moveTask(req.params.id, "todo");
       res.json(updated);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -2880,12 +2897,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: scopedStore } = await getProjectContext(req);
       const newTask = await scopedStore.duplicateTask(req.params.id);
       res.status(201).json(newTask);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.code === "ENOENT" ? 404 : 500;
-      throw new ApiError(status, err.message);
+      const errorWithCode = err as NodeJS.ErrnoException;
+      const status = errorWithCode.code === "ENOENT" ? 404 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -2906,15 +2924,16 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const refinedTask = await scopedStore.refineTask(req.params.id, trimmedFeedback);
       await scopedStore.logEntry(req.params.id, "Refinement requested", trimmedFeedback);
       res.status(201).json(refinedTask);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.code === "ENOENT" ? 404
-        : err.message?.includes("must be in 'done' or 'in-review'") ? 400
-        : err.message?.includes("Feedback is required") ? 400
+      const errorWithCode = err as NodeJS.ErrnoException;
+      const status = errorWithCode.code === "ENOENT" ? 404
+        : (err instanceof Error ? err.message : String(err)).includes("must be in 'done' or 'in-review'") ? 400
+        : (err instanceof Error ? err.message : String(err)).includes("Feedback is required") ? 400
         : 500;
-      throw new ApiError(status, err.message);
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -2924,12 +2943,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.archiveTask(req.params.id);
       res.json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.message?.includes("must be in") ? 400 : 500;
-      throw new ApiError(status, err.message);
+      const status = (err instanceof Error ? err.message : String(err)).includes("must be in") ? 400 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -2939,12 +2958,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.unarchiveTask(req.params.id);
       res.json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.message?.includes("must be in") ? 400 : 500;
-      throw new ApiError(status, err.message);
+      const status = (err instanceof Error ? err.message : String(err)).includes("must be in") ? 400 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -2954,7 +2973,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: scopedStore } = await getProjectContext(req);
       const archived = await scopedStore.archiveAllDone();
       res.json({ archived });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -3017,11 +3036,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         validatedExecutor = validateModelPair(modelProvider, modelId, "Executor model");
         validatedValidator = validateModelPair(validatorModelProvider, validatorModelId, "Validator model");
         validatedPlanning = validateModelPair(planningModelProvider, planningModelId, "Planning model");
-      } catch (err: any) {
+      } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-        throw badRequest(err.message);
+        throw badRequest(err instanceof Error ? err.message : String(err));
       }
 
       // Verify all tasks exist
@@ -3030,11 +3049,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         try {
           const task = await scopedStore.getTask(taskId);
           tasksById.set(taskId, task);
-        } catch (err: any) {
+        } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-          if (err?.code === "ENOENT" || err?.message?.includes("not found")) {
+          if ((err as NodeJS.ErrnoException).code === "ENOENT" || (err instanceof Error ? err.message : String(err)).includes("not found")) {
             throw notFound(`Task ${taskId} not found`);
           }
           throw err;
@@ -3067,13 +3086,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         try {
           const updated = await scopedStore.updateTask(taskId, updates);
           return { success: true, task: updated };
-        } catch (err: any) {
+        } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
           console.error(`Failed to update task ${taskId}:`, err);
           const success = false;
-          return { success, taskId, error: err.message };
+          return { success, taskId, error: err instanceof Error ? err.message : String(err) };
         }
       });
 
@@ -3081,7 +3100,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       // Collect successful updates
       const updated: Task[] = [];
-      const errors: Array<{ taskId: string; error: string }> = [];
+      const errors: Array<{ taskId: string; error: string | undefined }> = [];
 
       for (const result of results) {
         if (result.success && "task" in result && result.task) {
@@ -3097,7 +3116,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json({ updated, count: updated.length });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -3119,12 +3138,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         req.file.mimetype,
       );
       res.status(201).json(attachment);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.message.includes("Invalid mime type") || err.message.includes("File too large") ? 400 : 500;
-      throw new ApiError(status, err.message);
+      const status = (err instanceof Error ? err.message : String(err)).includes("Invalid mime type") || (err instanceof Error ? err.message : String(err)).includes("File too large") ? 400 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -3135,11 +3154,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { path, mimeType } = await scopedStore.getAttachment(req.params.id, req.params.filename);
       res.setHeader("Content-Type", mimeType);
       createReadStream(path).pipe(res);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound("Attachment not found");
       } else {
         rethrowAsApiError(err);
@@ -3153,11 +3172,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.deleteAttachment(req.params.id, req.params.filename);
       res.json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound("Attachment not found");
       } else {
         rethrowAsApiError(err);
@@ -3198,11 +3217,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json(logs);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound(`Task ${req.params.id} not found`);
       } else {
         rethrowAsApiError(err);
@@ -3315,11 +3334,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
 
       res.json(files);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound(`Task ${req.params.id} not found`);
       } else {
         rethrowAsApiError(err, "Internal server error");
@@ -3337,11 +3356,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
       res.json(task.workflowStepResults || []);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound(`Task ${req.params.id} not found`);
       } else {
         rethrowAsApiError(err, "Internal server error");
@@ -3355,14 +3374,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
       res.json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
       // ENOENT means the task directory/file genuinely doesn't exist → 404.
       // Any other error (e.g. JSON parse failure from a concurrent partial write,
       // or a transient FS error) should surface as 500 so clients can retry.
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound(`Task ${req.params.id} not found`);
       } else {
         rethrowAsApiError(err, "Internal server error");
@@ -3376,7 +3395,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.pauseTask(req.params.id, true);
       res.json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -3390,7 +3409,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.pauseTask(req.params.id, false);
       res.json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -3420,12 +3439,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await scopedStore.updateTask(task.id, { status: undefined });
 
       res.json({ ...updated, status: undefined });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.code === "ENOENT" ? 404 : 500;
-      throw new ApiError(status, err.message);
+      const errorWithCode = err as NodeJS.ErrnoException;
+      const status = errorWithCode.code === "ENOENT" ? 404 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -3457,12 +3477,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const updated = await scopedStore.getTask(task.id);
       res.json(updated);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.code === "ENOENT" ? 404 : 500;
-      throw new ApiError(status, err.message);
+      const errorWithCode = err as NodeJS.ErrnoException;
+      const status = errorWithCode.code === "ENOENT" ? 404 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -3471,12 +3492,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
       res.json(task.comments || []);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.code === "ENOENT" ? 404 : 500;
-      throw new ApiError(status, err.message);
+      const errorWithCode = err as NodeJS.ErrnoException;
+      const status = errorWithCode.code === "ENOENT" ? 404 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -3507,12 +3529,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
 
       res.json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.code === "ENOENT" ? 404 : 500;
-      throw new ApiError(status, err.message);
+      const errorWithCode = err as NodeJS.ErrnoException;
+      const status = errorWithCode.code === "ENOENT" ? 404 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -3528,14 +3551,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       const task = await scopedStore.updateTaskComment(req.params.id, req.params.commentId, text);
       res.json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.code === "ENOENT" ? 404
-        : err.message?.includes("not found") ? 404
+      const errorWithCode = err as NodeJS.ErrnoException;
+      const status = errorWithCode.code === "ENOENT" ? 404
+        : (err instanceof Error ? err.message : String(err)).includes("not found") ? 404
         : 500;
-      throw new ApiError(status, err.message);
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -3544,14 +3568,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.deleteTaskComment(req.params.id, req.params.commentId);
       res.json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.code === "ENOENT" ? 404
-        : err.message?.includes("not found") ? 404
+      const errorWithCode = err as NodeJS.ErrnoException;
+      const status = errorWithCode.code === "ENOENT" ? 404
+        : (err instanceof Error ? err.message : String(err)).includes("not found") ? 404
         : 500;
-      throw new ApiError(status, err.message);
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -3566,12 +3591,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: scopedStore } = await getProjectContext(req);
       const documents = await scopedStore.getTaskDocuments(req.params.id);
       res.json(documents);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.code === "ENOENT" ? 404 : 500;
-      throw new ApiError(status, err.message);
+      const errorWithCode = err as NodeJS.ErrnoException;
+      const status = errorWithCode.code === "ENOENT" ? 404 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -3584,12 +3610,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw new ApiError(404, "Document not found");
       }
       res.json(document);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.code === "ENOENT" ? 404 : 500;
-      throw new ApiError(status, err.message);
+      const errorWithCode = err as NodeJS.ErrnoException;
+      const status = errorWithCode.code === "ENOENT" ? 404 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -3599,7 +3626,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: scopedStore } = await getProjectContext(req);
       const revisions = await scopedStore.getTaskDocumentRevisions(req.params.id, req.params.key);
       res.json(revisions);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -3651,12 +3678,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Return 201 for new documents (revision === 1), 200 for updates
       const status = document.revision === 1 ? 201 : 200;
       res.status(status).json(document);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.code === "ENOENT" ? 404 : 500;
-      throw new ApiError(status, err.message);
+      const errorWithCode = err as NodeJS.ErrnoException;
+      const status = errorWithCode.code === "ENOENT" ? 404 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -3666,12 +3694,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: scopedStore } = await getProjectContext(req);
       await scopedStore.deleteTaskDocument(req.params.id, req.params.key);
       res.status(204).send();
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.message?.includes("not found") ? 404 : 500;
-      throw new ApiError(status, err.message);
+      const status = (err instanceof Error ? err.message : String(err)).includes("not found") ? 404 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -3700,12 +3728,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
 
       res.json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.code === "ENOENT" ? 404 : 500;
-      throw new ApiError(status, err.message);
+      const errorWithCode = err as NodeJS.ErrnoException;
+      const status = errorWithCode.code === "ENOENT" ? 404 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -3749,14 +3778,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await scopedStore.updateTask(task.id, { status: "needs-respecify" });
 
       res.json(updated);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.code === "ENOENT" ? 404
-        : err.message?.includes("Invalid transition") ? 400
+      const errorWithCode = err as NodeJS.ErrnoException;
+      const status = errorWithCode.code === "ENOENT" ? 404
+        : (err instanceof Error ? err.message : String(err)).includes("Invalid transition") ? 400
         : 500;
-      throw new ApiError(status, err.message);
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -3791,14 +3821,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await scopedStore.updateTask(task.id, { status: "needs-respecify" });
 
       res.json(updated);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.code === "ENOENT" ? 404
-        : err.message?.includes("Invalid transition") ? 400
+      const errorWithCode = err as NodeJS.ErrnoException;
+      const status = errorWithCode.code === "ENOENT" ? 404
+        : (err instanceof Error ? err.message : String(err)).includes("Invalid transition") ? 400
         : 500;
-      throw new ApiError(status, err.message);
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -3853,12 +3884,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         assigneeUserId: validatedAssigneeUserId,
       });
       res.json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.message?.includes("must be a string") || err.message?.includes("must be an array of strings") || err.message?.includes("thinkingLevel must be one of") ? 400 : 500;
-      throw new ApiError(status, err.message);
+      const status = (err instanceof Error ? err.message : String(err)).includes("must be a string") || (err instanceof Error ? err.message : String(err)).includes("must be an array of strings") || (err instanceof Error ? err.message : String(err)).includes("thinkingLevel must be one of") ? 400 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -3889,12 +3920,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         assignedAgentId: agentId === null ? null : agentId,
       });
       res.json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err?.code === "ENOENT" || err?.message?.includes("not found")) {
-        throw notFound(err.message ?? "Task not found");
+      if ((err as NodeJS.ErrnoException).code === "ENOENT" || (err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -3925,14 +3956,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         updates.status = null;
       }
 
-      const task = await scopedStore.updateTask(req.params.id, updates as any);
+      const task = await scopedStore.updateTask(req.params.id, updates as Parameters<typeof scopedStore.updateTask>[1]);
       res.json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err?.code === "ENOENT" || err?.message?.includes("not found")) {
-        throw notFound(err.message ?? "Task not found");
+      if ((err as NodeJS.ErrnoException).code === "ENOENT" || (err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -3950,12 +3981,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         status: null,
       });
       res.json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err?.code === "ENOENT" || err?.message?.includes("not found")) {
-        throw notFound(err.message ?? "Task not found");
+      if ((err as NodeJS.ErrnoException).code === "ENOENT" || (err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -3974,12 +4005,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
       const task = await scopedStore.moveTask(req.params.id, "todo");
       res.json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err?.code === "ENOENT" || err?.message?.includes("not found")) {
-        throw notFound(err.message ?? "Task not found");
+      if ((err as NodeJS.ErrnoException).code === "ENOENT" || (err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -4004,20 +4035,21 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const task = await agentStore.checkoutTask(agentId, req.params.id);
       res.json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err?.name === "CheckoutConflictError") {
+      if (err instanceof Error && err.name === "CheckoutConflictError") {
+        const checkoutErr = err as Error & { currentHolderId?: string; taskId?: string };
         res.status(409).json({
           error: "Task is already checked out",
-          currentHolder: err.currentHolderId,
-          taskId: err.taskId,
+          currentHolder: checkoutErr.currentHolderId,
+          taskId: checkoutErr.taskId,
         });
         return;
       }
-      if (err?.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       }
       rethrowAsApiError(err);
     }
@@ -4041,15 +4073,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const task = await agentStore.releaseTask(agentId, req.params.id);
       res.json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err?.message?.includes("not the checkout holder")) {
+      if ((err instanceof Error ? err.message : String(err)).includes("not the checkout holder")) {
         throw new ApiError(403, "Not the checkout holder");
       }
-      if (err?.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       }
       rethrowAsApiError(err);
     }
@@ -4068,12 +4100,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const task = await agentStore.forceReleaseTask(req.params.id);
       res.json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err?.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       }
       rethrowAsApiError(err);
     }
@@ -4092,7 +4124,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         checkedOutBy: task.checkedOutBy ?? null,
         checkedOutAt: task.checkedOutAt ?? null,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -4106,7 +4138,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.deleteTask(req.params.id);
       res.json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -4125,7 +4157,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const rootDir = scopedStore.getRootDir();
       const remotes = await getGitHubRemotes(rootDir);
       res.json(remotes);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -4147,7 +4179,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       const remotes = await listGitRemotes(rootDir);
       res.json(remotes);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -4182,16 +4214,16 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       await addGitRemote(name, url, rootDir);
       res.status(201).json({ name, added: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("Invalid remote name")) {
-        throw badRequest(err.message);
-      } else if (err.message?.includes("Invalid git URL")) {
-        throw badRequest(err.message);
-      } else if (err.message?.includes("already exists")) {
-        throw conflict(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("Invalid remote name")) {
+        throw badRequest(err instanceof Error ? err.message : String(err));
+      } else if ((err instanceof Error ? err.message : String(err)).includes("Invalid git URL")) {
+        throw badRequest(err instanceof Error ? err.message : String(err));
+      } else if ((err instanceof Error ? err.message : String(err)).includes("already exists")) {
+        throw conflict(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -4212,14 +4244,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { name } = req.params;
       await removeGitRemote(name, rootDir);
       res.json({ name, removed: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("Invalid remote name")) {
-        throw badRequest(err.message);
-      } else if (err.message?.includes("does not exist")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("Invalid remote name")) {
+        throw badRequest(err instanceof Error ? err.message : String(err));
+      } else if ((err instanceof Error ? err.message : String(err)).includes("does not exist")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -4245,16 +4277,16 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       await renameGitRemote(name, newName, rootDir);
       res.json({ oldName: name, newName, renamed: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("Invalid")) {
-        throw badRequest(err.message);
-      } else if (err.message?.includes("does not exist")) {
-        throw notFound(err.message);
-      } else if (err.message?.includes("already exists")) {
-        throw conflict(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("Invalid")) {
+        throw badRequest(err instanceof Error ? err.message : String(err));
+      } else if ((err instanceof Error ? err.message : String(err)).includes("does not exist")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
+      } else if ((err instanceof Error ? err.message : String(err)).includes("already exists")) {
+        throw conflict(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -4280,14 +4312,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       await setGitRemoteUrl(name, url, rootDir);
       res.json({ name, url, updated: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("Invalid")) {
-        throw badRequest(err.message);
-      } else if (err.message?.includes("does not exist")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("Invalid")) {
+        throw badRequest(err instanceof Error ? err.message : String(err));
+      } else if ((err instanceof Error ? err.message : String(err)).includes("does not exist")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -4311,7 +4343,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw internalError("Failed to get git status");
       }
       res.json(status);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -4334,7 +4366,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const limit = Math.min(parseInt(req.query.limit as string, 10) || 20, 100);
       const commits = await getGitCommits(limit, rootDir);
       res.json(commits);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -4364,7 +4396,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw notFound("Commit not found");
       }
       res.json(diff);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -4386,7 +4418,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       const commits = await getAheadCommits(rootDir);
       res.json(commits);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -4457,7 +4489,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const commits = await getRemoteCommits(remoteRef, limit, rootDir);
       res.json(commits);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -4479,7 +4511,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       const branches = await getGitBranches(rootDir);
       res.json(branches);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -4507,7 +4539,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const limit = Math.min(Math.max(parseInt(String(req.query.limit)) || 10, 1), 100);
       const commits = await getGitCommitsForBranch(name, limit, rootDir);
       res.json(commits);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -4531,7 +4563,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const tasks = await scopedStore.listTasks({ slim: true, includeArchived: false });
       const worktrees = await getGitWorktrees(tasks, rootDir);
       res.json(worktrees);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -4559,14 +4591,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       const branchName = await createGitBranch(name, base, rootDir);
       res.status(201).json({ name: branchName, created: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message.includes("Invalid branch name")) {
-        throw badRequest(err.message);
-      } else if (err.message.includes("already exists")) {
-        throw conflict(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("Invalid branch name")) {
+        throw badRequest(err instanceof Error ? err.message : String(err));
+      } else if ((err instanceof Error ? err.message : String(err)).includes("already exists")) {
+        throw conflict(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -4587,14 +4619,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { name } = req.params;
       await checkoutGitBranch(name, rootDir);
       res.json({ checkedOut: name });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message.includes("Invalid branch name")) {
-        throw badRequest(err.message);
-      } else if (err.message.includes("Uncommitted changes")) {
-        throw conflict(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("Invalid branch name")) {
+        throw badRequest(err instanceof Error ? err.message : String(err));
+      } else if ((err instanceof Error ? err.message : String(err)).includes("Uncommitted changes")) {
+        throw conflict(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -4617,15 +4649,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const force = req.query.force === "true";
       await deleteGitBranch(name, force, rootDir);
       res.json({ deleted: name });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message.includes("Invalid branch name")) {
-        throw badRequest(err.message);
-      } else if (err.message.includes("Cannot delete branch") || err.message.includes("is currently checked out")) {
-        throw conflict(err.message);
-      } else if (err.message.includes("not fully merged")) {
+      if ((err instanceof Error ? err.message : String(err)).includes("Invalid branch name")) {
+        throw badRequest(err instanceof Error ? err.message : String(err));
+      } else if ((err instanceof Error ? err.message : String(err)).includes("Cannot delete branch") || (err instanceof Error ? err.message : String(err)).includes("is currently checked out")) {
+        throw conflict(err instanceof Error ? err.message : String(err));
+      } else if ((err instanceof Error ? err.message : String(err)).includes("not fully merged")) {
         throw conflict("Branch has unmerged commits. Use force=true to delete anyway.");
       } else {
         rethrowAsApiError(err);
@@ -4648,14 +4680,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { remote } = req.body;
       const result = await fetchGitRemote(remote || "origin", rootDir);
       res.json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message.includes("Invalid remote name")) {
-        throw badRequest(err.message);
-      } else if (err.message.includes("Failed to connect")) {
-        throw new ApiError(503, err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("Invalid remote name")) {
+        throw badRequest(err instanceof Error ? err.message : String(err));
+      } else if ((err instanceof Error ? err.message : String(err)).includes("Failed to connect")) {
+        throw new ApiError(503, err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -4680,7 +4712,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         });
       }
       res.json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -4701,14 +4733,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       const result = await pushGitBranch(rootDir);
       res.json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message.includes("rejected") || err.message.includes("Pull latest")) {
-        throw conflict(err.message);
-      } else if (err.message.includes("Failed to connect")) {
-        throw new ApiError(503, err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("rejected") || (err instanceof Error ? err.message : String(err)).includes("Pull latest")) {
+        throw conflict(err instanceof Error ? err.message : String(err));
+      } else if ((err instanceof Error ? err.message : String(err)).includes("Failed to connect")) {
+        throw new ApiError(503, err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -4730,7 +4762,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       const stashes = await getGitStashList(rootDir);
       res.json(stashes);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -4753,12 +4785,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { message } = req.body;
       const result = await createGitStash(message, rootDir);
       res.status(201).json({ message: result });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("No local changes")) {
-        throw badRequest(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("No local changes")) {
+        throw badRequest(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -4784,7 +4816,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { drop } = req.body;
       const result = await applyGitStash(index, drop === true, rootDir);
       res.json({ message: result });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -4809,7 +4841,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       const result = await dropGitStash(index, rootDir);
       res.json({ message: result });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -4830,7 +4862,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       const diff = await getGitWorkingDiff(rootDir);
       res.json(diff);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -4851,7 +4883,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       const changes = await getGitFileChanges(rootDir);
       res.json(changes);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -4877,7 +4909,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       const staged = await stageGitFiles(files, rootDir);
       res.json({ staged });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -4903,7 +4935,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       const unstaged = await unstageGitFiles(files, rootDir);
       res.json({ unstaged });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -4929,12 +4961,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       const result = await createGitCommit(message, rootDir);
       res.status(201).json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("No staged changes")) {
-        throw badRequest(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("No staged changes")) {
+        throw badRequest(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -4959,7 +4991,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       const discarded = await discardGitChanges(files, rootDir);
       res.json({ discarded });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -4996,7 +5028,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       try {
         const issues = await client.listIssues(owner, repo, { limit, labels });
         res.json(issues);
-      } catch (err: any) {
+      } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -5012,7 +5044,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
         throw new ApiError(502, `GitHub CLI error: ${errorMessage}`);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -5064,7 +5096,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         if (issue === null) {
           throw badRequest(`#${issueNumber} is a pull request, not an issue`);
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -5107,7 +5139,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await scopedStore.logEntry(task.id, "Imported from GitHub", sourceUrl);
 
       res.status(201).json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -5274,20 +5306,20 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
           // Add to existingTasks to avoid duplicate imports within the same batch
           existingTasks.push({ ...task, description });
-        } catch (err: any) {
+        } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
           results.push({
             issueNumber,
             success: false,
-            error: err.message ?? "Failed to create task",
+            error: (err instanceof Error ? err.message : String(err)) || "Failed to create task",
           });
         }
       }
 
       res.json({ results });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -5322,7 +5354,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       try {
         const pulls = await client.listPullRequests(owner, repo, { limit });
         res.json(pulls);
-      } catch (err: any) {
+      } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -5338,7 +5370,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
         throw new ApiError(502, `GitHub CLI error: ${errorMessage}`);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -5390,7 +5422,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         if (pr === null) {
           throw notFound(`PR #${prNumber} not found in ${owner}/${repo}`);
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -5433,7 +5465,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await scopedStore.logEntry(task.id, "Imported PR from GitHub", sourceUrl);
 
       res.status(201).json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -5522,15 +5554,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await scopedStore.logEntry(task.id, "Created PR", `PR #${prInfo.number}: ${prInfo.url}`);
 
       res.status(201).json(prInfo);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound(`Task ${req.params.id} not found`);
-      } else if (err.message?.includes("already exists")) {
-        throw conflict(err.message);
-      } else if (err.message?.includes("No commits between")) {
+      } else if ((err instanceof Error ? err.message : String(err)).includes("already exists")) {
+        throw conflict(err instanceof Error ? err.message : String(err));
+      } else if ((err instanceof Error ? err.message : String(err)).includes("No commits between")) {
         throw badRequest("Branch has no commits. Push changes before creating PR.");
       } else {
         rethrowAsApiError(err, "Failed to create PR");
@@ -5731,11 +5763,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       if (isStale) {
         refreshPrInBackground(scopedStore, task.id, task.prInfo, githubToken);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound(`Task ${req.params.id} not found`);
       } else {
         rethrowAsApiError(err);
@@ -5814,14 +5846,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         checks: mergeStatus.checks,
         automationStatus: task.status ?? null,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound(`Task ${req.params.id} not found`);
-      } else if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      } else if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -5855,11 +5887,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       if (isStale) {
         refreshIssueInBackground(scopedStore, task.id, task.issueInfo, githubToken);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound(`Task ${req.params.id} not found`);
       } else {
         rethrowAsApiError(err);
@@ -5931,14 +5963,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       await scopedStore.updateIssueInfo(task.id, updatedIssueInfo);
       res.json(updatedIssueInfo);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound(`Task ${req.params.id} not found`);
-      } else if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      } else if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -6027,14 +6059,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
               prGroups.set(repoKey, group);
             }
           }
-        } catch (err: any) {
+        } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-          if (err?.code === "ENOENT") {
+          if ((err as NodeJS.ErrnoException).code === "ENOENT") {
             appendBatchStatusError(results, taskId, `Task ${taskId} not found`);
           } else {
-            appendBatchStatusError(results, taskId, err.message || `Failed to load task ${taskId}`);
+            appendBatchStatusError(results, taskId, err instanceof Error ? err.message : String(err) || `Failed to load task ${taskId}`);
           }
         }
       }
@@ -6075,12 +6107,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
             entry.issueInfo = updatedIssueInfo;
             entry.stale = entry.prInfo ? isBatchStatusStale(entry.prInfo, task.updatedAt) : false;
           }
-        } catch (err: any) {
+        } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
           for (const taskId of group.taskIds) {
-            appendBatchStatusError(results, taskId, err.message || `Failed to refresh issue badges for ${repoKey}`);
+            appendBatchStatusError(results, taskId, (err instanceof Error ? err.message : String(err)) || `Failed to refresh issue badges for ${repoKey}`);
           }
         }
 
@@ -6122,12 +6154,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
             entry.prInfo = updatedPrInfo;
             entry.stale = entry.issueInfo ? isBatchStatusStale(entry.issueInfo, task.updatedAt) : false;
           }
-        } catch (err: any) {
+        } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
           for (const taskId of group.taskIds) {
-            appendBatchStatusError(results, taskId, err.message || `Failed to refresh PR badges for ${repoKey}`);
+            appendBatchStatusError(results, taskId, (err instanceof Error ? err.message : String(err)) || `Failed to refresh PR badges for ${repoKey}`);
           }
         }
 
@@ -6148,7 +6180,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json({ results } satisfies BatchStatusResponse);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -6187,7 +6219,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       
       res.status(201).json({ sessionId: result.sessionId });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -6221,7 +6253,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       
       res.json({ killed: true, sessionId: id });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -6250,7 +6282,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         output: session.output.join(""),
         startTime: session.startTime.toISOString(),
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -6314,7 +6346,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       req.on("error", () => {
         terminalSessionManager.off("output", onOutput);
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -6358,7 +6390,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         shell: result.session.shell,
         cwd: result.session.cwd,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -6386,7 +6418,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           lastActivityAt: s.lastActivityAt.toISOString(),
         }))
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -6418,7 +6450,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json({ killed: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -6440,7 +6472,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { path: subPath } = req.query;
       const result = await listFiles(scopedStore, req.params.id, typeof subPath === "string" ? subPath : undefined);
       res.json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -6467,16 +6499,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const filePath = Array.isArray(req.params.filepath) ? req.params.filepath[0] : req.params.filepath ?? "";
       const result = await readFile(scopedStore, req.params.id, filePath);
       res.json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
       if (err instanceof FileServiceError) {
-        const status = err.code === "ENOENT" ? 404
+        const errorWithCode = err as NodeJS.ErrnoException;
+      const status = errorWithCode.code === "ENOENT" ? 404
           : err.code === "ENOTASK" ? 404
           : err.code === "EACCES" ? 403
           : err.code === "ETOOLARGE" ? 413
-          : err.code === "EINVAL" && err.message.includes("Binary file") ? 415
+          : err.code === "EINVAL" && (err instanceof Error ? err.message : String(err)).includes("Binary file") ? 415
           : 400;
         throw new ApiError(status, err.message, { code: err.code });
       } else {
@@ -6503,12 +6536,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const result = await writeFile(scopedStore, req.params.id, filePath, content);
       res.json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
       if (err instanceof FileServiceError) {
-        const status = err.code === "ENOENT" ? 404
+        const errorWithCode = err as NodeJS.ErrnoException;
+      const status = errorWithCode.code === "ENOENT" ? 404
           : err.code === "ENOTASK" ? 404
           : err.code === "EACCES" ? 403
           : err.code === "ETOOLARGE" ? 413
@@ -6541,7 +6575,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
             worktree: task.worktree!,
           })),
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -6562,7 +6596,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const workspaceId = typeof workspace === "string" && workspace.length > 0 ? workspace : "project";
       const result = await listWorkspaceFiles(scopedStore, workspaceId, typeof subPath === "string" ? subPath : undefined);
       res.json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -6593,7 +6627,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         : "project";
       const result = await readWorkspaceFile(scopedStore, workspace, filePath);
       res.json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -6602,7 +6636,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           : err.code === "ENOENT" ? 404
           : err.code === "EACCES" ? 403
           : err.code === "ETOOLARGE" ? 413
-          : err.code === "EINVAL" && err.message.includes("Binary file") ? 415
+          : err.code === "EINVAL" && (err instanceof Error ? err.message : String(err)).includes("Binary file") ? 415
           : 400;
         throw new ApiError(status, err.message, { code: err.code });
       } else {
@@ -6647,7 +6681,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const result = await copyWorkspaceFile(scopedStore, workspace, filePath, destination);
       res.json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -6683,7 +6717,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const result = await moveWorkspaceFile(scopedStore, workspace, filePath, destination);
       res.json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -6714,7 +6748,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { filePath, workspace } = extractFileParams(req);
       const result = await deleteWorkspaceFile(scopedStore, workspace, filePath);
       res.json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -6749,7 +6783,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const result = await renameWorkspaceFile(scopedStore, workspace, filePath, newName);
       res.json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -6785,7 +6819,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const stream = createReadStream(absolutePath);
       stream.pipe(res);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -6823,7 +6857,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       archive.pipe(res);
       archive.directory(absolutePath, dirName);
       await archive.finalize();
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -6867,7 +6901,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const result = await writeWorkspaceFile(scopedStore, workspace, filePath, content);
       res.json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -6912,7 +6946,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         projectId,
       );
       res.status(201).json({ sessionId: session.sessionId });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -7020,11 +7054,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         clearInterval(heartbeat);
         unsubscribe();
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      writeSSEEvent(res, "error", JSON.stringify(String(err?.message) || "Unknown error"));
+      writeSSEEvent(res, "error", JSON.stringify(err instanceof Error ? err.message : String(err)));
       res.end();
     }
   });
@@ -7118,7 +7152,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       cleanupSubtaskSession(sessionId);
       res.status(201).json({ tasks: createdTasks, parentTaskClosed });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -7146,12 +7180,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { cancelSubtaskSession } = await import("./subtask-breakdown.js");
       await cancelSubtaskSession(sessionId);
       res.json({ success: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.name === "SessionNotFoundError") {
-        throw notFound(err.message);
+      if (err instanceof Error && err.name === "SessionNotFoundError") {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err, "Failed to cancel subtask session");
       }
@@ -7189,14 +7223,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { retrySubtaskSession } = await import("./subtask-breakdown.js");
       await retrySubtaskSession(sessionId, scopedStore.getRootDir(), settings.promptOverrides);
       res.json({ success: true, sessionId });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.name === "SessionNotFoundError") {
-        throw notFound(err.message);
-      } else if (err.name === "InvalidSessionStateError") {
-        throw badRequest(err.message);
+      if (err instanceof Error && err.name === "SessionNotFoundError") {
+        throw notFound(err instanceof Error ? err.message : String(err));
+      } else if (err instanceof Error && err.name === "InvalidSessionStateError") {
+        throw badRequest(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err, "Failed to retry subtask session");
       }
@@ -7237,11 +7271,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         settings.promptOverrides,
       );
       res.status(201).json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.name === "RateLimitError") {
+      if (err instanceof Error && err.name === "RateLimitError") {
         throw rateLimited(err.message);
       } else {
         rethrowAsApiError(err, "Failed to start planning session");
@@ -7312,11 +7346,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         settings.promptOverrides,
       );
       res.status(201).json({ sessionId });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.name === "RateLimitError") {
+      if (err instanceof Error && err.name === "RateLimitError") {
         throw rateLimited(err.message);
       } else {
         rethrowAsApiError(err, "Failed to start planning session");
@@ -7365,14 +7399,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         settings.promptOverrides,
       );
       res.json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.name === "SessionNotFoundError") {
-        throw notFound(err.message);
-      } else if (err.name === "InvalidSessionStateError") {
-        throw badRequest(err.message);
+      if (err instanceof Error && err.name === "SessionNotFoundError") {
+        throw notFound(err instanceof Error ? err.message : String(err));
+      } else if (err instanceof Error && err.name === "InvalidSessionStateError") {
+        throw badRequest(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err, "Failed to process response");
       }
@@ -7410,14 +7444,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { retrySession } = await import("./planning.js");
       await retrySession(sessionId, scopedStore.getRootDir(), settings.promptOverrides);
       res.json({ success: true, sessionId });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.name === "SessionNotFoundError") {
-        throw notFound(err.message);
-      } else if (err.name === "InvalidSessionStateError") {
-        throw badRequest(err.message);
+      if (err instanceof Error && err.name === "SessionNotFoundError") {
+        throw notFound(err instanceof Error ? err.message : String(err));
+      } else if (err instanceof Error && err.name === "InvalidSessionStateError") {
+        throw badRequest(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err, "Failed to retry planning session");
       }
@@ -7450,12 +7484,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { cancelSession, SessionNotFoundError: _SessionNotFoundError2 } = await import("./planning.js");
       await cancelSession(sessionId);
       res.json({ success: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.name === "SessionNotFoundError") {
-        throw notFound(err.message);
+      if (err instanceof Error && err.name === "SessionNotFoundError") {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err, "Failed to cancel session");
       }
@@ -7581,7 +7615,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.status(201).json(task);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -7622,7 +7656,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Return a synthetic session ID (based on the planning session) and the generated subtasks
       // We use the planning session ID directly as the breakdown session ID
       res.json({ sessionId, subtasks });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -7721,7 +7755,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       cleanupSession(planningSessionId);
 
       res.status(201).json({ tasks: createdTasks });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -7854,11 +7888,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       req.on("close", () => {
         clearInterval(heartbeat);
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      writeSSEEvent(res, "error", JSON.stringify({ message: err.message || "Stream error" }));
+      writeSSEEvent(res, "error", JSON.stringify({ message: err instanceof Error ? err.message : String(err) || "Stream error" }));
       res.end();
     }
   });
@@ -7890,7 +7924,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
 
       res.json({ sessions });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -7950,7 +7984,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
 
       res.status(201).json({ session });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -7976,7 +8010,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json({ session });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -8014,7 +8048,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json({ session });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -8040,7 +8074,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json({ success: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -8094,7 +8128,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
 
       res.json({ messages });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -8234,7 +8268,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           data: err.message || "Failed to process message",
         });
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -8272,7 +8306,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // For now, return success if session exists (the message check is a bonus)
       // TODO: Add deleteMessage to ChatStore if not already present
       res.json({ success: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -8336,10 +8370,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         validated = validateRefineRequest(text, type);
       } catch (err) {
         if (err instanceof ValidationError) {
-          throw badRequest(err.message);
+          throw badRequest(err instanceof Error ? err.message : String(err));
         }
         if (err instanceof InvalidTypeError) {
-          throw new ApiError(422, err.message);
+          throw new ApiError(422, err instanceof Error ? err.message : String(err));
         }
         throw err;
       }
@@ -8352,14 +8386,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         settings.promptOverrides,
       );
       res.json({ refined });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
       // Check error by name since error classes are from dynamic import
-      if (err?.name === "RateLimitError") {
+      if (err instanceof Error && err.name === "RateLimitError") {
         throw rateLimited(err.message);
-      } else if (err?.name === "AiServiceError") {
+      } else if (err instanceof Error && err.name === "AiServiceError") {
         rethrowAsApiError(err, "AI service error");
       } else {
         rethrowAsApiError(err, "Failed to refine text");
@@ -8409,12 +8443,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Validate request body
       try {
         validateDescription(description);
-      } catch (err: any) {
+      } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-        if (err?.name === "ValidationError") {
-          throw badRequest(err.message);
+        if (err instanceof Error && err.name === "ValidationError") {
+          throw badRequest(err instanceof Error ? err.message : String(err));
         }
         throw err;
       }
@@ -8451,17 +8485,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json({ title });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
       // Check error by name since error classes are from dynamic import
-      if (err?.name === "RateLimitError") {
+      if (err instanceof Error && err.name === "RateLimitError") {
         throw rateLimited(err.message);
-      } else if (err?.name === "AiServiceError") {
+      } else if (err instanceof Error && err.name === "AiServiceError") {
         throw new ApiError(503, err.message || "AI service temporarily unavailable");
-      } else if (err?.name === "ValidationError") {
-        throw badRequest(err.message);
+      } else if (err instanceof Error && err.name === "ValidationError") {
+        throw badRequest(err instanceof Error ? err.message : String(err));
       } else {
         console.error("[ai-summarize] Unexpected error:", err);
         rethrowAsApiError(err, "Failed to generate title");
@@ -8481,7 +8515,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const providers = await fetchAllProviderUsage(options?.authStorage);
       res.json({ providers });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -8521,7 +8555,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       } else {
         res.json(allSchedules);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -8581,7 +8615,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         scope: scheduleScope,
       });
       res.status(201).json(schedule);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -8604,11 +8638,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json(schedule);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound("Schedule not found");
       }
       rethrowAsApiError(err);
@@ -8660,15 +8694,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         steps: steps !== undefined ? steps : undefined,
       });
       res.json(schedule);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound("Schedule not found");
       }
-      if (err.message?.includes("cannot be empty") || err.message?.includes("Invalid cron")) {
-        throw badRequest(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("cannot be empty") || (err instanceof Error ? err.message : String(err)).includes("Invalid cron")) {
+        throw badRequest(err instanceof Error ? err.message : String(err));
       }
       rethrowAsApiError(err);
     }
@@ -8692,11 +8726,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const deleted = await automationStore.deleteSchedule(id);
       res.json(deleted);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound("Schedule not found");
       }
       rethrowAsApiError(err);
@@ -8731,11 +8765,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Record the result
       const updated = await automationStore.recordRun(schedule.id, result);
       res.json({ schedule: updated, result });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound("Schedule not found");
       }
       rethrowAsApiError(err);
@@ -8760,11 +8794,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         enabled: !schedule.enabled,
       });
       res.json(updated);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound("Schedule not found");
       }
       rethrowAsApiError(err);
@@ -8793,15 +8827,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       const schedule = await automationStore.reorderSteps(id, stepIds);
       res.json(schedule);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound("Schedule not found");
       }
-      if (err.message?.includes("mismatch") || err.message?.includes("Unknown step") || err.message?.includes("no steps")) {
-        throw badRequest(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("mismatch") || (err instanceof Error ? err.message : String(err)).includes("Unknown step") || (err instanceof Error ? err.message : String(err)).includes("no steps")) {
+        throw badRequest(err instanceof Error ? err.message : String(err));
       }
       rethrowAsApiError(err);
     }
@@ -8841,7 +8875,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       } else {
         res.json(allRoutines);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -8907,7 +8941,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         scope: routineScope,
       });
       res.status(201).json(routine);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -8930,11 +8964,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json(routine);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound("Routine not found");
       }
       rethrowAsApiError(err);
@@ -8988,15 +9022,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         enabled,
       });
       res.json(routine);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound("Routine not found");
       }
-      if (err.message?.includes("cannot be empty") || err.message?.includes("Invalid cron")) {
-        throw badRequest(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("cannot be empty") || (err instanceof Error ? err.message : String(err)).includes("Invalid cron")) {
+        throw badRequest(err instanceof Error ? err.message : String(err));
       }
       rethrowAsApiError(err);
     }
@@ -9020,11 +9054,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const deleted = await routineStore.deleteRoutine(id);
       res.json(deleted);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound("Routine not found");
       }
       rethrowAsApiError(err);
@@ -9055,11 +9089,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const result = await routineRunner.triggerManual(id);
       const updated = await routineStore.getRoutine(id);
       res.json({ routine: updated, result });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound("Routine not found");
       }
       rethrowAsApiError(err);
@@ -9091,11 +9125,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const result = await routineRunner.triggerManual(id);
       const updated = await routineStore.getRoutine(id);
       res.json({ routine: updated, result });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound("Routine not found");
       }
       rethrowAsApiError(err);
@@ -9117,11 +9151,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json(routine.runHistory);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound("Routine not found");
       }
       rethrowAsApiError(err);
@@ -9153,7 +9187,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       // Get raw body for HMAC verification
-      const rawBody = (req as any).rawBody as Buffer | undefined;
+      const rawBody = req.rawBody;
       const signatureHeader = req.headers["x-hub-signature-256"] as string | undefined;
 
       // If webhook secret is configured, verify the signature (auth failures return 401)
@@ -9175,11 +9209,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const result = await routineRunner.triggerWebhook(id, payload, signatureHeader);
       const updated = await routineStore.getRoutine(id);
       res.json({ routine: updated, result });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound("Routine not found");
       }
       rethrowAsApiError(err);
@@ -9225,7 +9259,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const entries = await scopedStore.getActivityLog(options);
       res.json(entries);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -9243,7 +9277,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: scopedStore } = await getProjectContext(req);
       await scopedStore.clearActivityLog();
       res.json({ success: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -9263,7 +9297,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: scopedStore } = await getProjectContext(req);
       const steps = await scopedStore.listWorkflowSteps();
       res.json(steps);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -9351,12 +9385,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         modelId: modelPair.modelId,
       });
       res.status(201).json(step);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = typeof err?.message === "string" && (err.message.includes("must include both provider and modelId") || err.message.includes("Script mode requires")) ? 400 : 500;
-      throw new ApiError(status, err.message);
+      const status = typeof (err instanceof Error ? err.message : String(err)) === "string" && ((err instanceof Error ? err.message : String(err)).includes("must include both provider and modelId") || (err instanceof Error ? err.message : String(err)).includes("Script mode requires")) ? 400 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -9454,15 +9488,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const step = await scopedStore.updateWorkflowStep(req.params.id, updates);
       res.json(step);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
-        const status = typeof err?.message === "string" && (err.message.includes("must include both provider and modelId") || err.message.includes("Script mode requires")) ? 400 : 500;
-        throw new ApiError(status, err.message);
+        const status = typeof (err instanceof Error ? err.message : String(err)) === "string" && ((err instanceof Error ? err.message : String(err)).includes("must include both provider and modelId") || (err instanceof Error ? err.message : String(err)).includes("Script mode requires")) ? 400 : 500;
+        throw new ApiError(status, err instanceof Error ? err.message : String(err));
       }
     }
   });
@@ -9477,12 +9511,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: scopedStore } = await getProjectContext(req);
       await scopedStore.deleteWorkflowStep(req.params.id);
       res.status(204).send();
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -9530,10 +9564,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           settings.promptOverrides
         ) || DEFAULT_WORKFLOW_STEP_REFINE_PROMPT;
 
+        if (!createKbAgent) {
+          throw new Error("createKbAgent is not available");
+        }
         const { session } = await createKbAgent({
           cwd: scopedStore.getRootDir(),
           systemPrompt,
-          tools: "none",
+          tools: "readonly",
           // Resolve planning model using canonical lane hierarchy:
           // 1. Project planning override (planningProvider + planningModelId)
           // 2. Global planning lane (planningGlobalProvider + planningGlobalModelId)
@@ -9551,18 +9588,19 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           defaultThinkingLevel: settings.defaultThinkingLevel,
         });
 
+        const refineSession = session as unknown as RefineAgentSession;
         let output = "";
-        session.on("text", (delta: string) => {
+        refineSession.on("text", (delta: string) => {
           output += delta;
         });
 
-        await session.prompt(
+        await refineSession.prompt(
           `Refine this workflow step description into a detailed agent prompt:\n\nName: ${step.name}\nDescription: ${step.description}`
         );
-        session.dispose();
+        refineSession.dispose();
 
         refinedPrompt = output.trim();
-      } catch (_agentErr: any) {
+      } catch {
         // Fallback: return the description as-is if AI is unavailable
         refinedPrompt = step.description;
       }
@@ -9570,7 +9608,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Update the workflow step with the refined prompt
       const updated = await scopedStore.updateWorkflowStep(step.id, { prompt: refinedPrompt });
       res.json({ prompt: refinedPrompt, workflowStep: updated });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -9589,7 +9627,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const { WORKFLOW_STEP_TEMPLATES } = await import("@fusion/core");
       res.json({ templates: WORKFLOW_STEP_TEMPLATES });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -9628,7 +9666,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
 
       res.status(201).json(step);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -9684,7 +9722,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           // Quote and escape the argument for shell
           const str = String(arg);
           // If the arg contains special characters, use double quotes with escaping
-          if (str.includes('"') || str.includes("$") || str.includes("`") || str.includes("\\")) {
+          if (str.includes('"') || str.includes("$") || str.includes("`")) {
             // Use single quotes and escape embedded single quotes
             return `'${str.replace(/'/g, "'\\''")}'`;
           }
@@ -9720,7 +9758,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         sessionId,
         command: fullCommand,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -9757,7 +9795,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const agents = await agentStore.listAgents(filter as { state?: "idle" | "active" | "paused" | "terminated"; role?: import("@fusion/core").AgentCapability; includeSystem?: boolean });
       res.json(agents);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -9918,12 +9956,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         bundleConfig: bundleConfig ?? undefined,
       });
       res.status(201).json(agent);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("required") || err.message?.includes("cannot be empty")) {
-        throw badRequest(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("required") || (err instanceof Error ? err.message : String(err)).includes("cannot be empty")) {
+        throw badRequest(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -9969,7 +10007,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const allAgents = await agentStore.listAgents();
       const requestedIds = Array.isArray(agentIds) ? [...new Set(agentIds.map((id) => id.trim()))] : [];
       const agentsToExport = requestedIds.length > 0
-        ? allAgents.filter((agent: any) => requestedIds.includes(agent.id))
+        ? allAgents.filter((agent) => requestedIds.includes(agent.id))
         : allAgents;
 
       if (agentsToExport.length === 0) {
@@ -9991,7 +10029,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
 
       res.json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -10117,7 +10155,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json({ companies });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -10152,7 +10190,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await agentStore.init();
 
       const existingAgents = await agentStore.listAgents();
-      const existingNames = new Set(existingAgents.map((a: any) => a.name));
+      const existingNames = new Set(existingAgents.map((a) => a.name));
       const conversionOptions = {
         ...(skipExisting ? { skipExisting: [...existingNames] } : {}),
         existingAgents,
@@ -10370,7 +10408,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw badRequest("Provide one of: agents (array), source (path), manifest (string), or importSource + companySlug");
       }
 
-      const { items: importItems, result } = prepareAgentCompaniesImport(pkg as any, conversionOptions);
+      const { items: importItems, result } = prepareAgentCompaniesImport(pkg as import("@fusion/core").AgentCompaniesPackage, conversionOptions);
       const companyName = pkg.company?.name ?? "Unknown";
       const companySlug = typeof pkg.company?.slug === "string" ? pkg.company.slug : undefined;
 
@@ -10379,7 +10417,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       if (dryRun) {
-        const agentPreview = importItems.map((item: any) => ({
+        const agentPreview = importItems.map((item) => ({
           name: item.input.name,
           role: item.input.role,
           title: typeof item.input.title === "string" ? item.input.title : undefined,
@@ -10438,11 +10476,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           const agent = await agentStore.createAgent(input);
           created.push({ id: agent.id, name: agent.name });
           createdAgentIdsByManifestKey.set(item.manifestKey, agent.id);
-        } catch (err: any) {
+        } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-          errors.push({ name: item.input.name, error: err.message });
+          errors.push({ name: item.input.name, error: err instanceof Error ? err.message : String(err) });
         }
       }
 
@@ -10453,12 +10491,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         skipped: result.skipped,
         errors,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err?.name === "AgentCompaniesParseError") {
-        throw badRequest(err.message);
+      if (err instanceof Error && err.name === "AgentCompaniesParseError") {
+        throw badRequest(err instanceof Error ? err.message : String(err));
       }
       rethrowAsApiError(err);
     }
@@ -10477,21 +10515,21 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await agentStore.init();
 
       const agents = await agentStore.listAgents();
-      const activeCount = agents.filter((a: any) => a.state === "active" || a.state === "running").length;
-      const assignedTaskCount = agents.filter((a: any) => a.taskId).length;
+      const activeCount = agents.filter((a) => a.state === "active" || a.state === "running").length;
+      const assignedTaskCount = agents.filter((a) => a.taskId).length;
 
       let completedRuns = 0;
       let failedRuns = 0;
       for (const agent of agents) {
         const runs = await agentStore.getRecentRuns(agent.id, 100);
-        completedRuns += runs.filter((r: any) => r.status === "completed").length;
-        failedRuns += runs.filter((r: any) => r.status === "failed" || r.status === "terminated").length;
+        completedRuns += runs.filter((r) => r.status === "completed").length;
+        failedRuns += runs.filter((r) => r.status === "failed" || r.status === "terminated").length;
       }
 
       const total = completedRuns + failedRuns;
       const successRate = total > 0 ? completedRuns / total : 0;
       res.json({ activeCount, assignedTaskCount, completedRuns, failedRuns, successRate });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -10513,7 +10551,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const tree = await agentStore.getOrgTree();
       res.json(tree);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -10539,7 +10577,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json({ agent });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -10563,7 +10601,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw notFound("Agent not found");
       }
       res.json(agent);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -10715,14 +10753,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const agent = await agentStore.updateAgent(req.params.id, updates);
       res.json(agent);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
-      } else if (err.message?.includes("cannot be empty")) {
-        throw badRequest(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
+      } else if ((err instanceof Error ? err.message : String(err)).includes("cannot be empty")) {
+        throw badRequest(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -10747,7 +10785,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const state = computeAccessState(agent);
       res.json(serializeAccessState(state));
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -10789,12 +10827,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         permissions: permissions as Record<string, boolean>,
       });
       res.json(agent);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -10823,12 +10861,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         instructionsText: instructionsText ?? undefined,
       });
       res.json(agent);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -10852,7 +10890,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json({ soul: agent.soul ?? null });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -10882,12 +10920,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const agent = await agentStore.updateAgent(req.params.id, { soul });
       res.json(agent);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       }
       rethrowAsApiError(err);
     }
@@ -10910,7 +10948,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json({ memory: agent.memory ?? null });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -10940,12 +10978,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const agent = await agentStore.updateAgent(req.params.id, { memory });
       res.json(agent);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       }
       rethrowAsApiError(err);
     }
@@ -10970,14 +11008,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const agent = await agentStore.updateAgentState(req.params.id, state as import("@fusion/core").AgentState);
       res.json(agent);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
-      } else if (/invalid state transition/i.test(err.message ?? "")) {
-        throw badRequest(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
+      } else if (/invalid state transition/i.test(err instanceof Error ? err.message : String(err))) {
+        throw badRequest(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -10997,12 +11035,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       await agentStore.deleteAgent(req.params.id);
       res.status(204).send();
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -11034,7 +11072,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const revisions = await agentStore.getConfigRevisions(req.params.id, limit);
       res.json(revisions);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -11064,7 +11102,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json(revision);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -11090,14 +11128,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const result = await agentStore.rollbackConfig(req.params.id, req.params.revisionId);
       res.json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("belongs to agent")) {
-        throw badRequest(err.message);
-      } else if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("belongs to agent")) {
+        throw badRequest(err instanceof Error ? err.message : String(err));
+      } else if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -11122,12 +11160,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const budgetStatus = await agentStore.getBudgetStatus(req.params.id);
       res.json(budgetStatus);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -11152,12 +11190,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       await agentStore.resetBudgetUsage(req.params.id);
       res.json({ success: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -11188,12 +11226,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const result = await agentStore.createApiKey(req.params.id, { label });
       res.status(201).json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -11213,12 +11251,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const keys = await agentStore.listApiKeys(req.params.id);
       res.json(keys);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -11238,12 +11276,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const revoked = await agentStore.revokeApiKey(req.params.id, req.params.keyId);
       res.json(revoked);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -11268,7 +11306,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const tasks = await scopedStore.listTasks({ slim: true, includeArchived: false });
       res.json(tasks.filter((task) => task.assignedAgentId === req.params.id));
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -11307,7 +11345,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         priority: selection.priority,
         reason: selection.reason,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -11353,12 +11391,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json(run ? { event, run } : event);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -11381,7 +11419,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const history = await agentStore.getHeartbeatHistory(req.params.id, limit);
       res.json(history);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -11404,12 +11442,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const limit = typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : 20;
       const runs = await agentStore.getRecentRuns(req.params.id, limit);
       res.json(runs);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -11528,19 +11566,19 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         const run = await agentStore.startHeartbeatRun(req.params.id);
 
         // Enrich with invocation source, trigger detail, and context snapshot
-        (run as any).invocationSource = invocationSource;
-        (run as any).triggerDetail = trigger;
-        (run as any).contextSnapshot = contextSnapshot;
+        run.invocationSource = invocationSource;
+        run.triggerDetail = trigger;
+        run.contextSnapshot = contextSnapshot;
 
         await agentStore.saveRun(run);
         res.status(201).json(run);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -11592,12 +11630,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.status(200).json({ ok: true, runId: activeRun.id });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       }
       rethrowAsApiError(err);
     }
@@ -11619,12 +11657,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw notFound("Run not found");
       }
       res.json(run);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -11665,12 +11703,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         run.endedAt,
       );
       res.json(logs);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -11698,12 +11736,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Query mutation trail
       const mutations = await scopedStore.getMutationsForRun(req.params.runId);
       res.json({ runId: req.params.runId, mutations });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -11781,12 +11819,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       };
 
       res.json(response);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -11925,12 +11963,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       };
 
       res.json(response);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -11957,7 +11995,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const chain = await agentStore.getChainOfCommand(req.params.id);
       res.json(chain);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -11991,7 +12029,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const children = await agentStore.getAgentsByReportsTo(agentId);
       res.json(children);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -12042,7 +12080,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json(reflection);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -12082,7 +12120,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const reflections = await reflectionStore.getReflections(agentId, limit);
       res.json(reflections);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -12128,7 +12166,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const reflection = await reflectionService.generateReflection(agentId, "manual");
 
       res.status(201).json(reflection);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -12168,7 +12206,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const summary = await reflectionStore.getPerformanceSummary(agentId, { windowMs });
       res.json(summary);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -12203,7 +12241,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       // Check if AgentReflectionService is available
-      let AgentReflectionService: any;
+      let AgentReflectionService: typeof import("@fusion/engine").AgentReflectionService | undefined;
       try {
         const engine = await import("@fusion/engine");
         AgentReflectionService = engine.AgentReflectionService;
@@ -12227,7 +12265,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const context = await reflectionService.buildReflectionContext(agentId);
       res.json({ context });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -12255,12 +12293,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const ratings = await agentStore.getRatings(req.params.id, { limit, category });
       res.json(ratings);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -12305,12 +12343,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
 
       res.status(201).json(rating);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -12331,12 +12369,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const summary = await agentStore.getRatingSummary(req.params.id);
       res.json(summary);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -12357,12 +12395,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       await agentStore.deleteRating(req.params.ratingId);
       res.status(204).send();
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message?.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       } else {
         rethrowAsApiError(err);
       }
@@ -12399,7 +12437,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         sessionId: session.id,
         roleDescription: session.roleDescription,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -12430,12 +12468,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const spec = await generateAgentSpec(sessionId, rootDir, settings.promptOverrides);
       res.json({ spec });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
       if (err instanceof AgentGenerationSessionNotFoundError) {
-        throw notFound(err.message);
+        throw notFound(err instanceof Error ? err.message : String(err));
       }
       console.error("[agent-generation] Error generating spec:", err);
       rethrowAsApiError(err, "Failed to generate agent specification");
@@ -12457,7 +12495,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json({ session });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -12475,7 +12513,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { sessionId } = req.params;
       cleanupAgentGenerationSession(sessionId);
       res.json({ success: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -12533,7 +12571,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const plugin = await pluginStore.getPlugin(id);
       res.json(plugin);
     } catch (err: unknown) {
-      if (err instanceof Error && err.message.includes("not found")) {
+      if (err instanceof Error && (err instanceof Error ? err.message : String(err)).includes("not found")) {
         throw notFound(`Plugin "${id}" not found`);
       }
       throw internalError(err instanceof Error ? err.message : "Unknown error");
@@ -12617,8 +12655,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
         res.status(201).json(plugin);
       } catch (err: unknown) {
-        if (err instanceof Error && err.message.includes("already registered")) {
-          throw conflict(err.message);
+        if (err instanceof Error && (err instanceof Error ? err.message : String(err)).includes("already registered")) {
+          throw conflict(err instanceof Error ? err.message : String(err));
         }
         throw internalError(err instanceof Error ? err.message : "Failed to register plugin");
       }
@@ -12654,8 +12692,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
         res.status(201).json(plugin);
       } catch (err: unknown) {
-        if (err instanceof Error && err.message.includes("already registered")) {
-          throw conflict(err.message);
+        if (err instanceof Error && (err instanceof Error ? err.message : String(err)).includes("already registered")) {
+          throw conflict(err instanceof Error ? err.message : String(err));
         }
         throw internalError(err instanceof Error ? err.message : "Failed to register plugin");
       }
@@ -12742,11 +12780,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const plugin = await pluginStore.updatePluginSettings(id, settings);
       res.json(plugin);
     } catch (err: unknown) {
-      if (err instanceof Error && err.message.includes("not found")) {
+      if (err instanceof Error && (err instanceof Error ? err.message : String(err)).includes("not found")) {
         throw notFound(`Plugin "${id}" not found`);
       }
-      if (err instanceof Error && err.message.includes("validation failed")) {
-        throw badRequest(err.message);
+      if (err instanceof Error && (err instanceof Error ? err.message : String(err)).includes("validation failed")) {
+        throw badRequest(err instanceof Error ? err.message : String(err));
       }
       throw internalError(err instanceof Error ? err.message : "Failed to update settings");
     }
@@ -13032,7 +13070,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const parentPath = resolvedPath === "/" ? null : dirname(resolvedPath);
 
       res.json({ currentPath: resolvedPath, parentPath, entries });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -13063,7 +13101,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await central.close();
       
       res.json(projects);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -13115,14 +13153,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await central.close();
       
       res.status(201).json({ ...activeProject, _meta: { hasFusionDir: hasFusionDir ? undefined : false } });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.message?.includes("already registered") ? 409 
-        : err.message?.includes("Duplicate path") ? 409
+      const status = (err instanceof Error ? err.message : String(err)).includes("already registered") ? 409 
+        : (err instanceof Error ? err.message : String(err)).includes("Duplicate path") ? 409
         : 500;
-      throw new ApiError(status, err.message);
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -13181,7 +13219,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       
       res.json({ projects: detected });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -13207,7 +13245,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       
       res.json(project);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -13253,12 +13291,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await central.close();
       
       res.json(resultProject);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.message?.includes("not found") ? 404 : 500;
-      throw new ApiError(status, err.message);
+      const status = (err instanceof Error ? err.message : String(err)).includes("not found") ? 404 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -13276,12 +13314,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await central.close();
       
       res.json({ success: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.message?.includes("not found") ? 404 : 500;
-      throw new ApiError(status, err.message);
+      const status = (err instanceof Error ? err.message : String(err)).includes("not found") ? 404 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -13337,7 +13375,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         inFlightAgentCount,
         totalTasksCompleted,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -13367,7 +13405,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         maxConcurrent: 2,
         rootDir: project.path,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -13408,12 +13446,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json(project);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.message?.includes("not found") ? 404 : 500;
-      throw new ApiError(status, err.message);
+      const status = (err instanceof Error ? err.message : String(err)).includes("not found") ? 404 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -13450,12 +13488,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json(project);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.message?.includes("not found") ? 404 : 500;
-      throw new ApiError(status, err.message);
+      const status = (err instanceof Error ? err.message : String(err)).includes("not found") ? 404 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -13477,7 +13515,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       nodes.sort((a, b) => a.name.localeCompare(b.name));
       res.json(nodes);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -13534,12 +13572,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       await central.close();
       res.status(201).json(node);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.message?.includes("already exists") ? 409 : err.message?.includes("must") ? 400 : 500;
-      throw new ApiError(status, err.message);
+      const status = (err instanceof Error ? err.message : String(err)).includes("already exists") ? 409 : (err instanceof Error ? err.message : String(err)).includes("must") ? 400 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -13561,7 +13599,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json(node);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -13593,12 +13631,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await central.close();
 
       res.json(node);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.message?.includes("not found") ? 404 : err.message?.includes("must") ? 400 : 500;
-      throw new ApiError(status, err.message);
+      const status = (err instanceof Error ? err.message : String(err)).includes("not found") ? 404 : (err instanceof Error ? err.message : String(err)).includes("must") ? 400 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -13622,7 +13660,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await central.close();
 
       res.status(204).end();
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -13644,12 +13682,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await central.close();
 
       res.json({ status: healthStatus });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.message?.includes("not found") ? 404 : 500;
-      throw new ApiError(status, err.message);
+      const status = (err instanceof Error ? err.message : String(err)).includes("not found") ? 404 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -13672,7 +13710,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       // Return the systemMetrics field which contains SystemMetrics or null
       res.json(node.systemMetrics ?? null);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -13700,7 +13738,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       // Return versionInfo if present, null if not yet stored
       res.json(node.versionInfo ?? null);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -13745,7 +13783,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await central.close();
 
       res.json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -13801,7 +13839,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await central.close();
 
       res.json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -13822,18 +13860,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await central.init();
 
       const nodes = await central.listNodes();
-      const remoteNodes = nodes.filter((n: any) => n.type === "remote");
+      const remoteNodes = nodes.filter((n) => n.type === "remote");
       const meshState: unknown[] = [];
       for (const node of nodes) {
-        const state = typeof (central as any).getMeshState === "function"
-          ? await (central as any).getMeshState(node.id)
+        const state = typeof (central as InstanceType<typeof CentralCore>).getMeshState === "function"
+          ? await (central as InstanceType<typeof CentralCore>).getMeshState(node.id)
           : null;
         if (state) {
           meshState.push(state);
         } else {
           const connections =
             node.type === "local"
-              ? remoteNodes.map((peer: any) => ({
+              ? remoteNodes.map((peer) => ({
                   peerId: peer.id,
                   peerName: peer.name,
                   peerUrl: peer.url ?? null,
@@ -13857,7 +13895,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await central.close();
 
       res.json(meshState);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -13941,7 +13979,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         newPeers,
         timestamp: new Date().toISOString(),
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -13966,7 +14004,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await central.close();
 
       res.json({ active, config });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -14021,7 +14059,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await central.close();
 
       res.json({ success: true, config });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -14043,7 +14081,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await central.close();
 
       res.json({ success: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -14065,7 +14103,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await central.close();
 
       res.json(nodes);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -14130,12 +14168,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       await central.close();
       res.json(node);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = err.message?.includes("already exists") ? 409 : err.message?.includes("must") ? 400 : 500;
-      throw new ApiError(status, err.message);
+      const status = (err instanceof Error ? err.message : String(err)).includes("already exists") ? 409 : (err instanceof Error ? err.message : String(err)).includes("must") ? 400 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -14160,7 +14198,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await central.close();
       
       res.json(entries);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -14183,7 +14221,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await central.close();
       
       res.json(state);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -14212,7 +14250,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await central.close();
 
       res.json(state);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -14238,7 +14276,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const singleProjectPath = projects.length === 1 ? projects[0].path : null;
       
       res.json({ hasProjects, singleProjectPath });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -14276,7 +14314,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           path: p.path,
         })),
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -14317,7 +14355,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       } finally {
         await central.close();
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -14523,7 +14561,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       };
 
       res.json({ files, stats });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -14727,11 +14765,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
 
       res.json(files);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound(`Task ${req.params.id} not found`);
       } else {
         rethrowAsApiError(err, "Internal server error");
@@ -14751,7 +14789,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
       res.json(settings.scripts ?? {});
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -14784,7 +14822,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       };
       await scopedStore.updateSettings({ scripts });
       res.json(scripts);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -14806,7 +14844,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       delete scripts[name];
       await scopedStore.updateSettings({ scripts });
       res.json(scripts);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -14852,7 +14890,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const messages = await msgStore.getInbox(DASHBOARD_USER_ID, "user", filter);
       const mailbox = await msgStore.getMailbox(DASHBOARD_USER_ID, "user");
       res.json({ messages, total: messages.length, unreadCount: mailbox.unreadCount });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -14875,7 +14913,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       };
       const messages = await msgStore.getOutbox(DASHBOARD_USER_ID, "user", filter);
       res.json({ messages, total: messages.length });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -14892,7 +14930,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const msgStore = await getMessageStore(req);
       const mailbox = await msgStore.getMailbox(DASHBOARD_USER_ID, "user");
       res.json({ unreadCount: mailbox.unreadCount });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -14910,7 +14948,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const msgStore = await getMessageStore(req);
       const count = await msgStore.markAllAsRead(DASHBOARD_USER_ID, "user");
       res.json({ markedAsRead: count });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -14952,7 +14990,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         metadata,
       });
       res.status(201).json(message);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -14977,7 +15015,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         { id: participantId, type: participantType as ParticipantType },
       );
       res.json(messages);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -14997,7 +15035,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw notFound("Message not found");
       }
       res.json(message);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -15014,12 +15052,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const msgStore = await getMessageStore(req);
       const message = await msgStore.markAsRead(req.params.id);
       res.json(message);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       }
       rethrowAsApiError(err);
     }
@@ -15034,12 +15072,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const msgStore = await getMessageStore(req);
       await msgStore.deleteMessage(req.params.id);
       res.status(204).send();
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err.message.includes("not found")) {
-        throw notFound(err.message);
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
       }
       rethrowAsApiError(err);
     }
@@ -15056,7 +15094,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const mailbox = await msgStore.getMailbox(agentId, "agent");
       const inbox = await msgStore.getInbox(agentId, "agent");
       res.json({ ...mailbox, messages: inbox });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -15106,7 +15144,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const skills = await skillsAdapter.discoverSkills(rootDir);
 
       res.json({ skills });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -15157,16 +15195,16 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           pattern: persistence.pattern,
         },
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-      if (err instanceof Error && err.message?.includes("Invalid skill ID")) {
-        res.status(400).json({ error: err.message, code: "invalid_skill_id" });
+      if (err instanceof Error && (err instanceof Error ? err.message : String(err)).includes("Invalid skill ID")) {
+        res.status(400).json({ error: err instanceof Error ? err.message : String(err), code: "invalid_skill_id" });
         return;
       }
-      if (err instanceof Error && err.message?.includes("Skill not found")) {
-        res.status(404).json({ error: err.message, code: "skill_not_found" });
+      if (err instanceof Error && (err instanceof Error ? err.message : String(err)).includes("Skill not found")) {
+        res.status(404).json({ error: err instanceof Error ? err.message : String(err), code: "skill_not_found" });
         return;
       }
       rethrowAsApiError(err, "Failed to toggle skill execution");
@@ -15205,7 +15243,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -15284,12 +15322,13 @@ async function executeSingleCommand(
     }
 
     return { success: true, output, startedAt, completedAt: new Date().toISOString() };
-  } catch (err: any) {
+  } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
-    const stdout = err.stdout ?? "";
-    const stderr = err.stderr ?? "";
+    const execErr = err as NodeJS.ErrnoException & { stdout?: string; stderr?: string; killed?: boolean };
+    const stdout = execErr.stdout ?? "";
+    const stderr = execErr.stderr ?? "";
     let output = stdout;
     if (stderr) {
       output += stdout ? "\n--- stderr ---\n" : "";
@@ -15302,9 +15341,9 @@ async function executeSingleCommand(
     return {
       success: false,
       output,
-      error: err.killed
+      error: execErr.killed
         ? `Command timed out after ${(timeoutMs ?? DEFAULT_TIMEOUT_MS) / 1000}s`
-        : err.message ?? String(err),
+        : (err instanceof Error ? err.message : String(err)),
       startedAt,
       completedAt: new Date().toISOString(),
     };
@@ -15573,7 +15612,7 @@ function registerModelsRoute(router: Router, modelRegistry?: ModelRegistryLike, 
       }
 
       res.json({ models, favoriteProviders, favoriteModels });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -15639,7 +15678,7 @@ function registerAuthRoutes(router: Router, authStorage?: AuthStorageLike): void
       }
 
       res.json({ providers });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -15723,7 +15762,7 @@ function registerAuthRoutes(router: Router, authStorage?: AuthStorageLike): void
       const authInfo = await authUrlPromise;
       clearTimeout(timeout);
       res.json({ url: authInfo.url, instructions: authInfo.instructions });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -15750,7 +15789,7 @@ function registerAuthRoutes(router: Router, authStorage?: AuthStorageLike): void
       const storage = getAuthStorage();
       storage.logout(provider);
       res.json({ success: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -15794,7 +15833,7 @@ function registerAuthRoutes(router: Router, authStorage?: AuthStorageLike): void
       storage.setApiKey(provider, apiKey.trim());
       clearUsageCache();
       res.json({ success: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
@@ -15823,7 +15862,7 @@ function registerAuthRoutes(router: Router, authStorage?: AuthStorageLike): void
       storage.clearApiKey(provider);
       clearUsageCache();
       res.json({ success: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
