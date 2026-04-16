@@ -7,7 +7,7 @@
  * The parameter schemas are canonical here — executor.ts imports and reuses them.
  */
 
-import type { AgentStore, AgentState, AgentCapability, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext } from "@fusion/core";
+import type { AgentStore, AgentState, AgentCapability, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message } from "@fusion/core";
 import { isEphemeralAgent } from "@fusion/core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
@@ -65,6 +65,20 @@ export const delegateTaskParams = Type.Object({
   dependencies: Type.Optional(
     Type.Array(Type.String(), { description: "Task IDs this new task depends on (e.g. [\"KB-001\"])" }),
   ),
+});
+
+export const sendMessageParams = Type.Object({
+  to_id: Type.String({ description: "Recipient agent ID (e.g. 'agent-abc123')" }),
+  content: Type.String({ description: "Message body (1-2000 characters)" }),
+  type: Type.Optional(Type.Union([
+    Type.Literal("agent-to-agent"),
+    Type.Literal("agent-to-user"),
+  ], { description: "Message type (defaults to 'agent-to-agent')" })),
+});
+
+export const readMessagesParams = Type.Object({
+  unread_only: Type.Optional(Type.Boolean({ description: "Only return unread messages (default: true)" })),
+  limit: Type.Optional(Type.Number({ description: "Max messages to return (default: 20)" })),
 });
 
 // ── Tool factory functions ────────────────────────────────────────────────
@@ -423,6 +437,123 @@ export function createDelegateTaskTool(agentStore: AgentStore, taskStore: TaskSt
         }],
         details: { taskId: task.id, agentId: agent.id, agentName: agent.name },
       };
+    },
+  };
+}
+
+/**
+ * Create a `send_message` tool that sends a message to another agent or user.
+ *
+ * @param messageStore - MessageStore for message persistence
+ * @param fromAgentId - The agent ID sending the message
+ * @returns ToolDefinition for the `send_message` tool
+ */
+export function createSendMessageTool(messageStore: MessageStore, fromAgentId: string): ToolDefinition {
+  return {
+    name: "send_message",
+    label: "Send Message",
+    description:
+      "Send a message to another agent or user. The recipient will be woken if they have " +
+      "`messageResponseMode: 'immediate'` configured.",
+    parameters: sendMessageParams,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    execute: async (_id: string, params: Static<typeof sendMessageParams>, _signal?: any, _onUpdate?: any, _ctx?: any) => {
+      // Validate content length
+      const content = params.content.trim();
+      if (content.length === 0) {
+        return {
+          content: [{ type: "text" as const, text: "ERROR: Message content cannot be empty" }],
+          details: {},
+        };
+      }
+      if (content.length > 2000) {
+        return {
+          content: [{ type: "text" as const, text: "ERROR: Message content exceeds 2000 character limit" }],
+          details: {},
+        };
+      }
+
+      try {
+        const message = messageStore.sendMessage({
+          fromId: fromAgentId,
+          fromType: "agent",
+          toId: params.to_id,
+          toType: "agent",
+          content,
+          type: params.type ?? "agent-to-agent",
+        });
+
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Message sent to ${params.to_id} (ID: ${message.id})`,
+          }],
+          details: { messageId: message.id },
+        };
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text" as const, text: `ERROR: Failed to send message: ${errorMessage}` }],
+          details: {},
+        };
+      }
+    },
+  };
+}
+
+/**
+ * Create a `read_messages` tool that reads inbox messages for an agent.
+ *
+ * @param messageStore - MessageStore for message retrieval
+ * @param agentId - The agent ID whose inbox to read
+ * @returns ToolDefinition for the `read_messages` tool
+ */
+export function createReadMessagesTool(messageStore: MessageStore, agentId: string): ToolDefinition {
+  return {
+    name: "read_messages",
+    label: "Read Messages",
+    description: "Read your inbox messages. Returns unread messages by default.",
+    parameters: readMessagesParams,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    execute: async (_id: string, params: Static<typeof readMessagesParams>, _signal?: any, _onUpdate?: any, _ctx?: any) => {
+      const unreadOnly = params.unread_only ?? true;
+      const limit = params.limit ?? 20;
+
+      try {
+        const filter = {
+          ...(unreadOnly ? { read: false as const } : {}),
+          limit,
+        };
+
+        const messages = messageStore.getInbox(agentId, "agent", filter);
+
+        if (messages.length === 0) {
+          return {
+            content: [{ type: "text" as const, text: "No messages" }],
+            details: {},
+          };
+        }
+
+        const lines = messages.map((msg: Message) => {
+          const timestamp = new Date(msg.createdAt).toLocaleString();
+          const readStatus = msg.read ? "[read] " : "[unread] ";
+          return `${readStatus}[from: ${msg.fromId}] ${msg.content} (${timestamp})`;
+        });
+
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Messages (${messages.length}):\n${lines.join("\n")}`,
+          }],
+          details: { messages },
+        };
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text" as const, text: `ERROR: Failed to read messages: ${errorMessage}` }],
+          details: {},
+        };
+      }
     },
   };
 }

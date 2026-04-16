@@ -362,6 +362,78 @@ describe("HeartbeatMonitor", () => {
 
       customMonitor.stop();
     });
+
+    describe("createHeartbeatTools - message tools", () => {
+      let mockTaskStore: TaskStore;
+      let mockSession: ReturnType<typeof createMockSession>;
+      let capturedTools: any[] = [];
+
+      beforeEach(() => {
+        mockTaskStore = {
+          createTask: vi.fn().mockResolvedValue({ id: "FN-002", description: "test", dependencies: [], column: "triage" }),
+          logEntry: vi.fn().mockResolvedValue(undefined),
+          upsertTaskDocument: vi.fn().mockResolvedValue({
+            id: "doc-1", taskId: "FN-001", key: "test", content: "test", revision: 1, author: "agent",
+            createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+          }),
+          getTaskDocument: vi.fn().mockResolvedValue(null),
+          getTaskDocuments: vi.fn().mockResolvedValue([]),
+        } as unknown as TaskStore;
+        mockSession = createMockSession();
+        capturedTools = [];
+      });
+
+      it("includes send_message and read_messages tools when messageStore is available", () => {
+        const messageStore = createMockMessageStore();
+        const customMonitor = new HeartbeatMonitor({
+          store,
+          messageStore,
+          taskStore: mockTaskStore,
+          rootDir: "/tmp",
+        });
+
+        const tools = customMonitor.createHeartbeatTools("agent-001", mockTaskStore, "FN-001", undefined, undefined, messageStore);
+        const toolNames = tools.map((t) => t.name);
+
+        expect(toolNames).toContain("send_message");
+        expect(toolNames).toContain("read_messages");
+      });
+
+      it("does not include message tools when messageStore is not provided", () => {
+        const customMonitor = new HeartbeatMonitor({
+          store,
+          taskStore: mockTaskStore,
+          rootDir: "/tmp",
+        });
+
+        const tools = customMonitor.createHeartbeatTools("agent-001", mockTaskStore, "FN-001");
+        const toolNames = tools.map((t) => t.name);
+
+        expect(toolNames).not.toContain("send_message");
+        expect(toolNames).not.toContain("read_messages");
+      });
+
+      it("does not include message tools when messageStore is undefined even if other params are passed", () => {
+        const customMonitor = new HeartbeatMonitor({
+          store,
+          taskStore: mockTaskStore,
+          rootDir: "/tmp",
+        });
+
+        const tools = customMonitor.createHeartbeatTools(
+          "agent-001",
+          mockTaskStore,
+          "FN-001",
+          undefined,
+          undefined,
+          undefined
+        );
+        const toolNames = tools.map((t) => t.name);
+
+        expect(toolNames).not.toContain("send_message");
+        expect(toolNames).not.toContain("read_messages");
+      });
+    });
   });
 
   describe("isActive", () => {
@@ -1430,6 +1502,286 @@ describe("HeartbeatMonitor", () => {
         // Cleanup
         taskLaneSemaphore.release();
         taskLaneSemaphore.release();
+      });
+    });
+
+    describe("executeHeartbeat - message processing", () => {
+      it("includes unread messages in prompt when woken by wake-on-message", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({ session: mockSession as any });
+
+        const messages = [
+          createMessage({
+            id: "msg-1",
+            fromId: "agent-2",
+            content: "Hello from agent-2",
+            createdAt: "2024-01-15T10:30:00.000Z",
+          }),
+          createMessage({
+            id: "msg-2",
+            fromId: "user-1",
+            content: "Hello from user",
+            createdAt: "2024-01-15T11:00:00.000Z",
+          }),
+        ];
+
+        const messageStore = {
+          setMessageToAgentHook: vi.fn(),
+          getInbox: vi.fn().mockReturnValue(messages),
+          markAllAsRead: vi.fn(),
+        } as unknown as MessageStore;
+
+        const monitor = new HeartbeatMonitor({
+          store,
+          messageStore,
+          taskStore: mockTaskStore,
+          rootDir: "/tmp",
+        });
+
+        const result = await monitor.executeHeartbeat({
+          agentId: "agent-001",
+          source: "on_demand",
+          triggerDetail: "wake-on-message",
+        });
+
+        expect(result.status).toBe("completed");
+        expect(mockedCreateKbAgent).toHaveBeenCalled();
+        expect(messageStore.getInbox).toHaveBeenCalledWith("agent-001", "agent", { read: false, limit: 10 });
+
+        // Verify execution prompt (passed to promptWithFallback) included the messages
+        // The execution prompt is passed to session.prompt by promptWithFallback mock
+        const promptCalls = mockSession.prompt.mock.calls;
+        expect(promptCalls.length).toBeGreaterThan(0);
+        const executionPrompt = promptCalls[promptCalls.length - 1][0];
+        expect(executionPrompt).toContain("Pending Messages:");
+        expect(executionPrompt).toContain("Hello from agent-2");
+        expect(executionPrompt).toContain("Hello from user");
+      });
+
+      it("does not include message section when no unread messages", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({ session: mockSession as any });
+
+        const messageStore = {
+          setMessageToAgentHook: vi.fn(),
+          getInbox: vi.fn().mockReturnValue([]),
+          markAllAsRead: vi.fn(),
+        } as unknown as MessageStore;
+
+        const monitor = new HeartbeatMonitor({
+          store,
+          messageStore,
+          taskStore: mockTaskStore,
+          rootDir: "/tmp",
+        });
+
+        const result = await monitor.executeHeartbeat({
+          agentId: "agent-001",
+          source: "on_demand",
+          triggerDetail: "wake-on-message",
+        });
+
+        expect(result.status).toBe("completed");
+
+        // Verify prompt did NOT include pending messages section
+        // Note: without wake-on-message trigger, no messages are fetched
+        // so the prompt won't have the Pending Messages section at all
+      });
+
+      it("marks messages as read after successful heartbeat execution", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({ session: mockSession as any });
+
+        const messages = [
+          createMessage({
+            id: "msg-1",
+            fromId: "agent-2",
+            content: "Hello from agent-2",
+          }),
+        ];
+
+        const messageStore = {
+          setMessageToAgentHook: vi.fn(),
+          getInbox: vi.fn().mockReturnValue(messages),
+          markAllAsRead: vi.fn(),
+        } as unknown as MessageStore;
+
+        const monitor = new HeartbeatMonitor({
+          store,
+          messageStore,
+          taskStore: mockTaskStore,
+          rootDir: "/tmp",
+        });
+
+        const result = await monitor.executeHeartbeat({
+          agentId: "agent-001",
+          source: "on_demand",
+          triggerDetail: "wake-on-message",
+        });
+
+        expect(result.status).toBe("completed");
+        expect(messageStore.markAllAsRead).toHaveBeenCalledWith("agent-001", "agent");
+      });
+
+      it("does not mark messages as read on failed heartbeat execution", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        mockSession.prompt = vi.fn().mockRejectedValue(new Error("Execution failed"));
+        mockedCreateKbAgent.mockResolvedValue({ session: mockSession as any });
+
+        const messages = [
+          createMessage({
+            id: "msg-1",
+            fromId: "agent-2",
+            content: "Hello from agent-2",
+          }),
+        ];
+
+        const messageStore = {
+          setMessageToAgentHook: vi.fn(),
+          getInbox: vi.fn().mockReturnValue(messages),
+          markAllAsRead: vi.fn(),
+        } as unknown as MessageStore;
+
+        const monitor = new HeartbeatMonitor({
+          store,
+          messageStore,
+          taskStore: mockTaskStore,
+          rootDir: "/tmp",
+        });
+
+        const result = await monitor.executeHeartbeat({
+          agentId: "agent-001",
+          source: "on_demand",
+          triggerDetail: "wake-on-message",
+        });
+
+        expect(result.status).toBe("failed");
+        expect(messageStore.markAllAsRead).not.toHaveBeenCalled();
+      });
+
+      it("does not fetch messages when not wake-on-message trigger", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({ session: mockSession as any });
+
+        const messageStore = {
+          setMessageToAgentHook: vi.fn(),
+          getInbox: vi.fn(),
+          markAllAsRead: vi.fn(),
+        } as unknown as MessageStore;
+
+        const monitor = new HeartbeatMonitor({
+          store,
+          messageStore,
+          taskStore: mockTaskStore,
+          rootDir: "/tmp",
+        });
+
+        // Use a regular trigger (not wake-on-message)
+        await monitor.executeHeartbeat({
+          agentId: "agent-001",
+          source: "timer",
+          triggerDetail: "scheduled",
+        });
+
+        expect(messageStore.getInbox).not.toHaveBeenCalled();
+        expect(messageStore.markAllAsRead).not.toHaveBeenCalled();
+      });
+
+      describe("end-to-end agent-to-agent message flow", () => {
+        it("proves full message flow from send to wake to processing to reply", async () => {
+          // Import real MessageStore for this test
+          const core = await import("@fusion/core");
+          const Database = core.Database;
+          const RealMessageStore = core.MessageStore;
+
+          // Setup: create real temp database and MessageStore
+          const tmpDir = await import("node:fs/promises").then((fs) =>
+            fs.mkdtemp(require("node:path").join(require("node:os").tmpdir(), "fn-e2e-message-"))
+          );
+          const kbDir = require("node:path").join(tmpDir, ".fusion");
+          await require("node:fs").promises.mkdir(kbDir, { recursive: true });
+
+          let messageStore: InstanceType<typeof RealMessageStore>;
+          let db: InstanceType<typeof Database> | undefined;
+          try {
+            db = new Database(kbDir);
+            db.init();
+            messageStore = new RealMessageStore(db);
+
+            // Agent A sends a message to Agent B
+            const sentMessage = messageStore.sendMessage({
+              fromId: "agent-alpha",
+              fromType: "agent",
+              toId: "agent-beta",
+              toType: "agent",
+              content: "Hello Agent Beta, please process task FN-001.",
+              type: "agent-to-agent",
+              metadata: { taskId: "FN-001" },
+            });
+
+            expect(sentMessage.id).toBeDefined();
+            expect(sentMessage.content).toContain("Hello Agent Beta");
+
+            // Verify message is stored in Agent B's inbox
+            const inbox = messageStore.getInbox("agent-beta", "agent", { read: false });
+            expect(inbox).toHaveLength(1);
+            expect(inbox[0].id).toBe(sentMessage.id);
+            expect(inbox[0].content).toBe(sentMessage.content);
+
+            // Create a monitor for Agent B with real MessageStore
+            const store = createStoreWithAgentForExec({
+              id: "agent-beta",
+              name: "Agent Beta",
+              state: "active",
+              taskId: "FN-001",
+            });
+            const mockSession = createMockAgentSession();
+            mockedCreateKbAgent.mockResolvedValue({ session: mockSession as any });
+
+            const monitor = new HeartbeatMonitor({
+              store,
+              messageStore,
+              taskStore: mockTaskStore,
+              rootDir: "/tmp",
+            });
+
+            // Execute heartbeat to process the message (simulating wake-on-message trigger)
+            const result = await monitor.executeHeartbeat({
+              agentId: "agent-beta",
+              source: "on_demand",
+              triggerDetail: "wake-on-message",
+            });
+
+            // Verify heartbeat completed
+            expect(result.status).toBe("completed");
+
+            // Verify the execution prompt included the message
+            const promptCalls = mockSession.prompt.mock.calls;
+            expect(promptCalls.length).toBeGreaterThan(0);
+            const executionPrompt = promptCalls[promptCalls.length - 1][0];
+            expect(executionPrompt).toContain("Hello Agent Beta");
+            expect(executionPrompt).toContain("Pending Messages:");
+
+            // Verify messages were marked as read after successful processing
+            expect(messageStore.getMailbox("agent-beta", "agent").unreadCount).toBe(0);
+
+            // Cleanup
+            await monitor.stop();
+          } finally {
+            // Cleanup temp directory
+            try {
+              db?.close();
+              await require("node:fs/promises").rm(tmpDir, { recursive: true, force: true });
+            } catch {
+              // ignore cleanup errors
+            }
+          }
+        });
       });
     });
 

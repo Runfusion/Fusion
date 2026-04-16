@@ -35,6 +35,7 @@ import {
   createDelegateTaskTool,
   createListAgentsTool,
   createReflectOnPerformanceTool,
+  createSendMessageTool,
   createTaskCreateTool as sharedCreateTaskCreateTool,
   createTaskDocumentReadTool as sharedCreateTaskDocumentReadTool,
   createTaskDocumentWriteTool as sharedCreateTaskDocumentWriteTool,
@@ -47,12 +48,14 @@ export { summarizeToolArgs } from "./agent-logger.js";
 export {
   createDelegateTaskTool,
   createListAgentsTool,
+  createSendMessageTool,
   createTaskCreateTool,
   createTaskDocumentReadTool,
   createTaskDocumentWriteTool,
   createTaskLogTool,
   delegateTaskParams,
   listAgentsParams,
+  sendMessageParams,
   taskCreateParams,
   taskLogParams,
 } from "./agent-tools.js";
@@ -314,6 +317,8 @@ export interface TaskExecutorOptions {
   reflectionService?: AgentReflectionService;
   /** Plugin runner for invoking plugin hooks and providing plugin tools. */
   pluginRunner?: PluginRunner;
+  /** MessageStore for sending messages to other agents. When provided, executor agents gain send_message capability. */
+  messageStore?: import("@fusion/core").MessageStore;
   missionStore?: MissionStore;
   onSliceComplete?: (slice: Slice) => void;
   onStart?: (task: Task, worktreePath: string) => void;
@@ -1414,6 +1419,10 @@ export class TaskExecutor {
         ...(this.options.agentStore ? [
           createListAgentsTool(this.options.agentStore),
           createDelegateTaskTool(this.options.agentStore, this.store),
+        ] : []),
+        // Messaging tool — allows executor agents to send messages to other agents.
+        ...(this.options.messageStore && assignedAgentId ? [
+          createSendMessageTool(this.options.messageStore, assignedAgentId),
         ] : []),
         // Add plugin tools from PluginRunner
         ...(this.options.pluginRunner?.getPluginTools() ?? []),

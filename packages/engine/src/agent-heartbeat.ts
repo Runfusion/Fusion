@@ -20,7 +20,7 @@
 import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, AgentHeartbeatConfig, AgentBudgetStatus, Message, MessageStore, TaskStore, TaskDetail, AgentRole, Agent, InboxTask, BlockedStateSnapshot, RunMutationContext } from "@fusion/core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
-import { createTaskCreateTool, createTaskLogToolWithContext, createTaskDocumentWriteTool, createTaskDocumentReadTool, createListAgentsTool, createDelegateTaskTool, taskCreateParams } from "./agent-tools.js";
+import { createTaskCreateTool, createTaskLogToolWithContext, createTaskDocumentWriteTool, createTaskDocumentReadTool, createListAgentsTool, createDelegateTaskTool, createSendMessageTool, createReadMessagesTool, taskCreateParams } from "./agent-tools.js";
 import { AgentLogger } from "./agent-logger.js";
 import { heartbeatLog } from "./logger.js";
 import { createRunAuditor, type EngineRunContext } from "./run-audit.js";
@@ -136,7 +136,22 @@ Keep work lightweight — this is a single-pass check, not a full implementation
 You have readonly file access plus task_create, task_log, and task_document tools.
 
 **Task Documents:** Save important findings with task_document_write(key="...", content="...").
-Documents persist across sessions and are visible in the dashboard's Documents tab.`;
+Documents persist across sessions and are visible in the dashboard's Documents tab.
+
+## Processing Messages
+
+When you are woken by an incoming message (source includes "wake-on-message"), you should:
+1. Use read_messages to check your inbox for unread messages.
+2. Review each message and determine the appropriate action:
+   - If the message requires a response, use send_message to reply.
+   - If the message is informational, acknowledge it by logging with task_log.
+   - If the message requests work, create a follow-up task with task_create or handle it directly.
+3. After processing messages, continue with your normal heartbeat duties.
+
+When sending messages:
+- Be concise and clear about what you need or what you've done.
+- Include relevant context (task IDs, file paths) in metadata when applicable.
+- Use agent-to-agent for inter-agent communication.`;
 
 /** Parameter schema for the heartbeat_done tool */
 const heartbeatDoneParams = Type.Object({
@@ -908,7 +923,8 @@ export class HeartbeatMonitor {
         const { buildSessionSkillContextSync } = await import("./session-skill-context.js");
 
         // Build tools with task creation tracking and run context for mutation correlation
-        const heartbeatTools = this.createHeartbeatTools(agentId, taskStore, taskId, runContext, audit);
+        // Pass messageStore for messaging tools (send_message, read_messages)
+        const heartbeatTools = this.createHeartbeatTools(agentId, taskStore, taskId, runContext, audit, this.messageStore);
         heartbeatTools.push(heartbeatDoneTool);
 
         agentLogger = new AgentLogger({
@@ -954,6 +970,17 @@ export class HeartbeatMonitor {
           // Build execution prompt
           const taskTitle = taskDetail.title ?? taskDetail.description.slice(0, 100);
 
+          // Fetch unread messages when woken by message trigger
+          let pendingMessages: Message[] = [];
+          if (triggerDetail === "wake-on-message" && this.messageStore) {
+            try {
+              pendingMessages = this.messageStore.getInbox(agentId, "agent", { read: false, limit: 10 });
+            } catch {
+              // Non-critical — if message fetch fails, proceed without messages
+              heartbeatLog.warn(`Failed to fetch inbox messages for ${agentId} during wake-on-message`);
+            }
+          }
+
           const triggeringCommentLines: string[] = [];
           if (effectiveTriggeringCommentIds && effectiveTriggeringCommentIds.length > 0) {
             const commentLookup = new Map<string, { author: string; text: string }>();
@@ -983,6 +1010,19 @@ export class HeartbeatMonitor {
             }
           }
 
+          // Build pending messages section
+          const pendingMessagesLines: string[] = [];
+          if (pendingMessages.length > 0) {
+            pendingMessagesLines.push(
+              "",
+              "Pending Messages:",
+              ...pendingMessages.map((msg) => {
+                const timestamp = new Date(msg.createdAt).toLocaleString();
+                return `- [from: ${msg.fromId}] ${msg.content} (${timestamp})`;
+              }),
+            );
+          }
+
           const executionPrompt = [
             `Heartbeat execution for agent "${agent.name}" (ID: ${agent.id})`,
             `Source: ${source}${triggerDetail ? ` (${triggerDetail})` : ""}`,
@@ -993,6 +1033,7 @@ export class HeartbeatMonitor {
             "",
             taskDetail.prompt ? `PROMPT.md:\n${taskDetail.prompt}` : "No PROMPT.md available.",
             ...triggeringCommentLines,
+            ...pendingMessagesLines,
             "",
             "Review the task status and take appropriate action. Call heartbeat_done when finished.",
           ].join("\n");
@@ -1003,6 +1044,16 @@ export class HeartbeatMonitor {
           // Estimate output tokens (rough: ~4 chars per token)
           const estimatedOutputTokens = Math.ceil(outputLength / 4);
           await flushAgentLogger();
+
+          // Mark messages as read after successful processing (only if messages were included in prompt)
+          if (pendingMessages.length > 0 && this.messageStore) {
+            try {
+              this.messageStore.markAllAsRead(agentId, "agent");
+            } catch {
+              // Non-critical — mark as read failed, messages remain unread
+              heartbeatLog.warn(`Failed to mark messages as read for ${agentId}`);
+            }
+          }
 
           // Complete run successfully
           const completionResultJson: Record<string, unknown> = {
@@ -1074,6 +1125,7 @@ export class HeartbeatMonitor {
    * @param taskId - The assigned task ID (for task_log context)
    * @param runContext - Optional run context for mutation correlation
    * @param audit - Optional run auditor for audit trail (FN-1404)
+   * @param messageStore - Optional MessageStore for messaging tools
    * @returns Array of ToolDefinitions for the heartbeat session
    */
   createHeartbeatTools(
@@ -1082,6 +1134,7 @@ export class HeartbeatMonitor {
     taskId: string,
     runContext?: RunMutationContext,
     audit?: ReturnType<typeof createRunAuditor>,
+    messageStore?: MessageStore,
   ): ToolDefinition[] {
     const tools: ToolDefinition[] = [];
 
@@ -1132,6 +1185,12 @@ export class HeartbeatMonitor {
     // Agent delegation tools — discover and delegate work to other agents
     tools.push(createListAgentsTool(this.store));
     tools.push(createDelegateTaskTool(this.store, taskStore));
+
+    // Messaging tools — when MessageStore is available, agents can send and receive messages
+    if (messageStore) {
+      tools.push(createSendMessageTool(messageStore, agentId));
+      tools.push(createReadMessagesTool(messageStore, agentId));
+    }
 
     return tools;
   }
