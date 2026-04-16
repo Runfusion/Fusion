@@ -10,6 +10,8 @@ import type {
   RoadmapFeatureCreateInput,
   RoadmapFeatureUpdateInput,
   RoadmapWithHierarchy,
+  RoadmapMissionPlanningHandoff,
+  RoadmapFeatureTaskPlanningHandoff,
 } from "@fusion/core";
 import * as api from "../api";
 
@@ -132,6 +134,18 @@ export interface UseRoadmapsResult {
   /** Clear pending feature suggestions for a specific milestone */
   clearFeatureSuggestions: (milestoneId: string) => void;
 
+  // Handoff / Export callbacks
+  /** Current handoff payload (mission + feature handoffs) */
+  handoffPayload: { mission: RoadmapMissionPlanningHandoff; features: RoadmapFeatureTaskPlanningHandoff[] } | null;
+  /** Whether handoff is currently being fetched */
+  isFetchingHandoff: boolean;
+  /** Error from the last handoff fetch attempt */
+  handoffError: Error | null;
+  /** Fetch handoff payload for a roadmap */
+  fetchHandoff: (roadmapId: string, opts?: { onSuccess?: () => void; onError?: (err: Error) => void }) => Promise<void>;
+  /** Clear the current handoff payload */
+  clearHandoff: () => void;
+
   /** Refresh all roadmaps */
   refresh: () => Promise<void>;
 }
@@ -145,6 +159,11 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
   const [featuresByMilestoneId, setFeaturesByMilestoneId] = useState<Record<string, RoadmapFeature[]>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+
+  // Handoff state
+  const [handoffPayload, setHandoffPayload] = useState<{ mission: RoadmapMissionPlanningHandoff; features: RoadmapFeatureTaskPlanningHandoff[] } | null>(null);
+  const [isFetchingHandoff, setIsFetchingHandoff] = useState(false);
+  const [handoffError, setHandoffError] = useState<Error | null>(null);
 
   // Ephemeral milestone suggestion state (in-memory only, not persisted)
   const [milestoneSuggestions, setMilestoneSuggestions] = useState<MilestoneSuggestion[]>([]);
@@ -167,18 +186,22 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
   const previousProjectIdRef = useRef<string | undefined>(projectId);
   // Project context version for stale-response protection
   const projectContextVersionRef = useRef(0);
+  // Handoff fetch version for stale-response discard
+  const handoffFetchVersionRef = useRef(0);
   // Refs to access latest state in callbacks
   const roadmapsRef = useRef(roadmaps);
   const selectedRoadmapIdRef = useRef(selectedRoadmapId);
   const milestonesRef = useRef(milestones);
   const featuresByMilestoneIdRef = useRef(featuresByMilestoneId);
   const projectIdRef = useRef(projectId);
+  const handoffPayloadRef = useRef(handoffPayload);
 
   roadmapsRef.current = roadmaps;
   selectedRoadmapIdRef.current = selectedRoadmapId;
   milestonesRef.current = milestones;
   featuresByMilestoneIdRef.current = featuresByMilestoneId;
   projectIdRef.current = projectId;
+  handoffPayloadRef.current = handoffPayload;
 
   // Clear selection and suggestions when project changes
   useEffect(() => {
@@ -189,6 +212,9 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
       setSelectedRoadmap(null);
       setMilestones([]);
       setFeaturesByMilestoneId({});
+      // Clear handoff state
+      setHandoffPayload(null);
+      setHandoffError(null);
       // Clear ephemeral suggestion state
       setMilestoneSuggestions([]);
       setIsGeneratingSuggestions(false);
@@ -1046,6 +1072,52 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
     });
   }, []);
 
+  // ── Handoff / Export Functions ────────────────────────────────────────
+
+  const fetchHandoff = useCallback(async (
+    roadmapId: string,
+    opts?: { onSuccess?: () => void; onError?: (err: Error) => void }
+  ) => {
+    const requestVersion = ++handoffFetchVersionRef.current;
+    const requestProjectId = projectId; // Capture projectId at request time
+
+    setIsFetchingHandoff(true);
+    setHandoffError(null);
+
+    try {
+      const data = await api.fetchRoadmapHandoff(roadmapId, requestProjectId);
+
+      // Reject stale responses: check if project changed or version is stale
+      if (handoffFetchVersionRef.current !== requestVersion || projectId !== requestProjectId) {
+        return; // Stale response, discard
+      }
+
+      setHandoffPayload(data);
+      opts?.onSuccess?.();
+    } catch (err) {
+      // Reject stale errors: check if project changed or version is stale
+      if (handoffFetchVersionRef.current !== requestVersion || projectId !== requestProjectId) {
+        return; // Stale error, discard
+      }
+
+      const error = err instanceof Error ? err : new Error(String(err));
+      setHandoffError(error);
+      setHandoffPayload(null);
+      opts?.onError?.(error);
+    } finally {
+      // Only clear loading if this is still the current request
+      if (handoffFetchVersionRef.current === requestVersion) {
+        setIsFetchingHandoff(false);
+      }
+    }
+  }, [projectId]);
+
+  const clearHandoff = useCallback(() => {
+    setHandoffPayload(null);
+    setHandoffError(null);
+    setIsFetchingHandoff(false);
+  }, []);
+
   const refresh = useCallback(async () => {
     await fetchRoadmaps();
     if (selectedRoadmapIdRef.current) {
@@ -1088,6 +1160,11 @@ export function useRoadmaps(options?: UseRoadmapsOptions): UseRoadmapsResult {
     acceptFeatureSuggestion,
     acceptAllFeatureSuggestions,
     clearFeatureSuggestions,
+    handoffPayload,
+    isFetchingHandoff,
+    handoffError,
+    fetchHandoff,
+    clearHandoff,
     refresh,
   };
 }

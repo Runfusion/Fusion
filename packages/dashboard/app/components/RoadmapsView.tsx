@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { Plus, Pencil, Trash2, Check, X, GripVertical, Sparkles } from "lucide-react";
+import { Plus, Pencil, Trash2, Check, X, GripVertical, Sparkles, Download, Copy, Loader } from "lucide-react";
 import type { ToastType } from "../hooks/useToast";
 import { useRoadmaps, type FeatureSuggestion, type MilestoneSuggestion, type SuggestionDraftPatch } from "../hooks/useRoadmaps";
 import type {
@@ -12,6 +12,8 @@ import type {
   RoadmapMilestoneUpdateInput,
   RoadmapFeatureCreateInput,
   RoadmapFeatureUpdateInput,
+  RoadmapMissionPlanningHandoff,
+  RoadmapFeatureTaskPlanningHandoff,
 } from "@fusion/core";
 
 export interface RoadmapsViewProps {
@@ -64,6 +66,113 @@ interface CreateFormState {
   description: string;
 }
 
+// ── Handoff Modal Types ─────────────────────────────────────────────
+
+interface HandoffModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  roadmapId: string;
+  roadmapTitle: string;
+  handoffPayload: { mission: RoadmapMissionPlanningHandoff; features: RoadmapFeatureTaskPlanningHandoff[] } | null;
+  isLoading: boolean;
+  error: Error | null;
+  onFetchHandoff: () => void;
+  onCopyToClipboard: () => void;
+}
+
+// ── Handoff Modal Component ─────────────────────────────────────────
+
+function HandoffModal({
+  isOpen,
+  onClose,
+  roadmapTitle,
+  handoffPayload,
+  isLoading,
+  error,
+  onFetchHandoff,
+  onCopyToClipboard,
+}: HandoffModalProps) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="modal-overlay open" onClick={onClose} role="presentation">
+      <div className="modal modal-lg" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="handoff-modal-title">
+        <div className="modal-header">
+          <h2 id="handoff-modal-title">Export Roadmap: {roadmapTitle}</h2>
+          <button className="modal-close" onClick={onClose} aria-label="Close modal">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="modal-body">
+          <p className="text-muted" style={{ marginBottom: "var(--space-lg)" }}>
+            Export roadmap data for use in mission and task planning flows.
+            This is a read-only export — no missions or tasks will be created.
+          </p>
+          
+          {error && (
+            <div className="form-error" style={{ marginBottom: "var(--space-lg)" }}>
+              Error loading handoff data: {error.message}
+            </div>
+          )}
+
+          {!handoffPayload && !isLoading && (
+            <div style={{ textAlign: "center", padding: "var(--space-xl)" }}>
+              <button className="btn btn-primary" onClick={onFetchHandoff}>
+                <Download size={16} style={{ marginRight: "var(--space-sm)" }} />
+                Load Handoff Data
+              </button>
+            </div>
+          )}
+
+          {isLoading && (
+            <div style={{ textAlign: "center", padding: "var(--space-xl)" }}>
+              <Loader size={24} className="spin" />
+              <p style={{ marginTop: "var(--space-md)" }}>Loading handoff data...</p>
+            </div>
+          )}
+
+          {handoffPayload && (
+            <>
+              <div style={{ marginBottom: "var(--space-lg)" }}>
+                <h3 style={{ marginBottom: "var(--space-sm)" }}>Mission Planning Handoff</h3>
+                <div className="card" style={{ padding: "var(--space-md)" }}>
+                  <pre style={{ whiteSpace: "pre-wrap", fontSize: "12px", maxHeight: "200px", overflow: "auto" }}>
+                    {JSON.stringify(handoffPayload.mission, null, 2)}
+                  </pre>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: "var(--space-lg)" }}>
+                <h3 style={{ marginBottom: "var(--space-sm)" }}>
+                  Feature Task Planning Handoffs ({handoffPayload.features.length})
+                </h3>
+                <div className="card" style={{ padding: "var(--space-md)" }}>
+                  <pre style={{ whiteSpace: "pre-wrap", fontSize: "12px", maxHeight: "300px", overflow: "auto" }}>
+                    {JSON.stringify(handoffPayload.features, null, 2)}
+                  </pre>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+        <div className="modal-actions">
+          <div className="modal-actions-left">
+            {handoffPayload && (
+              <button className="btn btn-sm" onClick={onCopyToClipboard}>
+                <Copy size={14} style={{ marginRight: "var(--space-xs)" }} />
+                Copy to Clipboard
+              </button>
+            )}
+          </div>
+          <div className="modal-actions-right">
+            <button className="btn" onClick={onClose}>Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Roadmap Item ─────────────────────────────────────────────────────
 
 function RoadmapItem({
@@ -72,12 +181,14 @@ function RoadmapItem({
   onSelect,
   onEdit,
   onDelete,
+  onExport,
 }: {
   roadmap: Roadmap;
   isSelected: boolean;
   onSelect: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onExport: () => void;
 }) {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
@@ -93,6 +204,11 @@ function RoadmapItem({
   const handleDeleteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     onDelete();
+  };
+
+  const handleExportClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onExport();
   };
 
   return (
@@ -112,6 +228,17 @@ function RoadmapItem({
         )}
       </div>
       <div className="roadmaps-view__sidebar-item-actions" onClick={handleEditClick} role="presentation">
+        <span
+          className="roadmaps-view__icon-btn"
+          onClick={handleExportClick}
+          role="button"
+          title="Export roadmap"
+          aria-label="Export roadmap"
+          data-testid={`roadmap-export-${roadmap.id}`}
+          tabIndex={0}
+        >
+          <Download size={14} />
+        </span>
         <span
           className="roadmaps-view__icon-btn"
           onClick={handleEditClick}
@@ -1127,7 +1254,17 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
     acceptFeatureSuggestion,
     acceptAllFeatureSuggestions,
     clearFeatureSuggestions,
+    handoffPayload,
+    isFetchingHandoff,
+    handoffError,
+    fetchHandoff,
+    clearHandoff,
   } = useRoadmaps({ projectId });
+
+  // Handoff modal state
+  const [handoffModalOpen, setHandoffModalOpen] = useState(false);
+  const [handoffRoadmapId, setHandoffRoadmapId] = useState<string | null>(null);
+  const [handoffRoadmapTitle, setHandoffRoadmapTitle] = useState<string>("");
 
   // Goal prompt state for milestone suggestion generation
   const [goalPrompt, setGoalPrompt] = useState("");
@@ -1460,6 +1597,41 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
     [deleteRoadmap, addToast]
   );
 
+  // Handoff handlers
+  const handleOpenHandoffModal = useCallback((roadmapId: string, roadmapTitle: string) => {
+    setHandoffRoadmapId(roadmapId);
+    setHandoffRoadmapTitle(roadmapTitle);
+    setHandoffModalOpen(true);
+    // Clear any previous handoff data
+    clearHandoff();
+  }, [clearHandoff]);
+
+  const handleCloseHandoffModal = useCallback(() => {
+    setHandoffModalOpen(false);
+    setHandoffRoadmapId(null);
+    setHandoffRoadmapTitle("");
+    clearHandoff();
+  }, [clearHandoff]);
+
+  const handleFetchHandoff = useCallback(() => {
+    if (handoffRoadmapId) {
+      fetchHandoff(handoffRoadmapId, {
+        onError: (err) => addToast(`Failed to load handoff: ${err.message}`, "error"),
+      });
+    }
+  }, [handoffRoadmapId, fetchHandoff, addToast]);
+
+  const handleCopyHandoffToClipboard = useCallback(() => {
+    if (handoffPayload) {
+      const data = JSON.stringify(handoffPayload, null, 2);
+      navigator.clipboard.writeText(data).then(() => {
+        addToast("Handoff data copied to clipboard", "success");
+      }).catch(() => {
+        addToast("Failed to copy to clipboard", "error");
+      });
+    }
+  }, [handoffPayload, addToast]);
+
   const handleCreateRoadmap = useCallback(
     async (input: RoadmapCreateInput) => {
       try {
@@ -1758,6 +1930,7 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
                 onSelect={() => selectRoadmap(roadmap.id)}
                 onEdit={() => handleStartRoadmapEdit(roadmap)}
                 onDelete={() => handleDeleteRoadmap(roadmap.id)}
+                onExport={() => handleOpenHandoffModal(roadmap.id, roadmap.title)}
               />
             ))
           )}
@@ -2015,6 +2188,19 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
           />
         </div>
       )}
+
+      {/* Handoff export modal */}
+      <HandoffModal
+        isOpen={handoffModalOpen}
+        onClose={handleCloseHandoffModal}
+        roadmapId={handoffRoadmapId || ""}
+        roadmapTitle={handoffRoadmapTitle}
+        handoffPayload={handoffPayload}
+        isLoading={isFetchingHandoff}
+        error={handoffError}
+        onFetchHandoff={handleFetchHandoff}
+        onCopyToClipboard={handleCopyHandoffToClipboard}
+      />
     </div>
   );
 }

@@ -295,6 +295,33 @@ Within each milestone, you can generate AI-powered feature suggestions to quickl
 - **No milestones**: "This roadmap has no milestones. Click + on a milestone lane to add one."
 - **No features**: "No features yet." displayed within each milestone card
 
+### Roadmap Export / Handoff
+
+Roadmaps can be exported as structured data for use in mission and task planning flows.
+
+**How to use:**
+
+1. Hover over a roadmap in the sidebar
+2. Click the **download icon** (↘) to open the export modal
+3. Click **Load Handoff Data** to fetch the roadmap's handoff payload
+4. Review the exported data:
+   - **Mission Planning Handoff**: Roadmap structure with milestones and features in deterministic order
+   - **Feature Task Handoffs**: Individual feature entries with source lineage (roadmap ID, milestone ID, feature ID, titles, and order indices)
+
+**Key features:**
+
+- This is a **read-only** export — no missions, slices, or tasks are created
+- The handoff preserves source lineage for traceability to the original roadmap
+- Ordering is deterministic (milestone order, then feature order)
+- Click **Copy to Clipboard** to copy the full handoff payload as JSON
+- Handoff data can be manually used to seed mission planning prompts or task creation flows
+
+**Use cases:**
+
+- Export a roadmap's milestone/feature structure to guide AI-assisted mission planning
+- Copy individual feature handoffs as task planning prompts
+- Preserve roadmap context when creating tasks in the task board
+
 ## Task Detail Modal
 
 Inspect logs, step progress, workflow outcomes, and model overrides.

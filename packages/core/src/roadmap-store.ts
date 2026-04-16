@@ -869,4 +869,64 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
       description: feature.description,
     };
   }
+
+  /**
+   * Get a mission planning handoff payload for a roadmap.
+   *
+   * Alias for getRoadmapMissionHandoff() for API consistency.
+   * Converts the roadmap into a mission planning structure while preserving
+   * source IDs and deterministic order.
+   *
+   * @param roadmapId - Roadmap ID
+   * @returns The mission planning handoff payload
+   * @throws Error if roadmap not found
+   */
+  getMissionPlanningHandoff(roadmapId: string): RoadmapMissionPlanningHandoff {
+    return this.getRoadmapMissionHandoff(roadmapId);
+  }
+
+  /**
+   * List all task planning handoff payloads for a roadmap.
+   *
+   * Returns a flat list of all feature handoffs in deterministic order
+   * (milestone order index, then feature order index).
+   *
+   * @param roadmapId - Roadmap ID
+   * @returns Array of task planning handoff payloads for all features
+   * @throws Error if roadmap not found
+   */
+  listFeatureTaskPlanningHandoffs(roadmapId: string): RoadmapFeatureTaskPlanningHandoff[] {
+    // Validate roadmap exists
+    const roadmap = this.getRoadmap(roadmapId);
+    if (!roadmap) {
+      throw new Error(`Roadmap ${roadmapId} not found`);
+    }
+
+    const milestones = this.listMilestones(roadmapId);
+    const handoffs: RoadmapFeatureTaskPlanningHandoff[] = [];
+
+    for (const milestone of milestones) {
+      const features = this.listFeatures(milestone.id);
+
+      for (const feature of features) {
+        const source: RoadmapFeatureSourceRef = {
+          roadmapId: roadmap.id,
+          milestoneId: milestone.id,
+          featureId: feature.id,
+          roadmapTitle: roadmap.title,
+          milestoneTitle: milestone.title,
+          milestoneOrderIndex: milestone.orderIndex,
+          featureOrderIndex: feature.orderIndex,
+        };
+
+        handoffs.push({
+          source,
+          title: feature.title,
+          description: feature.description,
+        });
+      }
+    }
+
+    return handoffs;
+  }
 }

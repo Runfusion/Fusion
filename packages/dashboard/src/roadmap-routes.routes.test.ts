@@ -171,6 +171,51 @@ function createMockRoadmapStore(): RoadmapStore {
         description: feature.description,
       };
     }),
+    getMissionPlanningHandoff: vi.fn((roadmapId: string) => {
+      const roadmap = roadmaps.get(roadmapId);
+      if (!roadmap) throw new Error("Roadmap " + roadmapId + " not found");
+      const ms = Array.from(milestones.values()).filter((m) => m.roadmapId === roadmapId).sort((a, b) => a.orderIndex - b.orderIndex);
+      return {
+        sourceRoadmapId: roadmap.id,
+        title: roadmap.title,
+        description: roadmap.description,
+        milestones: ms.map((m) => {
+          const fs = Array.from(features.values()).filter((f) => f.milestoneId === m.id).sort((a, b) => a.orderIndex - b.orderIndex);
+          return {
+            sourceMilestoneId: m.id,
+            title: m.title,
+            description: m.description,
+            orderIndex: m.orderIndex,
+            features: fs.map((f) => ({ sourceFeatureId: f.id, title: f.title, description: f.description, orderIndex: f.orderIndex })),
+          };
+        }),
+      };
+    }),
+    listFeatureTaskPlanningHandoffs: vi.fn((roadmapId: string) => {
+      const roadmap = roadmaps.get(roadmapId);
+      if (!roadmap) throw new Error("Roadmap " + roadmapId + " not found");
+      const ms = Array.from(milestones.values()).filter((m) => m.roadmapId === roadmapId).sort((a, b) => a.orderIndex - b.orderIndex);
+      const handoffs = [];
+      for (const m of ms) {
+        const fs = Array.from(features.values()).filter((f) => f.milestoneId === m.id).sort((a, b) => a.orderIndex - b.orderIndex);
+        for (const f of fs) {
+          handoffs.push({
+            source: {
+              roadmapId: roadmap.id,
+              milestoneId: m.id,
+              featureId: f.id,
+              roadmapTitle: roadmap.title,
+              milestoneTitle: m.title,
+              milestoneOrderIndex: m.orderIndex,
+              featureOrderIndex: f.orderIndex,
+            },
+            title: f.title,
+            description: f.description,
+          });
+        }
+      }
+      return handoffs;
+    }),
   } as unknown as RoadmapStore;
 }
 
@@ -190,6 +235,19 @@ describe("Roadmap Routes", () => {
     app = express();
     app.use(express.json());
     app.use("/api/roadmaps", createRoadmapRouter(mockStore));
+    
+    // Add error handler for tests that check 404 responses
+    app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+      if (err instanceof ApiError) {
+        res.status(err.statusCode).json({ error: err.message });
+        return;
+      }
+      if (err instanceof Error) {
+        res.status(500).json({ error: err.message });
+        return;
+      }
+      res.status(500).json({ error: "Internal server error" });
+    });
   });
 
   afterEach(() => {
@@ -341,6 +399,68 @@ describe("Roadmap Routes", () => {
       expect(response.body.milestones.length).toBe(1);
       expect(response.body.features.length).toBe(1);
       expect(response.body.features[0].id).toBe(feature.id);
+    });
+  });
+
+  describe("GET /api/roadmaps/:roadmapId/handoff", () => {
+    it("returns both mission and feature handoffs", async () => {
+      const roadmap = mockRoadmapStore.createRoadmap({ title: "Combined Handoff" });
+      const milestone1 = mockRoadmapStore.createMilestone(roadmap.id, { title: "Phase 1" });
+      const milestone2 = mockRoadmapStore.createMilestone(roadmap.id, { title: "Phase 2" });
+      const feature1 = mockRoadmapStore.createFeature(milestone1.id, { title: "Feature A" });
+      const feature2 = mockRoadmapStore.createFeature(milestone2.id, { title: "Feature B" });
+
+      const response = await performGet(app, "/api/roadmaps/" + roadmap.id + "/handoff");
+      expect(response.status).toBe(200);
+      
+      // Verify mission handoff structure
+      expect(response.body.mission).toBeDefined();
+      expect(response.body.mission.sourceRoadmapId).toBe(roadmap.id);
+      expect(response.body.mission.title).toBe("Combined Handoff");
+      expect(response.body.mission.milestones).toHaveLength(2);
+      
+      // Verify feature handoffs structure
+      expect(response.body.features).toBeDefined();
+      expect(response.body.features).toHaveLength(2);
+      expect(response.body.features[0].title).toBe("Feature A");
+      expect(response.body.features[0].source.milestoneId).toBe(milestone1.id);
+      expect(response.body.features[1].title).toBe("Feature B");
+      expect(response.body.features[1].source.milestoneId).toBe(milestone2.id);
+    });
+
+    it("returns empty features array when roadmap has no features", async () => {
+      const roadmap = mockRoadmapStore.createRoadmap({ title: "Empty Handoff" });
+      mockRoadmapStore.createMilestone(roadmap.id, { title: "Empty Phase" });
+
+      const response = await performGet(app, "/api/roadmaps/" + roadmap.id + "/handoff");
+      expect(response.status).toBe(200);
+      expect(response.body.features).toHaveLength(0);
+    });
+
+    it("returns 404 when roadmap not found", async () => {
+      const response = await performGet(app, "/api/roadmaps/nonexistent/handoff");
+      expect(response.status).toBe(404);
+    });
+
+    it("returns 404 for cross-project isolation", async () => {
+      // Create roadmap in default store
+      const roadmap = mockRoadmapStore.createRoadmap({ title: "Isolated Roadmap" });
+      
+      // Mock a different project store that returns no roadmap
+      mockGetOrCreateProjectStore.mockResolvedValueOnce({
+        getRoadmapStore: vi.fn(() => ({
+          getMissionPlanningHandoff: vi.fn(() => {
+            throw new Error("Roadmap nonexistent not found");
+          }),
+          listFeatureTaskPlanningHandoffs: vi.fn(() => {
+            throw new Error("Roadmap nonexistent not found");
+          }),
+        })),
+        getRootDir: vi.fn(() => "/test/root"),
+      });
+
+      const response = await performGet(app, "/api/roadmaps/nonexistent/handoff?projectId=other-project");
+      expect(response.status).toBe(404);
     });
   });
 

@@ -4600,6 +4600,17 @@ export function getRoadmapFeatureHandoff(
   );
 }
 
+/** Combined handoff response type for roadmap handoff endpoint */
+export interface RoadmapHandoffResponse {
+  mission: RoadmapMissionPlanningHandoff;
+  features: RoadmapFeatureTaskPlanningHandoff[];
+}
+
+/** Get both mission and feature handoff payloads for a roadmap */
+export function fetchRoadmapHandoff(roadmapId: string, projectId?: string): Promise<RoadmapHandoffResponse> {
+  return api<RoadmapHandoffResponse>(withProjectId(`/roadmaps/${encodeURIComponent(roadmapId)}/handoff`, projectId));
+}
+
 /** Response from milestone suggestion generation */
 export interface MilestoneSuggestionsResponse {
   suggestions: Array<{

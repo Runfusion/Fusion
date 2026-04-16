@@ -160,8 +160,17 @@ The roadmap model is intentionally lightweight and independent from `MissionStor
 - FK cascade integrity: deleting a roadmap removes milestones and features
 - Export/handoff DTO methods for integration with downstream systems:
   - `getRoadmapExport()` → `RoadmapExportBundle` (flat export payload)
-  - `getRoadmapMissionHandoff()` → `RoadmapMissionPlanningHandoff` (mission conversion)
-  - `getRoadmapFeatureHandoff()` → `RoadmapFeatureTaskPlanningHandoff` (task planning)
+  - `getMissionPlanningHandoff()` → `RoadmapMissionPlanningHandoff` (mission conversion)
+  - `listFeatureTaskPlanningHandoffs()` → `RoadmapFeatureTaskPlanningHandoff[]` (all features as task handoffs)
+  - `getRoadmapFeatureHandoff()` → `RoadmapFeatureTaskPlanningHandoff` (single feature task handoff)
+- Pure handoff mapping helpers in `roadmap-handoff.ts` for read-only transformations
+
+**Roadmap handoff contract boundary (FN-1674):**
+- Handoffs are **read-only** transformations — no mission/task records are created
+- Source lineage is preserved on every emitted item (roadmapId, milestoneId, featureId, titles, order indices)
+- Ordering is deterministic using `normalizeRoadmapMilestoneOrder` and `normalizeRoadmapFeatureOrder`
+- Not-found semantics: store handoff methods throw when roadmapId is unknown; routes map to HTTP 404
+- The combined handoff endpoint (`GET /:roadmapId/handoff`) returns both mission and task handoffs
 
 Key roadmap invariants:
 - milestone ordering is scoped to a single roadmap and must remain contiguous + 0-based
@@ -173,7 +182,7 @@ Key roadmap invariants:
 - Roadmaps: `GET /`, `POST /`, `GET /:roadmapId`, `PATCH /:roadmapId`, `DELETE /:roadmapId`
 - Milestones: `GET /:roadmapId/milestones`, `POST /:roadmapId/milestones`, `PATCH /milestones/:milestoneId`, `DELETE /milestones/:milestoneId`, `POST /:roadmapId/milestones/reorder`
 - Features: `GET /milestones/:milestoneId/features`, `POST /milestones/:milestoneId/features`, `PATCH /features/:featureId`, `DELETE /features/:featureId`, `POST /milestones/:milestoneId/features/reorder`, `POST /features/:featureId/move`
-- Export/Handoff: `GET /:roadmapId/export`, `GET /:roadmapId/handoff/mission`, `GET /:roadmapId/milestones/:milestoneId/features/:featureId/handoff/task`
+- Export/Handoff: `GET /:roadmapId/export`, `GET /:roadmapId/handoff`, `GET /:roadmapId/handoff/mission`, `GET /:roadmapId/milestones/:milestoneId/features/:featureId/handoff/task`
 
 **Database schema:**
 - `roadmaps` — roadmap metadata (id, title, description, timestamps)

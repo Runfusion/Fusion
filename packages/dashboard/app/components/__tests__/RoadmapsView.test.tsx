@@ -41,6 +41,9 @@ vi.mock("lucide-react", () => ({
   X: (props: unknown) => <span data-testid="x-icon" {...props}>X</span>,
   GripVertical: (props: unknown) => <span data-testid="grip-icon" {...props}>Grip</span>,
   Sparkles: (props: unknown) => <span data-testid="sparkles-icon" {...props}>Sparkles</span>,
+  Download: (props: unknown) => <span data-testid="download-icon" {...props}>Download</span>,
+  Copy: (props: unknown) => <span data-testid="copy-icon" {...props}>Copy</span>,
+  Loader: (props: unknown) => <span data-testid="loader-icon" {...props}>Loader</span>,
 }));
 
 const mockRoadmaps: Roadmap[] = [

@@ -2,7 +2,8 @@
  * Roadmap REST API Routes
  *
  * Provides CRUD endpoints for standalone roadmaps, milestones, and features.
- * Also includes AI-powered suggestion endpoints for milestone and feature creation.
+ * Also includes AI-powered suggestion endpoints for milestone and feature creation,
+ * and read-only handoff endpoints for exporting roadmap data to mission/task planning.
  *
  * Endpoints:
  * - Roadmaps: GET /, POST /, GET /:id, PATCH /:id, DELETE /:id
@@ -16,6 +17,9 @@
  *            POST /features/:id/move
  * - Suggestions: POST /:roadmapId/suggestions/milestones,
  *                POST /milestones/:milestoneId/suggestions/features
+ * - Export/Handoff: GET /:roadmapId/export, GET /:roadmapId/handoff,
+ *                   GET /:roadmapId/handoff/mission,
+ *                   GET /:roadmapId/milestones/:milestoneId/features/:featureId/handoff/task
  */
 
 import { Router, type Request, type Response } from "express";
@@ -595,6 +599,36 @@ export function createRoadmapRouter(store: TaskStore): Router {
   });
 
   /**
+   * GET /api/roadmaps/:roadmapId/handoff
+   * Get both mission-oriented and task-oriented handoff payloads for the roadmap.
+   *
+   * This is a convenience endpoint that combines both handoff types in a single response.
+   * Returns 404 if the roadmap is not found.
+   */
+  router.get("/:roadmapId/handoff", async (req, res) => {
+    try {
+      const roadmapStore = getScopedStore().getRoadmapStore();
+      const { roadmapId } = req.params;
+
+      // Get both handoff types
+      const missionHandoff = roadmapStore.getMissionPlanningHandoff(roadmapId);
+      const featureHandoffs = roadmapStore.listFeatureTaskPlanningHandoffs(roadmapId);
+
+      res.json({
+        mission: missionHandoff,
+        features: featureHandoffs,
+      });
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      // Handle not-found case from store methods
+      if (err instanceof Error && err.message.includes("not found")) {
+        throw notFound(err.message);
+      }
+      rethrowAsApiError(err, "Failed to generate handoff");
+    }
+  });
+
+  /**
    * GET /api/roadmaps/:roadmapId/handoff/mission
    * Get a mission planning handoff payload for the roadmap.
    */
@@ -603,10 +637,14 @@ export function createRoadmapRouter(store: TaskStore): Router {
       const roadmapStore = getScopedStore().getRoadmapStore();
       const { roadmapId } = req.params;
 
-      const handoff = roadmapStore.getRoadmapMissionHandoff(roadmapId);
+      const handoff = roadmapStore.getMissionPlanningHandoff(roadmapId);
       res.json(handoff);
     } catch (err) {
       if (err instanceof ApiError) throw err;
+      // Handle not-found case from store methods
+      if (err instanceof Error && err.message.includes("not found")) {
+        throw notFound(err.message);
+      }
       rethrowAsApiError(err, "Failed to generate mission handoff");
     }
   });

@@ -200,6 +200,12 @@ export {
   applyRoadmapFeatureReorder,
   moveRoadmapFeature,
 } from "./roadmap-ordering.js";
+export {
+  mapFeatureToTaskHandoff,
+  mapRoadmapToMissionHandoff,
+  mapRoadmapWithHierarchyToMissionHandoff,
+  mapAllFeaturesToTaskHandoffs,
+} from "./roadmap-handoff.js";
 
 // ── Mission Hierarchy Types ────────────────────────────────────────────
 
