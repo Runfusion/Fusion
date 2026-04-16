@@ -27577,6 +27577,13 @@ html .column.drag-over * {
   gap: var(--space-md);
 }
 
+.add-node-modal__description {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: var(--space-sm);
+  padding: 0;
+}
+
 .add-node-modal__field {
   display: flex;
   flex-direction: column;
@@ -27584,13 +27591,12 @@ html .column.drag-over * {
 }
 
 .add-node-modal__field > span {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
 }
 
-.add-node-modal__field input,
-.add-node-modal__field select {
+.add-node-modal__field input {
   padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -27598,19 +27604,92 @@ html .column.drag-over * {
   color: var(--text);
   font-size: 14px;
   width: 100%;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
-.add-node-modal__field input:focus,
-.add-node-modal__field select:focus {
+.add-node-modal__field input:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.add-node-modal__field input[aria-invalid="true"] {
+  border-color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 5%, var(--surface));
+}
+
+.add-node-modal__field input[aria-invalid="true"]:focus {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-error) 15%, transparent);
+}
+
+.add-node-modal__hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
 }
 
 .add-node-modal__error {
   color: var(--color-error);
   font-size: 12px;
   margin-top: 2px;
+}
+
+/* Type toggle (segmented control) */
+.add-node-modal__type-toggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.add-node-modal__type-btn {
+  flex: 1;
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.add-node-modal__type-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bg) 50%, var(--surface));
+}
+
+.add-node-modal__type-btn:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+  z-index: 1;
+}
+
+.add-node-modal__type-btn.active {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.add-node-modal__type-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Remote fields with animated show/hide */
+.add-node-modal__remote-fields {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.2s ease;
+  overflow: hidden;
+}
+
+.add-node-modal__remote-fields[data-visible="true"] {
+  grid-template-rows: 1fr;
+}
+
+.add-node-modal__remote-fields > * {
+  overflow: hidden;
 }
 
 .node-detail-modal {
@@ -27758,6 +27837,38 @@ html .column.drag-over * {
   .node-detail-modal__field--full {
     grid-column: span 1;
   }
+
+  /* Add Node Modal mobile */
+  .add-node-modal {
+    width: calc(100vw - 16px);
+  }
+
+  .add-node-modal__type-toggle {
+    width: 100%;
+  }
+
+  .add-node-modal__type-btn {
+    flex: 1;
+    padding: 12px 16px;
+  }
+
+  .add-node-modal__field input {
+    min-height: 44px;
+  }
+
+  /* Instant transition on mobile for remote fields */
+  .add-node-modal__remote-fields {
+    transition: none;
+  }
+
+  /* Connect Node Modal mobile */
+  .connect-node-modal {
+    width: calc(100vw - 16px);
+  }
+
+  .connect-node-field input {
+    min-height: 44px;
+  }
 }
 
 /* ── Mesh Topology ─────────────────────────────────────────────── */
@@ -27831,53 +27942,6 @@ html .column.drag-over * {
   text-align: center;
   color: var(--text-muted);
   padding: var(--space-xl);
-}
-
-/* ── Connect Node Modal ──────────────────────────────────────────── */
-
-.connect-node-form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
-}
-
-.connect-node-field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-}
-
-.connect-node-field label {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text);
-}
-
-.connect-node-field input {
-  padding: var(--space-sm) var(--space-md);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text);
-  font-size: 14px;
-  transition: border-color var(--transition-fast);
-}
-
-.connect-node-field input:focus {
-  outline: none;
-  border-color: var(--color-primary);
-}
-
-.connect-node-field .error-message {
-  font-size: 12px;
-  color: var(--color-error);
-}
-
-.connect-node-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-sm);
-  padding-top: var(--space-sm);
 }
 
 /* ── Quick Chat FAB ──────────────────────────────────────────────── */
@@ -30057,9 +30121,9 @@ html .column.drag-over * {
 }
 
 .connect-node-field > span {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
 }
 
 .connect-node-field input {
@@ -30069,12 +30133,22 @@ html .column.drag-over * {
   background: var(--surface);
   color: var(--text);
   font-size: 14px;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .connect-node-field input:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.connect-node-field input[aria-invalid="true"] {
+  border-color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 5%, var(--surface));
+}
+
+.connect-node-field input[aria-invalid="true"]:focus {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-error) 15%, transparent);
 }
 
 .connect-node-url-preview {
@@ -30084,6 +30158,7 @@ html .column.drag-over * {
   padding: var(--space-sm) var(--space-md);
   background: color-mix(in srgb, var(--surface) 50%, var(--bg));
   border-radius: var(--radius-sm);
+  border-left: 3px solid var(--accent);
   font-size: 12px;
 }
 
@@ -30094,13 +30169,14 @@ html .column.drag-over * {
 .connect-node-url-preview code {
   font-family: var(--font-mono);
   color: var(--text);
+  font-size: 12px;
 }
 
 .connect-node-actions {
   display: flex;
   justify-content: flex-end;
   gap: var(--space-sm);
-  padding-top: var(--space-sm);
+  padding: var(--modal-padding);
   border-top: 1px solid var(--border);
 }
 

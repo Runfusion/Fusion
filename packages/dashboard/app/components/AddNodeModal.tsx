@@ -109,7 +109,7 @@ export function AddNodeModal({ isOpen, onClose, onSubmit, addToast }: AddNodeMod
 
     try {
       await onSubmit(input);
-      addToast(`Node \"${input.name}\" registered`, "success");
+      addToast(`Node "${input.name}" registered`, "success");
       closeModal();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to register node";
@@ -132,6 +132,8 @@ export function AddNodeModal({ isOpen, onClose, onSubmit, addToast }: AddNodeMod
         </div>
 
         <div className="modal-body add-node-modal__body">
+          <p className="add-node-modal__description">Register a node to distribute task execution across machines.</p>
+
           <label className="add-node-modal__field">
             <span>Name</span>
             <input
@@ -146,45 +148,54 @@ export function AddNodeModal({ isOpen, onClose, onSubmit, addToast }: AddNodeMod
             {errors.name && <span className="add-node-modal__error">{errors.name}</span>}
           </label>
 
-          <label className="add-node-modal__field">
-            <span>Type</span>
-            <select
-              value={type}
-              onChange={(event) => setType(event.target.value as "local" | "remote")}
+          <div className="add-node-modal__type-toggle">
+            <button
+              type="button"
+              className={`add-node-modal__type-btn ${type === "local" ? "active" : ""}`}
+              data-type="local"
+              onClick={() => setType("local")}
               disabled={isSubmitting}
+              aria-pressed={type === "local"}
             >
-              <option value="local">Local</option>
-              <option value="remote">Remote</option>
-            </select>
-          </label>
+              Local
+            </button>
+            <button
+              type="button"
+              className={`add-node-modal__type-btn ${type === "remote" ? "active" : ""}`}
+              data-type="remote"
+              onClick={() => setType("remote")}
+              disabled={isSubmitting}
+              aria-pressed={type === "remote"}
+            >
+              Remote
+            </button>
+          </div>
 
-          {type === "remote" && (
-            <>
-              <label className="add-node-modal__field">
-                <span>URL</span>
-                <input
-                  type="text"
-                  value={url}
-                  onChange={(event) => setUrl(event.target.value)}
-                  placeholder="https://node.example.com"
-                  disabled={isSubmitting}
-                  aria-invalid={Boolean(errors.url)}
-                />
-                {errors.url && <span className="add-node-modal__error">{errors.url}</span>}
-              </label>
+          <div className="add-node-modal__remote-fields" data-testid="remote-fields-container" data-visible={type === "remote"}>
+            <label className="add-node-modal__field">
+              <span>URL</span>
+              <input
+                type="text"
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+                placeholder="https://node.example.com"
+                disabled={isSubmitting}
+                aria-invalid={Boolean(errors.url)}
+              />
+              {errors.url && <span className="add-node-modal__error">{errors.url}</span>}
+            </label>
 
-              <label className="add-node-modal__field">
-                <span>API Key</span>
-                <input
-                  type="password"
-                  value={apiKey}
-                  onChange={(event) => setApiKey(event.target.value)}
-                  placeholder="Optional"
-                  disabled={isSubmitting}
-                />
-              </label>
-            </>
-          )}
+            <label className="add-node-modal__field">
+              <span>API Key</span>
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(event) => setApiKey(event.target.value)}
+                placeholder="Optional"
+                disabled={isSubmitting}
+              />
+            </label>
+          </div>
 
           <label className="add-node-modal__field">
             <span>Max Concurrent</span>
@@ -197,13 +208,14 @@ export function AddNodeModal({ isOpen, onClose, onSubmit, addToast }: AddNodeMod
               disabled={isSubmitting}
               aria-invalid={Boolean(errors.maxConcurrent)}
             />
+            <span className="add-node-modal__hint">Max simultaneous task agents (1–10)</span>
             {errors.maxConcurrent && <span className="add-node-modal__error">{errors.maxConcurrent}</span>}
           </label>
         </div>
 
         <div className="modal-actions">
           <button className="btn btn-sm" onClick={closeModal} disabled={isSubmitting}>Cancel</button>
-          <button className="btn btn-primary btn-sm" onClick={handleSubmit} disabled={isSubmitting}>
+          <button className="btn btn-primary btn-sm" data-testid="add-node-submit" onClick={handleSubmit} disabled={isSubmitting}>
             {isSubmitting ? "Adding..." : "Add Node"}
           </button>
         </div>
