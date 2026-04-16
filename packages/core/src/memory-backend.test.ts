@@ -701,6 +701,70 @@ describe("memory-backend", () => {
       expect(writeResult.success).toBe(true);
       expect(writeResult.backend).toBe("test-backend");
     });
+
+    it("should handle QMD write-then-read round-trip via convenience functions", async () => {
+      const qmdSettings = { [MEMORY_BACKEND_SETTINGS_KEYS.MEMORY_BACKEND_TYPE]: "qmd" };
+      const testContent = "QMD test content for round-trip verification";
+
+      // Write using QMD convenience function
+      const writeResult = await writeMemory(tempDir, testContent, qmdSettings);
+      expect(writeResult.success).toBe(true);
+      expect(writeResult.backend).toBe("qmd");
+
+      // Read using QMD convenience function
+      const readResult = await readMemory(tempDir, qmdSettings);
+      expect(readResult.content).toBe(testContent);
+      expect(readResult.exists).toBe(true);
+      expect(readResult.backend).toBe("qmd");
+    });
+
+    it("should handle QMD persistence cross-verification (QMD write, FileMemoryBackend read)", async () => {
+      const qmdSettings = { [MEMORY_BACKEND_SETTINGS_KEYS.MEMORY_BACKEND_TYPE]: "qmd" };
+      const testContent = "QMD persistence cross-verification content";
+
+      // Write via QMD convenience function
+      await writeMemory(tempDir, testContent, qmdSettings);
+
+      // Read via direct FileMemoryBackend instance to verify filesystem delegation
+      const fileBackend = new FileMemoryBackend();
+      const fileResult = await fileBackend.read(tempDir);
+      expect(fileResult.content).toBe(testContent);
+      expect(fileResult.exists).toBe(true);
+      expect(fileResult.backend).toBe("file"); // FileBackend reports "file"
+    });
+
+    it("should preserve content across backend switching (file to QMD)", async () => {
+      const fileSettings = { [MEMORY_BACKEND_SETTINGS_KEYS.MEMORY_BACKEND_TYPE]: "file" };
+      const qmdSettings = { [MEMORY_BACKEND_SETTINGS_KEYS.MEMORY_BACKEND_TYPE]: "qmd" };
+      const testContent = "Shared storage content across backends";
+
+      // Write via file backend
+      await writeMemory(tempDir, testContent, fileSettings);
+
+      // Read via QMD backend
+      const qmdReadResult = await readMemory(tempDir, qmdSettings);
+      expect(qmdReadResult.content).toBe(testContent);
+      expect(qmdReadResult.backend).toBe("qmd");
+
+      // Read back via file backend to verify consistency
+      const fileReadResult = await readMemory(tempDir, fileSettings);
+      expect(fileReadResult.content).toBe(testContent);
+    });
+
+    it("should correctly report memoryExists for QMD backend", async () => {
+      const qmdSettings = { [MEMORY_BACKEND_SETTINGS_KEYS.MEMORY_BACKEND_TYPE]: "qmd" };
+
+      // Initially should not exist
+      const existsBefore = await memoryExists(tempDir, qmdSettings);
+      expect(existsBefore).toBe(false);
+
+      // Write via QMD
+      await writeMemory(tempDir, "QMD exists test content", qmdSettings);
+
+      // Now should exist
+      const existsAfter = await memoryExists(tempDir, qmdSettings);
+      expect(existsAfter).toBe(true);
+    });
   });
 
   // ── Edge Cases ────────────────────────────────────────────────────

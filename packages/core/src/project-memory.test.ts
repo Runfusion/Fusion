@@ -275,6 +275,43 @@ describe("project-memory", () => {
       // Should return false since readonly can't write
       expect(result).toBe(false);
     });
+
+    it("creates memory file with QMD backend when memory does not exist", async () => {
+      // Ensure clean state
+      await mkdir(join(testDir, ".fusion"), { recursive: true });
+      if (existsSync(memoryPath)) await unlink(memoryPath);
+      expect(existsSync(memoryPath)).toBe(false);
+
+      const settings = { memoryBackendType: "qmd" };
+      const created = await ensureMemoryFileWithBackend(testDir, settings);
+
+      expect(created).toBe(true);
+      expect(existsSync(memoryPath)).toBe(true);
+      const content = readFileSync(memoryPath, "utf-8");
+      expect(content).toBe(getDefaultMemoryScaffold());
+    });
+
+    it("QMD ensureMemoryFileWithBackend is idempotent and does not overwrite", async () => {
+      // Create memory via QMD backend
+      await mkdir(join(testDir, ".fusion"), { recursive: true });
+      if (existsSync(memoryPath)) await unlink(memoryPath);
+
+      const settings = { memoryBackendType: "qmd" };
+      const firstCreated = await ensureMemoryFileWithBackend(testDir, settings);
+      expect(firstCreated).toBe(true);
+
+      // Manually edit the content
+      const customContent = "# Custom Memory\n\nI edited this content";
+      await writeFile(memoryPath, customContent, "utf-8");
+
+      // Call ensure again - should NOT overwrite
+      const secondCreated = await ensureMemoryFileWithBackend(testDir, settings);
+      expect(secondCreated).toBe(false);
+
+      // Content should still be the custom content
+      const content = readFileSync(memoryPath, "utf-8");
+      expect(content).toBe(customContent);
+    });
   });
 
   // ── readProjectMemoryWithBackend ─────────────────────────────────────
@@ -332,6 +369,16 @@ describe("project-memory", () => {
       // Unknown backend should fall back gracefully
       const content = await readProjectMemoryWithBackend(testDir, settings);
       expect(content).toBe("");
+    });
+
+    it("returns memory content when using QMD backend", async () => {
+      // Create the memory file directly (simulating prior creation)
+      await mkdir(join(testDir, ".fusion"), { recursive: true });
+      await writeFile(memoryPath, "# QMD Memory\n\nSome content", "utf-8");
+
+      const settings = { memoryBackendType: "qmd" };
+      const content = await readProjectMemoryWithBackend(testDir, settings);
+      expect(content).toBe("# QMD Memory\n\nSome content");
     });
   });
 
@@ -445,6 +492,15 @@ describe("project-memory", () => {
       expect(instructions).toMatch(/consult.*project memory/i);
     });
 
+    it("QMD triage instructions completeness - contains consult guidance", () => {
+      const settings = { memoryBackendType: "qmd" };
+      const instructions = buildTriageMemoryInstructions(testDir, settings);
+      expect(instructions).toContain("## Project Memory");
+      expect(instructions).not.toContain(".fusion/memory.md");
+      // Should contain consult guidance
+      expect(instructions).toMatch(/consult.*memory/i);
+    });
+
     it("does not include .fusion/memory.md for non-file backends without instructionPathHint", () => {
       const settings = { memoryBackendType: "some-custom-backend" };
       const instructions = buildTriageMemoryInstructions(testDir, settings);
@@ -492,6 +548,21 @@ describe("project-memory", () => {
       expect(instructions).not.toContain(".fusion/memory.md");
       // Should instruct to consult project memory at start
       expect(instructions).toMatch(/consult.*project memory/i);
+    });
+
+    it("QMD execution instructions completeness", () => {
+      const settings = { memoryBackendType: "qmd" };
+      const instructions = buildExecutionMemoryInstructions(testDir, settings);
+      expect(instructions).toContain("## Project Memory");
+      expect(instructions).not.toContain(".fusion/memory.md");
+      // Contains consult guidance at start of execution
+      expect(instructions).toMatch(/consult.*memory/i);
+      // Contains "end of execution" write guidance
+      expect(instructions).toMatch(/end of execution/i);
+      // Contains "skip" wording for when nothing durable learned
+      expect(instructions).toMatch(/skip.*memory.*update|nothing durable/i);
+      // Contains "avoid" / "trivia" guidance
+      expect(instructions).toMatch(/trivia|avoid/i);
     });
 
     it("maintains backward compatibility when settings omitted (file behavior)", () => {

@@ -380,6 +380,28 @@ describe("buildSpecificationPrompt", () => {
       // Should instruct to consult project memory
       expect(prompt).toMatch(/consult.*project memory/i);
     });
+
+    it("QMD prompt has actionable memory instructions", () => {
+      const settings: Settings = {
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        memoryEnabled: true,
+        memoryBackendType: "qmd",
+      };
+      const prompt = buildSpecificationPrompt(
+        baseTask,
+        ".fusion/tasks/KB-001/PROMPT.md",
+        settings,
+      );
+      expect(prompt).toContain("## Project Memory");
+      // QMD should NOT contain .fusion/memory.md
+      expect(prompt).not.toContain(".fusion/memory.md");
+      // Contains consult guidance
+      expect(prompt).toMatch(/consult.*memory/i);
+    });
   });
 
   describe("user comments", () => {
