@@ -28543,6 +28543,13 @@ html .column.drag-over * {
   background: var(--warning);
 }
 
+.node-card__auth-indicator {
+  display: inline-flex;
+  align-items: center;
+  margin-left: var(--space-xs);
+  vertical-align: middle;
+}
+
 .node-card__url {
   font-family: var(--font-mono);
   font-size: 12px;

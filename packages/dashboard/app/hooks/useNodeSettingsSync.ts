@@ -118,6 +118,10 @@ export interface UseNodeSettingsSyncResult {
   pullSettings: (nodeId: string) => Promise<NodeSettingsSyncResult>;
   /** Sync auth credentials with a remote node */
   syncAuth: (nodeId: string) => Promise<NodeAuthSyncResult>;
+  /** Get auth sync state for a specific node */
+  getAuthSyncState: (nodeId: string) => "match" | "differs" | "not-synced" | undefined;
+  /** Get per-provider auth match details for a specific node */
+  getAuthProviders: (nodeId: string) => Record<string, "match" | "differs"> | undefined;
 }
 
 const POLL_INTERVAL_MS = 30_000; // 30 seconds
@@ -352,6 +356,28 @@ export function useNodeSettingsSync(): UseNodeSettingsSyncResult {
     }
   }, []);
 
+  /**
+   * Get auth sync state for a specific node.
+   */
+  const getAuthSyncState = useCallback(
+    (nodeId: string): "match" | "differs" | "not-synced" | undefined => {
+      const status = syncStatusMap[nodeId];
+      return status?.authMatch;
+    },
+    [syncStatusMap],
+  );
+
+  /**
+   * Get per-provider auth match details for a specific node.
+   */
+  const getAuthProviders = useCallback(
+    (nodeId: string): Record<string, "match" | "differs"> | undefined => {
+      const status = syncStatusMap[nodeId];
+      return status?.authDiff;
+    },
+    [syncStatusMap],
+  );
+
   return {
     syncStatusMap,
     loading,
@@ -363,5 +389,7 @@ export function useNodeSettingsSync(): UseNodeSettingsSyncResult {
     pushSettings,
     pullSettings,
     syncAuth,
+    getAuthSyncState,
+    getAuthProviders,
   };
 }

@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useState } from "react";
-import { Activity, Server, Settings, Trash2 } from "lucide-react";
+import { Activity, Server, Settings, Shield, Trash2 } from "lucide-react";
 import type { NodeInfo, ProjectInfo } from "../api";
 import { getProjectCountForNode } from "../utils/nodeProjectAssignment";
 import type { ComputedNodeSyncStatus } from "../hooks/useNodeSettingsSync";
@@ -13,6 +13,10 @@ export interface NodeCardProps {
   onRemove: (id: string) => void;
   isLoading?: boolean;
   syncStatus?: ComputedNodeSyncStatus;
+  /** Auth credential sync state for this node. Only meaningful for remote nodes. */
+  authSyncState?: "match" | "differs" | "not-synced";
+  /** Per-provider auth match details for tooltip. Map of provider name (e.g. "anthropic") to its match status. */
+  authSyncProviders?: Record<string, "match" | "differs">;
 }
 
 const STATUS_CONFIG: Record<NodeInfo["status"], { label: string; color: string; className: string }> = {
@@ -21,6 +25,30 @@ const STATUS_CONFIG: Record<NodeInfo["status"], { label: string; color: string; 
   connecting: { label: "Connecting", color: "var(--warning)", className: "node-card__status--connecting" },
   error: { label: "Error", color: "var(--color-error)", className: "node-card__status--error" },
 };
+
+const AUTH_SYNC_COLORS: Record<string, string> = {
+  match: "var(--success)",
+  differs: "var(--warning)",
+  "not-synced": "var(--text-muted)",
+};
+
+function buildAuthTooltip(
+  state: "match" | "differs" | "not-synced",
+  providers?: Record<string, "match" | "differs">,
+): string {
+  if (state === "match") return "Auth credentials match";
+  if (state === "not-synced") return "Auth not synced";
+  // state === "differs"
+  if (providers && Object.keys(providers).length > 0) {
+    const differing = Object.entries(providers)
+      .filter(([, status]) => status === "differs")
+      .map(([name]) => name);
+    if (differing.length > 0) {
+      return `Auth credentials differ: ${differing.join(", ")}`;
+    }
+  }
+  return "Auth credentials differ";
+}
 
 function truncateUrl(url: string, maxLength: number = 42): string {
   if (url.length <= maxLength) return url;
@@ -53,6 +81,22 @@ function areNodeCardPropsEqual(previous: NodeCardProps, next: NodeCardProps): bo
     if (prevSync.diffCount !== nextSync.diffCount) return false;
   }
 
+  // Compare auth sync state
+  if (previous.authSyncState !== next.authSyncState) return false;
+  // Shallow compare authSyncProviders
+  const prevProviders = previous.authSyncProviders;
+  const nextProviders = next.authSyncProviders;
+  if (prevProviders === nextProviders) {
+    // same ref or both undefined - equal
+  } else if (!prevProviders || !nextProviders) {
+    return false; // one defined, one not
+  } else {
+    const prevKeys = Object.keys(prevProviders);
+    const nextKeys = Object.keys(nextProviders);
+    if (prevKeys.length !== nextKeys.length) return false;
+    if (prevKeys.some((k) => prevProviders[k] !== nextProviders[k])) return false;
+  }
+
   // Compare project counts using the canonical counting function
   const previousCount = getProjectCountForNode(previous.projects, prevNode);
   const nextCount = getProjectCountForNode(next.projects, nextNode);
@@ -67,6 +111,8 @@ function NodeCardInner({
   onRemove,
   isLoading = false,
   syncStatus,
+  authSyncState,
+  authSyncProviders,
 }: NodeCardProps) {
   const [removeArmed, setRemoveArmed] = useState(false);
   const statusConfig = STATUS_CONFIG[node.status];
@@ -133,6 +179,16 @@ function NodeCardInner({
                 <span className="node-card__status-indicator" style={{ backgroundColor: statusConfig.color }} aria-hidden />
                 {statusConfig.label}
               </span>
+              {node.type === "remote" && authSyncState && (
+                <span
+                  className={`node-card__auth-indicator node-card__auth-indicator--${authSyncState}`}
+                  title={buildAuthTooltip(authSyncState, authSyncProviders)}
+                  aria-label={`Auth sync: ${authSyncState === "match" ? "credentials match" : authSyncState === "differs" ? "credentials differ" : "not synced"}`}
+                  style={{ color: AUTH_SYNC_COLORS[authSyncState] }}
+                >
+                  <Shield size={14} />
+                </span>
+              )}
             </div>
           </div>
         </div>
