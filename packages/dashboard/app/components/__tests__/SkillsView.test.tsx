@@ -430,4 +430,194 @@ describe("SkillsView", () => {
       expect(onClose).toHaveBeenCalled();
     });
   });
+
+  describe("CSS class assertions", () => {
+    it("renders with .skills-view root class", async () => {
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+
+      await waitFor(() => {
+        expect(document.querySelector(".skills-view")).toBeTruthy();
+      });
+    });
+
+    it("renders .skills-view-header and .skills-view-content sections", async () => {
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+
+      await waitFor(() => {
+        expect(document.querySelector(".skills-view-header")).toBeTruthy();
+        expect(document.querySelector(".skills-view-section")).toBeTruthy();
+      });
+    });
+
+    it("renders discovered skills list with .skills-view-item rows", async () => {
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+
+      await waitFor(() => {
+        const items = document.querySelectorAll(".skills-view-item");
+        expect(items.length).toBeGreaterThanOrEqual(2);
+      });
+    });
+
+    it("renders catalog cards with .skills-view-card class", async () => {
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+
+      await waitFor(() => {
+        expect(document.querySelectorAll(".skills-view-card").length).toBeGreaterThanOrEqual(2);
+      });
+    });
+
+    it("renders search input with .skills-view-search class", async () => {
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+
+      await waitFor(() => {
+        expect(document.querySelector(".skills-view-search")).toBeTruthy();
+      });
+    });
+
+    it("renders toggle sliders with .skills-view-toggle-slider class", async () => {
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+
+      await waitFor(() => {
+        const sliders = document.querySelectorAll(".skills-view-toggle-slider");
+        expect(sliders.length).toBeGreaterThanOrEqual(2);
+      });
+    });
+
+    it("renders catalog grid with .skills-view-grid class", async () => {
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+
+      await waitFor(() => {
+        expect(document.querySelector(".skills-view-grid")).toBeTruthy();
+      });
+    });
+  });
+
+  describe("catalog search debounce", () => {
+    it("debounces catalog search input", async () => {
+      vi.useFakeTimers();
+      vi.advanceTimersByTime(0); // Initialize fake timers
+
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+
+      // Wait for initial render and API calls
+      await act(async () => {
+        vi.runAllTimers();
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(100);
+      });
+
+      mockFetchSkillsCatalog.mockClear();
+
+      const searchInput = screen.getByPlaceholderText("Search skills...");
+
+      // Type in the search input
+      fireEvent.change(searchInput, { target: { value: "test" } });
+
+      // Should NOT have called fetchSkillsCatalog yet (debounce not triggered)
+      expect(mockFetchSkillsCatalog).not.toHaveBeenCalled();
+
+      // Advance timers by 300ms (component debounce is ~300ms)
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
+
+      // Now fetchSkillsCatalog should have been called with the search query
+      expect(mockFetchSkillsCatalog).toHaveBeenCalledWith("test", 20, undefined);
+
+      vi.useRealTimers();
+    });
+
+    it("debounces with original query when clearing search", async () => {
+      vi.useFakeTimers();
+      vi.advanceTimersByTime(0); // Initialize fake timers
+
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+
+      // Wait for initial render and API calls
+      await act(async () => {
+        vi.runAllTimers();
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(100);
+      });
+
+      const searchInput = screen.getByPlaceholderText("Search skills...");
+
+      // Type something and wait for debounce
+      fireEvent.change(searchInput, { target: { value: "test" } });
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
+
+      mockFetchSkillsCatalog.mockClear();
+
+      // Clear the search
+      fireEvent.change(searchInput, { target: { value: "" } });
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
+
+      // Should call with empty query
+      expect(mockFetchSkillsCatalog).toHaveBeenCalledWith("", 20, undefined);
+
+      vi.useRealTimers();
+    });
+  });
+
+  describe("error-state retry", () => {
+    it("retry button is displayed when catalog fetch fails", async () => {
+      mockFetchSkillsCatalog.mockRejectedValue({
+        error: "Service unavailable",
+        code: "upstream_http_error",
+      });
+
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Try Again")).toBeTruthy();
+      });
+    });
+
+    it("error message is displayed when catalog fetch fails", async () => {
+      mockFetchSkillsCatalog.mockRejectedValue(new Error("Network error"));
+
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/unavailable|error|failed/i)).toBeTruthy();
+      });
+    });
+
+    it("success state after retry clears error", async () => {
+      // Use a custom mock function that rejects on first call and resolves on second
+      let callCount = 0;
+      mockFetchSkillsCatalog.mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.reject(new Error("Service unavailable"));
+        }
+        return Promise.resolve({
+          entries: mockCatalogEntries,
+          auth: { mode: "unauthenticated", tokenPresent: false, fallbackUsed: false },
+        });
+      });
+
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Try Again")).toBeTruthy();
+      });
+
+      // Click retry
+      await act(async () => {
+        fireEvent.click(screen.getByText("Try Again"));
+      });
+
+      await waitFor(() => {
+        // Catalog should now show entries
+        expect(screen.getByText("Test Skill")).toBeTruthy();
+      });
+    });
+  });
 });

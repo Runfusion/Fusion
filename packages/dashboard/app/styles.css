@@ -25311,6 +25311,38 @@ html .column.drag-over * {
     font-size: 16px;
   }
 
+  /* Skills View mobile */
+  .skills-view-header {
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .skills-view-title h2 {
+    font-size: 16px;
+  }
+
+  .skills-view-content {
+    padding: var(--space-md);
+  }
+
+  .skills-view-search .form-input {
+    max-width: none;
+    width: 100%;
+  }
+
+  .skills-view-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .skills-view-item {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
+  .skills-view-toggle-slider {
+    min-width: 32px;
+    min-height: 18px;
+  }
+
   .agent-tree__indent--1 { padding-left: 16px; }
   .agent-tree__indent--2 { padding-left: 32px; }
   .agent-tree__indent--3 { padding-left: 48px; }
@@ -26986,6 +27018,272 @@ html .column.drag-over * {
 .agent-controls-actions {
   display: flex;
   gap: var(--space-sm);
+}
+
+/* === Skills View === */
+.skills-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.skills-view-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-lg) 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.skills-view-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.skills-view-title h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.skills-view-count {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.skills-view-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.skills-view-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.skills-view-section {
+  margin-bottom: var(--space-xl);
+}
+
+.skills-view-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: var(--space-md);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+/* Discovered skills list */
+.skills-view-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.skills-view-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.skills-view-item:hover {
+  background: var(--card-hover);
+  border-color: var(--text-muted);
+}
+
+.skills-view-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.skills-view-item-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skills-view-item-path {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skills-view-item-source {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Toggle switch */
+.skills-view-item-toggle {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.skills-view-item-toggle input {
+  display: none;
+}
+
+.skills-view-toggle-slider {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  background: var(--border);
+  border-radius: var(--radius-md);
+  transition: background var(--transition-normal);
+  flex-shrink: 0;
+}
+
+.skills-view-toggle-slider::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: var(--card);
+  border-radius: 50%;
+  transition: transform var(--transition-normal);
+}
+
+.skills-view-item-toggle input:checked + .skills-view-toggle-slider {
+  background: var(--color-success);
+}
+
+.skills-view-item-toggle input:checked + .skills-view-toggle-slider::after {
+  transform: translateX(14px);
+}
+
+/* Catalog search */
+.skills-view-search {
+  margin-bottom: var(--space-md);
+}
+
+.skills-view-search .form-input {
+  width: 100%;
+  max-width: 400px;
+}
+
+/* Catalog grid */
+.skills-view-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-md);
+}
+
+.skills-view-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.skills-view-card:hover {
+  background: var(--card-hover);
+  border-color: var(--text-muted);
+}
+
+.skills-view-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.skills-view-card-description {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 0;
+}
+
+.skills-view-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.skills-view-card-installs {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: auto;
+}
+
+/* Empty / error / loading states */
+.skills-view-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-2xl);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.skills-view-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-error) 25%, transparent);
+  border-radius: var(--radius-md);
+  text-align: center;
+}
+
+.skills-view-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-xl);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* Close button */
+.skills-view-close {
+  flex-shrink: 0;
 }
 
 /* === Node Management === */
