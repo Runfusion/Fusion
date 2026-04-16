@@ -23759,6 +23759,27 @@ html .column.drag-over * {
   padding-right: 4px;
 }
 
+.agent-system-filter {
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+
+.agent-system-filter:hover {
+  color: var(--text);
+}
+
+.agent-system-filter input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--todo);
+  cursor: pointer;
+}
+
 .agent-create-form {
   display: flex;
   gap: var(--space-md);

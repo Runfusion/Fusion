@@ -2,6 +2,13 @@
 
 ## Architecture
 
+- **`FN-1737 Ephemeral Agent Auto-Deletion`**: Runtime-created agents (task-workers created by `InProcessRuntime` and spawned child agents created by `TaskExecutor`) are now auto-deleted from `AgentStore` after reaching a terminal state. A 5-second delay allows the UI to observe the "terminated" state before deletion. The `includeSystem` filter in `AgentStore.listAgents()` allows callers to exclude these ephemeral agents:
+  - `agent.metadata?.agentKind === "task-worker"` — task-worker agents
+  - `agent.metadata?.type === "spawned"` — spawned child agents
+  - `agent.metadata?.taskWorker === true` — legacy marker
+  - `agent.metadata?.managedBy === "task-executor"` — executor-managed agents
+  - Default: `includeSystem: false` excludes these from the agents page UI
+
 - **`FN-1736 Multi-Project Scoping Audit`**: Comprehensive audit of project-scoping across the Fusion stack found:
   - SSE/WebSocket endpoints (`/api/tasks/:id/logs/stream`, `/api/events`, `/api/ws`) already use `resolveProjectScopedStore()` or `getProjectContext()` correctly
   - Badge WebSocket (`setupBadgeWebSocket`) properly scopes per-project with listeners on scoped stores

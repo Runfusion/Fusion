@@ -304,6 +304,11 @@ export class InProcessRuntime
           if (agentId && this.agentStore) {
             void this.agentStore.updateAgentState(agentId, "terminated").catch(() => {});
             this.taskAgentMap.delete(task.id);
+            // Auto-delete the task-worker agent after a short delay so the UI
+            // can observe the terminal state before the agent is removed.
+            void setTimeout(() => {
+              this.agentStore?.deleteAgent(agentId).catch(() => {});
+            }, 5000);
           }
         },
         onError: (task, error) => {
@@ -331,6 +336,11 @@ export class InProcessRuntime
           if (agentId && this.agentStore) {
             void this.agentStore.updateAgentState(agentId, "terminated").catch(() => {});
             this.taskAgentMap.delete(task.id);
+            // Auto-delete the task-worker agent after a short delay so the UI
+            // can observe the terminal state before the agent is removed.
+            void setTimeout(() => {
+              this.agentStore?.deleteAgent(agentId).catch(() => {});
+            }, 5000);
           }
         },
       };

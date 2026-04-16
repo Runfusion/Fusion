@@ -251,6 +251,7 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
 
   const [editingRoleForAgent, setEditingRoleForAgent] = useState<string | null>(null);
   const roleSelectRef = useRef<HTMLSelectElement>(null);
+  const [showSystemAgents, setShowSystemAgents] = useState(false);
 
   const hierarchy = useAgentHierarchy(agents, projectId);
 
@@ -287,14 +288,14 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
     setIsLoading(true);
     try {
       const filter = filterState !== "all" ? { state: filterState } : undefined;
-      const data = await fetchAgents(filter, projectId);
+      const data = await fetchAgents({ ...filter, includeSystem: showSystemAgents }, projectId);
       setAgents(data);
     } catch (err: any) {
       addToast(`Failed to load agents: ${err.message}`, "error");
     } finally {
       setIsLoading(false);
     }
-  }, [filterState, addToast, projectId]);
+  }, [filterState, showSystemAgents, addToast, projectId]);
 
   useEffect(() => {
     void loadAgents();
@@ -527,6 +528,16 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
               <option value="terminated">Terminated</option>
             </select>
           </div>
+
+          <label className="checkbox-label agent-system-filter">
+            <input
+              type="checkbox"
+              checked={showSystemAgents}
+              onChange={(e) => setShowSystemAgents(e.target.checked)}
+              aria-label="Show system agents"
+            />
+            Show system agents
+          </label>
 
           <div className="agent-controls-actions">
             <button

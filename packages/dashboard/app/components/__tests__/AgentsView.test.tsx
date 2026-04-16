@@ -430,7 +430,7 @@ describe("AgentsView", () => {
       fireEvent.change(filterSelect, { target: { value: "active" } });
 
       await waitFor(() => {
-        expect(mockFetchAgents).toHaveBeenCalledWith({ state: "active" }, undefined);
+        expect(mockFetchAgents).toHaveBeenCalledWith({ state: "active", includeSystem: false }, undefined);
       });
     });
 
@@ -445,13 +445,117 @@ describe("AgentsView", () => {
       fireEvent.change(filterSelect, { target: { value: "idle" } });
 
       await waitFor(() => {
-        expect(mockFetchAgents).toHaveBeenLastCalledWith({ state: "idle" }, undefined);
+        expect(mockFetchAgents).toHaveBeenLastCalledWith({ state: "idle", includeSystem: false }, undefined);
       });
 
       fireEvent.change(filterSelect, { target: { value: "all" } });
 
       await waitFor(() => {
-        expect(mockFetchAgents).toHaveBeenLastCalledWith(undefined, undefined);
+        expect(mockFetchAgents).toHaveBeenLastCalledWith({ includeSystem: false }, undefined);
+      });
+    });
+  });
+
+  describe("show system agents toggle", () => {
+    it("renders the system agents checkbox", async () => {
+      render(<AgentsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Show system agents")).toBeTruthy();
+      });
+
+      // Checkbox should be unchecked by default
+      const checkbox = screen.getByLabelText("Show system agents") as HTMLInputElement;
+      expect(checkbox.checked).toBe(false);
+    });
+
+    it("passes includeSystem: false by default to fetchAgents", async () => {
+      render(<AgentsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("All States")).toBeTruthy();
+      });
+
+      // Default call should include includeSystem: false
+      await waitFor(() => {
+        expect(mockFetchAgents).toHaveBeenLastCalledWith({ includeSystem: false }, undefined);
+      });
+    });
+
+    it("toggles system agents visibility when checkbox is clicked", async () => {
+      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("All States")).toBeTruthy();
+      });
+
+      const checkbox = screen.getByLabelText("Show system agents");
+      fireEvent.click(checkbox);
+
+      await waitFor(() => {
+        expect(mockFetchAgents).toHaveBeenLastCalledWith({ includeSystem: true }, projectId);
+      });
+    });
+
+    it("combines system agents toggle with state filter", async () => {
+      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("All States")).toBeTruthy();
+      });
+
+      // First enable system agents toggle
+      const checkbox = screen.getByLabelText("Show system agents");
+      fireEvent.click(checkbox);
+
+      await waitFor(() => {
+        expect(mockFetchAgents).toHaveBeenLastCalledWith({ includeSystem: true }, projectId);
+      });
+
+      // Then filter by state
+      const filterSelect = screen.getByDisplayValue("All States");
+      fireEvent.change(filterSelect, { target: { value: "active" } });
+
+      await waitFor(() => {
+        expect(mockFetchAgents).toHaveBeenLastCalledWith({ state: "active", includeSystem: true }, projectId);
+      });
+    });
+
+    it("shows system agents in agent list when checkbox is enabled", async () => {
+      const systemAgents: Agent[] = [
+        {
+          id: "agent-sys-001",
+          name: "executor-FN-TEST",
+          role: "executor" as AgentCapability,
+          state: "terminated" as AgentState,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          metadata: { agentKind: "task-worker" },
+        },
+      ];
+
+      // Mock returns only normal agents by default (excluding terminated)
+      mockFetchAgents.mockResolvedValue(mockAgents.slice(0, 3));
+
+      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Test Agent 1")).toBeTruthy();
+      });
+
+      // Normal agents should be visible
+      expect(screen.queryByText("executor-FN-TEST")).toBeNull();
+
+      // Update mock to return system agents too (next call)
+      mockFetchAgents.mockResolvedValueOnce([...mockAgents.slice(0, 3), ...systemAgents]);
+
+      // Enable system agents toggle
+      const checkbox = screen.getByLabelText("Show system agents");
+      fireEvent.click(checkbox);
+
+      // Now the agents should be reloaded with system agents included
+      await waitFor(() => {
+        expect(mockFetchAgents).toHaveBeenCalledWith({ includeSystem: true }, projectId);
       });
     });
   });

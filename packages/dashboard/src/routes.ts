@@ -9647,16 +9647,21 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   /**
    * GET /api/agents
    * List all agents with optional filtering.
-   * Query params: state, role
+   * Query params: state, role, includeSystem
    */
   router.get("/agents", async (req, res) => {
     try {
-      const filter: { state?: string; role?: string } = {};
+      const filter: { state?: string; role?: string; includeSystem?: boolean } = {};
       if (req.query.state && typeof req.query.state === "string") {
         filter.state = req.query.state;
       }
       if (req.query.role && typeof req.query.role === "string") {
         filter.role = req.query.role;
+      }
+      if (req.query.includeSystem === "true") {
+        filter.includeSystem = true;
+      } else if (req.query.includeSystem === "false") {
+        filter.includeSystem = false;
       }
 
       const { store: scopedStore } = await getProjectContext(req);
@@ -9664,7 +9669,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
 
-      const agents = await agentStore.listAgents(filter as { state?: "idle" | "active" | "paused" | "terminated"; role?: import("@fusion/core").AgentCapability });
+      const agents = await agentStore.listAgents(filter as { state?: "idle" | "active" | "paused" | "terminated"; role?: import("@fusion/core").AgentCapability; includeSystem?: boolean });
       res.json(agents);
     } catch (err: any) {
       if (err instanceof ApiError) {

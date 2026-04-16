@@ -2282,12 +2282,14 @@ export function proxyApi<T>(path: string, opts?: RequestInit & { nodeId?: string
 
 /** Fetch all agents, optionally filtered by state or role */
 export function fetchAgents(
-  filter?: { state?: AgentState; role?: AgentCapability },
+  filter?: { state?: AgentState; role?: AgentCapability; includeSystem?: boolean },
   projectId?: string,
 ): Promise<Agent[]> {
   const params = new URLSearchParams();
   if (filter?.state) params.set("state", filter.state);
   if (filter?.role) params.set("role", filter.role);
+  if (filter?.includeSystem === true) params.set("includeSystem", "true");
+  else if (filter?.includeSystem === false) params.set("includeSystem", "false");
   if (projectId) params.set("projectId", projectId);
   const query = params.size > 0 ? `?${params.toString()}` : "";
   return api<Agent[]>(`/agents${query}`);

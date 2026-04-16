@@ -998,6 +998,75 @@ describe("AgentStore", () => {
       expect(agents).toHaveLength(1);
       expect(agents[0].name).toBe("Valid");
     });
+
+    it("filters out system agents when includeSystem is false", async () => {
+      // Create a normal agent
+      const normal = await store.createAgent({ name: "Normal Agent", role: "executor" });
+
+      // Create a task-worker agent
+      const taskWorker = await store.createAgent({
+        name: "executor-FN-TEST",
+        role: "executor",
+        metadata: { agentKind: "task-worker" },
+      });
+
+      // Create a spawned child agent
+      const spawned = await store.createAgent({
+        name: "spawned-agent",
+        role: "executor",
+        metadata: { type: "spawned" },
+      });
+
+      // Create an agent with taskWorker metadata
+      const withTaskWorker = await store.createAgent({
+        name: "task-worker-agent",
+        role: "executor",
+        metadata: { taskWorker: true },
+      });
+
+      // Create an agent with managedBy metadata
+      const managedBy = await store.createAgent({
+        name: "managed-agent",
+        role: "executor",
+        metadata: { managedBy: "task-executor" },
+      });
+
+      // Without includeSystem filter, all agents are returned
+      const allAgents = await store.listAgents();
+      expect(allAgents).toHaveLength(5);
+
+      // With includeSystem: false, system agents are filtered out
+      const nonSystemAgents = await store.listAgents({ includeSystem: false });
+      expect(nonSystemAgents).toHaveLength(1);
+      expect(nonSystemAgents[0].id).toBe(normal.id);
+
+      // With includeSystem: true, all agents are returned
+      const systemAgents = await store.listAgents({ includeSystem: true });
+      expect(systemAgents).toHaveLength(5);
+    });
+
+    it("includeSystem filter works with state filter", async () => {
+      // Create a normal agent
+      const normal = await store.createAgent({ name: "Normal Agent", role: "executor" });
+
+      // Create a task-worker agent
+      const taskWorker = await store.createAgent({
+        name: "executor-FN-TEST",
+        role: "executor",
+        metadata: { agentKind: "task-worker" },
+      });
+      await store.recordHeartbeat(taskWorker.id, "ok");
+      await store.updateAgentState(taskWorker.id, "active");
+
+      // Without includeSystem, but with state=active - only returns active non-system agents
+      const activeNonSystem = await store.listAgents({ state: "active", includeSystem: false });
+      expect(activeNonSystem).toHaveLength(0);
+
+      // With includeSystem: true, returns all active agents
+      const activeAll = await store.listAgents({ state: "active", includeSystem: true });
+      expect(activeAll).toHaveLength(1);
+      expect(activeAll[0].id).toBe(taskWorker.id);
+    });
   });
 
   // ── Org Hierarchy ────────────────────────────────────────────────

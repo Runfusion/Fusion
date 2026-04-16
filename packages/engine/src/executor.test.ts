@@ -9168,6 +9168,46 @@ describe("Agent Spawning - Child Termination", () => {
     expect(mockSession.dispose).toHaveBeenCalled();
     expect(internals.totalSpawnedCount).toBe(0);
   });
+
+  it("terminateChildAgent auto-deletes agent after 5 second delay", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const agentStore = createMockAgentStore() as any;
+      // Add deleteAgent mock to the agent store
+      agentStore.deleteAgent = vi.fn().mockResolvedValue(undefined);
+      const store = createMockStore();
+
+      const executor = new TaskExecutor(store, "/tmp/test", { agentStore } as any);
+      const internals = executor as any;
+
+      const mockSession = { dispose: vi.fn() };
+      const childId = "agent-auto-delete-test";
+      internals.childSessions.set(childId, mockSession);
+      internals.totalSpawnedCount = 1;
+
+      // Terminate the child
+      const terminatePromise = internals.terminateChildAgent(childId);
+
+      // Session should be disposed immediately
+      expect(mockSession.dispose).toHaveBeenCalled();
+
+      // deleteAgent should not be called yet (before 5 seconds)
+      expect(agentStore.deleteAgent).not.toHaveBeenCalled();
+
+      // Advance timers by 5 seconds
+      await vi.advanceTimersByTimeAsync(5000);
+
+      // Now deleteAgent should have been called
+      expect(agentStore.deleteAgent).toHaveBeenCalledTimes(1);
+      expect(agentStore.deleteAgent).toHaveBeenCalledWith(childId);
+
+      // Should not throw even when delete fails
+      await terminatePromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("Agent Spawning - runSpawnedChild", () => {

@@ -3917,6 +3917,12 @@ and show an appropriate message to the user.\`
       // Agent may not exist in store — that's ok for cleanup
     }
 
+    // Auto-delete the child agent after a short delay so the UI can observe
+    // the terminal state before the agent is removed.
+    void setTimeout(() => {
+      this.options.agentStore?.deleteAgent(childId).catch(() => {});
+    }, 5000);
+
     this.totalSpawnedCount = Math.max(0, this.totalSpawnedCount - 1);
   }
 

@@ -558,6 +558,88 @@ describe("InProcessRuntime", () => {
       await new Promise((resolve) => setTimeout(resolve, 25));
       expect(executeSpy).not.toHaveBeenCalled();
     }, 30000);
+
+    it("auto-deletes task-worker agent on task completion after 5 second delay", async () => {
+      vi.useFakeTimers();
+
+      try {
+        await runtime.start();
+
+        const store = getAgentStore(runtime);
+        const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockResolvedValue(undefined);
+
+        const executorOptions = mockExecutorCtor.mock.calls.at(-1)?.[0] as {
+          onStart?: (task: Task, worktreePath: string) => void;
+          onComplete?: (task: Task) => void;
+        };
+        expect(executorOptions.onComplete).toBeTypeOf("function");
+
+        // Create a task-worker agent first via onStart
+        executorOptions.onStart?.({ id: "FN-AUTO1" } as Task, join(testDir, "worktree-FN-AUTO1"));
+
+        await vi.waitFor(async () => {
+          const agents = await store.listAgents();
+          expect(agents.some((a: Agent) => a.name === "executor-FN-AUTO1")).toBe(true);
+        });
+
+        // Clear previous calls and trigger onComplete
+        deleteAgentSpy.mockClear();
+        executorOptions.onComplete?.({ id: "FN-AUTO1" } as Task);
+
+        // Verify deleteAgent was not called immediately (before 5 seconds)
+        expect(deleteAgentSpy).not.toHaveBeenCalled();
+
+        // Advance timers by 5 seconds
+        await vi.advanceTimersByTimeAsync(5000);
+
+        // Now deleteAgent should have been called
+        expect(deleteAgentSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    }, 30000);
+
+    it("auto-deletes task-worker agent on task error after 5 second delay", async () => {
+      vi.useFakeTimers();
+
+      try {
+        await runtime.start();
+
+        const store = getAgentStore(runtime);
+        const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockResolvedValue(undefined);
+
+        const executorOptions = mockExecutorCtor.mock.calls.at(-1)?.[0] as {
+          onError?: (task: Task, error: Error) => void;
+        };
+        expect(executorOptions.onError).toBeTypeOf("function");
+
+        // Create a task-worker agent first via onStart
+        const onStartOptions = mockExecutorCtor.mock.calls.at(-1)?.[0] as {
+          onStart?: (task: Task, worktreePath: string) => void;
+        };
+        onStartOptions.onStart?.({ id: "FN-AUTO2" } as Task, join(testDir, "worktree-FN-AUTO2"));
+
+        await vi.waitFor(async () => {
+          const agents = await store.listAgents();
+          expect(agents.some((a: Agent) => a.name === "executor-FN-AUTO2")).toBe(true);
+        });
+
+        // Clear previous calls and trigger onError
+        deleteAgentSpy.mockClear();
+        executorOptions.onError?.({ id: "FN-AUTO2" } as Task, new Error("Task failed"));
+
+        // Verify deleteAgent was not called immediately (before 5 seconds)
+        expect(deleteAgentSpy).not.toHaveBeenCalled();
+
+        // Advance timers by 5 seconds
+        await vi.advanceTimersByTimeAsync(5000);
+
+        // Now deleteAgent should have been called
+        expect(deleteAgentSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    }, 30000);
   });
 
   describe("configuration", () => {

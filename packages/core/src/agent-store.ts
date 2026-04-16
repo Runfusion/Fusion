@@ -986,11 +986,26 @@ export class AgentStore extends EventEmitter {
   }
 
   /**
+   * Check if an agent is a system-generated ephemeral agent (task-worker or spawned child).
+   * These agents are created at runtime by the engine and should typically be hidden
+   * from the default agents page view.
+   */
+  private isSystemAgent(agent: Agent): boolean {
+    const metadata = agent.metadata ?? {};
+    return (
+      metadata.agentKind === "task-worker" ||
+      metadata.type === "spawned" ||
+      metadata.taskWorker === true ||
+      metadata.managedBy === "task-executor"
+    );
+  }
+
+  /**
    * List all agents, optionally filtered by state.
    * @param filter - Optional filter criteria
    * @returns Array of agents
    */
-  async listAgents(filter?: { state?: AgentState; role?: AgentCapability }): Promise<Agent[]> {
+  async listAgents(filter?: { state?: AgentState; role?: AgentCapability; includeSystem?: boolean }): Promise<Agent[]> {
     const files = await readdir(this.agentsDir).catch(() => [] as string[]);
     const agentFiles = files.filter((f) => f.endsWith(".json") && !f.includes("-heartbeats") && !f.includes("-sessions") && !f.includes("-runs") && !f.includes("-revisions"));
 
@@ -1003,6 +1018,9 @@ export class AgentStore extends EventEmitter {
         // Apply filters
         if (filter?.state && agent.state !== filter.state) continue;
         if (filter?.role && agent.role !== filter.role) continue;
+
+        // When includeSystem is explicitly false, filter out system agents
+        if (filter?.includeSystem === false && this.isSystemAgent(agent)) continue;
 
         agents.push(agent);
       } catch {
