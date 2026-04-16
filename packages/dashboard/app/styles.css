@@ -16705,6 +16705,9 @@ html .column.drag-over * {
   padding: 16px 0 0;
   border-top: 1px solid var(--border);
   margin-top: var(--space-lg);
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
 }
 
 @media (max-width: 768px) {
@@ -16913,6 +16916,9 @@ html .column.drag-over * {
   padding: 16px 0 0;
   border-top: 1px solid var(--border);
   margin-top: var(--space-lg);
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
 }
 
 .routine-trigger-type-selector {
