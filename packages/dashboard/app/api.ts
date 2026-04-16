@@ -324,6 +324,18 @@ export function saveMemory(content: string, projectId?: string): Promise<{ succe
 }
 
 /**
+ * Compact memory content using AI to distill it down to the most important insights.
+ * Reads current memory, compacts it via AI, and writes the result back.
+ * @param projectId - Optional project ID for multi-project support
+ * @returns Promise resolving to the compacted memory content
+ */
+export function compactMemory(projectId?: string): Promise<{ content: string }> {
+  return api<{ content: string }>(withProjectId("/memory/compact", projectId), {
+    method: "POST",
+  });
+}
+
+/**
  * Memory backend capabilities returned by the backend status API.
  */
 export interface MemoryBackendCapabilities {

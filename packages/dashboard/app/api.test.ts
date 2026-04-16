@@ -3499,6 +3499,87 @@ describe("fetchMemoryBackendStatus", () => {
   });
 });
 
+describe("compactMemory", () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    globalThis.fetch = vi.fn();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("calls POST /api/memory/compact without projectId", async () => {
+    const { compactMemory } = await import("./api");
+
+    const mockResponse = { content: "# Compacted Memory\n\nImportant content here." };
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: {
+        get: (name: string) =>
+          name.toLowerCase() === "content-type" ? "application/json" : null,
+      },
+      json: () => Promise.resolve(mockResponse),
+      text: () => Promise.resolve(JSON.stringify(mockResponse)),
+    } as unknown as Response);
+
+    const result = await compactMemory();
+
+    expect(result).toEqual(mockResponse);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[0]).toContain("/api/memory/compact");
+    expect(call[1].method).toBe("POST");
+  });
+
+  it("calls POST /api/memory/compact with projectId", async () => {
+    const { compactMemory } = await import("./api");
+
+    const mockResponse = { content: "# Compacted Memory\n\nImportant content here." };
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: {
+        get: (name: string) =>
+          name.toLowerCase() === "content-type" ? "application/json" : null,
+      },
+      json: () => Promise.resolve(mockResponse),
+      text: () => Promise.resolve(JSON.stringify(mockResponse)),
+    } as unknown as Response);
+
+    const result = await compactMemory("proj_abc");
+
+    expect(result).toEqual(mockResponse);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[0]).toContain("/api/memory/compact");
+    expect(call[0]).toContain("projectId=proj_abc");
+    expect(call[1].method).toBe("POST");
+  });
+
+  it("throws on error response", async () => {
+    const { compactMemory } = await import("./api");
+
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      status: 503,
+      statusText: "Service Unavailable",
+      headers: {
+        get: (name: string) =>
+          name.toLowerCase() === "content-type" ? "application/json" : null,
+      },
+      json: () => Promise.resolve({ error: "AI service temporarily unavailable" }),
+      text: () => Promise.resolve(JSON.stringify({ error: "AI service temporarily unavailable" })),
+    } as unknown as Response);
+
+    await expect(compactMemory()).rejects.toThrow("AI service temporarily unavailable");
+  });
+});
+
 describe("Roadmap API wrappers", () => {
   const originalFetch = globalThis.fetch;
 

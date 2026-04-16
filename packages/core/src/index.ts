@@ -169,6 +169,15 @@ export {
   __resetSummarizeState,
 } from "./ai-summarize.js";
 
+// ── Memory Compaction ─────────────────────────────────────────────────
+
+export {
+  compactMemoryWithAi,
+  COMPACT_MEMORY_SYSTEM_PROMPT,
+  __resetCompactionState,
+} from "./memory-compaction.js";
+// Note: AiServiceError is shared with ai-summarize.ts and re-exported from there
+
 // ── Standalone Roadmap Model ───────────────────────────────────────────
 
 export type {

@@ -70,6 +70,7 @@ vi.mock("../../api", () => ({
   importSettings: vi.fn(() => Promise.resolve({ success: true, globalCount: 0, projectCount: 0 })),
   fetchMemory: vi.fn(() => Promise.resolve({ content: "" })),
   saveMemory: vi.fn(() => Promise.resolve({ success: true })),
+  compactMemory: vi.fn(() => Promise.resolve({ content: "# Compacted Memory\n\nImportant content." })),
 }));
 
 // Mock useMemoryBackendStatus hook
@@ -3684,6 +3685,131 @@ describe("Prompts section", () => {
       const globalPayload = (updateGlobalSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
       expect(globalPayload.defaultProvider).toBeNull();
       expect(globalPayload.defaultModelId).toBeNull();
+    });
+  });
+
+  describe("Memory section - Compact Memory", () => {
+    it("renders Compact Memory button in memory section", async () => {
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      // Navigate to Memory section
+      const memorySection = screen.getByText("Memory");
+      fireEvent.click(memorySection);
+
+      await waitFor(() => {
+        // Should show Compact Memory button
+        expect(screen.getByText("Compact Memory")).toBeInTheDocument();
+      });
+    });
+
+    it("calls compactMemory when Compact Memory button is clicked", async () => {
+      const { compactMemory } = await import("../../api");
+      (compactMemory as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        content: "# Compacted Memory\n\nImportant content.",
+      });
+
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      // Navigate to Memory section
+      const memorySection = screen.getByText("Memory");
+      fireEvent.click(memorySection);
+
+      await waitFor(() => {
+        // Click Compact Memory button
+        const compactBtn = screen.getByText("Compact Memory");
+        fireEvent.click(compactBtn);
+      });
+
+      await waitFor(() => {
+        expect(compactMemory).toHaveBeenCalled();
+      });
+    });
+
+    it("updates editor content after successful compaction", async () => {
+      const { compactMemory } = await import("../../api");
+      const newContent = "# Compacted Memory\n\nImportant content.";
+      (compactMemory as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        content: newContent,
+      });
+
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      // Navigate to Memory section
+      const memorySection = screen.getByText("Memory");
+      fireEvent.click(memorySection);
+
+      await waitFor(() => {
+        // Click Compact Memory button
+        const compactBtn = screen.getByText("Compact Memory");
+        fireEvent.click(compactBtn);
+      });
+
+      await waitFor(() => {
+        // Should show success toast
+        expect(addToast).toHaveBeenCalledWith("Memory compacted successfully", "success");
+      });
+    });
+
+    it("disables button while compacting", async () => {
+      let resolveCompact: (value: { content: string }) => void;
+      const { compactMemory } = await import("../../api");
+      (compactMemory as ReturnType<typeof vi.fn>).mockImplementation(
+        () => new Promise((resolve) => { resolveCompact = resolve; })
+      );
+
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      // Navigate to Memory section
+      const memorySection = screen.getByText("Memory");
+      fireEvent.click(memorySection);
+
+      await waitFor(() => {
+        // Click Compact Memory button
+        const compactBtn = screen.getByText("Compact Memory");
+        fireEvent.click(compactBtn);
+      });
+
+      await waitFor(() => {
+        // Button should show loading text
+        expect(screen.getByText("Compacting…")).toBeInTheDocument();
+      });
+
+      // Complete the promise
+      resolveCompact!({ content: "# Compacted Memory\n\nImportant content." });
+
+      await waitFor(() => {
+        // Button should be back to normal
+        expect(screen.getByText("Compact Memory")).toBeInTheDocument();
+      });
+    });
+
+    it("shows error toast when compaction fails", async () => {
+      const { compactMemory } = await import("../../api");
+      (compactMemory as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("AI service unavailable")
+      );
+
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      // Navigate to Memory section
+      const memorySection = screen.getByText("Memory");
+      fireEvent.click(memorySection);
+
+      await waitFor(() => {
+        // Click Compact Memory button
+        const compactBtn = screen.getByText("Compact Memory");
+        fireEvent.click(compactBtn);
+      });
+
+      await waitFor(() => {
+        // Should show error toast
+        expect(addToast).toHaveBeenCalledWith("AI service unavailable", "error");
+      });
     });
   });
 });

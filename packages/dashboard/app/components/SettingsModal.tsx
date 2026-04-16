@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Globe, Folder } from "lucide-react";
 import { THINKING_LEVELS, PROMPT_KEY_CATALOG, isGlobalSettingsKey, isProjectSettingsKey } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent, PromptKey, AgentPromptsConfig } from "@fusion/core";
-import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemory, saveMemory, fetchGlobalConcurrency, updateGlobalConcurrency } from "../api";
+import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemory, saveMemory, fetchGlobalConcurrency, updateGlobalConcurrency, compactMemory } from "../api";
 import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData, MemoryBackendCapabilities } from "../api";
 import { useMemoryBackendStatus } from "../hooks/useMemoryBackendStatus";
 import type { ToastType } from "../hooks/useToast";
@@ -151,6 +151,7 @@ export function SettingsModal({
   const [memoryContent, setMemoryContent] = useState("");
   const [memoryLoading, setMemoryLoading] = useState(false);
   const [memoryDirty, setMemoryDirty] = useState(false);
+  const [compactLoading, setCompactLoading] = useState(false);
 
   // Global concurrency state
   const [globalMaxConcurrent, setGlobalMaxConcurrent] = useState<number | undefined>(4);
@@ -776,6 +777,20 @@ export function SettingsModal({
       addToast(err?.message || "Failed to save memory", "error");
     }
   }, [memoryContent, projectId, addToast]);
+
+  const handleCompactMemory = useCallback(async () => {
+    setCompactLoading(true);
+    try {
+      const { content } = await compactMemory(projectId);
+      setMemoryContent(content);
+      setMemoryDirty(true);
+      addToast("Memory compacted successfully", "success");
+    } catch (err: any) {
+      addToast(err?.message || "Failed to compact memory", "error");
+    } finally {
+      setCompactLoading(false);
+    }
+  }, [projectId, addToast]);
 
   const savePresetDraft = () => {
     if (!presetDraft) return;
@@ -2070,6 +2085,19 @@ export function SettingsModal({
             {memoryDirty && !isEditingAllowed && (
               <div className="form-group">
                 <small className="field-error">Cannot save: {isMemoryEnabled ? "Backend is read-only" : "Memory is disabled"}</small>
+              </div>
+            )}
+
+            {isEditingAllowed && (
+              <div className="form-group">
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={handleCompactMemory}
+                  disabled={compactLoading}
+                >
+                  {compactLoading ? "Compacting…" : "Compact Memory"}
+                </button>
               </div>
             )}
           </>

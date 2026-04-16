@@ -2250,6 +2250,92 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  /**
+   * POST /api/memory/compact
+   * AI-powered memory compaction using the memory compaction service.
+   * Reads current memory, compacts it using AI, and writes back the result.
+   *
+   * Body: none (reads current memory from backend)
+   *
+   * Error mapping:
+   * - Memory content too short (< 200 chars) → 400 Bad Request
+   * - READ_ONLY → 409 Conflict
+   * - BACKEND_UNAVAILABLE → 503 Service Unavailable
+   * - AiServiceError → 503 Service Unavailable
+   * - Other errors → 500 Internal Server Error
+   */
+  router.post("/memory/compact", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const settings = await scopedStore.getSettings();
+      const rootDir = scopedStore.getRootDir();
+
+      // Read current memory
+      const result = await readMemory(rootDir, settings);
+      const content = result.content;
+
+      // Validate content length (must be at least 200 chars to compact)
+      if (content.length < 200) {
+        throw badRequest("Memory content too short to compact");
+      }
+
+      // Resolve model selection hierarchy for compaction:
+      // 1. Project titleSummarizer override (titleSummarizerProvider + titleSummarizerModelId)
+      // 2. Planning lane settings (planningProvider + planningModelId)
+      // 3. Default pair (defaultProvider + defaultModelId)
+      // 4. Automatic model resolution (no explicit model)
+      const resolvedProvider =
+        (settings.titleSummarizerProvider && settings.titleSummarizerModelId ? settings.titleSummarizerProvider : undefined) ||
+        (settings.planningProvider && settings.planningModelId ? settings.planningProvider : undefined) ||
+        (settings.defaultProvider && settings.defaultModelId ? settings.defaultProvider : undefined);
+
+      const resolvedModelId =
+        (settings.titleSummarizerProvider && settings.titleSummarizerModelId ? settings.titleSummarizerModelId : undefined) ||
+        (settings.planningProvider && settings.planningModelId ? settings.planningModelId : undefined) ||
+        (settings.defaultProvider && settings.defaultModelId ? settings.defaultModelId : undefined);
+
+      // Import and call the compaction service
+      const { compactMemoryWithAi } = await import("@fusion/core");
+      const compacted = await compactMemoryWithAi(content, rootDir, resolvedProvider, resolvedModelId);
+
+      // Write compacted content back
+      await writeMemory(rootDir, compacted, settings);
+
+      res.json({ content: compacted });
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+
+      // Map MemoryBackendError codes to appropriate HTTP status codes
+      if (err instanceof MemoryBackendError) {
+        const details = { code: err.code, backend: err.backend };
+        switch (err.code) {
+          case "READ_ONLY":
+          case "UNSUPPORTED":
+          case "CONFLICT":
+            throw new ApiError(409, `Memory operation failed: ${err.message}`, details);
+          case "BACKEND_UNAVAILABLE":
+            res.status(503).json({
+              error: `Memory backend unavailable: ${err.message}`,
+              ...details,
+            });
+            return;
+          default:
+            // READ_FAILED, WRITE_FAILED, NOT_FOUND, etc.
+            throw new ApiError(500, `Memory operation failed: ${err.message}`, details);
+        }
+      }
+
+      // Map AI service errors to 503
+      if (err?.name === "AiServiceError") {
+        throw new ApiError(503, err.message || "AI service temporarily unavailable");
+      }
+
+      rethrowAsApiError(err, "Failed to compact memory");
+    }
+  });
+
   // ── Global Settings Routes ─────────────────────────────────────
 
   /**
