@@ -76,9 +76,88 @@ describe("skills-view mobile css", () => {
 
   it("defines .skills-view-toggle-slider with minimum dimensions on mobile", () => {
     expect(mobileMediaBlock).toContain(".skills-view-toggle-slider");
-    const block = extractRuleBlock(cssContent, ".skills-view-toggle-slider");
-    expect(block).toContain("min-width: 32px");
-    expect(block).toContain("min-height: 18px");
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-toggle-slider");
+    expect(block).toContain("min-width: 40px");
+    expect(block).toContain("min-height: 22px");
+  });
+
+  it("defines .skills-view-section with reduced margin-bottom on mobile", () => {
+    expect(mobileMediaBlock).toContain(".skills-view-section");
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-section");
+    expect(block).toMatch(/margin-bottom:\s*var\(--space-md\)/);
+  });
+
+  it("defines .skills-view-section-title with smaller font on mobile", () => {
+    expect(mobileMediaBlock).toContain(".skills-view-section-title");
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-section-title");
+    expect(block).toContain("font-size: 13px");
+  });
+
+  it("defines .skills-view-card with reduced padding on mobile", () => {
+    expect(mobileMediaBlock).toContain(".skills-view-card");
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-card");
+    expect(block).toContain("padding: var(--space-sm)");
+  });
+
+  it("defines .skills-view-card-title with smaller font on mobile", () => {
+    expect(mobileMediaBlock).toContain(".skills-view-card-title");
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-card-title");
+    expect(block).toContain("font-size: 13px");
+  });
+
+  it("defines .skills-view-card-description with smaller font on mobile", () => {
+    expect(mobileMediaBlock).toContain(".skills-view-card-description");
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-card-description");
+    expect(block).toContain("font-size: 12px");
+  });
+
+  it("defines .skills-view-empty with reduced padding on mobile", () => {
+    expect(mobileMediaBlock).toContain(".skills-view-empty");
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-empty");
+    expect(block).toContain("padding: var(--space-lg)");
+  });
+
+  it("defines .skills-view-error with reduced padding on mobile", () => {
+    expect(mobileMediaBlock).toContain(".skills-view-error");
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-error");
+    expect(block).toContain("padding: var(--space-lg)");
+  });
+
+  it("defines .skills-view-loading with reduced padding on mobile", () => {
+    expect(mobileMediaBlock).toContain(".skills-view-loading");
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-loading");
+    expect(block).toContain("padding: var(--space-md)");
+  });
+
+  it("defines .skills-view-item with padding on mobile", () => {
+    expect(mobileMediaBlock).toContain(".skills-view-item");
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-item");
+    expect(block).toContain("padding: var(--space-md)");
+  });
+
+  it("defines .skills-view-item-info with full width on mobile", () => {
+    expect(mobileMediaBlock).toContain(".skills-view-item-info");
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-item-info");
+    expect(block).toContain("width: 100%");
+  });
+
+  it("defines .skills-view-item-toggle with padding on mobile", () => {
+    expect(mobileMediaBlock).toContain(".skills-view-item-toggle");
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-item-toggle");
+    expect(block).toContain("padding: var(--space-sm)");
+  });
+
+  it("defines .skills-view-count with smaller font on mobile", () => {
+    expect(mobileMediaBlock).toContain(".skills-view-count");
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-count");
+    expect(block).toContain("font-size: 12px");
+  });
+
+  it("defines .badge--sm base class in CSS", () => {
+    expect(cssContent).toContain(".badge--sm {");
+    const block = extractRuleBlock(cssContent, ".badge--sm");
+    expect(block).toContain("font-size: 10px");
+    expect(block).toContain("padding: 1px 6px");
   });
 
   it("skills-view base styles are defined in styles.css", () => {

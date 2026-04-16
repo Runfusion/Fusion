@@ -128,19 +128,19 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
             <Wrench size={20} />
             Skills
           </h2>
-          <span className="skills-view-count">{discoveredSkills.length} discovered</span>
+          <span className="skills-view-count" aria-label={`${discoveredSkills.length} discovered skills`}>{discoveredSkills.length} discovered</span>
         </div>
 
         <div className="skills-view-actions">
           <button
-            className="btn-icon skills-view-close"
+            className="btn-icon skills-view-close touch-target"
             onClick={onClose}
             aria-label="Close skills view"
           >
             <X size={16} />
           </button>
           <button
-            className="btn btn-sm"
+            className="btn btn-sm touch-target"
             onClick={() => void loadDiscoveredSkills()}
             disabled={isLoadingDiscovered}
           >
