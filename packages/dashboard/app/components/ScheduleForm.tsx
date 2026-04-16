@@ -58,7 +58,7 @@ function generateStepId(): string {
 }
 
 type ScheduleMode = "simple" | "advanced";
-type SimpleType = "command" | "ai-prompt";
+type SimpleType = "command" | "ai-prompt" | "create-task";
 
 interface ScheduleFormProps {
   /** Existing schedule for editing. Omit for create mode. */
@@ -77,10 +77,12 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
   const isEditing = !!schedule;
 
   // Determine initial mode based on whether the schedule has steps
-  // But single ai-prompt steps from simple mode should show in simple mode
+  // But single ai-prompt and create-task steps from simple mode should show in simple mode
   const isSimpleAiPrompt = schedule?.steps && schedule.steps.length === 1 && 
     schedule.steps[0].type === "ai-prompt" && !schedule.command;
-  const initialMode: ScheduleMode = (schedule?.steps && schedule.steps.length > 0 && !isSimpleAiPrompt) ? "advanced" : "simple";
+  const isSimpleCreateTask = schedule?.steps && schedule.steps.length === 1 && 
+    schedule.steps[0].type === "create-task" && !schedule.command;
+  const initialMode: ScheduleMode = (schedule?.steps && schedule.steps.length > 0 && !isSimpleAiPrompt && !isSimpleCreateTask) ? "advanced" : "simple";
 
   const [mode, setMode] = useState<ScheduleMode>(initialMode);
   const [name, setName] = useState(schedule?.name ?? "");
@@ -99,6 +101,10 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
     if (schedule?.steps && schedule.steps.length === 1 && schedule.steps[0].type === "ai-prompt" && !schedule.command) {
       return "ai-prompt";
     }
+    // Detect if editing a simple-mode create-task schedule
+    if (schedule?.steps && schedule.steps.length === 1 && schedule.steps[0].type === "create-task" && !schedule.command) {
+      return "create-task";
+    }
     return "command";
   });
   const [prompt, setPrompt] = useState(() => {
@@ -111,13 +117,38 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
     if (schedule?.steps && schedule.steps.length === 1 && schedule.steps[0].type === "ai-prompt" && !schedule.command) {
       return schedule.steps[0].modelProvider ?? "";
     }
+    if (schedule?.steps && schedule.steps.length === 1 && schedule.steps[0].type === "create-task" && !schedule.command) {
+      return schedule.steps[0].modelProvider ?? "";
+    }
     return "";
   });
   const [modelId, setModelId] = useState(() => {
     if (schedule?.steps && schedule.steps.length === 1 && schedule.steps[0].type === "ai-prompt" && !schedule.command) {
       return schedule.steps[0].modelId ?? "";
     }
+    if (schedule?.steps && schedule.steps.length === 1 && schedule.steps[0].type === "create-task" && !schedule.command) {
+      return schedule.steps[0].modelId ?? "";
+    }
     return "";
+  });
+  // Create-task fields
+  const [taskTitle, setTaskTitle] = useState(() => {
+    if (schedule?.steps && schedule.steps.length === 1 && schedule.steps[0].type === "create-task" && !schedule.command) {
+      return schedule.steps[0].taskTitle ?? "";
+    }
+    return "";
+  });
+  const [taskDescription, setTaskDescription] = useState(() => {
+    if (schedule?.steps && schedule.steps.length === 1 && schedule.steps[0].type === "create-task" && !schedule.command) {
+      return schedule.steps[0].taskDescription ?? "";
+    }
+    return "";
+  });
+  const [taskColumn, setTaskColumn] = useState(() => {
+    if (schedule?.steps && schedule.steps.length === 1 && schedule.steps[0].type === "create-task" && !schedule.command) {
+      return schedule.steps[0].taskColumn ?? "triage";
+    }
+    return "triage";
   });
 
   // Model dropdown state
@@ -193,9 +224,19 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
     if (mode === "simple") {
       if (simpleType === "command") {
         if (!command.trim()) e.command = "Command is required";
-      } else {
+      } else if (simpleType === "ai-prompt") {
         // AI Prompt mode
         if (!prompt.trim()) e.prompt = "Prompt is required";
+        
+        // Model consistency check: both must be set or both must be empty
+        const hasProvider = !!modelProvider.trim();
+        const hasModelId = !!modelId.trim();
+        if (hasProvider !== hasModelId) {
+          e.model = "Both model provider and model ID must be set, or both must be empty";
+        }
+      } else if (simpleType === "create-task") {
+        // Create Task mode
+        if (!taskDescription.trim()) e.taskDescription = "Task description is required";
         
         // Model consistency check: both must be set or both must be empty
         const hasProvider = !!modelProvider.trim();
@@ -248,7 +289,7 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
     }
     setErrors(e);
     return Object.keys(e).length === 0;
-  }, [name, command, prompt, modelProvider, modelId, mode, simpleType, steps, scheduleType, cronExpression, timeoutMs, hasEditingSteps]);
+  }, [name, command, prompt, modelProvider, modelId, mode, simpleType, steps, scheduleType, cronExpression, timeoutMs, hasEditingSteps, taskDescription]);
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -278,7 +319,7 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
               steps: undefined,
               scope: effectiveScope,
             };
-          } else {
+          } else if (simpleType === "ai-prompt") {
             // AI Prompt mode - create a single-step automation
             const aiStep: AutomationStep = {
               id: generateStepId(),
@@ -297,6 +338,29 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
               enabled,
               timeoutMs,
               steps: [aiStep],
+              scope: effectiveScope,
+            };
+          } else {
+            // Create Task mode - create a single-step create-task automation
+            const createTaskStep: AutomationStep = {
+              id: generateStepId(),
+              type: "create-task",
+              name: name.trim(),
+              taskTitle: taskTitle.trim() || undefined,
+              taskDescription: taskDescription.trim(),
+              taskColumn: taskColumn,
+              modelProvider: modelProvider.trim() || undefined,
+              modelId: modelId.trim() || undefined,
+            };
+            submitData = {
+              name: name.trim(),
+              description: description.trim() || undefined,
+              scheduleType,
+              cronExpression: scheduleType === "custom" ? cronExpression.trim() : undefined,
+              command: "",
+              enabled,
+              timeoutMs,
+              steps: [createTaskStep],
               scope: effectiveScope,
             };
           }
@@ -319,7 +383,7 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
         setSubmitting(false);
       }
     },
-    [validate, onSubmit, name, description, scheduleType, cronExpression, command, prompt, modelProvider, modelId, enabled, timeoutMs, mode, simpleType, steps, formScope, projectId, schedule?.scope],
+    [validate, onSubmit, name, description, scheduleType, cronExpression, command, prompt, modelProvider, modelId, enabled, timeoutMs, mode, simpleType, steps, formScope, projectId, schedule?.scope, taskTitle, taskDescription, taskColumn],
   );
 
   const cronFieldId = "schedule-cron";
@@ -328,6 +392,8 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
   const commandErrorId = "schedule-command-error";
   const promptErrorId = "schedule-prompt-error";
   const modelErrorId = "schedule-model-error";
+  const taskDescriptionErrorId = "schedule-task-description-error";
+  const taskModelErrorId = "schedule-task-model-error";
   const timeoutErrorId = "schedule-timeout-error";
 
   return (
@@ -498,6 +564,15 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
               >
                 AI Prompt
               </button>
+              <button
+                type="button"
+                className={`schedule-mode-btn${simpleType === "create-task" ? " active" : ""}`}
+                onClick={() => setSimpleType("create-task")}
+                role="radio"
+                aria-checked={simpleType === "create-task"}
+              >
+                Create Task
+              </button>
             </div>
           </div>
 
@@ -519,7 +594,7 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
                 <small>Shell command to execute. Runs with your user permissions.</small>
               )}
             </div>
-          ) : (
+          ) : simpleType === "ai-prompt" ? (
             <>
               <div className="form-group">
                 <label htmlFor="schedule-prompt">Prompt</label>
@@ -555,6 +630,68 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
                   <small id={modelErrorId} className="field-error">{errors.model}</small>
                 ) : (
                   <small>AI model for this prompt. Uses default if not selected.</small>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="form-group">
+                <label htmlFor="schedule-task-title">Task Title (optional)</label>
+                <input
+                  id="schedule-task-title"
+                  type="text"
+                  placeholder="e.g. Review weekly dependencies"
+                  value={taskTitle}
+                  onChange={(e) => setTaskTitle(e.target.value)}
+                />
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="schedule-task-description">Task Description (required)</label>
+                <textarea
+                  id="schedule-task-description"
+                  placeholder="e.g. Check all npm dependencies for security vulnerabilities"
+                  value={taskDescription}
+                  onChange={(e) => setTaskDescription(e.target.value)}
+                  rows={4}
+                  aria-invalid={!!errors.taskDescription}
+                  aria-describedby={errors.taskDescription ? taskDescriptionErrorId : undefined}
+                />
+                {errors.taskDescription ? (
+                  <small id={taskDescriptionErrorId} className="field-error">{errors.taskDescription}</small>
+                ) : (
+                  <small>Describes the task that will be created.</small>
+                )}
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="schedule-task-column">Target Column</label>
+                <select
+                  id="schedule-task-column"
+                  value={taskColumn}
+                  onChange={(e) => setTaskColumn(e.target.value)}
+                >
+                  <option value="triage">Triage</option>
+                  <option value="todo">To Do</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="schedule-task-model">Executor Model (optional)</label>
+                <CustomModelDropdown
+                  id="schedule-task-model"
+                  label="Executor Model"
+                  models={models}
+                  value={modelValue}
+                  onChange={handleModelChange}
+                  placeholder="Use default"
+                  disabled={modelsLoading}
+                />
+                {modelsError && <small className="field-error">{modelsError}</small>}
+                {errors.model ? (
+                  <small id={taskModelErrorId} className="field-error">{errors.model}</small>
+                ) : (
+                  <small>AI model used to execute the created task. Uses default if not selected.</small>
                 )}
               </div>
             </>

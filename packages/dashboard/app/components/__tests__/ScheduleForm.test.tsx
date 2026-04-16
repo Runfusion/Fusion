@@ -18,7 +18,7 @@ vi.mock("lucide-react", () => ({
   Sparkles: () => <span data-testid="icon-sparkles">✨</span>,
   Terminal: () => <span data-testid="icon-terminal">⌨</span>,
   ArrowUpDown: () => <span data-testid="icon-arrow">↕</span>,
-  GripVertical: () => <span data-testid="icon-grip">⋮⋮</span>,
+  ListPlus: () => <span data-testid="icon-list-plus">➕</span>,
 }));
 
 // Mock @fusion/core to provide type-only exports (no runtime values needed)
@@ -739,6 +739,206 @@ describe("ScheduleForm", () => {
           }),
         );
       });
+    });
+  });
+
+  describe("simple mode create-task", () => {
+    it("shows Create Task radio button in simple mode", () => {
+      render(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} />);
+      expect(screen.getByRole("radio", { name: "Create Task" })).toBeDefined();
+      expect(screen.getByRole("radio", { name: "Command" })).toBeDefined();
+      expect(screen.getByRole("radio", { name: "AI Prompt" })).toBeDefined();
+    });
+
+    it("shows task creation fields when Create Task type is selected", async () => {
+      render(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} />);
+      
+      // Click Create Task radio
+      fireEvent.click(screen.getByRole("radio", { name: "Create Task" }));
+      
+      // Create Task radio should be checked
+      expect(screen.getByRole("radio", { name: "Create Task" })).toHaveAttribute("aria-checked", "true");
+      
+      // Task title input should be visible
+      expect(screen.getByLabelText("Task Title (optional)")).toBeDefined();
+      
+      // Task description textarea should be visible
+      expect(screen.getByLabelText("Task Description (required)")).toBeDefined();
+      
+      // Target column select should be visible
+      expect(screen.getByLabelText("Target Column")).toBeDefined();
+      
+      // Executor model dropdown should be visible
+      expect(screen.getByTestId("model-dropdown")).toBeDefined();
+      
+      // Command input should NOT be visible
+      expect(screen.queryByLabelText("Command")).toBeNull();
+      
+      // Prompt textarea should NOT be visible
+      expect(screen.queryByLabelText("Prompt")).toBeNull();
+    });
+
+    it("shows validation error when task description is empty on submit", async () => {
+      render(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} />);
+      
+      // Fill name
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Create Task Schedule" } });
+      
+      // Switch to Create Task mode
+      fireEvent.click(screen.getByRole("radio", { name: "Create Task" }));
+      
+      // Submit without task description
+      fireEvent.click(screen.getByText("Create Schedule"));
+      
+      // Should show description validation error
+      expect(screen.getByText("Task description is required")).toBeDefined();
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("submits single create-task step when simple mode uses Create Task", async () => {
+      render(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} />);
+      
+      // Fill name
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Create Task Schedule" } });
+      
+      // Switch to Create Task mode
+      fireEvent.click(screen.getByRole("radio", { name: "Create Task" }));
+      
+      // Fill task description
+      fireEvent.change(screen.getByLabelText("Task Description (required)"), { 
+        target: { value: "Check npm dependencies for security vulnerabilities" } 
+      });
+      
+      // Select target column (triage is default)
+      
+      // Submit
+      fireEvent.click(screen.getByText("Create Schedule"));
+      
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            name: "Create Task Schedule",
+            command: "",
+            steps: expect.arrayContaining([
+              expect.objectContaining({
+                type: "create-task",
+                name: "Create Task Schedule",
+                taskDescription: "Check npm dependencies for security vulnerabilities",
+                taskColumn: "triage",
+              }),
+            ]),
+          }),
+        );
+      });
+    });
+
+    it("submits with task title and model when provided", async () => {
+      render(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} />);
+      
+      // Fill name
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Create Task Schedule" } });
+      
+      // Switch to Create Task mode
+      fireEvent.click(screen.getByRole("radio", { name: "Create Task" }));
+      
+      // Fill task title
+      fireEvent.change(screen.getByLabelText("Task Title (optional)"), { 
+        target: { value: "Review Dependencies" } 
+      });
+      
+      // Fill task description
+      fireEvent.change(screen.getByLabelText("Task Description (required)"), { 
+        target: { value: "Check npm dependencies for security vulnerabilities" } 
+      });
+      
+      // Select To Do column
+      fireEvent.change(screen.getByLabelText("Target Column"), { target: { value: "todo" } });
+      
+      // Submit - model is optional
+      fireEvent.click(screen.getByText("Create Schedule"));
+      
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            steps: expect.arrayContaining([
+              expect.objectContaining({
+                type: "create-task",
+                taskTitle: "Review Dependencies",
+                taskDescription: "Check npm dependencies for security vulnerabilities",
+                taskColumn: "todo",
+              }),
+            ]),
+          }),
+        );
+      });
+    });
+
+    it("restores Create Task simple type when editing schedule with single create-task step", () => {
+      const schedule = makeSchedule({
+        steps: [
+          {
+            id: "step-1",
+            type: "create-task",
+            name: "Create Task Schedule",
+            taskTitle: "Review Dependencies",
+            taskDescription: "Check npm dependencies for security vulnerabilities",
+            taskColumn: "todo",
+            modelProvider: "openai",
+            modelId: "gpt-4o",
+          },
+        ],
+        command: "",
+      });
+      
+      render(<ScheduleForm schedule={schedule} onSubmit={onSubmit} onCancel={onCancel} />);
+      
+      // Create Task radio should be selected
+      expect(screen.getByRole("radio", { name: "Create Task" })).toHaveAttribute("aria-checked", "true");
+      
+      // Task title should be populated
+      expect(screen.getByLabelText("Task Title (optional)")).toHaveProperty("value", "Review Dependencies");
+      
+      // Task description should be populated
+      expect(screen.getByLabelText("Task Description (required)")).toHaveProperty("value", "Check npm dependencies for security vulnerabilities");
+      
+      // Target column should be To Do
+      expect(screen.getByLabelText("Target Column")).toHaveProperty("value", "todo");
+      
+      // Command input should not be visible
+      expect(screen.queryByLabelText("Command")).toBeNull();
+      
+      // Prompt textarea should not be visible
+      expect(screen.queryByLabelText("Prompt")).toBeNull();
+    });
+
+    it("can switch between all three simple types without losing form state", async () => {
+      render(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} />);
+      
+      // Fill in Command mode
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Test Schedule" } });
+      fireEvent.change(screen.getByLabelText("Command"), { target: { value: "echo hello" } });
+      
+      // Switch to AI Prompt mode
+      fireEvent.click(screen.getByRole("radio", { name: "AI Prompt" }));
+      
+      // Enter prompt
+      fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "Summarize this" } });
+      
+      // Switch to Create Task mode
+      fireEvent.click(screen.getByRole("radio", { name: "Create Task" }));
+      
+      // Enter task description
+      fireEvent.change(screen.getByLabelText("Task Description (required)"), { 
+        target: { value: "Check dependencies" } 
+      });
+      
+      // Switch back to AI Prompt mode - prompt should be preserved
+      fireEvent.click(screen.getByRole("radio", { name: "AI Prompt" }));
+      expect(screen.getByLabelText("Prompt")).toHaveProperty("value", "Summarize this");
+      
+      // Switch back to Create Task mode - description should be preserved
+      fireEvent.click(screen.getByRole("radio", { name: "Create Task" }));
+      expect(screen.getByLabelText("Task Description (required)")).toHaveProperty("value", "Check dependencies");
     });
   });
 });
