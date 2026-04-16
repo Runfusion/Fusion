@@ -11,8 +11,10 @@ import {
 } from "lucide-react";
 import { useChat } from "../hooks/useChat";
 import { useViewportMode } from "./Header";
-import { fetchAgents } from "../api";
+import { fetchAgents, fetchModels } from "../api";
 import type { Agent } from "@fusion/core";
+import type { ModelInfo } from "../api";
+import { CustomModelDropdown } from "./CustomModelDropdown";
 
 export interface ChatViewProps {
   projectId?: string;
@@ -110,13 +112,16 @@ const KB_AGENT_ID = "__kb_agent__";
 
 interface NewChatDialogProps {
   onClose: () => void;
-  onCreate: (input: { agentId: string }) => void;
+  onCreate: (input: { agentId: string; modelProvider?: string; modelId?: string }) => void;
 }
 
 function NewChatDialog({ onClose, onCreate }: NewChatDialogProps) {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(true);
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
+  const [selectedModel, setSelectedModel] = useState<string>("");
 
   // Load agents on mount
   useEffect(() => {
@@ -134,10 +139,41 @@ function NewChatDialog({ onClose, onCreate }: NewChatDialogProps) {
       });
   }, []);
 
+  // Load models on mount
+  useEffect(() => {
+    setModelsLoading(true);
+    fetchModels()
+      .then((response) => {
+        setModels(response.models);
+      })
+      .catch(() => {
+        // Silently fail - show empty list
+        setModels([]);
+      })
+      .finally(() => {
+        setModelsLoading(false);
+      });
+  }, []);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedAgentId) return;
-    onCreate({ agentId: selectedAgentId });
+
+    // Parse model selection into provider and modelId
+    let modelProvider: string | undefined;
+    let modelId: string | undefined;
+    if (selectedModel) {
+      const slashIdx = selectedModel.indexOf("/");
+      if (slashIdx > 0) {
+        modelProvider = selectedModel.slice(0, slashIdx);
+        modelId = selectedModel.slice(slashIdx + 1);
+      }
+    }
+
+    onCreate({
+      agentId: selectedAgentId,
+      ...(modelProvider && modelId ? { modelProvider, modelId } : {}),
+    });
   };
 
   return (
@@ -169,6 +205,19 @@ function NewChatDialog({ onClose, onCreate }: NewChatDialogProps) {
               </div>
             )}
           </label>
+          <div className="chat-new-dialog-model-dropdown">
+            {modelsLoading ? (
+              <div className="chat-new-dialog-loading">Loading models...</div>
+            ) : (
+              <CustomModelDropdown
+                models={models}
+                value={selectedModel}
+                onChange={setSelectedModel}
+                label="Model"
+                placeholder="Use agent default"
+              />
+            )}
+          </div>
           <div className="chat-new-dialog-actions">
             <button type="button" className="btn btn-sm" onClick={onClose}>
               Cancel
@@ -252,7 +301,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
 
   // Handle create session
   const handleCreateSession = useCallback(
-    async (input: { agentId: string }) => {
+    async (input: { agentId: string; modelProvider?: string; modelId?: string }) => {
       try {
         await createSession(input);
         setShowNewDialog(false);

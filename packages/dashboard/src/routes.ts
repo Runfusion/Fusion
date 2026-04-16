@@ -8381,8 +8381,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   /**
    * POST /api/chat/sessions
    * Create a new chat session.
-   * Body: { agentId: string, title?: string }
-   * The model is resolved from the agent's runtimeConfig.model setting.
+   * Body: { agentId: string, title?: string, modelProvider?: string, modelId?: string }
+   * If modelProvider and modelId are provided, those are used. Otherwise the model is
+   * resolved from the agent's runtimeConfig.model setting.
    * The session is scoped to the project identified by projectId query param or header.
    */
   router.post("/chat/sessions", rateLimit(RATE_LIMITS.mutation), async (req, res) => {
@@ -8398,35 +8399,54 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
 
-      const { agentId, title } = req.body as {
+      const { agentId, title, modelProvider, modelId } = req.body as {
         agentId?: string;
         title?: string;
+        modelProvider?: string;
+        modelId?: string;
       };
 
       if (!agentId || typeof agentId !== "string" || !agentId.trim()) {
         throw badRequest("agentId is required");
       }
 
-      // Fetch the agent to resolve model configuration
-      const agent = await agentStore.getAgent(agentId);
-      if (!agent) {
-        throw notFound(`Agent ${agentId} not found`);
+      // Validate that if one model field is provided, the other must also be provided
+      const hasClientModelProvider = typeof modelProvider === "string" && modelProvider.trim() !== "";
+      const hasClientModelId = typeof modelId === "string" && modelId.trim() !== "";
+      if (hasClientModelProvider !== hasClientModelId) {
+        throw badRequest("Both modelProvider and modelId must be provided together, or neither should be provided");
       }
 
-      // Parse the agent's model config from runtimeConfig.model
-      // Format: "provider/modelId" (e.g., "anthropic/claude-sonnet-4-5")
-      const runtimeModel = typeof agent.runtimeConfig?.model === "string" ? agent.runtimeConfig.model : "";
-      const slashIdx = runtimeModel.indexOf("/");
-      const resolvedProvider = slashIdx > 0 ? runtimeModel.slice(0, slashIdx) : undefined;
-      const resolvedModelId = slashIdx > 0 ? runtimeModel.slice(slashIdx + 1) : undefined;
+      // Fetch the agent to resolve model configuration (only if client didn't provide model)
+      let resolvedProvider: string | null = null;
+      let resolvedModelId: string | null = null;
+
+      if (hasClientModelProvider && hasClientModelId) {
+        // Use client-provided model
+        resolvedProvider = modelProvider!.trim();
+        resolvedModelId = modelId!.trim();
+      } else {
+        // Resolve from agent's runtimeConfig.model
+        const agent = await agentStore.getAgent(agentId);
+        if (!agent) {
+          throw notFound(`Agent ${agentId} not found`);
+        }
+
+        // Parse the agent's model config from runtimeConfig.model
+        // Format: "provider/modelId" (e.g., "anthropic/claude-sonnet-4-5")
+        const runtimeModel = typeof agent.runtimeConfig?.model === "string" ? agent.runtimeConfig.model : "";
+        const slashIdx = runtimeModel.indexOf("/");
+        resolvedProvider = slashIdx > 0 ? runtimeModel.slice(0, slashIdx) : null;
+        resolvedModelId = slashIdx > 0 ? runtimeModel.slice(slashIdx + 1) : null;
+      }
 
       // Create the chat session with projectId for multi-project scoping
       const session = chatStore.createSession({
         agentId: agentId.trim(),
         title: title?.trim() || null,
         projectId: projectId ?? null,
-        modelProvider: resolvedProvider ?? null,
-        modelId: resolvedModelId ?? null,
+        modelProvider: resolvedProvider,
+        modelId: resolvedModelId,
       });
 
       res.status(201).json({ session });

@@ -236,6 +236,60 @@ describe("ChatView", () => {
     });
   });
 
+  it("creates session with model selection", async () => {
+    const createSession = vi.fn().mockResolvedValue({ id: "session-new", agentId: "agent-001" });
+    setupMockChat({ sessions: [], filteredSessions: [], createSession });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    await userEvent.click(screen.getByTestId("chat-new-btn"));
+
+    const dialog = document.querySelector(".chat-new-dialog");
+
+    // Click on an agent to select it
+    await userEvent.click(within(dialog!).getByTestId("agent-option-agent-001"));
+
+    // Select a model from the dropdown
+    const modelDropdown = within(dialog!).getByTestId("mock-model-dropdown");
+    await userEvent.selectOptions(modelDropdown, "anthropic/claude-sonnet-4-5");
+
+    await userEvent.click(within(dialog!).getByText("Create"));
+
+    await waitFor(() => {
+      expect(createSession).toHaveBeenCalledWith({
+        agentId: "agent-001",
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+      });
+    });
+  });
+
+  it("creates session without model selection omits model fields", async () => {
+    const createSession = vi.fn().mockResolvedValue({ id: "session-new", agentId: "agent-001" });
+    setupMockChat({ sessions: [], filteredSessions: [], createSession });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    await userEvent.click(screen.getByTestId("chat-new-btn"));
+
+    const dialog = document.querySelector(".chat-new-dialog");
+
+    // Click on an agent to select it
+    await userEvent.click(within(dialog!).getByTestId("agent-option-agent-001"));
+
+    // Make sure no model is selected (use default)
+    const modelDropdown = within(dialog!).getByTestId("mock-model-dropdown");
+    await userEvent.selectOptions(modelDropdown, "");
+
+    await userEvent.click(within(dialog!).getByText("Create"));
+
+    await waitFor(() => {
+      expect(createSession).toHaveBeenCalledWith({
+        agentId: "agent-001",
+      });
+    });
+  });
+
   it("renders messages for active session", () => {
     setupMockChat({
       activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
