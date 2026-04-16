@@ -18,7 +18,7 @@ interface NodesViewProps {
 export function NodesView({ addToast, onClose }: NodesViewProps) {
   const { nodes, loading, error, refresh, register, update, unregister, healthCheck } = useNodes();
   const { projects } = useProjects();
-  const { syncStatusMap, pushSettings, pullSettings, syncAuth, trackNode } = useNodeSettingsSync();
+  const { syncStatusMap, pushSettings, pullSettings, syncAuth, trackNode, getAuthSyncState, getAuthProviders } = useNodeSettingsSync();
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [selectedNode, setSelectedNode] = useState<NodeInfo | null>(null);
 
@@ -179,6 +179,8 @@ export function NodesView({ addToast, onClose }: NodesViewProps) {
                 onRemove={(id) => { void handleUnregister(id); }}
                 isLoading={loading}
                 syncStatus={nodeSyncStatus}
+                authSyncState={node.type === "remote" ? getAuthSyncState(node.id) : undefined}
+                authSyncProviders={node.type === "remote" ? getAuthProviders(node.id) : undefined}
               />
             );
           })}

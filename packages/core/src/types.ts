@@ -964,6 +964,23 @@ export interface GlobalSettings {
   daemonPort?: number;
   /** Host for daemon mode server binding. Default: "0.0.0.0" (all interfaces). */
   daemonHost?: string;
+  /** When true, enables automatic settings synchronization between nodes.
+   *  Settings are pushed/pulled on the configured interval. Default: false. */
+  settingsSyncEnabled?: boolean;
+  /** When true, model auth credentials (API keys) are included in sync operations.
+   *  Only applies when settingsSyncEnabled is also true. Default: false. */
+  settingsSyncAuth?: boolean;
+  /** How often automatic settings sync runs, in milliseconds.
+   *  Valid values: 300000 (5m), 900000 (15m), 1800000 (30m), 3600000 (1h).
+   *  Default: 900000 (15m). */
+  settingsSyncInterval?: number;
+  /** Conflict resolution strategy when synced settings differ between nodes.
+   *  - "last-write-wins": The most recent change overwrites (default)
+   *  - "always-ask": Prompt the user to choose
+   *  - "keep-local": Keep the local version on conflict
+   *  - "keep-remote": Accept the remote version on conflict
+   *  Default: "last-write-wins". */
+  settingsSyncConflictResolution?: "last-write-wins" | "always-ask" | "keep-local" | "keep-remote";
 }
 
 /**

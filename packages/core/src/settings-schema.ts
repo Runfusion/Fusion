@@ -42,6 +42,11 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   daemonToken: undefined,
   daemonPort: 4040,
   daemonHost: "0.0.0.0",
+  // Node settings sync
+  settingsSyncEnabled: false,
+  settingsSyncAuth: false,
+  settingsSyncInterval: 900000,
+  settingsSyncConflictResolution: "last-write-wins",
 } satisfies CompleteSettings<GlobalSettings>;
 
 /** Default values for project-level settings. */

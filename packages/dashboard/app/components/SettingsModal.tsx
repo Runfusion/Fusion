@@ -32,6 +32,7 @@ import { applyPresetToSelection, generateUniquePresetId } from "../utils/modelPr
  *   - authentication: OAuth provider status, login/logout (independent)
  *   - appearance: Theme and color settings (global)
  *   - notifications: ntfy.sh notification settings (global)
+ *   - node-sync: Settings sync between nodes (global)
  *   - global-models: Default/fallback models and thinking level (global)
  *   - project-models: Planning & validator models, model presets, and AI summarization (project)
  *   - general: Task prefix configuration (project)
@@ -59,6 +60,7 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "authentication", label: "Authentication", scope: undefined, icon: Globe },
   { id: "appearance", label: "Appearance", scope: "global" },
   { id: "notifications", label: "Notifications", scope: "global" },
+  { id: "node-sync", label: "Node Sync", scope: "global" },
   { id: "global-models", label: "Models", scope: "global" },
   { id: "project-models", label: "Project Models", scope: "project" },
   { id: "__global_header", label: "Global", scope: undefined, isGroupHeader: true },
@@ -2459,6 +2461,77 @@ export function SettingsModal({
                   </small>
                 )}
               </div>
+              </>
+            )}
+          </>
+        );
+      case "node-sync":
+        return (
+          <>
+            {renderScopeBanner()}
+            <h4 className="settings-section-heading">Node Sync</h4>
+            <div className="form-group">
+              <label htmlFor="settingsSyncEnabled" className="checkbox-label">
+                <input
+                  id="settingsSyncEnabled"
+                  type="checkbox"
+                  checked={form.settingsSyncEnabled || false}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, settingsSyncEnabled: e.target.checked }))
+                  }
+                />
+                Enable automatic settings sync
+              </label>
+              <small>Automatically synchronize settings between this node and connected remote nodes</small>
+            </div>
+            {form.settingsSyncEnabled && (
+              <>
+                <div className="form-group">
+                  <label htmlFor="settingsSyncAuth" className="checkbox-label">
+                    <input
+                      id="settingsSyncAuth"
+                      type="checkbox"
+                      checked={form.settingsSyncAuth || false}
+                      onChange={(e) =>
+                        setForm((f) => ({ ...f, settingsSyncAuth: e.target.checked }))
+                      }
+                    />
+                    Sync model auth credentials
+                  </label>
+                  <small>Include API keys and OAuth tokens in sync operations</small>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="settingsSyncInterval">Sync interval</label>
+                  <select
+                    id="settingsSyncInterval"
+                    className="select"
+                    value={form.settingsSyncInterval || 900000}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, settingsSyncInterval: parseInt(e.target.value, 10) }))
+                    }
+                  >
+                    <option value={300000}>Every 5 minutes</option>
+                    <option value={900000}>Every 15 minutes</option>
+                    <option value={1800000}>Every 30 minutes</option>
+                    <option value={3600000}>Every 1 hour</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="settingsSyncConflictResolution">Conflict resolution</label>
+                  <select
+                    id="settingsSyncConflictResolution"
+                    className="select"
+                    value={form.settingsSyncConflictResolution || "last-write-wins"}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, settingsSyncConflictResolution: e.target.value as "last-write-wins" | "always-ask" | "keep-local" | "keep-remote" }))
+                    }
+                  >
+                    <option value="last-write-wins">Last write wins</option>
+                    <option value="always-ask">Always ask</option>
+                    <option value="keep-local">Keep local</option>
+                    <option value="keep-remote">Keep remote</option>
+                  </select>
+                </div>
               </>
             )}
           </>

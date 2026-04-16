@@ -105,6 +105,8 @@ beforeEach(() => {
     pushSettings: vi.fn().mockResolvedValue({ success: true }),
     pullSettings: vi.fn().mockResolvedValue({ success: true }),
     syncAuth: vi.fn().mockResolvedValue({ success: true, syncedProviders: [] }),
+    getAuthSyncState: vi.fn().mockReturnValue(undefined),
+    getAuthProviders: vi.fn().mockReturnValue(undefined),
   });
 });
 
@@ -333,6 +335,8 @@ describe("NodesView", () => {
         pushSettings: vi.fn().mockResolvedValue({ success: true }),
         pullSettings: vi.fn().mockResolvedValue({ success: true }),
         syncAuth: vi.fn().mockResolvedValue({ success: true, syncedProviders: [] }),
+        getAuthSyncState: vi.fn().mockReturnValue(undefined),
+        getAuthProviders: vi.fn().mockReturnValue(undefined),
       });
 
       mockUseNodes.mockReturnValue(makeUseNodesResult({
@@ -369,6 +373,8 @@ describe("NodesView", () => {
         pushSettings: vi.fn().mockResolvedValue({ success: true }),
         pullSettings: vi.fn().mockResolvedValue({ success: true }),
         syncAuth: vi.fn().mockResolvedValue({ success: true, syncedProviders: [] }),
+        getAuthSyncState: vi.fn().mockReturnValue(undefined),
+        getAuthProviders: vi.fn().mockReturnValue(undefined),
       });
 
       mockUseNodes.mockReturnValue(makeUseNodesResult({
@@ -404,6 +410,8 @@ describe("NodesView", () => {
         pushSettings: vi.fn().mockResolvedValue({ success: true }),
         pullSettings: vi.fn().mockResolvedValue({ success: true }),
         syncAuth: vi.fn().mockResolvedValue({ success: true, syncedProviders: [] }),
+        getAuthSyncState: vi.fn().mockReturnValue(undefined),
+        getAuthProviders: vi.fn().mockReturnValue(undefined),
       });
 
       mockUseNodes.mockReturnValue(makeUseNodesResult({
@@ -441,6 +449,8 @@ describe("NodesView", () => {
         pushSettings: vi.fn().mockResolvedValue({ success: true }),
         pullSettings: vi.fn().mockResolvedValue({ success: true }),
         syncAuth: vi.fn().mockResolvedValue({ success: true, syncedProviders: [] }),
+        getAuthSyncState: vi.fn().mockReturnValue(undefined),
+        getAuthProviders: vi.fn().mockReturnValue(undefined),
       });
 
       mockUseNodes.mockReturnValue(makeUseNodesResult({

@@ -8,6 +8,7 @@ vi.mock("lucide-react", () => ({
   Activity: () => <span data-testid="activity-icon">activity</span>,
   Server: () => <span data-testid="server-icon">server</span>,
   Settings: () => <span data-testid="settings-icon">settings</span>,
+  Shield: () => <span data-testid="shield-icon">shield</span>,
   Trash2: () => <span data-testid="trash-icon">trash</span>,
 }));
 
@@ -539,6 +540,127 @@ describe("NodeCard", () => {
 
       const syncIndicator = screen.getByTestId("node-card-sync");
       expect(syncIndicator).toHaveAttribute("data-sync-state", "diff");
+    });
+  });
+
+  describe("auth sync indicator", () => {
+    it("renders auth indicator for remote node with match state", () => {
+      const node = makeNode({
+        id: "node-auth-match",
+        name: "Auth Match Node",
+        type: "remote",
+        status: "online",
+      });
+
+      render(
+        <NodeCard
+          node={node}
+          projects={[]}
+          onHealthCheck={vi.fn()}
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          authSyncState="match"
+        />
+      );
+
+      expect(screen.getByTestId("shield-icon")).toBeInTheDocument();
+      const indicator = document.querySelector(".node-card__auth-indicator--match");
+      expect(indicator).toBeInTheDocument();
+      expect(indicator?.getAttribute("aria-label")).toContain("credentials match");
+    });
+
+    it("renders auth indicator with differs state and provider details in tooltip", () => {
+      const node = makeNode({
+        id: "node-auth-differs",
+        name: "Auth Differs Node",
+        type: "remote",
+        status: "online",
+      });
+
+      render(
+        <NodeCard
+          node={node}
+          projects={[]}
+          onHealthCheck={vi.fn()}
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          authSyncState="differs"
+          authSyncProviders={{ anthropic: "differs", openai: "match" }}
+        />
+      );
+
+      const indicator = document.querySelector(".node-card__auth-indicator--differs");
+      expect(indicator).toBeInTheDocument();
+      expect(indicator?.getAttribute("aria-label")).toContain("credentials differ");
+      expect(indicator?.getAttribute("title")).toContain("anthropic");
+    });
+
+    it("renders auth indicator with not-synced state", () => {
+      const node = makeNode({
+        id: "node-auth-not-synced",
+        name: "Auth Not Synced Node",
+        type: "remote",
+        status: "online",
+      });
+
+      render(
+        <NodeCard
+          node={node}
+          projects={[]}
+          onHealthCheck={vi.fn()}
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          authSyncState="not-synced"
+        />
+      );
+
+      const indicator = document.querySelector(".node-card__auth-indicator--not-synced");
+      expect(indicator).toBeInTheDocument();
+      expect(indicator?.getAttribute("aria-label")).toContain("not synced");
+      expect(indicator?.getAttribute("title")).toBe("Auth not synced");
+    });
+
+    it("does not render auth indicator when authSyncState is undefined", () => {
+      const node = makeNode({
+        id: "node-no-auth",
+        name: "No Auth State Node",
+        type: "remote",
+        status: "online",
+      });
+
+      render(
+        <NodeCard
+          node={node}
+          projects={[]}
+          onHealthCheck={vi.fn()}
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+        />
+      );
+
+      expect(screen.queryByTestId("shield-icon")).not.toBeInTheDocument();
+    });
+
+    it("does not render auth indicator for local nodes even with authSyncState", () => {
+      const node = makeNode({
+        id: "node-local-auth",
+        name: "Local Node",
+        type: "local",
+        status: "online",
+      });
+
+      render(
+        <NodeCard
+          node={node}
+          projects={[]}
+          onHealthCheck={vi.fn()}
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          authSyncState="match"
+        />
+      );
+
+      expect(screen.queryByTestId("shield-icon")).not.toBeInTheDocument();
     });
   });
 });

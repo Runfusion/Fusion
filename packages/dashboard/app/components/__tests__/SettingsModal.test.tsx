@@ -32,6 +32,10 @@ const defaultSettings: Settings = {
   runStepsInNewSessions: false,
   maxParallelSteps: 2,
   showQuickChatFAB: false,
+  settingsSyncEnabled: false,
+  settingsSyncAuth: false,
+  settingsSyncInterval: 900000,
+  settingsSyncConflictResolution: "last-write-wins",
 };
 
 vi.mock("../../api", () => ({
@@ -1976,7 +1980,7 @@ describe("SettingsModal", () => {
     expect(sidebar).toBeTruthy();
     const navItems = sidebar!.querySelectorAll(".settings-nav-item");
     // 15 nav items (group headers are not nav items)
-    expect(navItems.length).toBe(15);
+    expect(navItems.length).toBe(16);
 
     // Labels include scope icons (Globe for global, Folder for project)
     const labels = Array.from(navItems).map((el) => el.textContent?.trim());
@@ -1984,6 +1988,7 @@ describe("SettingsModal", () => {
       "Authentication",
       "Appearance",
       "Notifications",
+      "Node Sync",
       "Models",
       "Project Models",
       "General",
@@ -2400,6 +2405,111 @@ describe("SettingsModal", () => {
     expect((screen.getByLabelText("Task merged") as HTMLInputElement).checked).toBe(false);
     expect((screen.getByLabelText("Task failed") as HTMLInputElement).checked).toBe(false);
     expect((screen.getByLabelText("Plan needs approval") as HTMLInputElement).checked).toBe(false);
+  });
+
+  // Node Sync section tests
+  describe("Node Sync section", () => {
+    it("Node Sync section renders with heading and toggle", async () => {
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      fireEvent.click(screen.getByText("Node Sync"));
+      expect(screen.getByText("Node Sync", { selector: "h4" })).toBeTruthy();
+      expect(screen.getByLabelText("Enable automatic settings sync")).toBeTruthy();
+    });
+
+    it("sub-fields are hidden when sync is disabled", async () => {
+      (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ...defaultSettings,
+        settingsSyncEnabled: false,
+      });
+
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      fireEvent.click(screen.getByText("Node Sync"));
+      expect(screen.queryByLabelText("Sync interval")).toBeNull();
+      expect(screen.queryByLabelText("Conflict resolution")).toBeNull();
+    });
+
+    it("sub-fields are visible when sync is enabled", async () => {
+      (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ...defaultSettings,
+        settingsSyncEnabled: true,
+      });
+
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      fireEvent.click(screen.getByText("Node Sync"));
+      expect(screen.getByLabelText("Enable automatic settings sync")).toBeTruthy();
+      expect(screen.getByLabelText("Sync model auth credentials")).toBeTruthy();
+      expect(screen.getByLabelText("Sync interval")).toBeTruthy();
+      expect(screen.getByLabelText("Conflict resolution")).toBeTruthy();
+    });
+
+    it("toggle enables sync and updates form state", async () => {
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      fireEvent.click(screen.getByText("Node Sync"));
+      const checkbox = screen.getByLabelText("Enable automatic settings sync") as HTMLInputElement;
+      expect(checkbox.checked).toBe(false);
+
+      fireEvent.click(checkbox);
+      expect((screen.getByLabelText("Enable automatic settings sync") as HTMLInputElement).checked).toBe(true);
+    });
+
+    it("interval dropdown changes form value", async () => {
+      (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ...defaultSettings,
+        settingsSyncEnabled: true,
+        settingsSyncInterval: 900000,
+      });
+
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      fireEvent.click(screen.getByText("Node Sync"));
+      const select = screen.getByLabelText("Sync interval") as HTMLSelectElement;
+      expect(select.value).toBe("900000");
+
+      fireEvent.change(select, { target: { value: "3600000" } });
+      expect(select.value).toBe("3600000");
+    });
+
+    it("conflict resolution dropdown changes form value", async () => {
+      (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ...defaultSettings,
+        settingsSyncEnabled: true,
+        settingsSyncConflictResolution: "last-write-wins",
+      });
+
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      fireEvent.click(screen.getByText("Node Sync"));
+      const select = screen.getByLabelText("Conflict resolution") as HTMLSelectElement;
+      expect(select.value).toBe("last-write-wins");
+
+      fireEvent.change(select, { target: { value: "keep-local" } });
+      expect(select.value).toBe("keep-local");
+    });
+
+    it("save persists global settings with sync enabled", async () => {
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      fireEvent.click(screen.getByText("Node Sync"));
+      const checkbox = screen.getByLabelText("Enable automatic settings sync");
+      fireEvent.click(checkbox);
+
+      fireEvent.click(screen.getByText("Save"));
+      await waitFor(() => expect(updateGlobalSettings).toHaveBeenCalledTimes(1));
+
+      const payload = (updateGlobalSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(payload.settingsSyncEnabled).toBe(true);
+    });
   });
 
   // Model filter tests with CustomModelDropdown

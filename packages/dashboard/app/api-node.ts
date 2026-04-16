@@ -74,6 +74,11 @@ export interface NodeSettingsSyncStatus {
     global: string[];
     project: string[];
   };
+  /** Overall auth credential sync state: "match" if credentials match between local and remote,
+   *  "differs" if they differ, "not-synced" if auth sync has never been performed. */
+  authMatch?: "match" | "differs" | "not-synced";
+  /** Per-provider auth match details. Map of provider name to match status. */
+  authDiff?: Record<string, "match" | "differs">;
 }
 
 /** Result from auth sync operation */
