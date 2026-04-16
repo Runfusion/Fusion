@@ -26,6 +26,7 @@ Mission → Milestone → Slice → Feature → Task
 - **GitHub tools** — `fn_task_import_github`, `fn_task_import_github_issue`, `fn_task_browse_github_issues`
 - **Mission tools** — `fn_mission_create`, `fn_mission_list`, `fn_mission_show`, `fn_mission_delete`, `fn_milestone_add`, `fn_slice_add`, `fn_feature_add`, `fn_slice_activate`, `fn_feature_link_task`
 - **Agent tools** — `fn_agent_stop`, `fn_agent_start`
+- **Skills tools** — `fn_skills_search`, `fn_skills_install`
 - **Dashboard** — Use `/fn` command to start/stop the dashboard
 
 </essential_principles>
