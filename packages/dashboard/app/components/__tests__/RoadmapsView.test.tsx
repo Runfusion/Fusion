@@ -44,7 +44,27 @@ vi.mock("lucide-react", () => ({
   Download: (props: unknown) => <span data-testid="download-icon" {...props}>Download</span>,
   Copy: (props: unknown) => <span data-testid="copy-icon" {...props}>Copy</span>,
   Loader: (props: unknown) => <span data-testid="loader-icon" {...props}>Loader</span>,
+  ArrowLeft: (props: unknown) => <span data-testid="arrow-left-icon" {...props}>ArrowLeft</span>,
+  ChevronLeft: (props: unknown) => <span data-testid="chevron-left-icon" {...props}>ChevronLeft</span>,
 }));
+
+// Viewport mode mock helper
+function mockViewport(mode: "mobile" | "desktop") {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: vi.fn().mockImplementation((query: string) => {
+      const isMobileQuery = query === "(max-width: 768px)";
+      const isTabletQuery = query === "(min-width: 769px) and (max-width: 1024px)";
+      return {
+        matches: mode === "mobile" ? isMobileQuery : false,
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      };
+    }),
+  });
+}
 
 const mockRoadmaps: Roadmap[] = [
   {
@@ -108,6 +128,7 @@ const mockAddToast = vi.fn();
 describe("RoadmapsView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockViewport("desktop");
     (api.fetchRoadmaps as ReturnType<typeof vi.fn>).mockResolvedValue(mockRoadmaps);
     (api.fetchRoadmap as ReturnType<typeof vi.fn>).mockResolvedValue(mockRoadmapHierarchy);
     vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -644,6 +665,183 @@ describe("RoadmapsView", () => {
       // The edit button is a pencil icon with testId like "suggestion-{id}-edit"
       const editButtons = screen.queryAllByRole("button", { name: /edit/i });
       expect(editButtons.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("Mobile roadmap controls", () => {
+    beforeEach(() => {
+      mockViewport("mobile");
+    });
+
+    afterEach(() => {
+      mockViewport("desktop");
+    });
+
+    it("shows mobile roadmap list when no roadmap selected on mobile", async () => {
+      render(<RoadmapsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("roadmaps-view__mobile-list")).toBeInTheDocument();
+      });
+
+      expect(screen.getByText("Q2 Roadmap")).toBeInTheDocument();
+      expect(screen.getByText("Q3 Roadmap")).toBeInTheDocument();
+      expect(screen.getByTestId("mobile-create-roadmap-btn")).toBeInTheDocument();
+    });
+
+    it("shows mobile roadmap items when roadmaps exist on mobile", async () => {
+      render(<RoadmapsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-roadmap-item-RM-001")).toBeInTheDocument();
+      });
+
+      expect(screen.getByTestId("mobile-roadmap-item-RM-002")).toBeInTheDocument();
+    });
+
+    it("can select a roadmap from mobile list", async () => {
+      render(<RoadmapsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-roadmap-item-RM-001")).toBeInTheDocument();
+      });
+
+      // Click on a roadmap item
+      fireEvent.click(screen.getByTestId("mobile-roadmap-item-RM-001"));
+
+      // Should show the mobile header with the roadmap title
+      await waitFor(() => {
+        expect(screen.getByTestId("roadmaps-view__mobile-header")).toBeInTheDocument();
+        expect(screen.getByText("Q2 Roadmap", { selector: ".roadmaps-view__mobile-header-title" })).toBeInTheDocument();
+      });
+    });
+
+    it("mobile back button deselects roadmap", async () => {
+      render(<RoadmapsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-roadmap-item-RM-001")).toBeInTheDocument();
+      });
+
+      // Select a roadmap
+      fireEvent.click(screen.getByTestId("mobile-roadmap-item-RM-001"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("roadmaps-view__mobile-header")).toBeInTheDocument();
+      });
+
+      // Click back button
+      fireEvent.click(screen.getByTestId("mobile-back-btn"));
+
+      // Should show mobile list again
+      await waitFor(() => {
+        expect(screen.getByTestId("roadmaps-view__mobile-list")).toBeInTheDocument();
+      });
+    });
+
+    it("mobile create button shows create form", async () => {
+      render(<RoadmapsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-create-roadmap-btn")).toBeInTheDocument();
+      });
+
+      // Click create button
+      fireEvent.click(screen.getByTestId("mobile-create-roadmap-btn"));
+
+      // Should show create form
+      await waitFor(() => {
+        expect(screen.getByTestId("create-roadmap-form")).toBeInTheDocument();
+        expect(screen.getByTestId("create-roadmap-title")).toBeInTheDocument();
+      });
+    });
+
+    it("mobile can create roadmap via form", async () => {
+      const newRoadmap = {
+        id: "RM-003",
+        title: "New Roadmap",
+        createdAt: "2026-01-03T00:00:00.000Z",
+        updatedAt: "2026-01-03T00:00:00.000Z",
+      };
+      (api.createRoadmap as ReturnType<typeof vi.fn>).mockResolvedValue(newRoadmap);
+
+      render(<RoadmapsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-create-roadmap-btn")).toBeInTheDocument();
+      });
+
+      // Click create button
+      fireEvent.click(screen.getByTestId("mobile-create-roadmap-btn"));
+
+      // Fill in the form using userEvent for better React integration
+      await waitFor(() => {
+        const titleInput = screen.getByTestId("create-roadmap-title");
+        expect(titleInput).toBeInTheDocument();
+      });
+
+      const titleInput = screen.getByTestId("create-roadmap-title");
+      await userEvent.type(titleInput, "New Roadmap");
+
+      // Submit the form using fireEvent.submit
+      const form = screen.getByTestId("create-roadmap-form").querySelector("form");
+      expect(form).toBeTruthy();
+      fireEvent.submit(form!);
+
+      await waitFor(() => {
+        expect(api.createRoadmap).toHaveBeenCalledWith(
+          { title: "New Roadmap" },
+          undefined
+        );
+        expect(mockAddToast).toHaveBeenCalledWith("Roadmap created", "success");
+      });
+    });
+
+    it("mobile edit and delete buttons are visible on roadmap items", async () => {
+      render(<RoadmapsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-roadmap-item-RM-001")).toBeInTheDocument();
+      });
+
+      // Edit and delete buttons should be visible (not hidden behind hover on mobile)
+      expect(screen.getByTestId("mobile-roadmap-edit-RM-001")).toBeInTheDocument();
+      expect(screen.getByTestId("mobile-roadmap-delete-RM-001")).toBeInTheDocument();
+      expect(screen.getByTestId("mobile-roadmap-export-RM-001")).toBeInTheDocument();
+    });
+
+    it("shows empty state on mobile when no roadmaps", async () => {
+      (api.fetchRoadmaps as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+      render(<RoadmapsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("roadmaps-view__mobile-list")).toBeInTheDocument();
+      });
+
+      expect(screen.getByText("No roadmaps yet.")).toBeInTheDocument();
+      expect(screen.getByTestId("roadmaps-view__mobile-list").textContent).toContain("Create Roadmap");
+    });
+
+    it("mobile header shows action buttons when roadmap selected", async () => {
+      render(<RoadmapsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-roadmap-item-RM-001")).toBeInTheDocument();
+      });
+
+      // Select a roadmap
+      fireEvent.click(screen.getByTestId("mobile-roadmap-item-RM-001"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("roadmaps-view__mobile-header")).toBeInTheDocument();
+      });
+
+      // Action buttons should be visible in header
+      expect(screen.getByTestId("mobile-header-create-btn")).toBeInTheDocument();
+      expect(screen.getByTestId("mobile-header-edit-btn")).toBeInTheDocument();
+      expect(screen.getByTestId("mobile-header-delete-btn")).toBeInTheDocument();
+      expect(screen.getByTestId("mobile-back-btn")).toBeInTheDocument();
     });
   });
 });

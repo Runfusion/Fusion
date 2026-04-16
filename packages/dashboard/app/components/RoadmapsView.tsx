@@ -1,7 +1,8 @@
 import { useState, useCallback } from "react";
-import { Plus, Pencil, Trash2, Check, X, GripVertical, Sparkles, Download, Copy, Loader } from "lucide-react";
+import { Plus, Pencil, Trash2, Check, X, GripVertical, Sparkles, Download, Copy, Loader, ChevronLeft, ArrowLeft } from "lucide-react";
 import type { ToastType } from "../hooks/useToast";
 import { useRoadmaps, type FeatureSuggestion, type MilestoneSuggestion, type SuggestionDraftPatch } from "../hooks/useRoadmaps";
+import { useViewportMode } from "../hooks/useViewportMode";
 import type {
   Roadmap,
   RoadmapMilestone,
@@ -261,6 +262,190 @@ function RoadmapItem({
         >
           <Trash2 size={14} />
         </span>
+      </div>
+    </div>
+  );
+}
+
+// ── Mobile Roadmap List ──────────────────────────────────────────────
+
+function MobileRoadmapList({
+  roadmaps,
+  selectedRoadmapId,
+  onSelect,
+  onCreate,
+  onEdit,
+  onDelete,
+  onExport,
+  showCreateForm,
+  onCancelCreate,
+  onSaveCreate,
+}: {
+  roadmaps: Roadmap[];
+  selectedRoadmapId: string | null;
+  onSelect: (id: string) => void;
+  onCreate: () => void;
+  onEdit: (roadmap: Roadmap) => void;
+  onDelete: (roadmapId: string) => void;
+  onExport: (roadmap: Roadmap) => void;
+  showCreateForm: boolean;
+  onCancelCreate: () => void;
+  onSaveCreate: (input: RoadmapCreateInput) => void;
+}) {
+  return (
+    <div className="roadmaps-view__mobile-list" data-testid="roadmaps-view__mobile-list">
+      <div className="roadmaps-view__mobile-list-header">
+        <h2 className="roadmaps-view__mobile-list-title">Roadmaps</h2>
+        {!showCreateForm && (
+          <button
+            className="roadmaps-view__mobile-add-btn"
+            onClick={onCreate}
+            title="Create roadmap"
+            aria-label="Create roadmap"
+            data-testid="mobile-create-roadmap-btn"
+          >
+            <Plus size={18} />
+          </button>
+        )}
+      </div>
+
+      {showCreateForm && (
+        <div className="roadmaps-view__mobile-create-form">
+          <CreateRoadmapForm onSave={onSaveCreate} onCancel={onCancelCreate} />
+        </div>
+      )}
+
+      {roadmaps.length === 0 && !showCreateForm ? (
+        <div className="roadmaps-view__mobile-empty">
+          <p>No roadmaps yet.</p>
+          <button className="btn btn-primary btn-sm" onClick={onCreate}>
+            <Plus size={14} />
+            <span>Create Roadmap</span>
+          </button>
+        </div>
+      ) : (
+        <div className="roadmaps-view__mobile-list-items">
+          {roadmaps.map((roadmap) => (
+            <div
+              key={roadmap.id}
+              className={`roadmaps-view__mobile-item${roadmap.id === selectedRoadmapId ? " roadmaps-view__mobile-item--active" : ""}`}
+              onClick={() => onSelect(roadmap.id)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  onSelect(roadmap.id);
+                }
+              }}
+              data-testid={`mobile-roadmap-item-${roadmap.id}`}
+            >
+              <div className="roadmaps-view__mobile-item-content">
+                <span className="roadmaps-view__mobile-item-title">{roadmap.title}</span>
+                {roadmap.description && (
+                  <span className="roadmaps-view__mobile-item-desc">{roadmap.description}</span>
+                )}
+              </div>
+              <div className="roadmaps-view__mobile-item-actions">
+                <button
+                  className="roadmaps-view__mobile-action-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onExport(roadmap);
+                  }}
+                  title="Export roadmap"
+                  aria-label="Export roadmap"
+                  data-testid={`mobile-roadmap-export-${roadmap.id}`}
+                >
+                  <Download size={16} />
+                </button>
+                <button
+                  className="roadmaps-view__mobile-action-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEdit(roadmap);
+                  }}
+                  title="Edit roadmap"
+                  aria-label="Edit roadmap"
+                  data-testid={`mobile-roadmap-edit-${roadmap.id}`}
+                >
+                  <Pencil size={16} />
+                </button>
+                <button
+                  className="roadmaps-view__mobile-action-btn roadmaps-view__mobile-action-btn--danger"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(roadmap.id);
+                  }}
+                  title="Delete roadmap"
+                  aria-label="Delete roadmap"
+                  data-testid={`mobile-roadmap-delete-${roadmap.id}`}
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Mobile Roadmap Header (shown when roadmap is selected) ────────────
+
+function MobileRoadmapHeader({
+  roadmapTitle,
+  onBack,
+  onEdit,
+  onDelete,
+  onCreate,
+}: {
+  roadmapTitle: string;
+  onBack: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onCreate: () => void;
+}) {
+  return (
+    <div className="roadmaps-view__mobile-header" data-testid="roadmaps-view__mobile-header">
+      <button
+        className="roadmaps-view__mobile-back-btn"
+        onClick={onBack}
+        title="Back to roadmap list"
+        aria-label="Back to roadmap list"
+        data-testid="mobile-back-btn"
+      >
+        <ArrowLeft size={20} />
+      </button>
+      <h2 className="roadmaps-view__mobile-header-title">{roadmapTitle}</h2>
+      <div className="roadmaps-view__mobile-header-actions">
+        <button
+          className="roadmaps-view__mobile-action-btn"
+          onClick={onCreate}
+          title="Create roadmap"
+          aria-label="Create roadmap"
+          data-testid="mobile-header-create-btn"
+        >
+          <Plus size={18} />
+        </button>
+        <button
+          className="roadmaps-view__mobile-action-btn"
+          onClick={onEdit}
+          title="Edit roadmap"
+          aria-label="Edit roadmap"
+          data-testid="mobile-header-edit-btn"
+        >
+          <Pencil size={18} />
+        </button>
+        <button
+          className="roadmaps-view__mobile-action-btn roadmaps-view__mobile-action-btn--danger"
+          onClick={onDelete}
+          title="Delete roadmap"
+          aria-label="Delete roadmap"
+          data-testid="mobile-header-delete-btn"
+        >
+          <Trash2 size={18} />
+        </button>
       </div>
     </div>
   );
@@ -1219,6 +1404,8 @@ function CreateFeatureForm({
 // ── Main Component ────────────────────────────────────────────────────
 
 export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
+  const isMobile = useViewportMode() === "mobile";
+
   const {
     roadmaps,
     selectedRoadmapId,
@@ -1294,8 +1481,8 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
     description: "",
   });
 
-  // Mobile sidebar state
-  const [mobileSelectedRoadmapId, setMobileSelectedRoadmapId] = useState<string | null>(null);
+  // Mobile roadmap list create form state
+  const [mobileShowCreateForm, setMobileShowCreateForm] = useState(false);
 
   // Milestone drag-and-drop state
   const [milestoneDrag, setMilestoneDrag] = useState<MilestoneDragState>({
@@ -1896,49 +2083,83 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
 
   return (
     <div className="roadmaps-view">
-      {/* Desktop sidebar */}
-      <aside className="roadmaps-view__sidebar" aria-label="Roadmaps">
-        <div className="roadmaps-view__sidebar-header">
-          <h2 className="roadmaps-view__sidebar-title">Roadmaps</h2>
-          <button
-            className="roadmaps-view__add-btn"
-            onClick={() => setCreateForm({ type: "roadmap", title: "", description: "" })}
-            title="Create roadmap"
-            aria-label="Create roadmap"
-            data-testid="create-roadmap-btn"
-          >
-            <Plus size={16} />
-          </button>
-        </div>
+      {/* Mobile Roadmap List (shown when mobile and no roadmap selected) */}
+      {isMobile && !effectiveSelectedRoadmapId && (
+        <MobileRoadmapList
+          roadmaps={roadmaps}
+          selectedRoadmapId={effectiveSelectedRoadmapId}
+          onSelect={(id) => selectRoadmap(id)}
+          onCreate={() => setMobileShowCreateForm(true)}
+          onEdit={handleStartRoadmapEdit}
+          onDelete={handleDeleteRoadmap}
+          onExport={(roadmap) => handleOpenHandoffModal(roadmap.id, roadmap.title)}
+          showCreateForm={mobileShowCreateForm}
+          onCancelCreate={() => setMobileShowCreateForm(false)}
+          onSaveCreate={async (input) => {
+            await handleCreateRoadmap(input);
+            setMobileShowCreateForm(false);
+          }}
+        />
+      )}
 
-        {createForm.type === "roadmap" && (
-          <CreateRoadmapForm
-            onSave={handleCreateRoadmap}
-            onCancel={() => setCreateForm({ type: null, parentId: undefined, title: "", description: "" })}
-          />
-        )}
+      {/* Desktop sidebar (hidden on mobile) */}
+      {!isMobile && (
+        <aside className="roadmaps-view__sidebar" aria-label="Roadmaps">
+          <div className="roadmaps-view__sidebar-header">
+            <h2 className="roadmaps-view__sidebar-title">Roadmaps</h2>
+            <button
+              className="roadmaps-view__add-btn"
+              onClick={() => setCreateForm({ type: "roadmap", title: "", description: "" })}
+              title="Create roadmap"
+              aria-label="Create roadmap"
+              data-testid="create-roadmap-btn"
+            >
+              <Plus size={16} />
+            </button>
+          </div>
 
-        <div className="roadmaps-view__sidebar-list">
-          {roadmaps.length === 0 ? (
-            <p className="roadmaps-view__empty-sidebar">No roadmaps yet. Click + to create one.</p>
-          ) : (
-            roadmaps.map((roadmap) => (
-              <RoadmapItem
-                key={roadmap.id}
-                roadmap={roadmap}
-                isSelected={roadmap.id === effectiveSelectedRoadmapId}
-                onSelect={() => selectRoadmap(roadmap.id)}
-                onEdit={() => handleStartRoadmapEdit(roadmap)}
-                onDelete={() => handleDeleteRoadmap(roadmap.id)}
-                onExport={() => handleOpenHandoffModal(roadmap.id, roadmap.title)}
-              />
-            ))
+          {createForm.type === "roadmap" && (
+            <CreateRoadmapForm
+              onSave={handleCreateRoadmap}
+              onCancel={() => setCreateForm({ type: null, parentId: undefined, title: "", description: "" })}
+            />
           )}
-        </div>
-      </aside>
+
+          <div className="roadmaps-view__sidebar-list">
+            {roadmaps.length === 0 ? (
+              <p className="roadmaps-view__empty-sidebar">No roadmaps yet. Click + to create one.</p>
+            ) : (
+              roadmaps.map((roadmap) => (
+                <RoadmapItem
+                  key={roadmap.id}
+                  roadmap={roadmap}
+                  isSelected={roadmap.id === effectiveSelectedRoadmapId}
+                  onSelect={() => selectRoadmap(roadmap.id)}
+                  onEdit={() => handleStartRoadmapEdit(roadmap)}
+                  onDelete={() => handleDeleteRoadmap(roadmap.id)}
+                  onExport={() => handleOpenHandoffModal(roadmap.id, roadmap.title)}
+                />
+              ))
+            )}
+          </div>
+        </aside>
+      )}
 
       {/* Main content */}
       <main className="roadmaps-view__main" aria-label="Roadmap content">
+        {/* Mobile header when roadmap is selected */}
+        {isMobile && effectiveSelectedRoadmapId && (
+          <MobileRoadmapHeader
+            roadmapTitle={selectedRoadmap?.title || "Untitled Roadmap"}
+            onBack={() => selectRoadmap(null)}
+            onEdit={() => {
+              if (selectedRoadmap) handleStartRoadmapEdit(selectedRoadmap);
+            }}
+            onDelete={() => handleDeleteRoadmap(effectiveSelectedRoadmapId)}
+            onCreate={() => setMobileShowCreateForm(true)}
+          />
+        )}
+
         {!effectiveSelectedRoadmapId ? (
           <div className="roadmaps-view__empty-main">
             <p>Select a roadmap from the sidebar to view its milestones.</p>
