@@ -37,6 +37,8 @@ Triage → Todo → In Progress → In Review → Done → Archived
 | `fn_feature_link_task` | Link a feature to a task |
 | `fn_agent_stop` | Stop (pause) a running agent |
 | `fn_agent_start` | Start (resume) a stopped agent |
+| `fn_skills_search` | Search skills.sh for agent skills |
+| `fn_skills_install` | Install a skill from skills.sh |
 
 ## CLI Commands (fn)
 

@@ -262,6 +262,26 @@ Start (resume) a stopped agent. Transitions the agent from paused to active stat
 |-----------|------|----------|-------------|
 | `id` | string | ✓ | Agent ID to start (e.g., agent-abc123) |
 
+## Skills Tools
+
+### fn_skills_search
+
+Search the skills.sh directory for agent skills. Returns matching skills with names, sources, install counts, and install commands.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | ✓ | Search query — framework, technology, or capability (e.g., "react", "firebase", "testing", "docker") |
+| `limit` | number | — | Max results (default: 10, max: 50) |
+
+### fn_skills_install
+
+Install an agent skill from skills.sh into the current project. Downloads skill files into the project's skill directories.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `source` | string | ✓ | GitHub source in owner/repo format (e.g., "firebase/agent-skills") |
+| `skill` | string | — | Specific skill name to install. Omit to install all skills from the source. |
+
 ## Dashboard Command
 
 ### /fn

@@ -116,6 +116,9 @@ describe("fn pi extension", () => {
         // Agent tools
         "fn_agent_stop",
         "fn_agent_start",
+        // Skills tools
+        "fn_skills_search",
+        "fn_skills_install",
       ];
 
       for (const name of expected) {

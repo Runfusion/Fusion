@@ -1639,6 +1639,182 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
+  // ── fn_skills_search ─────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "fn_skills_search",
+    label: "FN: Search Skills",
+    description:
+      "Search the skills.sh directory for agent skills. Returns matching skills with names, " +
+      "sources (owner/repo), install counts, and install commands. " +
+      "Use fn_skills_install to install a selected skill.",
+    promptSnippet: "Search skills.sh for agent skills",
+    promptGuidelines: [
+      "Use fn_skills_search to discover skills before installing",
+      "Returns skills sorted by popularity (install count)",
+    ],
+    parameters: Type.Object({
+      query: Type.String({
+        description:
+          "Search query — framework name, technology, or capability (e.g., 'react', 'firebase', 'testing', 'docker')",
+      }),
+      limit: Type.Optional(
+        Type.Number({
+          description: "Max results to return (default: 10, max: 50)",
+          minimum: 1,
+          maximum: 50,
+        }),
+      ),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // Dynamic import to match existing extension patterns
+      const { searchSkills, formatInstalls } = await import("./commands/skills.js");
+
+      const skills = await searchSkills(params.query, params.limit ?? 10);
+
+      if (skills.length === 0) {
+        return {
+          content: [{ type: "text", text: `No skills found for '${params.query}'` }],
+          details: { count: 0, skills: [] },
+        };
+      }
+
+      const lines: string[] = [];
+      lines.push(`Found ${skills.length} skills matching '${params.query}':\n`);
+
+      for (let i = 0; i < skills.length; i++) {
+        const skill = skills[i]!;
+        const installs = formatInstalls(skill.installs);
+        lines.push(`${i + 1}. ${skill.name} (${skill.source})${installs ? ` — ${installs}` : ""}`);
+      }
+
+      lines.push("\nInstall a skill with: fn_skills_install({ source: \"<owner/repo>\", skill: \"<name>\" })");
+
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        details: {
+          count: skills.length,
+          skills: skills.map((s) => ({
+            name: s.name,
+            source: s.source,
+            installs: s.installs,
+            installCommand: `fn skills install ${s.source} --skill ${s.name}`,
+          })),
+        },
+      };
+    },
+  });
+
+  // ── fn_skills_install ─────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "fn_skills_install",
+    label: "FN: Install Skill",
+    description:
+      "Install an agent skill from skills.sh into the current project. " +
+      "Downloads skill files into the project's skill directories (.pi/skills/, .agents/skills/). " +
+      "The skill becomes available to AI agents in subsequent sessions.",
+    promptSnippet: "Install a skill from skills.sh into the current project",
+    promptGuidelines: [
+      "Use fn_skills_install after fn_skills_search to install a discovered skill",
+      "The source is in owner/repo format (e.g., 'firebase/agent-skills')",
+      "Specify the skill name to install a specific skill, or omit to install all from the source",
+    ],
+    parameters: Type.Object({
+      source: Type.String({
+        description: "GitHub source in owner/repo format (e.g., 'firebase/agent-skills')",
+      }),
+      skill: Type.Optional(
+        Type.String({
+          description: "Specific skill name to install (e.g., 'firebase-basics'). Omit to install all skills from the source.",
+        }),
+      ),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // Validate source format
+      if (!/^[^/]+\/[^/]+$/.test(params.source)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Invalid source format: '${params.source}'. Use owner/repo format (e.g., 'firebase/agent-skills').`,
+            },
+          ],
+          isError: true,
+          details: { error: "Invalid source format" },
+        };
+      }
+
+      // Build npx skills add arguments
+      const npxArgs = ["skills", "add", params.source];
+
+      if (params.skill) {
+        npxArgs.push("--skill", params.skill);
+      }
+
+      // Non-interactive mode (-y) targeting pi agent (-a pi)
+      npxArgs.push("-y", "-a", "pi");
+
+      // Execute via spawn
+      const child = spawn("npx", npxArgs, {
+        cwd: ctx.cwd,
+        stdio: "pipe",
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      child.stdout?.on("data", (data) => {
+        stdout += data.toString();
+      });
+
+      child.stderr?.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      const exitCode = await new Promise<number>((resolve) => {
+        child.on("exit", (code) => {
+          resolve(code ?? 1);
+        });
+        child.on("error", () => {
+          resolve(1);
+        });
+      });
+
+      try {
+        // Always dispose the child process
+        child.kill();
+      } catch {
+        // Ignore errors during cleanup
+      }
+
+      if (exitCode !== 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to install skill: ${stderr || "npx skills add exited with code " + exitCode}`,
+            },
+          ],
+          isError: true,
+          details: { exitCode, stderr },
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Installed skill from ${params.source}. Skills are discovered from .pi/skills/ and .agents/skills/. The skill will be available in future agent sessions.`,
+          },
+        ],
+        details: { source: params.source, skill: params.skill ?? "all" },
+      };
+    },
+  });
+
   // ── /fn command — start the dashboard + engine ───────────────────
 
   let dashboardProcess: ChildProcess | null = null;

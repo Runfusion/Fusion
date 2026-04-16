@@ -58,6 +58,7 @@ const { runAgentExport } = await import("./commands/agent-export.js");
 const { runMessageInbox, runMessageOutbox, runMessageSend, runMessageRead, runMessageDelete, runAgentMailbox } = await import("./commands/message.js");
 const { runPluginList, runPluginInstall, runPluginUninstall, runPluginEnable, runPluginDisable } = await import("./commands/plugin.js");
 const { runPluginCreate } = await import("./commands/plugin-scaffold.js");
+const { runSkillsSearch, runSkillsInstall } = await import("./commands/skills.js");
 
 const HELP = `
 fn — AI-orchestrated task board
@@ -154,6 +155,11 @@ Usage:
   fn plugin enable <id>             Enable a plugin
   fn plugin disable <id>             Disable a plugin
   fn plugin create <name>           Scaffold a new plugin project
+  fn skills search <query>            Search skills.sh for agent skills
+  fn skills search <query> --limit 5  Limit results
+  fn skills install <owner/repo>      Install skills from a source
+  fn skills install <owner/repo> --skill <name>
+                                      Install a specific skill
 
 Options:
   --project, -P <name>       Target a specific project (bypasses CWD detection)
@@ -1053,6 +1059,74 @@ async function main() {
             console.log("Try: fn plugin list | install | uninstall | enable | disable | create");
             process.exit(1);
         }
+        break;
+      }
+
+      case "skills": {
+        const subcommand = args[1];
+
+        if (!subcommand || subcommand === "--help" || subcommand === "-h") {
+          console.log("fn skills — Browse and install skills from skills.sh\n");
+          console.log("Usage:");
+          console.log("  fn skills search <query>            Search skills.sh for agent skills");
+          console.log("  fn skills search <query> --limit 5  Limit results (default: 10, max: 50)");
+          console.log("  fn skills install <owner/repo>      Install skills from a source");
+          console.log("  fn skills install <owner/repo> --skill <name>");
+          console.log("                                      Install a specific skill");
+          console.log("\nExamples:");
+          console.log("  fn skills search react");
+          console.log("  fn skills search firebase --limit 5");
+          console.log("  fn skills install firebase/agent-skills");
+          console.log("  fn skills install firebase/agent-skills --skill firebase-basics");
+          break;
+        }
+
+        if (subcommand === "search") {
+          // Collect all remaining args as the query
+          const queryArgs = args.slice(2);
+
+          // Parse --limit option
+          let limit = 10;
+          const filteredArgs: string[] = [];
+          for (let i = 0; i < queryArgs.length; i++) {
+            if (queryArgs[i] === "--limit" && i + 1 < queryArgs.length) {
+              const parsed = parseInt(queryArgs[i + 1], 10);
+              if (!isNaN(parsed)) {
+                limit = Math.min(Math.max(parsed, 1), 50);
+              }
+              i++; // skip the value
+            } else {
+              filteredArgs.push(queryArgs[i]!);
+            }
+          }
+
+          await runSkillsSearch(filteredArgs, { limit });
+          break;
+        }
+
+        if (subcommand === "install") {
+          // Collect all remaining args as the source and options
+          const installArgs = args.slice(2);
+
+          // Parse --skill option
+          let skill: string | undefined;
+          const filteredArgs: string[] = [];
+          for (let i = 0; i < installArgs.length; i++) {
+            if (installArgs[i] === "--skill" && i + 1 < installArgs.length) {
+              skill = installArgs[i + 1];
+              i++; // skip the value
+            } else {
+              filteredArgs.push(installArgs[i]!);
+            }
+          }
+
+          await runSkillsInstall(filteredArgs, { skill });
+          break;
+        }
+
+        console.error(`Unknown subcommand: skills ${subcommand}`);
+        console.log("Try: fn skills search | install");
+        process.exit(1);
         break;
       }
 
