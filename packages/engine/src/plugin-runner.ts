@@ -14,6 +14,7 @@ import type {
   FusionPlugin,
   PluginToolDefinition,
   PluginRouteDefinition,
+  PluginUiSlotDefinition,
   PluginContext,
 } from "@fusion/core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
@@ -51,14 +52,24 @@ interface CachedRoutes {
   version: number;
 }
 
+/**
+ * Cached UI slots - rebuilt when plugin state changes
+ */
+interface CachedUiSlots {
+  slots: Array<{ pluginId: string; slot: PluginUiSlotDefinition }>;
+  version: number;
+}
+
 const DEFAULT_HOOK_TIMEOUT_MS = 5000;
 
 export class PluginRunner {
   private readonly log = createLogger("plugin-runner");
   private cachedTools: CachedTools | null = null;
   private cachedRoutes: CachedRoutes | null = null;
+  private cachedUiSlots: CachedUiSlots | null = null;
   private toolsCacheVersion = 0;
   private routesCacheVersion = 0;
+  private uiSlotsCacheVersion = 0;
   private hookTimeoutMs: number;
 
   // Event handler references for cleanup
@@ -114,6 +125,7 @@ export class PluginRunner {
     // Build initial caches
     this.invalidateToolsCache();
     this.invalidateRoutesCache();
+    this.invalidateUiSlotsCache();
   }
 
   /**
@@ -183,6 +195,20 @@ export class PluginRunner {
   }
 
   /**
+   * Get all UI slot definitions from loaded plugins.
+   * UI slots are cached and only rebuilt when plugin state changes.
+   */
+  getPluginUiSlots(): Array<{ pluginId: string; slot: PluginUiSlotDefinition }> {
+    if (!this.cachedUiSlots || this.cachedUiSlots.version !== this.uiSlotsCacheVersion) {
+      this.cachedUiSlots = {
+        slots: this.options.pluginLoader.getPluginUiSlots(),
+        version: this.uiSlotsCacheVersion,
+      };
+    }
+    return this.cachedUiSlots.slots;
+  }
+
+  /**
    * Get the underlying plugin loader.
    */
   getLoader(): PluginLoader {
@@ -205,6 +231,7 @@ export class PluginRunner {
     await this.options.pluginLoader.reloadPlugin(pluginId);
     this.invalidateToolsCache();
     this.invalidateRoutesCache();
+    this.invalidateUiSlotsCache();
     executorLog.log(`Plugin ${pluginId} reloaded`);
   }
 
@@ -214,11 +241,14 @@ export class PluginRunner {
    * Handle plugin:enabled event - automatically load the plugin.
    */
   private async onPluginEnabled(plugin: import("@fusion/core").PluginInstallation): Promise<void> {
+    // Invalidate caches before the operation to ensure fresh state regardless of outcome
+    this.invalidateToolsCache();
+    this.invalidateRoutesCache();
+    this.invalidateUiSlotsCache();
+
     try {
       executorLog.log(`Auto-loading enabled plugin: ${plugin.id}`);
       await this.options.pluginLoader.loadPlugin(plugin.id);
-      this.invalidateToolsCache();
-      this.invalidateRoutesCache();
     } catch (err) {
       this.log.error(`Failed to auto-load plugin ${plugin.id}:`, err);
       // Don't rethrow - error isolation
@@ -229,11 +259,14 @@ export class PluginRunner {
    * Handle plugin:disabled event - automatically stop the plugin.
    */
   private async onPluginDisabled(plugin: import("@fusion/core").PluginInstallation): Promise<void> {
+    // Invalidate caches before the operation to ensure fresh state regardless of outcome
+    this.invalidateToolsCache();
+    this.invalidateRoutesCache();
+    this.invalidateUiSlotsCache();
+
     try {
       executorLog.log(`Auto-stopping disabled plugin: ${plugin.id}`);
       await this.options.pluginLoader.stopPlugin(plugin.id);
-      this.invalidateToolsCache();
-      this.invalidateRoutesCache();
     } catch (err) {
       this.log.error(`Failed to auto-stop plugin ${plugin.id}:`, err);
       // Don't rethrow - error isolation
@@ -244,11 +277,14 @@ export class PluginRunner {
    * Handle plugin:unregistered event - ensure plugin is stopped.
    */
   private async onPluginUnregistered(plugin: import("@fusion/core").PluginInstallation): Promise<void> {
+    // Invalidate caches before the operation to ensure fresh state regardless of outcome
+    this.invalidateToolsCache();
+    this.invalidateRoutesCache();
+    this.invalidateUiSlotsCache();
+
     try {
       executorLog.log(`Stopping unregistered plugin: ${plugin.id}`);
       await this.options.pluginLoader.stopPlugin(plugin.id);
-      this.invalidateToolsCache();
-      this.invalidateRoutesCache();
     } catch {
       // Ignore - plugin might not be loaded
     }
@@ -260,6 +296,7 @@ export class PluginRunner {
   private onPluginStateChanged(): void {
     this.invalidateToolsCache();
     this.invalidateRoutesCache();
+    this.invalidateUiSlotsCache();
   }
 
   /**
@@ -268,6 +305,7 @@ export class PluginRunner {
   private onPluginUpdated(): void {
     this.invalidateToolsCache();
     this.invalidateRoutesCache();
+    this.invalidateUiSlotsCache();
   }
 
   /**
@@ -276,6 +314,7 @@ export class PluginRunner {
   private onPluginLoaded(_event: { pluginId: string }): void {
     this.invalidateToolsCache();
     this.invalidateRoutesCache();
+    this.invalidateUiSlotsCache();
   }
 
   /**
@@ -284,6 +323,7 @@ export class PluginRunner {
   private onPluginUnloaded(_event: { pluginId: string }): void {
     this.invalidateToolsCache();
     this.invalidateRoutesCache();
+    this.invalidateUiSlotsCache();
   }
 
   /**
@@ -292,6 +332,7 @@ export class PluginRunner {
   private onPluginReloaded(_event: { pluginId: string }): void {
     this.invalidateToolsCache();
     this.invalidateRoutesCache();
+    this.invalidateUiSlotsCache();
   }
 
   // ── Tool Conversion ───────────────────────────────────────────────
@@ -449,6 +490,14 @@ export class PluginRunner {
   private invalidateRoutesCache(): void {
     this.routesCacheVersion++;
     this.log.log(`Routes cache invalidated (version: ${this.routesCacheVersion})`);
+  }
+
+  /**
+   * Invalidate the UI slots cache, forcing rebuild on next access.
+   */
+  private invalidateUiSlotsCache(): void {
+    this.uiSlotsCacheVersion++;
+    this.log.log(`UI slots cache invalidated (version: ${this.uiSlotsCacheVersion})`);
   }
 
   // ── Store Event Subscriptions ────────────────────────────────────

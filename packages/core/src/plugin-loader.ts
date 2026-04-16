@@ -19,6 +19,7 @@ import type {
   PluginLogger,
   PluginToolDefinition,
   PluginRouteDefinition,
+  PluginUiSlotDefinition,
   PluginState,
   PluginInstallation,
 } from "./plugin-types.js";
@@ -727,6 +728,21 @@ export class PluginLoader extends EventEmitter<{
       }
     }
     return routes;
+  }
+
+  /**
+   * Get all UI slot definitions from loaded plugins.
+   */
+  getPluginUiSlots(): Array<{ pluginId: string; slot: PluginUiSlotDefinition }> {
+    const slots: Array<{ pluginId: string; slot: PluginUiSlotDefinition }> = [];
+    for (const [pluginId, plugin] of this.plugins) {
+      if (plugin.uiSlots) {
+        for (const slot of plugin.uiSlots) {
+          slots.push({ pluginId, slot });
+        }
+      }
+    }
+    return slots;
   }
 
   /**

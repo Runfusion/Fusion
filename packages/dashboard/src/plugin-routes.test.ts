@@ -87,6 +87,7 @@ function createMockPluginLoader(overrides: Partial<PluginLoader> = {}): PluginLo
     getLoadedPlugins: vi.fn().mockReturnValue([]),
     getPluginTools: vi.fn().mockReturnValue([]),
     getPluginRoutes: vi.fn().mockReturnValue([]),
+    getPluginUiSlots: vi.fn().mockReturnValue([]),
     loadAllPlugins: vi.fn().mockResolvedValue({ loaded: 0, errors: 0 }),
     stopAllPlugins: vi.fn().mockResolvedValue(undefined),
     invokeHook: vi.fn().mockResolvedValue(undefined),
@@ -655,5 +656,117 @@ describe("POST /api/plugins mode:install — dist-folder parent resolution", () 
     expect(pluginStore.registerPlugin).toHaveBeenCalledWith(
       expect.objectContaining({ path: distPath }),
     );
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════
+describe("GET /api/plugins/ui-slots", () => {
+  let pluginStore: PluginStore;
+  let pluginLoader: PluginLoader;
+  let store: TaskStore;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    pluginStore = createMockPluginStore();
+    pluginLoader = createMockPluginLoader();
+    store = createMockTaskStore({
+      getPluginStore: vi.fn().mockReturnValue(pluginStore),
+    });
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { pluginStore, pluginLoader }));
+    return app;
+  }
+
+  it("returns 200 with empty array when no plugins have uiSlots", async () => {
+    (pluginLoader.getPluginUiSlots as ReturnType<typeof vi.fn>).mockReturnValue([]);
+
+    const res = await performGet(buildApp(), "/api/plugins/ui-slots");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it("returns 200 with aggregated slots when plugins have uiSlots", async () => {
+    const mockSlots = [
+      {
+        pluginId: "test-plugin",
+        slot: {
+          slotId: "task-detail-tab",
+          label: "Task Details",
+          componentPath: "./components/TaskDetailTab.js",
+        },
+      },
+      {
+        pluginId: "test-plugin",
+        slot: {
+          slotId: "header-action",
+          label: "Header Action",
+          icon: "Plus",
+          componentPath: "./components/HeaderAction.js",
+        },
+      },
+    ];
+    (pluginLoader.getPluginUiSlots as ReturnType<typeof vi.fn>).mockReturnValue(mockSlots);
+
+    const res = await performGet(buildApp(), "/api/plugins/ui-slots");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(mockSlots);
+    expect(res.body).toHaveLength(2);
+    expect(res.body[0].pluginId).toBe("test-plugin");
+    expect(res.body[0].slot.slotId).toBe("task-detail-tab");
+    expect(res.body[1].slot.icon).toBe("Plus");
+  });
+
+  it("response shape is Array<{ pluginId: string; slot: PluginUiSlotDefinition }>", async () => {
+    const mockSlots = [
+      {
+        pluginId: "plugin-a",
+        slot: {
+          slotId: "custom-slot",
+          label: "Custom Slot",
+          componentPath: "./components/CustomSlot.js",
+        },
+      },
+    ];
+    (pluginLoader.getPluginUiSlots as ReturnType<typeof vi.fn>).mockReturnValue(mockSlots);
+
+    const res = await performGet(buildApp(), "/api/plugins/ui-slots");
+
+    expect(res.status).toBe(200);
+    // Verify response shape
+    expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body[0]).toHaveProperty("pluginId");
+    expect(typeof res.body[0].pluginId).toBe("string");
+    expect(res.body[0]).toHaveProperty("slot");
+    expect(res.body[0].slot).toHaveProperty("slotId");
+    expect(res.body[0].slot).toHaveProperty("label");
+    expect(res.body[0].slot).toHaveProperty("componentPath");
+  });
+
+  it("returns empty array when pluginLoader is not available", async () => {
+    // Build app without pluginLoader
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { pluginStore }));
+    const res = await performGet(app, "/api/plugins/ui-slots");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it("does not conflict with /plugins/:id route", async () => {
+    // Verify that /plugins/ui-slots doesn't get matched by /plugins/:id
+    (pluginLoader.getPluginUiSlots as ReturnType<typeof vi.fn>).mockReturnValue([]);
+
+    const res = await performGet(buildApp(), "/api/plugins/ui-slots");
+
+    // Should return 200, not 404 (which would happen if :id = "ui-slots" matched)
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
   });
 });

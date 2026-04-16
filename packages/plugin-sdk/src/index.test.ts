@@ -189,6 +189,55 @@ describe("Plugin SDK", () => {
       };
       expect(ctx.pluginId).toBe("test");
     });
+
+    it("exports PluginUiSlotDefinition type", () => {
+      // This is a compile-time test - if types are exported correctly, this will compile
+      const slot: import("../../core/src/plugin-types.js").PluginUiSlotDefinition = {
+        slotId: "task-detail-tab",
+        label: "Task Details",
+        icon: "FileText",
+        componentPath: "./components/TaskDetailTab.js",
+      };
+      expect(slot.slotId).toBe("task-detail-tab");
+      expect(slot.label).toBe("Task Details");
+      expect(slot.icon).toBe("FileText");
+      expect(slot.componentPath).toBe("./components/TaskDetailTab.js");
+    });
+
+    it("PluginUiSlotDefinition icon is optional", () => {
+      // This is a compile-time test - if types are exported correctly, this will compile
+      const slot: import("../../core/src/plugin-types.js").PluginUiSlotDefinition = {
+        slotId: "header-action",
+        label: "Header Action",
+        componentPath: "./components/HeaderAction.js",
+      };
+      expect(slot.slotId).toBe("header-action");
+      expect((slot as any).icon).toBeUndefined();
+    });
+
+    it("PluginUiSlotDefinition can be used in FusionPlugin", () => {
+      // This verifies that PluginUiSlotDefinition can be used in the FusionPlugin interface
+      const plugin: FusionPlugin = {
+        manifest: {
+          id: "test",
+          name: "Test",
+          version: "1.0.0",
+        },
+        state: "installed",
+        hooks: {},
+        tools: [],
+        routes: [],
+        uiSlots: [
+          {
+            slotId: "custom-tab",
+            label: "Custom Tab",
+            componentPath: "./components/CustomTab.js",
+          },
+        ],
+      };
+      expect(plugin.uiSlots).toHaveLength(1);
+      expect(plugin.uiSlots![0].slotId).toBe("custom-tab");
+    });
   });
 
   // ── validatePluginManifest ───────────────────────────────────────────

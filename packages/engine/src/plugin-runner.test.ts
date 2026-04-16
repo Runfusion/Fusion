@@ -31,6 +31,7 @@ describe("PluginRunner", () => {
     invokeHook: ReturnType<typeof vi.fn>;
     getPluginTools: ReturnType<typeof vi.fn>;
     getPluginRoutes: ReturnType<typeof vi.fn>;
+    getPluginUiSlots: ReturnType<typeof vi.fn>;
     getLoadedPlugins: ReturnType<typeof vi.fn>;
     getPlugin: ReturnType<typeof vi.fn>;
     loadPlugin: ReturnType<typeof vi.fn>;
@@ -70,6 +71,7 @@ describe("PluginRunner", () => {
       invokeHook: vi.fn().mockResolvedValue(undefined),
       getPluginTools: vi.fn().mockReturnValue([]),
       getPluginRoutes: vi.fn().mockReturnValue([]),
+      getPluginUiSlots: vi.fn().mockReturnValue([]),
       getLoadedPlugins: vi.fn().mockReturnValue([]),
       getPlugin: vi.fn(),
       loadPlugin: vi.fn().mockResolvedValue({}),
@@ -277,6 +279,202 @@ describe("PluginRunner", () => {
       await pluginRunner.init();
       const routes = pluginRunner.getPluginRoutes();
       expect(routes).toEqual([]);
+    });
+  });
+
+  describe("getPluginUiSlots()", () => {
+    it("should return empty array when no plugins have uiSlots", async () => {
+      mockPluginLoader.getPluginUiSlots.mockReturnValue([]);
+      await pluginRunner.init();
+      const slots = pluginRunner.getPluginUiSlots();
+      expect(slots).toEqual([]);
+    });
+
+    it("should return cached slots after plugins load", async () => {
+      const mockSlots = [
+        {
+          pluginId: "test-plugin",
+          slot: {
+            slotId: "task-detail-tab",
+            label: "Task Details",
+            componentPath: "./components/TaskDetailTab.js",
+          },
+        },
+      ];
+      mockPluginLoader.getPluginUiSlots.mockReturnValue(mockSlots);
+      
+      await pluginRunner.init();
+      const slots1 = pluginRunner.getPluginUiSlots();
+      const slots2 = pluginRunner.getPluginUiSlots();
+      
+      expect(slots1).toEqual(mockSlots);
+      expect(slots2).toBe(slots1); // Same reference (cached)
+    });
+
+    it("should invalidate cache on plugin:reloaded event", async () => {
+      const mockSlots = [
+        {
+          pluginId: "test-plugin",
+          slot: {
+            slotId: "custom-tab",
+            label: "Custom Tab",
+            componentPath: "./components/CustomTab.js",
+          },
+        },
+      ];
+      mockPluginLoader.getPluginUiSlots.mockReturnValue(mockSlots);
+      
+      await pluginRunner.init();
+      const slots1 = pluginRunner.getPluginUiSlots();
+      expect(slots1).toEqual(mockSlots);
+      
+      // Simulate plugin:reloaded event that invalidates cache
+      const reloadHandler = mockPluginLoader.on.mock.calls.find(
+        call => call[0] === "plugin:reloaded"
+      )?.[1];
+      if (reloadHandler) {
+        reloadHandler({ pluginId: "test-plugin" });
+      }
+      
+      // Next call should rebuild cache
+      const newSlots = [
+        {
+          pluginId: "test-plugin",
+          slot: {
+            slotId: "updated-tab",
+            label: "Updated Tab",
+            componentPath: "./components/UpdatedTab.js",
+          },
+        },
+      ];
+      mockPluginLoader.getPluginUiSlots.mockReturnValue(newSlots);
+      
+      const slots2 = pluginRunner.getPluginUiSlots();
+      expect(slots2).toEqual(newSlots);
+      expect(mockPluginLoader.getPluginUiSlots).toHaveBeenCalledTimes(2);
+    });
+
+    it("should invalidate cache on plugin:enabled event", async () => {
+      mockPluginLoader.getPluginUiSlots.mockReturnValue([]);
+      await pluginRunner.init();
+      
+      // Get initial slots
+      pluginRunner.getPluginUiSlots();
+      
+      // Simulate plugin:enabled event
+      const enabledHandler = mockPluginStore.on.mock.calls.find(
+        call => call[0] === "plugin:enabled"
+      )?.[1];
+      
+      const newPlugin = {
+        id: "new-plugin",
+        name: "New Plugin",
+        version: "1.0.0",
+        path: "/test/path",
+        enabled: true,
+        state: "stopped" as const,
+        settings: {},
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      };
+      
+      if (enabledHandler) {
+        enabledHandler(newPlugin);
+      }
+      
+      // Next call should rebuild cache
+      pluginRunner.getPluginUiSlots();
+      expect(mockPluginLoader.getPluginUiSlots).toHaveBeenCalledTimes(2);
+    });
+
+    it("should invalidate cache on plugin:disabled event", async () => {
+      mockPluginLoader.getPluginUiSlots.mockReturnValue([]);
+      await pluginRunner.init();
+      
+      // Get initial slots
+      pluginRunner.getPluginUiSlots();
+      
+      // Simulate plugin:disabled event
+      const disabledHandler = mockPluginStore.on.mock.calls.find(
+        call => call[0] === "plugin:disabled"
+      )?.[1];
+      
+      const plugin = {
+        id: "test-plugin",
+        name: "Test Plugin",
+        version: "1.0.0",
+        path: "/test/path",
+        enabled: true,
+        state: "stopped" as const,
+        settings: {},
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      };
+      
+      if (disabledHandler) {
+        disabledHandler(plugin);
+      }
+      
+      // Next call should rebuild cache
+      pluginRunner.getPluginUiSlots();
+      expect(mockPluginLoader.getPluginUiSlots).toHaveBeenCalledTimes(2);
+    });
+
+    it("should invalidate cache on plugin:stateChanged event", async () => {
+      mockPluginLoader.getPluginUiSlots.mockReturnValue([]);
+      await pluginRunner.init();
+      
+      // Get initial slots
+      pluginRunner.getPluginUiSlots();
+      
+      // Simulate plugin:stateChanged event
+      const stateHandler = mockPluginStore.on.mock.calls.find(
+        call => call[0] === "plugin:stateChanged"
+      )?.[1];
+      
+      if (stateHandler) {
+        stateHandler();
+      }
+      
+      // Next call should rebuild cache
+      pluginRunner.getPluginUiSlots();
+      expect(mockPluginLoader.getPluginUiSlots).toHaveBeenCalledTimes(2);
+    });
+
+    it("should invalidate cache on plugin:updated event", async () => {
+      mockPluginLoader.getPluginUiSlots.mockReturnValue([]);
+      await pluginRunner.init();
+      
+      // Get initial slots
+      pluginRunner.getPluginUiSlots();
+      
+      // Simulate plugin:updated event
+      const updatedHandler = mockPluginStore.on.mock.calls.find(
+        call => call[0] === "plugin:updated"
+      )?.[1];
+      
+      if (updatedHandler) {
+        updatedHandler();
+      }
+      
+      // Next call should rebuild cache
+      pluginRunner.getPluginUiSlots();
+      expect(mockPluginLoader.getPluginUiSlots).toHaveBeenCalledTimes(2);
+    });
+
+    it("should invalidate cache on reloadPlugin()", async () => {
+      mockPluginLoader.getPluginUiSlots.mockReturnValue([]);
+      await pluginRunner.init();
+      
+      // Get initial slots
+      pluginRunner.getPluginUiSlots();
+      
+      // Call reloadPlugin
+      await pluginRunner.reloadPlugin("test-plugin");
+      
+      // Next call should rebuild cache
+      pluginRunner.getPluginUiSlots();
+      expect(mockPluginLoader.getPluginUiSlots).toHaveBeenCalledTimes(2);
     });
   });
 

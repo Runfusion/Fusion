@@ -12970,6 +12970,16 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   });
 
   /**
+   * GET /api/plugins/ui-slots
+   * Get all UI slot definitions from active plugins.
+   * Returns aggregated array of { pluginId, slot } objects.
+   */
+  router.get("/plugins/ui-slots", async (_req: Request, res: Response) => {
+    const slots = options?.pluginLoader?.getPluginUiSlots() ?? [];
+    res.json(slots);
+  });
+
+  /**
    * GET /api/plugins/:id
    * Get a single plugin by ID.
    * Query: { projectId?: string }

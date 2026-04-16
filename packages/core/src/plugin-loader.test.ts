@@ -813,6 +813,182 @@ describe("PluginLoader", () => {
     });
   });
 
+  // ── getPluginUiSlots ───────────────────────────────────────────────
+
+  describe("getPluginUiSlots", () => {
+    it("returns empty array when no plugins loaded", async () => {
+      await pluginStore.init();
+
+      const loader = new PluginLoader({
+        pluginStore,
+        taskStore: mockTaskStore,
+      });
+
+      const slots = loader.getPluginUiSlots();
+      expect(slots).toEqual([]);
+    });
+
+    it("returns empty array when plugins have no uiSlots", async () => {
+      await pluginStore.init();
+
+      const loader = new PluginLoader({
+        pluginStore,
+        taskStore: mockTaskStore,
+      });
+
+      // Manually add plugin without uiSlots
+      (loader as any).plugins.set("no-ui-slots", {
+        manifest: makeManifest({ id: "no-ui-slots" }),
+        state: "started",
+        hooks: {},
+        tools: [],
+        routes: [],
+      } as FusionPlugin);
+
+      const slots = loader.getPluginUiSlots();
+      expect(slots).toEqual([]);
+    });
+
+    it("returns aggregated slots from single plugin", async () => {
+      await pluginStore.init();
+
+      const loader = new PluginLoader({
+        pluginStore,
+        taskStore: mockTaskStore,
+      });
+
+      // Manually add plugin with uiSlots
+      (loader as any).plugins.set("slots-a", {
+        manifest: makeManifest({ id: "slots-a" }),
+        state: "started",
+        hooks: {},
+        tools: [],
+        routes: [],
+        uiSlots: [
+          {
+            slotId: "task-detail-tab",
+            label: "Task Details",
+            componentPath: "./components/TaskDetailTab.js",
+          },
+        ],
+      } as FusionPlugin);
+
+      const slots = loader.getPluginUiSlots();
+
+      expect(slots).toHaveLength(1);
+      expect(slots[0].pluginId).toBe("slots-a");
+      expect(slots[0].slot.slotId).toBe("task-detail-tab");
+      expect(slots[0].slot.label).toBe("Task Details");
+      expect(slots[0].slot.componentPath).toBe("./components/TaskDetailTab.js");
+    });
+
+    it("returns aggregated slots from multiple plugins", async () => {
+      await pluginStore.init();
+
+      const loader = new PluginLoader({
+        pluginStore,
+        taskStore: mockTaskStore,
+      });
+
+      // Manually add plugins with uiSlots
+      (loader as any).plugins.set("slots-a", {
+        manifest: makeManifest({ id: "slots-a" }),
+        state: "started",
+        hooks: {},
+        tools: [],
+        routes: [],
+        uiSlots: [
+          {
+            slotId: "task-detail-tab",
+            label: "Task Details",
+            componentPath: "./components/TaskDetailTab.js",
+          },
+        ],
+      } as FusionPlugin);
+      (loader as any).plugins.set("slots-b", {
+        manifest: makeManifest({ id: "slots-b" }),
+        state: "started",
+        hooks: {},
+        tools: [],
+        routes: [],
+        uiSlots: [
+          {
+            slotId: "header-action",
+            label: "Header Action",
+            icon: "Plus",
+            componentPath: "./components/HeaderAction.js",
+          },
+          {
+            slotId: "settings-section",
+            label: "Settings",
+            componentPath: "./components/SettingsSection.js",
+          },
+        ],
+      } as FusionPlugin);
+
+      const slots = loader.getPluginUiSlots();
+
+      expect(slots).toHaveLength(3);
+      expect(slots.find((s) => s.pluginId === "slots-a")?.slot.slotId).toBe(
+        "task-detail-tab",
+      );
+      expect(slots.find((s) => s.pluginId === "slots-b")?.slot.slotId).toBe(
+        "header-action",
+      );
+      expect(slots.filter((s) => s.pluginId === "slots-b")).toHaveLength(2);
+    });
+
+    it("each slot includes correct pluginId", async () => {
+      await pluginStore.init();
+
+      const loader = new PluginLoader({
+        pluginStore,
+        taskStore: mockTaskStore,
+      });
+
+      // Manually add plugins with overlapping slotIds (different plugins)
+      (loader as any).plugins.set("plugin-x", {
+        manifest: makeManifest({ id: "plugin-x" }),
+        state: "started",
+        hooks: {},
+        tools: [],
+        routes: [],
+        uiSlots: [
+          {
+            slotId: "custom-tab",
+            label: "Custom Tab",
+            componentPath: "./components/CustomTab.js",
+          },
+        ],
+      } as FusionPlugin);
+      (loader as any).plugins.set("plugin-y", {
+        manifest: makeManifest({ id: "plugin-y" }),
+        state: "started",
+        hooks: {},
+        tools: [],
+        routes: [],
+        uiSlots: [
+          {
+            slotId: "custom-tab",
+            label: "Custom Tab Y",
+            componentPath: "./components/CustomTabY.js",
+          },
+        ],
+      } as FusionPlugin);
+
+      const slots = loader.getPluginUiSlots();
+
+      // Both plugins can have slots with the same slotId
+      const pluginXSlot = slots.find((s) => s.pluginId === "plugin-x");
+      const pluginYSlot = slots.find((s) => s.pluginId === "plugin-y");
+
+      expect(pluginXSlot?.slot.slotId).toBe("custom-tab");
+      expect(pluginXSlot?.slot.label).toBe("Custom Tab");
+      expect(pluginYSlot?.slot.slotId).toBe("custom-tab");
+      expect(pluginYSlot?.slot.label).toBe("Custom Tab Y");
+    });
+  });
+
   // ── getLoadedPlugins ───────────────────────────────────────────────
 
   describe("getLoadedPlugins", () => {

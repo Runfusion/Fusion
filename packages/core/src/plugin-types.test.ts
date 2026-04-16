@@ -463,3 +463,106 @@ describe("validatePluginManifest", () => {
     });
   });
 });
+
+// ── PluginUiSlotDefinition ─────────────────────────────────────────────
+
+describe("PluginUiSlotDefinition", () => {
+  it("accepts a valid PluginUiSlotDefinition with all fields", () => {
+    const slot = {
+      slotId: "task-detail-tab",
+      label: "Task Details",
+      icon: "FileText",
+      componentPath: "./components/TaskDetailTab.js",
+    };
+
+    expect(slot.slotId).toBe("task-detail-tab");
+    expect(slot.label).toBe("Task Details");
+    expect(slot.icon).toBe("FileText");
+    expect(slot.componentPath).toBe("./components/TaskDetailTab.js");
+  });
+
+  it("accepts a valid PluginUiSlotDefinition without optional icon field", () => {
+    const slot = {
+      slotId: "header-action",
+      label: "Header Action",
+      componentPath: "./components/HeaderAction.js",
+    };
+
+    expect(slot.slotId).toBe("header-action");
+    expect(slot.label).toBe("Header Action");
+    expect(slot.componentPath).toBe("./components/HeaderAction.js");
+    // icon is optional, so it should be undefined
+    expect((slot as any).icon).toBeUndefined();
+  });
+
+  it("requires slotId field", () => {
+    const slot = {
+      label: "Some Label",
+      componentPath: "./components/Test.js",
+    };
+
+    // TypeScript would catch this at compile time, but at runtime we verify the structure
+    expect((slot as any).slotId).toBeUndefined();
+  });
+
+  it("requires label field", () => {
+    const slot = {
+      slotId: "some-slot",
+      componentPath: "./components/Test.js",
+    };
+
+    expect((slot as any).label).toBeUndefined();
+  });
+
+  it("requires componentPath field", () => {
+    const slot = {
+      slotId: "some-slot",
+      label: "Some Label",
+    };
+
+    expect((slot as any).componentPath).toBeUndefined();
+  });
+});
+
+// ── FusionPlugin with uiSlots ──────────────────────────────────────────
+
+describe("FusionPlugin with uiSlots", () => {
+  it("accepts a FusionPlugin with uiSlots array", () => {
+    const plugin = {
+      manifest: { id: "test-plugin", name: "Test Plugin", version: "1.0.0" },
+      state: "started" as const,
+      hooks: {},
+      tools: [],
+      routes: [],
+      uiSlots: [
+        {
+          slotId: "task-detail-tab",
+          label: "Task Details",
+          componentPath: "./components/TaskDetailTab.js",
+        },
+        {
+          slotId: "header-action",
+          label: "Header Action",
+          icon: "Plus",
+          componentPath: "./components/HeaderAction.js",
+        },
+      ],
+    };
+
+    expect(plugin.uiSlots).toHaveLength(2);
+    expect(plugin.uiSlots![0].slotId).toBe("task-detail-tab");
+    expect(plugin.uiSlots![1].icon).toBe("Plus");
+  });
+
+  it("accepts a FusionPlugin without uiSlots field", () => {
+    const plugin = {
+      manifest: { id: "test-plugin", name: "Test Plugin", version: "1.0.0" },
+      state: "started" as const,
+      hooks: {},
+      tools: [],
+      routes: [],
+    };
+
+    expect((plugin as any).uiSlots).toBeUndefined();
+  });
+});

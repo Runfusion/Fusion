@@ -107,6 +107,7 @@ export type {
   PluginToolResult,
   PluginRouteDefinition,
   PluginRouteMethod,
+  PluginUiSlotDefinition,
   PluginContext,
   PluginLogger,
   FusionPlugin,

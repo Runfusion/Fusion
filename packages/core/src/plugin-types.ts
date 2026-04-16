@@ -142,6 +142,28 @@ export interface PluginRouteDefinition {
   description?: string;
 }
 
+// ── Plugin UI Slots ─────────────────────────────────────────────────
+
+/**
+ * UI slot definition for plugin-provided dashboard components.
+ * Each slot represents a mount point where a plugin can render UI.
+ */
+export interface PluginUiSlotDefinition {
+  /** Unique slot identifier (e.g., "task-detail-tab", "header-action", "settings-section") */
+  slotId: string;
+  /** Human-readable label for the UI slot */
+  label: string;
+  /** Optional icon name (lucide-react icon name or custom icon identifier) */
+  icon?: string;
+  /**
+   * Path to the JS module that exports the component.
+   * This should be a web component or a function component descriptor
+   * that the dashboard can render in the slot.
+   * Path is relative to the plugin's root directory.
+   */
+  componentPath: string;
+}
+
 // ── Fusion Plugin ────────────────────────────────────────────────────
 
 export type PluginState = "installed" | "started" | "stopped" | "error";
@@ -162,6 +184,7 @@ export interface FusionPlugin {
   };
   tools?: PluginToolDefinition[];
   routes?: PluginRouteDefinition[];
+  uiSlots?: PluginUiSlotDefinition[];
 }
 
 // ── Plugin Installation ───────────────────────────────────────────────
