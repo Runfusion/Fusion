@@ -23554,6 +23554,63 @@ html .column.drag-over * {
   flex-wrap: wrap;
 }
 
+/* Provider cards in onboarding - enhanced card layout for AI setup step */
+.onboarding-provider-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.onboarding-provider-card:hover {
+  border-color: var(--todo);
+  background: var(--card-hover);
+}
+
+.onboarding-provider-card--connected {
+  border-left: 3px solid var(--color-success);
+}
+
+.onboarding-provider-card__icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.onboarding-provider-card__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.onboarding-provider-card__name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+}
+
+.onboarding-provider-card__description {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.onboarding-provider-card__actions {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  align-items: flex-end;
+}
+
 .onboarding-provider-info {
   display: flex;
   flex-direction: column;
@@ -23942,6 +23999,17 @@ html .column.drag-over * {
   .onboarding-provider-row {
     flex-direction: column;
     gap: var(--space-sm);
+  }
+
+  .onboarding-provider-card {
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .onboarding-provider-card__actions {
+    align-items: stretch;
+    flex-direction: row;
+    justify-content: flex-end;
   }
 
   .onboarding-apikey-input {

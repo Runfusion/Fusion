@@ -13,6 +13,24 @@ import {
 } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { CustomModelDropdown } from "./CustomModelDropdown";
+import { ProviderIcon } from "./ProviderIcon";
+
+/** Provider metadata with plain-language descriptions for the onboarding UI */
+const PROVIDER_INFO: Record<string, { description: string }> = {
+  anthropic: { description: "Claude models — strong at reasoning, analysis, and code" },
+  openai: { description: "GPT models — versatile for a wide range of tasks" },
+  "openai-codex": { description: "Codex models by OpenAI — optimized for coding tasks" },
+  google: { description: "Gemini models — multimodal with strong reasoning" },
+  gemini: { description: "Gemini models — multimodal with strong reasoning" },
+  ollama: { description: "Run open-source models locally on your machine" },
+  minimax: { description: "MiniMax models — cost-effective for high-volume usage" },
+  zai: { description: "GLM models by Zhipu AI — strong multilingual support" },
+  kimi: { description: "Kimi by Moonshot AI — long-context capabilities" },
+  moonshot: { description: "Kimi by Moonshot AI — long-context capabilities" },
+};
+
+/** Fallback description for providers not in the map */
+const PROVIDER_INFO_FALLBACK = { description: "AI provider — connect to start using AI models" };
 import {
   getOnboardingState,
   saveOnboardingState,
@@ -667,9 +685,18 @@ export function ModelOnboardingModal({
                 <>
                   {/* OAuth Providers */}
                   {aiOauthProviders.map((provider) => (
-                    <div key={provider.id} className="onboarding-provider-row">
-                      <div className="onboarding-provider-info">
-                        <strong>{provider.name}</strong>
+                    <div
+                      key={provider.id}
+                      className={`onboarding-provider-card${provider.authenticated ? " onboarding-provider-card--connected" : ""}`}
+                    >
+                      <div className="onboarding-provider-card__icon">
+                        <ProviderIcon provider={provider.id} size="md" />
+                      </div>
+                      <div className="onboarding-provider-card__body">
+                        <strong className="onboarding-provider-card__name">{provider.name}</strong>
+                        <span className="onboarding-provider-card__description">
+                          {PROVIDER_INFO[provider.id]?.description ?? PROVIDER_INFO_FALLBACK.description}
+                        </span>
                         <span
                           data-testid={`onboarding-auth-status-${provider.id}`}
                           className={`auth-status-badge ${provider.authenticated ? "authenticated" : "not-authenticated"}`}
@@ -679,7 +706,7 @@ export function ModelOnboardingModal({
                             : "✗ Not authenticated"}
                         </span>
                       </div>
-                      <div>
+                      <div className="onboarding-provider-card__actions">
                         {authActionInProgress === provider.id ? (
                           <>
                             <button className="btn btn-sm" disabled>
@@ -690,7 +717,6 @@ export function ModelOnboardingModal({
                             <button
                               className="btn btn-sm"
                               onClick={() => handleCancelLogin(provider.id)}
-                              style={{ marginLeft: 8 }}
                             >
                               Cancel
                             </button>
@@ -728,12 +754,21 @@ export function ModelOnboardingModal({
 
                   {/* API Key Providers */}
                   {aiApiKeyProviders.map((provider) => (
-                    <div key={provider.id} className="onboarding-provider-row">
-                      <div className="onboarding-provider-info">
-                        <strong>
+                    <div
+                      key={provider.id}
+                      className={`onboarding-provider-card${provider.authenticated ? " onboarding-provider-card--connected" : ""}`}
+                    >
+                      <div className="onboarding-provider-card__icon">
+                        <ProviderIcon provider={provider.id} size="md" />
+                      </div>
+                      <div className="onboarding-provider-card__body">
+                        <strong className="onboarding-provider-card__name">
                           <Key size={14} style={{ marginRight: 4 }} />
                           {provider.name}
                         </strong>
+                        <span className="onboarding-provider-card__description">
+                          {PROVIDER_INFO[provider.id]?.description ?? PROVIDER_INFO_FALLBACK.description}
+                        </span>
                         <span
                           data-testid={`onboarding-auth-status-${provider.id}`}
                           className={`auth-status-badge ${provider.authenticated ? "authenticated" : "not-authenticated"}`}
@@ -743,7 +778,7 @@ export function ModelOnboardingModal({
                             : "✗ No API key"}
                         </span>
                       </div>
-                      <div className="onboarding-apikey-actions">
+                      <div className="onboarding-provider-card__actions">
                         {provider.authenticated ? (
                           <button
                             className="btn btn-sm"

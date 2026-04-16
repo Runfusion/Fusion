@@ -54,6 +54,15 @@ vi.mock("../model-onboarding-state", () => ({
   getStepData: (...args: unknown[]) => mockGetStepData(...args),
 }));
 
+// Mock ProviderIcon for test isolation
+vi.mock("../ProviderIcon", () => ({
+  ProviderIcon: ({ provider, size }: { provider: string; size?: string }) => (
+    <span data-testid="provider-icon" data-provider={provider} data-size={size}>
+      {provider} icon
+    </span>
+  ),
+}));
+
 const defaultAuthProviders: AuthProvider[] = [
   { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
   { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
@@ -299,6 +308,105 @@ describe("ModelOnboardingModal", () => {
       // Input should be empty initially (never prefilled)
       expect(input.value).toBe("");
       expect(input.type).toBe("password");
+    });
+
+    it("renders provider description for OAuth provider", async () => {
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Claude models — strong at reasoning, analysis, and code")).toBeTruthy();
+      });
+
+      // Verify the description is inside a provider card
+      const description = screen.getByText("Claude models — strong at reasoning, analysis, and code");
+      expect(description.closest(".onboarding-provider-card")).toBeTruthy();
+    });
+
+    it("renders provider description for API key provider", async () => {
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("GPT models — versatile for a wide range of tasks")).toBeTruthy();
+      });
+
+      // Verify the description is inside a provider card
+      const description = screen.getByText("GPT models — versatile for a wide range of tasks");
+      expect(description.closest(".onboarding-provider-card")).toBeTruthy();
+    });
+
+    it("renders ProviderIcon for each provider card", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Anthropic")).toBeTruthy();
+        expect(screen.getByText("OpenAI")).toBeTruthy();
+      });
+
+      // Verify provider icons are rendered for both providers
+      const icons = screen.getAllByTestId("provider-icon");
+      expect(icons.length).toBe(2);
+
+      // Verify the data-provider attributes match expected IDs
+      const anthropicIcon = icons.find((icon) => icon.getAttribute("data-provider") === "anthropic");
+      const openaiIcon = icons.find((icon) => icon.getAttribute("data-provider") === "openai");
+      expect(anthropicIcon).toBeTruthy();
+      expect(openaiIcon).toBeTruthy();
+    });
+
+    it("applies connected modifier class to authenticated provider cards", async () => {
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+          { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
+        ],
+      });
+
+      const { container } = render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Anthropic")).toBeTruthy();
+      });
+
+      // Verify the authenticated provider has the connected modifier class
+      const connectedCards = container.querySelectorAll(".onboarding-provider-card--connected");
+      expect(connectedCards.length).toBe(1);
+
+      // Verify the connected card contains Anthropic
+      const anthropicCard = connectedCards[0];
+      expect(anthropicCard?.textContent?.includes("Anthropic")).toBe(true);
+
+      // Verify non-authenticated provider does not have the modifier
+      const allCards = container.querySelectorAll(".onboarding-provider-card");
+      const connectedCardIds = Array.from(connectedCards).map((card) =>
+        card.querySelector(".onboarding-provider-card__name")?.textContent
+      );
+      expect(connectedCardIds).toContain("Anthropic");
+    });
+
+    it("renders fallback description for unknown provider", async () => {
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "unknown-provider", name: "Unknown", authenticated: false, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("AI provider — connect to start using AI models")).toBeTruthy();
+      });
     });
   });
 
