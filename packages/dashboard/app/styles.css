@@ -19446,6 +19446,11 @@ html .column.drag-over * {
   border-top-color: rgba(0, 0, 0, 0.08);
 }
 
+[data-theme="light"] .gm-remote-default-badge {
+  background: rgba(9, 105, 218, 0.1);
+  color: #0969da;
+}
+
 [data-theme="light"] .gm-hash {
   background: rgba(0, 0, 0, 0.05);
 }

@@ -1790,6 +1790,109 @@ describe("GitManagerModal", () => {
     expect(selectorItems[0].classList.contains("selected")).toBe(true);
   });
 
+  it("shows compact remote selector with hostnames, not full URLs", async () => {
+    (fetchGitRemotesDetailed as any).mockResolvedValue([
+      { name: "origin", fetchUrl: "https://github.com/user/repo.git", pushUrl: "https://github.com/user/repo.git" },
+    ]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("remote-selector")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("remote-detail-card")).toBeInTheDocument();
+    });
+
+    const selector = screen.getByTestId("remote-selector");
+    // Selector shows the remote name
+    expect(within(selector).getByText("origin")).toBeInTheDocument();
+    // Selector shows hostname, not full URL
+    expect(within(selector).getByText("github.com")).toBeInTheDocument();
+    // Full URL should NOT be in the selector — only in the detail card
+    expect(selector.textContent).not.toContain("https://github.com/user/repo.git");
+    // Full URL appears in the detail card
+    expect(screen.getByTestId("remote-detail-card").textContent).toContain("https://github.com/user/repo.git");
+  });
+
+  it("shows default badge for origin remote only", async () => {
+    (fetchGitRemotesDetailed as any).mockResolvedValue([
+      { name: "origin", fetchUrl: "https://github.com/user/repo.git", pushUrl: "" },
+      { name: "upstream", fetchUrl: "https://gitlab.com/other/repo.git", pushUrl: "" },
+    ]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("remote-selector")).toBeInTheDocument();
+    });
+
+    // Only origin has default badge — look for "default" text in selector
+    const selector = screen.getByTestId("remote-selector");
+    const badges = within(selector).getAllByText("default");
+    expect(badges.length).toBe(1);
+    expect(within(selector).getByText("upstream")).toBeInTheDocument();
+  });
+
+  it("shows full URLs and edit controls only for selected remote", async () => {
+    (fetchGitRemotesDetailed as any).mockResolvedValue([
+      { name: "origin", fetchUrl: "https://github.com/user/repo.git", pushUrl: "" },
+      { name: "upstream", fetchUrl: "https://gitlab.com/other/repo.git", pushUrl: "" },
+    ]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("remote-detail-card")).toBeInTheDocument();
+    });
+
+    // Detail card shows full URL for auto-selected remote (origin)
+    expect(screen.getByTestId("remote-detail-card").textContent).toContain("https://github.com/user/repo.git");
+    // upstream URL should NOT appear in the detail card
+    expect(screen.getByTestId("remote-detail-card").textContent).not.toContain("gitlab.com/other/repo.git");
+    // Edit buttons are in the detail card
+    expect(screen.getByTitle("Edit remote URL")).toBeInTheDocument();
+  });
+
+  it("shows placeholder in detail panel when no remote selected", async () => {
+    (fetchGitRemotesDetailed as any).mockResolvedValue([
+      { name: "origin", fetchUrl: "https://github.com/user/repo.git", pushUrl: "" },
+    ]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    // Remote is auto-selected, so detail card should be visible
+    await waitFor(() => {
+      expect(screen.getByTestId("remote-detail-card")).toBeInTheDocument();
+    });
+
+    // When there are no remotes, the detail panel shows a placeholder
+    (fetchGitRemotesDetailed as any).mockResolvedValue([]);
+    // Trigger reload by switching tabs
+    fireEvent.click(screen.getByRole("tab", { name: /status/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("No remotes")).toBeInTheDocument();
+    });
+
+    // Detail panel should show empty state message
+    expect(screen.getByText("Select a remote to view details")).toBeInTheDocument();
+  });
+
   // ── Refresh Button ─────────────────────────────────────────
 
   it("refreshes data when refresh button is clicked", async () => {
