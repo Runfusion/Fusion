@@ -394,6 +394,7 @@ export async function runDaemon(opts: DaemonOptions = {}) {
   const app = createServer(store, {
     engine: cwdEngine,
     engineManager,
+    centralCore: sharedCentralCore ?? undefined,
     onMerge: (taskId) => cwdEngine.onMerge(taskId),
     authStorage: dashboardAuthStorage,
     modelRegistry,

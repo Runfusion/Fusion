@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { join, dirname } from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import type { Task, TaskStore, MergeResult, AutomationStore, RoutineStore } from "@fusion/core";
+import type { Task, TaskStore, MergeResult, AutomationStore, RoutineStore, CentralCore } from "@fusion/core";
 import { ChatStore } from "@fusion/core";
 import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
 import { createApiRoutes } from "./routes.js";
@@ -110,6 +110,10 @@ export interface ServerOptions {
   /** ProjectEngineManager for uniform multi-project engine lifecycle.
    *  When provided, the server can resolve per-project engines for route handlers. */
   engineManager?: import("@fusion/engine").ProjectEngineManager;
+  /** Shared CentralCore instance used by the engine manager.
+   *  Routes that mutate central runtime state should use this instance so
+   *  in-process listeners (for example global concurrency changes) are notified. */
+  centralCore?: CentralCore;
   /** Custom merge handler — when provided, used instead of store.mergeTask */
   onMerge?: (taskId: string) => Promise<MergeResult>;
   /** When true, run API/websocket server only (skip frontend static assets + SPA fallback) */

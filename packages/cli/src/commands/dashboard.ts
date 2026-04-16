@@ -577,6 +577,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     app = createServer(store, {
       engine: cwdEngine,
       engineManager,
+      centralCore: centralCoreForEngine,
       authStorage: dashboardAuthStorage,
       modelRegistry,
       automationStore,
@@ -737,6 +738,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     // Dev mode: no engine, pass individual proxy objects to createServer
     app = createServer(store, {
       onMerge,
+      centralCore: centralCoreForMesh ?? undefined,
       authStorage: dashboardAuthStorage,
       modelRegistry,
       automationStore,

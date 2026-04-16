@@ -96,6 +96,24 @@ vi.mock("../../hooks/useMemoryBackendStatus", () => ({
   })),
 }));
 
+// Mock useMemoryBackendStatus hook
+vi.mock("../../hooks/useMemoryBackendStatus", () => ({
+  useMemoryBackendStatus: vi.fn(() => ({
+    currentBackend: "file",
+    capabilities: {
+      readable: true,
+      writable: true,
+      supportsAtomicWrite: true,
+      hasConflictResolution: false,
+      persistent: true,
+    },
+    availableBackends: ["file", "readonly", "qmd"],
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+  })),
+}));
+
 // Mock PluginManager to avoid SSE setup in tests
 vi.mock("../PluginManager", () => ({
   PluginManager: vi.fn(({ addToast }) => (

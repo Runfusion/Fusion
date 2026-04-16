@@ -306,6 +306,137 @@ describe("QuickChatFAB", () => {
     });
   });
 
+  it("switching back to a previous agent restores its conversation", async () => {
+    const sessionForAgent1: ChatSession = {
+      id: "session-agent-001",
+      agentId: "agent-001",
+      status: "active",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const sessionForAgent2: ChatSession = {
+      id: "session-agent-002",
+      agentId: "agent-002",
+      status: "active",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const agent1Messages = [
+      {
+        id: "msg-001",
+        sessionId: "session-agent-001",
+        role: "user" as const,
+        content: "Hello from agent 1",
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: "msg-002",
+        sessionId: "session-agent-001",
+        role: "assistant" as const,
+        content: "Hello from agent 1 assistant",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    const agent2Messages = [
+      {
+        id: "msg-003",
+        sessionId: "session-agent-002",
+        role: "user" as const,
+        content: "Hello from agent 2",
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: "msg-004",
+        sessionId: "session-agent-002",
+        role: "assistant" as const,
+        content: "Agent 2 response",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+
+    // Setup: agent-001 has an existing session, agent-002 does not
+    // Override beforeEach's createChatSession mock (which returns session-001)
+    // so that creating agent-002's session returns the correct ID
+    mockCreateChatSession.mockResolvedValueOnce({ session: sessionForAgent2 });
+    mockFetchChatSessions
+      // Initial load: agent-001's existing session found
+      .mockResolvedValueOnce({ sessions: [sessionForAgent1] })
+      // Switch to agent-002: no session found → will create new
+      .mockResolvedValueOnce({ sessions: [] })
+      // Switch back to agent-001: should find the existing session
+      .mockResolvedValueOnce({ sessions: [sessionForAgent1] });
+
+    // Per-call message mocks
+    mockFetchChatMessages
+      .mockResolvedValueOnce({ messages: agent1Messages })
+      .mockResolvedValueOnce({ messages: agent2Messages })
+      .mockResolvedValueOnce({ messages: agent1Messages });
+
+    render(<QuickChatFAB addToast={addToast} projectId="proj-123" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    // Step 1: Open chat with agent-001 (existing session found)
+    await waitFor(() => {
+      expect(mockFetchChatSessions).toHaveBeenCalledWith("proj-123", "active");
+    });
+
+    // Verify agent-001's messages are shown
+    await waitFor(() => {
+      expect(screen.getByText("Hello from agent 1")).toBeDefined();
+      expect(screen.getByText("Hello from agent 1 assistant")).toBeDefined();
+    });
+
+    // Step 2: Switch to agent-002 → messages should clear then load
+    fireEvent.change(screen.getByTestId("quick-chat-agent-select"), {
+      target: { value: "agent-002" },
+    });
+
+    // New session created for agent-002
+    await waitFor(() => {
+      expect(mockCreateChatSession).toHaveBeenLastCalledWith({ agentId: "agent-002" }, "proj-123");
+    });
+
+    // Verify agent-002's messages are shown
+    await waitFor(() => {
+      expect(screen.getByText("Hello from agent 2")).toBeDefined();
+      expect(screen.getByText("Agent 2 response")).toBeDefined();
+    });
+
+    // Step 3: Switch back to agent-001 → should restore original session
+    fireEvent.change(screen.getByTestId("quick-chat-agent-select"), {
+      target: { value: "agent-001" },
+    });
+
+    // Should find existing session (not create new)
+    await waitFor(() => {
+      // Verify fetchChatSessions was called with correct projectId on each switch
+      expect(mockFetchChatSessions.mock.calls).toEqual([
+        ["proj-123", "active"],
+        ["proj-123", "active"],
+        ["proj-123", "active"],
+      ]);
+      // Verify no new session was created for agent-001 (already had one)
+      expect(mockCreateChatSession).not.toHaveBeenLastCalledWith(
+        { agentId: "agent-001" },
+        "proj-123",
+      );
+    });
+
+    // Verify agent-001's original messages are restored
+    await waitFor(() => {
+      expect(screen.getByText("Hello from agent 1")).toBeDefined();
+      expect(screen.getByText("Hello from agent 1 assistant")).toBeDefined();
+    });
+
+    // Verify fetchChatMessages was called with correct session IDs for each agent
+    expect(mockFetchChatMessages.mock.calls).toEqual([
+      ["session-agent-001", { limit: 50 }, "proj-123"],
+      ["session-agent-002", { limit: 50 }, "proj-123"],
+      ["session-agent-001", { limit: 50 }, "proj-123"],
+    ]);
+  });
+
   it("shows placeholder text when conversation is empty", async () => {
     mockFetchChatMessages.mockResolvedValue({ messages: [] });
 

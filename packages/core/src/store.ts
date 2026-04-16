@@ -28,7 +28,8 @@ const LEGACY_BACKUP_DIR = ".kb/backups";
 
 /**
  * Canonicalizes a settings object by resolving legacy defaults.
- * Currently handles the .kb/backups → .fusion/backups migration.
+ * Currently handles the .kb/backups → .fusion/backups migration and
+ * strips legacy fields that are no longer valid.
  *
  * This function applies only the exact-match legacy alias transformation.
  * Other custom .kb/* paths are preserved as-is.
@@ -43,6 +44,14 @@ function canonicalizeSettings(settings: Settings): Settings {
       autoBackupDir: ".fusion/backups",
     };
   }
+
+  // Strip legacy globalMaxConcurrent from project settings - this field was
+  // deprecated in favor of the global-level maxConcurrent in concurrency settings.
+  const { globalMaxConcurrent, ...rest } = settings as Settings & { globalMaxConcurrent?: number };
+  if (globalMaxConcurrent !== undefined) {
+    return rest as Settings;
+  }
+
   return settings;
 }
 

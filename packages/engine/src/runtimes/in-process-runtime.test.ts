@@ -508,7 +508,7 @@ describe("InProcessRuntime", () => {
       executorOptions.onStart?.({ id: "FN-1661" } as Task, join(testDir, "worktree-FN-1661"));
 
       await vi.waitFor(async () => {
-        const agents = await store.listAgents();
+        const agents = await store.listAgents({ includeEphemeral: true });
         expect(agents).toHaveLength(1);
         expect(agents[0]).toMatchObject({
           name: "executor-FN-1661",
@@ -551,7 +551,7 @@ describe("InProcessRuntime", () => {
       const store = getAgentStore(runtime);
 
       await vi.waitFor(async () => {
-        const agents = await store.listAgents();
+        const agents = await store.listAgents({ includeEphemeral: true });
         expect(agents.some((agent: Agent) => agent.name === "executor-FN-2001")).toBe(true);
       });
 
@@ -578,7 +578,7 @@ describe("InProcessRuntime", () => {
         executorOptions.onStart?.({ id: "FN-AUTO1" } as Task, join(testDir, "worktree-FN-AUTO1"));
 
         await vi.waitFor(async () => {
-          const agents = await store.listAgents();
+          const agents = await store.listAgents({ includeEphemeral: true });
           expect(agents.some((a: Agent) => a.name === "executor-FN-AUTO1")).toBe(true);
         });
 
@@ -620,7 +620,7 @@ describe("InProcessRuntime", () => {
         onStartOptions.onStart?.({ id: "FN-AUTO2" } as Task, join(testDir, "worktree-FN-AUTO2"));
 
         await vi.waitFor(async () => {
-          const agents = await store.listAgents();
+          const agents = await store.listAgents({ includeEphemeral: true });
           expect(agents.some((a: Agent) => a.name === "executor-FN-AUTO2")).toBe(true);
         });
 

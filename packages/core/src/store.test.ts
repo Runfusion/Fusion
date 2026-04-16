@@ -2025,6 +2025,25 @@ describe("TaskStore", () => {
       expect(globalStore.getSettingsPath()).toContain("settings.json");
     });
 
+    it("ignores legacy project-level globalMaxConcurrent values", async () => {
+      const db = (store as any).db;
+      const row = db.prepare("SELECT settings FROM config WHERE id = 1").get() as { settings?: string } | undefined;
+      const existingSettings = row?.settings ? JSON.parse(row.settings) : {};
+      existingSettings.maxConcurrent = 9;
+      existingSettings.globalMaxConcurrent = 4;
+      db.prepare("UPDATE config SET settings = ? WHERE id = 1").run(JSON.stringify(existingSettings));
+
+      const settings = await store.getSettings();
+      const fastSettings = await store.getSettingsFast();
+      const { project } = await store.getSettingsByScope();
+
+      expect(settings.maxConcurrent).toBe(9);
+      expect(fastSettings.maxConcurrent).toBe(9);
+      expect((settings as any).globalMaxConcurrent).toBeUndefined();
+      expect((fastSettings as any).globalMaxConcurrent).toBeUndefined();
+      expect((project as any).globalMaxConcurrent).toBeUndefined();
+    });
+
     it("updateSettings creates config row if missing and persists settings", async () => {
       // Manually delete the config row to simulate corruption/edge case
       const db = (store as any).db;

@@ -149,6 +149,10 @@ export function useQuickChat(
         return;
       }
 
+      // Clear old messages immediately so stale conversation doesn't briefly flash
+      // while the new agent's session loads
+      setMessages([]);
+
       // New agent — initialize session
       currentAgentIdRef.current = agentId;
       await initializeSession(agentId);

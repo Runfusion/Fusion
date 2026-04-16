@@ -15290,12 +15290,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.get("/global-concurrency", async (_req, res) => {
     try {
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
+      const central = options?.centralCore ?? new (await import("@fusion/core")).CentralCore();
+      const shouldClose = !options?.centralCore;
+      if (shouldClose) await central.init();
       
       const state = await central.getGlobalConcurrencyState();
-      await central.close();
+      if (shouldClose) await central.close();
       
       res.json(state);
     } catch (err: unknown) {
@@ -15319,12 +15319,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
 
     try {
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
+      const central = options?.centralCore ?? new (await import("@fusion/core")).CentralCore();
+      const shouldClose = !options?.centralCore;
+      if (shouldClose) await central.init();
 
       const state = await central.updateGlobalConcurrency({ globalMaxConcurrent });
-      await central.close();
+      if (shouldClose) await central.close();
 
       res.json(state);
     } catch (err: unknown) {
