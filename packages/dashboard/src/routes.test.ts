@@ -9367,6 +9367,371 @@ describe("POST /api/ai/summarize-title", () => {
   });
 });
 
+describe("POST /planning/start-streaming with projectId scoping", () => {
+  const projectId = "proj-planning-scoped";
+
+  let defaultStore: TaskStore;
+  let scopedStore: TaskStore;
+
+  beforeEach(() => {
+    defaultStore = createMockStore();
+    scopedStore = createMockStore({
+      getRootDir: vi.fn().mockReturnValue("/scoped/planning/project"),
+    });
+
+    vi.spyOn(projectStoreResolver, "getOrCreateProjectStore").mockResolvedValue(scopedStore);
+    __resetPlanningState();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    __setCreateKbAgent(undefined as any);
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(defaultStore));
+    return app;
+  }
+
+  it("uses scoped store settings for prompt resolution when projectId is provided", async () => {
+    const customPlanningPrompt = "CUSTOM SCOPED PLANNING PROMPT";
+    (scopedStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      promptOverrides: {
+        "planning-system": customPlanningPrompt,
+      },
+      defaultProvider: "scoped-provider",
+      defaultModelId: "scoped-model",
+    });
+
+    const mockAgent = {
+      session: {
+        state: { messages: [] },
+        prompt: vi.fn(async () => {
+          return JSON.stringify({
+            type: "question",
+            data: { id: "q-1", type: "text", question: "What is the scope?" },
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    };
+    const createKbAgentSpy = vi.fn(async () => mockAgent);
+    __setCreateKbAgent(createKbAgentSpy as any);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/planning/start-streaming?projectId=${projectId}`,
+      JSON.stringify({ initialPlan: "Test planning" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(projectStoreResolver.getOrCreateProjectStore).toHaveBeenCalledWith(projectId);
+    expect(scopedStore.getSettings).toHaveBeenCalled();
+    expect(scopedStore.getRootDir()).toBe("/scoped/planning/project");
+    // Verify scoped settings were used for prompt resolution
+    await vi.waitFor(() => {
+      expect(createKbAgentSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          systemPrompt: customPlanningPrompt,
+          defaultProvider: "scoped-provider",
+          defaultModelId: "scoped-model",
+        }),
+      );
+    });
+  });
+
+  it("uses request body model override when provided alongside projectId", async () => {
+    (scopedStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      defaultProvider: "scoped-provider",
+      defaultModelId: "scoped-model",
+    });
+
+    const mockAgent = {
+      session: {
+        state: { messages: [] },
+        prompt: vi.fn(async () => {
+          return JSON.stringify({
+            type: "question",
+            data: { id: "q-1", type: "text", question: "What is the scope?" },
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    };
+    const createKbAgentSpy = vi.fn(async () => mockAgent);
+    __setCreateKbAgent(createKbAgentSpy as any);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/planning/start-streaming?projectId=${projectId}`,
+      JSON.stringify({
+        initialPlan: "Test planning",
+        planningModelProvider: "google",
+        planningModelId: "gemini-2.5-pro",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    // Request body override takes precedence over scoped settings
+    await vi.waitFor(() => {
+      expect(createKbAgentSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          defaultProvider: "google",
+          defaultModelId: "gemini-2.5-pro",
+        }),
+      );
+    });
+  });
+
+  it("falls back to scoped settings when no request override provided", async () => {
+    (scopedStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      planningProvider: "anthropic",
+      planningModelId: "claude-sonnet-4",
+    });
+
+    const mockAgent = {
+      session: {
+        state: { messages: [] },
+        prompt: vi.fn(async () => {
+          return JSON.stringify({
+            type: "question",
+            data: { id: "q-1", type: "text", question: "What is the scope?" },
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    };
+    const createKbAgentSpy = vi.fn(async () => mockAgent);
+    __setCreateKbAgent(createKbAgentSpy as any);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/planning/start-streaming?projectId=${projectId}`,
+      JSON.stringify({ initialPlan: "Test planning" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    // Scoped settings planning lane should be used
+    await vi.waitFor(() => {
+      expect(createKbAgentSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          defaultProvider: "anthropic",
+          defaultModelId: "claude-sonnet-4",
+        }),
+      );
+    });
+  });
+
+  it("uses default store when projectId is omitted", async () => {
+    // When projectId is omitted, default store should be used
+    const defaultRootDir = "/fake/root";
+    (defaultStore.getRootDir as ReturnType<typeof vi.fn>).mockReturnValue(defaultRootDir);
+    (defaultStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      defaultProvider: "default-provider",
+      defaultModelId: "default-model",
+    });
+
+    const mockAgent = {
+      session: {
+        state: { messages: [] },
+        prompt: vi.fn(async () => {
+          return JSON.stringify({
+            type: "question",
+            data: { id: "q-1", type: "text", question: "What is the scope?" },
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    };
+    const createKbAgentSpy = vi.fn(async () => mockAgent);
+    __setCreateKbAgent(createKbAgentSpy as any);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/planning/start-streaming",
+      JSON.stringify({ initialPlan: "Test planning" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    // Default store should be used (getOrCreateProjectStore should not be called)
+    expect(projectStoreResolver.getOrCreateProjectStore).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(createKbAgentSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          defaultProvider: "default-provider",
+          defaultModelId: "default-model",
+        }),
+      );
+    });
+  });
+});
+
+describe("POST /subtasks/start-streaming with projectId scoping", () => {
+  const projectId = "proj-subtask-scoped";
+
+  let defaultStore: TaskStore;
+  let scopedStore: TaskStore;
+
+  beforeEach(() => {
+    defaultStore = createMockStore();
+    scopedStore = createMockStore({
+      getRootDir: vi.fn().mockReturnValue("/scoped/subtask/project"),
+    });
+
+    vi.spyOn(projectStoreResolver, "getOrCreateProjectStore").mockResolvedValue(scopedStore);
+    __resetSubtaskBreakdownState();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(defaultStore));
+    return app;
+  }
+
+  it("uses scoped store settings for prompt resolution when projectId is provided", async () => {
+    const customSubtaskPrompt = "CUSTOM SCOPED SUBTASK BREAKDOWN PROMPT";
+    (scopedStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      promptOverrides: {
+        "subtask-breakdown-system": customSubtaskPrompt,
+      },
+    });
+
+    const mockCreateSubtaskSession = vi.fn().mockResolvedValue({ sessionId: "scoped-subtask-session" });
+    vi.spyOn(subtaskBreakdownModule, "createSubtaskSession").mockImplementation(mockCreateSubtaskSession);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/subtasks/start-streaming?projectId=${projectId}`,
+      JSON.stringify({ description: "Break into subtasks" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(res.body.sessionId).toBe("scoped-subtask-session");
+    expect(projectStoreResolver.getOrCreateProjectStore).toHaveBeenCalledWith(projectId);
+    expect(scopedStore.getSettings).toHaveBeenCalled();
+    expect(scopedStore.getRootDir()).toBe("/scoped/subtask/project");
+    // Verify scoped settings were passed for prompt resolution
+    expect(mockCreateSubtaskSession).toHaveBeenCalledWith(
+      "Break into subtasks",
+      scopedStore,
+      "/scoped/subtask/project",
+      expect.objectContaining({
+        "subtask-breakdown-system": customSubtaskPrompt,
+      }),
+      projectId,
+    );
+  });
+
+  it("uses scoped rootDir for subtask generation", async () => {
+    const scopedRootDir = "/different/scoped/root";
+    scopedStore = createMockStore({
+      getRootDir: vi.fn().mockReturnValue(scopedRootDir),
+    });
+    vi.spyOn(projectStoreResolver, "getOrCreateProjectStore").mockResolvedValue(scopedStore);
+
+    (scopedStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      promptOverrides: {},
+    });
+
+    const mockCreateSubtaskSession = vi.fn().mockResolvedValue({ sessionId: "session-2" });
+    vi.spyOn(subtaskBreakdownModule, "createSubtaskSession").mockImplementation(mockCreateSubtaskSession);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/subtasks/start-streaming?projectId=${projectId}`,
+      JSON.stringify({ description: "Break into subtasks" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(mockCreateSubtaskSession).toHaveBeenCalledWith(
+      "Break into subtasks",
+      scopedStore,
+      scopedRootDir,
+      expect.any(Object),
+      projectId,
+    );
+  });
+
+  it("uses default store when projectId is omitted", async () => {
+    // When projectId is omitted, default store should be used
+    const defaultRootDir = "/fake/root";
+    (defaultStore.getRootDir as ReturnType<typeof vi.fn>).mockReturnValue(defaultRootDir);
+    (defaultStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      promptOverrides: {
+        "subtask-breakdown-system": "Default subtask prompt",
+      },
+    });
+
+    const mockCreateSubtaskSession = vi.fn().mockResolvedValue({ sessionId: "default-session" });
+    vi.spyOn(subtaskBreakdownModule, "createSubtaskSession").mockImplementation(mockCreateSubtaskSession);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/subtasks/start-streaming",
+      JSON.stringify({ description: "Break into subtasks" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    // Default store should be used (getOrCreateProjectStore should not be called)
+    expect(projectStoreResolver.getOrCreateProjectStore).not.toHaveBeenCalled();
+    expect(mockCreateSubtaskSession).toHaveBeenCalledWith(
+      "Break into subtasks",
+      defaultStore,
+      defaultRootDir,
+      expect.any(Object),
+      undefined,
+    );
+  });
+
+  it("passes projectId to subtask session for multi-project scoping", async () => {
+    (scopedStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      promptOverrides: {},
+    });
+
+    const mockCreateSubtaskSession = vi.fn().mockResolvedValue({ sessionId: "session-with-projectid" });
+    vi.spyOn(subtaskBreakdownModule, "createSubtaskSession").mockImplementation(mockCreateSubtaskSession);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/subtasks/start-streaming?projectId=${projectId}`,
+      JSON.stringify({ description: "Scoped subtask" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    // Ensure projectId is passed through for multi-project scoping
+    expect(mockCreateSubtaskSession).toHaveBeenCalledWith(
+      "Scoped subtask",
+      scopedStore,
+      "/scoped/subtask/project",
+      expect.any(Object),
+      projectId,
+    );
+  });
+});
+
 describe("POST /api/ai/summarize-title with projectId scoping", () => {
   const projectId = "proj-summarize-scoped";
   let defaultStore: TaskStore;
