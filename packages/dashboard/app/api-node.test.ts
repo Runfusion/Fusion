@@ -4,18 +4,26 @@ import {
   fetchRemoteNodeProjects,
   fetchRemoteNodeTasks,
   fetchRemoteNodeProjectHealth,
+  fetchNodeSettings,
+  pushNodeSettings,
+  pullNodeSettings,
+  fetchNodeSettingsSyncStatus,
+  syncNodeAuth,
 } from "./api-node";
 import * as apiModule from "./api";
 
 vi.mock("./api", () => ({
   proxyApi: vi.fn(),
+  api: vi.fn(),
 }));
 
 const mockProxyApi = vi.mocked(apiModule.proxyApi);
+const mockApi = vi.mocked(apiModule.api);
 
 describe("api-node", () => {
   beforeEach(() => {
     mockProxyApi.mockReset();
+    mockApi.mockReset();
   });
 
   describe("fetchRemoteNodeHealth", () => {
@@ -223,6 +231,173 @@ describe("api-node", () => {
       mockProxyApi.mockRejectedValueOnce(new Error("404 Not Found"));
 
       await expect(fetchRemoteNodeProjects("node_abc")).rejects.toThrow("404 Not Found");
+    });
+  });
+
+  // ── Node Settings Sync API ──────────────────────────────────────────────
+
+  describe("fetchNodeSettings", () => {
+    it("calls api with correct path and returns settings", async () => {
+      const mockSettings = { global: { theme: "dark" }, project: { maxConcurrent: 4 } };
+      mockApi.mockResolvedValueOnce(mockSettings);
+
+      const result = await fetchNodeSettings("node_abc");
+
+      expect(mockApi).toHaveBeenCalledTimes(1);
+      expect(mockApi).toHaveBeenCalledWith("/nodes/node_abc/settings");
+      expect(result).toEqual(mockSettings);
+    });
+
+    it("encodes nodeId with special characters in URL", async () => {
+      mockApi.mockResolvedValueOnce({ global: {}, project: {} });
+
+      await fetchNodeSettings("node/abc+def");
+
+      expect(mockApi).toHaveBeenCalledWith("/nodes/node%2Fabc%2Bdef/settings");
+    });
+
+    it("propagates errors from api", async () => {
+      mockApi.mockRejectedValueOnce(new Error("Node unreachable"));
+
+      await expect(fetchNodeSettings("node_abc")).rejects.toThrow("Node unreachable");
+    });
+  });
+
+  describe("pushNodeSettings", () => {
+    it("calls api with POST method and correct path", async () => {
+      const mockResult = { success: true, syncedFields: ["theme", "maxConcurrent"] };
+      mockApi.mockResolvedValueOnce(mockResult);
+
+      const result = await pushNodeSettings("node_abc");
+
+      expect(mockApi).toHaveBeenCalledTimes(1);
+      expect(mockApi).toHaveBeenCalledWith(
+        "/nodes/node_abc/settings/push",
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      expect(result).toEqual(mockResult);
+    });
+
+    it("encodes nodeId with special characters in URL", async () => {
+      mockApi.mockResolvedValueOnce({ success: true, syncedFields: [] });
+
+      await pushNodeSettings("node/abc+def");
+
+      expect(mockApi).toHaveBeenCalledWith(
+        "/nodes/node%2Fabc%2Bdef/settings/push",
+        { method: "POST", body: JSON.stringify({}) },
+      );
+    });
+
+    it("propagates errors from api", async () => {
+      mockApi.mockRejectedValueOnce(new Error("Push failed"));
+
+      await expect(pushNodeSettings("node_abc")).rejects.toThrow("Push failed");
+    });
+  });
+
+  describe("pullNodeSettings", () => {
+    it("calls api with POST method, correct path, and last-write-wins conflict resolution", async () => {
+      const mockResult = { success: true, appliedFields: ["theme"], skippedFields: [] };
+      mockApi.mockResolvedValueOnce(mockResult);
+
+      const result = await pullNodeSettings("node_abc");
+
+      expect(mockApi).toHaveBeenCalledTimes(1);
+      expect(mockApi).toHaveBeenCalledWith(
+        "/nodes/node_abc/settings/pull",
+        { method: "POST", body: JSON.stringify({ conflictResolution: "last-write-wins" }) },
+      );
+      expect(result).toEqual(mockResult);
+    });
+
+    it("encodes nodeId with special characters in URL", async () => {
+      mockApi.mockResolvedValueOnce({ success: true, appliedFields: [], skippedFields: [] });
+
+      await pullNodeSettings("node/abc+def");
+
+      expect(mockApi).toHaveBeenCalledWith(
+        "/nodes/node%2Fabc%2Bdef/settings/pull",
+        { method: "POST", body: JSON.stringify({ conflictResolution: "last-write-wins" }) },
+      );
+    });
+
+    it("propagates errors from api", async () => {
+      mockApi.mockRejectedValueOnce(new Error("Pull failed"));
+
+      await expect(pullNodeSettings("node_abc")).rejects.toThrow("Pull failed");
+    });
+  });
+
+  describe("fetchNodeSettingsSyncStatus", () => {
+    it("calls api with correct path and returns sync status", async () => {
+      const mockStatus = {
+        lastSyncAt: "2026-04-01T00:00:00.000Z",
+        lastSyncDirection: "sync",
+        localUpdatedAt: "2026-04-01T00:00:00.000Z",
+        remoteReachable: true,
+        diff: { global: ["theme"], project: [] },
+      };
+      mockApi.mockResolvedValueOnce(mockStatus);
+
+      const result = await fetchNodeSettingsSyncStatus("node_abc");
+
+      expect(mockApi).toHaveBeenCalledTimes(1);
+      expect(mockApi).toHaveBeenCalledWith("/nodes/node_abc/settings/sync-status");
+      expect(result).toEqual(mockStatus);
+    });
+
+    it("encodes nodeId with special characters in URL", async () => {
+      mockApi.mockResolvedValueOnce({
+        lastSyncAt: null,
+        lastSyncDirection: null,
+        localUpdatedAt: "2026-04-01T00:00:00.000Z",
+        remoteReachable: false,
+        diff: { global: [], project: [] },
+      });
+
+      await fetchNodeSettingsSyncStatus("node/abc+def");
+
+      expect(mockApi).toHaveBeenCalledWith("/nodes/node%2Fabc%2Bdef/settings/sync-status");
+    });
+
+    it("propagates errors from api", async () => {
+      mockApi.mockRejectedValueOnce(new Error("Sync status check failed"));
+
+      await expect(fetchNodeSettingsSyncStatus("node_abc")).rejects.toThrow("Sync status check failed");
+    });
+  });
+
+  describe("syncNodeAuth", () => {
+    it("calls api with POST method and correct path", async () => {
+      const mockResult = { success: true, syncedProviders: ["openai", "anthropic"] };
+      mockApi.mockResolvedValueOnce(mockResult);
+
+      const result = await syncNodeAuth("node_abc");
+
+      expect(mockApi).toHaveBeenCalledTimes(1);
+      expect(mockApi).toHaveBeenCalledWith(
+        "/nodes/node_abc/auth/sync",
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      expect(result).toEqual(mockResult);
+    });
+
+    it("encodes nodeId with special characters in URL", async () => {
+      mockApi.mockResolvedValueOnce({ success: true, syncedProviders: [] });
+
+      await syncNodeAuth("node/abc+def");
+
+      expect(mockApi).toHaveBeenCalledWith(
+        "/nodes/node%2Fabc%2Bdef/auth/sync",
+        { method: "POST", body: JSON.stringify({}) },
+      );
+    });
+
+    it("propagates errors from api", async () => {
+      mockApi.mockRejectedValueOnce(new Error("Auth sync failed"));
+
+      await expect(syncNodeAuth("node_abc")).rejects.toThrow("Auth sync failed");
     });
   });
 });

@@ -74,7 +74,7 @@ function buildApiUrl(path: string): string {
   return `/api${path}`;
 }
 
-async function api<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
+export async function api<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
   const url = buildApiUrl(path);
   const res = await fetch(url, {
     headers: { "Content-Type": "application/json" },

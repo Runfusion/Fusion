@@ -5,7 +5,7 @@
 
 import type { ProjectInfo } from "./api";
 import type { ProjectHealth, Task } from "@fusion/core";
-import { proxyApi } from "./api";
+import { api, proxyApi } from "./api";
 
 /** Health information for a remote node */
 export interface RemoteNodeHealth {
@@ -44,5 +44,74 @@ export async function fetchRemoteNodeProjectHealth(
 ): Promise<ProjectHealth> {
   return proxyApi<ProjectHealth>(`/project-health?projectId=${encodeURIComponent(projectId)}`, {
     nodeId,
+  });
+}
+
+// ── Node Settings Sync API ──────────────────────────────────────────────────────
+
+/** Settings scopes returned by GET /api/nodes/:id/settings */
+export interface NodeSettingsScopes {
+  global: Record<string, unknown>;
+  project: Record<string, unknown>;
+}
+
+/** Result from settings push/pull operations */
+export interface NodeSettingsSyncResult {
+  success: boolean;
+  syncedFields?: string[];
+  appliedFields?: string[];
+  skippedFields?: string[];
+  error?: string;
+}
+
+/** Sync status returned by GET /api/nodes/:id/settings/sync-status */
+export interface NodeSettingsSyncStatus {
+  lastSyncAt: string | null;
+  lastSyncDirection: string | null;
+  localUpdatedAt: string;
+  remoteReachable: boolean;
+  diff: {
+    global: string[];
+    project: string[];
+  };
+}
+
+/** Result from auth sync operation */
+export interface NodeAuthSyncResult {
+  success: boolean;
+  syncedProviders: string[];
+}
+
+/** Fetch settings from a remote node */
+export async function fetchNodeSettings(nodeId: string): Promise<NodeSettingsScopes> {
+  return api<NodeSettingsScopes>(`/nodes/${encodeURIComponent(nodeId)}/settings`);
+}
+
+/** Push local settings to a remote node */
+export async function pushNodeSettings(nodeId: string): Promise<NodeSettingsSyncResult> {
+  return api<NodeSettingsSyncResult>(`/nodes/${encodeURIComponent(nodeId)}/settings/push`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+/** Pull settings from a remote node and apply locally */
+export async function pullNodeSettings(nodeId: string): Promise<NodeSettingsSyncResult> {
+  return api<NodeSettingsSyncResult>(`/nodes/${encodeURIComponent(nodeId)}/settings/pull`, {
+    method: "POST",
+    body: JSON.stringify({ conflictResolution: "last-write-wins" }),
+  });
+}
+
+/** Get the sync status for a node (last sync time, diff summary, etc.) */
+export async function fetchNodeSettingsSyncStatus(nodeId: string): Promise<NodeSettingsSyncStatus> {
+  return api<NodeSettingsSyncStatus>(`/nodes/${encodeURIComponent(nodeId)}/settings/sync-status`);
+}
+
+/** Synchronize model auth credentials with a remote node */
+export async function syncNodeAuth(nodeId: string): Promise<NodeAuthSyncResult> {
+  return api<NodeAuthSyncResult>(`/nodes/${encodeURIComponent(nodeId)}/auth/sync`, {
+    method: "POST",
+    body: JSON.stringify({}),
   });
 }
