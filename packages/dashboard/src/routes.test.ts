@@ -11924,6 +11924,19 @@ describe("PUT /api/settings - memoryBackendType validation", () => {
     expect(store.updateSettings).toHaveBeenCalledWith(expect.objectContaining({ memoryBackendType: "custom-backend-v1" }));
   });
 
+  it("accepts memoryBackendType as qmd", async () => {
+    (store.updateSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      memoryBackendType: "qmd",
+    });
+
+    const res = await REQUEST(buildApp(), "PUT", "/api/settings", JSON.stringify({ memoryBackendType: "qmd" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateSettings).toHaveBeenCalledWith(expect.objectContaining({ memoryBackendType: "qmd" }));
+  });
+
   it("returns 400 when memoryBackendType is not string or null", async () => {
     const res = await REQUEST(buildApp(), "PUT", "/api/settings", JSON.stringify({ memoryBackendType: 123 }), {
       "Content-Type": "application/json",

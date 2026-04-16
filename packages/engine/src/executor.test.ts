@@ -2408,6 +2408,25 @@ describe("buildExecutionPrompt", () => {
       expect(memorySection).toMatch(/consult.*project memory/i);
     });
 
+    it("QMD prompt has actionable memory instructions", () => {
+      const task = createMockTaskDetail();
+      const result = buildExecutionPrompt(task, "/project", {
+        memoryEnabled: true,
+        memoryBackendType: "qmd",
+      } as any);
+      expect(result).toContain("## Project Memory");
+      // Extract the Project Memory section
+      const memorySectionMatch = result.match(/## Project Memory\n([\s\S]*?)(?=\n## [^#]|$)/);
+      expect(memorySectionMatch).toBeTruthy();
+      const memorySection = memorySectionMatch![1];
+      // QMD should NOT contain .fusion/memory.md
+      expect(memorySection).not.toContain(".fusion/memory.md");
+      // Contains consult guidance at start of execution
+      expect(memorySection).toMatch(/consult.*memory/i);
+      // Contains "end of execution" write guidance
+      expect(memorySection).toMatch(/end of execution/i);
+    });
+
     it("excludes memory section when memoryEnabled: false regardless of backend", () => {
       const task = createMockTaskDetail();
       const result = buildExecutionPrompt(task, "/project", {
