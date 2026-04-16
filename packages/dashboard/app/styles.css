@@ -28216,6 +28216,90 @@ html .column.drag-over * {
   font-weight: 600;
 }
 
+/* === NodeCard Sync Indicator === */
+.node-card__sync {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--space-sm);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.node-card__sync-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.node-card__sync-time {
+  color: var(--text-muted);
+}
+
+/* === NodeDetailModal Sync Section === */
+.node-detail-modal__sync-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.node-detail-modal__sync-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.node-detail-modal__sync-diff {
+  color: var(--warning);
+  font-size: 12px;
+}
+
+.node-detail-modal__sync-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.node-detail-modal__sync-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  padding: var(--space-sm);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent);
+  border-radius: var(--radius-sm);
+  color: var(--color-error);
+  font-size: 12px;
+}
+
+.node-detail-modal__sync-error-dismiss {
+  background: transparent;
+  border: none;
+  color: var(--color-error);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+}
+
+.node-detail-modal__sync-error-dismiss:hover {
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
+}
+
+/* === NodesView Synced Stat === */
+.nodes-view-stat--synced strong {
+  color: var(--color-success);
+}
+
 .node-card__actions {
   display: flex;
   gap: var(--space-xs);

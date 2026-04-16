@@ -4,6 +4,8 @@ import { NodesView } from "../NodesView";
 import type { NodeInfo, ProjectInfo } from "../../api";
 import { useNodes } from "../../hooks/useNodes";
 import { useProjects } from "../../hooks/useProjects";
+import { useNodeSettingsSync } from "../../hooks/useNodeSettingsSync";
+import type { NodeSettingsSyncStatus } from "../../api-node";
 
 vi.mock("../../hooks/useNodes", () => ({
   useNodes: vi.fn(),
@@ -13,8 +15,33 @@ vi.mock("../../hooks/useProjects", () => ({
   useProjects: vi.fn(),
 }));
 
+vi.mock("../../hooks/useNodeSettingsSync", () => ({
+  useNodeSettingsSync: vi.fn(),
+  computeSyncState: vi.fn((status: NodeSettingsSyncStatus) => {
+    if (!status) return { syncState: "never-synced" as const, lastSyncAt: null, diffCount: 0 };
+    if (status.lastSyncAt === null) return { syncState: "never-synced" as const, lastSyncAt: null, diffCount: 0 };
+    if (!status.remoteReachable) return { syncState: "error" as const, lastSyncAt: status.lastSyncAt, diffCount: 0 };
+    const diffCount = status.diff.global.length + status.diff.project.length;
+    if (diffCount > 0) return { syncState: "diff" as const, lastSyncAt: status.lastSyncAt, diffCount };
+    return { syncState: "synced" as const, lastSyncAt: status.lastSyncAt, diffCount: 0 };
+  }),
+  getSyncStateColor: vi.fn((state: string) => {
+    switch (state) {
+      case "synced": return "var(--color-success)";
+      case "diff": return "var(--warning)";
+      case "error": return "var(--color-error)";
+      default: return "var(--text-muted)";
+    }
+  }),
+  formatRelativeTime: vi.fn((ts: string | null) => {
+    if (!ts) return "Never synced";
+    return "Synced 2m ago";
+  }),
+}));
+
 const mockUseNodes = vi.mocked(useNodes);
 const mockUseProjects = vi.mocked(useProjects);
+const mockUseNodeSettingsSync = vi.mocked(useNodeSettingsSync);
 
 function makeNode(overrides: Partial<NodeInfo> = {}): NodeInfo {
   return {
@@ -65,6 +92,19 @@ beforeEach(() => {
     register: vi.fn(),
     update: vi.fn(),
     unregister: vi.fn(),
+  });
+
+  mockUseNodeSettingsSync.mockReturnValue({
+    syncStatusMap: {},
+    loading: false,
+    actionLoading: {},
+    error: null,
+    refresh: vi.fn().mockResolvedValue(undefined),
+    trackNode: vi.fn(),
+    untrackNode: vi.fn(),
+    pushSettings: vi.fn().mockResolvedValue({ success: true }),
+    pullSettings: vi.fn().mockResolvedValue({ success: true }),
+    syncAuth: vi.fn().mockResolvedValue({ success: true, syncedProviders: [] }),
   });
 });
 
@@ -267,6 +307,163 @@ describe("NodesView", () => {
       expect(screen.getByTestId("nodes-stat-online").textContent).toContain("1");
       expect(screen.getByTestId("nodes-stat-offline").textContent).toContain("0");
       expect(screen.getByTestId("nodes-stat-remote").textContent).toContain("0");
+    });
+  });
+
+  describe("sync status", () => {
+    it("renders Synced stat in stats row", () => {
+      const syncedStatus: NodeSettingsSyncStatus = {
+        lastSyncAt: new Date(Date.now() - 60000).toISOString(),
+        lastSyncDirection: "push",
+        localUpdatedAt: new Date().toISOString(),
+        remoteReachable: true,
+        diff: { global: [], project: [] },
+      };
+
+      mockUseNodeSettingsSync.mockReturnValue({
+        syncStatusMap: {
+          "node-remote": syncedStatus,
+        },
+        loading: false,
+        actionLoading: {},
+        error: null,
+        refresh: vi.fn().mockResolvedValue(undefined),
+        trackNode: vi.fn(),
+        untrackNode: vi.fn(),
+        pushSettings: vi.fn().mockResolvedValue({ success: true }),
+        pullSettings: vi.fn().mockResolvedValue({ success: true }),
+        syncAuth: vi.fn().mockResolvedValue({ success: true, syncedProviders: [] }),
+      });
+
+      mockUseNodes.mockReturnValue(makeUseNodesResult({
+        nodes: [
+          makeNode({ id: "node-remote", name: "Remote Node", type: "remote", status: "online" }),
+        ],
+      }));
+
+      render(<NodesView addToast={vi.fn()} onClose={vi.fn()} />);
+
+      expect(screen.getByTestId("nodes-stat-synced")).toBeInTheDocument();
+      expect(screen.getByTestId("nodes-stat-synced").textContent).toContain("1");
+    });
+
+    it("Synced count is 0 when no remote nodes are synced", () => {
+      const diffStatus: NodeSettingsSyncStatus = {
+        lastSyncAt: new Date(Date.now() - 60000).toISOString(),
+        lastSyncDirection: "push",
+        localUpdatedAt: new Date().toISOString(),
+        remoteReachable: true,
+        diff: { global: ["theme"], project: [] },
+      };
+
+      mockUseNodeSettingsSync.mockReturnValue({
+        syncStatusMap: {
+          "node-remote": diffStatus,
+        },
+        loading: false,
+        actionLoading: {},
+        error: null,
+        refresh: vi.fn().mockResolvedValue(undefined),
+        trackNode: vi.fn(),
+        untrackNode: vi.fn(),
+        pushSettings: vi.fn().mockResolvedValue({ success: true }),
+        pullSettings: vi.fn().mockResolvedValue({ success: true }),
+        syncAuth: vi.fn().mockResolvedValue({ success: true, syncedProviders: [] }),
+      });
+
+      mockUseNodes.mockReturnValue(makeUseNodesResult({
+        nodes: [
+          makeNode({ id: "node-remote", name: "Remote Node", type: "remote", status: "online" }),
+        ],
+      }));
+
+      render(<NodesView addToast={vi.fn()} onClose={vi.fn()} />);
+
+      expect(screen.getByTestId("nodes-stat-synced").textContent).toContain("0");
+    });
+
+    it("Synced count excludes local nodes", () => {
+      const syncedStatus: NodeSettingsSyncStatus = {
+        lastSyncAt: new Date(Date.now() - 60000).toISOString(),
+        lastSyncDirection: "push",
+        localUpdatedAt: new Date().toISOString(),
+        remoteReachable: true,
+        diff: { global: [], project: [] },
+      };
+
+      mockUseNodeSettingsSync.mockReturnValue({
+        syncStatusMap: {
+          "node-local": syncedStatus,
+        },
+        loading: false,
+        actionLoading: {},
+        error: null,
+        refresh: vi.fn().mockResolvedValue(undefined),
+        trackNode: vi.fn(),
+        untrackNode: vi.fn(),
+        pushSettings: vi.fn().mockResolvedValue({ success: true }),
+        pullSettings: vi.fn().mockResolvedValue({ success: true }),
+        syncAuth: vi.fn().mockResolvedValue({ success: true, syncedProviders: [] }),
+      });
+
+      mockUseNodes.mockReturnValue(makeUseNodesResult({
+        nodes: [
+          makeNode({ id: "node-local", name: "Local Node", type: "local", status: "online" }),
+        ],
+      }));
+
+      render(<NodesView addToast={vi.fn()} onClose={vi.fn()} />);
+
+      // Local nodes should not be counted in synced
+      expect(screen.getByTestId("nodes-stat-synced").textContent).toContain("0");
+      expect(screen.getByTestId("nodes-stat-remote").textContent).toContain("0");
+    });
+
+    it("passes syncStatus to NodeCard components for remote nodes", () => {
+      const syncedStatus: NodeSettingsSyncStatus = {
+        lastSyncAt: new Date(Date.now() - 60000).toISOString(),
+        lastSyncDirection: "push",
+        localUpdatedAt: new Date().toISOString(),
+        remoteReachable: true,
+        diff: { global: [], project: [] },
+      };
+
+      mockUseNodeSettingsSync.mockReturnValue({
+        syncStatusMap: {
+          "node-remote": syncedStatus,
+        },
+        loading: false,
+        actionLoading: {},
+        error: null,
+        refresh: vi.fn().mockResolvedValue(undefined),
+        trackNode: vi.fn(),
+        untrackNode: vi.fn(),
+        pushSettings: vi.fn().mockResolvedValue({ success: true }),
+        pullSettings: vi.fn().mockResolvedValue({ success: true }),
+        syncAuth: vi.fn().mockResolvedValue({ success: true, syncedProviders: [] }),
+      });
+
+      mockUseNodes.mockReturnValue(makeUseNodesResult({
+        nodes: [
+          makeNode({ id: "node-local", name: "Local Node", type: "local", status: "online" }),
+          makeNode({ id: "node-remote", name: "Remote Node", type: "remote", status: "online" }),
+        ],
+      }));
+
+      render(<NodesView addToast={vi.fn()} onClose={vi.fn()} />);
+
+      // Remote node card should have sync indicator
+      const remoteNodeCard = document.querySelector('[data-node-id="node-remote"]');
+      expect(remoteNodeCard).toBeInTheDocument();
+      const syncIndicator = remoteNodeCard?.querySelector('[data-testid="node-card-sync"]');
+      expect(syncIndicator).toBeInTheDocument();
+      expect(syncIndicator).toHaveAttribute("data-sync-state", "synced");
+
+      // Local node card should not have sync indicator
+      const localNodeCard = document.querySelector('[data-node-id="node-local"]');
+      expect(localNodeCard).toBeInTheDocument();
+      const localSyncIndicator = localNodeCard?.querySelector('[data-testid="node-card-sync"]');
+      expect(localSyncIndicator).not.toBeInTheDocument();
     });
   });
 });

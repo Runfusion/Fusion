@@ -2,6 +2,8 @@ import { memo, useCallback, useMemo, useState } from "react";
 import { Activity, Server, Settings, Trash2 } from "lucide-react";
 import type { NodeInfo, ProjectInfo } from "../api";
 import { getProjectCountForNode } from "../utils/nodeProjectAssignment";
+import type { ComputedNodeSyncStatus } from "../hooks/useNodeSettingsSync";
+import { formatRelativeTime, getSyncStateColor } from "../hooks/useNodeSettingsSync";
 
 export interface NodeCardProps {
   node: NodeInfo;
@@ -10,6 +12,7 @@ export interface NodeCardProps {
   onEdit: (node: NodeInfo) => void;
   onRemove: (id: string) => void;
   isLoading?: boolean;
+  syncStatus?: ComputedNodeSyncStatus;
 }
 
 const STATUS_CONFIG: Record<NodeInfo["status"], { label: string; color: string; className: string }> = {
@@ -37,6 +40,19 @@ function areNodeCardPropsEqual(previous: NodeCardProps, next: NodeCardProps): bo
   if (prevNode.updatedAt !== nextNode.updatedAt) return false;
   if (previous.isLoading !== next.isLoading) return false;
 
+  // Compare sync status
+  const prevSync = previous.syncStatus;
+  const nextSync = next.syncStatus;
+  if (!prevSync && !nextSync) {
+    // Both undefined - equal
+  } else if (!prevSync || !nextSync) {
+    return false; // One defined, one not
+  } else {
+    if (prevSync.syncState !== nextSync.syncState) return false;
+    if (prevSync.lastSyncAt !== nextSync.lastSyncAt) return false;
+    if (prevSync.diffCount !== nextSync.diffCount) return false;
+  }
+
   // Compare project counts using the canonical counting function
   const previousCount = getProjectCountForNode(previous.projects, prevNode);
   const nextCount = getProjectCountForNode(next.projects, nextNode);
@@ -50,6 +66,7 @@ function NodeCardInner({
   onEdit,
   onRemove,
   isLoading = false,
+  syncStatus,
 }: NodeCardProps) {
   const [removeArmed, setRemoveArmed] = useState(false);
   const statusConfig = STATUS_CONFIG[node.status];
@@ -138,6 +155,24 @@ function NodeCardInner({
             <span className="node-card__metric-value">{node.maxConcurrent}</span>
           </div>
         </div>
+
+        {/* Sync status indicator — only for remote nodes with sync data */}
+        {node.type === "remote" && syncStatus && (
+          <div
+            className="node-card__sync"
+            data-sync-state={syncStatus.syncState}
+            data-testid="node-card-sync"
+          >
+            <span
+              className="node-card__sync-dot"
+              style={{ backgroundColor: getSyncStateColor(syncStatus.syncState) }}
+              aria-hidden
+            />
+            <span className="node-card__sync-time">
+              {formatRelativeTime(syncStatus.lastSyncAt)}
+            </span>
+          </div>
+        )}
       </div>
 
       <footer className="node-card__actions">

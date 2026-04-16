@@ -2,12 +2,30 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { NodeCard } from "../NodeCard";
 import type { NodeInfo, ProjectInfo } from "../../api";
+import type { ComputedNodeSyncStatus } from "../../hooks/useNodeSettingsSync";
 
 vi.mock("lucide-react", () => ({
   Activity: () => <span data-testid="activity-icon">activity</span>,
   Server: () => <span data-testid="server-icon">server</span>,
   Settings: () => <span data-testid="settings-icon">settings</span>,
   Trash2: () => <span data-testid="trash-icon">trash</span>,
+}));
+
+vi.mock("../../hooks/useNodeSettingsSync", () => ({
+  formatRelativeTime: vi.fn((ts: string | null) => {
+    if (!ts) return "Never synced";
+    return "Synced 2m ago";
+  }),
+  getSyncStateColor: vi.fn((state: string) => {
+    switch (state) {
+      case "synced": return "var(--color-success)";
+      case "diff": return "var(--warning)";
+      case "error": return "var(--color-error)";
+      case "pending": return "var(--warning)";
+      case "never-synced": return "var(--text-muted)";
+      default: return "var(--text-muted)";
+    }
+  }),
 }));
 
 function makeNode(overrides: Partial<NodeInfo> = {}): NodeInfo {
@@ -32,6 +50,15 @@ function makeProject(overrides: Partial<ProjectInfo> = {}): ProjectInfo {
     isolationMode: "in-process",
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function makeSyncStatus(overrides: Partial<ComputedNodeSyncStatus> = {}): ComputedNodeSyncStatus {
+  return {
+    syncState: "synced",
+    lastSyncAt: new Date(Date.now() - 120000).toISOString(), // 2 minutes ago
+    diffCount: 0,
     ...overrides,
   };
 }
@@ -360,6 +387,158 @@ describe("NodeCard", () => {
           render(null as unknown as JSX.Element);
         }
       }
+    });
+  });
+
+  describe("sync indicator", () => {
+    it("renders sync indicator for remote nodes with synced state", () => {
+      const node = makeNode({
+        id: "node-synced",
+        name: "Synced Node",
+        type: "remote",
+        url: "https://synced.example.com",
+        status: "online",
+      });
+      const syncStatus = makeSyncStatus({ syncState: "synced" });
+
+      render(
+        <NodeCard
+          node={node}
+          projects={[]}
+          onHealthCheck={vi.fn()}
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          syncStatus={syncStatus}
+        />
+      );
+
+      const syncIndicator = screen.getByTestId("node-card-sync");
+      expect(syncIndicator).toBeInTheDocument();
+      expect(syncIndicator).toHaveAttribute("data-sync-state", "synced");
+      expect(syncIndicator.textContent).toMatch(/Synced/);
+    });
+
+    it("does not render sync indicator for local nodes", () => {
+      const node = makeNode({
+        id: "node-local",
+        name: "Local Node",
+        type: "local",
+        status: "online",
+      });
+      const syncStatus = makeSyncStatus();
+
+      render(
+        <NodeCard
+          node={node}
+          projects={[]}
+          onHealthCheck={vi.fn()}
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          syncStatus={syncStatus}
+        />
+      );
+
+      expect(screen.queryByTestId("node-card-sync")).not.toBeInTheDocument();
+    });
+
+    it("does not render sync indicator when syncStatus is undefined", () => {
+      const node = makeNode({
+        id: "node-remote",
+        name: "Remote Node",
+        type: "remote",
+        url: "https://remote.example.com",
+        status: "online",
+      });
+
+      render(
+        <NodeCard
+          node={node}
+          projects={[]}
+          onHealthCheck={vi.fn()}
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+        />
+      );
+
+      expect(screen.queryByTestId("node-card-sync")).not.toBeInTheDocument();
+    });
+
+    it("renders error state dot for sync error", () => {
+      const node = makeNode({
+        id: "node-error-sync",
+        name: "Error Sync Node",
+        type: "remote",
+        status: "online",
+      });
+      const syncStatus = makeSyncStatus({ syncState: "error" });
+
+      render(
+        <NodeCard
+          node={node}
+          projects={[]}
+          onHealthCheck={vi.fn()}
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          syncStatus={syncStatus}
+        />
+      );
+
+      const syncIndicator = screen.getByTestId("node-card-sync");
+      expect(syncIndicator).toHaveAttribute("data-sync-state", "error");
+    });
+
+    it("renders 'Never synced' when lastSyncAt is null", () => {
+      const node = makeNode({
+        id: "node-never-synced",
+        name: "Never Synced Node",
+        type: "remote",
+        status: "online",
+      });
+      const syncStatus = makeSyncStatus({
+        syncState: "never-synced",
+        lastSyncAt: null,
+      });
+
+      render(
+        <NodeCard
+          node={node}
+          projects={[]}
+          onHealthCheck={vi.fn()}
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          syncStatus={syncStatus}
+        />
+      );
+
+      const syncIndicator = screen.getByTestId("node-card-sync");
+      expect(syncIndicator.textContent).toContain("Never synced");
+    });
+
+    it("renders diff state correctly", () => {
+      const node = makeNode({
+        id: "node-diff",
+        name: "Diff Node",
+        type: "remote",
+        status: "online",
+      });
+      const syncStatus = makeSyncStatus({
+        syncState: "diff",
+        diffCount: 5,
+      });
+
+      render(
+        <NodeCard
+          node={node}
+          projects={[]}
+          onHealthCheck={vi.fn()}
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          syncStatus={syncStatus}
+        />
+      );
+
+      const syncIndicator = screen.getByTestId("node-card-sync");
+      expect(syncIndicator).toHaveAttribute("data-sync-state", "diff");
     });
   });
 });

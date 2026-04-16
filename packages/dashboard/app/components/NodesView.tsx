@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, Server, Wifi, WifiOff, Globe, RefreshCw, X } from "lucide-react";
 import { useNodes } from "../hooks/useNodes";
 import { useProjects } from "../hooks/useProjects";
+import { useNodeSettingsSync, computeSyncState } from "../hooks/useNodeSettingsSync";
 import type { NodeInfo, NodeUpdateInput } from "../api";
 import { NodeCard } from "./NodeCard";
 import { MeshTopology } from "./MeshTopology";
@@ -17,8 +18,17 @@ interface NodesViewProps {
 export function NodesView({ addToast, onClose }: NodesViewProps) {
   const { nodes, loading, error, refresh, register, update, unregister, healthCheck } = useNodes();
   const { projects } = useProjects();
+  const { syncStatusMap, pushSettings, pullSettings, syncAuth, trackNode } = useNodeSettingsSync();
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [selectedNode, setSelectedNode] = useState<NodeInfo | null>(null);
+
+  // Track remote nodes for sync status polling
+  useEffect(() => {
+    const remoteNodes = nodes.filter((node) => node.type === "remote");
+    for (const node of remoteNodes) {
+      trackNode(node.id);
+    }
+  }, [nodes, trackNode]);
 
   useEffect(() => {
     if (!selectedNode) return;
@@ -31,8 +41,11 @@ export function NodesView({ addToast, onClose }: NodesViewProps) {
     const online = nodes.filter((node) => node.status === "online").length;
     const offline = nodes.filter((node) => node.status === "offline" || node.status === "error").length;
     const remote = nodes.filter((node) => node.type === "remote").length;
-    return { total, online, offline, remote };
-  }, [nodes]);
+    const synced = nodes.filter(
+      (node) => node.type === "remote" && syncStatusMap[node.id] && computeSyncState(syncStatusMap[node.id]).syncState === "synced"
+    ).length;
+    return { total, online, offline, remote, synced };
+  }, [nodes, syncStatusMap]);
 
   const handleRegister = useCallback(async (input: AddNodeInput) => {
     await register(input);
@@ -120,6 +133,10 @@ export function NodesView({ addToast, onClose }: NodesViewProps) {
           <span><Globe size={14} /> Remote</span>
           <strong>{stats.remote}</strong>
         </div>
+        <div className="nodes-view-stat nodes-view-stat--synced" data-testid="nodes-stat-synced">
+          <span><RefreshCw size={14} /> Synced</span>
+          <strong>{stats.synced}</strong>
+        </div>
       </div>
 
       {error && <div className="nodes-view-error">{error}</div>}
@@ -148,17 +165,23 @@ export function NodesView({ addToast, onClose }: NodesViewProps) {
         </div>
       ) : (
         <div className="nodes-view-grid">
-          {nodes.map((node) => (
-            <NodeCard
-              key={node.id}
-              node={node}
-              projects={projects}
-              onHealthCheck={(id) => { void handleHealthCheck(id); }}
-              onEdit={(selected) => setSelectedNode(selected)}
-              onRemove={(id) => { void handleUnregister(id); }}
-              isLoading={loading}
-            />
-          ))}
+          {nodes.map((node) => {
+            const nodeSyncStatus = node.type === "remote" && syncStatusMap[node.id]
+              ? computeSyncState(syncStatusMap[node.id])
+              : undefined;
+            return (
+              <NodeCard
+                key={node.id}
+                node={node}
+                projects={projects}
+                onHealthCheck={(id) => { void handleHealthCheck(id); }}
+                onEdit={(selected) => setSelectedNode(selected)}
+                onRemove={(id) => { void handleUnregister(id); }}
+                isLoading={loading}
+                syncStatus={nodeSyncStatus}
+              />
+            );
+          })}
         </div>
       )}
 
@@ -177,6 +200,12 @@ export function NodesView({ addToast, onClose }: NodesViewProps) {
         onUpdate={handleUpdate}
         onHealthCheck={handleHealthCheck}
         addToast={addToast}
+        syncStatus={selectedNode?.type === "remote" && selectedNode && syncStatusMap[selectedNode.id]
+          ? computeSyncState(syncStatusMap[selectedNode.id])
+          : undefined}
+        onPushSettings={pushSettings}
+        onPullSettings={pullSettings}
+        onSyncAuth={syncAuth}
       />
     </div>
   );

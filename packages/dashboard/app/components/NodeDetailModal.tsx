@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, Pencil, Save, X } from "lucide-react";
+import { Activity, Download, Key, Pencil, Save, Shield, Upload, X } from "lucide-react";
 import type { NodeInfo, NodeUpdateInput, ProjectInfo } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { getProjectsForNode } from "../utils/nodeProjectAssignment";
+import type { ComputedNodeSyncStatus } from "../hooks/useNodeSettingsSync";
+import { formatRelativeTime, getSyncStateColor } from "../hooks/useNodeSettingsSync";
 
 interface NodeDetailModalProps {
   isOpen: boolean;
@@ -12,6 +14,10 @@ interface NodeDetailModalProps {
   onUpdate: (id: string, updates: NodeUpdateInput) => Promise<void>;
   onHealthCheck: (id: string) => Promise<void>;
   addToast: (message: string, type?: ToastType) => void;
+  syncStatus?: ComputedNodeSyncStatus;
+  onPushSettings?: (nodeId: string) => Promise<unknown>;
+  onPullSettings?: (nodeId: string) => Promise<unknown>;
+  onSyncAuth?: (nodeId: string) => Promise<unknown>;
 }
 
 function formatTimestamp(value?: string): string {
@@ -29,6 +35,10 @@ export function NodeDetailModal({
   onUpdate,
   onHealthCheck,
   addToast,
+  syncStatus,
+  onPushSettings,
+  onPullSettings,
+  onSyncAuth,
 }: NodeDetailModalProps) {
   const [editMode, setEditMode] = useState(false);
   const [name, setName] = useState("");
@@ -36,6 +46,12 @@ export function NodeDetailModal({
   const [apiKey, setApiKey] = useState("");
   const [maxConcurrent, setMaxConcurrent] = useState(2);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Sync action states
+  const [isPushing, setIsPushing] = useState(false);
+  const [isPulling, setIsPulling] = useState(false);
+  const [isSyncingAuth, setIsSyncingAuth] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!node || !isOpen) {
@@ -80,6 +96,58 @@ export function NodeDetailModal({
       addToast(message, "error");
     }
   }, [addToast, node, onHealthCheck]);
+
+  const handlePushSettings = useCallback(async () => {
+    if (!node || !onPushSettings) return;
+    setSyncError(null);
+    setIsPushing(true);
+    try {
+      await onPushSettings(node.id);
+      addToast("Settings pushed successfully", "success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Push settings failed";
+      setSyncError(message);
+      addToast(message, "error");
+    } finally {
+      setIsPushing(false);
+    }
+  }, [addToast, node, onPushSettings]);
+
+  const handlePullSettings = useCallback(async () => {
+    if (!node || !onPullSettings) return;
+    setSyncError(null);
+    setIsPulling(true);
+    try {
+      await onPullSettings(node.id);
+      addToast("Settings pulled successfully", "success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Pull settings failed";
+      setSyncError(message);
+      addToast(message, "error");
+    } finally {
+      setIsPulling(false);
+    }
+  }, [addToast, node, onPullSettings]);
+
+  const handleSyncAuth = useCallback(async () => {
+    if (!node || !onSyncAuth) return;
+    setSyncError(null);
+    setIsSyncingAuth(true);
+    try {
+      await onSyncAuth(node.id);
+      addToast("Auth credentials synced successfully", "success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Auth sync failed";
+      setSyncError(message);
+      addToast(message, "error");
+    } finally {
+      setIsSyncingAuth(false);
+    }
+  }, [addToast, node, onSyncAuth]);
+
+  const handleDismissSyncError = useCallback(() => {
+    setSyncError(null);
+  }, []);
 
   const handleSave = useCallback(async () => {
     if (!node || isSaving) return;
@@ -271,6 +339,78 @@ export function NodeDetailModal({
               <span>Last check: <strong>{formatTimestamp(node.updatedAt)}</strong></span>
             </div>
           </section>
+
+          {/* Settings Sync section — only for remote nodes */}
+          {node.type === "remote" && (
+            <section className="node-detail-modal__section">
+              <h4>Settings Sync</h4>
+
+              {syncStatus && (
+                <div className="node-detail-modal__sync-status">
+                  <span
+                    className="node-detail-modal__sync-dot"
+                    style={{ backgroundColor: getSyncStateColor(syncStatus.syncState) }}
+                    aria-hidden
+                  />
+                  <span>
+                    Last sync:{" "}
+                    <strong>
+                      {syncStatus.lastSyncAt
+                        ? formatRelativeTime(syncStatus.lastSyncAt)
+                        : "Never synced"}
+                    </strong>
+                  </span>
+                  {syncStatus.diffCount > 0 && (
+                    <span className="node-detail-modal__sync-diff">
+                      Differences: <strong>{syncStatus.diffCount}</strong>
+                    </span>
+                  )}
+                </div>
+              )}
+
+              <div className="node-detail-modal__sync-actions">
+                <button
+                  className="btn btn-sm"
+                  onClick={handlePushSettings}
+                  disabled={isPushing || !onPushSettings}
+                >
+                  <Upload size={14} />
+                  {isPushing ? "Pushing..." : "Push Settings"}
+                </button>
+
+                <button
+                  className="btn btn-sm"
+                  onClick={handlePullSettings}
+                  disabled={isPulling || !onPullSettings}
+                >
+                  <Download size={14} />
+                  {isPulling ? "Pulling..." : "Pull Settings"}
+                </button>
+
+                <button
+                  className="btn btn-sm"
+                  onClick={handleSyncAuth}
+                  disabled={isSyncingAuth || !onSyncAuth}
+                >
+                  <Shield size={14} />
+                  {isSyncingAuth ? "Syncing..." : "Sync Auth"}
+                </button>
+              </div>
+
+              {syncError && (
+                <div className="node-detail-modal__sync-error">
+                  <span>{syncError}</span>
+                  <button
+                    className="node-detail-modal__sync-error-dismiss"
+                    onClick={handleDismissSyncError}
+                    aria-label="Dismiss error"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+            </section>
+          )}
         </div>
 
         <div className="modal-actions node-detail-modal__actions">

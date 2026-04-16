@@ -9,6 +9,94 @@ import {
   type NodeAuthSyncResult,
 } from "../api-node";
 
+// ── Sync State Utilities ───────────────────────────────────────────────────────
+
+/** Derived sync state computed from raw sync status data */
+export type SyncState = "synced" | "pending" | "diff" | "error" | "never-synced";
+
+/** Computed sync status with derived state for UI consumption */
+export interface ComputedNodeSyncStatus {
+  syncState: SyncState;
+  lastSyncAt: string | null;
+  diffCount: number;
+}
+
+/**
+ * Compute the derived sync state from raw NodeSettingsSyncStatus data.
+ * - never-synced: lastSyncAt is null (never been synced)
+ * - error: remote node is unreachable
+ * - diff: there are differences between local and remote
+ * - synced: no differences and lastSyncAt is set
+ * - pending: lastSyncAt is set, remote is reachable, but we don't have diff data yet
+ */
+export function computeSyncState(status: NodeSettingsSyncStatus): ComputedNodeSyncStatus {
+  const { lastSyncAt, remoteReachable, diff } = status;
+  const diffCount = diff.global.length + diff.project.length;
+
+  if (lastSyncAt === null) {
+    return { syncState: "never-synced", lastSyncAt, diffCount: 0 };
+  }
+
+  if (!remoteReachable) {
+    return { syncState: "error", lastSyncAt, diffCount };
+  }
+
+  if (diffCount > 0) {
+    return { syncState: "diff", lastSyncAt, diffCount };
+  }
+
+  return { syncState: "synced", lastSyncAt, diffCount: 0 };
+}
+
+/**
+ * Format a relative time string from an ISO timestamp.
+ * Returns "Synced Xm ago", "Synced Xh ago", "Synced Xd ago", or "Never synced".
+ */
+export function formatRelativeTime(isoTimestamp: string | null): string {
+  if (isoTimestamp === null) {
+    return "Never synced";
+  }
+
+  const date = new Date(isoTimestamp);
+  if (Number.isNaN(date.getTime())) {
+    return "Never synced";
+  }
+
+  const now = Date.now();
+  const diffMs = now - date.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  const diffMin = Math.floor(diffSec / 60);
+  const diffHr = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHr / 24);
+
+  if (diffMin < 1) {
+    return "Synced just now";
+  }
+  if (diffMin < 60) {
+    return `Synced ${diffMin}m ago`;
+  }
+  if (diffHr < 24) {
+    return `Synced ${diffHr}h ago`;
+  }
+  return `Synced ${diffDay}d ago`;
+}
+
+/** Get the CSS color variable for a sync state */
+export function getSyncStateColor(state: SyncState): string {
+  switch (state) {
+    case "synced":
+      return "var(--color-success)";
+    case "pending":
+      return "var(--warning)";
+    case "diff":
+      return "var(--warning)";
+    case "error":
+      return "var(--color-error)";
+    case "never-synced":
+      return "var(--text-muted)";
+  }
+}
+
 export interface UseNodeSettingsSyncResult {
   /** Per-node sync status keyed by nodeId */
   syncStatusMap: Record<string, NodeSettingsSyncStatus>;
