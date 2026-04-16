@@ -4515,3 +4515,262 @@ describe("Settings API wrappers", () => {
     });
   });
 });
+
+// ── Automation / Scheduling Scope Tests ─────────────────────────────────────────
+
+function mockSchedulingFetchResponse(
+  ok: boolean,
+  body: unknown,
+  status = ok ? 200 : 500,
+  contentType = "application/json"
+) {
+  const bodyText = JSON.stringify(body);
+  return Promise.resolve({
+    ok,
+    status,
+    statusText: ok ? "OK" : "Error",
+    headers: {
+      get: (name: string) =>
+        name.toLowerCase() === "content-type" ? contentType : null,
+    },
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(bodyText),
+  } as unknown as Response);
+}
+
+describe("Automation API scope forwarding", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("fetchAutomations sends GET to /automations without scope by default", async () => {
+    const { fetchAutomations } = await import("./api");
+    globalThis.fetch = vi.fn().mockReturnValue(mockSchedulingFetchResponse(true, []));
+
+    await fetchAutomations();
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe("/api/automations");
+  });
+
+  it("fetchAutomations includes scope=global when specified", async () => {
+    const { fetchAutomations } = await import("./api");
+    globalThis.fetch = vi.fn().mockReturnValue(mockSchedulingFetchResponse(true, []));
+
+    await fetchAutomations({ scope: "global" });
+
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/api/automations?scope=global");
+  });
+
+  it("fetchAutomations includes scope=project and projectId when project-scoped", async () => {
+    const { fetchAutomations } = await import("./api");
+    globalThis.fetch = vi.fn().mockReturnValue(mockSchedulingFetchResponse(true, []));
+
+    await fetchAutomations({ scope: "project", projectId: "proj-123" });
+
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/api/automations");
+    expect(url).toContain("scope=project");
+    expect(url).toContain("projectId=proj-123");
+  });
+
+  it("createAutomation forwards scope context in query params", async () => {
+    const { createAutomation } = await import("./api");
+    const fakeSchedule = {
+      id: "sched-001",
+      name: "Test",
+      scheduleType: "daily",
+      cronExpression: "0 0 * * *",
+      command: "echo test",
+      enabled: true,
+      scope: "project",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    globalThis.fetch = vi.fn().mockReturnValue({
+      ok: true,
+      status: 201,
+      statusText: "Created",
+      headers: { get: () => "application/json" },
+      json: () => Promise.resolve(fakeSchedule),
+      text: () => Promise.resolve(JSON.stringify(fakeSchedule)),
+    } as unknown as Response);
+
+    await createAutomation(
+      { name: "Test", scheduleType: "daily", command: "echo test", enabled: true, scope: "project" },
+      { scope: "project", projectId: "proj-123" }
+    );
+
+    const [url, opts] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/api/automations?scope=project&projectId=proj-123");
+    const body = JSON.parse(opts.body);
+    expect(body.name).toBe("Test");
+    expect(body.scope).toBe("project");
+  });
+
+  it("createAutomation forwards scope context without projectId for global scope", async () => {
+    const { createAutomation } = await import("./api");
+    const fakeSchedule = {
+      id: "sched-001",
+      name: "Test",
+      scheduleType: "daily",
+      cronExpression: "0 0 * * *",
+      command: "echo test",
+      enabled: true,
+      scope: "global",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    globalThis.fetch = vi.fn().mockReturnValue({
+      ok: true,
+      status: 201,
+      statusText: "Created",
+      headers: { get: () => "application/json" },
+      json: () => Promise.resolve(fakeSchedule),
+      text: () => Promise.resolve(JSON.stringify(fakeSchedule)),
+    } as unknown as Response);
+
+    await createAutomation(
+      { name: "Test", scheduleType: "daily", command: "echo test", enabled: true },
+      { scope: "global" }
+    );
+
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/api/automations?scope=global");
+    expect(url).not.toContain("projectId");
+  });
+
+  it("runAutomation forwards scope context", async () => {
+    const { runAutomation } = await import("./api");
+    globalThis.fetch = vi.fn().mockReturnValue(mockSchedulingFetchResponse(true, { schedule: {}, result: { success: true } }));
+
+    await runAutomation("sched-001", { scope: "project", projectId: "proj-123" });
+
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/api/automations/sched-001/run?scope=project&projectId=proj-123");
+  });
+
+  it("toggleAutomation forwards scope context", async () => {
+    const { toggleAutomation } = await import("./api");
+    globalThis.fetch = vi.fn().mockReturnValue(mockSchedulingFetchResponse(true, { id: "sched-001", enabled: false }));
+
+    await toggleAutomation("sched-001", { scope: "global" });
+
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/api/automations/sched-001/toggle?scope=global");
+  });
+});
+
+describe("Routine API scope forwarding", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("fetchRoutines sends GET to /routines without scope by default", async () => {
+    const { fetchRoutines } = await import("./api");
+    globalThis.fetch = vi.fn().mockReturnValue(mockSchedulingFetchResponse(true, []));
+
+    await fetchRoutines();
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe("/api/routines");
+  });
+
+  it("fetchRoutines includes scope=global when specified", async () => {
+    const { fetchRoutines } = await import("./api");
+    globalThis.fetch = vi.fn().mockReturnValue(mockSchedulingFetchResponse(true, []));
+
+    await fetchRoutines({ scope: "global" });
+
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/api/routines?scope=global");
+  });
+
+  it("fetchRoutines includes scope=project and projectId when project-scoped", async () => {
+    const { fetchRoutines } = await import("./api");
+    globalThis.fetch = vi.fn().mockReturnValue(mockSchedulingFetchResponse(true, []));
+
+    await fetchRoutines({ scope: "project", projectId: "proj-456" });
+
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/api/routines");
+    expect(url).toContain("scope=project");
+    expect(url).toContain("projectId=proj-456");
+  });
+
+  it("createRoutine forwards scope context in query params", async () => {
+    const { createRoutine } = await import("./api");
+    const fakeRoutine = {
+      id: "routine-001",
+      name: "Test Routine",
+      enabled: true,
+      trigger: { type: "manual" },
+      scope: "project",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    globalThis.fetch = vi.fn().mockReturnValue({
+      ok: true,
+      status: 201,
+      statusText: "Created",
+      headers: { get: () => "application/json" },
+      json: () => Promise.resolve(fakeRoutine),
+      text: () => Promise.resolve(JSON.stringify(fakeRoutine)),
+    } as unknown as Response);
+
+    await createRoutine(
+      { name: "Test Routine", agentId: "", trigger: { type: "manual" as const }, enabled: true },
+      { scope: "project", projectId: "proj-456" }
+    );
+
+    const [url, opts] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/api/routines?scope=project&projectId=proj-456");
+    const body = JSON.parse(opts.body);
+    expect(body.name).toBe("Test Routine");
+    expect(body.scope).toBeUndefined(); // scope is in query, not body (body comes from RoutineCreateInput)
+  });
+
+  it("updateRoutine forwards scope context", async () => {
+    const { updateRoutine } = await import("./api");
+    globalThis.fetch = vi.fn().mockReturnValue(mockSchedulingFetchResponse(true, { id: "routine-001", name: "Updated" }));
+
+    await updateRoutine("routine-001", { name: "Updated" }, { scope: "project", projectId: "proj-456" });
+
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/api/routines/routine-001?scope=project&projectId=proj-456");
+  });
+
+  it("deleteRoutine forwards scope context", async () => {
+    const { deleteRoutine } = await import("./api");
+    globalThis.fetch = vi.fn().mockReturnValue({
+      ok: true,
+      status: 204,
+      statusText: "No Content",
+      headers: { get: () => "application/json" },
+      json: () => Promise.resolve(null),
+      text: () => Promise.resolve(""),
+    } as unknown as Response);
+
+    await deleteRoutine("routine-001", { scope: "global" });
+
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/api/routines/routine-001?scope=global");
+  });
+
+  it("runRoutine forwards scope context", async () => {
+    const { runRoutine } = await import("./api");
+    globalThis.fetch = vi.fn().mockReturnValue(mockSchedulingFetchResponse(true, { routine: {}, result: { success: true } }));
+
+    await runRoutine("routine-001", { scope: "project", projectId: "proj-789" });
+
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/api/routines/routine-001/trigger?scope=project&projectId=proj-789");
+  });
+});

@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { Play, Pause, Pencil, Trash2, Clock, CheckCircle, XCircle, ChevronDown, ChevronUp, Calendar, Webhook, Code, Zap } from "lucide-react";
+import { Play, Pause, Pencil, Trash2, Clock, CheckCircle, XCircle, ChevronDown, ChevronUp, Calendar, Webhook, Code, Zap, Globe, Folder } from "lucide-react";
 import type { Routine, RoutineExecutionResult, RoutineTriggerType, RoutineCatchUpPolicy, RoutineExecutionPolicy } from "@fusion/core";
 
 /**
@@ -171,6 +171,15 @@ export function RoutineCard({ routine, onEdit, onDelete, onRun, onToggle, runnin
               <TriggerIcon size={10} />
               {TRIGGER_TYPE_LABELS[routine.trigger.type]}
             </span>
+            {routine.scope && (
+              <span
+                className={`routine-scope-badge${routine.scope === "global" ? " global" : " project"}`}
+                title={`${routine.scope === "global" ? "Global" : "Project"}-scoped routine`}
+              >
+                {routine.scope === "global" ? <Globe size={10} /> : <Folder size={10} />}
+                {routine.scope}
+              </span>
+            )}
           </div>
           {routine.description && (
             <p className="routine-card-description">{routine.description}</p>

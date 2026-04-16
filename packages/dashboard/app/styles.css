@@ -16027,6 +16027,141 @@ html .column.drag-over * {
   max-height: 70vh;
 }
 
+/* Scheduling scope selector */
+.scheduling-scope-selector {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 2px;
+}
+
+.scope-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.scope-btn:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.scope-btn.active {
+  background: var(--todo);
+  color: white;
+}
+
+.scope-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Schedule form scope toggle */
+.schedule-scope-toggle {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 2px;
+  width: fit-content;
+}
+
+.schedule-scope-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.schedule-scope-btn:hover:not(:disabled) {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.schedule-scope-btn.active {
+  background: var(--todo);
+  color: white;
+}
+
+.schedule-scope-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.schedule-scope-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Routine form scope toggle */
+.routine-scope-toggle {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 2px;
+  width: fit-content;
+}
+
+.routine-scope-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.routine-scope-btn:hover:not(:disabled) {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.routine-scope-btn.active {
+  background: var(--todo);
+  color: white;
+}
+
+.routine-scope-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.routine-scope-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .schedule-empty-state {
   display: flex;
   flex-direction: column;
@@ -16111,6 +16246,30 @@ html .column.drag-over * {
   border: 1px solid;
   line-height: 1.5;
   white-space: nowrap;
+}
+
+.schedule-scope-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid;
+  line-height: 1.4;
+  white-space: nowrap;
+  text-transform: lowercase;
+}
+
+.schedule-scope-badge.global {
+  color: var(--text-muted);
+  border-color: var(--text-dim);
+}
+
+.schedule-scope-badge.project {
+  color: var(--todo);
+  border-color: var(--todo);
 }
 
 .schedule-card-description {
@@ -16655,6 +16814,30 @@ html .column.drag-over * {
   border: 1px solid;
   line-height: 1.5;
   white-space: nowrap;
+}
+
+.routine-scope-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid;
+  line-height: 1.4;
+  white-space: nowrap;
+  text-transform: lowercase;
+}
+
+.routine-scope-badge.global {
+  color: var(--text-muted);
+  border-color: var(--text-dim);
+}
+
+.routine-scope-badge.project {
+  color: var(--todo);
+  border-color: var(--todo);
 }
 
 .routine-card-description {

@@ -1762,56 +1762,84 @@ export function connectPlanningStream(
 
 // ── Automation / Scheduled Tasks ──────────────────────────────────
 
+/**
+ * Options for scheduling scope (global vs project-scoped automations/routines).
+ * When scope is "project", projectId must be provided.
+ */
+export type SchedulingScopeOptions = {
+  /** Scope for scheduling operations: "global" or "project". Defaults to "project" on the server. */
+  scope?: "global" | "project";
+  /** Project ID required when scope is "project". */
+  projectId?: string;
+};
+
+/**
+ * Build URL suffix with scope and projectId query params.
+ * Mirrors the backend's parseScopeParam logic: scope goes in query param.
+ */
+function withSchedulingScope(path: string, options?: SchedulingScopeOptions): string {
+  const params = new URLSearchParams();
+  if (options?.scope) {
+    params.set("scope", options.scope);
+  }
+  if (options?.projectId) {
+    params.set("projectId", options.projectId);
+  }
+  const suffix = params.toString();
+  if (!suffix) return path;
+  return `${path}?${suffix}`;
+}
+
 /** Response from the manual run trigger endpoint. */
 export interface AutomationRunResponse {
   schedule: ScheduledTask;
   result: AutomationRunResult;
 }
 
-export function fetchAutomations(): Promise<ScheduledTask[]> {
-  return api<ScheduledTask[]>("/automations");
+export function fetchAutomations(options?: SchedulingScopeOptions): Promise<ScheduledTask[]> {
+  return api<ScheduledTask[]>(withSchedulingScope("/automations", options));
 }
 
-export function fetchAutomation(id: string): Promise<ScheduledTask> {
-  return api<ScheduledTask>(`/automations/${id}`);
+export function fetchAutomation(id: string, options?: SchedulingScopeOptions): Promise<ScheduledTask> {
+  return api<ScheduledTask>(withSchedulingScope(`/automations/${id}`, options));
 }
 
-export function createAutomation(input: ScheduledTaskCreateInput): Promise<ScheduledTask> {
-  const { name, description, scheduleType, cronExpression, command, enabled, timeoutMs, steps } = input;
-  return api<ScheduledTask>("/automations", {
+export function createAutomation(input: ScheduledTaskCreateInput, options?: SchedulingScopeOptions): Promise<ScheduledTask> {
+  // Forward all input fields including scope metadata (scope may be set on input or in options)
+  return api<ScheduledTask>(withSchedulingScope("/automations", options), {
     method: "POST",
-    body: JSON.stringify({ name, description, scheduleType, cronExpression, command, enabled, timeoutMs, steps }),
+    body: JSON.stringify(input),
   });
 }
 
-export function updateAutomation(id: string, updates: ScheduledTaskUpdateInput): Promise<ScheduledTask> {
-  const { name, description, scheduleType, cronExpression, command, enabled, timeoutMs, steps } = updates;
-  return api<ScheduledTask>(`/automations/${id}`, {
+export function updateAutomation(id: string, updates: ScheduledTaskUpdateInput, options?: SchedulingScopeOptions): Promise<ScheduledTask> {
+  // Forward all update fields including scope metadata
+  return api<ScheduledTask>(withSchedulingScope(`/automations/${id}`, options), {
     method: "PATCH",
-    body: JSON.stringify({ name, description, scheduleType, cronExpression, command, enabled, timeoutMs, steps }),
+    body: JSON.stringify(updates),
   });
 }
 
-export async function deleteAutomation(id: string): Promise<void> {
-  await api(`/automations/${id}`, {
+export async function deleteAutomation(id: string, options?: SchedulingScopeOptions): Promise<void> {
+  await api(withSchedulingScope(`/automations/${id}`, options), {
     method: "DELETE",
   });
 }
 
-export function runAutomation(id: string): Promise<AutomationRunResponse> {
-  return api<AutomationRunResponse>(`/automations/${id}/run`, {
+export function runAutomation(id: string, options?: SchedulingScopeOptions): Promise<AutomationRunResponse> {
+  return api<AutomationRunResponse>(withSchedulingScope(`/automations/${id}/run`, options), {
     method: "POST",
   });
 }
 
-export function toggleAutomation(id: string): Promise<ScheduledTask> {
-  return api<ScheduledTask>(`/automations/${id}/toggle`, {
+export function toggleAutomation(id: string, options?: SchedulingScopeOptions): Promise<ScheduledTask> {
+  return api<ScheduledTask>(withSchedulingScope(`/automations/${id}/toggle`, options), {
     method: "POST",
   });
 }
 
-export function reorderAutomationSteps(id: string, stepIds: string[]): Promise<ScheduledTask> {
-  return api<ScheduledTask>(`/automations/${id}/steps/reorder`, {
+export function reorderAutomationSteps(id: string, stepIds: string[], options?: SchedulingScopeOptions): Promise<ScheduledTask> {
+  return api<ScheduledTask>(withSchedulingScope(`/automations/${id}/steps/reorder`, options), {
     method: "POST",
     body: JSON.stringify({ stepIds }),
   });
@@ -1824,46 +1852,48 @@ export interface RoutineRunResponse {
   result: RoutineExecutionResult;
 }
 
-export function fetchRoutines(): Promise<Routine[]> {
-  return api<Routine[]>("/routines");
+export function fetchRoutines(options?: SchedulingScopeOptions): Promise<Routine[]> {
+  return api<Routine[]>(withSchedulingScope("/routines", options));
 }
 
-export function fetchRoutine(id: string): Promise<Routine> {
-  return api<Routine>(`/routines/${id}`);
+export function fetchRoutine(id: string, options?: SchedulingScopeOptions): Promise<Routine> {
+  return api<Routine>(withSchedulingScope(`/routines/${id}`, options));
 }
 
-export function createRoutine(input: RoutineCreateInput): Promise<Routine> {
-  return api<Routine>("/routines", {
+export function createRoutine(input: RoutineCreateInput, options?: SchedulingScopeOptions): Promise<Routine> {
+  // Forward all input fields including scope metadata
+  return api<Routine>(withSchedulingScope("/routines", options), {
     method: "POST",
     body: JSON.stringify(input),
   });
 }
 
-export function updateRoutine(id: string, updates: RoutineUpdateInput): Promise<Routine> {
-  return api<Routine>(`/routines/${id}`, {
+export function updateRoutine(id: string, updates: RoutineUpdateInput, options?: SchedulingScopeOptions): Promise<Routine> {
+  // Forward all update fields including scope metadata
+  return api<Routine>(withSchedulingScope(`/routines/${id}`, options), {
     method: "PATCH",
     body: JSON.stringify(updates),
   });
 }
 
-export async function deleteRoutine(id: string): Promise<void> {
-  await api(`/routines/${id}`, {
+export async function deleteRoutine(id: string, options?: SchedulingScopeOptions): Promise<void> {
+  await api(withSchedulingScope(`/routines/${id}`, options), {
     method: "DELETE",
   });
 }
 
-export function runRoutine(id: string): Promise<RoutineRunResponse> {
-  return api<RoutineRunResponse>(`/routines/${id}/trigger`, {
+export function runRoutine(id: string, options?: SchedulingScopeOptions): Promise<RoutineRunResponse> {
+  return api<RoutineRunResponse>(withSchedulingScope(`/routines/${id}/trigger`, options), {
     method: "POST",
   });
 }
 
-export function fetchRoutineRuns(id: string): Promise<RoutineExecutionResult[]> {
-  return api<RoutineExecutionResult[]>(`/routines/${id}/runs`);
+export function fetchRoutineRuns(id: string, options?: SchedulingScopeOptions): Promise<RoutineExecutionResult[]> {
+  return api<RoutineExecutionResult[]>(withSchedulingScope(`/routines/${id}/runs`, options));
 }
 
-export function triggerRoutineWebhook(id: string, payload?: Record<string, unknown>): Promise<RoutineRunResponse> {
-  return api<RoutineRunResponse>(`/routines/${id}/webhook`, {
+export function triggerRoutineWebhook(id: string, payload?: Record<string, unknown>, options?: SchedulingScopeOptions): Promise<RoutineRunResponse> {
+  return api<RoutineRunResponse>(withSchedulingScope(`/routines/${id}/webhook`, options), {
     method: "POST",
     body: payload ? JSON.stringify(payload) : undefined,
   });

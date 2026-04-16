@@ -1,9 +1,11 @@
 import { useState, useCallback, useEffect } from "react";
+import { Globe, Folder } from "lucide-react";
 import type { ScheduledTask, ScheduledTaskCreateInput, ScheduleType, AutomationStep } from "@fusion/core";
 import { ScheduleStepsEditor } from "./ScheduleStepsEditor";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { fetchModels } from "../api";
 import type { ModelInfo } from "../api";
+import type { SchedulingScope } from "./ScheduledTasksModal";
 
 /** Mapping from preset schedule types to their cron expressions. Mirrored from @fusion/core. */
 const PRESET_CRON: Record<Exclude<ScheduleType, "custom">, string> = {
@@ -65,9 +67,13 @@ interface ScheduleFormProps {
   onSubmit: (input: ScheduledTaskCreateInput) => Promise<void>;
   /** Called when the user cancels. */
   onCancel: () => void;
+  /** Scope for the schedule (global or project). Defaults to schedule.scope or "project". */
+  scope?: SchedulingScope;
+  /** Project ID for project-scoped schedules. */
+  projectId?: string;
 }
 
-export function ScheduleForm({ schedule, onSubmit, onCancel }: ScheduleFormProps) {
+export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, projectId }: ScheduleFormProps) {
   const isEditing = !!schedule;
 
   // Determine initial mode based on whether the schedule has steps
@@ -178,6 +184,11 @@ export function ScheduleForm({ schedule, onSubmit, onCancel }: ScheduleFormProps
     const e: Record<string, string> = {};
     if (!name.trim()) e.name = "Name is required";
     
+    // Scope validation: project scope requires projectId
+    if (formScope === "project" && !projectId) {
+      e.scope = "Project-specific entries require an active project.";
+    }
+    
     // Simple mode validation
     if (mode === "simple") {
       if (simpleType === "command") {
@@ -247,6 +258,13 @@ export function ScheduleForm({ schedule, onSubmit, onCancel }: ScheduleFormProps
       try {
         let submitData: ScheduledTaskCreateInput;
         
+        // Determine scope: use edit mode's existing scope, otherwise use formScope prop
+        // When formScope is "project" but no projectId provided, fall back to "global"
+        let effectiveScope = schedule?.scope ?? formScope ?? (projectId ? "project" : "global");
+        if (effectiveScope === "project" && !projectId) {
+          effectiveScope = "global";
+        }
+        
         if (mode === "simple") {
           if (simpleType === "command") {
             submitData = {
@@ -258,6 +276,7 @@ export function ScheduleForm({ schedule, onSubmit, onCancel }: ScheduleFormProps
               enabled,
               timeoutMs,
               steps: undefined,
+              scope: effectiveScope,
             };
           } else {
             // AI Prompt mode - create a single-step automation
@@ -278,6 +297,7 @@ export function ScheduleForm({ schedule, onSubmit, onCancel }: ScheduleFormProps
               enabled,
               timeoutMs,
               steps: [aiStep],
+              scope: effectiveScope,
             };
           }
         } else {
@@ -290,6 +310,7 @@ export function ScheduleForm({ schedule, onSubmit, onCancel }: ScheduleFormProps
             enabled,
             timeoutMs,
             steps,
+            scope: effectiveScope,
           };
         }
         
@@ -298,7 +319,7 @@ export function ScheduleForm({ schedule, onSubmit, onCancel }: ScheduleFormProps
         setSubmitting(false);
       }
     },
-    [validate, onSubmit, name, description, scheduleType, cronExpression, command, prompt, modelProvider, modelId, enabled, timeoutMs, mode, simpleType, steps],
+    [validate, onSubmit, name, description, scheduleType, cronExpression, command, prompt, modelProvider, modelId, enabled, timeoutMs, mode, simpleType, steps, formScope, projectId, schedule?.scope],
   );
 
   const cronFieldId = "schedule-cron";
@@ -340,6 +361,47 @@ export function ScheduleForm({ schedule, onSubmit, onCancel }: ScheduleFormProps
           onChange={(e) => setDescription(e.target.value)}
           rows={2}
         />
+      </div>
+
+      {/* Scope selector */}
+      <div className="form-group">
+        <label>Scope</label>
+        <div className="schedule-scope-toggle" role="radiogroup" aria-label="Schedule scope">
+          <button
+            type="button"
+            className={`schedule-scope-btn${(!formScope || formScope === 'global') ? " active" : ""}`}
+            onClick={() => { /* Scope is determined at submit time based on projectId */ }}
+            role="radio"
+            aria-checked={(!formScope || formScope === 'global') ? "true" : "false"}
+            disabled={!!schedule?.scope}
+            title={schedule?.scope ? `Scope is locked to ${schedule.scope} for existing schedules` : "Global scope"}
+          >
+            <Globe size={12} />
+            Global
+          </button>
+          <button
+            type="button"
+            className={`schedule-scope-btn${formScope === 'project' ? " active" : ""}`}
+            onClick={() => { /* Scope is determined at submit time based on projectId */ }}
+            role="radio"
+            aria-checked={formScope === 'project' ? "true" : "false"}
+            disabled={!!schedule?.scope || !projectId}
+            title={schedule?.scope ? `Scope is locked to ${schedule.scope} for existing schedules` : !projectId ? "Select a project to enable project scope" : "Project scope"}
+          >
+            <Folder size={12} />
+            Project
+          </button>
+        </div>
+        <small>
+          {!projectId && !schedule?.scope
+            ? "No active project. Schedules will be created at global scope."
+            : formScope === "project" && projectId
+              ? `This schedule will be scoped to the current project.`
+              : "This schedule will be created at global scope."}
+        </small>
+        {errors.scope && (
+          <small className="field-error">{errors.scope}</small>
+        )}
       </div>
 
       <div className="form-group">

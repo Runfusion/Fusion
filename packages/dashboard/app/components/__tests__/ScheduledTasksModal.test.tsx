@@ -19,6 +19,8 @@ vi.mock("lucide-react", () => ({
   Webhook: () => <span data-testid="icon-webhook">🔗</span>,
   Code: () => <span data-testid="icon-code">💻</span>,
   Zap: () => <span data-testid="icon-zap">⚡</span>,
+  Globe: () => <span data-testid="icon-globe">🌍</span>,
+  Folder: () => <span data-testid="icon-folder">📁</span>,
 }));
 
 // Mock @fusion/core (no runtime values needed — ScheduleForm inlines presets)
@@ -186,6 +188,107 @@ describe("ScheduledTasksModal", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  describe("Scope behavior", () => {
+    it("defaults to global scope when no projectId provided", async () => {
+      render(<ScheduledTasksModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => {
+        expect(screen.getByText("No scheduled tasks yet")).toBeDefined();
+      });
+      // Verify fetchAutomations was called with global scope
+      expect(mockFetchAutomations).toHaveBeenCalledWith({ scope: "global" });
+    });
+
+    it("defaults to project scope when projectId is provided", async () => {
+      render(<ScheduledTasksModal onClose={onClose} addToast={addToast} projectId="proj-123" />);
+      await waitFor(() => {
+        expect(screen.getByText("No scheduled tasks yet")).toBeDefined();
+      });
+      // Verify fetchAutomations was called with project scope and projectId
+      expect(mockFetchAutomations).toHaveBeenCalledWith({ scope: "project", projectId: "proj-123" });
+    });
+
+    it("forwards projectId to fetchRoutines when projectId is provided", async () => {
+      render(<ScheduledTasksModal onClose={onClose} addToast={addToast} projectId="proj-456" />);
+      await waitFor(() => {
+        expect(screen.getByText("No scheduled tasks yet")).toBeDefined();
+      });
+      // Verify fetchRoutines was called with project scope and projectId
+      expect(mockFetchRoutines).toHaveBeenCalledWith({ scope: "project", projectId: "proj-456" });
+    });
+
+    it("can switch from global to project scope and reloads data", async () => {
+      mockFetchAutomations.mockResolvedValue([makeSchedule({ name: "Test Job" })]);
+      render(<ScheduledTasksModal onClose={onClose} addToast={addToast} projectId="proj-789" />);
+      
+      // Initial load with project scope
+      await waitFor(() => {
+        expect(mockFetchAutomations).toHaveBeenCalledWith({ scope: "project", projectId: "proj-789" });
+      });
+      
+      // Clear mocks to track the reload after scope switch
+      mockFetchAutomations.mockClear();
+      
+      // Click the global scope button
+      const globalBtn = screen.getByRole("button", { name: /global/i });
+      fireEvent.click(globalBtn);
+      
+      // Should reload with global scope
+      await waitFor(() => {
+        expect(mockFetchAutomations).toHaveBeenCalledWith({ scope: "global" });
+      });
+    });
+
+    it("switches from project to global scope and reloads data", async () => {
+      mockFetchAutomations.mockResolvedValue([makeSchedule({ name: "Test Job" })]);
+      render(<ScheduledTasksModal onClose={onClose} addToast={addToast} />);
+      
+      // Initial load with global scope
+      await waitFor(() => {
+        expect(mockFetchAutomations).toHaveBeenCalledWith({ scope: "global" });
+      });
+      
+      // Clear mocks to track the reload after scope switch
+      mockFetchAutomations.mockClear();
+      
+      // Click the project scope button
+      const projectBtn = screen.getByRole("button", { name: /project/i });
+      fireEvent.click(projectBtn);
+      
+      // Should reload with project scope (but no projectId available, so falls back to global)
+      await waitFor(() => {
+        expect(mockFetchAutomations).toHaveBeenCalledWith({ scope: "project" });
+      });
+    });
+
+    it("resets view to list when switching scope", async () => {
+      mockFetchAutomations.mockResolvedValue([makeSchedule({ name: "Test Job" })]);
+      render(<ScheduledTasksModal onClose={onClose} addToast={addToast} />);
+      
+      await waitFor(() => {
+        expect(screen.getByText("New Schedule")).toBeDefined();
+      });
+      
+      // Open create form
+      fireEvent.click(screen.getByText("New Schedule"));
+      await waitFor(() => {
+        expect(screen.getByText("New Schedule", { selector: "h4" })).toBeDefined();
+      });
+      
+      // Clear mocks
+      mockFetchAutomations.mockClear();
+      
+      // Switch scope - should reset to list view
+      const globalBtn = screen.getByRole("button", { name: /global/i });
+      fireEvent.click(globalBtn);
+      
+      await waitFor(() => {
+        // Should be back to list view, not create form
+        expect(screen.queryByText("New Schedule", { selector: "h4" })).toBeNull();
+        expect(screen.getByText("Test Job")).toBeDefined();
+      });
+    });
+  });
+
   describe("create flow", () => {
     it("shows create form when clicking New Schedule", async () => {
       mockFetchAutomations.mockResolvedValue([makeSchedule()]);
@@ -259,8 +362,25 @@ describe("ScheduledTasksModal", () => {
       fireEvent.click(screen.getByLabelText("Disable My Job"));
 
       await waitFor(() => {
-        expect(mockToggleAutomation).toHaveBeenCalledWith("sched-1");
+        expect(mockToggleAutomation).toHaveBeenCalledWith("sched-1", { scope: "global" });
         expect(addToast).toHaveBeenCalledWith('"My Job" disabled', "success");
+      });
+    });
+
+    it("forwards projectId when projectId is provided", async () => {
+      const schedule = makeSchedule({ name: "My Job", enabled: true });
+      mockFetchAutomations.mockResolvedValue([schedule]);
+      mockToggleAutomation.mockResolvedValue({ ...schedule, enabled: false });
+
+      render(<ScheduledTasksModal onClose={onClose} addToast={addToast} projectId="proj-123" />);
+      await waitFor(() => {
+        expect(screen.getByText("My Job")).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByLabelText("Disable My Job"));
+
+      await waitFor(() => {
+        expect(mockToggleAutomation).toHaveBeenCalledWith("sched-1", { scope: "project", projectId: "proj-123" });
       });
     });
   });
@@ -280,7 +400,7 @@ describe("ScheduledTasksModal", () => {
       fireEvent.click(screen.getByLabelText("Delete My Job"));
 
       await waitFor(() => {
-        expect(mockDeleteAutomation).toHaveBeenCalledWith("sched-1");
+        expect(mockDeleteAutomation).toHaveBeenCalledWith("sched-1", { scope: "global" });
         expect(addToast).toHaveBeenCalledWith('Deleted "My Job"', "success");
       });
 
@@ -308,7 +428,7 @@ describe("ScheduledTasksModal", () => {
       fireEvent.click(screen.getByLabelText("Run My Job now"));
 
       await waitFor(() => {
-        expect(mockRunAutomation).toHaveBeenCalledWith("sched-1");
+        expect(mockRunAutomation).toHaveBeenCalledWith("sched-1", { scope: "global" });
         expect(addToast).toHaveBeenCalledWith('"My Job" completed successfully', "success");
       });
     });
@@ -575,7 +695,7 @@ describe("ScheduledTasksModal", () => {
       fireEvent.click(screen.getByLabelText("Run My Routine now"));
 
       await waitFor(() => {
-        expect(mockRunRoutine).toHaveBeenCalledWith("routine-001");
+        expect(mockRunRoutine).toHaveBeenCalledWith("routine-001", { scope: "global" });
         expect(addToast).toHaveBeenCalledWith('"My Routine" completed successfully', "success");
       });
     });
@@ -623,7 +743,7 @@ describe("ScheduledTasksModal", () => {
       fireEvent.click(screen.getByLabelText("Delete My Routine"));
 
       await waitFor(() => {
-        expect(mockDeleteRoutine).toHaveBeenCalledWith("routine-001");
+        expect(mockDeleteRoutine).toHaveBeenCalledWith("routine-001", { scope: "global" });
         expect(addToast).toHaveBeenCalledWith('Deleted "My Routine"', "success");
       });
 
@@ -646,7 +766,7 @@ describe("ScheduledTasksModal", () => {
       fireEvent.click(screen.getByLabelText("Disable My Routine"));
 
       await waitFor(() => {
-        expect(mockUpdateRoutine).toHaveBeenCalledWith("routine-001", { enabled: false });
+        expect(mockUpdateRoutine).toHaveBeenCalledWith("routine-001", { enabled: false }, { scope: "global" });
         expect(addToast).toHaveBeenCalledWith('"My Routine" disabled', "success");
       });
     });

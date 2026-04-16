@@ -9,6 +9,8 @@ vi.mock("lucide-react", () => ({
   Webhook: () => <span data-testid="icon-webhook">🔗</span>,
   Code: () => <span data-testid="icon-code">💻</span>,
   Zap: () => <span data-testid="icon-zap">⚡</span>,
+  Globe: () => <span data-testid="icon-globe">🌍</span>,
+  Folder: () => <span data-testid="icon-folder">📁</span>,
 }));
 
 // Mock @fusion/core

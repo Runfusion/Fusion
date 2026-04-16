@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { Play, Pause, Pencil, Trash2, Clock, CheckCircle, XCircle, ChevronDown, ChevronUp, Layers } from "lucide-react";
+import { Play, Pause, Pencil, Trash2, Clock, CheckCircle, XCircle, ChevronDown, ChevronUp, Layers, Globe, Folder } from "lucide-react";
 import type { ScheduledTask, AutomationRunResult, AutomationStepResult } from "@fusion/core";
 
 /**
@@ -165,6 +165,15 @@ export function ScheduleCard({ schedule, onEdit, onDelete, onRun, onToggle, runn
             >
               {schedule.scheduleType}
             </span>
+            {schedule.scope && (
+              <span
+                className={`schedule-scope-badge${schedule.scope === "global" ? " global" : " project"}`}
+                title={`${schedule.scope === "global" ? "Global" : "Project"}-scoped schedule`}
+              >
+                {schedule.scope === "global" ? <Globe size={10} /> : <Folder size={10} />}
+                {schedule.scope}
+              </span>
+            )}
           </div>
           {schedule.description && (
             <p className="schedule-card-description">{schedule.description}</p>

@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { Calendar, Webhook, Code, Zap } from "lucide-react";
+import { Calendar, Webhook, Code, Zap, Globe, Folder } from "lucide-react";
 import type {
   Routine,
   RoutineCreateInput,
@@ -121,9 +121,13 @@ interface RoutineEditorProps {
   onSubmit: (input: RoutineCreateInput) => Promise<void>;
   /** Called when the user cancels. */
   onCancel: () => void;
+  /** Scope for the routine (global or project). Defaults to routine.scope or "project". */
+  scope?: "global" | "project";
+  /** Project ID for project-scoped routines. */
+  projectId?: string;
 }
 
-export function RoutineEditor({ routine, onSubmit, onCancel }: RoutineEditorProps) {
+export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, projectId }: RoutineEditorProps) {
   const isEditing = !!routine;
 
   // Extract trigger fields if editing
@@ -156,6 +160,12 @@ export function RoutineEditor({ routine, onSubmit, onCancel }: RoutineEditorProp
   const validate = useCallback((): boolean => {
     const e: Record<string, string> = {};
     if (!name.trim()) e.name = "Name is required";
+    
+    // Scope validation: project scope requires projectId
+    if (formScope === "project" && !projectId) {
+      e.scope = "Project-specific entries require an active project.";
+    }
+    
     if (triggerType === "cron") {
       if (!cronExpression.trim()) {
         e.cronExpression = "Cron expression is required";
@@ -171,7 +181,7 @@ export function RoutineEditor({ routine, onSubmit, onCancel }: RoutineEditorProp
     }
     setErrors(e);
     return Object.keys(e).length === 0;
-  }, [name, triggerType, cronExpression, webhookPath, endpoint]);
+  }, [name, triggerType, cronExpression, webhookPath, endpoint, formScope, projectId]);
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -179,6 +189,13 @@ export function RoutineEditor({ routine, onSubmit, onCancel }: RoutineEditorProp
       if (!validate()) return;
       setSubmitting(true);
       try {
+        // Determine scope: use edit mode's existing scope, otherwise use formScope prop
+        // When formScope is "project" but no projectId provided, fall back to "global"
+        let effectiveScope = routine?.scope ?? formScope ?? (projectId ? "project" : "global");
+        if (effectiveScope === "project" && !projectId) {
+          effectiveScope = "global";
+        }
+        
         const trigger = buildTrigger(triggerType, cronExpression, webhookPath, webhookSecret, endpoint);
         const input: RoutineCreateInput = {
           name: name.trim(),
@@ -188,13 +205,14 @@ export function RoutineEditor({ routine, onSubmit, onCancel }: RoutineEditorProp
           executionPolicy,
           catchUpPolicy,
           enabled,
+          scope: effectiveScope,
         };
         await onSubmit(input);
       } finally {
         setSubmitting(false);
       }
     },
-    [validate, onSubmit, name, description, triggerType, cronExpression, webhookPath, webhookSecret, endpoint, executionPolicy, catchUpPolicy, enabled],
+    [validate, onSubmit, name, description, triggerType, cronExpression, webhookPath, webhookSecret, endpoint, executionPolicy, catchUpPolicy, enabled, formScope, projectId, routine?.scope],
   );
 
   const nameErrorId = "routine-name-error";
@@ -234,6 +252,45 @@ export function RoutineEditor({ routine, onSubmit, onCancel }: RoutineEditorProp
           onChange={(e) => setDescription(e.target.value)}
           rows={2}
         />
+      </div>
+
+      {/* Scope selector */}
+      <div className="form-group">
+        <label>Scope</label>
+        <div className="routine-scope-toggle" role="radiogroup" aria-label="Routine scope">
+          <button
+            type="button"
+            className={`routine-scope-btn${(!formScope || formScope === 'global') ? " active" : ""}`}
+            role="radio"
+            aria-checked={(!formScope || formScope === 'global') ? "true" : "false"}
+            disabled={!!routine?.scope}
+            title={routine?.scope ? `Scope is locked to ${routine.scope} for existing routines` : "Global scope"}
+          >
+            <Globe size={12} />
+            Global
+          </button>
+          <button
+            type="button"
+            className={`routine-scope-btn${formScope === 'project' ? " active" : ""}`}
+            role="radio"
+            aria-checked={formScope === 'project' ? "true" : "false"}
+            disabled={!!routine?.scope || !projectId}
+            title={routine?.scope ? `Scope is locked to ${routine.scope} for existing routines` : !projectId ? "Select a project to enable project scope" : "Project scope"}
+          >
+            <Folder size={12} />
+            Project
+          </button>
+        </div>
+        <small>
+          {!projectId && !routine?.scope
+            ? "No active project. Routines will be created at global scope."
+            : formScope === "project" && projectId
+              ? `This routine will be scoped to the current project.`
+              : "This routine will be created at global scope."}
+        </small>
+        {errors.scope && (
+          <small className="field-error">{errors.scope}</small>
+        )}
       </div>
 
       {/* Trigger Type */}

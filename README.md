@@ -160,6 +160,8 @@ Fusion supports scheduled task automation via the `/api/automations` endpoints. 
 
 **Scope:** Automations support scope-aware routing with `?scope=global` or `?scope=project` query parameter (or `scope` field in request body). When scope is omitted, the legacy default behavior applies (backward compatible).
 
+**Dashboard UI:** The Scheduled Tasks modal in the dashboard provides a Global/Project scope toggle in the header. When a project is active, the scope defaults to "Project"; otherwise it defaults to "Global". Schedules display a scope badge indicating their scope (global vs project). Project-scoped entries require an active project context.
+
 | Endpoint | Method | Description |
 |---------|--------|-------------|
 | `/api/automations` | GET | List all automations (filtered by scope if specified) |
@@ -176,6 +178,8 @@ Fusion supports scheduled task automation via the `/api/automations` endpoints. 
 Routines are AI agent tasks triggered by cron schedules, webhooks, or manual execution.
 
 **Scope:** Routines support scope-aware routing with `?scope=global` or `?scope=project` query parameter (or `scope` field in request body). When scope is omitted, the legacy default behavior applies (backward compatible).
+
+**Dashboard UI:** The Scheduled Tasks modal in the dashboard provides a Global/Project scope toggle in the header. When a project is active, the scope defaults to "Project"; otherwise it defaults to "Global". Routines display a scope badge indicating their scope (global vs project). Project-scoped entries require an active project context.
 
 | Endpoint | Method | Description |
 |---------|--------|-------------|

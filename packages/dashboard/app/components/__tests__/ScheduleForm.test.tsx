@@ -3,6 +3,24 @@ import { render, screen, fireEvent, waitFor, act } from "@testing-library/react"
 import { ScheduleForm } from "../ScheduleForm";
 import type { ScheduledTask } from "@fusion/core";
 
+// Mock lucide-react
+vi.mock("lucide-react", () => ({
+  Globe: () => <span data-testid="icon-globe">🌍</span>,
+  Folder: () => <span data-testid="icon-folder">📁</span>,
+  GripVertical: () => <span data-testid="icon-grip">⋮⋮</span>,
+  Plus: () => <span data-testid="icon-plus">+</span>,
+  Pencil: () => <span data-testid="icon-pencil">✎</span>,
+  Trash2: () => <span data-testid="icon-trash">🗑</span>,
+  CheckCircle: () => <span data-testid="icon-check">✓</span>,
+  XCircle: () => <span data-testid="icon-x">✗</span>,
+  ChevronDown: () => <span data-testid="icon-down">▼</span>,
+  ChevronUp: () => <span data-testid="icon-up">▲</span>,
+  Sparkles: () => <span data-testid="icon-sparkles">✨</span>,
+  Terminal: () => <span data-testid="icon-terminal">⌨</span>,
+  ArrowUpDown: () => <span data-testid="icon-arrow">↕</span>,
+  GripVertical: () => <span data-testid="icon-grip">⋮⋮</span>,
+}));
+
 // Mock @fusion/core to provide type-only exports (no runtime values needed)
 vi.mock("@fusion/core", () => ({}));
 

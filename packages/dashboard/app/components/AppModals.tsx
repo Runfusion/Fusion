@@ -184,6 +184,7 @@ export function AppModals({
         <ScheduledTasksModal
           onClose={modalManager.closeSchedules}
           addToast={addToast}
+          projectId={projectId}
         />
       )}
 

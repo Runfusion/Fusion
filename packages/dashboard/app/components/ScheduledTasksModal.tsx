@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
-import { Plus, Clock, Zap } from "lucide-react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { Plus, Clock, Zap, Globe, Folder } from "lucide-react";
 import type {
   ScheduledTask,
   ScheduledTaskCreateInput,
@@ -28,17 +28,25 @@ import type { ToastType } from "../hooks/useToast";
 /** Polling interval for auto-refreshing the schedule/routine list (30 seconds). */
 const POLL_INTERVAL_MS = 30_000;
 
+/** Scheduling scope: global (user-level) or project-scoped. */
+export type SchedulingScope = "global" | "project";
+
 interface ScheduledTasksModalProps {
   onClose: () => void;
   addToast: (message: string, type?: ToastType) => void;
+  /** Optional project ID for project-scoped scheduling. When provided, scope defaults to "project". */
+  projectId?: string;
 }
 
 type ModalView = "list" | "create" | "edit";
 type ActiveTab = "schedules" | "routines";
 
-export function ScheduledTasksModal({ onClose, addToast }: ScheduledTasksModalProps) {
+export function ScheduledTasksModal({ onClose, addToast, projectId }: ScheduledTasksModalProps) {
   // Tab state
   const [activeTab, setActiveTab] = useState<ActiveTab>("schedules");
+
+  // Scope state: defaults to "project" when projectId exists, else "global"
+  const [activeScope, setActiveScope] = useState<SchedulingScope>(() => projectId ? "project" : "global");
 
   // Schedule state
   const [schedules, setSchedules] = useState<ScheduledTask[]>([]);
@@ -54,31 +62,37 @@ export function ScheduledTasksModal({ onClose, addToast }: ScheduledTasksModalPr
   const [editingRoutine, setEditingRoutine] = useState<Routine | undefined>();
   const [runningRoutineId, setRunningRoutineId] = useState<string | null>(null);
 
+  // Build scope options for API calls
+  const scopeOptions = useMemo(() => ({
+    scope: activeScope,
+    projectId: activeScope === "project" ? projectId : undefined,
+  }), [activeScope, projectId]);
+
   // Load schedules
   const loadSchedules = useCallback(async () => {
     try {
-      const data = await fetchAutomations();
+      const data = await fetchAutomations(scopeOptions);
       setSchedules(data);
     } catch (err: any) {
       addToast(err.message || "Failed to load schedules", "error");
     } finally {
       setLoading(false);
     }
-  }, [addToast]);
+  }, [addToast, scopeOptions]);
 
   // Load routines
   const loadRoutines = useCallback(async () => {
     try {
-      const data = await fetchRoutines();
+      const data = await fetchRoutines(scopeOptions);
       setRoutines(data);
     } catch (err: any) {
       addToast(err.message || "Failed to load routines", "error");
     }
-  }, [addToast]);
+  }, [addToast, scopeOptions]);
 
   useEffect(() => {
-    loadSchedules();
-    loadRoutines();
+    void loadSchedules();
+    void loadRoutines();
   }, [loadSchedules, loadRoutines]);
 
   // Poll for updates while modal is open
@@ -128,7 +142,7 @@ export function ScheduledTasksModal({ onClose, addToast }: ScheduledTasksModalPr
   const handleCreate = useCallback(
     async (input: ScheduledTaskCreateInput) => {
       try {
-        await createAutomation(input);
+        await createAutomation(input, scopeOptions);
         addToast("Schedule created", "success");
         setView("list");
         await loadSchedules();
@@ -136,7 +150,7 @@ export function ScheduledTasksModal({ onClose, addToast }: ScheduledTasksModalPr
         addToast(err.message || "Failed to create schedule", "error");
       }
     },
-    [addToast, loadSchedules],
+    [addToast, loadSchedules, scopeOptions],
   );
 
   const handleEdit = useCallback((schedule: ScheduledTask) => {
@@ -148,7 +162,7 @@ export function ScheduledTasksModal({ onClose, addToast }: ScheduledTasksModalPr
     async (input: ScheduledTaskCreateInput) => {
       if (!editingSchedule) return;
       try {
-        await updateAutomation(editingSchedule.id, input);
+        await updateAutomation(editingSchedule.id, input, scopeOptions);
         addToast("Schedule updated", "success");
         setView("list");
         setEditingSchedule(undefined);
@@ -157,27 +171,27 @@ export function ScheduledTasksModal({ onClose, addToast }: ScheduledTasksModalPr
         addToast(err.message || "Failed to update schedule", "error");
       }
     },
-    [editingSchedule, addToast, loadSchedules],
+    [editingSchedule, addToast, loadSchedules, scopeOptions],
   );
 
   const handleDelete = useCallback(
     async (schedule: ScheduledTask) => {
       try {
-        await deleteAutomation(schedule.id);
+        await deleteAutomation(schedule.id, scopeOptions);
         addToast(`Deleted "${schedule.name}"`, "success");
         await loadSchedules();
       } catch (err: any) {
         addToast(err.message || "Failed to delete schedule", "error");
       }
     },
-    [addToast, loadSchedules],
+    [addToast, loadSchedules, scopeOptions],
   );
 
   const handleRun = useCallback(
     async (schedule: ScheduledTask) => {
       setRunningId(schedule.id);
       try {
-        const { result } = await runAutomation(schedule.id);
+        const { result } = await runAutomation(schedule.id, scopeOptions);
         if (result.success) {
           addToast(`"${schedule.name}" completed successfully`, "success");
         } else {
@@ -190,13 +204,13 @@ export function ScheduledTasksModal({ onClose, addToast }: ScheduledTasksModalPr
         setRunningId(null);
       }
     },
-    [addToast, loadSchedules],
+    [addToast, loadSchedules, scopeOptions],
   );
 
   const handleToggle = useCallback(
     async (schedule: ScheduledTask) => {
       try {
-        await toggleAutomation(schedule.id);
+        await toggleAutomation(schedule.id, scopeOptions);
         addToast(
           `"${schedule.name}" ${schedule.enabled ? "disabled" : "enabled"}`,
           "success",
@@ -206,7 +220,7 @@ export function ScheduledTasksModal({ onClose, addToast }: ScheduledTasksModalPr
         addToast(err.message || "Failed to toggle schedule", "error");
       }
     },
-    [addToast, loadSchedules],
+    [addToast, loadSchedules, scopeOptions],
   );
 
   const handleFormCancel = useCallback(() => {
@@ -219,7 +233,7 @@ export function ScheduledTasksModal({ onClose, addToast }: ScheduledTasksModalPr
   const handleCreateRoutine = useCallback(
     async (input: RoutineCreateInput) => {
       try {
-        await createRoutine(input);
+        await createRoutine(input, scopeOptions);
         addToast("Routine created", "success");
         setRoutineView("list");
         await loadRoutines();
@@ -227,7 +241,7 @@ export function ScheduledTasksModal({ onClose, addToast }: ScheduledTasksModalPr
         addToast(err.message || "Failed to create routine", "error");
       }
     },
-    [addToast, loadRoutines],
+    [addToast, loadRoutines, scopeOptions],
   );
 
   const handleEditRoutine = useCallback((routine: Routine) => {
@@ -239,7 +253,7 @@ export function ScheduledTasksModal({ onClose, addToast }: ScheduledTasksModalPr
     async (input: RoutineCreateInput) => {
       if (!editingRoutine) return;
       try {
-        await updateRoutine(editingRoutine.id, input);
+        await updateRoutine(editingRoutine.id, input, scopeOptions);
         addToast("Routine updated", "success");
         setRoutineView("list");
         setEditingRoutine(undefined);
@@ -248,27 +262,27 @@ export function ScheduledTasksModal({ onClose, addToast }: ScheduledTasksModalPr
         addToast(err.message || "Failed to update routine", "error");
       }
     },
-    [editingRoutine, addToast, loadRoutines],
+    [editingRoutine, addToast, loadRoutines, scopeOptions],
   );
 
   const handleDeleteRoutine = useCallback(
     async (routine: Routine) => {
       try {
-        await deleteRoutine(routine.id);
+        await deleteRoutine(routine.id, scopeOptions);
         addToast(`Deleted "${routine.name}"`, "success");
         await loadRoutines();
       } catch (err: any) {
         addToast(err.message || "Failed to delete routine", "error");
       }
     },
-    [addToast, loadRoutines],
+    [addToast, loadRoutines, scopeOptions],
   );
 
   const handleRunRoutine = useCallback(
     async (routine: Routine) => {
       setRunningRoutineId(routine.id);
       try {
-        const { result } = await runRoutine(routine.id);
+        const { result } = await runRoutine(routine.id, scopeOptions);
         if (result.success) {
           addToast(`"${routine.name}" completed successfully`, "success");
         } else {
@@ -281,13 +295,13 @@ export function ScheduledTasksModal({ onClose, addToast }: ScheduledTasksModalPr
         setRunningRoutineId(null);
       }
     },
-    [addToast, loadRoutines],
+    [addToast, loadRoutines, scopeOptions],
   );
 
   const handleToggleRoutine = useCallback(
     async (routine: Routine) => {
       try {
-        await updateRoutine(routine.id, { enabled: !routine.enabled });
+        await updateRoutine(routine.id, { enabled: !routine.enabled }, scopeOptions);
         addToast(
           `"${routine.name}" ${routine.enabled ? "disabled" : "enabled"}`,
           "success",
@@ -297,7 +311,7 @@ export function ScheduledTasksModal({ onClose, addToast }: ScheduledTasksModalPr
         addToast(err.message || "Failed to toggle routine", "error");
       }
     },
-    [addToast, loadRoutines],
+    [addToast, loadRoutines, scopeOptions],
   );
 
   const handleRoutineCancel = useCallback(() => {
@@ -315,11 +329,22 @@ export function ScheduledTasksModal({ onClose, addToast }: ScheduledTasksModalPr
     setEditingRoutine(undefined);
   }, []);
 
+  // ── Scope switch handler ───────────────────────────────────────────────
+
+  const handleScopeSwitch = useCallback((scope: SchedulingScope) => {
+    setActiveScope(scope);
+    // Reset to list view when switching scope
+    setView("list");
+    setEditingSchedule(undefined);
+    setRoutineView("list");
+    setEditingRoutine(undefined);
+  }, []);
+
   // ── Render content ─────────────────────────────────────────────────────
 
   const renderSchedulesContent = () => {
     if (view === "create") {
-      return <ScheduleForm onSubmit={handleCreate} onCancel={handleFormCancel} />;
+      return <ScheduleForm onSubmit={handleCreate} onCancel={handleFormCancel} scope={activeScope} projectId={projectId} />;
     }
 
     if (view === "edit" && editingSchedule) {
@@ -328,6 +353,8 @@ export function ScheduledTasksModal({ onClose, addToast }: ScheduledTasksModalPr
           schedule={editingSchedule}
           onSubmit={handleUpdate}
           onCancel={handleFormCancel}
+          scope={activeScope}
+          projectId={projectId}
         />
       );
     }
@@ -373,7 +400,7 @@ export function ScheduledTasksModal({ onClose, addToast }: ScheduledTasksModalPr
 
   const renderRoutinesContent = () => {
     if (routineView === "create") {
-      return <RoutineEditor onSubmit={handleCreateRoutine} onCancel={handleRoutineCancel} />;
+      return <RoutineEditor onSubmit={handleCreateRoutine} onCancel={handleRoutineCancel} scope={activeScope} projectId={projectId} />;
     }
 
     if (routineView === "edit" && editingRoutine) {
@@ -382,6 +409,8 @@ export function ScheduledTasksModal({ onClose, addToast }: ScheduledTasksModalPr
           routine={editingRoutine}
           onSubmit={handleUpdateRoutine}
           onCancel={handleRoutineCancel}
+          scope={activeScope}
+          projectId={projectId}
         />
       );
     }
@@ -440,6 +469,29 @@ export function ScheduledTasksModal({ onClose, addToast }: ScheduledTasksModalPr
         <div className="modal-header">
           <h3 id="schedules-modal-title">Scheduled Tasks</h3>
           <div className="modal-header-actions">
+            {/* Scope selector */}
+            <div className="scheduling-scope-selector" role="group" aria-label="Scheduling scope">
+              <button
+                type="button"
+                className={`scope-btn${activeScope === "global" ? " active" : ""}`}
+                onClick={() => handleScopeSwitch("global")}
+                aria-pressed={activeScope === "global"}
+                title="Global (user-level) schedules"
+              >
+                <Globe size={14} />
+                Global
+              </button>
+              <button
+                type="button"
+                className={`scope-btn${activeScope === "project" ? " active" : ""}`}
+                onClick={() => handleScopeSwitch("project")}
+                aria-pressed={activeScope === "project"}
+                title="Project-scoped schedules"
+              >
+                <Folder size={14} />
+                Project
+              </button>
+            </div>
             {isShowingList && (
               <button
                 className="btn btn-primary btn-sm"
