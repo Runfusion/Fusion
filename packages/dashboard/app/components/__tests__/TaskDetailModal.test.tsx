@@ -433,6 +433,208 @@ describe("TaskDetailModal", () => {
     expect(h2?.textContent).toBe("Implement dark mode");
   });
 
+  describe("description truncation", () => {
+    it("truncates description over 200 characters with Show more button", () => {
+      const longDescription = "A".repeat(250);
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            title: undefined,
+            description: longDescription,
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const h2 = container.querySelector("h2.detail-title");
+      expect(h2?.textContent).toBe("A".repeat(200) + "…");
+      const toggle = container.querySelector(".detail-description-toggle");
+      expect(toggle?.textContent).toBe("Show more");
+    });
+
+    it("expands full description when Show more is clicked", async () => {
+      const longDescription = "B".repeat(250);
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            title: undefined,
+            description: longDescription,
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const toggle = container.querySelector(".detail-description-toggle") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(toggle);
+      });
+
+      const h2 = container.querySelector("h2.detail-title");
+      expect(h2?.textContent).toBe("B".repeat(250));
+      expect(toggle.textContent).toBe("Show less");
+    });
+
+    it("collapses description when Show less is clicked", async () => {
+      const longDescription = "C".repeat(250);
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            title: undefined,
+            description: longDescription,
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // First expand
+      const toggle = container.querySelector(".detail-description-toggle") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(toggle);
+      });
+
+      // Then collapse
+      await act(async () => {
+        fireEvent.click(toggle);
+      });
+
+      const h2 = container.querySelector("h2.detail-title");
+      expect(h2?.textContent).toBe("C".repeat(200) + "…");
+      expect(toggle.textContent).toBe("Show more");
+    });
+
+    it("does not show toggle for description under 200 characters", () => {
+      const shortDescription = "Short description";
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            title: undefined,
+            description: shortDescription,
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const h2 = container.querySelector("h2.detail-title");
+      expect(h2?.textContent).toBe(shortDescription);
+      expect(container.querySelector(".detail-description-toggle")).toBeNull();
+    });
+
+    it("does not show toggle when title is present and short", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            title: "Short title",
+            description: "This is a longer description that would be truncated if it were shown as the main text",
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const h2 = container.querySelector("h2.detail-title");
+      expect(h2?.textContent).toBe("Short title");
+      expect(container.querySelector(".detail-description-toggle")).toBeNull();
+    });
+
+    it("shows toggle when title exceeds 200 characters", () => {
+      const longTitle = "D".repeat(250);
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            title: longTitle,
+            description: "Short description",
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const h2 = container.querySelector("h2.detail-title");
+      expect(h2?.textContent).toBe("D".repeat(200) + "…");
+      const toggle = container.querySelector(".detail-description-toggle");
+      expect(toggle?.textContent).toBe("Show more");
+    });
+
+    it("resets expanded state when task changes", async () => {
+      const longDescription1 = "E".repeat(250);
+      const longDescription2 = "F".repeat(250);
+      const { container, rerender } = render(
+        <TaskDetailModal
+          task={makeTask({
+            id: "FN-001",
+            title: undefined,
+            description: longDescription1,
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Expand the first task
+      const toggle = container.querySelector(".detail-description-toggle") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(toggle);
+      });
+
+      // Verify expanded
+      const h2Before = container.querySelector("h2.detail-title");
+      expect(h2Before?.textContent).toBe("E".repeat(250));
+
+      // Change to a different task
+      rerender(
+        <TaskDetailModal
+          task={makeTask({
+            id: "FN-002",
+            title: undefined,
+            description: longDescription2,
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Should be collapsed again
+      const h2After = container.querySelector("h2.detail-title");
+      expect(h2After?.textContent).toBe("F".repeat(200) + "…");
+    });
+  });
+
   it("always shows task.id in the detail-id badge regardless of title", () => {
     // With title
     const { container: withTitle } = render(

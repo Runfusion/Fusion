@@ -191,6 +191,8 @@ function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "…" : s;
 }
 
+const DESCRIPTION_TRUNCATE_LENGTH = 200;
+
 const EDITABLE_COLUMNS: Set<Column> = new Set(["triage", "todo"]);
 
 export function TaskDetailModal({
@@ -267,7 +269,13 @@ export function TaskDetailModal({
     setActiveTab(initialTab);
   }, [initialTab]);
 
+  // Reset description expanded state when task changes
+  useEffect(() => {
+    setDescriptionExpanded(false);
+  }, [task.id]);
+
   const [logSubview, setLogSubview] = useState<"activity" | "agent-log">("activity");
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [attachments, setAttachments] = useState<TaskAttachment[]>(task.attachments || []);
   const [uploading, setUploading] = useState(false);
   const [dependencies, setDependencies] = useState<string[]>(task.dependencies || []);
@@ -1099,7 +1107,25 @@ export function TaskDetailModal({
             </div>
           ) : (
             <>
-              <h2 className="detail-title">{task.title || task.description}</h2>
+              {(() => {
+                const displayText = task.title || task.description || task.id;
+                const shouldTruncate = !descriptionExpanded && displayText.length > DESCRIPTION_TRUNCATE_LENGTH;
+                return (
+                  <>
+                    <h2 className="detail-title">
+                      {shouldTruncate ? displayText.slice(0, DESCRIPTION_TRUNCATE_LENGTH) + "…" : displayText}
+                    </h2>
+                    {displayText.length > DESCRIPTION_TRUNCATE_LENGTH && (
+                      <button
+                        className="detail-description-toggle"
+                        onClick={() => setDescriptionExpanded(!descriptionExpanded)}
+                      >
+                        {descriptionExpanded ? "Show less" : "Show more"}
+                      </button>
+                    )}
+                  </>
+                );
+              })()}
               <div className="detail-meta">
                 Created {new Date(task.createdAt).toLocaleDateString()} · Updated{" "}
                 {new Date(task.updatedAt).toLocaleDateString()}
