@@ -18,6 +18,7 @@ import type {
   AgentManifest,
   CompanyManifest,
   ProjectManifest,
+  SkillManifest,
   TaskManifest,
   TeamManifest,
 } from "./agent-companies-types.js";
@@ -344,6 +345,15 @@ export function parseTaskManifest(content: string): TaskManifest {
   return parseTypedManifest<TaskManifest>(content, "task");
 }
 
+export function parseSkillManifest(content: string): SkillManifest {
+  const { frontmatter, body } = parseYamlFrontmatter(content);
+  requireName(frontmatter, "skill");
+  return {
+    ...(frontmatter as unknown as SkillManifest),
+    instructionBody: body,
+  };
+}
+
 function parseManifestFile<T>(filePath: string, parser: (content: string) => T): T {
   try {
     return parser(readFileSync(filePath, "utf-8"));
@@ -443,6 +453,7 @@ export function parseCompanyDirectory(dirPath: string): AgentCompaniesPackage {
       parseProjectManifest,
     ),
     tasks: parseManifestSubdirectories(resolvedPath, "tasks", "TASK.md", parseTaskManifest),
+    skills: parseManifestSubdirectories(resolvedPath, "skills", "SKILL.md", parseSkillManifest),
   };
 }
 

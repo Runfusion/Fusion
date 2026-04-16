@@ -70,12 +70,17 @@ export interface TaskManifest extends AgentCompaniesFrontmatter {
   };
 }
 
+export interface SkillManifest extends AgentCompaniesFrontmatter {
+  instructionBody?: string;
+}
+
 export interface AgentCompaniesPackage {
   company?: CompanyManifest;
   agents: AgentManifest[];
   teams: TeamManifest[];
   projects: ProjectManifest[];
   tasks: TaskManifest[];
+  skills?: SkillManifest[];
 }
 
 export interface AgentCompaniesImportResult {

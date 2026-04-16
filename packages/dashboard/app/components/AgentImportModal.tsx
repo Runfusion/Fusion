@@ -20,6 +20,11 @@ interface AgentPreview {
   skills?: string[];
 }
 
+interface SkillPreview {
+  name: string;
+  description?: string;
+}
+
 /** Import result from the API */
 interface ImportResult {
   companyName?: string;
@@ -118,6 +123,7 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
   const [directoryAgents, setDirectoryAgents] = useState<DirectoryAgentInput[]>([]);
   const [companyName, setCompanyName] = useState("Unknown");
   const [agents, setAgents] = useState<AgentPreview[]>([]);
+  const [skills, setSkills] = useState<SkillPreview[]>([]);
   const [isParsing, setIsParsing] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
@@ -193,6 +199,7 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
     setDirectoryAgents([]);
     setCompanyName("Unknown");
     setAgents([]);
+    setSkills([]);
     setIsParsing(false);
     setIsImporting(false);
     setParseError(null);
@@ -317,6 +324,7 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
       const data = await res.json() as {
         companyName?: string;
         agents?: AgentPreview[];
+        skills?: SkillPreview[];
         created: string[];
         skipped: string[];
         errors: Array<{ name: string; error: string }>;
@@ -325,9 +333,11 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
       const previewAgents = (data.agents && data.agents.length > 0)
         ? data.agents
         : data.created.map((name) => ({ name, role: "custom" }));
+      const previewSkills = Array.isArray(data.skills) ? data.skills : [];
 
       setCompanyName(data.companyName ?? "Unknown");
       setAgents(previewAgents);
+      setSkills(previewSkills);
       setStep("preview");
     } catch (err) {
       setParseError(err instanceof Error ? err.message : "Failed to parse manifest");
@@ -626,6 +636,28 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
                 </div>
               ) : (
                 <p className="agent-import-empty">No agents found in the manifest.</p>
+              )}
+
+              {skills.length > 0 && (
+                <div className="agent-import-skills-section">
+                  <div className="agent-import-count">
+                    <FileText size={14} />
+                    <span>{skills.length} skill{skills.length !== 1 ? "s" : ""} found</span>
+                  </div>
+                  <div className="agent-import-skill-list">
+                    {skills.map((skill, idx) => (
+                      <div key={`${skill.name}-${idx}`} className="agent-import-skill-item">
+                        <span className="agent-import-skill-icon">⚡</span>
+                        <div className="agent-import-skill-details">
+                          <span className="agent-import-skill-name">{skill.name}</span>
+                          {skill.description && (
+                            <span className="agent-import-skill-description">{skill.description}</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
 
               {importError && (

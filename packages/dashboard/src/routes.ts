@@ -10705,6 +10705,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         teams: unknown[];
         projects: unknown[];
         tasks: unknown[];
+        skills?: unknown[];
       };
 
       if (Array.isArray(agents)) {
@@ -10977,11 +10978,19 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
             : undefined,
         }));
 
+        const skillPreview = (pkg.skills ?? [])
+          .filter((skill): skill is Record<string, unknown> => typeof skill === "object" && skill !== null)
+          .map((skill) => ({
+            name: typeof skill.name === "string" && skill.name.length > 0 ? skill.name : "Unnamed Skill",
+            description: typeof skill.description === "string" ? skill.description : undefined,
+          }));
+
         res.json({
           dryRun: true,
           companyName,
           ...(companySlug ? { companySlug } : {}),
           agents: agentPreview,
+          skills: skillPreview,
           created: result.created,
           skipped: result.skipped,
           errors: result.errors,
@@ -11036,6 +11045,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         created,
         skipped: result.skipped,
         errors,
+        skillsCount: (pkg.skills ?? []).length,
       });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
