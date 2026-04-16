@@ -451,12 +451,12 @@ export function ModelOnboardingModal({
           <h2 id="onboarding-title" className="model-onboarding-title">
             {step === "ai-setup" && (
               <>
-                <Zap size={24} /> Set Up AI
+                <Zap size={24} /> Set Up AI <span className="onboarding-optional-badge">Optional</span>
               </>
             )}
             {step === "github" && (
               <>
-                <GitPullRequest size={24} /> Connect GitHub
+                <GitPullRequest size={24} /> Connect GitHub <span className="onboarding-optional-badge">Optional</span>
               </>
             )}
             {step === "first-task" && (
@@ -545,6 +545,13 @@ export function ModelOnboardingModal({
                 Connect an AI provider and choose a default model. You can
                 authenticate via OAuth or enter an API key.
               </p>
+
+              {/* Show helper text when providers exist but none are authenticated */}
+              {authProviders.length > 0 && !authProviders.some((p) => p.authenticated) && (
+                <p className="onboarding-helper-text">
+                  You can add API keys or log in to providers later from Settings.
+                </p>
+              )}
 
               {authLoading ? (
                 <div className="model-onboarding-loading">
@@ -733,45 +740,52 @@ export function ModelOnboardingModal({
                   </button>
                 </div>
               ) : (
-                <div className="onboarding-provider-row">
-                  <div className="onboarding-provider-info">
-                    <strong>
-                      <GitPullRequest size={16} style={{ marginRight: 8 }} />
-                      GitHub
-                    </strong>
-                    <span
-                      data-testid="onboarding-auth-status-github"
-                      className={`auth-status-badge ${isGithubAuthenticated ? "authenticated" : "not-authenticated"}`}
-                    >
-                      {isGithubAuthenticated
-                        ? "✓ Connected"
-                        : "✗ Not connected"}
-                    </span>
-                  </div>
-                  <div>
-                    {authActionInProgress === "github" ? (
-                      <button className="btn btn-sm" disabled>
+                <>
+                  <div className="onboarding-provider-row">
+                    <div className="onboarding-provider-info">
+                      <strong>
+                        <GitPullRequest size={16} style={{ marginRight: 8 }} />
+                        GitHub
+                      </strong>
+                      <span
+                        data-testid="onboarding-auth-status-github"
+                        className={`auth-status-badge ${isGithubAuthenticated ? "authenticated" : "not-authenticated"}`}
+                      >
                         {isGithubAuthenticated
-                          ? "Logging out…"
-                          : "Waiting for login…"}
-                      </button>
-                    ) : isGithubAuthenticated ? (
-                      <button
-                        className="btn btn-sm"
-                        onClick={() => handleLogout("github")}
-                      >
-                        Disconnect
-                      </button>
-                    ) : (
-                      <button
-                        className="btn btn-primary btn-sm"
-                        onClick={() => handleLogin("github")}
-                      >
-                        Connect
-                      </button>
-                    )}
+                          ? "✓ Connected"
+                          : "✗ Not connected"}
+                      </span>
+                    </div>
+                    <div>
+                      {authActionInProgress === "github" ? (
+                        <button className="btn btn-sm" disabled>
+                          {isGithubAuthenticated
+                            ? "Logging out…"
+                            : "Waiting for login…"}
+                        </button>
+                      ) : isGithubAuthenticated ? (
+                        <button
+                          className="btn btn-sm"
+                          onClick={() => handleLogout("github")}
+                        >
+                          Disconnect
+                        </button>
+                      ) : (
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={() => handleLogin("github")}
+                        >
+                          Connect
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
+                  {!isGithubAuthenticated && (
+                    <p className="onboarding-helper-text">
+                      You can connect GitHub later from Settings → Authentication.
+                    </p>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -841,6 +855,9 @@ export function ModelOnboardingModal({
               >
                 Skip for now
               </button>
+              <button className="onboarding-skip-step-link" onClick={handleNext}>
+                Skip setup →
+              </button>
               <button className="btn btn-primary" onClick={handleNext}>
                 Next →
               </button>
@@ -851,6 +868,9 @@ export function ModelOnboardingModal({
             <>
               <button className="btn btn-sm" onClick={handleBack}>
                 ← Back
+              </button>
+              <button className="onboarding-skip-step-link" onClick={handleNext}>
+                Skip GitHub →
               </button>
               <button className="btn btn-primary" onClick={handleNext}>
                 Next →

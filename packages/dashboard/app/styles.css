@@ -23150,6 +23150,19 @@ html .column.drag-over * {
   color: var(--accent);
 }
 
+.onboarding-optional-badge {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg-hover);
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-left: 8px;
+  vertical-align: middle;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
 /* Step indicator */
 .model-onboarding-steps {
   display: flex;
@@ -23239,6 +23252,13 @@ html .column.drag-over * {
   color: var(--text-muted);
   margin-bottom: 16px;
   line-height: 1.5;
+}
+
+.onboarding-helper-text {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin: 4px 0 0 0;
+  line-height: 1.4;
 }
 
 .model-onboarding-loading {
@@ -23617,6 +23637,23 @@ html .column.drag-over * {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.onboarding-skip-step-link {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  text-decoration: none;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.onboarding-skip-step-link:hover {
+  color: var(--text);
+  background: var(--bg-hover);
 }
 
 @media (max-width: 768px) {

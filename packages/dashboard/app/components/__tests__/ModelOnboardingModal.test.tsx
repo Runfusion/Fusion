@@ -985,4 +985,247 @@ describe("ModelOnboardingModal", () => {
       expect(mockClearOnboardingState).not.toHaveBeenCalled();
     });
   });
+
+  describe("Non-blocking progression", () => {
+    it("allows advancing to GitHub step without authenticating any provider", async () => {
+      // All providers return authenticated: false
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+          { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Set Up AI")).toBeTruthy();
+      });
+
+      // Click Next without any providers authenticated
+      fireEvent.click(screen.getByText("Next →"));
+
+      // Should advance to GitHub step
+      await waitFor(() => {
+        expect(screen.getByText("Connect GitHub")).toBeTruthy();
+      });
+
+      // No error messages should appear
+      expect(screen.queryByText(/error/i)).toBeNull();
+    });
+
+    it("allows advancing to GitHub step without selecting a model", async () => {
+      // Default mock setup has no model selected
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Set Up AI")).toBeTruthy();
+      });
+
+      // Verify model dropdown is empty (no model selected)
+      const dropdown = screen.getByTestId("mock-model-dropdown") as HTMLSelectElement;
+      expect(dropdown.value).toBe("");
+
+      // Click Next without selecting a model
+      fireEvent.click(screen.getByText("Next →"));
+
+      // Should advance to GitHub step successfully
+      await waitFor(() => {
+        expect(screen.getByText("Connect GitHub")).toBeTruthy();
+      });
+    });
+
+    it("allows advancing to First Task step without connecting GitHub", async () => {
+      // GitHub provider exists but is not authenticated
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+          { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      // Navigate to GitHub step
+      await navigateToGitHubStep();
+
+      // Click Next without connecting GitHub
+      fireEvent.click(screen.getByText("Next →"));
+
+      // Should advance to First Task step
+      await waitFor(() => {
+        expect(screen.getByText("Create Your First Task")).toBeTruthy();
+      });
+    });
+
+    it("allows completing full onboarding flow without any setup", async () => {
+      // All providers not authenticated, no model selected
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      // Navigate AI Setup → GitHub → First Task
+      await navigateToFirstTaskStep();
+
+      // Click Finish Setup
+      fireEvent.click(screen.getByText("Finish Setup"));
+
+      // Should complete onboarding successfully
+      await waitFor(() => {
+        expect(screen.getByText("All Set!")).toBeTruthy();
+      });
+
+      // Should call updateGlobalSettings with modelOnboardingComplete: true
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelOnboardingComplete: true,
+        }),
+      );
+    });
+
+    it("shows Optional badge on AI Setup and GitHub steps", async () => {
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      // On AI Setup step, Optional badge should be visible
+      await waitFor(() => {
+        expect(screen.getByText("Optional")).toBeTruthy();
+      });
+
+      // Navigate to GitHub step
+      await navigateToGitHubStep();
+
+      // On GitHub step, Optional badge should be visible
+      await waitFor(() => {
+        expect(screen.getByText("Optional")).toBeTruthy();
+      });
+
+      // Navigate to First Task step
+      fireEvent.click(screen.getByText("Next →"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Create Your First Task")).toBeTruthy();
+      });
+
+      // On First Task step, NO Optional badge should be shown
+      // (there should be only one "Optional" text if we go back, but at this point it should be 0)
+      const optionalBadges = screen.queryAllByText("Optional");
+      expect(optionalBadges.length).toBe(0);
+    });
+
+    it("shows skip-step links on AI Setup and GitHub steps", async () => {
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Set Up AI")).toBeTruthy();
+      });
+
+      // On AI Setup step, Skip setup link should be present
+      expect(screen.getByText("Skip setup →")).toBeTruthy();
+
+      // Click Skip setup
+      fireEvent.click(screen.getByText("Skip setup →"));
+
+      // Should advance to GitHub step
+      await waitFor(() => {
+        expect(screen.getByText("Connect GitHub")).toBeTruthy();
+      });
+
+      // On GitHub step, Skip GitHub link should be present
+      expect(screen.getByText("Skip GitHub →")).toBeTruthy();
+
+      // Click Skip GitHub
+      fireEvent.click(screen.getByText("Skip GitHub →"));
+
+      // Should advance to First Task step
+      await waitFor(() => {
+        expect(screen.getByText("Create Your First Task")).toBeTruthy();
+      });
+    });
+
+    it("shows helper text on AI Setup when no providers authenticated", async () => {
+      // All providers authenticated: false
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+          { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Set Up AI")).toBeTruthy();
+      });
+
+      // Helper text should be visible when no providers are authenticated
+      expect(screen.getByText("You can add API keys or log in to providers later from Settings.")).toBeTruthy();
+    });
+
+    it("does not show helper text on AI Setup when a provider is authenticated", async () => {
+      // At least one provider authenticated: true
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+          { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Set Up AI")).toBeTruthy();
+      });
+
+      // Helper text should NOT be visible when a provider is authenticated
+      expect(screen.queryByText("You can add API keys or log in to providers later from Settings.")).toBeNull();
+    });
+
+    it("shows helper text on GitHub step when GitHub is available but not connected", async () => {
+      // GitHub provider exists with authenticated: false
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToGitHubStep();
+
+      // Helper text should be visible when GitHub is available but not connected
+      expect(screen.getByText("You can connect GitHub later from Settings → Authentication.")).toBeTruthy();
+    });
+
+    it("does not show helper text on GitHub step when GitHub is connected", async () => {
+      // GitHub provider exists with authenticated: true
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "github", name: "GitHub", authenticated: true, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToGitHubStep();
+
+      // Helper text should NOT be visible when GitHub is connected
+      expect(screen.queryByText("You can connect GitHub later from Settings → Authentication.")).toBeNull();
+    });
+  });
 });
