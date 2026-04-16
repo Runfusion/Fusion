@@ -1147,8 +1147,14 @@ The cross-node system uses a **proxy-based model** where the local dashboard ser
 ### Dependency Chain for Cross-Node
 
 1. **FN-1802** — Generic proxy route (`/api/proxy/:nodeId/*`) — unblocks all remote viewing
-2. **FN-1806** — Specific proxy routes (health, projects, tasks, events) — alternative/complement to FN-1802
+2. **FN-1806** — ✅ Implemented (FN-1833): 5 proxy routes in `routes.ts` with `proxyToRemoteNode()` helper. JSON routes: `/health`, `/projects`, `/tasks`, `/project-health`. SSE route: `/events` (30s timeout, client disconnect cleanup). Auth via `Bearer` header when `apiKey` set. Filters hop-by-hop headers.
 3. **FN-1803** — Node-aware project registration and directory browsing
 4. **FN-1804** — Frontend node selector for project creation
 5. **FN-1805** — Wire peer exchange and discovery in runtimes
 6. **FN-1736** — Comprehensive project scoping review (SSE/WebSocket filtering)
+
+**FN-1806 implementation notes:**
+- Routes must be placed BEFORE `return router;` in `createApiRoutes` — TypeScript's scope analysis requires helper functions to be defined before they're used at the same scope level
+- Use `async function` declarations (not arrow functions) for the route handlers to ensure proper TypeScript scope resolution
+- For mock fetch responses in tests: always use `ReadableStream` for the body — never return `null` for body, or the streaming pipe won't work
+- `proxyToRemoteNode` helper uses `new URL(req.url, 'http://localhost')` to reliably extract query params for forwarding

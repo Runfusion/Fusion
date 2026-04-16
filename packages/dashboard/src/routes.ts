@@ -1772,6 +1772,128 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     return getOrCreateProjectStore(projectId);
   }
 
+  /**
+   * Forward an HTTP request to a remote node.
+   * Validates the node exists, is remote, and has a URL, then proxies the request.
+   * Always closes the CentralCore instance in a finally block.
+   */
+  async function proxyToRemoteNode(
+    req: Request,
+    res: Response,
+    remotePath: string,
+    options?: { timeoutMs?: number },
+  ): Promise<void> {
+    const nodeId = req.params.nodeId as string;
+    const timeoutMs = options?.timeoutMs ?? 10_000;
+
+    const { CentralCore } = await import("@fusion/core");
+    const central = new CentralCore(store.getFusionDir());
+
+    try {
+      await central.init();
+
+      const node = await central.getNode(nodeId);
+      if (!node) {
+        throw notFound("Node not found");
+      }
+
+      if (node.type === "local") {
+        throw badRequest("Cannot proxy to local node");
+      }
+
+      if (!node.url) {
+        throw badRequest("Node has no URL configured");
+      }
+
+      // Parse query string from original request URL
+      const parsedUrl = new URL(req.url, "http://localhost");
+      const queryString = parsedUrl.search;
+
+      // Build target URL: node.url + /api + remotePath + queryString
+      const targetPath = `/api${remotePath}${queryString}`;
+      const targetUrl = new URL(targetPath, node.url).toString();
+
+      // Build headers, injecting Authorization if apiKey is present
+      const headers: Record<string, string> = {};
+      if (node.apiKey) {
+        headers["Authorization"] = `Bearer ${node.apiKey}`;
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+      const response = await fetch(targetUrl, {
+        headers,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      // Filter out hop-by-hop headers that should not be forwarded
+      const hopByHopHeaders = new Set([
+        "transfer-encoding",
+        "connection",
+        "keep-alive",
+        "upgrade",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailers",
+      ]);
+
+      // Forward safe headers from remote response
+      response.headers.forEach((value, key) => {
+        if (!hopByHopHeaders.has(key.toLowerCase())) {
+          res.setHeader(key, value);
+        }
+      });
+
+      res.status(response.status);
+
+      if (!response.body) {
+        res.end();
+        return;
+      }
+
+      // Convert web ReadableStream to Node Readable and pipe
+      const { Readable } = await import("node:stream");
+      const nodeStream = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream);
+
+      nodeStream.on("data", (chunk: Buffer) => {
+        res.write(chunk);
+      });
+
+      nodeStream.on("end", () => {
+        res.end();
+      });
+
+      nodeStream.on("error", (err: Error) => {
+        // Log but don't crash — stream may already be closing
+        console.error(`[proxy] Stream error for node ${nodeId}:`, err.message);
+        if (!res.writableEnded) {
+          res.end();
+        }
+      });
+    } catch (err: unknown) {
+      // Only send error response if headers haven't been sent yet
+      if (res.headersSent) {
+        return;
+      }
+      if (err instanceof Error && err.name === "AbortError") {
+        res.status(504).json({ error: "Remote node timeout" });
+      } else if (err instanceof TypeError) {
+        // DNS failure, connection refused, etc.
+        res.status(502).json({ error: "Remote node unreachable" });
+      } else if (err instanceof ApiError) {
+        throw err;
+      } else {
+        rethrowAsApiError(err, "Proxy request failed");
+      }
+    } finally {
+      await central.close();
+    }
+  }
+
   interface ProjectContext {
     store: TaskStore;
     engine: import("@fusion/engine").ProjectEngine | undefined;
@@ -15298,7 +15420,191 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       rethrowAsApiError(err, "Failed to fetch skills catalog");
     }
-  });  return router;
+  });
+
+  // ── Remote Node Proxy Routes ───────────────────────────────────────────
+
+  /** GET /api/proxy/:nodeId/health — Forward health check to remote node */
+  router.get("/proxy/:nodeId/health", async function (req, res) {
+    try {
+      await proxyToRemoteNode(req, res, "/health");
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  /** GET /api/proxy/:nodeId/projects — Forward projects list to remote node */
+  router.get("/proxy/:nodeId/projects", async function (req, res) {
+    try {
+      await proxyToRemoteNode(req, res, "/projects");
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  /** GET /api/proxy/:nodeId/tasks — Forward tasks list to remote node (forwards projectId, q query params) */
+  router.get("/proxy/:nodeId/tasks", async function (req, res) {
+    try {
+      await proxyToRemoteNode(req, res, "/tasks");
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  /** GET /api/proxy/:nodeId/project-health — Forward project health to remote node (forwards projectId query param) */
+  router.get("/proxy/:nodeId/project-health", async function (req, res) {
+    try {
+      await proxyToRemoteNode(req, res, "/project-health");
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  /**
+   * GET /api/proxy/:nodeId/events — SSE proxy to remote node events stream.
+   * Uses a 30-second timeout since SSE connections are long-lived.
+   * Handles client disconnect gracefully.
+   */
+  router.get("/proxy/:nodeId/events", async function (req, res) {
+    const nodeId = req.params.nodeId as string;
+
+    const { CentralCore } = await import("@fusion/core");
+    const central = new CentralCore(store.getFusionDir());
+
+    try {
+      await central.init();
+
+      const node = await central.getNode(nodeId);
+      if (!node) {
+        res.status(404).json({ error: "Node not found" });
+        return;
+      }
+
+      if (node.type === "local") {
+        res.status(400).json({ error: "Cannot proxy to local node" });
+        return;
+      }
+
+      if (!node.url) {
+        res.status(400).json({ error: "Node has no URL configured" });
+        return;
+      }
+
+      // Parse query string and build target URL
+      const parsedUrl = new URL(req.url, "http://localhost");
+      const queryString = parsedUrl.search;
+      const targetUrl = new URL(`/api/events${queryString}`, node.url).toString();
+
+      // Build headers, injecting Authorization if apiKey is present
+      const headers: Record<string, string> = {};
+      if (node.apiKey) {
+        headers["Authorization"] = `Bearer ${node.apiKey}`;
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30_000);
+
+      const response = await fetch(targetUrl, {
+        headers,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        res.status(response.status).json({ error: "Remote node events unavailable" });
+        return;
+      }
+
+      if (!response.body) {
+        res.status(502).json({ error: "Remote node unreachable" });
+        return;
+      }
+
+      // Set SSE headers on Express response
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders();
+      res.write(": connected\n\n");
+
+      // Convert web ReadableStream to Node Readable and pipe chunks to client
+      const { Readable } = await import("node:stream");
+      const nodeStream = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream);
+
+      let destroyed = false;
+
+      // Handle client disconnect — abort remote fetch and destroy stream
+      req.on("close", () => {
+        if (!destroyed) {
+          destroyed = true;
+          controller.abort();
+          nodeStream.destroy();
+        }
+      });
+
+      nodeStream.on("data", (chunk: Buffer) => {
+        if (!res.writableEnded) {
+          res.write(chunk);
+        }
+      });
+
+      nodeStream.on("end", () => {
+        if (!res.writableEnded) {
+          res.end();
+        }
+      });
+
+      nodeStream.on("error", (err: Error) => {
+        // Log but don't crash — stream may already be closing
+        console.error(`[proxy:sse] Stream error for node ${nodeId}:`, err.message);
+        if (!res.writableEnded) {
+          res.end();
+        }
+      });
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") {
+        if (!res.headersSent) {
+          res.status(504).json({ error: "Remote node timeout" });
+        } else if (!res.writableEnded) {
+          res.end();
+        }
+      } else if (err instanceof TypeError) {
+        if (!res.headersSent) {
+          res.status(502).json({ error: "Remote node unreachable" });
+        } else if (!res.writableEnded) {
+          res.end();
+        }
+      } else {
+        console.error(`[proxy:sse] Unexpected error for node ${nodeId}:`, err);
+        if (!res.headersSent) {
+          if (err instanceof ApiError) {
+            throw err;
+          }
+          rethrowAsApiError(err);
+        } else if (!res.writableEnded) {
+          res.end();
+        }
+      }
+    } finally {
+      await central.close();
+    }
+  });
+
+  return router;
 }
 
 // ── Automation step helpers ─────────────────────────────────────────
@@ -15918,6 +16224,8 @@ function registerAuthRoutes(router: Router, authStorage?: AuthStorageLike): void
       rethrowAsApiError(err);
     }
   });
+
+
 
 
 }
