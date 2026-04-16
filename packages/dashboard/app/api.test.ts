@@ -1664,12 +1664,19 @@ describe("Planning Mode API", () => {
       await expect(startPlanning("Build something")).rejects.toThrow("Rate limit exceeded");
     });
 
-    it("throws on validation error", async () => {
-      globalThis.fetch = vi.fn().mockReturnValue(
-        mockFetchResponse(false, { error: "initialPlan must be 500 characters or less" }, 400)
-      );
+    it("accepts long initialPlan values (no character limit)", async () => {
+      // Test that long initialPlan values are accepted by the server (removed 500-char limit)
+      const response = { sessionId: "plan-456", currentQuestion: FAKE_QUESTION, summary: null };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, response, 201));
 
-      await expect(startPlanning("a".repeat(600))).rejects.toThrow("500 characters");
+      const result = await startPlanning("a".repeat(2000));
+
+      expect(result.sessionId).toBe("plan-456");
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/planning/start", {
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+        body: JSON.stringify({ initialPlan: "a".repeat(2000) }),
+      });
     });
   });
 

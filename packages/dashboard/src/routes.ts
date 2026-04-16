@@ -7688,10 +7688,6 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw badRequest("initialPlan is required and must be a string");
       }
 
-      if (initialPlan.length > 500) {
-        throw badRequest("initialPlan must be 500 characters or less");
-      }
-
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
       const ip = req.ip || req.socket.remoteAddress || "unknown";
@@ -7735,10 +7731,6 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       if (!initialPlan || typeof initialPlan !== "string") {
         throw badRequest("initialPlan is required and must be a string");
-      }
-
-      if (initialPlan.length > 500) {
-        throw badRequest("initialPlan must be 500 characters or less");
       }
 
       if (planningModelProvider !== undefined && typeof planningModelProvider !== "string") {

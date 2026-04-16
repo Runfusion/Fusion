@@ -7832,8 +7832,9 @@ describe("Planning Mode Routes", () => {
         expect(res.body.error).toContain("initialPlan is required");
       });
 
-      it("rejects initialPlan longer than 500 chars", async () => {
-        const longPlan = "a".repeat(501);
+      it("accepts long initialPlan (no character limit)", async () => {
+        // Test that the server accepts long initialPlan values (removed 500-char limit)
+        const longPlan = "a".repeat(2000);
         const res = await REQUEST(
           buildApp(),
           "POST",
@@ -7842,8 +7843,8 @@ describe("Planning Mode Routes", () => {
           { "Content-Type": "application/json" }
         );
 
-        expect(res.status).toBe(400);
-        expect(res.body.error).toContain("500 characters");
+        expect(res.status).toBe(201);
+        expect(res.body.sessionId).toBeDefined();
       });
 
       it("enforces rate limiting (5 sessions per hour per IP)", async () => {
