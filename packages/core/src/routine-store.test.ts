@@ -597,4 +597,261 @@ describe("RoutineStore", () => {
       expect(final.runHistory).toHaveLength(10);
     });
   });
+
+  // ── Scope-aware routines ─────────────────────────────────────────
+
+  describe("scope-aware routines", () => {
+    it("createRoutine without scope defaults to 'project'", async () => {
+      const routine = await store.createRoutine({
+        name: "Default scope",
+        agentId: "test-agent",
+        trigger: { type: "cron", cronExpression: "0 * * * *" },
+      });
+
+      expect(routine.scope).toBe("project");
+
+      // Verify round-trip persistence
+      const fetched = await store.getRoutine(routine.id);
+      expect(fetched.scope).toBe("project");
+    });
+
+    it("createRoutine with scope='global' persists correctly", async () => {
+      const routine = await store.createRoutine({
+        name: "Global scope",
+        agentId: "test-agent",
+        trigger: { type: "cron", cronExpression: "0 * * * *" },
+        scope: "global",
+      });
+
+      expect(routine.scope).toBe("global");
+
+      // Verify round-trip persistence
+      const fetched = await store.getRoutine(routine.id);
+      expect(fetched.scope).toBe("global");
+    });
+
+    it("listRoutines returns both global and project scopes", async () => {
+      const global = await store.createRoutine({
+        name: "Global",
+        agentId: "test-agent",
+        trigger: { type: "cron", cronExpression: "0 * * * *" },
+        scope: "global",
+      });
+      const project = await store.createRoutine({
+        name: "Project",
+        agentId: "test-agent",
+        trigger: { type: "cron", cronExpression: "0 * * * *" },
+        scope: "project",
+      });
+
+      const list = await store.listRoutines();
+      expect(list).toHaveLength(2);
+
+      const globalFound = list.find((r) => r.id === global.id);
+      const projectFound = list.find((r) => r.id === project.id);
+      expect(globalFound?.scope).toBe("global");
+      expect(projectFound?.scope).toBe("project");
+    });
+
+    it("getDueRoutines filters by scope - global only", async () => {
+      const global = await store.createRoutine({
+        name: "Global due",
+        agentId: "test-agent",
+        trigger: { type: "cron", cronExpression: "0 * * * *" },
+        scope: "global",
+      });
+      const project = await store.createRoutine({
+        name: "Project due",
+        agentId: "test-agent",
+        trigger: { type: "cron", cronExpression: "0 * * * *" },
+        scope: "project",
+      });
+
+      // Set nextRunAt to the past via direct DB update
+      const pastDate = new Date(Date.now() - 60000).toISOString();
+      store["db"].prepare("UPDATE routines SET nextRunAt = ? WHERE id = ?").run(pastDate, global.id);
+      store["db"].prepare("UPDATE routines SET nextRunAt = ? WHERE id = ?").run(pastDate, project.id);
+
+      const globalDue = await store.getDueRoutines("global");
+      expect(globalDue.some((r) => r.id === global.id)).toBe(true);
+      expect(globalDue.some((r) => r.id === project.id)).toBe(false);
+
+      const projectDue = await store.getDueRoutines("project");
+      expect(projectDue.some((r) => r.id === project.id)).toBe(true);
+      expect(projectDue.some((r) => r.id === global.id)).toBe(false);
+    });
+
+    it("getDueRoutinesAllScopes returns routines from both scopes", async () => {
+      const global = await store.createRoutine({
+        name: "Global due",
+        agentId: "test-agent",
+        trigger: { type: "cron", cronExpression: "0 * * * *" },
+        scope: "global",
+      });
+      const project = await store.createRoutine({
+        name: "Project due",
+        agentId: "test-agent",
+        trigger: { type: "cron", cronExpression: "0 * * * *" },
+        scope: "project",
+      });
+
+      // Set nextRunAt to the past via direct DB update
+      const pastDate = new Date(Date.now() - 60000).toISOString();
+      store["db"].prepare("UPDATE routines SET nextRunAt = ? WHERE id = ?").run(pastDate, global.id);
+      store["db"].prepare("UPDATE routines SET nextRunAt = ? WHERE id = ?").run(pastDate, project.id);
+
+      const allDue = await store.getDueRoutinesAllScopes();
+      expect(allDue.some((r) => r.id === global.id)).toBe(true);
+      expect(allDue.some((r) => r.id === project.id)).toBe(true);
+    });
+
+    it("getDueRoutines does not leak scopes - global not in project", async () => {
+      const global = await store.createRoutine({
+        name: "Global only",
+        agentId: "test-agent",
+        trigger: { type: "cron", cronExpression: "0 * * * *" },
+        scope: "global",
+      });
+
+      // Set nextRunAt to the past
+      const pastDate = new Date(Date.now() - 60000).toISOString();
+      store["db"].prepare("UPDATE routines SET nextRunAt = ? WHERE id = ?").run(pastDate, global.id);
+
+      const projectDue = await store.getDueRoutines("project");
+      expect(projectDue.some((r) => r.id === global.id)).toBe(false);
+    });
+
+    it("getDueRoutines does not leak scopes - project not in global", async () => {
+      const project = await store.createRoutine({
+        name: "Project only",
+        agentId: "test-agent",
+        trigger: { type: "cron", cronExpression: "0 * * * *" },
+        scope: "project",
+      });
+
+      // Set nextRunAt to the past
+      const pastDate = new Date(Date.now() - 60000).toISOString();
+      store["db"].prepare("UPDATE routines SET nextRunAt = ? WHERE id = ?").run(pastDate, project.id);
+
+      const globalDue = await store.getDueRoutines("global");
+      expect(globalDue.some((r) => r.id === project.id)).toBe(false);
+    });
+
+    it("recordRun preserves scope", async () => {
+      const routine = await store.createRoutine({
+        name: "Scope preservation",
+        agentId: "test-agent",
+        trigger: { type: "manual" },
+        scope: "global",
+      });
+
+      await store.recordRun(routine.id, {
+        routineId: routine.id,
+        success: true,
+        output: "ok",
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+      });
+
+      const fetched = await store.getRoutine(routine.id);
+      expect(fetched.scope).toBe("global");
+    });
+
+    it("trigger type variants with scope persist correctly - cron", async () => {
+      const routine = await store.createRoutine({
+        name: "Cron with global",
+        agentId: "test-agent",
+        trigger: { type: "cron", cronExpression: "0 * * * *" },
+        scope: "global",
+      });
+      const fetched = await store.getRoutine(routine.id);
+      expect(fetched.scope).toBe("global");
+      expect(fetched.trigger.type).toBe("cron");
+    });
+
+    it("trigger type variants with scope persist correctly - webhook", async () => {
+      const routine = await store.createRoutine({
+        name: "Webhook with global",
+        agentId: "test-agent",
+        trigger: { type: "webhook", webhookPath: "/trigger/test" },
+        scope: "global",
+      });
+      const fetched = await store.getRoutine(routine.id);
+      expect(fetched.scope).toBe("global");
+      expect(fetched.trigger.type).toBe("webhook");
+    });
+
+    it("trigger type variants with scope persist correctly - api", async () => {
+      const routine = await store.createRoutine({
+        name: "API with global",
+        agentId: "test-agent",
+        trigger: { type: "api", endpoint: "/api/test" },
+        scope: "global",
+      });
+      const fetched = await store.getRoutine(routine.id);
+      expect(fetched.scope).toBe("global");
+      expect(fetched.trigger.type).toBe("api");
+    });
+
+    it("trigger type variants with scope persist correctly - manual", async () => {
+      const routine = await store.createRoutine({
+        name: "Manual with global",
+        agentId: "test-agent",
+        trigger: { type: "manual" },
+        scope: "global",
+      });
+      const fetched = await store.getRoutine(routine.id);
+      expect(fetched.scope).toBe("global");
+      expect(fetched.trigger.type).toBe("manual");
+    });
+
+    it("startRoutineExecution preserves scope", async () => {
+      const routine = await store.createRoutine({
+        name: "Start scope test",
+        agentId: "test-agent",
+        trigger: { type: "cron", cronExpression: "0 * * * *" },
+        scope: "global",
+      });
+
+      await store.startRoutineExecution(routine.id, {
+        triggeredAt: new Date().toISOString(),
+        invocationSource: "test",
+      });
+
+      const fetched = await store.getRoutine(routine.id);
+      expect(fetched.scope).toBe("global");
+    });
+
+    it("completeRoutineExecution preserves scope", async () => {
+      const routine = await store.createRoutine({
+        name: "Complete scope test",
+        agentId: "test-agent",
+        trigger: { type: "cron", cronExpression: "0 * * * *" },
+        scope: "global",
+      });
+
+      await store.completeRoutineExecution(routine.id, {
+        completedAt: new Date().toISOString(),
+        success: true,
+        resultJson: { output: "ok" },
+      });
+
+      const fetched = await store.getRoutine(routine.id);
+      expect(fetched.scope).toBe("global");
+    });
+
+    it("cancelRoutineExecution preserves scope", async () => {
+      const routine = await store.createRoutine({
+        name: "Cancel scope test",
+        agentId: "test-agent",
+        trigger: { type: "cron", cronExpression: "0 * * * *" },
+        scope: "global",
+      });
+
+      await store.cancelRoutineExecution(routine.id);
+
+      const fetched = await store.getRoutine(routine.id);
+      expect(fetched.scope).toBe("global");
+    });
+  });
 });

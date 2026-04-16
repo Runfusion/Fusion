@@ -747,4 +747,196 @@ describe("AutomationStore", () => {
       expect(final.runHistory).toHaveLength(10);
     });
   });
+
+  // ── Scope-aware scheduling ─────────────────────────────────────────
+
+  describe("scope-aware scheduling", () => {
+    it("createSchedule without scope defaults to 'project'", async () => {
+      const schedule = await store.createSchedule({
+        name: "Default scope",
+        command: "echo default",
+        scheduleType: "hourly",
+      });
+
+      expect(schedule.scope).toBe("project");
+
+      // Verify round-trip persistence
+      const fetched = await store.getSchedule(schedule.id);
+      expect(fetched.scope).toBe("project");
+    });
+
+    it("createSchedule with scope='global' persists correctly", async () => {
+      const schedule = await store.createSchedule({
+        name: "Global scope",
+        command: "echo global",
+        scheduleType: "hourly",
+        scope: "global",
+      });
+
+      expect(schedule.scope).toBe("global");
+
+      // Verify round-trip persistence
+      const fetched = await store.getSchedule(schedule.id);
+      expect(fetched.scope).toBe("global");
+    });
+
+    it("listSchedules returns both global and project scopes", async () => {
+      const global = await store.createSchedule({
+        name: "Global",
+        command: "echo",
+        scheduleType: "hourly",
+        scope: "global",
+      });
+      const project = await store.createSchedule({
+        name: "Project",
+        command: "echo",
+        scheduleType: "hourly",
+        scope: "project",
+      });
+
+      const list = await store.listSchedules();
+      expect(list).toHaveLength(2);
+
+      const globalFound = list.find((s) => s.id === global.id);
+      const projectFound = list.find((s) => s.id === project.id);
+      expect(globalFound?.scope).toBe("global");
+      expect(projectFound?.scope).toBe("project");
+    });
+
+    it("getDueSchedules filters by scope - global only", async () => {
+      const global = await store.createSchedule({
+        name: "Global due",
+        command: "echo",
+        scheduleType: "hourly",
+        scope: "global",
+      });
+      const project = await store.createSchedule({
+        name: "Project due",
+        command: "echo",
+        scheduleType: "hourly",
+        scope: "project",
+      });
+
+      // Set nextRunAt to the past via direct DB update
+      const pastDate = new Date(Date.now() - 60000).toISOString();
+      store["db"].prepare("UPDATE automations SET nextRunAt = ? WHERE id = ?").run(pastDate, global.id);
+      store["db"].prepare("UPDATE automations SET nextRunAt = ? WHERE id = ?").run(pastDate, project.id);
+
+      const globalDue = await store.getDueSchedules("global");
+      expect(globalDue.some((s) => s.id === global.id)).toBe(true);
+      expect(globalDue.some((s) => s.id === project.id)).toBe(false);
+
+      const projectDue = await store.getDueSchedules("project");
+      expect(projectDue.some((s) => s.id === project.id)).toBe(true);
+      expect(projectDue.some((s) => s.id === global.id)).toBe(false);
+    });
+
+    it("getDueSchedulesAllScopes returns schedules from both scopes", async () => {
+      const global = await store.createSchedule({
+        name: "Global due",
+        command: "echo",
+        scheduleType: "hourly",
+        scope: "global",
+      });
+      const project = await store.createSchedule({
+        name: "Project due",
+        command: "echo",
+        scheduleType: "hourly",
+        scope: "project",
+      });
+
+      // Set nextRunAt to the past via direct DB update
+      const pastDate = new Date(Date.now() - 60000).toISOString();
+      store["db"].prepare("UPDATE automations SET nextRunAt = ? WHERE id = ?").run(pastDate, global.id);
+      store["db"].prepare("UPDATE automations SET nextRunAt = ? WHERE id = ?").run(pastDate, project.id);
+
+      const allDue = await store.getDueSchedulesAllScopes();
+      expect(allDue.some((s) => s.id === global.id)).toBe(true);
+      expect(allDue.some((s) => s.id === project.id)).toBe(true);
+    });
+
+    it("getDueSchedules does not leak scopes - global not in project", async () => {
+      const global = await store.createSchedule({
+        name: "Global only",
+        command: "echo",
+        scheduleType: "hourly",
+        scope: "global",
+      });
+
+      // Set nextRunAt to the past
+      const pastDate = new Date(Date.now() - 60000).toISOString();
+      store["db"].prepare("UPDATE automations SET nextRunAt = ? WHERE id = ?").run(pastDate, global.id);
+
+      const projectDue = await store.getDueSchedules("project");
+      expect(projectDue.some((s) => s.id === global.id)).toBe(false);
+    });
+
+    it("getDueSchedules does not leak scopes - project not in global", async () => {
+      const project = await store.createSchedule({
+        name: "Project only",
+        command: "echo",
+        scheduleType: "hourly",
+        scope: "project",
+      });
+
+      // Set nextRunAt to the past
+      const pastDate = new Date(Date.now() - 60000).toISOString();
+      store["db"].prepare("UPDATE automations SET nextRunAt = ? WHERE id = ?").run(pastDate, project.id);
+
+      const globalDue = await store.getDueSchedules("global");
+      expect(globalDue.some((s) => s.id === project.id)).toBe(false);
+    });
+
+    it("recordRun preserves scope", async () => {
+      const schedule = await store.createSchedule({
+        name: "Scope preservation",
+        command: "echo",
+        scheduleType: "hourly",
+        scope: "global",
+      });
+
+      await store.recordRun(schedule.id, {
+        success: true,
+        output: "ok",
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+      });
+
+      const fetched = await store.getSchedule(schedule.id);
+      expect(fetched.scope).toBe("global");
+    });
+
+    it("updateSchedule does not change scope when not specified", async () => {
+      const schedule = await store.createSchedule({
+        name: "Original",
+        command: "echo",
+        scheduleType: "hourly",
+        scope: "global",
+      });
+
+      await store.updateSchedule(schedule.id, { name: "Updated" });
+
+      const fetched = await store.getSchedule(schedule.id);
+      expect(fetched.scope).toBe("global");
+      expect(fetched.name).toBe("Updated");
+    });
+
+    it("updateSchedule does not change scope when scope is specified (scope is immutable after creation)", async () => {
+      // Note: ScheduledTaskUpdateInput includes scope, but updateSchedule implementation
+      // does not handle it. Scope is effectively immutable after creation.
+      const schedule = await store.createSchedule({
+        name: "Scope immutable",
+        command: "echo",
+        scheduleType: "hourly",
+        scope: "project",
+      });
+
+      await store.updateSchedule(schedule.id, { name: "Updated", scope: "global" });
+
+      const fetched = await store.getSchedule(schedule.id);
+      // Scope remains unchanged because updateSchedule doesn't handle scope updates
+      expect(fetched.scope).toBe("project");
+      expect(fetched.name).toBe("Updated");
+    });
+  });
 });
