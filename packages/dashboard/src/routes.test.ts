@@ -93,6 +93,7 @@ function createMockGlobalSettingsStore() {
     updateSettings: vi.fn().mockResolvedValue({}),
     getSettingsPath: vi.fn().mockReturnValue("/fake/home/.fusion/settings.json"),
     init: vi.fn().mockResolvedValue(false),
+    invalidateCache: vi.fn(),
   };
 }
 
@@ -12173,6 +12174,80 @@ describe("PUT /settings/global", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.modelOnboardingComplete).toBe(true);
+  });
+
+  it("invalidates all global settings caches including engine stores", async () => {
+    const updated = { defaultModelId: "claude-3-5-sonnet" };
+    (store.updateGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValue(updated);
+
+    // Create mock engine with GlobalSettingsStore spy
+    const engineGlobalStore = createMockGlobalSettingsStore();
+    const mockEngineStore = createMockStore();
+    (mockEngineStore.getGlobalSettingsStore as ReturnType<typeof vi.fn>).mockReturnValue(engineGlobalStore);
+
+    const mockEngine = {
+      getTaskStore: vi.fn().mockReturnValue(mockEngineStore),
+    };
+
+    // Create mock engine manager
+    const mockEngineManager = {
+      getAllEngines: vi.fn().mockReturnValue(new Map([["project-1", mockEngine]])),
+      getEngine: vi.fn(),
+      ensureEngine: vi.fn(),
+    };
+
+    // Spy on invalidateAllGlobalSettingsCaches
+    const invalidateAllSpy = vi.spyOn(projectStoreResolver, "invalidateAllGlobalSettingsCaches");
+
+    // Build app with engineManager option
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { engineManager: mockEngineManager as any }));
+
+    const res = await REQUEST(
+      app,
+      "PUT",
+      "/api/settings/global",
+      JSON.stringify(updated),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(store.updateGlobalSettings).toHaveBeenCalledWith(updated);
+
+    // Verify project-store-resolver caches are invalidated
+    expect(invalidateAllSpy).toHaveBeenCalledOnce();
+
+    // Verify engine store cache is invalidated
+    expect(mockEngine.getTaskStore).toHaveBeenCalled();
+    expect(engineGlobalStore.invalidateCache).toHaveBeenCalledOnce();
+  });
+
+  it("handles missing engineManager gracefully", async () => {
+    const updated = { defaultModelId: "claude-3-5-sonnet" };
+    (store.updateGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValue(updated);
+
+    // Spy on invalidateAllGlobalSettingsCaches
+    const invalidateAllSpy = vi.spyOn(projectStoreResolver, "invalidateAllGlobalSettingsCaches");
+
+    // Build app WITHOUT engineManager option
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+
+    const res = await REQUEST(
+      app,
+      "PUT",
+      "/api/settings/global",
+      JSON.stringify(updated),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(store.updateGlobalSettings).toHaveBeenCalledWith(updated);
+
+    // Should still invalidate project-store-resolver caches
+    expect(invalidateAllSpy).toHaveBeenCalledOnce();
   });
 });
 

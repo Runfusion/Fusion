@@ -2776,6 +2776,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // next GET /settings?projectId=xxx reads fresh values from disk rather
       // than returning a stale per-project cache.
       invalidateAllGlobalSettingsCaches();
+      // Also invalidate caches in engine manager stores (separate GlobalSettingsStore
+      // instances that are NOT part of the project-store-resolver cache).
+      const engineManager = options?.engineManager;
+      if (engineManager) {
+        for (const engine of engineManager.getAllEngines().values()) {
+          engine.getTaskStore().getGlobalSettingsStore().invalidateCache();
+        }
+      }
       res.json(settings);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
