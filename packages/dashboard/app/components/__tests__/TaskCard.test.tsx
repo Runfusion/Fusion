@@ -50,6 +50,18 @@ vi.mock("lucide-react", () => ({
   Trash2: ({ size }: { size?: number }) => <span data-testid="trash-icon">🗑️</span>,
 }));
 
+// Mock usePluginUiSlots hook
+const mockUsePluginUiSlots = vi.fn(() => ({
+  slots: [],
+  getSlotsForId: vi.fn(() => []),
+  loading: false,
+  error: null,
+}));
+
+vi.mock("../../hooks/usePluginUiSlots", () => ({
+  usePluginUiSlots: (...args: unknown[]) => mockUsePluginUiSlots(...args),
+}));
+
 beforeEach(() => {
   mockUseBadgeWebSocket.mockReset();
   mockUseBadgeWebSocket.mockReturnValue({
@@ -4091,5 +4103,92 @@ describe("TaskCard delete button", () => {
         "error"
       );
     });
+  });
+});
+
+describe("TaskCard PluginSlot integration", () => {
+  function makeTaskWithDeps(id: string): Task {
+    return {
+      id,
+      title: `Task ${id}`,
+      description: "Test description",
+      column: "todo",
+      status: "todo",
+      priority: 0,
+      size: "M",
+      dependencies: ["FN-001"],
+      steps: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  it("renders PluginSlot for task-card-badge", () => {
+    mockUsePluginUiSlots.mockReturnValue({
+      slots: [{ pluginId: "test-plugin", slot: { slotId: "task-card-badge", label: "Badge", componentPath: "./test.js" } }],
+      getSlotsForId: (id: string) => id === "task-card-badge" ? [{ pluginId: "test-plugin", slot: { slotId: "task-card-badge", label: "Badge", componentPath: "./test.js" } }] : [],
+      loading: false,
+      error: null,
+    });
+    const task = makeTaskWithDeps("FN-001");
+    const { container } = render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={vi.fn()}
+      />
+    );
+    const slot = container.querySelector('[data-slot-id="task-card-badge"]');
+    expect(slot).not.toBeNull();
+    expect(slot).toHaveAttribute("data-plugin-id", "test-plugin");
+  });
+
+  it("renders PluginSlot even when task has no dependencies", () => {
+    mockUsePluginUiSlots.mockReturnValue({
+      slots: [{ pluginId: "test-plugin", slot: { slotId: "task-card-badge", label: "Badge", componentPath: "./test.js" } }],
+      getSlotsForId: (id: string) => id === "task-card-badge" ? [{ pluginId: "test-plugin", slot: { slotId: "task-card-badge", label: "Badge", componentPath: "./test.js" } }] : [],
+      loading: false,
+      error: null,
+    });
+    const task: Task = {
+      id: "FN-002",
+      title: "Task without deps",
+      column: "todo",
+      status: "todo",
+      priority: 0,
+      size: "M",
+      steps: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const { container } = render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={vi.fn()}
+      />
+    );
+    const slot = container.querySelector('[data-slot-id="task-card-badge"]');
+    expect(slot).not.toBeNull();
+    expect(slot).toHaveAttribute("data-plugin-id", "test-plugin");
+  });
+
+  it("renders nothing when no plugins register for task-card-badge slot", () => {
+    mockUsePluginUiSlots.mockReturnValue({
+      slots: [],
+      getSlotsForId: vi.fn(() => []),
+      loading: false,
+      error: null,
+    });
+    const task = makeTaskWithDeps("FN-001");
+    const { container } = render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={vi.fn()}
+      />
+    );
+    const slot = container.querySelector('[data-slot-id="task-card-badge"]');
+    expect(slot).toBeNull();
   });
 });

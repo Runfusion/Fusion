@@ -10,6 +10,7 @@ import { ThemeSelector } from "./ThemeSelector";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { FileEditor } from "./FileEditor";
 import { PluginManager } from "./PluginManager";
+import { PluginSlot } from "./PluginSlot";
 import { AgentPromptsManager } from "./AgentPromptsManager";
 import { applyPresetToSelection, generateUniquePresetId } from "../utils/modelPresets";
 
@@ -2564,6 +2565,7 @@ export function SettingsModal({
           <>
             <h4 className="settings-section-heading">Plugins</h4>
             <PluginManager addToast={addToast} projectId={projectId} />
+            <PluginSlot slotId="settings-section" projectId={projectId} />
           </>
         );
       case "authentication":

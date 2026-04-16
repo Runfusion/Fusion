@@ -34,6 +34,18 @@ vi.mock("lucide-react", () => ({
   Clock: () => null,
 }));
 
+// Mock usePluginUiSlots hook
+const mockUsePluginUiSlots = vi.fn(() => ({
+  slots: [],
+  getSlotsForId: vi.fn(() => []),
+  loading: false,
+  error: null,
+}));
+
+vi.mock("../../hooks/usePluginUiSlots", () => ({
+  usePluginUiSlots: (...args: unknown[]) => mockUsePluginUiSlots(...args),
+}));
+
 function makeTask(id: string): Task {
   return {
     id,
@@ -351,5 +363,48 @@ describe("Column same-column drop", () => {
       expect(quickEntry.getAttribute("data-has-toggle-favorite")).toBe("no");
       expect(quickEntry.getAttribute("data-has-toggle-model-favorite")).toBe("no");
     });
+  });
+});
+
+describe("Column PluginSlot integration", () => {
+  it("renders PluginSlot for board-column-footer", () => {
+    mockUsePluginUiSlots.mockReturnValue({
+      slots: [{ pluginId: "test-plugin", slot: { slotId: "board-column-footer", label: "Column Footer", componentPath: "./test.js" } }],
+      getSlotsForId: (id: string) => id === "board-column-footer" ? [{ pluginId: "test-plugin", slot: { slotId: "board-column-footer", label: "Column Footer", componentPath: "./test.js" } }] : [],
+      loading: false,
+      error: null,
+    });
+    const { container } = render(
+      <Column
+        {...defaultProps}
+        column="triage"
+        tasks={[]}
+      />,
+    );
+    // Check that column-body exists
+    const columnBody = container.querySelector(".column-body");
+    expect(columnBody).not.toBeNull();
+    // Check for plugin slot inside column-body (always rendered, even for empty columns)
+    const slot = container.querySelector('[data-slot-id="board-column-footer"]');
+    expect(slot).not.toBeNull();
+    expect(slot).toHaveAttribute("data-plugin-id", "test-plugin");
+  });
+
+  it("renders nothing when no plugins register for board-column-footer slot", () => {
+    mockUsePluginUiSlots.mockReturnValue({
+      slots: [],
+      getSlotsForId: vi.fn(() => []),
+      loading: false,
+      error: null,
+    });
+    const { container } = render(
+      <Column
+        {...defaultProps}
+        column="triage"
+        tasks={[]}
+      />,
+    );
+    const slot = container.querySelector('[data-slot-id="board-column-footer"]');
+    expect(slot).toBeNull();
   });
 });

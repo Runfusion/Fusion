@@ -9,6 +9,18 @@ vi.mock("../api", () => ({
   fetchScripts: (...args: unknown[]) => mockFetchScripts(...args),
 }));
 
+// Mock usePluginUiSlots hook
+const mockUsePluginUiSlots = vi.fn(() => ({
+  slots: [],
+  getSlotsForId: vi.fn(() => []),
+  loading: false,
+  error: null,
+}));
+
+vi.mock("../../hooks/usePluginUiSlots", () => ({
+  usePluginUiSlots: (...args: unknown[]) => mockUsePluginUiSlots(...args),
+}));
+
 // Mock matchMedia for mobile/tablet/desktop viewport tests
 type ViewportTier = "mobile" | "tablet" | "desktop";
 
@@ -1596,5 +1608,32 @@ describe("Header", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  describe("PluginSlot integration", () => {
+    it("renders PluginSlot for header-action slot", () => {
+      mockUsePluginUiSlots.mockReturnValue({
+        slots: [{ pluginId: "test-plugin", slot: { slotId: "header-action", label: "Test Action", componentPath: "./test.js" } }],
+        getSlotsForId: (id: string) => id === "header-action" ? [{ pluginId: "test-plugin", slot: { slotId: "header-action", label: "Test Action", componentPath: "./test.js" } }] : [],
+        loading: false,
+        error: null,
+      });
+      const { container } = render(<Header />);
+      const slot = container.querySelector('[data-slot-id="header-action"]');
+      expect(slot).not.toBeNull();
+      expect(slot).toHaveAttribute("data-plugin-id", "test-plugin");
+    });
+
+    it("renders nothing when no plugins register for header-action slot", () => {
+      mockUsePluginUiSlots.mockReturnValue({
+        slots: [],
+        getSlotsForId: vi.fn(() => []),
+        loading: false,
+        error: null,
+      });
+      const { container } = render(<Header />);
+      const slot = container.querySelector('[data-slot-id="header-action"]');
+      expect(slot).toBeNull();
+    });
   });
 });

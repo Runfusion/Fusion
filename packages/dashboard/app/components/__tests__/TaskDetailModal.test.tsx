@@ -57,6 +57,18 @@ vi.mock("../../hooks/useAgentLogs", () => ({
   useAgentLogs: vi.fn(() => ({ entries: [], loading: false, clear: vi.fn() })),
 }));
 
+// Mock usePluginUiSlots hook
+const mockUsePluginUiSlots = vi.fn(() => ({
+  slots: [],
+  getSlotsForId: vi.fn(() => []),
+  loading: false,
+  error: null,
+}));
+
+vi.mock("../../hooks/usePluginUiSlots", () => ({
+  usePluginUiSlots: (...args: unknown[]) => mockUsePluginUiSlots(...args),
+}));
+
 function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
   return {
     id: "FN-099",
@@ -5269,6 +5281,99 @@ describe("TaskDetailModal", () => {
 
       // Loading indicator should be gone
       expect(screen.queryByText("Loading specification…")).toBeNull();
+    });
+  });
+
+  describe("PluginSlot integration", () => {
+    it("renders plugin tabs when plugins register for task-detail-tab slot", async () => {
+      mockUsePluginUiSlots.mockReturnValue({
+        slots: [
+          { pluginId: "plugin-a", slot: { slotId: "task-detail-tab", label: "Plugin A Tab", componentPath: "./a.js" } },
+          { pluginId: "plugin-b", slot: { slotId: "task-detail-tab", label: "Plugin B Tab", componentPath: "./b.js" } },
+        ],
+        getSlotsForId: (id: string) => id === "task-detail-tab" ? [
+          { pluginId: "plugin-a", slot: { slotId: "task-detail-tab", label: "Plugin A Tab", componentPath: "./a.js" } },
+          { pluginId: "plugin-b", slot: { slotId: "task-detail-tab", label: "Plugin B Tab", componentPath: "./b.js" } },
+        ] : [],
+        loading: false,
+        error: null,
+      });
+
+      render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onOpenDetail={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />
+      );
+
+      // Both plugin tabs should appear
+      expect(screen.getByText("Plugin A Tab")).toBeDefined();
+      expect(screen.getByText("Plugin B Tab")).toBeDefined();
+    });
+
+    it("shows plugin tab content when plugin tab is clicked", async () => {
+      mockUsePluginUiSlots.mockReturnValue({
+        slots: [
+          { pluginId: "plugin-a", slot: { slotId: "task-detail-tab", label: "Plugin A Tab", componentPath: "./a.js" } },
+        ],
+        getSlotsForId: (id: string) => id === "task-detail-tab" ? [
+          { pluginId: "plugin-a", slot: { slotId: "task-detail-tab", label: "Plugin A Tab", componentPath: "./a.js" } },
+        ] : [],
+        loading: false,
+        error: null,
+      });
+
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onOpenDetail={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />
+      );
+
+      // Click the plugin tab
+      await userEvent.click(screen.getByText("Plugin A Tab"));
+
+      // Verify plugin slot renders with task-detail-tab slotId
+      const slot = container.querySelector('[data-slot-id="task-detail-tab"]');
+      expect(slot).not.toBeNull();
+      expect(slot).toHaveAttribute("data-plugin-id", "plugin-a");
+    });
+
+    it("renders no extra tabs when no plugins register", () => {
+      mockUsePluginUiSlots.mockReturnValue({
+        slots: [],
+        getSlotsForId: vi.fn(() => []),
+        loading: false,
+        error: null,
+      });
+
+      render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onOpenDetail={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />
+      );
+
+      // Only standard tabs should be visible (Definition, Logs, etc.)
+      expect(screen.getByText("Definition")).toBeDefined();
+      expect(screen.getByText("Logs")).toBeDefined();
+      // Plugin tabs should not exist
+      expect(screen.queryByText("Plugin A Tab")).toBeNull();
     });
   });
 });

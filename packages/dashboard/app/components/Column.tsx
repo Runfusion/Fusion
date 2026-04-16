@@ -5,6 +5,7 @@ import { COLUMN_LABELS, COLUMN_DESCRIPTIONS } from "@fusion/core";
 import { TaskCard } from "./TaskCard";
 import { WorktreeGroup } from "./WorktreeGroup";
 import { QuickEntryBox } from "./QuickEntryBox";
+import { PluginSlot } from "./PluginSlot";
 import { groupByWorktree } from "../utils/worktreeGrouping";
 import type { ToastType } from "../hooks/useToast";
 import { ChevronDown, ChevronUp, Archive } from "lucide-react";
@@ -273,6 +274,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
               )}
             </>
           )}
+          <PluginSlot slotId="board-column-footer" projectId={projectId} />
         </div>
       )}
     </div>

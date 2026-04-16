@@ -106,6 +106,18 @@ vi.mock("../PluginManager", () => ({
   )),
 }));
 
+// Mock usePluginUiSlots hook
+const mockUsePluginUiSlots = vi.fn(() => ({
+  slots: [],
+  getSlotsForId: vi.fn(() => []),
+  loading: false,
+  error: null,
+}));
+
+vi.mock("../../hooks/usePluginUiSlots", () => ({
+  usePluginUiSlots: (...args: unknown[]) => mockUsePluginUiSlots(...args),
+}));
+
 import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchGlobalConcurrency, updateGlobalConcurrency } from "../../api";
 
 const onClose = vi.fn();
@@ -3153,6 +3165,45 @@ describe("SettingsModal", () => {
     const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(payload.runStepsInNewSessions).toBe(true);
     expect(payload.maxParallelSteps).toBe(3);
+  });
+
+  describe("PluginSlot integration", () => {
+    it("renders PluginSlot for settings-section in plugins section", async () => {
+      mockUsePluginUiSlots.mockReturnValue({
+        slots: [{ pluginId: "test-plugin", slot: { slotId: "settings-section", label: "Test Settings", componentPath: "./test.js" } }],
+        getSlotsForId: (id: string) => id === "settings-section" ? [{ pluginId: "test-plugin", slot: { slotId: "settings-section", label: "Test Settings", componentPath: "./test.js" } }] : [],
+        loading: false,
+        error: null,
+      });
+      const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      // Navigate to Plugins section
+      await userEvent.click(screen.getByText("Plugins"));
+      await waitFor(() => expect(screen.getByTestId("plugin-manager")).toBeDefined());
+
+      // Verify slot renders
+      const slot = container.querySelector('[data-slot-id="settings-section"]');
+      expect(slot).not.toBeNull();
+      expect(slot).toHaveAttribute("data-plugin-id", "test-plugin");
+    });
+
+    it("renders nothing when no plugins register for settings-section slot", async () => {
+      mockUsePluginUiSlots.mockReturnValue({
+        slots: [],
+        getSlotsForId: vi.fn(() => []),
+        loading: false,
+        error: null,
+      });
+      const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      await userEvent.click(screen.getByText("Plugins"));
+      await waitFor(() => expect(screen.getByTestId("plugin-manager")).toBeDefined());
+
+      const slot = container.querySelector('[data-slot-id="settings-section"]');
+      expect(slot).toBeNull();
+    });
   });
 });
 

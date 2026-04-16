@@ -5,6 +5,7 @@ import type { NodeConfig, ProjectStatus } from "@fusion/core";
 import { fetchScripts } from "../api";
 import { QuickScriptsDropdown } from "./QuickScriptsDropdown";
 import { NodeStatusIndicator } from "./NodeStatusIndicator";
+import { PluginSlot } from "./PluginSlot";
 import { useViewportMode, type ViewportMode } from "../hooks/useViewportMode";
 
 export { useViewportMode };
@@ -929,6 +930,9 @@ export function Header({
             <Settings size={16} />
           </button>
         )}
+
+        {/* Plugin UI slot for header actions */}
+        <PluginSlot slotId="header-action" projectId={projectId} />
 
         {/* Compact overflow menu trigger (mobile + tablet) */}
         {isCompact && !hideFullNav && (

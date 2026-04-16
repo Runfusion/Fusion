@@ -5,6 +5,7 @@ import { COLUMN_LABELS, VALID_TRANSITIONS } from "@fusion/core";
 import { fetchTaskDetail, uploadAttachment, fetchMission, fetchAgent } from "../api";
 import { GitHubBadge } from "./GitHubBadge";
 import { pickPreferredBadge } from "./TaskCardBadge";
+import { PluginSlot } from "./PluginSlot";
 import { useBadgeWebSocket } from "../hooks/useBadgeWebSocket";
 import { getFreshBatchData } from "../hooks/useBatchBadgeFetch";
 import { useTaskDiffStats } from "../hooks/useTaskDiffStats";
@@ -1056,6 +1057,7 @@ function TaskCardComponent({
           {(queued || task.status === "queued") && <span className="queued-badge"><Clock size={12} style={{ verticalAlign: "middle" }} /> Queued</span>}
         </div>
       )}
+      <PluginSlot slotId="task-card-badge" projectId={projectId} />
     </div>
   );
 }

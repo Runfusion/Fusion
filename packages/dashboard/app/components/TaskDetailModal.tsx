@@ -17,6 +17,8 @@ import { TaskChangesTab } from "./TaskChangesTab";
 import { TaskForm, type PendingImage } from "./TaskForm";
 import { WorkflowResultsTab } from "./WorkflowResultsTab";
 import { TaskDocumentsTab } from "./TaskDocumentsTab";
+import { PluginSlot } from "./PluginSlot";
+import { usePluginUiSlots } from "../hooks/usePluginUiSlots";
 
 interface ModelSelection {
   provider?: string;
@@ -167,7 +169,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-type TabId = "definition" | "logs" | "changes" | "comments" | "model" | "workflow" | "documents";
+type TabId = "definition" | "logs" | "changes" | "comments" | "model" | "workflow" | "documents" | `plugin-${string}`;
 
 interface TaskDetailModalProps {
   task: Task | TaskDetail;
@@ -315,6 +317,10 @@ export function TaskDetailModal({
   const [showActionsMenu, setShowActionsMenu] = useState(false);
   const moveMenuRef = useRef<HTMLDivElement>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
+
+  // Plugin UI slots for task-detail-tab
+  const { getSlotsForId: getPluginSlots } = usePluginUiSlots(projectId);
+  const pluginTabSlots = getPluginSlots("task-detail-tab");
 
   // Track mount state to avoid setting state on unmounted component
   useEffect(() => {
@@ -1188,6 +1194,19 @@ export function TaskDetailModal({
             >
               Workflow
             </button>
+            {/* Plugin tabs */}
+            {pluginTabSlots.map((entry, index) => {
+              const pluginTabId = `plugin-${index}` as TabId;
+              return (
+                <button
+                  key={`plugin-tab-${entry.pluginId}`}
+                  className={`detail-tab${activeTab === pluginTabId ? " detail-tab-active" : ""}`}
+                  onClick={() => setActiveTab(pluginTabId)}
+                >
+                  {entry.slot.label}
+                </button>
+              );
+            })}
           </div>
           {activeTab === "workflow" ? (
             <div className="detail-section">
@@ -1271,6 +1290,10 @@ export function TaskDetailModal({
               onTaskUpdated={onTaskUpdated}
               canEdit={canEdit}
             />
+          ) : typeof activeTab === "string" && activeTab.startsWith("plugin-") ? (
+            <div className="detail-section">
+              <PluginSlot slotId="task-detail-tab" projectId={projectId} />
+            </div>
           ) : (
           <>
           {/* Summary section - only for done tasks with summary */}
