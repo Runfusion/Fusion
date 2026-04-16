@@ -1545,7 +1545,7 @@ export function SettingsModal({
                 id="globalMaxConcurrent"
                 type="number"
                 min={1}
-                max={50}
+                max={10000}
                 value={globalMaxConcurrent ?? ""}
                 onChange={(e) => {
                   const val = e.target.value;

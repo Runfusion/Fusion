@@ -669,6 +669,22 @@ describe("PUT /api/global-concurrency route handler", () => {
     expect(mockUpdateGlobalConcurrency).toHaveBeenCalledWith({ globalMaxConcurrent: 10 });
     expect((res.body as any).globalMaxConcurrent).toBe(10);
   });
+
+  it("rejects globalMaxConcurrent above 10000", async () => {
+    const store = new MockStoreForRoutes();
+    const app = createServer(store as any);
+
+    const res = await request(
+      app,
+      "PUT",
+      "/api/global-concurrency",
+      JSON.stringify({ globalMaxConcurrent: 10001 }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(mockUpdateGlobalConcurrency).not.toHaveBeenCalled();
+  });
 });
 
 // ── GET /api/projects/:id/health Route Tests ─────────────────────────────────

@@ -14199,8 +14199,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.put("/global-concurrency", async (req, res) => {
     const { globalMaxConcurrent } = req.body ?? {};
-    if (!Number.isInteger(globalMaxConcurrent) || globalMaxConcurrent < 1) {
-      throw badRequest("globalMaxConcurrent must be an integer >= 1");
+    if (!Number.isInteger(globalMaxConcurrent) || globalMaxConcurrent < 1 || globalMaxConcurrent > 10000) {
+      throw badRequest("globalMaxConcurrent must be an integer between 1 and 10000");
     }
 
     try {

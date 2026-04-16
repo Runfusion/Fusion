@@ -1748,6 +1748,13 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   ): Promise<GlobalConcurrencyState> {
     this.ensureInitialized();
 
+    if (
+      updates.globalMaxConcurrent !== undefined &&
+      (!Number.isFinite(updates.globalMaxConcurrent) || updates.globalMaxConcurrent < 1 || updates.globalMaxConcurrent > 10000)
+    ) {
+      throw new Error("globalMaxConcurrent must be between 1 and 10000");
+    }
+
     const current = await this.getGlobalConcurrencyState();
     const updated = {
       ...current,
