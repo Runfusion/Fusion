@@ -94,6 +94,9 @@ export interface ModelOnboardingModalProps {
 /** Outcome states for OAuth login attempts */
 export type LoginOutcome = "pending" | "success" | "timeout" | "failed" | "cancelled";
 
+/** Provider connection status for UI display */
+export type ProviderConnectionStatus = "connected" | "not-connected" | "skipped" | "retry";
+
 /** Maximum number of poll cycles before timing out (150 × 2s = 5 minutes) */
 const MAX_POLL_CYCLES = 150;
 
@@ -134,6 +137,15 @@ export function ModelOnboardingModal({
   const [loginOutcomes, setLoginOutcomes] = useState<Record<string, LoginOutcome>>({});
   const pollCountRef = useRef<number>(0);
 
+  // Initialize skippedProviders from persisted state
+  const [skippedProviders, setSkippedProviders] = useState<Record<string, boolean>>(
+    () => {
+      const state = getOnboardingState();
+      const data = state?.stepData?.["ai-setup"];
+      return (data?.skippedProviders as Record<string, boolean>) ?? {};
+    }
+  );
+
   // Step definitions for progress indicator
   const steps = [
     { key: "ai-setup" as const, label: "AI Setup" },
@@ -151,15 +163,99 @@ export function ModelOnboardingModal({
     }
   }, [step, completedSteps]);
 
+  // Auto-mark unconnected providers as skipped when leaving ai-setup step
+  // Only skip if NO providers are connected (if at least one is connected, others remain "Not connected")
+  const prevStepRef = useRef<OnboardingStep>(initialStep);
+  useEffect(() => {
+    if (prevStepRef.current === "ai-setup" && step !== "ai-setup") {
+      // Check if any AI provider is connected
+      const hasConnectedProvider = authProviders.some(
+        (p) => p.id !== "github" && p.authenticated
+      );
+      // Only mark as skipped if no providers are connected
+      if (!hasConnectedProvider) {
+        const newlySkipped: Record<string, boolean> = {};
+        for (const p of authProviders) {
+          if (p.id !== "github" && !p.authenticated && !skippedProviders[p.id]) {
+            newlySkipped[p.id] = true;
+          }
+        }
+        if (Object.keys(newlySkipped).length > 0) {
+          const updated = { ...skippedProviders, ...newlySkipped };
+          setSkippedProviders(updated);
+          saveOnboardingState(step, {
+            stepData: { "ai-setup": { skippedProviders: updated } },
+          });
+        }
+      }
+    }
+    prevStepRef.current = step;
+  }, [step, authProviders, skippedProviders]);
+
   // Load auth providers
   const loadAuthStatus = useCallback(async () => {
     try {
       const { providers } = await fetchAuthStatus();
       setAuthProviders(providers);
+      // Remove from skippedProviders when a provider becomes authenticated
+      setSkippedProviders((prev) => {
+        const updated = { ...prev };
+        for (const p of providers) {
+          if (p.authenticated && updated[p.id]) {
+            delete updated[p.id];
+          }
+        }
+        return Object.keys(updated).length === Object.keys(prev).length ? prev : updated;
+      });
     } catch {
       // Silently fail
     }
   }, []);
+
+  // Reload auth status when returning to AI Setup step from another step (not on initial mount)
+  const aiSetupReturnRef = useRef(false);
+  useEffect(() => {
+    if (aiSetupReturnRef.current) {
+      loadAuthStatus();
+    }
+    aiSetupReturnRef.current = step !== "ai-setup";
+  }, [step, loadAuthStatus]);
+
+  // Get provider connection status for UI display
+  const getProviderStatus = useCallback((provider: AuthProvider): ProviderConnectionStatus => {
+    if (provider.authenticated) {
+      return "connected";
+    }
+    // Check for retry-able failure states (from login outcomes)
+    const loginOutcome = (loginOutcomes as Record<string, string> | undefined)?.[provider.id];
+    if (loginOutcome === "timeout" || loginOutcome === "failed") {
+      return "retry";
+    }
+    if (skippedProviders[provider.id]) {
+      return "skipped";
+    }
+    return "not-connected";
+  }, [loginOutcomes, skippedProviders]);
+
+  // Status badge component for provider connection status
+  function ProviderStatusBadge({ status }: { status: ProviderConnectionStatus }) {
+    const config: Record<ProviderConnectionStatus, { text: string; className: string }> = {
+      connected: { text: "✓ Connected", className: "auth-status-badge connected" },
+      "not-connected": { text: "Not connected", className: "auth-status-badge not-connected" },
+      skipped: { text: "Skipped", className: "auth-status-badge skipped" },
+      retry: { text: "Retry", className: "auth-status-badge retry" },
+    };
+    const { text, className: badgeClassName } = config[status];
+    return (
+      <span
+        data-testid="provider-status-badge"
+        className={badgeClassName}
+        data-status={status}
+      >
+        {text}
+      </span>
+    );
+  }
 
   // Load models
   const loadModels = useCallback(async () => {
@@ -703,6 +799,38 @@ export function ModelOnboardingModal({
                 service or enter an API key.
               </p>
 
+              {/* Provider connection status summary */}
+              {!authLoading && authProviders.length > 0 && (
+                (() => {
+                  const connectedCount = authProviders.filter(p => p.id !== "github" && p.authenticated).length;
+                  const totalAiProviders = authProviders.filter(p => p.id !== "github").length;
+                  const skippedCount = Object.keys(skippedProviders).filter(id => !authProviders.find(p => p.id === id)?.authenticated).length;
+                  const connectedProviders = authProviders.filter(p => p.id !== "github" && p.authenticated);
+
+                  if (totalAiProviders === 0) return null;
+
+                  let summaryClass = "onboarding-provider-summary";
+                  let summaryText = "";
+
+                  if (connectedCount > 0) {
+                    summaryClass += " onboarding-provider-summary--connected";
+                    summaryText = `✓ ${connectedCount} of ${totalAiProviders} provider${totalAiProviders !== 1 ? "s" : ""} connected`;
+                  } else if (skippedCount > 0) {
+                    summaryClass += " onboarding-provider-summary--skipped";
+                    summaryText = `${skippedCount} provider${skippedCount !== 1 ? "s" : ""} skipped`;
+                  } else {
+                    summaryClass += " onboarding-provider-summary--none";
+                    summaryText = "No providers connected yet";
+                  }
+
+                  return (
+                    <div className={summaryClass} data-testid="provider-summary">
+                      {summaryText}
+                    </div>
+                  );
+                })()
+              )}
+
               {/* Provider explanation disclosure */}
               <OnboardingDisclosure summary="What are AI providers?">
                 <p className="onboarding-helper-text">
@@ -747,14 +875,7 @@ export function ModelOnboardingModal({
                         <span className="onboarding-provider-card__description">
                           {PROVIDER_INFO[provider.id]?.description ?? PROVIDER_INFO_FALLBACK.description}
                         </span>
-                        <span
-                          data-testid={`onboarding-auth-status-${provider.id}`}
-                          className={`auth-status-badge ${provider.authenticated ? "authenticated" : "not-authenticated"}`}
-                        >
-                          {provider.authenticated
-                            ? "✓ Authenticated"
-                            : "✗ Not authenticated"}
-                        </span>
+                        <ProviderStatusBadge status={getProviderStatus(provider)} />
                       </div>
                       <div className="onboarding-provider-card__actions">
                         {authActionInProgress === provider.id ? (
@@ -832,14 +953,7 @@ export function ModelOnboardingModal({
                         <span className="onboarding-provider-card__description">
                           {PROVIDER_INFO[provider.id]?.description ?? PROVIDER_INFO_FALLBACK.description}
                         </span>
-                        <span
-                          data-testid={`onboarding-auth-status-${provider.id}`}
-                          className={`auth-status-badge ${provider.authenticated ? "authenticated" : "not-authenticated"}`}
-                        >
-                          {provider.authenticated
-                            ? "✓ Key saved"
-                            : "✗ No API key"}
-                        </span>
+                        <ProviderStatusBadge status={getProviderStatus(provider)} />
                       </div>
                       <div className="onboarding-provider-card__actions">
                         {provider.authenticated ? (
@@ -996,11 +1110,11 @@ export function ModelOnboardingModal({
                       </strong>
                       <span
                         data-testid="onboarding-auth-status-github"
-                        className={`auth-status-badge ${isGithubAuthenticated ? "authenticated" : "not-authenticated"}`}
+                        className={`auth-status-badge ${isGithubAuthenticated ? "connected" : "not-connected"}`}
                       >
                         {isGithubAuthenticated
                           ? "✓ Connected"
-                          : "✗ Not connected"}
+                          : "Not connected"}
                       </span>
                     </div>
                     <div>

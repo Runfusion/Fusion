@@ -3496,6 +3496,23 @@ body {
   background: color-mix(in srgb, var(--color-error) 15%, transparent);
   color: var(--color-error);
 }
+
+/* === Provider Connection Status Badges (FN-1901) === */
+.auth-status-badge.connected {
+  background: color-mix(in srgb, var(--color-success) 20%, transparent);
+  color: var(--color-success);
+}
+
+.auth-status-badge.skipped {
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  color: var(--color-warning);
+}
+
+.auth-status-badge.retry {
+  background: color-mix(in srgb, var(--color-warning) 20%, transparent);
+  color: var(--color-warning);
+  cursor: pointer;
+}
 .auth-hint {
   display: block;
   padding: 12px 4px 0;
@@ -23612,6 +23629,32 @@ html .column.drag-over * {
   border-radius: 8px;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+/* === Provider Summary (FN-1901) === */
+.onboarding-provider-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-pill);
+  margin-bottom: var(--space-sm);
+}
+
+.onboarding-provider-summary--connected {
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
+  color: var(--color-success);
+}
+
+.onboarding-provider-summary--skipped {
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  color: var(--color-warning);
+}
+
+.onboarding-provider-summary--none {
+  background: color-mix(in srgb, var(--text-muted) 8%, transparent);
 }
 
 /* Provider cards in onboarding - enhanced card layout for AI setup step */

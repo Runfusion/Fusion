@@ -196,7 +196,11 @@ describe("ModelOnboardingModal", () => {
         expect(screen.getByText("Anthropic")).toBeTruthy();
       });
 
-      expect(screen.getByText("✗ Not authenticated")).toBeTruthy();
+      // Check status badges - first badge should be for Anthropic
+      const badges = screen.getAllByTestId("provider-status-badge");
+      expect(badges.length).toBeGreaterThanOrEqual(1);
+      expect(badges[0]).toHaveAttribute("data-status", "not-connected");
+      expect(badges[0]).toHaveTextContent("Not connected");
       expect(screen.getByText("Login")).toBeTruthy();
     });
 
@@ -304,7 +308,7 @@ describe("ModelOnboardingModal", () => {
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
 
       await waitFor(() => {
-        expect(screen.getByText("✓ Key saved")).toBeTruthy();
+        expect(screen.getByText("✓ Connected")).toBeTruthy();
       });
 
       fireEvent.click(screen.getByText("Remove Key"));
@@ -450,7 +454,7 @@ describe("ModelOnboardingModal", () => {
 
       // Use more specific selector to avoid matching the header title
       expect(screen.getByTestId("onboarding-auth-status-github")).toBeTruthy();
-      expect(screen.getByText("✗ Not connected")).toBeTruthy();
+      expect(screen.getByText("Not connected")).toBeTruthy();
       expect(screen.getByText("Connect")).toBeTruthy();
     });
 
@@ -1778,6 +1782,326 @@ describe("ModelOnboardingModal progressive disclosure", () => {
       expect(screen.queryByText("How do I choose a model?")).toBeNull();
       expect(screen.queryByText("What does GitHub integration do?")).toBeNull();
       expect(screen.queryByText("What happens when I create a task?")).toBeNull();
+    });
+  });
+
+  // FN-1901: Provider Connection Status Display Tests
+  describe("Provider connection status display (FN-1901)", () => {
+    it("shows Connected badge for authenticated provider", async () => {
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Anthropic")).toBeTruthy();
+      });
+
+      const badge = screen.getByTestId("provider-status-badge");
+      expect(badge).toHaveAttribute("data-status", "connected");
+      expect(badge).toHaveTextContent("✓ Connected");
+    });
+
+    it("shows Not connected badge for unauthenticated provider", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Anthropic")).toBeTruthy();
+      });
+
+      const badges = screen.getAllByTestId("provider-status-badge");
+      const anthropicBadge = badges.find(b =>
+        b.closest(".onboarding-provider-card")?.textContent?.includes("Anthropic")
+      );
+      expect(anthropicBadge).toHaveAttribute("data-status", "not-connected");
+      expect(anthropicBadge).toHaveTextContent("Not connected");
+    });
+
+    it("shows Skipped badge for providers when user moves past ai-setup without connecting", async () => {
+      // Start at ai-setup with unconnected providers
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Anthropic")).toBeTruthy();
+      });
+
+      // Navigate to GitHub step (triggers skip-tracking effect)
+      fireEvent.click(screen.getByText("Next →"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Connect GitHub")).toBeTruthy();
+      });
+
+      // Navigate back to AI Setup
+      fireEvent.click(screen.getByText("← Back"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Set Up AI")).toBeTruthy();
+      });
+
+      // Verify the provider now shows Skipped badge
+      const badges = screen.getAllByTestId("provider-status-badge");
+      const anthropicBadge = badges.find(b =>
+        b.closest(".onboarding-provider-card")?.textContent?.includes("Anthropic")
+      );
+      expect(anthropicBadge).toHaveAttribute("data-status", "skipped");
+      expect(anthropicBadge).toHaveTextContent("Skipped");
+    });
+
+    it("does not mark providers as skipped when at least one is authenticated", async () => {
+      // Set up: anthropic is authenticated, openai is not
+      // Use mockImplementation so subsequent calls also return the correct providers
+      mockFetchAuthStatus.mockImplementation(() =>
+        Promise.resolve({
+          providers: [
+            { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+            { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
+          ],
+        })
+      );
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Anthropic")).toBeTruthy();
+      });
+
+      // Navigate away and back
+      fireEvent.click(screen.getByText("Next →"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Connect GitHub")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByText("← Back"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Set Up AI")).toBeTruthy();
+      });
+
+      // Verify anthropic shows Connected (not Skipped)
+      const badges = screen.getAllByTestId("provider-status-badge");
+      const anthropicBadge = badges.find(b =>
+        b.closest(".onboarding-provider-card")?.textContent?.includes("Anthropic")
+      );
+      expect(anthropicBadge).toHaveAttribute("data-status", "connected");
+
+      // Verify openai shows Not connected (not Skipped)
+      const openaiBadge = badges.find(b =>
+        b.closest(".onboarding-provider-card")?.textContent?.includes("OpenAI")
+      );
+      expect(openaiBadge).toHaveAttribute("data-status", "not-connected");
+    });
+
+    it("removes skipped status when provider becomes authenticated", async () => {
+      // Start with unconnected provider
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Anthropic")).toBeTruthy();
+      });
+
+      // Navigate away to trigger skip-tracking
+      fireEvent.click(screen.getByText("Next →"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Connect GitHub")).toBeTruthy();
+      });
+
+      // Now mock returns authenticated provider
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+        ],
+      });
+
+      // Navigate back to AI Setup (loads fresh auth status)
+      fireEvent.click(screen.getByText("← Back"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Set Up AI")).toBeTruthy();
+      });
+
+      // Verify the provider now shows Connected (skipped status removed)
+      const badge = screen.getByTestId("provider-status-badge");
+      expect(badge).toHaveAttribute("data-status", "connected");
+    });
+
+    it("persists skipped providers to onboarding stepData", async () => {
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Anthropic")).toBeTruthy();
+      });
+
+      // Navigate away
+      fireEvent.click(screen.getByText("Next →"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Connect GitHub")).toBeTruthy();
+      });
+
+      // Verify saveOnboardingState was called with skippedProviders
+      const saveCall = mockSaveOnboardingState.mock.calls.find(
+        (call) => call[1]?.stepData?.["ai-setup"]?.skippedProviders?.anthropic === true
+      );
+      expect(saveCall).toBeDefined();
+    });
+
+    it("restores skipped providers from persisted state on mount", async () => {
+      // Set up persisted state with anthropic as skipped
+      // Use mockReturnValue (not mockReturnValueOnce) since getOnboardingState is called multiple times
+      mockGetOnboardingState.mockReturnValue({
+        currentStep: "ai-setup",
+        updatedAt: new Date().toISOString(),
+        completedSteps: [],
+        dismissed: false,
+        completed: false,
+        completedAt: undefined,
+        stepData: {
+          "ai-setup": {
+            skippedProviders: { anthropic: true },
+          },
+        },
+      });
+
+      // Provider is not authenticated
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Anthropic")).toBeTruthy();
+      });
+
+      // Verify the provider shows Skipped immediately
+      const badge = screen.getByTestId("provider-status-badge");
+      expect(badge).toHaveAttribute("data-status", "skipped");
+      expect(badge).toHaveTextContent("Skipped");
+    });
+
+    it("shows provider summary with connected count", async () => {
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+          { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Anthropic")).toBeTruthy();
+      });
+
+      const summary = screen.getByTestId("provider-summary");
+      expect(summary).toHaveTextContent("1 of 2 providers connected");
+      expect(summary).toHaveClass("onboarding-provider-summary--connected");
+    });
+
+    it("shows provider summary with skipped count", async () => {
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Anthropic")).toBeTruthy();
+      });
+
+      // Navigate away to trigger skip-tracking
+      fireEvent.click(screen.getByText("Next →"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Connect GitHub")).toBeTruthy();
+      });
+
+      // Navigate back
+      fireEvent.click(screen.getByText("← Back"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Set Up AI")).toBeTruthy();
+      });
+
+      const summary = screen.getByTestId("provider-summary");
+      expect(summary).toHaveTextContent("1 provider skipped");
+      expect(summary).toHaveClass("onboarding-provider-summary--skipped");
+    });
+
+    it("shows provider summary with none connected", async () => {
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Anthropic")).toBeTruthy();
+      });
+
+      const summary = screen.getByTestId("provider-summary");
+      expect(summary).toHaveTextContent("No providers connected yet");
+      expect(summary).toHaveClass("onboarding-provider-summary--none");
+    });
+
+    it("does not show provider summary during loading", async () => {
+      // Don't resolve the mock immediately
+      mockFetchAuthStatus.mockImplementation(() => new Promise(() => {}));
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      // Summary should not exist while loading
+      expect(screen.queryByTestId("provider-summary")).toBeNull();
+
+      // Should show loading state
+      expect(screen.getByText("Loading providers…")).toBeTruthy();
+    });
+
+    it("GitHub step shows Connected/Not connected badge", async () => {
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+          { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToGitHubStep();
+
+      // GitHub should show Not connected
+      expect(screen.getByTestId("onboarding-auth-status-github")).toHaveTextContent("Not connected");
+      expect(screen.getByTestId("onboarding-auth-status-github")).toHaveClass("auth-status-badge");
     });
   });
 });
