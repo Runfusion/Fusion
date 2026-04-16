@@ -46,6 +46,7 @@ vi.mock("lucide-react", () => ({
   Loader: (props: unknown) => <span data-testid="loader-icon" {...props}>Loader</span>,
   ArrowLeft: (props: unknown) => <span data-testid="arrow-left-icon" {...props}>ArrowLeft</span>,
   ChevronLeft: (props: unknown) => <span data-testid="chevron-left-icon" {...props}>ChevronLeft</span>,
+  ChevronUp: (props: unknown) => <span data-testid="chevron-up-icon" {...props}>ChevronUp</span>,
 }));
 
 // Viewport mode mock helper
@@ -917,6 +918,182 @@ describe("RoadmapsView", () => {
       // Should show milestone content
       expect(screen.getByText("Milestone 1")).toBeInTheDocument();
       expect(screen.getByText("Milestone 2")).toBeInTheDocument();
+    });
+  });
+
+  describe("Mobile suggestion panel collapse", () => {
+    beforeEach(() => {
+      mockViewport("mobile");
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("shows expand button instead of suggestion section on mobile", async () => {
+      render(<RoadmapsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-roadmap-item-RM-001")).toBeInTheDocument();
+      });
+
+      // Select roadmap
+      fireEvent.click(screen.getByTestId("mobile-roadmap-item-RM-001"));
+
+      // On mobile, should show the expand button instead of the goal prompt input
+      await waitFor(() => {
+        expect(screen.getByTestId("expand-suggestion-panel-btn")).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId("goal-prompt-input")).not.toBeInTheDocument();
+    });
+
+    it("expands suggestion panel on mobile when button is clicked", async () => {
+      render(<RoadmapsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-roadmap-item-RM-001")).toBeInTheDocument();
+      });
+
+      // Select roadmap
+      fireEvent.click(screen.getByTestId("mobile-roadmap-item-RM-001"));
+
+      // Expand the panel
+      await waitFor(() => {
+        expect(screen.getByTestId("expand-suggestion-panel-btn")).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByTestId("expand-suggestion-panel-btn"));
+
+      // Panel should now be visible
+      await waitFor(() => {
+        expect(screen.getByTestId("goal-prompt-input")).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId("expand-suggestion-panel-btn")).not.toBeInTheDocument();
+    });
+
+    it("can collapse suggestion panel on mobile", async () => {
+      render(<RoadmapsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-roadmap-item-RM-001")).toBeInTheDocument();
+      });
+
+      // Select roadmap
+      fireEvent.click(screen.getByTestId("mobile-roadmap-item-RM-001"));
+
+      // Expand the panel
+      await waitFor(() => {
+        expect(screen.getByTestId("expand-suggestion-panel-btn")).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByTestId("expand-suggestion-panel-btn"));
+
+      // Wait for panel to expand
+      await waitFor(() => {
+        expect(screen.getByTestId("goal-prompt-input")).toBeInTheDocument();
+      });
+
+      // Collapse the panel
+      fireEvent.click(screen.getByTestId("collapse-suggestion-panel-btn"));
+
+      // Panel should be hidden, expand button should be back
+      await waitFor(() => {
+        expect(screen.getByTestId("expand-suggestion-panel-btn")).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId("goal-prompt-input")).not.toBeInTheDocument();
+    });
+
+    it("persists goal prompt and suggestions across collapse/expand on mobile", async () => {
+      // Mock milestone suggestion generation
+      (api.generateMilestoneSuggestions as ReturnType<typeof vi.fn>).mockResolvedValue({
+        suggestions: [
+          { title: "Persisted Milestone", description: "Persisted description" },
+        ],
+      });
+
+      render(<RoadmapsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-roadmap-item-RM-001")).toBeInTheDocument();
+      });
+
+      // Select roadmap
+      fireEvent.click(screen.getByTestId("mobile-roadmap-item-RM-001"));
+
+      // Expand the panel
+      await waitFor(() => {
+        expect(screen.getByTestId("expand-suggestion-panel-btn")).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByTestId("expand-suggestion-panel-btn"));
+
+      // Type into goal prompt
+      await waitFor(() => {
+        expect(screen.getByTestId("goal-prompt-input")).toBeInTheDocument();
+      });
+      const goalInput = screen.getByTestId("goal-prompt-input");
+      await userEvent.type(goalInput, "Build an app");
+
+      // Generate suggestions
+      fireEvent.click(screen.getByTestId("generate-suggestions-btn"));
+
+      // Wait for suggestions to appear
+      await waitFor(() => {
+        expect(screen.getByText("Persisted Milestone")).toBeInTheDocument();
+      });
+
+      // Collapse the panel
+      fireEvent.click(screen.getByTestId("collapse-suggestion-panel-btn"));
+
+      // Wait for expand button to appear
+      await waitFor(() => {
+        expect(screen.getByTestId("expand-suggestion-panel-btn")).toBeInTheDocument();
+      });
+
+      // Re-expand the panel
+      fireEvent.click(screen.getByTestId("expand-suggestion-panel-btn"));
+
+      // Goal prompt and suggestions should persist
+      await waitFor(() => {
+        expect(screen.getByTestId("goal-prompt-input")).toBeInTheDocument();
+      });
+      expect(screen.getByTestId("goal-prompt-input")).toHaveValue("Build an app");
+      expect(screen.getByText("Persisted Milestone")).toBeInTheDocument();
+    });
+
+    it("resets suggestion panel when switching roadmaps on mobile", async () => {
+      render(<RoadmapsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-roadmap-item-RM-001")).toBeInTheDocument();
+      });
+
+      // Select RM-001
+      fireEvent.click(screen.getByTestId("mobile-roadmap-item-RM-001"));
+
+      // Expand the panel
+      await waitFor(() => {
+        expect(screen.getByTestId("expand-suggestion-panel-btn")).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByTestId("expand-suggestion-panel-btn"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("goal-prompt-input")).toBeInTheDocument();
+      });
+
+      // Go back to roadmap list
+      fireEvent.click(screen.getByTestId("mobile-back-btn"));
+
+      // Wait for list to appear
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-roadmap-item-RM-002")).toBeInTheDocument();
+      });
+
+      // Switch to RM-002
+      fireEvent.click(screen.getByTestId("mobile-roadmap-item-RM-002"));
+
+      // Panel should be collapsed (expand button visible)
+      await waitFor(() => {
+        expect(screen.getByTestId("expand-suggestion-panel-btn")).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId("goal-prompt-input")).not.toBeInTheDocument();
     });
   });
 });

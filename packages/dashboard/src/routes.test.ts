@@ -9450,20 +9450,32 @@ describe("POST /api/ai/summarize-title", () => {
   });
 
   it("accepts optional provider and modelId parameters", async () => {
+    const fusionCore = await import("@fusion/core");
+    const summarizeTitleSpy = vi
+      .spyOn(fusionCore, "summarizeTitle")
+      .mockResolvedValueOnce("Generated title");
+
+    const description = "x".repeat(300);
     const res = await REQUEST(
       buildApp(),
       "POST",
       "/api/ai/summarize-title",
       JSON.stringify({
-        description: "x".repeat(300),
+        description,
         provider: "google",
         modelId: "gemini-2.5-pro",
       }),
       { "Content-Type": "application/json" },
     );
 
-    // Either 200 (success) or 503 (AI service unavailable) is acceptable
-    expect([200, 503]).toContain(res.status);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ title: "Generated title" });
+    expect(summarizeTitleSpy).toHaveBeenCalledWith(
+      description,
+      "/test/project",
+      "google",
+      "gemini-2.5-pro",
+    );
   });
 });
 

@@ -33327,6 +33327,55 @@ html .column.drag-over * {
   color: var(--text-primary);
 }
 
+/* === Mobile Suggestion Panel Expand/Collapse === */
+
+.roadmap-suggestion-expand-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-md) var(--space-lg);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.roadmap-suggestion-expand-btn:hover:not(:disabled) {
+  background: var(--card-hover);
+}
+
+.roadmap-suggestion-expand-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.roadmap-suggestion-expand-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.roadmap-suggestion-collapse-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: var(--space-xs);
+  border-radius: var(--radius-sm);
+  transition: color var(--transition-fast);
+}
+
+.roadmap-suggestion-collapse-btn:hover {
+  color: var(--text-primary);
+}
+
 /* Mobile responsive */
 @media (max-width: 768px) {
   /* Allow vertical scrolling on mobile for roadmap list and detail views */
@@ -33568,6 +33617,10 @@ html .column.drag-over * {
   /* Roadmap suggestion mobile styles */
   .roadmap-suggestion-section {
     padding: var(--space-md);
+    margin: var(--space-md);
+  }
+
+  .roadmap-suggestion-expand-btn {
     margin: var(--space-md);
   }
 

@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { Plus, Pencil, Trash2, Check, X, GripVertical, Sparkles, Download, Copy, Loader, ChevronLeft, ArrowLeft } from "lucide-react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { Plus, Pencil, Trash2, Check, X, GripVertical, Sparkles, Download, Copy, Loader, ChevronLeft, ArrowLeft, ChevronUp } from "lucide-react";
 import type { ToastType } from "../hooks/useToast";
 import { useRoadmaps, type FeatureSuggestion, type MilestoneSuggestion, type SuggestionDraftPatch } from "../hooks/useRoadmaps";
 import { useViewportMode } from "../hooks/useViewportMode";
@@ -1456,6 +1456,18 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
   // Goal prompt state for milestone suggestion generation
   const [goalPrompt, setGoalPrompt] = useState("");
 
+  // Mobile suggestion panel collapse state
+  const [showSuggestionPanel, setShowSuggestionPanel] = useState(false);
+
+  // Reset suggestion panel when roadmap changes on mobile
+  const prevRoadmapIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevRoadmapIdRef.current !== null && prevRoadmapIdRef.current !== selectedRoadmapId) {
+      setShowSuggestionPanel(false);
+    }
+    prevRoadmapIdRef.current = selectedRoadmapId;
+  }, [selectedRoadmapId]);
+
   // Inline edit states
   const [roadmapEdit, setRoadmapEdit] = useState<InlineEditState>({
     roadmapId: null,
@@ -2245,67 +2257,154 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
             </div>
 
             {/* Milestone Suggestions Section */}
-            <div className="roadmap-suggestion-section">
-              <div className="roadmap-suggestion-header">
-                <h3 className="roadmap-suggestion-title">Generate Milestone Ideas</h3>
-              </div>
-              <div className="roadmap-suggestion-form">
-                <textarea
-                  className="roadmap-suggestion-input"
-                  value={goalPrompt}
-                  onChange={(e) => setGoalPrompt(e.target.value)}
-                  placeholder="Describe your roadmap goal (e.g., 'Build a user authentication system with OAuth, profiles, and admin dashboard')"
-                  rows={2}
-                  disabled={isGeneratingSuggestions || !selectedRoadmapId}
-                  data-testid="goal-prompt-input"
-                />
-                <div className="roadmap-suggestion-actions">
-                  <button
-                    className="roadmap-suggestion-generate-btn"
-                    onClick={handleGenerateSuggestions}
-                    disabled={!goalPrompt.trim() || isGeneratingSuggestions || !selectedRoadmapId}
-                    data-testid="generate-suggestions-btn"
-                  >
-                    {isGeneratingSuggestions ? "Generating..." : "Generate Milestones"}
-                  </button>
+            {isMobile ? (
+              showSuggestionPanel ? (
+                <div className="roadmap-suggestion-section">
+                  <div className="roadmap-suggestion-header">
+                    <h3 className="roadmap-suggestion-title">Generate Milestone Ideas</h3>
+                    <button
+                      className="roadmap-suggestion-collapse-btn"
+                      onClick={() => setShowSuggestionPanel(false)}
+                      aria-label="Collapse suggestion panel"
+                      data-testid="collapse-suggestion-panel-btn"
+                    >
+                      <ChevronUp size={16} />
+                    </button>
+                  </div>
+                  <div className="roadmap-suggestion-form">
+                    <textarea
+                      className="roadmap-suggestion-input"
+                      value={goalPrompt}
+                      onChange={(e) => setGoalPrompt(e.target.value)}
+                      placeholder="Describe your roadmap goal (e.g., 'Build a user authentication system with OAuth, profiles, and admin dashboard')"
+                      rows={2}
+                      disabled={isGeneratingSuggestions || !selectedRoadmapId}
+                      data-testid="goal-prompt-input"
+                      autoFocus
+                    />
+                    <div className="roadmap-suggestion-actions">
+                      <button
+                        className="roadmap-suggestion-generate-btn"
+                        onClick={handleGenerateSuggestions}
+                        disabled={!goalPrompt.trim() || isGeneratingSuggestions || !selectedRoadmapId}
+                        data-testid="generate-suggestions-btn"
+                      >
+                        {isGeneratingSuggestions ? "Generating..." : "Generate Milestones"}
+                      </button>
+                      {milestoneSuggestions.length > 0 && (
+                        <>
+                          <button
+                            className="roadmap-suggestion-accept-all-btn"
+                            onClick={handleAcceptAllSuggestions}
+                            data-testid="accept-all-suggestions-btn"
+                          >
+                            Accept All ({milestoneSuggestions.length})
+                          </button>
+                          <button
+                            className="roadmap-suggestion-clear-btn"
+                            onClick={handleClearSuggestions}
+                            title="Clear suggestions"
+                            aria-label="Clear suggestions"
+                            data-testid="clear-suggestions-btn"
+                          >
+                            <X size={14} />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Suggestion Cards */}
                   {milestoneSuggestions.length > 0 && (
-                    <>
-                      <button
-                        className="roadmap-suggestion-accept-all-btn"
-                        onClick={handleAcceptAllSuggestions}
-                        data-testid="accept-all-suggestions-btn"
-                      >
-                        Accept All ({milestoneSuggestions.length})
-                      </button>
-                      <button
-                        className="roadmap-suggestion-clear-btn"
-                        onClick={handleClearSuggestions}
-                        title="Clear suggestions"
-                        aria-label="Clear suggestions"
-                        data-testid="clear-suggestions-btn"
-                      >
-                        <X size={14} />
-                      </button>
-                    </>
+                    <div className="roadmap-suggestion-list">
+                      {milestoneSuggestions.map((suggestion) => (
+                        <MilestoneSuggestionCard
+                          key={suggestion.id}
+                          suggestion={suggestion}
+                          onUpdateDraft={(patch) => updateMilestoneSuggestionDraft(suggestion.id, patch)}
+                          onAccept={() => handleAcceptSuggestion(suggestion.id)}
+                          testIdPrefix="suggestion"
+                        />
+                      ))}
+                    </div>
                   )}
                 </div>
-              </div>
-
-              {/* Suggestion Cards */}
-              {milestoneSuggestions.length > 0 && (
-                <div className="roadmap-suggestion-list">
-                  {milestoneSuggestions.map((suggestion) => (
-                    <MilestoneSuggestionCard
-                      key={suggestion.id}
-                      suggestion={suggestion}
-                      onUpdateDraft={(patch) => updateMilestoneSuggestionDraft(suggestion.id, patch)}
-                      onAccept={() => handleAcceptSuggestion(suggestion.id)}
-                      testIdPrefix="suggestion"
-                    />
-                  ))}
+              ) : (
+                <div className="roadmap-suggestion-section">
+                  <button
+                    className="roadmap-suggestion-expand-btn"
+                    onClick={() => setShowSuggestionPanel(true)}
+                    disabled={!selectedRoadmapId}
+                    data-testid="expand-suggestion-panel-btn"
+                  >
+                    <Sparkles size={16} />
+                    Generate Milestone Ideas
+                  </button>
                 </div>
-              )}
-            </div>
+              )
+            ) : (
+              <div className="roadmap-suggestion-section">
+                <div className="roadmap-suggestion-header">
+                  <h3 className="roadmap-suggestion-title">Generate Milestone Ideas</h3>
+                </div>
+                <div className="roadmap-suggestion-form">
+                  <textarea
+                    className="roadmap-suggestion-input"
+                    value={goalPrompt}
+                    onChange={(e) => setGoalPrompt(e.target.value)}
+                    placeholder="Describe your roadmap goal (e.g., 'Build a user authentication system with OAuth, profiles, and admin dashboard')"
+                    rows={2}
+                    disabled={isGeneratingSuggestions || !selectedRoadmapId}
+                    data-testid="goal-prompt-input"
+                  />
+                  <div className="roadmap-suggestion-actions">
+                    <button
+                      className="roadmap-suggestion-generate-btn"
+                      onClick={handleGenerateSuggestions}
+                      disabled={!goalPrompt.trim() || isGeneratingSuggestions || !selectedRoadmapId}
+                      data-testid="generate-suggestions-btn"
+                    >
+                      {isGeneratingSuggestions ? "Generating..." : "Generate Milestones"}
+                    </button>
+                    {milestoneSuggestions.length > 0 && (
+                      <>
+                        <button
+                          className="roadmap-suggestion-accept-all-btn"
+                          onClick={handleAcceptAllSuggestions}
+                          data-testid="accept-all-suggestions-btn"
+                        >
+                          Accept All ({milestoneSuggestions.length})
+                        </button>
+                        <button
+                          className="roadmap-suggestion-clear-btn"
+                          onClick={handleClearSuggestions}
+                          title="Clear suggestions"
+                          aria-label="Clear suggestions"
+                          data-testid="clear-suggestions-btn"
+                        >
+                          <X size={14} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Suggestion Cards */}
+                {milestoneSuggestions.length > 0 && (
+                  <div className="roadmap-suggestion-list">
+                    {milestoneSuggestions.map((suggestion) => (
+                      <MilestoneSuggestionCard
+                        key={suggestion.id}
+                        suggestion={suggestion}
+                        onUpdateDraft={(patch) => updateMilestoneSuggestionDraft(suggestion.id, patch)}
+                        onAccept={() => handleAcceptSuggestion(suggestion.id)}
+                        testIdPrefix="suggestion"
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Milestone lanes */}
             <div className="roadmaps-view__milestone-lanes">

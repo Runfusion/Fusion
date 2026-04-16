@@ -735,13 +735,23 @@ export function createMissionRouter(
         missionStore.updateMission(mission.id, { interviewState: "completed" as InterviewState });
 
         // Create milestones, slices, and features with verification in dedicated fields.
-        // For each feature, auto-generate a linked contract assertion.
+        // Auto-generate contract assertions for milestone, slice, and feature levels.
         for (const milestoneData of (summary.milestones ?? [])) {
           // Use dedicated verification field instead of concatenating into description
           const milestone = missionStore.addMilestone(mission.id, {
             title: milestoneData.title,
             description: milestoneData.description || undefined,
             verification: milestoneData.verification,
+          });
+
+          // Milestone-level assertion remains on the milestone even when it has no slices.
+          missionStore.addContractAssertion(milestone.id, {
+            title: `Milestone: ${milestoneData.title}`,
+            assertion:
+              milestoneData.verification
+              || milestoneData.description
+              || `Verify milestone completion: ${milestoneData.title}`,
+            status: "pending",
           });
 
           for (const sliceData of (milestoneData.slices ?? [])) {
@@ -752,6 +762,16 @@ export function createMissionRouter(
               verification: sliceData.verification,
             });
 
+            // Slice-level assertion for explicit verification criteria.
+            missionStore.addContractAssertion(milestone.id, {
+              title: `Slice: ${sliceData.title}`,
+              assertion:
+                sliceData.verification
+                || sliceData.description
+                || `Verify slice completion: ${sliceData.title}`,
+              status: "pending",
+            });
+
             for (const featureData of (sliceData.features ?? [])) {
               const feature = missionStore.addFeature(slice.id, {
                 title: featureData.title,
@@ -759,8 +779,7 @@ export function createMissionRouter(
                 acceptanceCriteria: featureData.acceptanceCriteria,
               });
 
-              // Auto-generate a contract assertion for this feature
-              // Assertion text source priority: acceptanceCriteria -> description -> fallback
+              // Feature assertion text source priority: acceptanceCriteria -> description -> fallback
               const assertionText = featureData.acceptanceCriteria
                 || featureData.description
                 || `Verify implementation of: ${featureData.title}`;
