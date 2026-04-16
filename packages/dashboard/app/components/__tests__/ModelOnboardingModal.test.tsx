@@ -368,6 +368,41 @@ describe("ModelOnboardingModal", () => {
         expect(screen.getByText("Set Up AI")).toBeTruthy();
       });
     });
+
+    it("clicking completed AI Setup step indicator navigates back without removing from completedSteps", async () => {
+      // Start on GitHub step with AI Setup already completed
+      mockGetOnboardingState.mockReturnValueOnce({
+        currentStep: "github",
+        completedSteps: ["ai-setup"],
+        updatedAt: "2024-01-01T00:00:00.000Z",
+        dismissed: false,
+        completed: false,
+        stepData: {},
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Connect GitHub")).toBeTruthy();
+      });
+
+      // AI Setup step indicator should be clickable (shows as done)
+      const aiSetupIndicator = screen.getByRole("button", { name: "Go back to AI Setup" });
+      expect(aiSetupIndicator).toBeTruthy();
+
+      // Click the AI Setup step indicator
+      fireEvent.click(aiSetupIndicator);
+
+      await waitFor(() => {
+        expect(screen.getByText("Set Up AI")).toBeTruthy();
+      });
+
+      // Verify saveOnboardingState was called with AI Setup still in completedSteps
+      const saveCalls = mockSaveOnboardingState.mock.calls;
+      const lastSaveCall = saveCalls[saveCalls.length - 1];
+      expect(lastSaveCall[0]).toBe("ai-setup");
+      expect(lastSaveCall[1]?.completedSteps).toContain("ai-setup");
+    });
   });
 
   describe("First Task step", () => {
@@ -711,6 +746,111 @@ describe("ModelOnboardingModal", () => {
       // The modal should still render with empty dropdown
       const dropdown = screen.getByTestId("mock-model-dropdown") as HTMLSelectElement;
       expect(dropdown.value).toBe("");
+    });
+
+    it("reopening with persisted github step loads auth status fresh and shows correct badges", async () => {
+      // Mock persisted state showing user was on github step
+      mockGetOnboardingState.mockReturnValueOnce({
+        currentStep: "github",
+        completedSteps: ["ai-setup"],
+        updatedAt: "2024-01-01T00:00:00.000Z",
+        dismissed: false,
+        completed: false,
+        stepData: {},
+      });
+
+      // Mock auth status with some authenticated providers
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+          { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
+          { id: "github", name: "GitHub", authenticated: true, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Connect GitHub")).toBeTruthy();
+      });
+
+      // Verify auth status was fetched fresh (not stale)
+      expect(mockFetchAuthStatus).toHaveBeenCalled();
+
+      // GitHub should show as connected
+      expect(screen.getByTestId("onboarding-auth-status-github")).toBeTruthy();
+      expect(screen.getByText("✓ Connected")).toBeTruthy();
+
+      // Should show Disconnect instead of Connect
+      expect(screen.getByText("Disconnect")).toBeTruthy();
+    });
+
+    it("reopening with persisted selected model hydrates dropdown via loadGlobalSettings", async () => {
+      // Mock global settings with a saved default model
+      mockFetchGlobalSettings.mockResolvedValueOnce({
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+        modelOnboardingComplete: false,
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Set Up AI")).toBeTruthy();
+      });
+
+      // Verify global settings was fetched to hydrate dropdown
+      expect(mockFetchGlobalSettings).toHaveBeenCalled();
+
+      // The model dropdown should be pre-populated with the saved default
+      const dropdown = screen.getByTestId("mock-model-dropdown") as HTMLSelectElement;
+      expect(dropdown.value).toBe("anthropic/claude-sonnet-4-5");
+    });
+
+    it("reopening at github step with persisted model selection hydrates correctly", async () => {
+      // Mock persisted state showing user was on first-task step
+      mockGetOnboardingState.mockReturnValueOnce({
+        currentStep: "first-task",
+        completedSteps: ["ai-setup", "github"],
+        updatedAt: "2024-01-01T00:00:00.000Z",
+        dismissed: false,
+        completed: false,
+        stepData: {},
+      });
+
+      // Mock global settings with a saved default model
+      mockFetchGlobalSettings.mockResolvedValueOnce({
+        defaultProvider: "openai",
+        defaultModelId: "gpt-4o",
+        modelOnboardingComplete: false,
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      // Wait for modal to show the first-task step
+      await waitFor(() => {
+        expect(screen.getByText("Create Your First Task")).toBeTruthy();
+      });
+
+      // Verify global settings was fetched to hydrate any model selection state
+      expect(mockFetchGlobalSettings).toHaveBeenCalled();
+
+      // Navigate back to see if the model dropdown has the saved value
+      fireEvent.click(screen.getByText("← Back"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Connect GitHub")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByText("← Back"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Set Up AI")).toBeTruthy();
+      });
+
+      // The model dropdown should be pre-populated with the saved default
+      const dropdown = screen.getByTestId("mock-model-dropdown") as HTMLSelectElement;
+      expect(dropdown.value).toBe("openai/gpt-4o");
     });
   });
 

@@ -52,9 +52,12 @@ export function ModelOnboardingModal({
   const initialStep: OnboardingStep = persistedState && persistedState.currentStep !== "complete"
     ? persistedState.currentStep as OnboardingStep
     : "ai-setup";
+  // Restore completed steps from persisted state
+  const persistedCompletedSteps = persistedState?.completedSteps ?? [];
 
   const [isOpen, setIsOpen] = useState(true);
   const [step, setStep] = useState<OnboardingStep>(initialStep);
+  const [completedSteps, setCompletedSteps] = useState<OnboardingStep[]>(persistedCompletedSteps);
   const [authProviders, setAuthProviders] = useState<AuthProvider[]>([]);
   const [authLoading, setAuthLoading] = useState(true);
   const [authActionInProgress, setAuthActionInProgress] = useState<string | null>(null);
@@ -78,9 +81,9 @@ export function ModelOnboardingModal({
   // Persist step state whenever it changes (for resume functionality)
   useEffect(() => {
     if (step !== "complete") {
-      saveOnboardingState(step);
+      saveOnboardingState(step, { completedSteps });
     }
-  }, [step]);
+  }, [step, completedSteps]);
 
   // Load auth providers
   const loadAuthStatus = useCallback(async () => {
@@ -139,6 +142,8 @@ export function ModelOnboardingModal({
 
   // Navigate to next step
   const handleNext = useCallback(() => {
+    // Mark current step as completed before moving forward
+    setCompletedSteps(prev => [...new Set([...prev, step])]);
     if (step === "ai-setup") {
       setStep("github");
     } else if (step === "github") {
@@ -148,6 +153,9 @@ export function ModelOnboardingModal({
 
   // Navigate to previous step
   const handleBack = useCallback(() => {
+    // Remove current step from completedSteps when going back (undoing progress)
+    const currentStepKey = step;
+    setCompletedSteps(prev => prev.filter(s => s !== currentStepKey));
     if (step === "github") {
       setStep("ai-setup");
     } else if (step === "first-task") {
@@ -476,31 +484,57 @@ export function ModelOnboardingModal({
 
         {/* Step indicator - 3 progress steps + complete */}
         <div className="model-onboarding-steps">
-          {steps.map((s, index) => (
-            <div key={s.key} className="onboarding-step-wrapper">
-              {index > 0 && (
-                <div
-                  className={`model-onboarding-step-connector ${
-                    index <= currentStepIndex ? "done" : ""
-                  }`}
-                />
-              )}
-              <div
-                className={`model-onboarding-step-indicator ${
-                  step === s.key ? "active" : ""
-                } ${currentStepIndex > index ? "done" : ""}`}
-              >
-                <span className="step-number">
-                  {currentStepIndex > index ? (
-                    <CheckCircle size={14} />
-                  ) : (
-                    index + 1
-                  )}
-                </span>
-                <span className="step-label">{s.label}</span>
+          {steps.map((s, index) => {
+            // A step is done if it's in completedSteps AND is before current position
+            const isDone = completedSteps.includes(s.key) && currentStepIndex > index;
+            // Clickable if it's a completed step (can review) or we're on a future step
+            const isClickable = isDone;
+            return (
+              <div key={s.key} className="onboarding-step-wrapper">
+                {index > 0 && (
+                  <div
+                    className={`model-onboarding-step-connector ${
+                      index <= currentStepIndex ? "done" : ""
+                    }`}
+                  />
+                )}
+                {isClickable ? (
+                  <button
+                    className={`model-onboarding-step-indicator ${
+                      step === s.key ? "active" : ""
+                    } ${isDone ? "done" : ""}`}
+                    onClick={() => setStep(s.key)}
+                    aria-label={`Go back to ${s.label}`}
+                    title={`Review ${s.label}`}
+                  >
+                    <span className="step-number">
+                      {isDone ? (
+                        <CheckCircle size={14} />
+                      ) : (
+                        index + 1
+                      )}
+                    </span>
+                    <span className="step-label">{s.label}</span>
+                  </button>
+                ) : (
+                  <div
+                    className={`model-onboarding-step-indicator ${
+                      step === s.key ? "active" : ""
+                    } ${isDone ? "done" : ""}`}
+                  >
+                    <span className="step-number">
+                      {isDone ? (
+                        <CheckCircle size={14} />
+                      ) : (
+                        index + 1
+                      )}
+                    </span>
+                    <span className="step-label">{s.label}</span>
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* Content */}

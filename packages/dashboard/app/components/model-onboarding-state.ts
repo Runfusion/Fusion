@@ -90,6 +90,10 @@ function applyStateDefaults(state: OnboardingState): OnboardingState {
  * Call this when the user dismisses the modal without completing.
  * @param step - The current step (known OnboardingStep or unknown string for future steps)
  * @param options - Optional rich payload for extended state tracking
+ * @param options.completedSteps - Array of steps that have been completed (for resume functionality)
+ * @param options.dismissed - Whether the user explicitly dismissed without finishing
+ * @param options.completed - Whether the user finished all steps
+ * @param options.stepData - Per-step data for restoring UI state on reopen
  */
 export function saveOnboardingState(
   step: OnboardingStep | string,
@@ -340,8 +344,12 @@ export function isOnboardingResumable(): boolean {
 /**
  * Get the step info needed to display the resume card.
  * Returns null if no resumable state exists (including if onboarding was completed).
+ * @returns Object containing:
+ *   - currentStep: The step where the user left off
+ *   - label: Human-readable step label
+ *   - completedSteps: Array of steps the user has completed (for showing progress)
  */
-export function getOnboardingResumeStep(): { currentStep: string; label: string } | null {
+export function getOnboardingResumeStep(): { currentStep: string; label: string; completedSteps: OnboardingStep[] } | null {
   const state = getOnboardingState();
   // Return null if no state, completed, or step is "complete"
   if (!state || isOnboardingCompleted() || state.currentStep === "complete") {
@@ -355,6 +363,7 @@ export function getOnboardingResumeStep(): { currentStep: string; label: string 
   return {
     currentStep: state.currentStep,
     label,
+    completedSteps: state.completedSteps,
   };
 }
 

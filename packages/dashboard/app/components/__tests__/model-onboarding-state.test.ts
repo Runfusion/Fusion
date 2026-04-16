@@ -578,8 +578,37 @@ describe("model-onboarding-state", () => {
         expect(result).toEqual({
           currentStep: step,
           label: ONBOARDING_STEP_LABELS[step],
+          completedSteps: [],
         });
       }
+    });
+
+    it("returns completedSteps in the return value", () => {
+      const state = {
+        currentStep: "github" as const,
+        updatedAt: "2024-01-01T00:00:00.000Z",
+        completedSteps: ["ai-setup"] as const,
+        dismissed: false,
+        completed: false,
+        stepData: {},
+      };
+      mockStore[STORAGE_KEY] = JSON.stringify(state);
+      const result = getOnboardingResumeStep();
+      expect(result?.completedSteps).toEqual(["ai-setup"]);
+    });
+
+    it("returns empty completedSteps when field is missing (legacy state)", () => {
+      const state = {
+        currentStep: "github" as const,
+        updatedAt: "2024-01-01T00:00:00.000Z",
+        dismissed: false,
+        completed: false,
+        stepData: {},
+        // Note: no completedSteps field
+      };
+      mockStore[STORAGE_KEY] = JSON.stringify(state);
+      const result = getOnboardingResumeStep();
+      expect(result?.completedSteps).toEqual([]);
     });
 
     it("returns null when completed: true", () => {
@@ -623,6 +652,7 @@ describe("model-onboarding-state", () => {
       expect(result).toEqual({
         currentStep: "custom-step",
         label: "Custom Step", // Falls back to title-case formatting
+        completedSteps: [],
       });
     });
 

@@ -19,6 +19,12 @@ export function OnboardingResumeCard({ onResume }: OnboardingResumeCardProps) {
     return null;
   }
 
+  const completedCount = resumeStep.completedSteps.length;
+  const totalSteps = 3; // ai-setup, github, first-task
+  const progressText = completedCount > 0
+    ? `${completedCount} of ${totalSteps} step${completedCount !== 1 ? "s" : ""} complete — You're on the `
+    : "You're on the ";
+
   return (
     <section
       className="onboarding-resume-card"
@@ -32,7 +38,7 @@ export function OnboardingResumeCard({ onResume }: OnboardingResumeCardProps) {
         <div className="onboarding-resume-card__content">
           <h2 className="onboarding-resume-card__title">Continue Setup</h2>
           <p className="onboarding-resume-card__description">
-            You&apos;re on the <strong>{resumeStep.label}</strong> step. Continue where you left off to complete your dashboard setup.
+            {progressText}<strong>{resumeStep.label}</strong> step. Continue where you left off to complete your dashboard setup.
           </p>
         </div>
       </div>

@@ -32,6 +32,7 @@ describe("OnboardingResumeCard", () => {
       mockGetOnboardingResumeStep.mockReturnValue({
         currentStep: "ai-setup",
         label: "AI Setup",
+        completedSteps: [],
       });
       render(<OnboardingResumeCard onResume={vi.fn()} />);
       expect(screen.getByRole("region", { name: "Resume onboarding" })).toBeInTheDocument();
@@ -41,6 +42,7 @@ describe("OnboardingResumeCard", () => {
       mockGetOnboardingResumeStep.mockReturnValue({
         currentStep: "github",
         label: "GitHub",
+        completedSteps: ["ai-setup"],
       });
       render(<OnboardingResumeCard onResume={vi.fn()} />);
       expect(screen.getByText("GitHub")).toBeInTheDocument();
@@ -50,6 +52,7 @@ describe("OnboardingResumeCard", () => {
       mockGetOnboardingResumeStep.mockReturnValue({
         currentStep: "first-task",
         label: "First Task",
+        completedSteps: ["ai-setup", "github"],
       });
       render(<OnboardingResumeCard onResume={vi.fn()} />);
       expect(screen.getByText("Continue Setup")).toBeInTheDocument();
@@ -59,6 +62,7 @@ describe("OnboardingResumeCard", () => {
       mockGetOnboardingResumeStep.mockReturnValue({
         currentStep: "ai-setup",
         label: "AI Setup",
+        completedSteps: [],
       });
       render(<OnboardingResumeCard onResume={vi.fn()} />);
       expect(screen.getByText("Continue onboarding")).toBeInTheDocument();
@@ -68,6 +72,7 @@ describe("OnboardingResumeCard", () => {
       mockGetOnboardingResumeStep.mockReturnValue({
         currentStep: "ai-setup",
         label: "AI Setup",
+        completedSteps: [],
       });
       render(<OnboardingResumeCard onResume={vi.fn()} />);
       const button = screen.getByRole("button", { name: "Continue onboarding" });
@@ -80,6 +85,7 @@ describe("OnboardingResumeCard", () => {
       mockGetOnboardingResumeStep.mockReturnValue({
         currentStep: "ai-setup",
         label: "AI Setup",
+        completedSteps: [],
       });
       const onResume = vi.fn();
       render(<OnboardingResumeCard onResume={onResume} />);
@@ -94,6 +100,7 @@ describe("OnboardingResumeCard", () => {
       mockGetOnboardingResumeStep.mockReturnValue({
         currentStep: "ai-setup",
         label: "AI Setup",
+        completedSteps: [],
       });
       const onResume = vi.fn();
       render(<OnboardingResumeCard onResume={onResume} />);
@@ -111,6 +118,7 @@ describe("OnboardingResumeCard", () => {
       mockGetOnboardingResumeStep.mockReturnValue({
         currentStep: "ai-setup",
         label: "AI Setup",
+        completedSteps: [],
       });
       render(<OnboardingResumeCard onResume={vi.fn()} />);
       expect(screen.getByText(/AI Setup/)).toBeInTheDocument();
@@ -120,6 +128,7 @@ describe("OnboardingResumeCard", () => {
       mockGetOnboardingResumeStep.mockReturnValue({
         currentStep: "github",
         label: "GitHub",
+        completedSteps: ["ai-setup"],
       });
       render(<OnboardingResumeCard onResume={vi.fn()} />);
       expect(screen.getByText(/GitHub/)).toBeInTheDocument();
@@ -129,9 +138,46 @@ describe("OnboardingResumeCard", () => {
       mockGetOnboardingResumeStep.mockReturnValue({
         currentStep: "first-task",
         label: "First Task",
+        completedSteps: ["ai-setup", "github"],
       });
       render(<OnboardingResumeCard onResume={vi.fn()} />);
       expect(screen.getByText(/First Task/)).toBeInTheDocument();
+    });
+  });
+
+  describe("completed step count", () => {
+    it("shows progress text without count when 0 steps completed", () => {
+      mockGetOnboardingResumeStep.mockReturnValue({
+        currentStep: "ai-setup",
+        label: "AI Setup",
+        completedSteps: [],
+      });
+      render(<OnboardingResumeCard onResume={vi.fn()} />);
+      // When 0 steps completed, text is just "You're on the <label> step"
+      expect(screen.getByText(/^You're on the/)).toBeInTheDocument();
+      expect(screen.getByText(/AI Setup/)).toBeInTheDocument();
+    });
+
+    it("shows completed step count text with 1 completed step (singular)", () => {
+      mockGetOnboardingResumeStep.mockReturnValue({
+        currentStep: "github",
+        label: "GitHub",
+        completedSteps: ["ai-setup"],
+      });
+      render(<OnboardingResumeCard onResume={vi.fn()} />);
+      // Uses singular "step" for 1 completed
+      expect(screen.getByText(/1 of 3 step complete/)).toBeInTheDocument();
+    });
+
+    it("shows completed step count text with 2 completed steps (plural)", () => {
+      mockGetOnboardingResumeStep.mockReturnValue({
+        currentStep: "first-task",
+        label: "First Task",
+        completedSteps: ["ai-setup", "github"],
+      });
+      render(<OnboardingResumeCard onResume={vi.fn()} />);
+      // Uses plural "steps" for 2 completed
+      expect(screen.getByText(/2 of 3 steps complete/)).toBeInTheDocument();
     });
   });
 

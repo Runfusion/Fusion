@@ -23187,6 +23187,19 @@ html .column.drag-over * {
   color: #fff;
 }
 
+.model-onboarding-step-indicator.done {
+  cursor: pointer;
+}
+
+.model-onboarding-step-indicator.done:hover {
+  opacity: 0.85;
+}
+
+.model-onboarding-step-indicator.done:focus-visible {
+  outline: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
 .model-onboarding-step-indicator .step-number {
   width: 24px;
   height: 24px;
