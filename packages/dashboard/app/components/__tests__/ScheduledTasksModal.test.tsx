@@ -346,6 +346,45 @@ describe("ScheduledTasksModal", () => {
         expect(addToast).toHaveBeenCalledWith("Schedule created", "success");
       });
     });
+
+    it("changing scope in create form updates modal's activeScope and reloads data", async () => {
+      const schedule = makeSchedule({ name: "Test Job" });
+      mockFetchAutomations
+        .mockResolvedValueOnce([schedule]) // initial load with project scope
+        .mockResolvedValueOnce([]); // reload with global scope after scope switch
+      mockCreateAutomation.mockResolvedValue(schedule);
+
+      render(<ScheduledTasksModal onClose={onClose} addToast={addToast} projectId="proj-123" />);
+      
+      // Initial load with project scope
+      await waitFor(() => {
+        expect(mockFetchAutomations).toHaveBeenCalledWith({ scope: "project", projectId: "proj-123" });
+        expect(screen.getByText("Test Job")).toBeDefined();
+      });
+      
+      // Open create form
+      fireEvent.click(screen.getByText("New Schedule"));
+      await waitFor(() => {
+        expect(screen.getByText("New Schedule", { selector: "h4" })).toBeDefined();
+      });
+      
+      // Clear mocks to track reload
+      mockFetchAutomations.mockClear();
+      
+      // Click Global scope button in the form (note: icon chars in accessible name)
+      const globalBtn = screen.getByRole("radio", { name: "🌍Global" });
+      fireEvent.click(globalBtn);
+      
+      // Modal should reload with global scope
+      await waitFor(() => {
+        expect(mockFetchAutomations).toHaveBeenCalledWith({ scope: "global" });
+      });
+      
+      // Should be back in list view
+      await waitFor(() => {
+        expect(screen.queryByText("New Schedule", { selector: "h4" })).toBeNull();
+      });
+    });
   });
 
   describe("toggle", () => {

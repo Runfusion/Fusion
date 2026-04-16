@@ -500,6 +500,105 @@ describe("ScheduleForm", () => {
     });
   });
 
+  describe("scope toggle", () => {
+    it("renders scope toggle buttons", () => {
+      render(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} />);
+      expect(screen.getByRole("radio", { name: "🌍Global" })).toBeDefined();
+      expect(screen.getByRole("radio", { name: "📁Project" })).toBeDefined();
+    });
+
+    it("clicking Global scope button calls onScopeChange with 'global'", () => {
+      const onScopeChange = vi.fn();
+      render(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} scope="project" onScopeChange={onScopeChange} />);
+      fireEvent.click(screen.getByRole("radio", { name: "🌍Global" }));
+      expect(onScopeChange).toHaveBeenCalledWith("global");
+    });
+
+    it("clicking Project scope button calls onScopeChange with 'project'", () => {
+      const onScopeChange = vi.fn();
+      render(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} scope="global" projectId="test-project" onScopeChange={onScopeChange} />);
+      fireEvent.click(screen.getByRole("radio", { name: "📁Project" }));
+      expect(onScopeChange).toHaveBeenCalledWith("project");
+    });
+
+    it("scope toggle updates visual active state", () => {
+      render(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} scope="global" projectId="test-project" />);
+      // Global should be active initially
+      expect(screen.getByRole("radio", { name: "🌍Global" })).toHaveAttribute("aria-checked", "true");
+      expect(screen.getByRole("radio", { name: "📁Project" })).toHaveAttribute("aria-checked", "false");
+
+      // Click Project button
+      fireEvent.click(screen.getByRole("radio", { name: "📁Project" }));
+
+      // Project should now be active
+      expect(screen.getByRole("radio", { name: "📁Project" })).toHaveAttribute("aria-checked", "true");
+      expect(screen.getByRole("radio", { name: "🌍Global" })).toHaveAttribute("aria-checked", "false");
+    });
+
+    it("Project button is disabled when no projectId", () => {
+      render(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} scope="global" />);
+      expect(screen.getByRole("radio", { name: "📁Project" })).toBeDisabled();
+    });
+
+    it("scope buttons are disabled when editing existing schedule with scope", () => {
+      const schedule = makeSchedule({ scope: "global" });
+      render(<ScheduleForm schedule={schedule} onSubmit={onSubmit} onCancel={onCancel} scope="global" />);
+      expect(screen.getByRole("radio", { name: "🌍Global" })).toBeDisabled();
+      expect(screen.getByRole("radio", { name: "📁Project" })).toBeDisabled();
+    });
+
+    it("submit uses localScope when user changes scope", async () => {
+      const onScopeChange = vi.fn();
+      render(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} scope="global" projectId="test-project" onScopeChange={onScopeChange} />);
+      
+      // Fill name and command
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "My Job" } });
+      fireEvent.change(screen.getByLabelText("Command"), { target: { value: "echo hello" } });
+      
+      // Switch to project scope
+      fireEvent.click(screen.getByRole("radio", { name: "📁Project" }));
+      
+      // Submit
+      fireEvent.click(screen.getByText("Create Schedule"));
+      
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            scope: "project",
+          }),
+        );
+      });
+    });
+
+    it("localScope syncs when formScope prop changes", () => {
+      const { rerender } = render(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} scope="global" projectId="test-project" />);
+      
+      // Global should be active initially
+      expect(screen.getByRole("radio", { name: "🌍Global" })).toHaveAttribute("aria-checked", "true");
+      
+      // Change prop to project scope
+      rerender(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} scope="project" projectId="test-project" />);
+      
+      // Project should now be active
+      expect(screen.getByRole("radio", { name: "📁Project" })).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("shows project scope description when localScope is project", () => {
+      render(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} scope="project" projectId="test-project" />);
+      expect(screen.getByText(/scoped to the current project/)).toBeDefined();
+    });
+
+    it("shows global scope description when localScope is global", () => {
+      render(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} scope="global" />);
+      expect(screen.getByText(/created at global scope/)).toBeDefined();
+    });
+
+    it("shows no project description when no projectId and no schedule", () => {
+      render(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} />);
+      expect(screen.getByText(/No active project/)).toBeDefined();
+    });
+  });
+
   describe("multi-step mode", () => {
     it("switches to Multi-Step mode and adds a command step", async () => {
       render(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} />);

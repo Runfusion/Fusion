@@ -344,7 +344,7 @@ export function ScheduledTasksModal({ onClose, addToast, projectId }: ScheduledT
 
   const renderSchedulesContent = () => {
     if (view === "create") {
-      return <ScheduleForm onSubmit={handleCreate} onCancel={handleFormCancel} scope={activeScope} projectId={projectId} />;
+      return <ScheduleForm onSubmit={handleCreate} onCancel={handleFormCancel} scope={activeScope} projectId={projectId} onScopeChange={handleScopeSwitch} />;
     }
 
     if (view === "edit" && editingSchedule) {
@@ -355,6 +355,7 @@ export function ScheduledTasksModal({ onClose, addToast, projectId }: ScheduledT
           onCancel={handleFormCancel}
           scope={activeScope}
           projectId={projectId}
+          onScopeChange={handleScopeSwitch}
         />
       );
     }

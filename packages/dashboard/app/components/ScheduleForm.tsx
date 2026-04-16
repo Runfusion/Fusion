@@ -71,9 +71,11 @@ interface ScheduleFormProps {
   scope?: SchedulingScope;
   /** Project ID for project-scoped schedules. */
   projectId?: string;
+  /** Called when the user changes the scope via the toggle buttons. */
+  onScopeChange?: (scope: SchedulingScope) => void;
 }
 
-export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, projectId }: ScheduleFormProps) {
+export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, projectId, onScopeChange }: ScheduleFormProps) {
   const isEditing = !!schedule;
 
   // Determine initial mode based on whether the schedule has steps
@@ -94,6 +96,14 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
   const [timeoutMs, setTimeoutMs] = useState<number>(schedule?.timeoutMs ?? 300000);
   const [steps, setSteps] = useState<AutomationStep[]>(schedule?.steps ?? []);
   const [hasEditingSteps, setHasEditingSteps] = useState(false);
+
+  // Scope toggle state
+  const [localScope, setLocalScope] = useState<SchedulingScope>(formScope ?? "global");
+
+  // Sync localScope when formScope prop changes (e.g., when parent resets)
+  useEffect(() => {
+    if (formScope) setLocalScope(formScope);
+  }, [formScope]);
 
   // Simple mode type toggle state
   const [simpleType, setSimpleType] = useState<SimpleType>(() => {
@@ -216,7 +226,7 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
     if (!name.trim()) e.name = "Name is required";
     
     // Scope validation: project scope requires projectId
-    if (formScope === "project" && !projectId) {
+    if (localScope === "project" && !projectId) {
       e.scope = "Project-specific entries require an active project.";
     }
     
@@ -289,7 +299,7 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
     }
     setErrors(e);
     return Object.keys(e).length === 0;
-  }, [name, command, prompt, modelProvider, modelId, mode, simpleType, steps, scheduleType, cronExpression, timeoutMs, hasEditingSteps, taskDescription]);
+  }, [name, command, prompt, modelProvider, modelId, mode, simpleType, steps, scheduleType, cronExpression, timeoutMs, hasEditingSteps, taskDescription, localScope]);
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -299,9 +309,9 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
       try {
         let submitData: ScheduledTaskCreateInput;
         
-        // Determine scope: use edit mode's existing scope, otherwise use formScope prop
-        // When formScope is "project" but no projectId provided, fall back to "global"
-        let effectiveScope = schedule?.scope ?? formScope ?? (projectId ? "project" : "global");
+        // Determine scope: use edit mode's existing scope, otherwise use localScope
+        // When localScope is "project" but no projectId provided, fall back to "global"
+        let effectiveScope = schedule?.scope ?? localScope;
         if (effectiveScope === "project" && !projectId) {
           effectiveScope = "global";
         }
@@ -383,7 +393,7 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
         setSubmitting(false);
       }
     },
-    [validate, onSubmit, name, description, scheduleType, cronExpression, command, prompt, modelProvider, modelId, enabled, timeoutMs, mode, simpleType, steps, formScope, projectId, schedule?.scope, taskTitle, taskDescription, taskColumn],
+    [validate, onSubmit, name, description, scheduleType, cronExpression, command, prompt, modelProvider, modelId, enabled, timeoutMs, mode, simpleType, steps, localScope, projectId, schedule?.scope, taskTitle, taskDescription, taskColumn],
   );
 
   const cronFieldId = "schedule-cron";
@@ -435,10 +445,10 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
         <div className="schedule-scope-toggle" role="radiogroup" aria-label="Schedule scope">
           <button
             type="button"
-            className={`schedule-scope-btn${(!formScope || formScope === 'global') ? " active" : ""}`}
-            onClick={() => { /* Scope is determined at submit time based on projectId */ }}
+            className={`schedule-scope-btn${localScope === 'global' ? " active" : ""}`}
+            onClick={() => { setLocalScope("global"); onScopeChange?.("global"); }}
             role="radio"
-            aria-checked={(!formScope || formScope === 'global') ? "true" : "false"}
+            aria-checked={localScope === 'global' ? "true" : "false"}
             disabled={!!schedule?.scope}
             title={schedule?.scope ? `Scope is locked to ${schedule.scope} for existing schedules` : "Global scope"}
           >
@@ -447,10 +457,10 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
           </button>
           <button
             type="button"
-            className={`schedule-scope-btn${formScope === 'project' ? " active" : ""}`}
-            onClick={() => { /* Scope is determined at submit time based on projectId */ }}
+            className={`schedule-scope-btn${localScope === 'project' ? " active" : ""}`}
+            onClick={() => { setLocalScope("project"); onScopeChange?.("project"); }}
             role="radio"
-            aria-checked={formScope === 'project' ? "true" : "false"}
+            aria-checked={localScope === 'project' ? "true" : "false"}
             disabled={!!schedule?.scope || !projectId}
             title={schedule?.scope ? `Scope is locked to ${schedule.scope} for existing schedules` : !projectId ? "Select a project to enable project scope" : "Project scope"}
           >
@@ -461,7 +471,7 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
         <small>
           {!projectId && !schedule?.scope
             ? "No active project. Schedules will be created at global scope."
-            : formScope === "project" && projectId
+            : localScope === "project" && projectId
               ? `This schedule will be scoped to the current project.`
               : "This schedule will be created at global scope."}
         </small>
