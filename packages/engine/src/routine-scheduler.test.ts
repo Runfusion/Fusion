@@ -739,4 +739,144 @@ describe("RoutineScheduler", () => {
       expect(hasSemaphore).toBe(false);
     });
   });
+
+  // ── Cross-package integration tests (FN-1743) ─────────────────────────────────
+  //
+  // These tests verify end-to-end scoped routine scheduling wiring across packages.
+  // They ensure that:
+  // 1. RoutineScheduler bound to a project store executes scoped routines only for that project lane
+  // 2. RoutineScheduler polls both global and project lanes when configured with both stores
+  // 3. Lane identity is preserved through handleCatchUp → executeRoutine
+  // 4. Identical routine IDs in different lanes do not cause cross-lane execution
+  // 5. Lane diagnostics are verifiable in test assertions
+
+  describe("cross-package dual-lane execution integration", () => {
+    it("scope='all' polls both global and project lanes in the same tick", async () => {
+      const globalRoutine = createMockRoutine({ id: "global-rout-all", name: "Global", scope: "global" });
+      const projectRoutine = createMockRoutine({ id: "project-rout-all", name: "Project", scope: "project" });
+      const routineStore = createMockRoutineStore([globalRoutine, projectRoutine]);
+      (routineStore.getDueRoutinesAllScopes as ReturnType<typeof vi.fn>).mockResolvedValue([globalRoutine, projectRoutine]);
+      const routineRunner = createMockRoutineRunner();
+      scheduler = createRoutineScheduler(createMockTaskStore(), routineStore, routineRunner, { scope: "all" });
+
+      await scheduler.tick();
+
+      // Both lanes should be polled
+      expect(routineStore.getDueRoutinesAllScopes).toHaveBeenCalledTimes(1);
+      expect(routineStore.getDueRoutines).not.toHaveBeenCalled();
+      // Both routines should be processed
+      expect(routineRunner.handleCatchUp).toHaveBeenCalledTimes(2);
+      expect(routineRunner.executeRoutine).toHaveBeenCalledTimes(2);
+    });
+
+    it("scope='all' lane identity is preserved through handleCatchUp → executeRoutine", async () => {
+      const globalRoutine = createMockRoutine({ id: "global-lane-id", name: "Global Lane", scope: "global" });
+      const projectRoutine = createMockRoutine({ id: "project-lane-id", name: "Project Lane", scope: "project" });
+      const routineStore = createMockRoutineStore([globalRoutine, projectRoutine]);
+      (routineStore.getDueRoutinesAllScopes as ReturnType<typeof vi.fn>).mockResolvedValue([globalRoutine, projectRoutine]);
+      const routineRunner = createMockRoutineRunner();
+      scheduler = createRoutineScheduler(createMockTaskStore(), routineStore, routineRunner, { scope: "all" });
+
+      await scheduler.tick();
+
+      // Verify both lanes were processed with correct IDs
+      expect(routineRunner.executeRoutine).toHaveBeenCalledWith("global-lane-id", "cron");
+      expect(routineRunner.executeRoutine).toHaveBeenCalledWith("project-lane-id", "cron");
+    });
+
+    it("pause applies uniformly across both lanes when scope='all'", async () => {
+      const globalRoutine = createMockRoutine({ id: "global-rout-pause", name: "Global", scope: "global" });
+      const projectRoutine = createMockRoutine({ id: "project-rout-pause", name: "Project", scope: "project" });
+      const routineStore = createMockRoutineStore([globalRoutine, projectRoutine]);
+      (routineStore.getDueRoutinesAllScopes as ReturnType<typeof vi.fn>).mockResolvedValue([globalRoutine, projectRoutine]);
+      const routineRunner = createMockRoutineRunner();
+      scheduler = createRoutineScheduler(
+        createMockTaskStore({ globalPause: true }),
+        routineStore,
+        routineRunner,
+        { scope: "all" },
+      );
+
+      await scheduler.tick();
+
+      // Neither lane should be polled when paused
+      expect(routineStore.getDueRoutinesAllScopes).not.toHaveBeenCalled();
+      expect(routineRunner.handleCatchUp).not.toHaveBeenCalled();
+      expect(routineRunner.executeRoutine).not.toHaveBeenCalled();
+    });
+
+    it("identical routine IDs across global and project lanes execute once (deduplication)", async () => {
+      // Same ID in both scopes
+      const globalRoutine = createMockRoutine({ id: "shared-rout", name: "Shared Global", scope: "global" });
+      const projectRoutine = createMockRoutine({ id: "shared-rout", name: "Shared Project", scope: "project" });
+      const routineStore = createMockRoutineStore([globalRoutine, projectRoutine]);
+      (routineStore.getDueRoutinesAllScopes as ReturnType<typeof vi.fn>).mockResolvedValue([globalRoutine, projectRoutine]);
+      const routineRunner = createMockRoutineRunner();
+      scheduler = createRoutineScheduler(createMockTaskStore(), routineStore, routineRunner, { scope: "all" });
+
+      await scheduler.tick();
+
+      // Only one execution should occur due to deduplication
+      expect(routineRunner.executeRoutine).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("cross-package scoped isolation integration", () => {
+    it("RoutineScheduler bound to project store never executes global-lane routines", async () => {
+      const globalRoutine = createMockRoutine({ id: "global-iso-rout", name: "Global", scope: "global" });
+      const routineStore = createMockRoutineStore([globalRoutine]);
+      const routineRunner = createMockRoutineRunner();
+      scheduler = createRoutineScheduler(createMockTaskStore(), routineStore, routineRunner, { scope: "project" });
+
+      await scheduler.tick();
+
+      // Project-scoped scheduler should not execute global routine
+      expect(routineRunner.handleCatchUp).not.toHaveBeenCalled();
+      expect(routineRunner.executeRoutine).not.toHaveBeenCalled();
+    });
+
+    it("RoutineScheduler bound to global store never executes project-lane routines", async () => {
+      const projectRoutine = createMockRoutine({ id: "project-iso-rout", name: "Project", scope: "project" });
+      const routineStore = createMockRoutineStore([projectRoutine]);
+      const routineRunner = createMockRoutineRunner();
+      scheduler = createRoutineScheduler(createMockTaskStore(), routineStore, routineRunner, { scope: "global" });
+
+      await scheduler.tick();
+
+      // Global-scoped scheduler should not execute project routine
+      expect(routineRunner.handleCatchUp).not.toHaveBeenCalled();
+      expect(routineRunner.executeRoutine).not.toHaveBeenCalled();
+    });
+
+    it("scope='all' processes routines from both lanes but never crosses lane boundaries", async () => {
+      const globalRoutine = createMockRoutine({ id: "global-boundary-rout", name: "Global", scope: "global" });
+      const projectRoutine = createMockRoutine({ id: "project-boundary-rout", name: "Project", scope: "project" });
+      const routineStore = createMockRoutineStore([globalRoutine, projectRoutine]);
+      (routineStore.getDueRoutinesAllScopes as ReturnType<typeof vi.fn>).mockResolvedValue([globalRoutine, projectRoutine]);
+      const routineRunner = createMockRoutineRunner();
+      scheduler = createRoutineScheduler(createMockTaskStore(), routineStore, routineRunner, { scope: "all" });
+
+      await scheduler.tick();
+
+      // Both lanes should be processed
+      expect(routineRunner.handleCatchUp).toHaveBeenCalledTimes(2);
+      expect(routineRunner.executeRoutine).toHaveBeenCalledTimes(2);
+      // Each routine is executed exactly once (no double execution)
+      expect(routineRunner.executeRoutine).toHaveBeenCalledWith("global-boundary-rout", "cron");
+      expect(routineRunner.executeRoutine).toHaveBeenCalledWith("project-boundary-rout", "cron");
+    });
+
+    it("scope='project' lane identity is preserved through handleCatchUp → executeRoutine", async () => {
+      const projectRoutine = createMockRoutine({ id: "project-preserved-id", name: "Project Preserved", scope: "project" });
+      const routineStore = createMockRoutineStore([projectRoutine]);
+      const routineRunner = createMockRoutineRunner();
+      scheduler = createRoutineScheduler(createMockTaskStore(), routineStore, routineRunner, { scope: "project" });
+
+      await scheduler.tick();
+
+      // Lane identity preserved through the execution pipeline
+      expect(routineRunner.handleCatchUp).toHaveBeenCalledWith(projectRoutine);
+      expect(routineRunner.executeRoutine).toHaveBeenCalledWith("project-preserved-id", "cron");
+    });
+  });
 });

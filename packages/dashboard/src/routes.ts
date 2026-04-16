@@ -1843,23 +1843,38 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * - "project": Returns the project-scoped AutomationStore from engine or project-store resolver
    * - undefined (legacy): Returns the default AutomationStore for backward compatibility
    *
+   * For project scope, this function prefers the engine's AutomationStore when an engine
+   * is available for the project. This ensures the same EventEmitter instance is used
+   * for both engine runtime events and HTTP route handlers.
+   *
    * @throws ApiError(503) if the store is unavailable for the requested scope
    */
   function resolveAutomationStore(req: Request, scope: ScopeValue | undefined): import("@fusion/core").AutomationStore {
-    const defaultStore = options?.automationStore;
+    const projectId = getProjectIdFromRequest(req);
+    const engineManager = options?.engineManager;
 
     if (scope === "global" || scope === undefined) {
       // Global scope: use the default process-level store
+      const defaultStore = options?.automationStore;
       if (!defaultStore) {
         throw new ApiError(503, "Automation store not available");
       }
       return defaultStore;
     }
 
-    // Project scope: resolve from engine or fallback to project store
-    // Project-scoped stores don't have a separate AutomationStore instance in the current design;
-    // they use the same store with scope filtering in queries.
-    // For now, fall back to the default store (scope filtering happens at query time).
+    // Project scope: prefer engine's store when available for multi-project isolation
+    if (projectId && engineManager) {
+      const engine = engineManager.getEngine(projectId);
+      if (engine) {
+        const engineStore = engine.getAutomationStore();
+        if (engineStore) {
+          return engineStore;
+        }
+      }
+    }
+
+    // Fallback: use the default store (scope filtering happens at query time)
+    const defaultStore = options?.automationStore;
     if (!defaultStore) {
       throw new ApiError(503, "Automation store not available");
     }
@@ -1874,23 +1889,38 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * - "project": Returns the project-scoped RoutineStore from engine or project-store resolver
    * - undefined (legacy): Returns the default RoutineStore for backward compatibility
    *
+   * For project scope, this function prefers the engine's RoutineStore when an engine
+   * is available for the project. This ensures the same EventEmitter instance is used
+   * for both engine runtime events and HTTP route handlers.
+   *
    * @throws ApiError(503) if the store is unavailable for the requested scope
    */
   function resolveRoutineStore(req: Request, scope: ScopeValue | undefined): import("@fusion/core").RoutineStore {
-    const defaultStore = options?.routineStore;
+    const projectId = getProjectIdFromRequest(req);
+    const engineManager = options?.engineManager;
 
     if (scope === "global" || scope === undefined) {
       // Global scope: use the default process-level store
+      const defaultStore = options?.routineStore;
       if (!defaultStore) {
         throw new ApiError(503, "Routine store not available");
       }
       return defaultStore;
     }
 
-    // Project scope: resolve from engine or fallback to project store
-    // Project-scoped stores don't have a separate RoutineStore instance in the current design;
-    // they use the same store with scope filtering in queries.
-    // For now, fall back to the default store (scope filtering happens at query time).
+    // Project scope: prefer engine's store when available for multi-project isolation
+    if (projectId && engineManager) {
+      const engine = engineManager.getEngine(projectId);
+      if (engine) {
+        const engineStore = engine.getRoutineStore();
+        if (engineStore) {
+          return engineStore;
+        }
+      }
+    }
+
+    // Fallback: use the default store (scope filtering happens at query time)
+    const defaultStore = options?.routineStore;
     if (!defaultStore) {
       throw new ApiError(503, "Routine store not available");
     }
@@ -1901,17 +1931,35 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * Resolve the RoutineRunner for the given scope.
    * The RoutineRunner handles execution and must be scoped consistently with store lookups.
    *
+   * For project scope, this function prefers the engine's RoutineRunner when an engine
+   * is available for the project. This ensures routine execution happens in the correct
+   * project context with proper concurrency management.
+   *
    * @throws ApiError(503) if the runner is unavailable for the requested scope
    */
-  function resolveRoutineRunner(_req: Request, _scope: ScopeValue | undefined): NonNullable<ServerOptions["routineRunner"]> {
-    const runner = options?.routineRunner;
+  function resolveRoutineRunner(req: Request, scope: ScopeValue | undefined): NonNullable<ServerOptions["routineRunner"]> {
+    const projectId = getProjectIdFromRequest(req);
+    const engineManager = options?.engineManager;
 
+    // For project scope, prefer engine's RoutineRunner when available
+    if (scope === "project" && projectId && engineManager) {
+      const engine = engineManager.getEngine(projectId);
+      if (engine) {
+        const engineRunner = engine.getRoutineRunner();
+        if (engineRunner) {
+          return {
+            triggerManual: engineRunner.triggerManual.bind(engineRunner),
+            triggerWebhook: engineRunner.triggerWebhook.bind(engineRunner),
+          };
+        }
+      }
+    }
+
+    // Fallback: use the default runner
+    const runner = options?.routineRunner;
     if (!runner) {
       throw new ApiError(503, "Routine execution not available");
     }
-
-    // For now, the routine runner is process-level and not scoped
-    // This maintains backward compatibility while scope isolation is enforced at the store level
     return runner;
   }
 

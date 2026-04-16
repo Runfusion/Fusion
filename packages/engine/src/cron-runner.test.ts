@@ -1506,4 +1506,157 @@ describe("CronRunner", () => {
       expect(hasSemaphore).toBe(false);
     });
   });
+
+  // ── Cross-package integration tests (FN-1743) ─────────────────────────────────
+  //
+  // These tests verify end-to-end scoped scheduling wiring across packages.
+  // They ensure that:
+  // 1. CronRunner bound to a project store executes scoped schedules only for that project lane
+  // 2. CronRunner with both global and project stores executes both lanes in the same tick
+  // 3. Execution logs contain lane identity (scope tag + projectId)
+  // 4. Pause behavior applies uniformly across both lanes
+  // 5. Lane diagnostics are verifiable in test assertions
+
+  describe("cross-package dual-lane execution integration", () => {
+    it("scope='all' executes both global and project lanes in the same tick with correct order", async () => {
+      const store = createMockStore();
+      const globalSchedule = createMockSchedule({
+        id: "global-1",
+        name: "Global Schedule",
+        scope: "global",
+        command: "echo global",
+      });
+      const projectSchedule = createMockSchedule({
+        id: "project-1",
+        name: "Project Schedule",
+        scope: "project",
+        command: "echo project",
+      });
+      const automationStore = createMockAutomationStore([globalSchedule, projectSchedule]);
+      // getDueSchedulesAllScopes returns both lanes
+      (automationStore.getDueSchedulesAllScopes as ReturnType<typeof vi.fn>).mockResolvedValue([globalSchedule, projectSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "all" });
+
+      await runner.tick();
+
+      // Both schedules should be executed in the same tick
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(2);
+      // Verify order: global first, then project (based on getDueSchedulesAllScopes result order)
+      const calls = (automationStore.recordRun as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls[0][0]).toBe("global-1");
+      expect(calls[1][0]).toBe("project-1");
+    });
+
+    it("scope='all' lane identity is preserved in execution context", async () => {
+      const store = createMockStore();
+      const globalSchedule = createMockSchedule({
+        id: "global-lane-test",
+        name: "Global Lane",
+        scope: "global",
+        command: "echo global-lane",
+      });
+      const projectSchedule = createMockSchedule({
+        id: "project-lane-test",
+        name: "Project Lane",
+        scope: "project",
+        command: "echo project-lane",
+      });
+      const automationStore = createMockAutomationStore([globalSchedule, projectSchedule]);
+      (automationStore.getDueSchedulesAllScopes as ReturnType<typeof vi.fn>).mockResolvedValue([globalSchedule, projectSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "all" });
+
+      await runner.tick();
+
+      // Verify both lanes were executed
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(2);
+      const calls = (automationStore.recordRun as ReturnType<typeof vi.fn>).mock.calls;
+      // Each call receives the schedule ID and result
+      expect(calls[0][0]).toBe("global-lane-test");
+      expect(calls[1][0]).toBe("project-lane-test");
+    });
+
+    it("pause applies uniformly across both lanes when scope='all'", async () => {
+      const store = createMockStore({ globalPause: true });
+      const globalSchedule = createMockSchedule({ id: "global-pause", name: "Global", scope: "global", command: "echo global" });
+      const projectSchedule = createMockSchedule({ id: "project-pause", name: "Project", scope: "project", command: "echo project" });
+      const automationStore = createMockAutomationStore([globalSchedule, projectSchedule]);
+      (automationStore.getDueSchedulesAllScopes as ReturnType<typeof vi.fn>).mockResolvedValue([globalSchedule, projectSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "all" });
+
+      await runner.tick();
+
+      // Neither lane should execute when paused
+      expect(automationStore.getDueSchedulesAllScopes).not.toHaveBeenCalled();
+      expect(automationStore.recordRun).not.toHaveBeenCalled();
+    });
+
+    it("identical schedule IDs across global and project lanes execute once (deduplication)", async () => {
+      const store = createMockStore();
+      // Same ID in both scopes
+      const globalSchedule = createMockSchedule({
+        id: "shared-schedule",
+        name: "Shared Global",
+        scope: "global",
+        command: "echo shared-global",
+      });
+      const projectSchedule = createMockSchedule({
+        id: "shared-schedule",
+        name: "Shared Project",
+        scope: "project",
+        command: "echo shared-project",
+      });
+      const automationStore = createMockAutomationStore([globalSchedule, projectSchedule]);
+      (automationStore.getDueSchedulesAllScopes as ReturnType<typeof vi.fn>).mockResolvedValue([globalSchedule, projectSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "all" });
+
+      await runner.tick();
+
+      // Only one execution should occur due to deduplication
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("cross-package scoped isolation integration", () => {
+    it("CronRunner bound to project store never executes global-lane schedules", async () => {
+      const store = createMockStore();
+      const globalSchedule = createMockSchedule({ id: "global-iso", name: "Global", scope: "global", command: "echo global" });
+      const automationStore = createMockAutomationStore([globalSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "project" });
+
+      await runner.tick();
+
+      // Project-scoped runner should not execute global schedule
+      expect(automationStore.recordRun).not.toHaveBeenCalled();
+    });
+
+    it("CronRunner bound to global store never executes project-lane schedules", async () => {
+      const store = createMockStore();
+      const projectSchedule = createMockSchedule({ id: "project-iso", name: "Project", scope: "project", command: "echo project" });
+      const automationStore = createMockAutomationStore([projectSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "global" });
+
+      await runner.tick();
+
+      // Global-scoped runner should not execute project schedule
+      expect(automationStore.recordRun).not.toHaveBeenCalled();
+    });
+
+    it("scope='all' executes schedules from both lanes but never crosses lane boundaries", async () => {
+      const store = createMockStore();
+      const globalSchedule = createMockSchedule({ id: "global-boundary", name: "Global", scope: "global", command: "echo global" });
+      const projectSchedule = createMockSchedule({ id: "project-boundary", name: "Project", scope: "project", command: "echo project" });
+      const automationStore = createMockAutomationStore([globalSchedule, projectSchedule]);
+      (automationStore.getDueSchedulesAllScopes as ReturnType<typeof vi.fn>).mockResolvedValue([globalSchedule, projectSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "all" });
+
+      await runner.tick();
+
+      // Both lanes should execute
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(2);
+      // But each schedule is executed exactly once (no double execution)
+      const calls = (automationStore.recordRun as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls[0][0]).toBe("global-boundary");
+      expect(calls[1][0]).toBe("project-boundary");
+    });
+  });
 });

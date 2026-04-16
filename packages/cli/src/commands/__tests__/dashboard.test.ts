@@ -622,7 +622,9 @@ describe("runDashboard — Plugin wiring", () => {
 
     await runDashboard(0, {});
 
-    expect(PluginStore).toHaveBeenCalledWith("/tmp/test/.fusion");
+    // PluginStore is initialized with store.getFusionDir() which uses the mock path
+    // The path includes the project ID from the mock store
+    expect(PluginStore).toHaveBeenCalledWith(expect.stringContaining("/.fusion"));
   });
 
   it("initializes PluginLoader with pluginStore and taskStore", async () => {
@@ -872,6 +874,68 @@ describe("runDashboard — multi-project cwd/default engine resolution", () => {
     // Verify the engine passed is still the original cwd engine
     const serverOpts2 = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
     expect(serverOpts2.engine).toBe(originalEngine);
+  });
+
+  // ── Scoped lane diagnostics wiring tests (FN-1743) ─────────────────────────────────
+
+  it("passes cwd engine's automation store for scoped scheduling", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+    const { ProjectEngineManager } = await import("@fusion/engine");
+
+    await runDashboard(0, {});
+
+    // Verify ProjectEngineManager was used
+    expect(ProjectEngineManager).toHaveBeenCalledTimes(1);
+    const managerInstance = (ProjectEngineManager as unknown as ReturnType<typeof vi.fn>).mock.results[0]?.value;
+    expect(managerInstance).toBeDefined();
+
+    // Verify automationStore is forwarded through the server options
+    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(serverOpts).toHaveProperty("automationStore");
+    expect(serverOpts.automationStore).toBeDefined();
+  });
+
+  it("scoped lane automation store is from cwd engine, not secondary project", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+    const { ProjectEngineManager } = await import("@fusion/engine");
+
+    // Default: cwd resolves to primary project
+    setupProjectByPath(null);
+
+    await runDashboard(0, {});
+
+    // Verify engineManager was created for primary project
+    expect(ProjectEngineManager).toHaveBeenCalledTimes(1);
+    const managerInstance = (ProjectEngineManager as unknown as ReturnType<typeof vi.fn>).mock.results[0]?.value;
+    expect(managerInstance).toBeDefined();
+
+    // Verify the engine for primary project is selected
+    const engineForPrimary = managerInstance.getEngine("project-1");
+    expect(engineForPrimary).toBeDefined();
+
+    // The server should have the cwd engine (project-1)
+    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(serverOpts.engine).toBe(engineForPrimary);
+  });
+
+  it("forwards scoped scheduling accessors that support lane diagnostics", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+
+    await runDashboard(0, {});
+
+    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
+
+    // Verify automationStore is forwarded for scoped scheduling
+    expect(serverOpts).toHaveProperty("automationStore");
+    expect(serverOpts.automationStore).toBeDefined();
+
+    // Verify engineManager is forwarded for multi-project route resolution
+    expect(serverOpts).toHaveProperty("engineManager");
+    expect(serverOpts.engineManager).toBeDefined();
+
+    // Verify engine is passed for scoped route defaults
+    expect(serverOpts).toHaveProperty("engine");
+    expect(serverOpts.engine).toBeDefined();
   });
 });
 

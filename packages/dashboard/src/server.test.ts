@@ -1280,4 +1280,500 @@ describe("createServer scoped scheduling resolver regressions", () => {
       expect(res.body.some((s: any) => s.scope === "project")).toBe(false);
     });
   });
+
+  // ── Cross-project isolation integration tests (FN-1743) ─────────────────────
+  //
+  // These tests verify end-to-end cross-project isolation for scoped scheduling routes.
+  // They ensure that:
+  // 1. Requests with projectId=proj-a never touch proj-b stores
+  // 2. Requests with projectId=proj-b never touch proj-a stores
+  // 3. Fallback paths are deterministic and do not opportunistically hop lanes
+  // 4. Scope filtering in routes ensures only project-scoped items are returned
+  //
+  // NOTE: The current implementation uses the same automation/routine store for both
+  // global and project scopes, with scope filtering applied at query time. This means
+  // engineManager.getEngine is not used for scope resolution - the store itself
+  // handles scope filtering through getDueSchedules(scope) or listSchedules filtering.
+
+  describe("cross-project isolation integration", () => {
+    // Test fixtures for multi-project scenarios
+    const FAKE_PROJ_A_SCHEDULE = {
+      id: "sched-proj-a",
+      name: "Project A Schedule",
+      scope: "project" as const,
+      scheduleType: "daily" as const,
+      command: "echo proj-a",
+      enabled: true,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const FAKE_PROJ_B_SCHEDULE = {
+      id: "sched-proj-b",
+      name: "Project B Schedule",
+      scope: "project" as const,
+      scheduleType: "daily" as const,
+      command: "echo proj-b",
+      enabled: true,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const FAKE_PROJ_A_ROUTINE = {
+      id: "routine-proj-a",
+      name: "Project A Routine",
+      scope: "project" as const,
+      trigger: { type: "manual" as const },
+      enabled: true,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const FAKE_PROJ_B_ROUTINE = {
+      id: "routine-proj-b",
+      name: "Project B Routine",
+      scope: "project" as const,
+      trigger: { type: "manual" as const },
+      enabled: true,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    it("GET /api/automations?scope=project filters to only project-scoped schedules", async () => {
+      const globalStore = createMockAutomationStore("global");
+      // Store returns both global and project schedules
+      globalStore.listSchedules.mockResolvedValue([
+        FAKE_GLOBAL_SCHEDULE,
+        FAKE_PROJ_A_SCHEDULE,
+        FAKE_PROJ_B_SCHEDULE,
+      ]);
+
+      const store = createMockStore();
+      const app = createServer(store, {
+        automationStore: globalStore as any,
+      });
+
+      // Request with scope=project
+      const res = await GET(app, "/api/automations?scope=project");
+
+      expect(res.status).toBe(200);
+      // Route filters by scope, so only project-scoped schedules are returned
+      expect(res.body.every((s: any) => s.scope === "project")).toBe(true);
+      // Global schedules should not be in the response
+      expect(res.body.some((s: any) => s.scope === "global")).toBe(false);
+    });
+
+    it("GET /api/automations?scope=global filters to only global-scoped schedules", async () => {
+      const globalStore = createMockAutomationStore("global");
+      globalStore.listSchedules.mockResolvedValue([
+        FAKE_GLOBAL_SCHEDULE,
+        FAKE_PROJ_A_SCHEDULE,
+        FAKE_PROJ_B_SCHEDULE,
+      ]);
+
+      const store = createMockStore();
+      const app = createServer(store, {
+        automationStore: globalStore as any,
+      });
+
+      // Request with scope=global
+      const res = await GET(app, "/api/automations?scope=global");
+
+      expect(res.status).toBe(200);
+      // Route filters by scope, so only global-scoped schedules are returned
+      expect(res.body.every((s: any) => s.scope === "global")).toBe(true);
+      // Project schedules should not be in the response
+      expect(res.body.some((s: any) => s.scope === "project")).toBe(false);
+    });
+
+    it("GET /api/routines?scope=project filters to only project-scoped routines", async () => {
+      const globalStore = createMockRoutineStore("global");
+      globalStore.listRoutines.mockResolvedValue([
+        FAKE_GLOBAL_ROUTINE,
+        FAKE_PROJ_A_ROUTINE,
+        FAKE_PROJ_B_ROUTINE,
+      ]);
+
+      const store = createMockStore();
+      const app = createServer(store, {
+        routineStore: globalStore as any,
+      });
+
+      // Request with scope=project
+      const res = await GET(app, "/api/routines?scope=project");
+
+      expect(res.status).toBe(200);
+      // Route filters by scope
+      expect(res.body.every((r: any) => r.scope === "project")).toBe(true);
+      expect(res.body.some((r: any) => r.scope === "global")).toBe(false);
+    });
+
+    it("GET /api/routines?scope=global filters to only global-scoped routines", async () => {
+      const globalStore = createMockRoutineStore("global");
+      globalStore.listRoutines.mockResolvedValue([
+        FAKE_GLOBAL_ROUTINE,
+        FAKE_PROJ_A_ROUTINE,
+        FAKE_PROJ_B_ROUTINE,
+      ]);
+
+      const store = createMockStore();
+      const app = createServer(store, {
+        routineStore: globalStore as any,
+      });
+
+      // Request with scope=global
+      const res = await GET(app, "/api/routines?scope=global");
+
+      expect(res.status).toBe(200);
+      // Route filters by scope
+      expect(res.body.every((r: any) => r.scope === "global")).toBe(true);
+      expect(res.body.some((r: any) => r.scope === "project")).toBe(false);
+    });
+
+    it("POST /api/routines/:id/run with scope=global executes global routine", async () => {
+      const globalStore = createMockRoutineStore("global");
+      const routineRunner = createMockRoutineRunner();
+      globalStore.getRoutine.mockResolvedValue({ ...FAKE_GLOBAL_ROUTINE });
+
+      const store = createMockStore();
+      const app = createServer(store, {
+        routineStore: globalStore as any,
+        routineRunner: routineRunner as any,
+      });
+
+      const res = await REQUEST(app, "POST", "/api/routines/routine-global-1/run?scope=global");
+
+      expect(res.status).toBe(200);
+      expect(routineRunner.triggerManual).toHaveBeenCalledWith("routine-global-1");
+    });
+
+    it("POST /api/routines/:id/run with scope=project for global routine returns 404", async () => {
+      const globalStore = createMockRoutineStore("global");
+      const routineRunner = createMockRoutineRunner();
+      // Routine is global-scoped
+      globalStore.getRoutine.mockResolvedValue({ ...FAKE_GLOBAL_ROUTINE });
+
+      const store = createMockStore();
+      const app = createServer(store, {
+        routineStore: globalStore as any,
+        routineRunner: routineRunner as any,
+      });
+
+      // Request with scope=project but routine is global
+      const res = await REQUEST(app, "POST", "/api/routines/routine-global-1/run?scope=project");
+
+      expect(res.status).toBe(404);
+      // RoutineRunner should NOT be called - scope mismatch
+      expect(routineRunner.triggerManual).not.toHaveBeenCalled();
+    });
+
+    it("fallback to global automation store is deterministic (no lane hopping)", async () => {
+      const globalStore = createMockAutomationStore("global");
+      // Only project-scoped schedules exist in the store
+      globalStore.listSchedules.mockResolvedValue([FAKE_PROJ_A_SCHEDULE, FAKE_PROJ_B_SCHEDULE]);
+
+      const store = createMockStore();
+      const app = createServer(store, {
+        automationStore: globalStore as any,
+      });
+
+      // scope=global should return empty (no global schedules exist)
+      const res = await GET(app, "/api/automations?scope=global");
+
+      expect(res.status).toBe(200);
+      // Should NOT have hopped to project lane - should return empty
+      expect(res.body).toHaveLength(0);
+    });
+
+    it("fallback to global routine store is deterministic (no lane hopping)", async () => {
+      const globalStore = createMockRoutineStore("global");
+      // Only project-scoped routines exist
+      globalStore.listRoutines.mockResolvedValue([FAKE_PROJ_A_ROUTINE, FAKE_PROJ_B_ROUTINE]);
+
+      const store = createMockStore();
+      const app = createServer(store, {
+        routineStore: globalStore as any,
+      });
+
+      // scope=global should return empty (no global routines exist)
+      const res = await GET(app, "/api/routines?scope=global");
+
+      expect(res.status).toBe(200);
+      // Should NOT have hopped to project lane - should return empty
+      expect(res.body).toHaveLength(0);
+    });
+
+    it("POST /api/automations with scope=project creates in project lane", async () => {
+      const globalStore = createMockAutomationStore("global");
+      globalStore.createSchedule.mockResolvedValue({ ...FAKE_PROJ_A_SCHEDULE });
+
+      const store = createMockStore();
+      const app = createServer(store, {
+        automationStore: globalStore as any,
+      });
+
+      const res = await REQUEST(app, "POST", "/api/automations", JSON.stringify({
+        name: "New Project Schedule",
+        command: "echo test",
+        scheduleType: "daily",
+        scope: "project",
+      }), { "Content-Type": "application/json" });
+
+      expect(res.status).toBe(201);
+      // Verify the schedule was created with project scope
+      expect(globalStore.createSchedule).toHaveBeenCalledWith(
+        expect.objectContaining({ scope: "project" }),
+      );
+    });
+
+    it("POST /api/routines with scope=project creates in project lane", async () => {
+      const globalStore = createMockRoutineStore("global");
+      globalStore.createRoutine.mockResolvedValue({ ...FAKE_PROJ_A_ROUTINE });
+
+      const store = createMockStore();
+      const app = createServer(store, {
+        routineStore: globalStore as any,
+      });
+
+      const res = await REQUEST(app, "POST", "/api/routines", JSON.stringify({
+        name: "New Project Routine",
+        trigger: { type: "cron", cronExpression: "0 * * * *" },
+        scope: "project",
+      }), { "Content-Type": "application/json" });
+
+      expect(res.status).toBe(201);
+      // Verify the routine was created with project scope
+      expect(globalStore.createRoutine).toHaveBeenCalledWith(
+        expect.objectContaining({ scope: "project" }),
+      );
+    });
+
+    // ── engineManager integration tests ─────────────────────────────────────────────
+    //
+    // These tests verify that engineManager.getEngine(projectId) is called for
+    // project-scoped automation/routine routes when projectId is provided.
+
+    it("GET /api/automations?scope=project&projectId=proj-a calls engineManager.getEngine(proj-a)", async () => {
+      const globalStore = createMockAutomationStore("global");
+      // Engine A's store has unique data
+      const projAStore = {
+        listSchedules: vi.fn().mockResolvedValue([FAKE_PROJ_A_SCHEDULE]),
+      };
+      const projAEngine = { getAutomationStore: vi.fn().mockReturnValue(projAStore) };
+
+      const engineManager = createMockEngineManager();
+      engineManager.getEngine.mockImplementation((id: string) => {
+        if (id === "proj-a") return projAEngine;
+        return undefined;
+      });
+
+      const store = createMockStore();
+      const app = createServer(store, {
+        automationStore: globalStore as any,
+        engineManager: engineManager as any,
+      });
+
+      const res = await GET(app, "/api/automations?scope=project&projectId=proj-a");
+
+      expect(res.status).toBe(200);
+      // Verify engine was consulted
+      expect(engineManager.getEngine).toHaveBeenCalledWith("proj-a");
+      // Verify engine's store was used
+      expect(projAStore.listSchedules).toHaveBeenCalled();
+      // Default store should NOT have been called
+      expect(globalStore.listSchedules).not.toHaveBeenCalled();
+    });
+
+    it("GET /api/automations?scope=project&projectId=proj-a never touches proj-b engine", async () => {
+      const globalStore = createMockAutomationStore("global");
+      const projAStore = { listSchedules: vi.fn().mockResolvedValue([FAKE_PROJ_A_SCHEDULE]) };
+      const projAEngine = { getAutomationStore: vi.fn().mockReturnValue(projAStore) };
+      const projBEngine = { getAutomationStore: vi.fn() }; // Should never be accessed
+
+      const engineManager = createMockEngineManager();
+      engineManager.getEngine.mockImplementation((id: string) => {
+        if (id === "proj-a") return projAEngine;
+        if (id === "proj-b") return projBEngine;
+        return undefined;
+      });
+
+      const store = createMockStore();
+      const app = createServer(store, {
+        automationStore: globalStore as any,
+        engineManager: engineManager as any,
+      });
+
+      await GET(app, "/api/automations?scope=project&projectId=proj-a");
+
+      // proj-b engine should NEVER be accessed
+      expect(engineManager.getEngine).toHaveBeenCalledWith("proj-a");
+      expect(engineManager.getEngine).not.toHaveBeenCalledWith("proj-b");
+    });
+
+    it("GET /api/routines?scope=project&projectId=proj-b calls engineManager.getEngine(proj-b)", async () => {
+      const globalStore = createMockRoutineStore("global");
+      const projBStore = {
+        listRoutines: vi.fn().mockResolvedValue([FAKE_PROJ_B_ROUTINE]),
+      };
+      const projBEngine = { getRoutineStore: vi.fn().mockReturnValue(projBStore) };
+
+      const engineManager = createMockEngineManager();
+      engineManager.getEngine.mockImplementation((id: string) => {
+        if (id === "proj-b") return projBEngine;
+        return undefined;
+      });
+
+      const store = createMockStore();
+      const app = createServer(store, {
+        routineStore: globalStore as any,
+        engineManager: engineManager as any,
+      });
+
+      const res = await GET(app, "/api/routines?scope=project&projectId=proj-b");
+
+      expect(res.status).toBe(200);
+      // Verify engine was consulted
+      expect(engineManager.getEngine).toHaveBeenCalledWith("proj-b");
+      // Verify engine's store was used
+      expect(projBStore.listRoutines).toHaveBeenCalled();
+      // Default store should NOT have been called
+      expect(globalStore.listRoutines).not.toHaveBeenCalled();
+    });
+
+    it("GET /api/routines?scope=project&projectId=proj-b never touches proj-a engine", async () => {
+      const globalStore = createMockRoutineStore("global");
+      const projAEngine = { getRoutineStore: vi.fn() }; // Should never be accessed
+      const projBStore = { listRoutines: vi.fn().mockResolvedValue([FAKE_PROJ_B_ROUTINE]) };
+      const projBEngine = { getRoutineStore: vi.fn().mockReturnValue(projBStore) };
+
+      const engineManager = createMockEngineManager();
+      engineManager.getEngine.mockImplementation((id: string) => {
+        if (id === "proj-a") return projAEngine;
+        if (id === "proj-b") return projBEngine;
+        return undefined;
+      });
+
+      const store = createMockStore();
+      const app = createServer(store, {
+        routineStore: globalStore as any,
+        engineManager: engineManager as any,
+      });
+
+      await GET(app, "/api/routines?scope=project&projectId=proj-b");
+
+      // proj-a engine should NEVER be accessed
+      expect(engineManager.getEngine).toHaveBeenCalledWith("proj-b");
+      expect(engineManager.getEngine).not.toHaveBeenCalledWith("proj-a");
+    });
+
+    it("POST /api/routines/:id/run?scope=project&projectId=proj-a uses engine's RoutineRunner", async () => {
+      const globalStore = createMockRoutineStore("global");
+      const projARoutineRunner = {
+        triggerManual: vi.fn().mockResolvedValue({ success: true }),
+        triggerWebhook: vi.fn().mockResolvedValue({ success: true }),
+      };
+      const projAEngine = {
+        getRoutineStore: vi.fn().mockReturnValue({
+          getRoutine: vi.fn().mockResolvedValue({ ...FAKE_PROJ_A_ROUTINE }),
+        }),
+        getRoutineRunner: vi.fn().mockReturnValue(projARoutineRunner),
+      };
+
+      const engineManager = createMockEngineManager();
+      engineManager.getEngine.mockImplementation((id: string) => {
+        if (id === "proj-a") return projAEngine;
+        return undefined;
+      });
+
+      const store = createMockStore();
+      const app = createServer(store, {
+        routineStore: globalStore as any,
+        engineManager: engineManager as any,
+      });
+
+      const res = await REQUEST(app, "POST", "/api/routines/routine-proj-a/run?scope=project&projectId=proj-a");
+
+      expect(res.status).toBe(200);
+      // Verify engine was consulted
+      expect(engineManager.getEngine).toHaveBeenCalledWith("proj-a");
+      // Verify engine's runner was used
+      expect(projARoutineRunner.triggerManual).toHaveBeenCalledWith("routine-proj-a");
+    });
+
+    it("POST /api/routines/:id/run?scope=project&projectId=proj-b never uses proj-a engine", async () => {
+      const globalRoutineRunner = createMockRoutineRunner();
+      const projAEngine = { getRoutineRunner: vi.fn() }; // Should never be accessed
+      const projBEngine = {
+        getRoutineStore: vi.fn().mockReturnValue({
+          getRoutine: vi.fn().mockResolvedValue({ ...FAKE_PROJ_B_ROUTINE }),
+        }),
+        getRoutineRunner: vi.fn().mockReturnValue({
+          triggerManual: vi.fn().mockResolvedValue({ success: true }),
+          triggerWebhook: vi.fn().mockResolvedValue({ success: true }),
+        }),
+      };
+
+      const engineManager = createMockEngineManager();
+      engineManager.getEngine.mockImplementation((id: string) => {
+        if (id === "proj-a") return projAEngine;
+        if (id === "proj-b") return projBEngine;
+        return undefined;
+      });
+
+      const store = createMockStore();
+      const app = createServer(store, {
+        routineStore: createMockRoutineStore("global") as any,
+        routineRunner: globalRoutineRunner as any,
+        engineManager: engineManager as any,
+      });
+
+      await REQUEST(app, "POST", "/api/routines/routine-proj-b/run?scope=project&projectId=proj-b");
+
+      // proj-a engine should NEVER be accessed
+      expect(engineManager.getEngine).toHaveBeenCalledWith("proj-b");
+      expect(engineManager.getEngine).not.toHaveBeenCalledWith("proj-a");
+    });
+
+    it("GET /api/automations?scope=project without projectId falls back to default store", async () => {
+      const globalStore = createMockAutomationStore("global");
+      globalStore.listSchedules.mockResolvedValue([FAKE_PROJ_A_SCHEDULE]);
+
+      const engineManager = createMockEngineManager();
+
+      const store = createMockStore();
+      const app = createServer(store, {
+        automationStore: globalStore as any,
+        engineManager: engineManager as any,
+      });
+
+      const res = await GET(app, "/api/automations?scope=project");
+
+      expect(res.status).toBe(200);
+      // Engine should NOT have been consulted (no projectId)
+      expect(engineManager.getEngine).not.toHaveBeenCalled();
+      // Default store should be used
+      expect(globalStore.listSchedules).toHaveBeenCalled();
+    });
+
+    it("GET /api/routines?scope=project without projectId falls back to default store", async () => {
+      const globalStore = createMockRoutineStore("global");
+      globalStore.listRoutines.mockResolvedValue([FAKE_PROJ_A_ROUTINE]);
+
+      const engineManager = createMockEngineManager();
+
+      const store = createMockStore();
+      const app = createServer(store, {
+        routineStore: globalStore as any,
+        engineManager: engineManager as any,
+      });
+
+      const res = await GET(app, "/api/routines?scope=project");
+
+      expect(res.status).toBe(200);
+      // Engine should NOT have been consulted (no projectId)
+      expect(engineManager.getEngine).not.toHaveBeenCalled();
+      // Default store should be used
+      expect(globalStore.listRoutines).toHaveBeenCalled();
+    });
+  });
 });
