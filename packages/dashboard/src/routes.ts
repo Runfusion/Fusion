@@ -4095,6 +4095,49 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  // GET /documents — List all documents across all tasks
+  router.get("/documents", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+
+      // Parse query parameters
+      const { q, limit: limitStr, offset: offsetStr } = req.query as Record<string, string | undefined>;
+
+      // Validate limit
+      let limit = 200;
+      if (limitStr !== undefined) {
+        const parsed = parseInt(limitStr, 10);
+        if (isNaN(parsed) || parsed < 1) {
+          throw badRequest("limit must be a positive integer");
+        }
+        limit = Math.min(parsed, 1000);
+      }
+
+      // Validate offset
+      let offset = 0;
+      if (offsetStr !== undefined) {
+        const parsed = parseInt(offsetStr, 10);
+        if (isNaN(parsed) || parsed < 0) {
+          throw badRequest("offset must be a non-negative integer");
+        }
+        offset = parsed;
+      }
+
+      const documents = await scopedStore.getAllDocuments({
+        searchQuery: q,
+        limit,
+        offset,
+      });
+
+      res.json(documents);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      throw new ApiError(500, err instanceof Error ? err.message : String(err));
+    }
+  });
+
   // Add steering comment to task
   router.post("/tasks/:id/steer", async (req, res) => {
     try {

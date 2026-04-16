@@ -573,6 +573,18 @@ export interface TaskDocumentCreateInput {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * TaskDocument extended with its parent task metadata for display in the documents view.
+ */
+export interface TaskDocumentWithTask extends TaskDocument {
+  /** Title of the parent task */
+  taskTitle?: string;
+  /** Description of the parent task */
+  taskDescription?: string;
+  /** Column of the parent task (e.g., "triage", "todo", "in-progress", "done", "in-review", "archived") */
+  taskColumn?: string;
+}
+
 export const DOCUMENT_KEY_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
 export function validateDocumentKey(key: string): void {

@@ -20,6 +20,7 @@ import type {
   PluginInstallation,
   TaskDocument,
   TaskDocumentRevision,
+  TaskDocumentWithTask,
 
   Message,
   MessageType,
@@ -502,6 +503,25 @@ export function fetchTaskDocument(taskId: string, key: string, projectId?: strin
 
 export function fetchTaskDocumentRevisions(taskId: string, key: string, projectId?: string): Promise<TaskDocumentRevision[]> {
   return api<TaskDocumentRevision[]>(withProjectId(`/tasks/${taskId}/documents/${key}/revisions`, projectId));
+}
+
+export interface FetchAllDocumentsOptions {
+  q?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function fetchAllDocuments(
+  options?: FetchAllDocumentsOptions,
+  projectId?: string,
+): Promise<TaskDocumentWithTask[]> {
+  const params = new URLSearchParams();
+  if (options?.q) params.set("q", options.q);
+  if (options?.limit !== undefined) params.set("limit", String(options.limit));
+  if (options?.offset !== undefined) params.set("offset", String(options.offset));
+  const queryString = params.toString();
+  const path = `/documents${queryString ? `?${queryString}` : ""}`;
+  return api<TaskDocumentWithTask[]>(withProjectId(path, projectId));
 }
 
 export function putTaskDocument(

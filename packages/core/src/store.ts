@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, open, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync, watch, type FSWatcher } from "node:fs";
-import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter } from "./types.js";
+import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter } from "./types.js";
 import { VALID_TRANSITIONS, DEFAULT_SETTINGS, isGlobalSettingsKey, WORKFLOW_STEP_TEMPLATES, validateDocumentKey } from "./types.js";
 import { GlobalSettingsStore } from "./global-settings.js";
 import { Database, toJson, toJsonNullable, fromJson } from "./db.js";
@@ -3439,6 +3439,46 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       .prepare("SELECT * FROM task_documents WHERE taskId = ? ORDER BY key")
       .all(taskId) as any[];
     return rows.map((row) => this.rowToTaskDocument(row));
+  }
+
+  /**
+   * List all documents across all tasks, optionally filtered by search query.
+   * Each document includes its parent task's title and column for display.
+   */
+  async getAllDocuments(options?: {
+    searchQuery?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<TaskDocumentWithTask[]> {
+    const limit = Math.min(Math.max(1, options?.limit ?? 200), 1000);
+    const offset = Math.max(0, options?.offset ?? 0);
+
+    let sql = `
+      SELECT td.*, t.title as taskTitle, t.description as taskDescription, t.column as taskColumn
+      FROM task_documents td
+      JOIN tasks t ON td.taskId = t.id
+    `;
+    const params: any[] = [];
+
+    if (options?.searchQuery && options.searchQuery.trim() !== "") {
+      const query = `%${options.searchQuery.trim()}%`;
+      sql += ` WHERE td.key LIKE ? OR td.content LIKE ? OR t.title LIKE ?`;
+      params.push(query, query, query);
+    }
+
+    sql += ` ORDER BY td.updatedAt DESC LIMIT ? OFFSET ?`;
+    params.push(limit, offset);
+
+    const rows = this.db.prepare(sql).all(...params) as any[];
+    return rows.map((row) => {
+      const doc = this.rowToTaskDocument(row);
+      return {
+        ...doc,
+        taskTitle: row.taskTitle,
+        taskDescription: row.taskDescription,
+        taskColumn: row.taskColumn,
+      };
+    });
   }
 
   /**

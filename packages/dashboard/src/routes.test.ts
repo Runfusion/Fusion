@@ -124,6 +124,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     getTaskDocuments: vi.fn().mockResolvedValue([]),
     getTaskDocument: vi.fn().mockResolvedValue(null),
     getTaskDocumentRevisions: vi.fn().mockResolvedValue([]),
+    getAllDocuments: vi.fn().mockResolvedValue([]),
     upsertTaskDocument: vi.fn(),
     deleteTaskDocument: vi.fn().mockResolvedValue(undefined),
     updatePrInfo: vi.fn().mockResolvedValue(undefined),
@@ -4324,6 +4325,103 @@ describe("Pause/Unpause endpoints", () => {
         (store.deleteTaskDocument as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Document not found"));
         const res = await REQUEST(buildApp(), "DELETE", "/api/tasks/KB-001/documents/missing");
         expect(res.status).toBe(404);
+      });
+    });
+
+    describe("GET /documents", () => {
+      it("returns empty array when no documents", async () => {
+        (store.getAllDocuments as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+        const res = await GET(buildApp(), "/api/documents");
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual([]);
+      });
+
+      it("returns documents across multiple tasks", async () => {
+        const mockDocs = [
+          {
+            id: "doc-1",
+            taskId: "KB-001",
+            key: "plan",
+            content: "Plan content",
+            revision: 1,
+            author: "user",
+            createdAt: "2024-01-01T00:00:00.000Z",
+            updatedAt: "2024-01-01T00:00:00.000Z",
+            taskTitle: "Task One",
+            taskColumn: "triage",
+          },
+          {
+            id: "doc-2",
+            taskId: "KB-002",
+            key: "notes",
+            content: "Notes content",
+            revision: 1,
+            author: "agent",
+            createdAt: "2024-01-02T00:00:00.000Z",
+            updatedAt: "2024-01-02T00:00:00.000Z",
+            taskTitle: "Task Two",
+            taskColumn: "in-progress",
+          },
+        ];
+        (store.getAllDocuments as ReturnType<typeof vi.fn>).mockResolvedValue(mockDocs);
+        const res = await GET(buildApp(), "/api/documents");
+        expect(res.status).toBe(200);
+        expect(res.body).toHaveLength(2);
+        expect(res.body[0].taskTitle).toBe("Task One");
+        expect(res.body[1].taskTitle).toBe("Task Two");
+      });
+
+      it("filters by search query", async () => {
+        (store.getAllDocuments as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+        const res = await GET(buildApp(), "/api/documents?q=plan");
+        expect(res.status).toBe(200);
+        expect(store.getAllDocuments).toHaveBeenCalledWith({ searchQuery: "plan", limit: 200, offset: 0 });
+      });
+
+      it("respects limit parameter", async () => {
+        (store.getAllDocuments as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+        const res = await GET(buildApp(), "/api/documents?limit=50");
+        expect(res.status).toBe(200);
+        expect(store.getAllDocuments).toHaveBeenCalledWith({ limit: 50, offset: 0 });
+      });
+
+      it("caps limit at 1000", async () => {
+        (store.getAllDocuments as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+        const res = await GET(buildApp(), "/api/documents?limit=9999");
+        expect(res.status).toBe(200);
+        expect(store.getAllDocuments).toHaveBeenCalledWith({ limit: 1000, offset: 0 });
+      });
+
+      it("respects offset parameter", async () => {
+        (store.getAllDocuments as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+        const res = await GET(buildApp(), "/api/documents?offset=10");
+        expect(res.status).toBe(200);
+        expect(store.getAllDocuments).toHaveBeenCalledWith({ limit: 200, offset: 10, searchQuery: undefined });
+      });
+
+      it("combines multiple parameters", async () => {
+        (store.getAllDocuments as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+        const res = await GET(buildApp(), "/api/documents?q=search&limit=25&offset=5");
+        expect(res.status).toBe(200);
+        expect(store.getAllDocuments).toHaveBeenCalledWith({ searchQuery: "search", limit: 25, offset: 5 });
+      });
+
+      it("returns 400 for invalid limit", async () => {
+        const res = await GET(buildApp(), "/api/documents?limit=-1");
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain("limit must be a positive integer");
+      });
+
+      it("returns 400 for non-numeric limit", async () => {
+        const res = await GET(buildApp(), "/api/documents?limit=abc");
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain("limit must be a positive integer");
+      });
+
+      it("returns 400 for negative offset", async () => {
+        const res = await GET(buildApp(), "/api/documents?offset=-5");
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain("offset must be a non-negative integer");
       });
     });
   });

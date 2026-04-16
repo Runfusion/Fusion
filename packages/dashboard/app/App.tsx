@@ -5,6 +5,7 @@ import { Board } from "./components/Board";
 import { ListView } from "./components/ListView";
 import { ProjectOverview } from "./components/ProjectOverview";
 import { AgentsView } from "./components/AgentsView";
+import { DocumentsView } from "./components/DocumentsView";
 import { InsightsView } from "./components/InsightsView";
 import { MissionManager } from "./components/MissionManager";
 import { NodesView } from "./components/NodesView";
@@ -400,6 +401,18 @@ function AppInner() {
       return (
         <PageErrorBoundary>
           <AgentsView addToast={addToast} projectId={currentProject?.id} />
+        </PageErrorBoundary>
+      );
+    }
+
+    if (taskView === "documents") {
+      return (
+        <PageErrorBoundary>
+          <DocumentsView
+            projectId={currentProject?.id}
+            addToast={addToast}
+            onOpenDetail={modalManager.openDetailTask}
+          />
         </PageErrorBoundary>
       );
     }

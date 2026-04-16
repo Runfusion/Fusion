@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Clock,
   FileCode,
+  FileText,
   Folder,
   GitBranch,
   Grid3X3,
@@ -28,9 +29,9 @@ import { useViewportMode } from "./Header";
 
 export interface MobileNavBarProps {
   /** Current task view mode */
-  view: "board" | "list" | "agents" | "missions" | "chat" | "roadmaps" | "skills" | "mailbox" | "insights";
+  view: "board" | "list" | "agents" | "missions" | "chat" | "documents" | "roadmaps" | "skills" | "mailbox" | "insights";
   /** Change task view handler */
-  onChangeView: (view: "board" | "list" | "agents" | "missions" | "chat" | "roadmaps" | "skills" | "mailbox" | "insights") => void;
+  onChangeView: (view: "board" | "list" | "agents" | "missions" | "chat" | "documents" | "roadmaps" | "skills" | "mailbox" | "insights") => void;
   /** Whether the ExecutorStatusBar footer is visible */
   footerVisible: boolean;
   /** Whether any full-screen modal is currently open (hides the tab bar) */
@@ -223,6 +224,18 @@ export function MobileNavBar({
         >
           <MessageSquare />
           <span className="mobile-nav-tab-label">Chat</span>
+        </button>
+
+        <button
+          type="button"
+          className={`mobile-nav-tab${view === "documents" ? " mobile-nav-tab--active" : ""}`}
+          data-testid="mobile-nav-tab-documents"
+          role="tab"
+          aria-selected={view === "documents"}
+          onClick={() => onChangeView("documents")}
+        >
+          <FileText />
+          <span className="mobile-nav-tab-label">Documents</span>
         </button>
 
         <button
@@ -499,6 +512,16 @@ export function MobileNavBar({
             >
               <MessageSquare />
               <span>Chat</span>
+            </button>
+
+            <button
+              type="button"
+              className="mobile-more-item"
+              data-testid="mobile-more-item-documents"
+              onClick={() => handleMoreAction(() => onChangeView("documents"))}
+            >
+              <FileText />
+              <span>Documents</span>
             </button>
 
             <button

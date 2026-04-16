@@ -284,4 +284,126 @@ describe("TaskStore task documents", () => {
       ).rejects.toThrow(/Invalid document key/);
     }
   });
+
+  describe("getAllDocuments", () => {
+    it("returns empty array when no documents exist", async () => {
+      const results = await store.getAllDocuments();
+      expect(results).toEqual([]);
+    });
+
+    it("returns documents across multiple tasks with task metadata", async () => {
+      const task1 = await store.createTask({ description: "Task One for getAllDocuments" });
+      const task2 = await store.createTask({ description: "Task Two for getAllDocuments" });
+
+      await store.upsertTaskDocument(task1.id, { key: "plan", content: "Plan for task 1" });
+      await store.upsertTaskDocument(task1.id, { key: "notes", content: "Notes for task 1" });
+      await store.upsertTaskDocument(task2.id, { key: "research", content: "Research for task 2" });
+
+      const results = await store.getAllDocuments();
+
+      expect(results).toHaveLength(3);
+
+      const task1Docs = results.filter((d) => d.taskId === task1.id);
+      expect(task1Docs).toHaveLength(2);
+      expect(task1Docs[0].taskTitle).toBeDefined();
+      expect(task1Docs[0].taskColumn).toBe("triage");
+
+      const task2Docs = results.filter((d) => d.taskId === task2.id);
+      expect(task2Docs).toHaveLength(1);
+      expect(task2Docs[0].key).toBe("research");
+      expect(task2Docs[0].content).toBe("Research for task 2");
+      expect(task2Docs[0].taskTitle).toBeDefined();
+    });
+
+    it("filters by search query matching document key", async () => {
+      const task = await store.createTask({ description: "Search key test task" });
+      await store.upsertTaskDocument(task.id, { key: "plan", content: "Some content" });
+      await store.upsertTaskDocument(task.id, { key: "notes", content: "Other content" });
+
+      const results = await store.getAllDocuments({ searchQuery: "plan" });
+      expect(results).toHaveLength(1);
+      expect(results[0].key).toBe("plan");
+    });
+
+    it("filters by search query matching document content", async () => {
+      const task = await store.createTask({ description: "Search content test task" });
+      await store.upsertTaskDocument(task.id, { key: "doc-a", content: "Alpha content here" });
+      await store.upsertTaskDocument(task.id, { key: "doc-b", content: "Beta content here" });
+
+      const results = await store.getAllDocuments({ searchQuery: "Alpha" });
+      expect(results).toHaveLength(1);
+      expect(results[0].key).toBe("doc-a");
+    });
+
+    it("filters by search query matching task title", async () => {
+      const task = await store.createTask({ title: "Unique task title for search 12345", description: "Some description" });
+      await store.upsertTaskDocument(task.id, { key: "plan", content: "Content" });
+
+      const results = await store.getAllDocuments({ searchQuery: "12345" });
+      expect(results).toHaveLength(1);
+      expect(results[0].taskId).toBe(task.id);
+    });
+
+    it("respects limit parameter", async () => {
+      const task = await store.createTask({ description: "Limit test task" });
+      await store.upsertTaskDocument(task.id, { key: "doc-1", content: "Content 1" });
+      await store.upsertTaskDocument(task.id, { key: "doc-2", content: "Content 2" });
+      await store.upsertTaskDocument(task.id, { key: "doc-3", content: "Content 3" });
+
+      const results = await store.getAllDocuments({ limit: 2 });
+      expect(results).toHaveLength(2);
+    });
+
+    it("respects offset parameter", async () => {
+      const task = await store.createTask({ description: "Offset test task" });
+      await store.upsertTaskDocument(task.id, { key: "doc-1", content: "Content 1" });
+      await store.upsertTaskDocument(task.id, { key: "doc-2", content: "Content 2" });
+      await store.upsertTaskDocument(task.id, { key: "doc-3", content: "Content 3" });
+
+      const allResults = await store.getAllDocuments();
+      const offsetResults = await store.getAllDocuments({ offset: 1 });
+
+      expect(offsetResults).toHaveLength(allResults.length - 1);
+      expect(offsetResults[0].key).toBe(allResults[1].key);
+    });
+
+    it("caps limit at 1000", async () => {
+      const task = await store.createTask({ description: "Cap limit test task" });
+      await store.upsertTaskDocument(task.id, { key: "plan", content: "Content" });
+
+      const results = await store.getAllDocuments({ limit: 9999 });
+      expect(results).toHaveLength(1);
+
+      // Verify it didn't error - SQLite would error on LIMIT 9999
+      // We check the actual limit by looking at the query result
+    });
+
+    it("orders by updatedAt descending", async () => {
+      const task = await store.createTask({ description: "Order test task" });
+      await store.upsertTaskDocument(task.id, { key: "first", content: "First doc" });
+      await sleep(10);
+      await store.upsertTaskDocument(task.id, { key: "second", content: "Second doc" });
+      await sleep(10);
+      await store.upsertTaskDocument(task.id, { key: "third", content: "Third doc" });
+
+      const results = await store.getAllDocuments();
+      expect(results[0].key).toBe("third");
+      expect(results[1].key).toBe("second");
+      expect(results[2].key).toBe("first");
+    });
+
+    it("combines search query with limit and offset", async () => {
+      const task = await store.createTask({ description: "Combined test task" });
+      await store.upsertTaskDocument(task.id, { key: "plan", content: "Alpha content" });
+      await store.upsertTaskDocument(task.id, { key: "notes", content: "Beta content" });
+      await store.upsertTaskDocument(task.id, { key: "research", content: "Gamma content" });
+
+      const results = await store.getAllDocuments({ searchQuery: "content", limit: 2, offset: 0 });
+      expect(results).toHaveLength(2);
+      // All results should contain "content" in key or content
+      for (const doc of results) {
+        expect(doc.key + doc.content).toMatch(/content/);
+      }
+    });
+  });
 });

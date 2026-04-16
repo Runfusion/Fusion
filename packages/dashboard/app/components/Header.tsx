@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Server, Workflow, Bot, ChevronLeft, Target, ChevronRight, FileCode, Loader2, Grid3X3, Mail, MessageSquare, ChevronDown, Check, Map, Zap, Sparkles } from "lucide-react";
+import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Server, Workflow, Bot, ChevronLeft, Target, ChevronRight, FileCode, Loader2, Grid3X3, Mail, MessageSquare, ChevronDown, Check, Map, Zap, Sparkles, FileText } from "lucide-react";
 import type { ProjectInfo } from "../api";
 import type { NodeConfig, ProjectStatus } from "@fusion/core";
 import { fetchScripts } from "../api";
@@ -180,8 +180,8 @@ export interface HeaderProps {
   enginePaused?: boolean;
   onToggleGlobalPause?: () => void;
   onToggleEnginePause?: () => void;
-  view?: "board" | "list" | "agents" | "missions" | "chat" | "roadmaps" | "skills" | "mailbox" | "insights";
-  onChangeView?: (view: "board" | "list" | "agents" | "missions" | "chat" | "roadmaps" | "skills" | "mailbox" | "insights") => void;
+  view?: "board" | "list" | "agents" | "missions" | "chat" | "documents" | "roadmaps" | "skills" | "mailbox" | "insights";
+  onChangeView?: (view: "board" | "list" | "agents" | "missions" | "chat" | "documents" | "roadmaps" | "skills" | "mailbox" | "insights") => void;
   searchQuery?: string;
   onSearchChange?: (query: string) => void;
   /** Multi-project props */
@@ -710,6 +710,15 @@ export function Header({
               aria-pressed={view === "chat"}
             >
               <MessageSquare size={16} />
+            </button>
+            <button
+              className={`view-toggle-btn${view === "documents" ? " active" : ""}`}
+              onClick={() => onChangeView("documents")}
+              title="Documents view"
+              aria-label="Documents view"
+              aria-pressed={view === "documents"}
+            >
+              <FileText size={16} />
             </button>
             <button
               className={`view-toggle-btn${view === "mailbox" ? " active" : ""}`}
