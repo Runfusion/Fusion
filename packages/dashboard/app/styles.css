@@ -6693,6 +6693,22 @@ body {
     padding-right: max(var(--space-md), env(safe-area-inset-right, 0px));
   }
 
+  /* Mobile: compact node label, no dropdown */
+  .header-node-selector--mobile {
+    margin-right: var(--space-xs);
+    cursor: default;
+  }
+
+  .header-node-selector--mobile .node-status-indicator {
+    font-size: 11px;
+    padding: 2px var(--space-xs);
+  }
+
+  .header-node-selector--mobile .node-status-indicator__name {
+    max-width: 80px;
+    font-weight: 400;
+  }
+
   /* Mobile view toggle in header — compact 2-button board/list switcher */
   .header-actions > .view-toggle {
     height: 32px;

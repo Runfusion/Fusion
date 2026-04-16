@@ -525,63 +525,73 @@ export function Header({
 
         {/* Node selector and status indicator */}
         {showNodeSelector && (
-          <div className="header-node-selector" ref={nodeSelectorRef}>
+          <div
+            className={`header-node-selector${isMobile ? " header-node-selector--mobile" : ""}`}
+            ref={isMobile ? undefined : nodeSelectorRef}
+          >
             {/* Node status indicator - always visible */}
-            <NodeStatusIndicator node={currentNode ?? null} showDetails />
-            
-            {/* Node selector dropdown */}
-            <button
-              className={`btn-icon node-selector-trigger${isNodeSelectorOpen ? " node-selector-trigger--open" : ""}`}
-              onClick={() => setIsNodeSelectorOpen((prev) => !prev)}
-              title="Switch node"
-              aria-label="Switch node"
-              aria-expanded={isNodeSelectorOpen}
-              aria-haspopup="listbox"
-              data-testid="node-selector-trigger"
-            >
-              <ChevronRight
-                size={12}
-                className={`node-selector-chevron${isNodeSelectorOpen ? " node-selector-chevron--open" : ""}`}
-              />
-            </button>
+            <NodeStatusIndicator
+              node={currentNode ?? null}
+              showDetails={!isMobile}
+            />
 
-            {/* Node selector dropdown menu */}
-            {isNodeSelectorOpen && (
-              <div className="node-selector-dropdown" role="listbox" aria-label="Select node">
-                {/* Local option */}
+            {/* Node selector dropdown - desktop/tablet only */}
+            {!isMobile && (
+              <>
                 <button
-                  className={`node-selector-option${!isRemote ? " node-selector-option--active" : ""}`}
-                  onClick={() => {
-                    onSelectNode?.(null);
-                    setIsNodeSelectorOpen(false);
-                  }}
-                  role="option"
-                  aria-selected={!isRemote}
-                  data-testid="node-option-local"
+                  className={`btn-icon node-selector-trigger${isNodeSelectorOpen ? " node-selector-trigger--open" : ""}`}
+                  onClick={() => setIsNodeSelectorOpen((prev) => !prev)}
+                  title="Switch node"
+                  aria-label="Switch node"
+                  aria-expanded={isNodeSelectorOpen}
+                  aria-haspopup="listbox"
+                  data-testid="node-selector-trigger"
                 >
-                  <span className="node-selector-option-dot node-selector-option-dot--local" />
-                  <span className="node-selector-option-label">Local</span>
+                  <ChevronRight
+                    size={12}
+                    className={`node-selector-chevron${isNodeSelectorOpen ? " node-selector-chevron--open" : ""}`}
+                  />
                 </button>
 
-                {/* Remote nodes */}
-                {remoteNodes.map((node) => (
-                  <button
-                    key={node.id}
-                    className={`node-selector-option${currentNode?.id === node.id ? " node-selector-option--active" : ""}`}
-                    onClick={() => {
-                      onSelectNode?.(node);
-                      setIsNodeSelectorOpen(false);
-                    }}
-                    role="option"
-                    aria-selected={currentNode?.id === node.id}
-                    data-testid={`node-option-${node.id}`}
-                  >
-                    <span className={`node-selector-option-dot node-selector-option-dot--${node.status}`} />
-                    <span className="node-selector-option-label">{node.name}</span>
-                    <span className="node-selector-option-status">{node.status}</span>
-                  </button>
-                ))}
-              </div>
+                {/* Node selector dropdown menu */}
+                {isNodeSelectorOpen && (
+                  <div className="node-selector-dropdown" role="listbox" aria-label="Select node">
+                    {/* Local option */}
+                    <button
+                      className={`node-selector-option${!isRemote ? " node-selector-option--active" : ""}`}
+                      onClick={() => {
+                        onSelectNode?.(null);
+                        setIsNodeSelectorOpen(false);
+                      }}
+                      role="option"
+                      aria-selected={!isRemote}
+                      data-testid="node-option-local"
+                    >
+                      <span className="node-selector-option-dot node-selector-option-dot--local" />
+                      <span className="node-selector-option-label">Local</span>
+                    </button>
+
+                    {/* Remote nodes */}
+                    {remoteNodes.map((node) => (
+                      <button
+                        key={node.id}
+                        className={`node-selector-option${currentNode?.id === node.id ? " node-selector-option--active" : ""}`}
+                        onClick={() => {
+                          onSelectNode?.(node);
+                          setIsNodeSelectorOpen(false);
+                        }}
+                        role="option"
+                        aria-selected={currentNode?.id === node.id}
+                        data-testid={`node-option-${node.id}`}
+                      >
+                        <span className={`node-selector-option-dot node-selector-option-dot--${node.status}`} />
+                        <span className="node-selector-option-label">{node.name}</span>
+                        <span className="node-selector-option-status">{node.status}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
