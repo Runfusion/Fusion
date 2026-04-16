@@ -443,3 +443,19 @@ Standard cron format: `minute hour day-of-month month day-of-week`
 | `0 2 * * *` | Daily at 2:00 AM (default) |
 | `0 */6 * * *` | Every 6 hours |
 | `0 9 * * 1` | Weekly on Monday at 9:00 AM |
+
+### Scheduling Scope
+
+Fusion supports scoped automations and routines:
+
+- **Global scope** (`scope: "global"`) — Executes across all projects. Useful for backups, insight extraction, and cross-project maintenance.
+- **Project scope** (`scope: "project"`) — Executes within a single project only. Useful for project-specific CI, tests, and deployments.
+
+**Defaults and resolution:**
+- When `scope` is omitted, Fusion treats the entry as `project` scope with `projectId: "default"`.
+- Global-scope entries ignore `projectId`.
+- Project-scope lookups require `projectId`; missing values fall back to `"default"`.
+
+**Settings that interact with scheduling:**
+- `autoBackupEnabled` / `autoBackupSchedule` — Backup automation respects scope like any other scheduled task.
+- `insightExtractionEnabled` / `insightExtractionSchedule` — Insight extraction can be configured as global or project-scoped.

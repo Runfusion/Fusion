@@ -139,7 +139,7 @@ Concrete references:
 - **Specialized stores**:
   - `AgentStore` (`agent-store.ts`) — filesystem-based agent metadata + heartbeat run history
   - `MissionStore` (`mission-store.ts`) — mission/milestone/slice/feature hierarchy
-  - `AutomationStore` (`automation-store.ts`) — scheduled jobs
+  - `AutomationStore` (`automation-store.ts`) — scheduled jobs with global/project scope isolation
   - `MessageStore` (`message-store.ts`) — mailbox/inbox/outbox messaging
   - `RoadmapStore` (`roadmap-store.ts`) — standalone roadmap CRUD with deterministic ordering and atomic reorder/move operations
 
@@ -310,7 +310,7 @@ Implemented in `agent-heartbeat.ts`:
 - API routes: `createApiRoutes()` in `packages/dashboard/src/routes.ts`
 
 Key server capabilities:
-- REST APIs for tasks, git, GitHub, agents, missions, planning, automations, settings
+- REST APIs for tasks, git, GitHub, agents, missions, planning, scoped automations/routines, settings
 - Project-scoped store reuse via `project-store-resolver.ts`
 - Rate limiting (`rate-limit.ts`)
 - Static SPA hosting (Vite build output)
