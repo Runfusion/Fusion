@@ -783,6 +783,24 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
     const handleMissionUpdated = (rawEvent: Event) => {
       refreshHealth();
+
+      // Update mission status in the list to keep badges in sync
+      const messageEvent = rawEvent as MessageEvent<string>;
+      if (messageEvent.data) {
+        try {
+          const updatedMission = JSON.parse(messageEvent.data);
+          if (updatedMission?.id) {
+            setMissions((prev) =>
+              prev.map((m) =>
+                m.id === updatedMission.id ? { ...m, ...updatedMission } : m
+              )
+            );
+          }
+        } catch {
+          // ignore invalid payloads
+        }
+      }
+
       // Reload the selected mission detail to reflect updated mission state (autopilot, status, etc.)
       if (selectedMission) {
         void loadMissionDetail(selectedMission.id);

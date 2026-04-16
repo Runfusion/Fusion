@@ -911,6 +911,42 @@ describe("MissionManager", () => {
     });
   });
 
+  it("updates mission status badge when mission:updated SSE event arrives", async () => {
+    globalThis.fetch = createFetchMock();
+    globalThis.EventSource = MockEventSource as unknown as typeof globalThis.EventSource;
+
+    render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+    // Wait for initial render — M-001 has status "planning"
+    await waitFor(() => {
+      expect(screen.getByText("Build Auth System")).toBeDefined();
+    });
+
+    // Verify initial status badge shows "planning"
+    const missionItem = screen.getByText("Build Auth System").closest(".mission-list__item");
+    expect(missionItem).toBeDefined();
+    const planningBadges = missionItem!.querySelectorAll(".mission-status-badge");
+    expect([...planningBadges].some((b) => b.textContent === "planning")).toBe(true);
+
+    // Emit mission:updated SSE event changing M-001 to "active"
+    await act(async () => {
+      for (const source of MockEventSource.instances) {
+        source.emit("mission:updated", {
+          id: "M-001",
+          title: "Build Auth System",
+          status: "active",
+        });
+      }
+    });
+
+    // Verify the badge now shows "active" instead of "planning"
+    await waitFor(() => {
+      const updatedBadges = missionItem!.querySelectorAll(".mission-status-badge");
+      expect([...updatedBadges].some((b) => b.textContent === "active")).toBe(true);
+      expect([...updatedBadges].some((b) => b.textContent === "planning")).toBe(false);
+    });
+  });
+
   it("reloads selected mission detail when slice:updated SSE event arrives", async () => {
     const fetchMock = createDetailFetchMock(mockMissionEvents);
     globalThis.fetch = fetchMock;
