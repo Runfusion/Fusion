@@ -2254,16 +2254,13 @@ describe("App onboarding reopen", () => {
       expect(screen.getByText("Settings")).toBeTruthy();
     });
 
-    // Navigate to Authentication section
-    const authSection = screen.getAllByText("Authentication")[0];
-    fireEvent.click(authSection);
-
+    // Authentication is the default settings section; wait for it to hydrate.
     await waitFor(() => {
       expect(fetchAuthStatus).toHaveBeenCalled();
     });
 
-    // Click Reopen onboarding guide button
-    const reopenBtn = screen.getByText("Reopen onboarding guide");
+    // Click Reopen onboarding guide button from Authentication section
+    const reopenBtn = await screen.findByText("Reopen onboarding guide");
     fireEvent.click(reopenBtn);
 
     // Wait for onboarding modal to open
