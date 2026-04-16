@@ -735,7 +735,7 @@ export function createMissionRouter(
         missionStore.updateMission(mission.id, { interviewState: "completed" as InterviewState });
 
         // Create milestones, slices, and features with verification in dedicated fields.
-        // Auto-generate contract assertions for milestone, slice, and feature levels.
+        // Auto-generate contract assertions at milestone, slice, and feature levels.
         for (const milestoneData of (summary.milestones ?? [])) {
           // Use dedicated verification field instead of concatenating into description
           const milestone = missionStore.addMilestone(mission.id, {
@@ -745,12 +745,12 @@ export function createMissionRouter(
           });
 
           // Milestone-level assertion remains on the milestone even when it has no slices.
+          const milestoneAssertionText = milestoneData.verification
+            || milestoneData.description
+            || `Verify milestone completion: ${milestoneData.title}`;
           missionStore.addContractAssertion(milestone.id, {
             title: `Milestone: ${milestoneData.title}`,
-            assertion:
-              milestoneData.verification
-              || milestoneData.description
-              || `Verify milestone completion: ${milestoneData.title}`,
+            assertion: milestoneAssertionText,
             status: "pending",
           });
 
@@ -763,12 +763,12 @@ export function createMissionRouter(
             });
 
             // Slice-level assertion for explicit verification criteria.
+            const sliceAssertionText = sliceData.verification
+              || sliceData.description
+              || `Verify slice completion: ${sliceData.title}`;
             missionStore.addContractAssertion(milestone.id, {
               title: `Slice: ${sliceData.title}`,
-              assertion:
-                sliceData.verification
-                || sliceData.description
-                || `Verify slice completion: ${sliceData.title}`,
+              assertion: sliceAssertionText,
               status: "pending",
             });
 

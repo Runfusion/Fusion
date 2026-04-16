@@ -27877,6 +27877,49 @@ html .column.drag-over * {
   color: var(--text-muted);
 }
 
+/* === Agent Import Skills === */
+.agent-import-skills-section {
+  margin-top: var(--space-lg);
+}
+
+.agent-import-skill-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  max-height: calc(var(--space-2xl) * 6);
+  overflow-y: auto;
+}
+
+.agent-import-skill-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.agent-import-skill-icon {
+  flex-shrink: 0;
+}
+
+.agent-import-skill-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.agent-import-skill-name {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.agent-import-skill-description {
+  color: var(--text-muted);
+}
+
 .agent-import-empty {
   color: var(--text-muted);
   font-size: 13px;

@@ -52,6 +52,10 @@ describe("AgentImportModal", () => {
             { name: "Reviewer", role: "reviewer", title: "Code Reviewer", skills: ["review"] },
             { name: "Planner", role: "triage", title: "Planner" },
           ],
+          skills: [
+            { name: "review", description: "Review implementation details" },
+            { name: "strategy" },
+          ],
           created: ["Reviewer", "Planner"],
           skipped: [],
           errors: [],
@@ -130,6 +134,10 @@ describe("AgentImportModal", () => {
     expect(screen.getByText("Planner")).toBeInTheDocument();
     expect(screen.getByText(/reviewer/)).toBeInTheDocument();
     expect(screen.getByText(/triage/)).toBeInTheDocument();
+    expect(screen.getByText("2 skills found")).toBeInTheDocument();
+    expect(screen.getByText("review")).toBeInTheDocument();
+    expect(screen.getByText("strategy")).toBeInTheDocument();
+    expect(screen.getByText("Review implementation details")).toBeInTheDocument();
   });
 
   it("Back button returns to input step", async () => {
@@ -141,6 +149,34 @@ describe("AgentImportModal", () => {
 
     expect(screen.getByLabelText("Manifest content")).toBeInTheDocument();
     expect(screen.queryByText("2 agents found")).not.toBeInTheDocument();
+  });
+
+  it("does not render skills section when no package skills are returned", async () => {
+    renderModal(true);
+
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      await mockResponse({
+        ok: true,
+        body: {
+          companyName: "Acme AI",
+          agents: [{ name: "Reviewer", role: "reviewer" }],
+          created: ["Reviewer"],
+          skipped: [],
+          errors: [],
+          dryRun: true,
+        },
+      }),
+    );
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Manifest content"), "---\nname: Reviewer\nrole: reviewer\n---");
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("1 agent found")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText(/skills found/)).not.toBeInTheDocument();
   });
 
   it("handleImport posts live import request and transitions to result step", async () => {

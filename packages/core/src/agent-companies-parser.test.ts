@@ -17,6 +17,7 @@ import {
   parseCompanyManifest,
   parseProjectManifest,
   parseSingleAgentManifest,
+  parseSkillManifest,
   parseTaskManifest,
   parseTeamManifest,
   parseYamlFrontmatter,
@@ -185,6 +186,24 @@ schedule:
       expect(manifest.assignee).toBe("./agents/ceo/AGENTS.md");
       expect(manifest.schedule?.timezone).toBe("America/New_York");
     });
+
+    it("parses SKILL.md with instruction body", () => {
+      const manifest = parseSkillManifest(`---
+name: review
+schema: agentcompanies/v1
+kind: skill
+---
+# review
+
+Add skill instructions here.`);
+
+      expect(manifest).toEqual({
+        name: "review",
+        schema: "agentcompanies/v1",
+        kind: "skill",
+        instructionBody: "# review\n\nAdd skill instructions here.",
+      });
+    });
   });
 
   describe("directory parsing", () => {
@@ -252,6 +271,43 @@ name: Solo Agent
       expect(pkg.teams).toEqual([]);
     });
 
+    it("parses skills from skills subdirectories", () => {
+      const root = createTempDir();
+      writeTextFile(
+        join(root, "skills", "review", "SKILL.md"),
+        `---
+name: review
+kind: skill
+---
+# review`,
+      );
+      writeTextFile(
+        join(root, "skills", "strategy", "SKILL.md"),
+        `---
+name: strategy
+kind: skill
+---
+# strategy`,
+      );
+
+      const pkg = parseCompanyDirectory(root);
+      expect(pkg.skills).toHaveLength(2);
+      expect(pkg.skills?.map((skill) => skill.name)).toEqual(["review", "strategy"]);
+    });
+
+    it("returns empty skills when skills directory is absent", () => {
+      const root = createTempDir();
+      writeTextFile(
+        join(root, "agents", "solo", "AGENTS.md"),
+        `---
+name: Solo Agent
+---`,
+      );
+
+      const pkg = parseCompanyDirectory(root);
+      expect(pkg.skills).toEqual([]);
+    });
+
     it("parses empty directory", () => {
       const root = createTempDir();
       const pkg = parseCompanyDirectory(root);
@@ -261,6 +317,7 @@ name: Solo Agent
         teams: [],
         projects: [],
         tasks: [],
+        skills: [],
       });
     });
 

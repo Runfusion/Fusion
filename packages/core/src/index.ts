@@ -482,6 +482,7 @@ export type {
   AgentManifest,
   ProjectManifest,
   TaskManifest,
+  SkillManifest,
   SourceReference,
 } from "./agent-companies-types.js";
 
@@ -495,6 +496,7 @@ export {
   parseSingleAgentManifest,
   parseProjectManifest,
   parseTaskManifest,
+  parseSkillManifest,
   parseCompanyDirectory,
   parseCompanyArchive,
   mapRoleToCapability,

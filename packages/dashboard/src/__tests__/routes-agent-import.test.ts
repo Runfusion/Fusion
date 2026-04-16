@@ -87,6 +87,7 @@ describe("POST /api/agents/import", () => {
       teams: [{ name: "Engineering" }],
       projects: [],
       tasks: [],
+      skills: [{ name: "review" }, { name: "strategy" }],
     });
 
     mockParseCompanyArchive.mockResolvedValue({
@@ -95,6 +96,7 @@ describe("POST /api/agents/import", () => {
       teams: [{ name: "Ops" }],
       projects: [],
       tasks: [],
+      skills: [{ name: "review" }, { name: "strategy" }],
     });
 
     mockParseSingleAgentManifest.mockReturnValue({
@@ -149,6 +151,7 @@ describe("POST /api/agents/import", () => {
     expect(body.created[0].name).toBe("YAML Agent");
     expect(body.companyName).toBe("Unknown");
     expect(body.companySlug).toBeUndefined();
+    expect(body.skillsCount).toBe(0);
   });
 
   it("imports agents via { source } directory mode", async () => {
@@ -164,6 +167,7 @@ describe("POST /api/agents/import", () => {
     expect(body.companyName).toBe("Directory Co");
     expect(body.companySlug).toBe("directory-co");
     expect(body.created).toHaveLength(1);
+    expect(body.skillsCount).toBe(2);
   });
 
   it("imports agents via { source } archive mode", async () => {
@@ -177,6 +181,7 @@ describe("POST /api/agents/import", () => {
     const body = response.body as any;
     expect(body.companyName).toBe("Archive Co");
     expect(body.companySlug).toBe("archive-co");
+    expect(body.skillsCount).toBe(2);
   });
 
   it("creates hierarchical agents with resolved parent ids", async () => {
@@ -302,6 +307,7 @@ describe("POST /api/agents/import", () => {
     expect(body.agents).toEqual([
       expect.objectContaining({ name: "YAML Agent", role: "custom", title: "Chief Executive" }),
     ]);
+    expect(body.skills).toEqual([]);
     expect(mockCreateAgent).not.toHaveBeenCalled();
   });
 
@@ -325,6 +331,53 @@ describe("POST /api/agents/import", () => {
     const body = response.body as any;
     expect(body.skipped).toEqual(["YAML Agent"]);
     expect(mockCreateAgent).not.toHaveBeenCalled();
+  });
+
+  it("dry-run preview includes skills from company package", async () => {
+    const sourceDir = join(testDir, "skills-company");
+    mkdirSync(join(sourceDir, "agents", "ceo"), { recursive: true });
+    writeFileSync(join(sourceDir, "agents", "ceo", "AGENTS.md"), "---\nname: CEO\n---\nLead");
+
+    mockParseCompanyDirectory.mockReturnValue({
+      company: { name: "Directory Co", slug: "directory-co" },
+      agents: [{ name: "Dir Agent", skills: ["review"] }],
+      teams: [{ name: "Engineering" }],
+      projects: [],
+      tasks: [],
+      skills: [
+        { name: "review", description: "Review implementation details" },
+        { name: "strategy" },
+      ],
+    });
+
+    const response = await postImport(app, { source: sourceDir, dryRun: true });
+
+    expect(response.status).toBe(200);
+    const body = response.body as any;
+    expect(body.skills).toEqual([
+      { name: "review", description: "Review implementation details" },
+      { name: "strategy" },
+    ]);
+  });
+
+  it("dry-run preview returns empty skills when package has no skills", async () => {
+    const sourceDir = join(testDir, "no-skills-company");
+    mkdirSync(join(sourceDir, "agents", "ceo"), { recursive: true });
+    writeFileSync(join(sourceDir, "agents", "ceo", "AGENTS.md"), "---\nname: CEO\n---\nLead");
+
+    mockParseCompanyDirectory.mockReturnValue({
+      company: { name: "Directory Co", slug: "directory-co" },
+      agents: [{ name: "Dir Agent", skills: ["review"] }],
+      teams: [{ name: "Engineering" }],
+      projects: [],
+      tasks: [],
+    });
+
+    const response = await postImport(app, { source: sourceDir, dryRun: true });
+
+    expect(response.status).toBe(200);
+    const body = response.body as any;
+    expect(body.skills).toEqual([]);
   });
 
   it("returns 400 for parser errors", async () => {
