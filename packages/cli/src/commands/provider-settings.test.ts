@@ -55,6 +55,38 @@ describe("createReadOnlyProviderSettingsView", () => {
     expect(view.getProjectSettings()).toEqual({});
     expect(view.getNpmCommand()).toEqual(["pnpm"]);
   });
+
+  it("merges legacy Pi and Fusion agent settings with Fusion taking precedence", () => {
+    const home = mkdtempSync(join(tmpdir(), "fusion-provider-settings-"));
+    const cwd = join(home, "project");
+    const fusionAgentDir = join(home, ".fusion", "agent");
+    const legacyAgentDir = join(home, ".pi", "agent");
+
+    mkdirSync(join(cwd, ".fusion"), { recursive: true });
+    mkdirSync(fusionAgentDir, { recursive: true });
+    mkdirSync(legacyAgentDir, { recursive: true });
+
+    writeJson(join(legacyAgentDir, "settings.json"), {
+      packages: ["npm:pi-claude-cli"],
+      npmCommand: ["npm"],
+      shared: "legacy",
+    });
+    writeJson(join(fusionAgentDir, "settings.json"), {
+      fusionDisabledExtensions: ["/tmp/disabled.ts"],
+      npmCommand: ["pnpm"],
+      shared: "fusion",
+    });
+
+    const view = createReadOnlyProviderSettingsView(cwd, fusionAgentDir);
+
+    expect(view.getGlobalSettings()).toMatchObject({
+      packages: ["npm:pi-claude-cli"],
+      fusionDisabledExtensions: ["/tmp/disabled.ts"],
+      npmCommand: ["pnpm"],
+      shared: "fusion",
+    });
+    expect(view.getNpmCommand()).toEqual(["pnpm"]);
+  });
 });
 
 describe("createProjectSettingsPersistence", () => {

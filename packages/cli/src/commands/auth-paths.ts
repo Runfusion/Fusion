@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export function getFusionAgentDir(home = process.env.HOME || process.env.USERPROFILE || homedir()): string {
@@ -41,15 +41,34 @@ export function getModelRegistryModelsPath(home = process.env.HOME || process.en
   return getLegacyModelsPaths(home).find((modelsPath) => existsSync(modelsPath)) ?? fusionModelsPath;
 }
 
-export function getPackageManagerAgentDir(home = process.env.HOME || process.env.USERPROFILE || homedir()): string {
-  const fusionAgentDir = getFusionAgentDir(home);
-  if (
-    existsSync(join(fusionAgentDir, "settings.json")) ||
-    existsSync(join(fusionAgentDir, "extensions"))
-  ) {
-    return fusionAgentDir;
+function readJsonObject(path: string): Record<string, unknown> {
+  if (!existsSync(path)) {
+    return {};
   }
 
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf-8"));
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function hasPackageManagerSettings(settings: Record<string, unknown>): boolean {
+  return Array.isArray(settings.packages) || Array.isArray(settings.npmCommand);
+}
+
+export function getPackageManagerAgentDir(home = process.env.HOME || process.env.USERPROFILE || homedir()): string {
+  const fusionAgentDir = getFusionAgentDir(home);
   const legacyAgentDir = getLegacyAgentDir(home);
-  return existsSync(legacyAgentDir) ? legacyAgentDir : fusionAgentDir;
+  const fusionSettings = readJsonObject(join(fusionAgentDir, "settings.json"));
+  const legacySettings = readJsonObject(join(legacyAgentDir, "settings.json"));
+
+  if (hasPackageManagerSettings(fusionSettings) || !existsSync(legacyAgentDir)) {
+    return fusionAgentDir;
+  }
+  if (hasPackageManagerSettings(legacySettings)) {
+    return legacyAgentDir;
+  }
+  return existsSync(fusionAgentDir) ? fusionAgentDir : legacyAgentDir;
 }

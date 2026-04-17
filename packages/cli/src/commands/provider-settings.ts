@@ -1,10 +1,17 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, basename } from "node:path";
 
 export interface PackageManagerSettingsView {
   getGlobalSettings(): Record<string, any>;
   getProjectSettings(): Record<string, any>;
   getNpmCommand(): string[] | undefined;
+}
+
+function siblingAgentDir(agentDir: string, siblingRoot: ".fusion" | ".pi"): string | undefined {
+  if (basename(agentDir) !== "agent") {
+    return undefined;
+  }
+  return join(dirname(dirname(agentDir)), siblingRoot, "agent");
 }
 
 function readJsonObject(path: string): Record<string, any> {
@@ -21,7 +28,16 @@ function readJsonObject(path: string): Record<string, any> {
 }
 
 export function createReadOnlyProviderSettingsView(cwd: string, agentDir: string): PackageManagerSettingsView {
-  const globalSettings = readJsonObject(join(agentDir, "settings.json"));
+  const fusionAgentDir = agentDir.includes(`${join(".fusion", "agent")}`)
+    ? agentDir
+    : siblingAgentDir(agentDir, ".fusion");
+  const legacyAgentDir = agentDir.includes(`${join(".pi", "agent")}`)
+    ? agentDir
+    : siblingAgentDir(agentDir, ".pi");
+  const legacyGlobalSettings = legacyAgentDir ? readJsonObject(join(legacyAgentDir, "settings.json")) : {};
+  const fusionGlobalSettings = fusionAgentDir ? readJsonObject(join(fusionAgentDir, "settings.json")) : {};
+  const directGlobalSettings = readJsonObject(join(agentDir, "settings.json"));
+  const globalSettings = { ...legacyGlobalSettings, ...directGlobalSettings, ...fusionGlobalSettings };
   const fusionProjectSettings = readJsonObject(join(cwd, ".fusion", "settings.json"));
   const mergedSettings = { ...globalSettings, ...fusionProjectSettings };
 

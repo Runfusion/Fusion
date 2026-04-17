@@ -188,7 +188,9 @@ async function discoverDashboardPiExtensions(cwd: string): Promise<PiExtensionSe
   try {
     const { DefaultPackageManager } = await import("@mariozechner/pi-coding-agent");
     const agentDir = getPiPackageManagerAgentDir();
-    const globalSettings = readJsonObject(join(agentDir, "settings.json"));
+    const legacyGlobalSettings = readJsonObject(join(getLegacyPiAgentDir(), "settings.json"));
+    const fusionGlobalSettings = readJsonObject(join(getFusionAgentDir(), "settings.json"));
+    const globalSettings = { ...legacyGlobalSettings, ...fusionGlobalSettings };
     const projectSettings = readJsonObject(join(cwd, ".fusion", "settings.json"));
     const mergedSettings = { ...globalSettings, ...projectSettings };
     const packageManager = new DefaultPackageManager({

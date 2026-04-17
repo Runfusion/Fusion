@@ -9,7 +9,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { join, relative, isAbsolute, resolve } from "node:path";
+import { basename, dirname, join, relative, isAbsolute, resolve } from "node:path";
 
 const execAsync = promisify(exec);
 import {
@@ -251,9 +251,29 @@ function readJsonObject(path: string): Record<string, any> {
   }
 }
 
+function hasPackageManagerSettings(settings: Record<string, any>): boolean {
+  return Array.isArray(settings.packages) || Array.isArray(settings.npmCommand);
+}
+
+function siblingAgentDir(agentDir: string, siblingRoot: ".fusion" | ".pi"): string | undefined {
+  if (basename(agentDir) !== "agent") {
+    return undefined;
+  }
+  return join(dirname(dirname(agentDir)), siblingRoot, "agent");
+}
+
 function createReadOnlyPiSettingsView(cwd: string, agentDir: string): PackageManagerSettingsView {
   const projectRoot = resolvePiExtensionProjectRoot(cwd);
-  const globalSettings = readJsonObject(join(agentDir, "settings.json"));
+  const fusionAgentDir = agentDir.includes(`${join(".fusion", "agent")}`)
+    ? agentDir
+    : siblingAgentDir(agentDir, ".fusion");
+  const legacyAgentDir = agentDir.includes(`${join(".pi", "agent")}`)
+    ? agentDir
+    : siblingAgentDir(agentDir, ".pi");
+  const legacyGlobalSettings = legacyAgentDir ? readJsonObject(join(legacyAgentDir, "settings.json")) : {};
+  const fusionGlobalSettings = fusionAgentDir ? readJsonObject(join(fusionAgentDir, "settings.json")) : {};
+  const directGlobalSettings = readJsonObject(join(agentDir, "settings.json"));
+  const globalSettings = { ...legacyGlobalSettings, ...directGlobalSettings, ...fusionGlobalSettings };
   const fusionProjectSettings = readJsonObject(join(projectRoot, ".fusion", "settings.json"));
   const mergedSettings = { ...globalSettings, ...fusionProjectSettings };
 
@@ -268,15 +288,17 @@ function createReadOnlyPiSettingsView(cwd: string, agentDir: string): PackageMan
 
 function getPackageManagerAgentDir(): string {
   const fusionAgentDir = getFusionAgentDir();
-  if (
-    existsSync(join(fusionAgentDir, "settings.json")) ||
-    existsSync(join(fusionAgentDir, "extensions"))
-  ) {
+  const legacyAgentDir = getLegacyPiAgentDir();
+  const fusionSettings = readJsonObject(join(fusionAgentDir, "settings.json"));
+  const legacySettings = readJsonObject(join(legacyAgentDir, "settings.json"));
+
+  if (hasPackageManagerSettings(fusionSettings) || !existsSync(legacyAgentDir)) {
     return fusionAgentDir;
   }
-
-  const legacyAgentDir = getLegacyPiAgentDir();
-  return existsSync(legacyAgentDir) ? legacyAgentDir : fusionAgentDir;
+  if (hasPackageManagerSettings(legacySettings)) {
+    return legacyAgentDir;
+  }
+  return existsSync(fusionAgentDir) ? fusionAgentDir : legacyAgentDir;
 }
 
 async function registerExtensionProviders(cwd: string, modelRegistry: ModelRegistry): Promise<void> {
