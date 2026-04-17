@@ -13,6 +13,7 @@ const mockClearApiKey = vi.fn();
 const mockFetchModels = vi.fn();
 const mockFetchGlobalSettings = vi.fn();
 const mockUpdateGlobalSettings = vi.fn();
+const mockCreateTask = vi.fn();
 
 vi.mock("../../api", () => ({
   fetchAuthStatus: (...args: unknown[]) => mockFetchAuthStatus(...args),
@@ -23,6 +24,7 @@ vi.mock("../../api", () => ({
   fetchModels: (...args: unknown[]) => mockFetchModels(...args),
   fetchGlobalSettings: (...args: unknown[]) => mockFetchGlobalSettings(...args),
   updateGlobalSettings: (...args: unknown[]) => mockUpdateGlobalSettings(...args),
+  createTask: (...args: unknown[]) => mockCreateTask(...args),
 }));
 
 // Mock CustomModelDropdown since it has complex portal behavior
@@ -125,6 +127,7 @@ beforeEach(() => {
   mockFetchModels.mockResolvedValue({ models: defaultModels, favoriteProviders: [], favoriteModels: [] });
   mockFetchGlobalSettings.mockResolvedValue({});
   mockUpdateGlobalSettings.mockResolvedValue({});
+  mockCreateTask.mockResolvedValue({ id: "FN-TEST", description: "test task" });
   mockLoginProvider.mockResolvedValue({ url: "https://auth.example.com/login" });
   mockLogoutProvider.mockResolvedValue({ success: true });
   mockSaveApiKey.mockResolvedValue({ success: true });
@@ -1230,6 +1233,154 @@ describe("ModelOnboardingModal", () => {
 
       expect(screen.getByText("Create a New Task")).toBeTruthy();
       expect(screen.getByText("Import from GitHub")).toBeTruthy();
+    });
+
+    it("shows empty-description validation and does not call createTask", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToFirstTaskStep();
+
+      fireEvent.click(screen.getByTestId("onboarding-first-task-submit"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("onboarding-task-error")).toBeTruthy();
+      });
+      expect(screen.getByText("Please enter a task description.")).toBeTruthy();
+      expect(screen.getByText("Create Your First Task")).toBeTruthy();
+      expect(mockCreateTask).not.toHaveBeenCalled();
+    });
+
+    it("shows server error and preserves typed task description", async () => {
+      mockCreateTask.mockRejectedValueOnce(new Error("description is required"));
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToFirstTaskStep();
+
+      const taskInput = screen.getByTestId("onboarding-first-task-input") as HTMLTextAreaElement;
+      fireEvent.change(taskInput, { target: { value: "Build a login page" } });
+      fireEvent.click(screen.getByTestId("onboarding-first-task-submit"));
+
+      await waitFor(() => {
+        expect(screen.getByText("description is required")).toBeTruthy();
+      });
+      expect(taskInput.value).toBe("Build a login page");
+      expect(screen.getByText("Create Your First Task")).toBeTruthy();
+    });
+
+    it("allows retrying after an error and transitions to created-task success", async () => {
+      mockCreateTask
+        .mockRejectedValueOnce(new Error("temporary failure"))
+        .mockResolvedValueOnce({
+          id: "FN-2000",
+          title: "Build auth",
+          description: "Build auth",
+        } as Task);
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToFirstTaskStep();
+
+      const taskInput = screen.getByTestId("onboarding-first-task-input") as HTMLTextAreaElement;
+      fireEvent.change(taskInput, { target: { value: "Build auth" } });
+
+      fireEvent.click(screen.getByTestId("onboarding-first-task-submit"));
+      await waitFor(() => {
+        expect(screen.getByText("temporary failure")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByTestId("onboarding-first-task-submit"));
+      await waitFor(() => {
+        expect(screen.getByText("Your first task is ready!")).toBeTruthy();
+      });
+
+      expect(screen.queryByTestId("onboarding-task-error")).toBeNull();
+      expect(mockCreateTask).toHaveBeenCalledTimes(2);
+    });
+
+    it("disables first-task submit button while creating the task", async () => {
+      let resolveCreateTask: ((value: Task) => void) | undefined;
+      mockCreateTask.mockImplementationOnce(
+        () =>
+          new Promise<Task>((resolve) => {
+            resolveCreateTask = resolve;
+          }),
+      );
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToFirstTaskStep();
+
+      fireEvent.change(screen.getByTestId("onboarding-first-task-input"), {
+        target: { value: "Build a login page" },
+      });
+
+      const submitButton = screen.getByTestId("onboarding-first-task-submit") as HTMLButtonElement;
+      fireEvent.click(submitButton);
+      expect(submitButton.disabled).toBe(true);
+
+      resolveCreateTask?.({ id: "FN-3000", title: "login", description: "Build a login page" } as Task);
+      await waitFor(() => {
+        expect(screen.getByText("Your first task is ready!")).toBeTruthy();
+      });
+    });
+
+    it("clears first-task creation error as input changes", async () => {
+      mockCreateTask.mockRejectedValueOnce(new Error("description is required"));
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToFirstTaskStep();
+
+      const taskInput = screen.getByTestId("onboarding-first-task-input") as HTMLTextAreaElement;
+      fireEvent.change(taskInput, { target: { value: "Build a login page" } });
+      fireEvent.click(screen.getByTestId("onboarding-first-task-submit"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("onboarding-task-error")).toBeTruthy();
+      });
+
+      fireEvent.change(taskInput, { target: { value: "Build a login page with OAuth" } });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("onboarding-task-error")).toBeNull();
+      });
+    });
+
+    it("renders network error message when createTask fails with Failed to fetch", async () => {
+      mockCreateTask.mockRejectedValueOnce(new Error("Failed to fetch"));
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToFirstTaskStep();
+
+      fireEvent.change(screen.getByTestId("onboarding-first-task-input"), {
+        target: { value: "Build a login page" },
+      });
+      fireEvent.click(screen.getByTestId("onboarding-first-task-submit"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Failed to fetch")).toBeTruthy();
+      });
+    });
+
+    it("uses fallback message when createTask throws a non-Error value", async () => {
+      mockCreateTask.mockRejectedValueOnce("unknown");
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToFirstTaskStep();
+
+      fireEvent.change(screen.getByTestId("onboarding-first-task-input"), {
+        target: { value: "Build a login page" },
+      });
+      fireEvent.click(screen.getByTestId("onboarding-first-task-submit"));
+
+      await waitFor(() => {
+        expect(
+          screen.getByText("Something went wrong creating your task. Please try again."),
+        ).toBeTruthy();
+      });
     });
 
     it("shows task-created success view after firstCreatedTask transitions from null", async () => {

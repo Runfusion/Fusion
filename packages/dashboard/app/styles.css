@@ -24444,6 +24444,47 @@ html .column.drag-over * {
   gap: 20px;
 }
 
+/* === Onboarding First Task Inline Form === */
+.onboarding-first-task-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.onboarding-first-task-form__label {
+  font-size: var(--space-md);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.onboarding-first-task-form__input {
+  width: 100%;
+  min-height: calc(var(--space-xl) * 3);
+  resize: vertical;
+}
+
+.onboarding-first-task-form__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* === Onboarding Task Error === */
+.onboarding-task-error {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent);
+}
+
+.onboarding-task-error .field-error {
+  margin: 0;
+}
+
+.onboarding-task-error .onboarding-helper-text {
+  margin: var(--space-xs) 0 0;
+}
+
 .onboarding-cta-options {
   display: flex;
   flex-direction: column;

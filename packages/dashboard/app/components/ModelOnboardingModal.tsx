@@ -10,6 +10,7 @@ import {
   clearApiKey,
   fetchModels,
   updateGlobalSettings,
+  createTask,
 } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { CustomModelDropdown } from "./CustomModelDropdown";
@@ -469,6 +470,10 @@ export function ModelOnboardingModal({
   const [completedSteps, setCompletedSteps] = useState<OnboardingStep[]>(persistedCompletedSteps);
   const [skippedSteps, setSkippedSteps] = useState<OnboardingStep[]>(persistedSkippedSteps);
   const [showTaskCreated, setShowTaskCreated] = useState(false);
+  const [firstTaskDescription, setFirstTaskDescription] = useState("");
+  const [isCreatingFirstTask, setIsCreatingFirstTask] = useState(false);
+  const [taskCreationError, setTaskCreationError] = useState<string | null>(null);
+  const [inlineCreatedTask, setInlineCreatedTask] = useState<Task | null>(null);
   const [authProviders, setAuthProviders] = useState<AuthProvider[]>([]);
   const [authLoading, setAuthLoading] = useState(true);
   const [authActionInProgress, setAuthActionInProgress] = useState<string | null>(null);
@@ -1125,6 +1130,33 @@ export function ModelOnboardingModal({
     }
   }, [selectedModel, availableModels, addToast]);
 
+  const handleCreateFirstTask = useCallback(async () => {
+    const trimmedDescription = firstTaskDescription.trim();
+    if (!trimmedDescription) {
+      setTaskCreationError("Please enter a task description.");
+      return;
+    }
+
+    setTaskCreationError(null);
+    setIsCreatingFirstTask(true);
+
+    try {
+      const createdTask = await createTask({ description: trimmedDescription });
+      setInlineCreatedTask(createdTask);
+      setShowTaskCreated(true);
+      addToast("Task created", "success");
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Something went wrong creating your task. Please try again.";
+      setTaskCreationError(message);
+      addToast(message, "error");
+    } finally {
+      setIsCreatingFirstTask(false);
+    }
+  }, [firstTaskDescription, addToast]);
+
   // Handle first task CTA - mark complete, close modal, then open new task
   const handleOpenNewTask = useCallback(async () => {
     // First complete the onboarding
@@ -1226,13 +1258,14 @@ export function ModelOnboardingModal({
   }, [onComplete]);
 
   const handleViewCreatedTask = useCallback(() => {
-    if (!firstCreatedTask) {
+    const createdTask = firstCreatedTask ?? inlineCreatedTask;
+    if (!createdTask) {
       return;
     }
 
-    onViewTask?.(firstCreatedTask);
+    onViewTask?.(createdTask);
     onComplete();
-  }, [firstCreatedTask, onViewTask, onComplete]);
+  }, [firstCreatedTask, inlineCreatedTask, onViewTask, onComplete]);
 
   const handleGoToDashboard = useCallback(() => {
     onComplete();
@@ -1334,8 +1367,11 @@ export function ModelOnboardingModal({
     });
   }
 
+  const createdTaskForDisplay = firstCreatedTask ?? inlineCreatedTask;
   const firstCreatedTaskPreview =
-    firstCreatedTask?.description?.split("\n")[0]?.trim() || firstCreatedTask?.title || "";
+    createdTaskForDisplay?.description?.split("\n")[0]?.trim() ||
+    createdTaskForDisplay?.title ||
+    "";
 
   return (
     <div
@@ -1857,11 +1893,11 @@ export function ModelOnboardingModal({
                 Your workspace is ready. Here's how to get started:
               </p>
 
-              {showTaskCreated && firstCreatedTask ? (
+              {showTaskCreated && createdTaskForDisplay ? (
                 <div className="onboarding-task-created">
                   <CheckCircle size={56} className="success-icon" />
                   <h3 className="onboarding-task-created__title">Your first task is ready!</h3>
-                  <div className="onboarding-task-created__task-id">{firstCreatedTask.id}</div>
+                  <div className="onboarding-task-created__task-id">{createdTaskForDisplay.id}</div>
                   {firstCreatedTaskPreview && (
                     <p className="onboarding-task-created__description">{firstCreatedTaskPreview}</p>
                   )}
@@ -1887,6 +1923,49 @@ export function ModelOnboardingModal({
                 </div>
               ) : (
                 <>
+                  <div className="onboarding-first-task-form">
+                    <label className="onboarding-first-task-form__label" htmlFor="onboarding-first-task-input">
+                      Describe your first task
+                    </label>
+                    <textarea
+                      id="onboarding-first-task-input"
+                      className="input onboarding-first-task-form__input"
+                      data-testid="onboarding-first-task-input"
+                      value={firstTaskDescription}
+                      onChange={(event) => {
+                        setFirstTaskDescription(event.target.value);
+                        setTaskCreationError(null);
+                      }}
+                      placeholder="Example: Build a login page with email and password"
+                      rows={4}
+                    />
+                    <div className="onboarding-first-task-form__actions">
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={handleCreateFirstTask}
+                        disabled={isCreatingFirstTask}
+                        data-testid="onboarding-first-task-submit"
+                      >
+                        {isCreatingFirstTask ? (
+                          <>
+                            <Loader2 size={16} className="animate-spin" />
+                            <span>Creating task…</span>
+                          </>
+                        ) : (
+                          "Create First Task"
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {taskCreationError && (
+                    <div className="onboarding-task-error" role="alert" data-testid="onboarding-task-error">
+                      <p className="field-error">{taskCreationError}</p>
+                      <p className="onboarding-helper-text">Your text has been preserved — fix the issue and try again.</p>
+                    </div>
+                  )}
+
                   <ReadinessSummary items={readinessItems} />
 
                   <OnboardingDisclosure summary="What happens when I create a task?">
