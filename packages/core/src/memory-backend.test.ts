@@ -18,6 +18,8 @@ import {
   memoryExists,
   MEMORY_BACKEND_SETTINGS_KEYS,
   DEFAULT_MEMORY_BACKEND,
+  buildQmdSearchArgs,
+  qmdMemoryCollectionName,
 } from "./memory-backend.js";
 import type { MemoryBackend } from "./memory-backend.js";
 
@@ -389,6 +391,35 @@ describe("memory-backend", () => {
         const result = await backend.exists(tempDir);
 
         expect(result).toBe(true);
+      });
+    });
+
+    describe("qmd collection scoping", () => {
+      it("uses a stable project-scoped collection name", () => {
+        const collectionName = qmdMemoryCollectionName(tempDir);
+
+        expect(collectionName).toMatch(/^fusion-memory-kb-memory-backend-test-[a-z0-9_-]+-[a-f0-9]{12}$/);
+        expect(qmdMemoryCollectionName(tempDir)).toBe(collectionName);
+      });
+
+      it("builds qmd search args with the project collection filter", () => {
+        const args = buildQmdSearchArgs(tempDir, { query: "agent memory", limit: 7 });
+        const collectionName = qmdMemoryCollectionName(tempDir);
+
+        expect(args).toEqual([
+          "search",
+          "agent memory",
+          "--json",
+          "--collection",
+          collectionName,
+          "-n",
+          "7",
+        ]);
+      });
+
+      it("clamps qmd result limits", () => {
+        expect(buildQmdSearchArgs(tempDir, { query: "memory", limit: 999 })).toContain("20");
+        expect(buildQmdSearchArgs(tempDir, { query: "memory", limit: 0 })).toContain("1");
       });
     });
   });

@@ -12,6 +12,7 @@
 import { readFile, writeFile, mkdir, access, constants, readdir, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
+import { createHash } from "node:crypto";
 
 export const MEMORY_WORKSPACE_PATH = ".fusion/memory";
 export const MEMORY_LONG_TERM_FILENAME = "MEMORY.md";
@@ -23,6 +24,7 @@ const DAILY_MEMORY_RE = /^\d{4}-\d{2}-\d{2}\.md$/;
 const MAX_MEMORY_SNIPPET_CHARS = 700;
 const DEFAULT_MEMORY_GET_LINES = 120;
 const MAX_MEMORY_GET_LINES = 400;
+const QMD_COLLECTION_PREFIX = "fusion-memory";
 
 // ── Type Definitions ────────────────────────────────────────────────
 
@@ -459,6 +461,30 @@ export function memoryDreamsPath(rootDir: string): string {
   return join(memoryWorkspacePath(rootDir), MEMORY_DREAMS_FILENAME);
 }
 
+export function qmdMemoryCollectionName(rootDir: string): string {
+  const absoluteRoot = resolve(rootDir);
+  const slug = basename(absoluteRoot)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    || "project";
+  const hash = createHash("sha1").update(absoluteRoot).digest("hex").slice(0, 12);
+  return `${QMD_COLLECTION_PREFIX}-${slug}-${hash}`;
+}
+
+export function buildQmdSearchArgs(rootDir: string, options: MemorySearchOptions): string[] {
+  const limit = Math.max(1, Math.min(options.limit ?? 5, 20));
+  return [
+    "search",
+    options.query,
+    "--json",
+    "--collection",
+    qmdMemoryCollectionName(rootDir),
+    "-n",
+    String(limit),
+  ];
+}
+
 export function dailyMemoryPath(rootDir: string, date = new Date()): string {
   return join(memoryWorkspacePath(rootDir), `${date.toISOString().slice(0, 10)}.md`);
 }
@@ -737,12 +763,13 @@ async function searchMemoryFiles(rootDir: string, options: MemorySearchOptions, 
 
 async function searchWithQmd(rootDir: string, options: MemorySearchOptions): Promise<MemorySearchResult[]> {
   const command = "qmd";
-  const mode = "search";
-  const args = [mode, options.query, "--json"];
+  const limit = Math.max(1, Math.min(options.limit ?? 5, 20));
   try {
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
     const execFileAsync = promisify(execFile);
+    await ensureQmdProjectMemoryCollection(rootDir, execFileAsync);
+    const args = buildQmdSearchArgs(rootDir, options);
     const { stdout } = await execFileAsync(command, args, {
       cwd: rootDir,
       timeout: 4000,
@@ -750,7 +777,7 @@ async function searchWithQmd(rootDir: string, options: MemorySearchOptions): Pro
     });
     const parsed = JSON.parse(stdout);
     const rawResults = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.results) ? parsed.results : [];
-    return rawResults.slice(0, Math.max(1, Math.min(options.limit ?? 5, 20))).map((result: Record<string, unknown>, index: number) => ({
+    return rawResults.slice(0, limit).map((result: Record<string, unknown>, index: number) => ({
       path: String(result.path ?? result.file ?? `qmd/result-${index + 1}`),
       lineStart: Number(result.lineStart ?? result.startLine ?? 1),
       lineEnd: Number(result.lineEnd ?? result.endLine ?? result.startLine ?? 1),
@@ -761,6 +788,35 @@ async function searchWithQmd(rootDir: string, options: MemorySearchOptions): Pro
   } catch {
     return [];
   }
+}
+
+async function ensureQmdProjectMemoryCollection(
+  rootDir: string,
+  execFileAsync: (
+    file: string,
+    args: readonly string[],
+    options?: { cwd?: string; timeout?: number; maxBuffer?: number },
+  ) => Promise<{ stdout: string; stderr: string }>,
+): Promise<string> {
+  const collectionName = qmdMemoryCollectionName(rootDir);
+  const memoryDir = memoryWorkspacePath(rootDir);
+  await mkdir(memoryDir, { recursive: true });
+
+  try {
+    await execFileAsync("qmd", ["collection", "add", memoryDir, "--name", collectionName, "--mask", "**/*.md"], {
+      cwd: rootDir,
+      timeout: 4000,
+      maxBuffer: 512 * 1024,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    const stderr = typeof err === "object" && err && "stderr" in err ? String((err as { stderr?: unknown }).stderr ?? "") : "";
+    if (!/already exists|exists/i.test(`${message}\n${stderr}`)) {
+      throw err;
+    }
+  }
+
+  return collectionName;
 }
 
 export async function isQmdAvailable(): Promise<boolean> {

@@ -441,6 +441,7 @@ export {
   memoryWorkspacePath,
   memoryLongTermPath,
   memoryDreamsPath,
+  qmdMemoryCollectionName,
   dailyMemoryPath,
   getDefaultLongTermMemoryScaffold,
   getDefaultDailyMemoryScaffold,
