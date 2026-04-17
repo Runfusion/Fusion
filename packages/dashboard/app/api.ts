@@ -326,6 +326,30 @@ export function saveMemory(content: string, projectId?: string): Promise<{ succe
   });
 }
 
+export interface MemoryFileInfo {
+  path: string;
+  label: string;
+  layer: "long-term" | "daily" | "dreams" | "legacy";
+  size: number;
+  updatedAt: string;
+}
+
+export function fetchMemoryFiles(projectId?: string): Promise<{ files: MemoryFileInfo[] }> {
+  return api<{ files: MemoryFileInfo[] }>(withProjectId("/memory/files", projectId));
+}
+
+export function fetchMemoryFile(path: string, projectId?: string): Promise<{ path: string; content: string }> {
+  const query = `path=${encodeURIComponent(path)}`;
+  return api<{ path: string; content: string }>(withProjectId(`/memory/file?${query}`, projectId));
+}
+
+export function saveMemoryFile(path: string, content: string, projectId?: string): Promise<{ success: boolean }> {
+  return api<{ success: boolean }>(withProjectId("/memory/file", projectId), {
+    method: "PUT",
+    body: JSON.stringify({ path, content }),
+  });
+}
+
 /**
  * Compact memory content using AI to distill it down to the most important insights.
  * Reads current memory, compacts it via AI, and writes the result back.

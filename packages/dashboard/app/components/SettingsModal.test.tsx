@@ -18,8 +18,10 @@ const mockTestNtfyNotification = vi.fn();
 const mockFetchBackups = vi.fn();
 const mockCreateBackup = vi.fn();
 const mockImportSettings = vi.fn();
-const mockFetchMemory = vi.fn();
-const mockSaveMemory = vi.fn();
+const mockFetchMemoryFiles = vi.fn();
+const mockFetchMemoryFile = vi.fn();
+const mockSaveMemoryFile = vi.fn();
+const mockCompactMemory = vi.fn();
 const mockFetchGlobalConcurrency = vi.fn();
 const mockUpdateGlobalConcurrency = vi.fn();
 const mockFetchMemoryBackendStatus = vi.fn();
@@ -38,8 +40,10 @@ vi.mock("../api", () => ({
   testNtfyNotification: (...args: unknown[]) => mockTestNtfyNotification(...args),
   fetchBackups: (...args: unknown[]) => mockFetchBackups(...args),
   createBackup: (...args: unknown[]) => mockCreateBackup(...args),
-  fetchMemory: (...args: unknown[]) => mockFetchMemory(...args),
-  saveMemory: (...args: unknown[]) => mockSaveMemory(...args),
+  fetchMemoryFiles: (...args: unknown[]) => mockFetchMemoryFiles(...args),
+  fetchMemoryFile: (...args: unknown[]) => mockFetchMemoryFile(...args),
+  saveMemoryFile: (...args: unknown[]) => mockSaveMemoryFile(...args),
+  compactMemory: (...args: unknown[]) => mockCompactMemory(...args),
   fetchGlobalConcurrency: (...args: unknown[]) => mockFetchGlobalConcurrency(...args),
   updateGlobalConcurrency: (...args: unknown[]) => mockUpdateGlobalConcurrency(...args),
   fetchMemoryBackendStatus: (...args: unknown[]) => mockFetchMemoryBackendStatus(...args),
@@ -86,8 +90,27 @@ describe("SettingsModal", () => {
     mockFetchAuthStatus.mockResolvedValue({ providers: [] });
     mockFetchModels.mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] });
     mockFetchBackups.mockResolvedValue({ backups: [], totalSize: 0 });
-    mockFetchMemory.mockResolvedValue({ content: "## Existing memory\n- Learned pattern" });
-    mockSaveMemory.mockResolvedValue({ success: true });
+    mockFetchMemoryFiles.mockResolvedValue({
+      files: [
+        {
+          path: ".fusion/memory/MEMORY.md",
+          label: "Long-term memory",
+          layer: "long-term",
+          size: 42,
+          updatedAt: "2026-04-17T12:00:00.000Z",
+        },
+        {
+          path: ".fusion/memory/DREAMS.md",
+          label: "Dreams",
+          layer: "dreams",
+          size: 21,
+          updatedAt: "2026-04-17T12:00:00.000Z",
+        },
+      ],
+    });
+    mockFetchMemoryFile.mockResolvedValue({ path: ".fusion/memory/MEMORY.md", content: "## Existing memory\n- Learned pattern" });
+    mockSaveMemoryFile.mockResolvedValue({ success: true });
+    mockCompactMemory.mockResolvedValue({ content: "# Compacted Memory\n\nImportant content." });
     mockImportSettings.mockResolvedValue({ success: true, globalCount: 0, projectCount: 0 });
     mockFetchGlobalConcurrency.mockResolvedValue({ globalMaxConcurrent: 4, currentlyActive: 0, queuedCount: 0, projectsActive: {} });
     mockUpdateGlobalConcurrency.mockResolvedValue({ globalMaxConcurrent: 4, currentlyActive: 0, queuedCount: 0, projectsActive: {} });
@@ -387,21 +410,22 @@ describe("SettingsModal", () => {
         expect(mockFetchSettings).toHaveBeenCalled();
       });
 
-      expect(mockFetchMemory).not.toHaveBeenCalled();
+      expect(mockFetchMemoryFiles).not.toHaveBeenCalled();
 
       await userEvent.click(screen.getByText("Memory"));
 
       await waitFor(() => {
-        expect(mockFetchMemory).toHaveBeenCalledWith(undefined);
+        expect(mockFetchMemoryFiles).toHaveBeenCalledWith(undefined);
+        expect(mockFetchMemoryFile).toHaveBeenCalledWith(".fusion/memory/MEMORY.md", undefined);
       });
 
-      const editor = await screen.findByLabelText("Editor for .fusion/memory.md") as HTMLTextAreaElement;
+      const editor = await screen.findByLabelText("Editor for .fusion/memory/MEMORY.md") as HTMLTextAreaElement;
       expect(editor.value).toContain("Existing memory");
     });
 
     it("shows loading state while memory is being fetched", async () => {
       let resolveMemory: ((value: { content: string }) => void) | undefined;
-      mockFetchMemory.mockReturnValueOnce(
+      mockFetchMemoryFile.mockReturnValueOnce(
         new Promise<{ content: string }>((resolve) => {
           resolveMemory = resolve;
         })
@@ -420,7 +444,7 @@ describe("SettingsModal", () => {
       resolveMemory?.({ content: "# Loaded" });
 
       await waitFor(() => {
-        expect(screen.getByLabelText("Editor for .fusion/memory.md")).toBeDefined();
+        expect(screen.getByLabelText("Editor for .fusion/memory/MEMORY.md")).toBeDefined();
       });
     });
 
@@ -434,20 +458,24 @@ describe("SettingsModal", () => {
 
       await userEvent.click(screen.getByText("Memory"));
 
-      const editor = await screen.findByLabelText("Editor for .fusion/memory.md");
+      const editor = await screen.findByLabelText("Editor for .fusion/memory/MEMORY.md");
       fireEvent.change(editor, { target: { value: "# Updated memory\n- Reusable learning" } });
 
       const saveButton = await screen.findByRole("button", { name: "Save Memory" });
       await userEvent.click(saveButton);
 
       await waitFor(() => {
-        expect(mockSaveMemory).toHaveBeenCalledWith("# Updated memory\n- Reusable learning", undefined);
+        expect(mockSaveMemoryFile).toHaveBeenCalledWith(
+          ".fusion/memory/MEMORY.md",
+          "# Updated memory\n- Reusable learning",
+          undefined,
+        );
       });
       expect(addToast).toHaveBeenCalledWith("Memory saved", "success");
     });
 
     it("handles empty memory content from API", async () => {
-      mockFetchMemory.mockResolvedValueOnce({ content: "" });
+      mockFetchMemoryFile.mockResolvedValueOnce({ path: ".fusion/memory/MEMORY.md", content: "" });
       renderModal();
 
       await waitFor(() => {
@@ -456,8 +484,35 @@ describe("SettingsModal", () => {
 
       await userEvent.click(screen.getByText("Memory"));
 
-      const editor = await screen.findByLabelText("Editor for .fusion/memory.md") as HTMLTextAreaElement;
+      const editor = await screen.findByLabelText("Editor for .fusion/memory/MEMORY.md") as HTMLTextAreaElement;
       expect(editor.value).toBe("");
+    });
+
+    it("switches between memory files in the editor", async () => {
+      mockFetchMemoryFile.mockImplementation((path: string) =>
+        Promise.resolve({
+          path,
+          content: path.endsWith("DREAMS.md") ? "# Dreams\n\n- Pattern" : "# Memory\n\n- Durable",
+        }),
+      );
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      await userEvent.click(screen.getByText("Memory"));
+
+      const select = await screen.findByLabelText("Memory File");
+      await userEvent.selectOptions(select, ".fusion/memory/DREAMS.md");
+
+      await waitFor(() => {
+        expect(mockFetchMemoryFile).toHaveBeenCalledWith(".fusion/memory/DREAMS.md", undefined);
+      });
+
+      const editor = await screen.findByLabelText("Editor for .fusion/memory/DREAMS.md") as HTMLTextAreaElement;
+      expect(editor.value).toContain("Dreams");
     });
   });
 

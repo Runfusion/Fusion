@@ -130,6 +130,8 @@ export const DEFAULT_PROJECT_SETTINGS = {
   memoryAutoSummarizeEnabled: false,
   memoryAutoSummarizeThresholdChars: 50_000,
   memoryAutoSummarizeSchedule: "0 3 * * *",
+  memoryDreamsEnabled: false,
+  memoryDreamsSchedule: "0 4 * * *",
   tokenCap: undefined,
   runStepsInNewSessions: false,
   maxParallelSteps: 2,

@@ -18,7 +18,7 @@ import * as nodeFs from "node:fs";
 
 import { promisify } from "node:util";
 import type { TaskStore, Column, ScheduleType, ActivityEventType, ModelPreset, MessageType, ParticipantType, RoutineTriggerType, ProjectSettings } from "@fusion/core";
-import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, type PiExtensionEntry, type PiExtensionSettings, getCurrentRepo, isGhAuthenticated, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupRoutine, exportSettings, importSettings, validateImportData, MessageStore, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes, readMemory, writeMemory, MemoryBackendError, discoverPiExtensions, updatePiExtensionDisabledIds, getFusionAgentDir, getLegacyPiAgentDir } from "@fusion/core";
+import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, type PiExtensionEntry, type PiExtensionSettings, getCurrentRepo, isGhAuthenticated, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupRoutine, exportSettings, importSettings, validateImportData, MessageStore, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes, listProjectMemoryFiles, readProjectMemoryFile, writeProjectMemoryFile, readMemory, writeMemory, MemoryBackendError, discoverPiExtensions, updatePiExtensionDisabledIds, getFusionAgentDir, getLegacyPiAgentDir } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
 import { GitHubClient, parseBadgeUrl } from "./github.js";
 import { githubRateLimiter } from "./github-poll.js";
@@ -2526,6 +2526,95 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       rethrowAsApiError(err, "Failed to save memory");
+    }
+  });
+
+  /**
+   * GET /api/memory/files
+   * Lists editable project memory files across the layered memory workspace.
+   */
+  router.get("/memory/files", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const rootDir = scopedStore.getRootDir();
+      const files = await listProjectMemoryFiles(rootDir);
+      res.json({ files });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to list memory files");
+    }
+  });
+
+  /**
+   * GET /api/memory/file?path=.fusion/memory/MEMORY.md
+   * Reads one validated memory file. Paths outside memory are rejected by core.
+   */
+  router.get("/memory/file", async (req, res) => {
+    try {
+      const path = typeof req.query.path === "string" ? req.query.path : "";
+      if (!path) {
+        throw badRequest("path is required");
+      }
+      const { store: scopedStore } = await getProjectContext(req);
+      const rootDir = scopedStore.getRootDir();
+      const result = await readProjectMemoryFile(rootDir, { path, lineCount: 400 });
+      res.json({ path: result.path, content: result.content });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof MemoryBackendError) {
+        const status = err.code === "NOT_FOUND" ? 404 : err.code === "UNSUPPORTED" ? 400 : 500;
+        throw new ApiError(status, `Memory operation failed: ${err.message}`, { code: err.code, backend: err.backend });
+      }
+      rethrowAsApiError(err, "Failed to read memory file");
+    }
+  });
+
+  /**
+   * PUT /api/memory/file
+   * Writes one validated memory file. Read-only backends reject writes.
+   */
+  router.put("/memory/file", async (req, res) => {
+    try {
+      const { path, content } = req.body ?? {};
+      if (typeof path !== "string" || !path) {
+        throw badRequest("path must be a string");
+      }
+      if (typeof content !== "string") {
+        throw badRequest("content must be a string");
+      }
+
+      const { store: scopedStore } = await getProjectContext(req);
+      const settings = await scopedStore.getSettings();
+      const backend = resolveMemoryBackend(settings);
+      if (!backend.capabilities.writable) {
+        throw new MemoryBackendError("READ_ONLY", "This backend is read-only and cannot write memory", backend.type);
+      }
+
+      const rootDir = scopedStore.getRootDir();
+      await writeProjectMemoryFile(rootDir, path, content);
+      res.json({ success: true });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof MemoryBackendError) {
+        const details = { code: err.code, backend: err.backend };
+        switch (err.code) {
+          case "READ_ONLY":
+          case "UNSUPPORTED":
+          case "CONFLICT":
+            throw new ApiError(409, `Memory operation failed: ${err.message}`, details);
+          case "NOT_FOUND":
+            throw new ApiError(404, `Memory operation failed: ${err.message}`, details);
+          default:
+            throw new ApiError(500, `Memory operation failed: ${err.message}`, details);
+        }
+      }
+      rethrowAsApiError(err, "Failed to save memory file");
     }
   });
 

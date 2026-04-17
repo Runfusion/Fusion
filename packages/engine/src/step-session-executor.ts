@@ -28,7 +28,7 @@ import { AgentLogger } from "./agent-logger.js";
 import { createLogger } from "./logger.js";
 import { isContextLimitError } from "./context-limit-detector.js";
 import { checkSessionError } from "./usage-limit-detector.js";
-import { createTaskDocumentWriteTool, createTaskDocumentReadTool } from "./agent-tools.js";
+import { createMemoryTools, createTaskDocumentWriteTool, createTaskDocumentReadTool } from "./agent-tools.js";
 
 const stepExecLog = createLogger("step-session-executor");
 
@@ -786,6 +786,7 @@ export class StepSessionExecutor {
                 createTaskDocumentReadTool(this.options.store, taskDetail.id),
               ]
             : [];
+          const memoryTools = createMemoryTools(this.options.rootDir, settings);
 
           // Create fresh agent session for this attempt
           // Resolve executor model using canonical lane hierarchy:
@@ -816,7 +817,7 @@ export class StepSessionExecutor {
             fallbackProvider: settings.fallbackProvider,
             fallbackModelId: settings.fallbackModelId,
             defaultThinkingLevel: taskDetail.thinkingLevel ?? settings.defaultThinkingLevel,
-            customTools: [...pluginTools, ...documentTools],
+            customTools: [...pluginTools, ...documentTools, ...memoryTools],
             onText: (delta) => {
               agentLogger.onText(delta);
               stuckTaskDetector?.recordActivity(trackingKey);

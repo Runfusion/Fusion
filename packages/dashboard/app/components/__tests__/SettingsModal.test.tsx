@@ -79,8 +79,19 @@ vi.mock("../../api", () => ({
   createBackup: vi.fn(() => Promise.resolve({ success: true })),
   exportSettings: vi.fn(() => Promise.resolve({ version: 1, exportedAt: new Date().toISOString(), global: undefined, project: {} })),
   importSettings: vi.fn(() => Promise.resolve({ success: true, globalCount: 0, projectCount: 0 })),
-  fetchMemory: vi.fn(() => Promise.resolve({ content: "" })),
-  saveMemory: vi.fn(() => Promise.resolve({ success: true })),
+  fetchMemoryFiles: vi.fn(() => Promise.resolve({
+    files: [
+      {
+        path: ".fusion/memory/MEMORY.md",
+        label: "Long-term memory",
+        layer: "long-term",
+        size: 0,
+        updatedAt: "2026-04-17T12:00:00.000Z",
+      },
+    ],
+  })),
+  fetchMemoryFile: vi.fn(() => Promise.resolve({ path: ".fusion/memory/MEMORY.md", content: "" })),
+  saveMemoryFile: vi.fn(() => Promise.resolve({ success: true })),
   compactMemory: vi.fn(() => Promise.resolve({ content: "# Compacted Memory\n\nImportant content." })),
 }));
 

@@ -1191,7 +1191,6 @@ export class HeartbeatMonitor {
     // Document tools for persisting durable findings
     tools.push(createTaskDocumentWriteTool(taskStore, taskId));
     tools.push(createTaskDocumentReadTool(taskStore, taskId));
-
     // Agent delegation tools — discover and delegate work to other agents
     tools.push(createListAgentsTool(this.store));
     tools.push(createDelegateTaskTool(this.store, taskStore));

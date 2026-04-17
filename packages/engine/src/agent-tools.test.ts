@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createSendMessageTool, createReadMessagesTool, sendMessageParams, readMessagesParams } from "./agent-tools.js";
+import { createMemoryTools, createSendMessageTool, createReadMessagesTool, sendMessageParams, readMessagesParams } from "./agent-tools.js";
 import type { MessageStore, Message } from "@fusion/core";
 
 // Mock logger
@@ -13,6 +13,27 @@ vi.mock("./logger.js", () => {
     createLogger: vi.fn(() => createMockLogger()),
     heartbeatLog: createMockLogger(),
   };
+});
+
+describe("createMemoryTools", () => {
+  it("omits memory tools when memory is disabled", () => {
+    expect(createMemoryTools("/repo", { memoryEnabled: false }).map((tool) => tool.name)).toEqual([]);
+  });
+
+  it("omits memory_append for read-only memory backends", () => {
+    expect(createMemoryTools("/repo", { memoryBackendType: "readonly" }).map((tool) => tool.name)).toEqual([
+      "memory_search",
+      "memory_get",
+    ]);
+  });
+
+  it("includes memory_append for writable memory backends", () => {
+    expect(createMemoryTools("/repo", { memoryBackendType: "file" }).map((tool) => tool.name)).toEqual([
+      "memory_search",
+      "memory_get",
+      "memory_append",
+    ]);
+  });
 });
 
 function createMessage(overrides: Partial<Message> = {}): Message {

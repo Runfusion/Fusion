@@ -19,9 +19,17 @@
  * - The memory instruction templates used by triage and executor prompts
  */
 
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import {
+  ensureOpenClawMemoryFiles,
+  memoryLongTermPath,
+  type MemorySearchOptions,
+  type MemorySearchResult,
+  type MemoryGetOptions,
+  type MemoryGetResult,
+} from "./memory-backend.js";
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -81,6 +89,7 @@ export function getDefaultMemoryScaffold(): string {
 export async function ensureMemoryFile(rootDir: string): Promise<boolean> {
   const filePath = memoryFilePath(rootDir);
   if (existsSync(filePath)) {
+    await ensureOpenClawMemoryFiles(rootDir);
     return false;
   }
 
@@ -90,6 +99,7 @@ export async function ensureMemoryFile(rootDir: string): Promise<boolean> {
   }
 
   await writeFile(filePath, getDefaultMemoryScaffold(), "utf-8");
+  await ensureOpenClawMemoryFiles(rootDir);
   return true;
 }
 
@@ -229,12 +239,30 @@ export async function ensureMemoryFileWithBackend(
   if (backend.exists) {
     const exists = await backend.exists(rootDir);
     if (exists) {
+      if (backend.capabilities.writable) {
+        await ensureOpenClawMemoryFiles(rootDir);
+        if (!existsSync(memoryFilePath(rootDir))) {
+          const existingContent = await readProjectMemory(rootDir);
+          if (existingContent) {
+            await backend.write(rootDir, existingContent);
+          }
+        }
+      }
       return false; // Memory already exists, don't overwrite
     }
   } else {
     // Fall back to direct file check
     const filePath = memoryFilePath(rootDir);
     if (existsSync(filePath)) {
+      if (backend.capabilities.writable) {
+        await ensureOpenClawMemoryFiles(rootDir);
+        if (!existsSync(memoryFilePath(rootDir))) {
+          const existingContent = await readProjectMemory(rootDir);
+          if (existingContent) {
+            await backend.write(rootDir, existingContent);
+          }
+        }
+      }
       return false; // Memory already exists, don't overwrite
     }
   }
@@ -243,6 +271,13 @@ export async function ensureMemoryFileWithBackend(
   const dir = join(rootDir, ".fusion");
   if (!existsSync(dir)) {
     await mkdir(dir, { recursive: true });
+  }
+
+  // OpenClaw-style memory layers are always bootstrapped for writable memory
+  // backends. The legacy `.fusion/memory.md` file remains as a compatibility
+  // source, but new writes go to `.fusion/memory/MEMORY.md`.
+  if (backend.capabilities.writable) {
+    await ensureOpenClawMemoryFiles(rootDir);
   }
 
   // Try to write using the backend
@@ -282,6 +317,32 @@ export async function readProjectMemoryWithBackend(
     // Read failures return empty string (graceful degradation)
     return "";
   }
+}
+
+export async function searchProjectMemory(
+  rootDir: string,
+  options: MemorySearchOptions,
+  settings?: MemorySettings,
+): Promise<MemorySearchResult[]> {
+  const { resolveMemoryBackend } = await getMemoryBackendUtils();
+  const backend = resolveMemoryBackend(settings);
+  if (!backend.search) {
+    return [];
+  }
+  return backend.search(rootDir, options);
+}
+
+export async function getProjectMemory(
+  rootDir: string,
+  options: MemoryGetOptions,
+  settings?: MemorySettings,
+): Promise<MemoryGetResult> {
+  const { resolveMemoryBackend } = await getMemoryBackendUtils();
+  const backend = resolveMemoryBackend(settings);
+  if (!backend.get) {
+    throw new Error(`Memory backend '${backend.type}' does not support memory_get`);
+  }
+  return backend.get(rootDir, options);
 }
 
 // ── Memory Instructions for Prompts ──────────────────────────────────
@@ -332,14 +393,17 @@ This project has a memory system that stores durable project learnings.
     return `
 ## Project Memory
 
-This project has a memory file at \`.fusion/memory.md\` that stores durable project learnings.
+This project has OpenClaw-style memory files:
+- \`.fusion/memory/MEMORY.md\` — curated long-term memory for durable decisions, conventions, and pitfalls
+- \`.fusion/memory/YYYY-MM-DD.md\` — append-only daily notes for running context
+- Legacy fallback: \`.fusion/memory.md\`
 
 **Before writing the specification:**
-1. Read \`.fusion/memory.md\` using the read tool
-2. Consult the architecture, conventions, pitfalls, and context sections
+1. Use \`memory_search\` first for task-relevant context
+2. Use \`memory_get\` only for specific memory files/line ranges returned by search
 3. Incorporate relevant learnings into your specification — reference actual patterns, constraints, and conventions documented there
 
-**If the memory file contains useful context for this task, reference it in the specification.** For example, if the memory documents that the project uses a specific pattern for API routes, ensure the specification follows that pattern.
+Do not read all memory or read \`.fusion/memory.md\` directly by default. If memory is irrelevant, skip it.
 `;
   }
 
@@ -407,27 +471,33 @@ This project has a memory system that stores durable project learnings.
     return `
 ## Project Memory
 
-This project has a memory file at \`.fusion/memory.md\` that stores durable project learnings accumulated from past task runs.
+This project has OpenClaw-style memory files:
+- \`.fusion/memory/MEMORY.md\` — curated long-term memory for durable decisions, conventions, and pitfalls
+- \`.fusion/memory/YYYY-MM-DD.md\` — append-only daily notes for running observations and open loops
+- Legacy fallback: \`.fusion/memory.md\`
 
 **At the start of execution:**
-1. Read \`.fusion/memory.md\` using the read tool
-2. Review the architecture, conventions, pitfalls, and context sections
-3. Apply these learnings to your implementation — follow documented patterns and avoid known pitfalls
+1. Use \`memory_search\` first for task-relevant context
+2. Use \`memory_get\` only for specific memory files/line ranges returned by search
+3. Apply relevant learnings to your implementation — follow documented patterns and avoid known pitfalls
+4. Do not load all memory or read \`.fusion/memory.md\` directly by default. Skip memory reads when memory is irrelevant or context is tight.
 
 **At the end of execution (before calling \`task_done()\`):**
 1. Review what you learned during this task that would genuinely benefit future runs
-2. **If nothing durable was learned, skip the memory update entirely** — do not append trivial or task-specific notes
-3. Only write when you have genuinely durable, reusable insights such as:
+2. Write durable decisions, conventions, and pitfalls to \`.fusion/memory/MEMORY.md\`
+3. Write running observations, unresolved context, and open loops to today's \`.fusion/memory/YYYY-MM-DD.md\`
+4. **If nothing durable was learned, skip the memory update entirely** — do not append trivial or task-specific notes
+5. Only write when you have genuinely durable, reusable insights such as:
    - New architectural patterns or module boundaries discovered
    - Conventions or standards that should be followed
    - Pitfalls or anti-patterns to avoid in future work
    - Important constraints or context that affects implementation decisions
-4. **Avoid** writing task-specific trivia such as:
+6. **Avoid** writing task-specific trivia such as:
    - Per-task implementation logs or changelog entries
    - Transient failures resolved without broader lessons
    - One-off file paths, variable names, or minor code changes
    - Notes about what you did rather than what future agents should know
-5. **Consolidate when possible**: If an existing entry already covers a concept, update or refine it rather than adding a duplicate. Delete entries that are no longer accurate.
+7. **Consolidate when possible**: If an existing entry already covers a concept, update or refine it rather than adding a duplicate. Delete entries that are no longer accurate.
 
 **Format for additions:** Add bullet points under the relevant section heading:
 - Use \`- \` prefix for list items
@@ -469,7 +539,15 @@ This project has a memory system that stores durable project learnings accumulat
  * @returns The memory file content, or empty string if not found.
  */
 export async function readProjectMemory(rootDir: string): Promise<string> {
+  const longTermPath = memoryLongTermPath(rootDir);
   const filePath = memoryFilePath(rootDir);
+  if (existsSync(longTermPath) && existsSync(filePath)) {
+    const [longTermStat, legacyStat] = await Promise.all([stat(longTermPath), stat(filePath)]);
+    return readFile(legacyStat.mtimeMs > longTermStat.mtimeMs ? filePath : longTermPath, "utf-8");
+  }
+  if (existsSync(longTermPath)) {
+    return readFile(longTermPath, "utf-8");
+  }
   if (!existsSync(filePath)) {
     return "";
   }

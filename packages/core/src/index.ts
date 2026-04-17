@@ -422,6 +422,8 @@ export {
   buildExecutionMemoryInstructions,
   readProjectMemory,
   readProjectMemoryWithBackend,
+  searchProjectMemory,
+  getProjectMemory,
   resolveMemoryInstructionContext,
   type MemoryInstructionContext,
 } from "./project-memory.js";
@@ -432,6 +434,21 @@ export {
   FileMemoryBackend,
   ReadOnlyMemoryBackend,
   QmdMemoryBackend,
+  MEMORY_WORKSPACE_PATH,
+  MEMORY_LONG_TERM_FILENAME,
+  MEMORY_DREAMS_FILENAME,
+  LEGACY_MEMORY_FILE_PATH,
+  memoryWorkspacePath,
+  memoryLongTermPath,
+  memoryDreamsPath,
+  dailyMemoryPath,
+  getDefaultLongTermMemoryScaffold,
+  getDefaultDailyMemoryScaffold,
+  getDefaultDreamsScaffold,
+  ensureOpenClawMemoryFiles,
+  listProjectMemoryFiles,
+  readProjectMemoryFile,
+  writeProjectMemoryFile,
 } from "./memory-backend.js";
 
 export {
@@ -449,7 +466,18 @@ export {
 
 export { MemoryBackendError } from "./memory-backend.js";
 
-export type { MemoryBackendCapabilities } from "./memory-backend.js";
+export type { MemoryBackendCapabilities, MemoryFileInfo, MemoryGetOptions, MemoryGetResult, MemorySearchOptions, MemorySearchResult } from "./memory-backend.js";
+
+export {
+  buildDreamProcessingPrompt,
+  createMemoryDreamsAutomation,
+  DEFAULT_MEMORY_DREAMS_SCHEDULE,
+  extractDreamProcessorResult,
+  MEMORY_DREAMS_SCHEDULE_NAME,
+  processMemoryDreams,
+  syncMemoryDreamsAutomation,
+} from "./memory-dreams.js";
+export type { DreamProcessorResult, DreamPromptExecutor } from "./memory-dreams.js";
 
 // ── Project Insights ──────────────────────────────────────────────────────
 

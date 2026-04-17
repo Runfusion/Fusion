@@ -1285,6 +1285,13 @@ export interface ProjectSettings {
    *  memoryAutoSummarizeEnabled is true.
    *  Default: "0 3 * * *" (daily at 3 AM, offset from insight extraction at 2 AM). */
   memoryAutoSummarizeSchedule?: string;
+  /** When true, daily memory notes are periodically synthesized into DREAMS.md
+   *  and durable lessons are promoted into `.fusion/memory/MEMORY.md`.
+   *  Default: false. */
+  memoryDreamsEnabled?: boolean;
+  /** Cron expression for dream processing. Only used when memoryDreamsEnabled
+   *  is true. Default: "0 4 * * *" (daily at 4 AM, after long-term compaction). */
+  memoryDreamsSchedule?: string;
   /** Maximum token count before auto-compact triggers. When undefined, compact
    *  only on overflow errors. When set, the engine monitors token usage after
    *  each prompt and proactively compacts context when the token count reaches

@@ -32,6 +32,7 @@ import type { StuckTaskDetector } from "./stuck-task-detector.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  createMemoryTools,
   createTaskDocumentReadTool,
   createTaskDocumentWriteTool,
 } from "./agent-tools.js";
@@ -651,6 +652,7 @@ export class TriageProcessor {
           }),
           createTaskDocumentWriteTool(this.store, task.id),
           createTaskDocumentReadTool(this.store, task.id),
+          ...createMemoryTools(this.rootDir, settings),
           this.createReviewSpecTool(
             task.id,
             promptPath,

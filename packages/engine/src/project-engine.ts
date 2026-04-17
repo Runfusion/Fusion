@@ -926,7 +926,7 @@ export class ProjectEngine {
     store.on("settings:updated", onStuckTimeoutChange);
     this.settingsHandlers.push(onStuckTimeoutChange);
 
-    // 5. Insight extraction settings change — sync automation
+    // 5. Memory maintenance settings change — sync automations
     const onInsightSettingsChange = async ({
       settings: s,
       previous: prev,
@@ -939,20 +939,30 @@ export class ProjectEngine {
         "insightExtractionSchedule",
         "insightExtractionMinIntervalMs",
       ] as const;
+      const dreamKeys = [
+        "memoryDreamsEnabled",
+        "memoryDreamsSchedule",
+      ] as const;
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const changed = insightKeys.some((key) => (s as any)[key] !== (prev as any)[key]);
-      if (!changed || !this.automationStore) return;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const dreamsChanged = dreamKeys.some((key) => (s as any)[key] !== (prev as any)[key]);
+      if ((!changed && !dreamsChanged) || !this.automationStore) return;
 
       try {
-        const { syncInsightExtractionAutomation } = await import("@fusion/core");
-        if (typeof syncInsightExtractionAutomation === "function") {
+        const { syncInsightExtractionAutomation, syncMemoryDreamsAutomation } = await import("@fusion/core");
+        if (changed && typeof syncInsightExtractionAutomation === "function") {
           await syncInsightExtractionAutomation(this.automationStore, s);
           runtimeLog.log("Insight extraction automation synced with settings");
         }
+        if (dreamsChanged && typeof syncMemoryDreamsAutomation === "function") {
+          await syncMemoryDreamsAutomation(this.automationStore, s);
+          runtimeLog.log("Memory dreams automation synced with settings");
+        }
       } catch (err) {
         runtimeLog.warn(
-          "Failed to sync insight extraction automation:",
+          "Failed to sync memory maintenance automation:",
           err instanceof Error ? err.message : err,
         );
       }

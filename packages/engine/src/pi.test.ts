@@ -181,6 +181,87 @@ describe("compactSessionContext", () => {
   });
 });
 
+describe("promptWithFallback context recovery", () => {
+  it("tries compacting embedded prompt memory before full session compaction", async () => {
+    const longMemory = Array.from({ length: 900 }, (_, index) => `- Durable memory item ${index}: ${"detail ".repeat(20)}`).join("\n");
+    const promptText = [
+      "Task prompt",
+      "",
+      "## Project Memory",
+      "",
+      longMemory,
+      "",
+      "## Begin",
+      "",
+      "Do the work.",
+    ].join("\n");
+    const state: { error?: string } = {};
+    const prompts: string[] = [];
+    const prompt = vi.fn(async (nextPrompt: string) => {
+      prompts.push(nextPrompt);
+      if (prompt.mock.calls.length === 1) {
+        state.error = "Your input exceeds the context window of this model. Please adjust your input and try again.";
+      }
+    });
+    const compact = vi.fn();
+    const session = {
+      prompt,
+      compact,
+      state,
+    } as unknown as AgentSession;
+
+    await promptWithFallback(session, promptText);
+
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(compact).not.toHaveBeenCalled();
+    expect(prompts[1]!.length).toBeLessThan(prompts[0]!.length);
+    expect(prompts[1]).toContain("Project memory compacted");
+    expect(prompts[1]).toContain("## Begin");
+  });
+
+  it("compacts and retries when session.prompt stores a context error in session.state.error", async () => {
+    const state: { error?: string } = {};
+    const prompt = vi.fn(async () => {
+      if (prompt.mock.calls.length === 1) {
+        state.error = "{\"error\":{\"code\":\"context_length_exceeded\",\"message\":\"Your input exceeds the context window of this model. Please adjust your input and try again.\"}}";
+      }
+    });
+    const compact = vi.fn(async () => {
+      state.error = undefined;
+      return { summary: "Compacted", tokensBefore: 120000 };
+    });
+    const session = {
+      prompt,
+      compact,
+      state,
+    } as unknown as AgentSession;
+
+    await promptWithFallback(session, "review this task");
+
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(compact).toHaveBeenCalledWith(COMPACTION_FALLBACK_INSTRUCTIONS);
+    expect(state.error).toBeUndefined();
+  });
+
+  it("throws swallowed non-context session errors without attempting compaction", async () => {
+    const state: { error?: string } = {};
+    const prompt = vi.fn(async () => {
+      state.error = "429 Too Many Requests";
+    });
+    const compact = vi.fn();
+    const session = {
+      prompt,
+      compact,
+      state,
+    } as unknown as AgentSession;
+
+    await expect(promptWithFallback(session, "review this task")).rejects.toThrow("429 Too Many Requests");
+
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(compact).not.toHaveBeenCalled();
+  });
+});
+
 describe("createKbAgent skills parameter", () => {
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
   let mockResolveSessionSkills: ReturnType<typeof vi.fn>;

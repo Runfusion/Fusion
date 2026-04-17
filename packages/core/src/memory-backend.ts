@@ -9,9 +9,19 @@
  * `.fusion/memory.md`.
  */
 
-import { readFile, writeFile, mkdir, access, constants } from "node:fs/promises";
+import { readFile, writeFile, mkdir, access, constants, readdir, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
+
+export const MEMORY_WORKSPACE_PATH = ".fusion/memory";
+export const MEMORY_LONG_TERM_FILENAME = "MEMORY.md";
+export const MEMORY_DREAMS_FILENAME = "DREAMS.md";
+export const LEGACY_MEMORY_FILE_PATH = ".fusion/memory.md";
+
+const DAILY_MEMORY_RE = /^\d{4}-\d{2}-\d{2}\.md$/;
+const MAX_MEMORY_SNIPPET_CHARS = 700;
+const DEFAULT_MEMORY_GET_LINES = 120;
+const MAX_MEMORY_GET_LINES = 400;
 
 // ── Type Definitions ────────────────────────────────────────────────
 
@@ -52,6 +62,43 @@ export interface MemoryWriteResult {
   success: boolean;
   /** The backend that processed this write */
   backend: string;
+}
+
+export interface MemoryGetOptions {
+  path: string;
+  startLine?: number;
+  lineCount?: number;
+}
+
+export interface MemoryGetResult {
+  path: string;
+  content: string;
+  startLine: number;
+  endLine: number;
+  totalLines: number;
+  backend: string;
+}
+
+export interface MemorySearchOptions {
+  query: string;
+  limit?: number;
+}
+
+export interface MemorySearchResult {
+  path: string;
+  lineStart: number;
+  lineEnd: number;
+  snippet: string;
+  score: number;
+  backend: string;
+}
+
+export interface MemoryFileInfo {
+  path: string;
+  label: string;
+  layer: "long-term" | "daily" | "dreams" | "legacy";
+  size: number;
+  updatedAt: string;
 }
 
 /**
@@ -109,6 +156,16 @@ export interface MemoryBackend {
    */
   write(rootDir: string, content: string): Promise<MemoryWriteResult>;
   /**
+   * Read a specific memory file or line window. Implementations must reject
+   * paths outside the memory workspace.
+   */
+  get?(rootDir: string, options: MemoryGetOptions): Promise<MemoryGetResult>;
+  /**
+   * Search memory files. Backends may use keyword search, vector search, or
+   * external sidecars, but should return bounded snippets rather than full files.
+   */
+  search?(rootDir: string, options: MemorySearchOptions): Promise<MemorySearchResult[]>;
+  /**
    * Check if memory exists for a project.
    * @param rootDir - The project root directory
    * @returns Promise resolving to true if memory exists
@@ -153,11 +210,21 @@ export class FileMemoryBackend implements MemoryBackend {
    * Get the absolute path to the memory file.
    */
   private getFilePath(rootDir: string): string {
-    return join(rootDir, ".fusion", "memory.md");
+    return join(rootDir, LEGACY_MEMORY_FILE_PATH);
+  }
+
+  private getLongTermPath(rootDir: string): string {
+    return join(rootDir, MEMORY_WORKSPACE_PATH, MEMORY_LONG_TERM_FILENAME);
   }
 
   async read(rootDir: string): Promise<MemoryReadResult> {
-    const filePath = this.getFilePath(rootDir);
+    const longTermPath = this.getLongTermPath(rootDir);
+    const legacyPath = this.getFilePath(rootDir);
+    let filePath = existsSync(longTermPath) ? longTermPath : legacyPath;
+    if (existsSync(longTermPath) && existsSync(legacyPath)) {
+      const [longTermStat, legacyStat] = await Promise.all([stat(longTermPath), stat(legacyPath)]);
+      filePath = legacyStat.mtimeMs > longTermStat.mtimeMs ? legacyPath : longTermPath;
+    }
     try {
       const content = await readFile(filePath, "utf-8");
       return {
@@ -182,13 +249,18 @@ export class FileMemoryBackend implements MemoryBackend {
   }
 
   async write(rootDir: string, content: string): Promise<MemoryWriteResult> {
-    const filePath = this.getFilePath(rootDir);
-    const dir = join(rootDir, ".fusion");
+    const filePath = this.getLongTermPath(rootDir);
+    const dir = join(rootDir, MEMORY_WORKSPACE_PATH);
+    const legacyPath = this.getFilePath(rootDir);
+    const legacyDir = join(rootDir, ".fusion");
 
     try {
       // Ensure directory exists
       if (!existsSync(dir)) {
         await mkdir(dir, { recursive: true });
+      }
+      if (!existsSync(legacyDir)) {
+        await mkdir(legacyDir, { recursive: true });
       }
 
       // Write atomically using temp file
@@ -198,6 +270,11 @@ export class FileMemoryBackend implements MemoryBackend {
       // Import rename for atomic swap
       const { rename } = await import("node:fs/promises");
       await rename(tmpPath, filePath);
+
+      // Temporary compatibility mirror while callers migrate to the layered path.
+      const legacyTmpPath = legacyPath + ".tmp";
+      await writeFile(legacyTmpPath, content, "utf-8");
+      await rename(legacyTmpPath, legacyPath);
 
       return {
         success: true,
@@ -213,13 +290,23 @@ export class FileMemoryBackend implements MemoryBackend {
   }
 
   async exists(rootDir: string): Promise<boolean> {
-    const filePath = this.getFilePath(rootDir);
+    const filePath = existsSync(this.getLongTermPath(rootDir))
+      ? this.getLongTermPath(rootDir)
+      : this.getFilePath(rootDir);
     try {
       await access(filePath, constants.R_OK);
       return true;
     } catch {
       return false;
     }
+  }
+
+  async get(rootDir: string, options: MemoryGetOptions): Promise<MemoryGetResult> {
+    return getMemoryFile(rootDir, options, this.type);
+  }
+
+  async search(rootDir: string, options: MemorySearchOptions): Promise<MemorySearchResult[]> {
+    return searchMemoryFiles(rootDir, options, this.type);
   }
 }
 
@@ -254,6 +341,18 @@ export class ReadOnlyMemoryBackend implements MemoryBackend {
       "This backend is read-only and cannot write memory",
       this.type,
     );
+  }
+
+  async get(_rootDir: string, options: MemoryGetOptions): Promise<MemoryGetResult> {
+    throw new MemoryBackendError(
+      "NOT_FOUND",
+      `Memory path '${options.path}' not found`,
+      this.type,
+    );
+  }
+
+  async search(_rootDir: string, _options: MemorySearchOptions): Promise<MemorySearchResult[]> {
+    return [];
   }
 }
 
@@ -332,6 +431,334 @@ export class QmdMemoryBackend implements MemoryBackend {
    */
   async exists(rootDir: string): Promise<boolean> {
     return this.fileBackend.exists(rootDir);
+  }
+
+  async get(rootDir: string, options: MemoryGetOptions): Promise<MemoryGetResult> {
+    return getMemoryFile(rootDir, options, this.type);
+  }
+
+  async search(rootDir: string, options: MemorySearchOptions): Promise<MemorySearchResult[]> {
+    const qmdResults = await searchWithQmd(rootDir, options);
+    if (qmdResults.length > 0) {
+      return qmdResults.map((result) => ({ ...result, backend: this.type }));
+    }
+    return searchMemoryFiles(rootDir, options, "file");
+  }
+}
+
+export function memoryWorkspacePath(rootDir: string): string {
+  return join(rootDir, MEMORY_WORKSPACE_PATH);
+}
+
+export function memoryLongTermPath(rootDir: string): string {
+  return join(memoryWorkspacePath(rootDir), MEMORY_LONG_TERM_FILENAME);
+}
+
+export function memoryDreamsPath(rootDir: string): string {
+  return join(memoryWorkspacePath(rootDir), MEMORY_DREAMS_FILENAME);
+}
+
+export function dailyMemoryPath(rootDir: string, date = new Date()): string {
+  return join(memoryWorkspacePath(rootDir), `${date.toISOString().slice(0, 10)}.md`);
+}
+
+export function getDefaultLongTermMemoryScaffold(): string {
+  return `# Project Memory
+
+<!-- Curated long-term memory. Store durable decisions, conventions, preferences, and pitfalls. -->
+
+## Decisions
+
+## Conventions
+
+## Pitfalls
+
+## Context
+`;
+}
+
+export function getDefaultDailyMemoryScaffold(date = new Date()): string {
+  return `# Daily Memory ${date.toISOString().slice(0, 10)}
+
+<!-- Append running observations, open loops, and day-to-day notes here. Promote evergreen facts to MEMORY.md. -->
+`;
+}
+
+export function getDefaultDreamsScaffold(): string {
+  return `# Memory Dreams
+
+<!-- Periodic synthesized patterns from daily notes. Promote durable lessons to MEMORY.md. -->
+`;
+}
+
+export async function ensureOpenClawMemoryFiles(rootDir: string, date = new Date()): Promise<{ longTermCreated: boolean; dailyCreated: boolean }> {
+  const workspacePath = memoryWorkspacePath(rootDir);
+  await mkdir(workspacePath, { recursive: true });
+
+  const longTermPath = memoryLongTermPath(rootDir);
+  let longTermCreated = false;
+  if (!existsSync(longTermPath)) {
+    const legacyPath = join(rootDir, LEGACY_MEMORY_FILE_PATH);
+    const content = existsSync(legacyPath)
+      ? await readFile(legacyPath, "utf-8")
+      : getDefaultLongTermMemoryScaffold();
+    await writeFile(longTermPath, content, "utf-8");
+    longTermCreated = true;
+  }
+
+  const todayPath = dailyMemoryPath(rootDir, date);
+  let dailyCreated = false;
+  if (!existsSync(todayPath)) {
+    await writeFile(todayPath, getDefaultDailyMemoryScaffold(date), "utf-8");
+    dailyCreated = true;
+  }
+
+  const dreamsPath = memoryDreamsPath(rootDir);
+  if (!existsSync(dreamsPath)) {
+    await writeFile(dreamsPath, getDefaultDreamsScaffold(), "utf-8");
+  }
+
+  return { longTermCreated, dailyCreated };
+}
+
+function getMemoryFileLayer(displayPath: string): MemoryFileInfo["layer"] {
+  if (displayPath === `${MEMORY_WORKSPACE_PATH}/${MEMORY_LONG_TERM_FILENAME}`) return "long-term";
+  if (displayPath === `${MEMORY_WORKSPACE_PATH}/${MEMORY_DREAMS_FILENAME}`) return "dreams";
+  if (displayPath === LEGACY_MEMORY_FILE_PATH) return "legacy";
+  return "daily";
+}
+
+function getMemoryFileLabel(displayPath: string): string {
+  const layer = getMemoryFileLayer(displayPath);
+  if (layer === "long-term") return "Long-term memory";
+  if (layer === "dreams") return "Dreams";
+  if (layer === "legacy") return "Legacy memory";
+  return `Daily notes ${basename(displayPath, ".md")}`;
+}
+
+export async function listProjectMemoryFiles(rootDir: string, date = new Date()): Promise<MemoryFileInfo[]> {
+  await ensureOpenClawMemoryFiles(rootDir, date);
+  const files = await listMemoryFiles(rootDir);
+  const uniqueFiles = Array.from(new Map(files.map((file) => [file.displayPath, file])).values());
+  const infos = await Promise.all(uniqueFiles.map(async (file) => {
+    const fileStat = await stat(file.absPath);
+    return {
+      path: file.displayPath,
+      label: getMemoryFileLabel(file.displayPath),
+      layer: getMemoryFileLayer(file.displayPath),
+      size: fileStat.size,
+      updatedAt: fileStat.mtime.toISOString(),
+    } satisfies MemoryFileInfo;
+  }));
+
+  const order: Record<MemoryFileInfo["layer"], number> = {
+    "long-term": 0,
+    daily: 1,
+    dreams: 2,
+    legacy: 3,
+  };
+  return infos.sort((a, b) => order[a.layer] - order[b.layer] || b.path.localeCompare(a.path));
+}
+
+export async function readProjectMemoryFile(rootDir: string, options: MemoryGetOptions): Promise<MemoryGetResult> {
+  return getMemoryFile(rootDir, options, "file");
+}
+
+export async function writeProjectMemoryFile(rootDir: string, path: string, content: string): Promise<MemoryWriteResult> {
+  const { absPath, displayPath } = resolveMemoryFilePath(rootDir, path);
+  await mkdir(dirname(absPath), { recursive: true });
+  const tmpPath = `${absPath}.tmp`;
+  await writeFile(tmpPath, content, "utf-8");
+  const { rename } = await import("node:fs/promises");
+  await rename(tmpPath, absPath);
+
+  if (displayPath === `${MEMORY_WORKSPACE_PATH}/${MEMORY_LONG_TERM_FILENAME}`) {
+    const legacyPath = join(rootDir, LEGACY_MEMORY_FILE_PATH);
+    const legacyTmpPath = `${legacyPath}.tmp`;
+    await writeFile(legacyTmpPath, content, "utf-8");
+    await rename(legacyTmpPath, legacyPath);
+  }
+
+  return { success: true, backend: "file" };
+}
+
+function isPathTraversal(path: string): boolean {
+  return path.split(/[\\/]+/).includes("..");
+}
+
+function normalizeMemoryRequestPath(rawPath: string): string {
+  const trimmed = rawPath.trim();
+  if (!trimmed) {
+    throw new MemoryBackendError("NOT_FOUND", "Memory path is required", "memory");
+  }
+  if (isAbsolute(trimmed) || isPathTraversal(trimmed)) {
+    throw new MemoryBackendError("UNSUPPORTED", "Memory paths must be workspace-relative", "memory");
+  }
+  const normalized = normalize(trimmed).replace(/\\/g, "/");
+  if (
+    normalized === MEMORY_LONG_TERM_FILENAME
+    || normalized === MEMORY_DREAMS_FILENAME
+    || normalized === `memory/${MEMORY_LONG_TERM_FILENAME}`
+    || normalized === `memory/${MEMORY_DREAMS_FILENAME}`
+  ) {
+    return `${MEMORY_WORKSPACE_PATH}/${basename(normalized)}`;
+  }
+  if (normalized === LEGACY_MEMORY_FILE_PATH) {
+    return normalized;
+  }
+  if (DAILY_MEMORY_RE.test(basename(normalized)) && (normalized === basename(normalized) || normalized.startsWith("memory/"))) {
+    return `${MEMORY_WORKSPACE_PATH}/${basename(normalized)}`;
+  }
+  if (normalized.startsWith(`${MEMORY_WORKSPACE_PATH}/`)) {
+    const file = basename(normalized);
+    if (file === MEMORY_LONG_TERM_FILENAME || file === MEMORY_DREAMS_FILENAME || DAILY_MEMORY_RE.test(file)) {
+      return `${MEMORY_WORKSPACE_PATH}/${file}`;
+    }
+  }
+  throw new MemoryBackendError(
+    "UNSUPPORTED",
+    `Memory path '${rawPath}' is outside allowed files: MEMORY.md, DREAMS.md, memory/YYYY-MM-DD.md, .fusion/memory.md`,
+    "memory",
+  );
+}
+
+function resolveMemoryFilePath(rootDir: string, requestedPath: string): { absPath: string; displayPath: string } {
+  const displayPath = normalizeMemoryRequestPath(requestedPath);
+  const absPath = resolve(rootDir, displayPath);
+  const rel = relative(rootDir, absPath);
+  if (!rel || rel.startsWith(`..${sep}`) || rel === ".." || isAbsolute(rel)) {
+    throw new MemoryBackendError("UNSUPPORTED", "Memory path escapes project root", "memory");
+  }
+  return { absPath, displayPath };
+}
+
+async function getMemoryFile(rootDir: string, options: MemoryGetOptions, backend: string): Promise<MemoryGetResult> {
+  const { absPath, displayPath } = resolveMemoryFilePath(rootDir, options.path);
+  let content: string;
+  try {
+    content = await readFile(absPath, "utf-8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new MemoryBackendError("NOT_FOUND", `Memory path '${options.path}' not found`, backend);
+    }
+    throw new MemoryBackendError("READ_FAILED", `Failed to read memory path '${options.path}': ${(err as Error).message}`, backend);
+  }
+
+  const lines = content.split("\n");
+  const startLine = Math.max(1, Math.floor(options.startLine ?? 1));
+  const requestedCount = Math.max(1, Math.floor(options.lineCount ?? DEFAULT_MEMORY_GET_LINES));
+  const lineCount = Math.min(requestedCount, MAX_MEMORY_GET_LINES);
+  const startIndex = Math.min(startLine - 1, lines.length);
+  const endIndex = Math.min(startIndex + lineCount, lines.length);
+
+  return {
+    path: displayPath,
+    content: lines.slice(startIndex, endIndex).join("\n"),
+    startLine,
+    endLine: endIndex,
+    totalLines: lines.length,
+    backend,
+  };
+}
+
+async function listMemoryFiles(rootDir: string): Promise<Array<{ absPath: string; displayPath: string }>> {
+  const files: Array<{ absPath: string; displayPath: string }> = [];
+  const workspacePath = memoryWorkspacePath(rootDir);
+  const longTerm = memoryLongTermPath(rootDir);
+  if (existsSync(longTerm)) {
+    files.push({ absPath: longTerm, displayPath: `${MEMORY_WORKSPACE_PATH}/${MEMORY_LONG_TERM_FILENAME}` });
+  }
+  const dreams = memoryDreamsPath(rootDir);
+  if (existsSync(dreams)) {
+    files.push({ absPath: dreams, displayPath: `${MEMORY_WORKSPACE_PATH}/${MEMORY_DREAMS_FILENAME}` });
+  }
+
+  if (existsSync(workspacePath)) {
+    for (const entry of await readdir(workspacePath)) {
+      if (!DAILY_MEMORY_RE.test(entry)) continue;
+      const absPath = join(workspacePath, entry);
+      const fileStat = await stat(absPath);
+      if (fileStat.isFile()) {
+        files.push({ absPath, displayPath: `${MEMORY_WORKSPACE_PATH}/${entry}` });
+      }
+    }
+  }
+
+  const legacyPath = join(rootDir, LEGACY_MEMORY_FILE_PATH);
+  if (existsSync(legacyPath)) {
+    files.push({ absPath: legacyPath, displayPath: LEGACY_MEMORY_FILE_PATH });
+  }
+
+  return files;
+}
+
+function scoreSnippet(snippet: string, queryTerms: string[]): number {
+  const normalized = snippet.toLowerCase();
+  return queryTerms.reduce((score, term) => score + (normalized.includes(term) ? 1 : 0), 0);
+}
+
+async function searchMemoryFiles(rootDir: string, options: MemorySearchOptions, backend: string): Promise<MemorySearchResult[]> {
+  const queryTerms = options.query
+    .toLowerCase()
+    .split(/[^a-z0-9_-]+/i)
+    .map((term) => term.trim())
+    .filter((term) => term.length >= 2);
+  if (queryTerms.length === 0) {
+    return [];
+  }
+
+  const limit = Math.max(1, Math.min(options.limit ?? 5, 20));
+  const results: MemorySearchResult[] = [];
+
+  for (const file of await listMemoryFiles(rootDir)) {
+    const lines = (await readFile(file.absPath, "utf-8")).split("\n");
+    for (let index = 0; index < lines.length; index += 8) {
+      const chunkLines = lines.slice(index, index + 12);
+      const snippet = chunkLines.join("\n").trim();
+      if (!snippet) continue;
+      const score = scoreSnippet(snippet, queryTerms);
+      if (score === 0) continue;
+      results.push({
+        path: file.displayPath,
+        lineStart: index + 1,
+        lineEnd: Math.min(index + chunkLines.length, lines.length),
+        snippet: snippet.slice(0, MAX_MEMORY_SNIPPET_CHARS),
+        score,
+        backend,
+      });
+    }
+  }
+
+  return results
+    .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
+    .slice(0, limit);
+}
+
+async function searchWithQmd(rootDir: string, options: MemorySearchOptions): Promise<MemorySearchResult[]> {
+  const command = "qmd";
+  const mode = "search";
+  const args = [mode, options.query, "--json"];
+  try {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const execFileAsync = promisify(execFile);
+    const { stdout } = await execFileAsync(command, args, {
+      cwd: rootDir,
+      timeout: 4000,
+      maxBuffer: 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout);
+    const rawResults = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.results) ? parsed.results : [];
+    return rawResults.slice(0, Math.max(1, Math.min(options.limit ?? 5, 20))).map((result: Record<string, unknown>, index: number) => ({
+      path: String(result.path ?? result.file ?? `qmd/result-${index + 1}`),
+      lineStart: Number(result.lineStart ?? result.startLine ?? 1),
+      lineEnd: Number(result.lineEnd ?? result.endLine ?? result.startLine ?? 1),
+      snippet: String(result.snippet ?? result.text ?? result.content ?? "").slice(0, MAX_MEMORY_SNIPPET_CHARS),
+      score: Number(result.score ?? 1),
+      backend: "qmd",
+    })).filter((result: MemorySearchResult) => result.snippet.trim().length > 0);
+  } catch {
+    return [];
   }
 }
 

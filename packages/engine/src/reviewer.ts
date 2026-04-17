@@ -16,6 +16,7 @@ import { AgentLogger } from "./agent-logger.js";
 import { reviewerLog } from "./logger.js";
 import { checkSessionError } from "./usage-limit-detector.js";
 import { resolveAgentInstructions, buildSystemPromptWithInstructions } from "./agent-instructions.js";
+import { createMemoryGetTool, createMemorySearchTool } from "./agent-tools.js";
 
 export const REVIEWER_SYSTEM_PROMPT = `You are an independent code and plan reviewer.
 
@@ -329,6 +330,10 @@ export async function reviewStep(
     cwd,
     systemPrompt: reviewerSystemPrompt,
     tools: "readonly",
+    customTools: options.rootDir ? [
+      createMemorySearchTool(options.rootDir),
+      createMemoryGetTool(options.rootDir),
+    ] : undefined,
     onText: agentLogger ? agentLogger.onText : (delta) => options.onText?.(delta),
     onThinking: agentLogger?.onThinking,
     onToolStart: agentLogger?.onToolStart,

@@ -3418,6 +3418,154 @@ body {
   }
 }
 
+/* === Memory Settings === */
+.memory-model-panel,
+.memory-prompt-contract {
+  margin: var(--space-md) var(--space-xl) var(--space-lg);
+  padding: var(--space-lg);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.memory-model-panel__header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  align-items: flex-start;
+  margin-bottom: var(--space-lg);
+}
+
+.memory-model-panel__header strong,
+.memory-prompt-contract strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.memory-model-panel__header p,
+.memory-layer-card p {
+  margin: var(--space-xs) 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.memory-model-panel__badge,
+.memory-layer-card__label {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-info);
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
+}
+
+.memory-model-panel__badge {
+  padding: var(--space-xs) var(--space-sm);
+  white-space: nowrap;
+}
+
+.memory-layer-grid,
+.memory-settings-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+.memory-settings-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.memory-layer-card {
+  min-width: 0;
+  padding: var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+}
+
+.memory-layer-card__label {
+  padding: var(--space-xs) var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.memory-layer-card strong {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.memory-prompt-contract ul {
+  margin: var(--space-sm) 0 0;
+  padding-left: var(--space-lg);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.settings-subline {
+  display: block;
+  margin-top: var(--space-xs);
+}
+
+.memory-status-message {
+  margin-bottom: var(--space-md);
+}
+
+.memory-editor-section {
+  margin-top: var(--space-lg);
+}
+
+.memory-file-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-xs) var(--space-md);
+  align-items: center;
+  margin: 0 var(--space-xl) var(--space-md);
+  padding: var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+}
+
+.memory-file-summary span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-pill);
+  color: var(--color-info);
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.memory-file-summary strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.memory-file-summary small {
+  grid-column: 2;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.memory-editor-frame {
+  min-height: 50vh;
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
 /* === Auth Provider Cards === */
 .auth-section-hint {
   padding: 12px 16px;
@@ -6939,6 +7087,38 @@ body {
 
   .settings-empty-state {
     padding: 12px 14px;
+  }
+
+  .memory-model-panel,
+  .memory-prompt-contract {
+    margin: var(--space-md) var(--space-lg) var(--space-lg);
+  }
+
+  .memory-model-panel__header {
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .memory-layer-grid,
+  .memory-settings-row {
+    grid-template-columns: 1fr;
+  }
+
+  .memory-editor-frame {
+    min-height: 45vh;
+  }
+
+  .memory-file-summary {
+    grid-template-columns: 1fr;
+    margin: 0 var(--space-lg) var(--space-md);
+  }
+
+  .memory-file-summary span {
+    justify-content: flex-start;
+  }
+
+  .memory-file-summary small {
+    grid-column: auto;
   }
 
   .settings-description {

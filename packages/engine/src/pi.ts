@@ -45,6 +45,38 @@ export interface PromptableSession extends AgentSession {
   promptWithFallback: (prompt: string, options?: unknown) => Promise<void>;
 }
 
+function getSessionStateError(session: AgentSession): string {
+  const error = (session as any).state?.error;
+  return typeof error === "string" ? error : "";
+}
+
+function clearSessionStateError(session: AgentSession): void {
+  const state = (session as any).state;
+  if (!state || typeof state !== "object" || !("error" in state)) {
+    return;
+  }
+
+  try {
+    state.error = undefined;
+  } catch {
+    // Best effort only. Some session implementations may expose readonly state.
+  }
+}
+
+async function promptSessionAndCheck(session: AgentSession, prompt: string, options?: unknown): Promise<void> {
+  clearSessionStateError(session);
+  if (options === undefined) {
+    await session.prompt(prompt);
+  } else {
+    await (session.prompt as any)(prompt, options);
+  }
+
+  const stateError = getSessionStateError(session);
+  if (stateError) {
+    throw new Error(stateError);
+  }
+}
+
 export async function promptWithFallback(session: AgentSession, prompt: string, options?: unknown): Promise<void> {
   const maybePromptable = session as Partial<PromptableSession>;
   if (typeof maybePromptable.promptWithFallback === "function") {
@@ -56,11 +88,7 @@ export async function promptWithFallback(session: AgentSession, prompt: string, 
 
   console.error(`[pi] promptWithFallback: calling session.prompt (prompt length=${prompt.length})`);
   try {
-    if (options === undefined) {
-      await session.prompt(prompt);
-    } else {
-      await (session.prompt as any)(prompt, options);
-    }
+    await promptSessionAndCheck(session, prompt, options);
     console.error(`[pi] promptWithFallback: prompt completed`);
   } catch (err: unknown) {
     const errorMessage = err instanceof Error ? err.message : String(err);
@@ -70,7 +98,19 @@ export async function promptWithFallback(session: AgentSession, prompt: string, 
     }
 
     // Context limit error — attempt auto-compaction and retry once
+    const promptMemoryRetry = await retryWithCompactedPromptMemory(session, prompt, options);
+    if (promptMemoryRetry.recovered) {
+      return;
+    }
+    if (promptMemoryRetry.error) {
+      const retryMessage = promptMemoryRetry.error instanceof Error ? promptMemoryRetry.error.message : String(promptMemoryRetry.error);
+      if (!isContextLimitError(retryMessage)) {
+        throw promptMemoryRetry.error;
+      }
+    }
+
     console.error(`[pi] promptWithFallback: context limit error — attempting auto-compaction`);
+    await flushMemoryBeforeSessionCompaction(session);
     const compactResult = await compactSessionContext(session);
     if (!compactResult) {
       console.error(`[pi] promptWithFallback: compaction unavailable — propagating original error`);
@@ -79,11 +119,7 @@ export async function promptWithFallback(session: AgentSession, prompt: string, 
 
     console.error(`[pi] promptWithFallback: compaction succeeded (${compactResult.tokensBefore} tokens) — retrying prompt`);
     try {
-      if (options === undefined) {
-        await session.prompt(prompt);
-      } else {
-        await (session.prompt as any)(prompt, options);
-      }
+      await promptSessionAndCheck(session, prompt, options);
       console.error(`[pi] promptWithFallback: prompt completed after auto-compaction`);
     } catch (retryErr: unknown) {
       const retryErrorMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
@@ -115,6 +151,114 @@ export const COMPACTION_FALLBACK_INSTRUCTIONS = [
   "Keep references to key files, decisions, and error states.",
   "Discard verbose tool output, repeated attempts, and exploration history.",
 ].join(" ");
+
+const MAX_COMPACTED_PROMPT_MEMORY_CHARS = 8_000;
+
+function compactMarkdownMemorySection(sectionBody: string): string {
+  const lines = sectionBody.split("\n");
+  const kept: string[] = [];
+  let used = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trimEnd();
+    const normalized = trimmed.trimStart();
+    const isUseful =
+      normalized.startsWith("##")
+      || normalized.startsWith("- ")
+      || normalized.startsWith("* ")
+      || /^\d+\.\s/.test(normalized)
+      || normalized.length === 0;
+
+    if (!isUseful) {
+      continue;
+    }
+
+    const nextLength = used + trimmed.length + 1;
+    if (nextLength > MAX_COMPACTED_PROMPT_MEMORY_CHARS) {
+      break;
+    }
+
+    kept.push(trimmed);
+    used = nextLength;
+  }
+
+  const compacted = kept.join("\n").trim();
+  if (compacted.length >= sectionBody.trim().length) {
+    return sectionBody.trim();
+  }
+
+  return [
+    compacted,
+    "",
+    `<!-- Project memory compacted from ${sectionBody.length} characters to avoid context overflow. Read .fusion/memory.md later only if essential. -->`,
+  ].join("\n").trim();
+}
+
+function compactPromptMemory(prompt: string): string | null {
+  const sectionPattern = /(^|\n)(## (?:Project Memory|Memory)\n\n)([\s\S]*?)(?=\n## [^#]|\n# [^#]|$)/g;
+  let changed = false;
+  const compactedPrompt = prompt.replace(sectionPattern, (match, prefix: string, heading: string, body: string) => {
+    const trimmedBody = body.trim();
+    if (trimmedBody.length <= MAX_COMPACTED_PROMPT_MEMORY_CHARS) {
+      return match;
+    }
+
+    const compacted = compactMarkdownMemorySection(trimmedBody);
+    if (compacted.length >= trimmedBody.length) {
+      return match;
+    }
+
+    changed = true;
+    return `${prefix}${heading}${compacted}`;
+  });
+
+  return changed && compactedPrompt.length < prompt.length ? compactedPrompt : null;
+}
+
+async function retryWithCompactedPromptMemory(
+  session: AgentSession,
+  prompt: string,
+  options?: unknown,
+): Promise<{ recovered: boolean; error?: unknown }> {
+  const compactedPrompt = compactPromptMemory(prompt);
+  if (!compactedPrompt) {
+    return { recovered: false };
+  }
+
+  console.error(
+    `[pi] promptWithFallback: retrying with compacted prompt memory (${prompt.length} → ${compactedPrompt.length} chars)`,
+  );
+
+  try {
+    await promptSessionAndCheck(session, compactedPrompt, options);
+    console.error(`[pi] promptWithFallback: prompt completed after prompt-memory compaction`);
+    return { recovered: true };
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error(`[pi] promptWithFallback: retry after prompt-memory compaction failed: ${errorMessage}`);
+    return { recovered: false, error: err };
+  }
+}
+
+async function flushMemoryBeforeSessionCompaction(session: AgentSession): Promise<void> {
+  if ((session as any).__fusionMemoryAppendAvailable !== true) {
+    return;
+  }
+
+  const flushPrompt = [
+    "Before context compaction, preserve only unresolved durable memory if needed.",
+    "If memory_append is available and you learned reusable project decisions, conventions, pitfalls, or open loops that are not already saved, append them now.",
+    "Use layer=\"long-term\" for durable facts and layer=\"daily\" for running notes/open loops.",
+    "If there is nothing durable to save, reply exactly: NONE.",
+  ].join("\n");
+
+  try {
+    await promptSessionAndCheck(session, flushPrompt);
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error(`[pi] promptWithFallback: memory flush before compaction skipped: ${errorMessage}`);
+  }
+}
 
 /**
  * Compact an agent session's context to free up the context window.
@@ -632,30 +776,35 @@ export async function createKbAgent(options: AgentOptions): Promise<AgentResult>
   }
 
   const { session } = sessionResult;
+  (session as any).__fusionMemoryAppendAvailable = options.customTools?.some((tool) => tool.name === "memory_append") === true;
   const promptableSession = session as PromptableSession;
 
   promptableSession.promptWithFallback = async (prompt: string, promptOptions?: unknown) => {
     try {
-      if (promptOptions === undefined) {
-        await session.prompt(prompt);
-      } else {
-        await (session.prompt as any)(prompt, promptOptions);
-      }
+      await promptSessionAndCheck(session, prompt, promptOptions);
       return;
     } catch (err: any) {
       const errorMessage = err?.message || "";
       if (isContextLimitError(errorMessage)) {
         // Context limit error — attempt auto-compaction and retry once
+        const promptMemoryRetry = await retryWithCompactedPromptMemory(session, prompt, promptOptions);
+        if (promptMemoryRetry.recovered) {
+          return;
+        }
+        if (promptMemoryRetry.error) {
+          const retryMessage = promptMemoryRetry.error instanceof Error ? promptMemoryRetry.error.message : String(promptMemoryRetry.error);
+          if (!isContextLimitError(retryMessage)) {
+            throw promptMemoryRetry.error;
+          }
+        }
+
         console.error(`[pi] promptWithFallback: context limit error — attempting auto-compaction`);
+        await flushMemoryBeforeSessionCompaction(session);
         const compactResult = await compactSessionContext(session);
         if (compactResult) {
           console.error(`[pi] promptWithFallback: compaction succeeded (${compactResult.tokensBefore} tokens) — retrying prompt`);
           try {
-            if (promptOptions === undefined) {
-              await session.prompt(prompt);
-            } else {
-              await (session.prompt as any)(prompt, promptOptions);
-            }
+            await promptSessionAndCheck(session, prompt, promptOptions);
             return;
           } catch (retryErr: any) {
             const retryErrorMessage = retryErr?.message || "";
@@ -682,6 +831,7 @@ export async function createKbAgent(options: AgentOptions): Promise<AgentResult>
 
       const fallbackSessionResult = await createSessionWithModel(fallbackModel);
       const fallbackSession = fallbackSessionResult.session as PromptableSession;
+      (fallbackSession as any).__fusionMemoryAppendAvailable = options.customTools?.some((tool) => tool.name === "memory_append") === true;
 
       if (options.defaultThinkingLevel) {
         fallbackSession.setThinkingLevel(options.defaultThinkingLevel as any);
@@ -710,25 +860,29 @@ export async function createKbAgent(options: AgentOptions): Promise<AgentResult>
 
       // Retry with fallback model, also with auto-compaction support
       try {
-        if (promptOptions === undefined) {
-          await fallbackSession.prompt(prompt);
-        } else {
-          await (fallbackSession.prompt as any)(prompt, promptOptions);
-        }
+        await promptSessionAndCheck(fallbackSession, prompt, promptOptions);
         return;
       } catch (fallbackErr: any) {
         const fallbackErrorMessage = fallbackErr?.message || "";
         if (isContextLimitError(fallbackErrorMessage)) {
+          const promptMemoryRetry = await retryWithCompactedPromptMemory(fallbackSession, prompt, promptOptions);
+          if (promptMemoryRetry.recovered) {
+            return;
+          }
+          if (promptMemoryRetry.error) {
+            const retryMessage = promptMemoryRetry.error instanceof Error ? promptMemoryRetry.error.message : String(promptMemoryRetry.error);
+            if (!isContextLimitError(retryMessage)) {
+              throw promptMemoryRetry.error;
+            }
+          }
+
           console.error(`[pi] promptWithFallback: fallback session context limit error — attempting auto-compaction`);
+          await flushMemoryBeforeSessionCompaction(fallbackSession);
           const compactResult = await compactSessionContext(fallbackSession);
           if (compactResult) {
             console.error(`[pi] promptWithFallback: fallback compaction succeeded (${compactResult.tokensBefore} tokens) — retrying`);
             try {
-              if (promptOptions === undefined) {
-                await fallbackSession.prompt(prompt);
-              } else {
-                await (fallbackSession.prompt as any)(prompt, promptOptions);
-              }
+              await promptSessionAndCheck(fallbackSession, prompt, promptOptions);
               return;
             } catch (retryErr: any) {
               const retryErrorMessage = retryErr?.message || "";

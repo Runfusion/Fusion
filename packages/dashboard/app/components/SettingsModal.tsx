@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Globe, Folder } from "lucide-react";
 import { THINKING_LEVELS, PROMPT_KEY_CATALOG, isGlobalSettingsKey, isProjectSettingsKey } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent, PromptKey, AgentPromptsConfig } from "@fusion/core";
-import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemory, saveMemory, fetchGlobalConcurrency, updateGlobalConcurrency, compactMemory, fetchPiExtensions, updatePiExtensions } from "../api";
-import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData, MemoryBackendCapabilities, PiExtensionSettings } from "../api";
+import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, fetchGlobalConcurrency, updateGlobalConcurrency, compactMemory, fetchPiExtensions, updatePiExtensions } from "../api";
+import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData, MemoryBackendCapabilities, MemoryFileInfo, PiExtensionSettings } from "../api";
 import { useMemoryBackendStatus } from "../hooks/useMemoryBackendStatus";
 import type { ToastType } from "../hooks/useToast";
 import { ThemeSelector } from "./ThemeSelector";
@@ -178,6 +178,8 @@ export function SettingsModal({
   const [memoryLoading, setMemoryLoading] = useState(false);
   const [memoryDirty, setMemoryDirty] = useState(false);
   const [compactLoading, setCompactLoading] = useState(false);
+  const [memoryFiles, setMemoryFiles] = useState<MemoryFileInfo[]>([]);
+  const [selectedMemoryPath, setSelectedMemoryPath] = useState(".fusion/memory/MEMORY.md");
 
   // Global concurrency state
   const [globalMaxConcurrent, setGlobalMaxConcurrent] = useState<number | undefined>(4);
@@ -266,8 +268,15 @@ export function SettingsModal({
 
     let cancelled = false;
     setMemoryLoading(true);
-    fetchMemory(projectId)
-      .then(({ content }) => {
+    fetchMemoryFiles(projectId)
+      .then(async ({ files }) => {
+        if (cancelled) return;
+        setMemoryFiles(files);
+        const nextPath = files.some((file) => file.path === selectedMemoryPath)
+          ? selectedMemoryPath
+          : files[0]?.path || ".fusion/memory/MEMORY.md";
+        setSelectedMemoryPath(nextPath);
+        const { content } = await fetchMemoryFile(nextPath, projectId);
         if (cancelled) return;
         setMemoryContent(content);
         setMemoryDirty(false);
@@ -286,7 +295,7 @@ export function SettingsModal({
     return () => {
       cancelled = true;
     };
-  }, [activeSection, memoryDirty, projectId, addToast]);
+  }, [activeSection, memoryDirty, selectedMemoryPath, projectId, addToast]);
 
   useEffect(() => {
     if (activeSection === "authentication") {
@@ -828,18 +837,19 @@ export function SettingsModal({
 
   const handleSaveMemory = useCallback(async () => {
     try {
-      await saveMemory(memoryContent, projectId);
+      await saveMemoryFile(selectedMemoryPath, memoryContent, projectId);
       setMemoryDirty(false);
       addToast("Memory saved", "success");
     } catch (err: any) {
       addToast(err?.message || "Failed to save memory", "error");
     }
-  }, [memoryContent, projectId, addToast]);
+  }, [selectedMemoryPath, memoryContent, projectId, addToast]);
 
   const handleCompactMemory = useCallback(async () => {
     setCompactLoading(true);
     try {
       const { content } = await compactMemory(projectId);
+      setSelectedMemoryPath(".fusion/memory/MEMORY.md");
       setMemoryContent(content);
       setMemoryDirty(true);
       addToast("Memory compacted successfully", "success");
@@ -2135,15 +2145,61 @@ export function SettingsModal({
 
         // Backend display names
         const backendNames: Record<string, string> = {
-          file: "File (.fusion/memory.md)",
+          file: "Markdown files",
           readonly: "Read-Only",
-          qmd: "QMD (Quantized Memory Distillation)",
+          qmd: "QMD search",
+        };
+        const backendDescriptions: Record<string, string> = {
+          file: "Stores MEMORY.md, daily notes, and DREAMS.md under .fusion/memory with built-in keyword search.",
+          qmd: "Uses qmd for memory_search when available, then falls back to the Markdown file search.",
+          readonly: "Allows read/search access without agent writes. Use this when memory is managed outside Fusion.",
+        };
+        const enabledCapabilities = [
+          capabilities?.readable ? "read" : null,
+          capabilities?.writable ? "write" : null,
+          capabilities?.supportsAtomicWrite ? "atomic writes" : null,
+          capabilities?.persistent ? "persistent" : null,
+        ].filter(Boolean);
+        const selectedMemoryFile = memoryFiles.find((file) => file.path === selectedMemoryPath);
+        const memoryLayerNames: Record<MemoryFileInfo["layer"], string> = {
+          "long-term": "Long-term",
+          daily: "Daily",
+          dreams: "Dreams",
+          legacy: "Legacy",
         };
 
         return (
           <>
             {renderScopeBanner()}
             <h4 className="settings-section-heading">Memory</h4>
+            <div className="memory-model-panel">
+              <div className="memory-model-panel__header">
+                <div>
+                  <strong>Layered project memory</strong>
+                  <p>
+                    Agents search memory first, open bounded line windows only when needed, and append new durable notes instead of pasting the whole memory file into prompts.
+                  </p>
+                </div>
+                <span className="memory-model-panel__badge">OpenClaw-style</span>
+              </div>
+              <div className="memory-layer-grid">
+                <div className="memory-layer-card">
+                  <span className="memory-layer-card__label">Long-term</span>
+                  <strong>.fusion/memory/MEMORY.md</strong>
+                  <p>Curated decisions, conventions, constraints, and pitfalls.</p>
+                </div>
+                <div className="memory-layer-card">
+                  <span className="memory-layer-card__label">Daily</span>
+                  <strong>.fusion/memory/YYYY-MM-DD.md</strong>
+                  <p>Fresh observations and open loops from active work.</p>
+                </div>
+                <div className="memory-layer-card">
+                  <span className="memory-layer-card__label">Dreams</span>
+                  <strong>.fusion/memory/DREAMS.md</strong>
+                  <p>Periodic synthesis that promotes reusable lessons back into long-term memory.</p>
+                </div>
+              </div>
+            </div>
             <div className="form-group">
               <label htmlFor="memoryEnabled" className="checkbox-label">
                 <input
@@ -2156,10 +2212,9 @@ export function SettingsModal({
                 />
                 Enable project memory
               </label>
-              <small>When enabled, agents will consult and update .fusion/memory.md with durable project learnings</small>
+              <small>Agents get memory_search, memory_get, and memory_append tools, plus a pre-compaction memory flush when context recovery needs it.</small>
             </div>
 
-            {/* Backend type selector */}
             <div className="form-group">
               <label htmlFor="memoryBackendType">Memory Backend</label>
               <select
@@ -2180,10 +2235,9 @@ export function SettingsModal({
                   </option>
                 ))}
               </select>
-              <small>Choose how project memory is stored. File backend uses .fusion/memory.md. QMD enables advanced memory features.</small>
+              <small>{backendDescriptions[form.memoryBackendType || "file"] || "Custom backend registered by the engine."}</small>
             </div>
 
-            {/* Backend capabilities info */}
             {backendLoading ? (
               <div className="form-group">
                 <small className="settings-muted">Loading backend status...</small>
@@ -2199,46 +2253,161 @@ export function SettingsModal({
                   {!isBackendWritable && " (read-only)"}
                 </small>
                 {isBackendWritable && capabilities && (
-                  <small className="settings-muted" style={{ display: "block", marginTop: "2px" }}>
-                    Supports: {capabilities.readable ? "read" : ""}{capabilities.readable && capabilities.writable ? ", " : ""}{capabilities.writable ? "write" : ""}{capabilities.supportsAtomicWrite ? ", atomic writes" : ""}{capabilities.persistent ? ", persistent" : ""}
+                  <small className="settings-muted settings-subline">
+                    Supports: {enabledCapabilities.join(", ")}
                   </small>
                 )}
               </div>
             ) : null}
 
-            <div style={{ borderTop: "1px solid var(--border)", margin: "var(--space-lg) 0" }} />
-
-            <div className="form-group">
-              <small>This file stores durable project learnings that agents consult during triage and execution.</small>
+            <div className="memory-prompt-contract">
+              <strong>Agent prompt contract</strong>
+              <ul>
+                <li>Search first with memory_search; do not read all memory by default.</li>
+                <li>Open exact context with memory_get line windows.</li>
+                <li>Append durable findings to daily notes or long-term memory with memory_append.</li>
+                <li>On context overflow, compact prompt memory before full session compaction.</li>
+              </ul>
             </div>
 
-            {/* Read-only state warnings */}
+            <div className="form-group">
+              <label htmlFor="memoryAutoSummarizeEnabled" className="checkbox-label">
+                <input
+                  id="memoryAutoSummarizeEnabled"
+                  type="checkbox"
+                  checked={form.memoryAutoSummarizeEnabled === true}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, memoryAutoSummarizeEnabled: e.target.checked }))
+                  }
+                  disabled={!isMemoryEnabled}
+                />
+                Compact long-term memory automatically
+              </label>
+              <small>Checks MEMORY.md on a schedule and distills it when it crosses the configured size threshold.</small>
+            </div>
+
+            <div className="memory-settings-row">
+              <div className="form-group">
+                <label htmlFor="memoryAutoSummarizeThresholdChars">Compaction Threshold</label>
+                <input
+                  id="memoryAutoSummarizeThresholdChars"
+                  type="number"
+                  min={1000}
+                  step={1000}
+                  value={form.memoryAutoSummarizeThresholdChars ?? 50000}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      memoryAutoSummarizeThresholdChars: Number(e.target.value) || undefined,
+                    }))
+                  }
+                  disabled={!isMemoryEnabled || form.memoryAutoSummarizeEnabled !== true}
+                />
+                <small>Characters before scheduled compaction runs.</small>
+              </div>
+              <div className="form-group">
+                <label htmlFor="memoryAutoSummarizeSchedule">Compaction Schedule</label>
+                <input
+                  id="memoryAutoSummarizeSchedule"
+                  type="text"
+                  value={form.memoryAutoSummarizeSchedule ?? "0 3 * * *"}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, memoryAutoSummarizeSchedule: e.target.value }))
+                  }
+                  disabled={!isMemoryEnabled || form.memoryAutoSummarizeEnabled !== true}
+                />
+                <small>Cron expression for long-term memory compaction.</small>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="memoryDreamsEnabled" className="checkbox-label">
+                <input
+                  id="memoryDreamsEnabled"
+                  type="checkbox"
+                  checked={form.memoryDreamsEnabled === true}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, memoryDreamsEnabled: e.target.checked }))
+                  }
+                  disabled={!isMemoryEnabled}
+                />
+                Process dreams from daily memory
+              </label>
+              <small>Turns daily notes into DREAMS.md synthesis and promotes reusable lessons into MEMORY.md.</small>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="memoryDreamsSchedule">Dream Processing Schedule</label>
+              <input
+                id="memoryDreamsSchedule"
+                type="text"
+                value={form.memoryDreamsSchedule ?? "0 4 * * *"}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, memoryDreamsSchedule: e.target.value }))
+                }
+                disabled={!isMemoryEnabled || form.memoryDreamsEnabled !== true}
+              />
+              <small>Cron expression for daily memory synthesis.</small>
+            </div>
+
             {!isMemoryEnabled && (
-              <div className="settings-empty-state" style={{ marginBottom: "var(--space-md)" }}>
+              <div className="settings-empty-state memory-status-message">
                 Memory is currently disabled. You can view the file, but editing is read-only until memory is re-enabled.
               </div>
             )}
             {isMemoryEnabled && !isBackendWritable && (
-              <div className="settings-empty-state" style={{ marginBottom: "var(--space-md)" }}>
+              <div className="settings-empty-state memory-status-message">
                 The selected backend ({backendNames[currentBackend || "file"] || currentBackend || "file"}) is read-only.
-                You can view the file, but saving is disabled. Select a writable backend (File or QMD) to enable editing.
+                You can view the file, but saving is disabled. Select a writable backend to enable editing.
               </div>
             )}
 
             {memoryLoading ? (
               <div className="settings-empty-state">Loading memory…</div>
             ) : (
-              <div className="form-group">
-                <div
-                  style={{
-                    height: "400px",
-                    border: "1px solid var(--border)",
-                    borderRadius: "var(--radius)",
-                    overflow: "hidden",
-                    display: "flex",
-                    flexDirection: "column",
-                  }}
-                >
+              <div className="memory-editor-section">
+                <div className="form-group">
+                  <label htmlFor="memoryFilePath">Memory File</label>
+                  <select
+                    id="memoryFilePath"
+                    value={selectedMemoryPath}
+                    onChange={(e) => {
+                      setSelectedMemoryPath(e.target.value);
+                      setMemoryDirty(false);
+                    }}
+                    disabled={memoryDirty}
+                  >
+                    {memoryFiles.map((file) => (
+                      <option key={file.path} value={file.path}>
+                        {file.label} - {file.path}
+                      </option>
+                    ))}
+                  </select>
+                  <small>
+                    {memoryDirty
+                      ? "Save or discard the current edits before switching files."
+                      : "Choose any project memory layer to inspect or edit."}
+                  </small>
+                </div>
+                {selectedMemoryFile && (
+                  <div className="memory-file-summary">
+                    <span>{memoryLayerNames[selectedMemoryFile.layer]}</span>
+                    <strong>{selectedMemoryFile.path}</strong>
+                    <small>
+                      {selectedMemoryFile.size.toLocaleString()} bytes · updated {new Date(selectedMemoryFile.updatedAt).toLocaleString()}
+                    </small>
+                  </div>
+                )}
+                <div className="form-group">
+                <label>{selectedMemoryFile?.label || "Memory Editor"}</label>
+                <small>
+                  {selectedMemoryFile?.layer === "long-term" && "Curated durable decisions, conventions, constraints, and pitfalls."}
+                  {selectedMemoryFile?.layer === "daily" && "Raw daily observations, open loops, and running context for dream processing."}
+                  {selectedMemoryFile?.layer === "dreams" && "Synthesized patterns and open loops promoted from daily memory."}
+                  {selectedMemoryFile?.layer === "legacy" && "Compatibility mirror for older agents and tools."}
+                  {!selectedMemoryFile && "Edits the selected memory file."}
+                </small>
+                <div className="memory-editor-frame">
                   <FileEditor
                     content={memoryContent}
                     onChange={(content) => {
@@ -2246,9 +2415,10 @@ export function SettingsModal({
                       setMemoryDirty(true);
                     }}
                     readOnly={!isEditingAllowed}
-                    filePath=".fusion/memory.md"
+                    filePath={selectedMemoryPath}
                   />
                 </div>
+              </div>
               </div>
             )}
 

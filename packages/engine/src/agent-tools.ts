@@ -7,8 +7,9 @@
  * The parameter schemas are canonical here — executor.ts imports and reuses them.
  */
 
+import { appendFile } from "node:fs/promises";
 import type { AgentStore, AgentState, AgentCapability, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message } from "@fusion/core";
-import { isEphemeralAgent } from "@fusion/core";
+import { dailyMemoryPath, ensureOpenClawMemoryFiles, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, searchProjectMemory } from "@fusion/core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import type { AgentReflectionService } from "./agent-reflection.js";
@@ -80,6 +81,30 @@ export const readMessagesParams = Type.Object({
   unread_only: Type.Optional(Type.Boolean({ description: "Only return unread messages (default: true)" })),
   limit: Type.Optional(Type.Number({ description: "Max messages to return (default: 20)" })),
 });
+
+export const memorySearchParams = Type.Object({
+  query: Type.String({ description: "Search terms for durable project memory. Use focused keywords, not a full prompt." }),
+  limit: Type.Optional(Type.Number({ description: "Maximum snippets to return (default: 5, max: 20)" })),
+});
+
+export const memoryGetParams = Type.Object({
+  path: Type.String({ description: "Memory path from memory_search, e.g. .fusion/memory/MEMORY.md or .fusion/memory/YYYY-MM-DD.md" }),
+  startLine: Type.Optional(Type.Number({ description: "1-based start line (default: 1)" })),
+  lineCount: Type.Optional(Type.Number({ description: "Number of lines to read (default: 120, max: 400)" })),
+});
+
+export const memoryAppendParams = Type.Object({
+  layer: Type.Union([
+    Type.Literal("long-term"),
+    Type.Literal("daily"),
+  ], { description: "long-term for durable conventions/decisions/pitfalls, daily for running notes/open loops" }),
+  content: Type.String({ description: "Markdown content to append. Keep it concise and reusable." }),
+});
+
+type MemoryToolSettings = {
+  memoryBackendType?: string;
+  [key: string]: unknown;
+};
 
 // ── Tool factory functions ────────────────────────────────────────────────
 
@@ -279,6 +304,100 @@ export function createTaskDocumentReadTool(store: TaskStore, taskId: string): To
       }
     },
   };
+}
+
+export function createMemorySearchTool(rootDir: string, settings?: MemoryToolSettings): ToolDefinition {
+  return {
+    name: "memory_search",
+    label: "Search Memory",
+    description:
+      "Search durable project memory and return small snippets with file paths and line ranges. " +
+      "Use this before memory_get; do not read all memory by default.",
+    parameters: memorySearchParams,
+    execute: async (_id: string, params: Static<typeof memorySearchParams>) => {
+      const results = await searchProjectMemory(rootDir, {
+        query: params.query,
+        limit: params.limit,
+      }, settings);
+
+      if (results.length === 0) {
+        return {
+          content: [{ type: "text" as const, text: "NONE" }],
+          details: { results: [] },
+        };
+      }
+
+      const text = results.map((result, index) => [
+        `${index + 1}. ${result.path}:${result.lineStart}-${result.lineEnd} (score ${result.score}, ${result.backend})`,
+        result.snippet,
+      ].join("\n")).join("\n\n");
+      return { content: [{ type: "text" as const, text }], details: { results } };
+    },
+  };
+}
+
+export function createMemoryGetTool(rootDir: string, settings?: MemoryToolSettings): ToolDefinition {
+  return {
+    name: "memory_get",
+    label: "Get Memory",
+    description:
+      "Read a bounded line window from a memory file returned by memory_search. " +
+      "Allowed files are .fusion/memory/MEMORY.md, .fusion/memory/YYYY-MM-DD.md, and legacy .fusion/memory.md.",
+    parameters: memoryGetParams,
+    execute: async (_id: string, params: Static<typeof memoryGetParams>) => {
+      const result = await getProjectMemory(rootDir, {
+        path: params.path,
+        startLine: params.startLine,
+        lineCount: params.lineCount,
+      }, settings);
+      return {
+        content: [{
+          type: "text" as const,
+          text: `${result.path}:${result.startLine}-${result.endLine} (${result.totalLines} total lines, ${result.backend})\n\n${result.content}`,
+        }],
+        details: result,
+      };
+    },
+  };
+}
+
+export function createMemoryAppendTool(rootDir: string): ToolDefinition {
+  return {
+    name: "memory_append",
+    label: "Append Memory",
+    description:
+      "Append concise Markdown to project memory. Use long-term only for durable conventions/decisions/pitfalls; " +
+      "use daily for running observations and open loops. Skip this tool when there is no reusable memory.",
+    parameters: memoryAppendParams,
+    execute: async (_id: string, params: Static<typeof memoryAppendParams>) => {
+      await ensureOpenClawMemoryFiles(rootDir);
+      const targetPath = params.layer === "long-term" ? memoryLongTermPath(rootDir) : dailyMemoryPath(rootDir);
+      const content = params.content.trim();
+      if (!content) {
+        return { content: [{ type: "text" as const, text: "ERROR: memory content cannot be empty" }], details: {} };
+      }
+
+      await appendFile(targetPath, `\n${content}\n`, "utf-8");
+      return {
+        content: [{ type: "text" as const, text: `Appended to ${params.layer} memory.` }],
+        details: { layer: params.layer },
+      };
+    },
+  };
+}
+
+export function createMemoryTools(rootDir: string, settings?: MemoryToolSettings): ToolDefinition[] {
+  if (settings?.memoryEnabled === false) {
+    return [];
+  }
+  const tools = [
+    createMemorySearchTool(rootDir, settings),
+    createMemoryGetTool(rootDir, settings),
+  ];
+  if (getMemoryBackendCapabilities(settings).writable) {
+    tools.push(createMemoryAppendTool(rootDir));
+  }
+  return tools;
 }
 
 /**

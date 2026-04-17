@@ -34,6 +34,7 @@ import { evaluateSpecStaleness, getPromptPath } from "./spec-staleness.js";
 import {
   createDelegateTaskTool,
   createListAgentsTool,
+  createMemoryTools,
   createReflectOnPerformanceTool,
   createSendMessageTool,
   createTaskCreateTool as sharedCreateTaskCreateTool,
@@ -56,6 +57,9 @@ export {
   createTaskLogTool,
   delegateTaskParams,
   listAgentsParams,
+  memoryAppendParams,
+  memoryGetParams,
+  memorySearchParams,
   sendMessageParams,
   taskCreateParams,
   taskLogParams,
@@ -1416,6 +1420,7 @@ export class TaskExecutor {
         this.createSpawnAgentTool(task.id, worktreePath, settings),
         this.createTaskDocumentWriteTool(task.id),
         this.createTaskDocumentReadTool(task.id),
+        ...createMemoryTools(this.rootDir, settings),
         // Conditionally add agent self-reflection when enabled and task has an assigned agent.
         ...reflectionTools,
         // Agent delegation tools — discover and delegate work to other agents.
