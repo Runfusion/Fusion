@@ -20,11 +20,21 @@ import {
 
 // Canonical insight categories (in display order)
 export const INSIGHT_CATEGORIES: InsightCategory[] = [
-  "features",
   "architecture",
+  "quality",
+  "workflow",
+  "performance",
+  "reliability",
+  "security",
+  "ux",
+  "testability",
+  "documentation",
+  "dependency",
+  "features",
   "competitive_analysis",
   "research",
   "trends",
+  "other",
 ];
 
 // Human-readable labels for categories

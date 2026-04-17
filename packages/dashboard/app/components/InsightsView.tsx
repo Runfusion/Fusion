@@ -2,7 +2,7 @@
  * InsightsView - Dashboard component for displaying and managing project insights
  *
  * Features:
- * - Displays insights grouped by category (features, architecture, competitive analysis, research, trends)
+ * - Displays insights grouped by all supported insight categories
  * - Manual insight generation trigger
  * - Per-insight dismiss action
  * - Per-insight task creation action
@@ -29,6 +29,7 @@ import {
   Clock,
 } from "lucide-react";
 import { useInsights, INSIGHT_CATEGORIES, CATEGORY_LABELS, type InsightSection } from "../hooks/useInsights";
+import type { InsightCategory } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { createTask } from "../api";
 
@@ -40,12 +41,22 @@ interface InsightsViewProps {
 }
 
 // Category icons mapping
-const CATEGORY_ICONS: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
-  features: Lightbulb,
+const CATEGORY_ICONS: Record<InsightCategory, React.ComponentType<{ size?: number; className?: string }>> = {
   architecture: Building,
+  quality: CheckCircle,
+  workflow: Clock,
+  performance: TrendingUp,
+  reliability: RefreshCw,
+  security: AlertCircle,
+  ux: Users,
+  testability: Archive,
+  documentation: ExternalLink,
+  dependency: Plus,
+  features: Lightbulb,
   competitive_analysis: Users,
   research: LineChart,
   trends: TrendingUp,
+  other: Sparkles,
 };
 
 export function InsightsView({ projectId, addToast, onClose, onCreateTask }: InsightsViewProps) {

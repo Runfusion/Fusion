@@ -71,7 +71,7 @@ describe("useInsights", () => {
       expect(result.current.isRunInFlight).toBe(false);
     });
 
-    it("should initialize with all five canonical sections", async () => {
+    it("should initialize with all canonical sections", async () => {
       mockFetchInsights.mockResolvedValue({ insights: [], count: 0 });
       mockFetchInsightRuns.mockResolvedValue({ runs: [] });
 
@@ -81,7 +81,7 @@ describe("useInsights", () => {
         expect(result.current.loading).toBe(false);
       });
 
-      expect(result.current.sections).toHaveLength(5);
+      expect(result.current.sections).toHaveLength(INSIGHT_CATEGORIES.length);
       expect(result.current.sections.map((s) => s.category)).toEqual(INSIGHT_CATEGORIES);
     });
   });
