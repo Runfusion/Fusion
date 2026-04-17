@@ -3588,7 +3588,10 @@ describe("compactMemory", () => {
   it("calls POST /api/memory/compact without projectId", async () => {
     const { compactMemory } = await import("./api");
 
-    const mockResponse = { content: "# Compacted Memory\n\nImportant content here." };
+    const mockResponse = {
+      path: ".fusion/memory/DREAMS.md",
+      content: "# Compacted Memory\n\nImportant content here.",
+    };
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
       status: 200,
@@ -3601,19 +3604,23 @@ describe("compactMemory", () => {
       text: () => Promise.resolve(JSON.stringify(mockResponse)),
     } as unknown as Response);
 
-    const result = await compactMemory();
+    const result = await compactMemory(".fusion/memory/DREAMS.md");
 
     expect(result).toEqual(mockResponse);
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(call[0]).toContain("/api/memory/compact");
     expect(call[1].method).toBe("POST");
+    expect(call[1].body).toBe(JSON.stringify({ path: ".fusion/memory/DREAMS.md" }));
   });
 
   it("calls POST /api/memory/compact with projectId", async () => {
     const { compactMemory } = await import("./api");
 
-    const mockResponse = { content: "# Compacted Memory\n\nImportant content here." };
+    const mockResponse = {
+      path: ".fusion/memory/MEMORY.md",
+      content: "# Compacted Memory\n\nImportant content here.",
+    };
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
       status: 200,
@@ -3626,7 +3633,7 @@ describe("compactMemory", () => {
       text: () => Promise.resolve(JSON.stringify(mockResponse)),
     } as unknown as Response);
 
-    const result = await compactMemory("proj_abc");
+    const result = await compactMemory(".fusion/memory/MEMORY.md", "proj_abc");
 
     expect(result).toEqual(mockResponse);
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
@@ -3634,6 +3641,7 @@ describe("compactMemory", () => {
     expect(call[0]).toContain("/api/memory/compact");
     expect(call[0]).toContain("projectId=proj_abc");
     expect(call[1].method).toBe("POST");
+    expect(call[1].body).toBe(JSON.stringify({ path: ".fusion/memory/MEMORY.md" }));
   });
 
   it("throws on error response", async () => {
@@ -3651,7 +3659,7 @@ describe("compactMemory", () => {
       text: () => Promise.resolve(JSON.stringify({ error: "AI service temporarily unavailable" })),
     } as unknown as Response);
 
-    await expect(compactMemory()).rejects.toThrow("AI service temporarily unavailable");
+    await expect(compactMemory(".fusion/memory/DREAMS.md")).rejects.toThrow("AI service temporarily unavailable");
   });
 });
 

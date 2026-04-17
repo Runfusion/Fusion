@@ -449,6 +449,7 @@ export {
   ensureOpenClawMemoryFiles,
   listProjectMemoryFiles,
   readProjectMemoryFile,
+  readProjectMemoryFileContent,
   writeProjectMemoryFile,
 } from "./memory-backend.js";
 

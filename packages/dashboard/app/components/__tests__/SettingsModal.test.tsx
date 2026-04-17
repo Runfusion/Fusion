@@ -99,7 +99,10 @@ vi.mock("../../api", () => ({
   })),
   fetchMemoryFile: vi.fn((path = ".fusion/memory/DREAMS.md") => Promise.resolve({ path, content: "" })),
   saveMemoryFile: vi.fn(() => Promise.resolve({ success: true })),
-  compactMemory: vi.fn(() => Promise.resolve({ content: "# Compacted Memory\n\nImportant content." })),
+  compactMemory: vi.fn(() => Promise.resolve({
+    path: ".fusion/memory/DREAMS.md",
+    content: "# Compacted Memory\n\nImportant content.",
+  })),
   installQmd: vi.fn(() => Promise.resolve({ success: true, qmdAvailable: true, qmdInstallCommand: "bun add -g qmd" })),
   testMemoryRetrieval: vi.fn(() => Promise.resolve({
     query: "project memory",
@@ -4081,7 +4084,7 @@ describe("Prompts section", () => {
       const selector = await screen.findByLabelText("Memory File") as HTMLSelectElement;
       expect(selector.value).toBe(".fusion/memory/DREAMS.md");
       expect(screen.getByText(/Choose any project memory file to view or edit/i)).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Compact Memory" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Compact Selected File" })).toBeInTheDocument();
     });
   });
 });

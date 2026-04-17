@@ -352,13 +352,38 @@ export function saveMemoryFile(path: string, content: string, projectId?: string
 
 /**
  * Compact memory content using AI to distill it down to the most important insights.
- * Reads current memory, compacts it via AI, and writes the result back.
+ * Reads one memory file, compacts it via AI, and writes the result back.
+ *
+ * Backwards-compatible call patterns:
+ * - compactMemory(projectId?)
+ * - compactMemory(path, projectId?)
+ *
+ * @param pathOrProjectId - Memory file path or legacy projectId-only argument
  * @param projectId - Optional project ID for multi-project support
  * @returns Promise resolving to the compacted memory content
  */
-export function compactMemory(projectId?: string): Promise<{ content: string }> {
-  return api<{ content: string }>(withProjectId("/memory/compact", projectId), {
+export function compactMemory(
+  pathOrProjectId?: string,
+  projectId?: string,
+): Promise<{ path?: string; content: string }> {
+  let path: string | undefined;
+  let effectiveProjectId = projectId;
+
+  if (projectId !== undefined) {
+    path = pathOrProjectId;
+  } else if (typeof pathOrProjectId === "string" && pathOrProjectId.trim().length > 0) {
+    const trimmed = pathOrProjectId.trim();
+    const looksLikeMemoryPath = trimmed.includes("/") || trimmed.endsWith(".md") || trimmed.startsWith(".");
+    if (looksLikeMemoryPath) {
+      path = trimmed;
+    } else {
+      effectiveProjectId = trimmed;
+    }
+  }
+
+  return api<{ path?: string; content: string }>(withProjectId("/memory/compact", effectiveProjectId), {
     method: "POST",
+    body: JSON.stringify(path ? { path } : {}),
   });
 }
 

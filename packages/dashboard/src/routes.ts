@@ -18,7 +18,7 @@ import * as nodeFs from "node:fs";
 
 import { promisify } from "node:util";
 import type { TaskStore, Column, ScheduleType, ActivityEventType, ModelPreset, MessageType, ParticipantType, RoutineTriggerType, ProjectSettings } from "@fusion/core";
-import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, type PiExtensionEntry, type PiExtensionSettings, getCurrentRepo, isGhAuthenticated, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupRoutine, exportSettings, importSettings, validateImportData, MessageStore, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes, listProjectMemoryFiles, readProjectMemoryFile, writeProjectMemoryFile, readMemory, writeMemory, searchProjectMemory, isQmdAvailable, QMD_INSTALL_COMMAND, MemoryBackendError, discoverPiExtensions, updatePiExtensionDisabledIds, getFusionAgentDir, getLegacyPiAgentDir } from "@fusion/core";
+import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, type PiExtensionEntry, type PiExtensionSettings, getCurrentRepo, isGhAuthenticated, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupRoutine, exportSettings, importSettings, validateImportData, MessageStore, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes, listProjectMemoryFiles, readProjectMemoryFile, readProjectMemoryFileContent, writeProjectMemoryFile, readMemory, writeMemory, searchProjectMemory, isQmdAvailable, QMD_INSTALL_COMMAND, MemoryBackendError, discoverPiExtensions, updatePiExtensionDisabledIds, getFusionAgentDir, getLegacyPiAgentDir } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
 import { GitHubClient, parseBadgeUrl } from "./github.js";
 import { githubRateLimiter } from "./github-poll.js";
@@ -2714,9 +2714,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   /**
    * POST /api/memory/compact
    * AI-powered memory compaction using the memory compaction service.
-   * Reads current memory, compacts it using AI, and writes back the result.
+   * Reads one selected memory file, compacts it using AI, and writes back the result.
    *
-   * Body: none (reads current memory from backend)
+   * Body: { path?: string } (defaults to .fusion/memory/MEMORY.md)
    *
    * Error mapping:
    * - Memory content too short (< 200 chars) → 400 Bad Request
@@ -2727,12 +2727,19 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.post("/memory/compact", async (req, res) => {
     try {
+      const requestedPath = typeof req.body?.path === "string" && req.body.path.trim()
+        ? req.body.path
+        : ".fusion/memory/MEMORY.md";
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
+      const backend = resolveMemoryBackend(settings);
+      if (!backend.capabilities.writable) {
+        throw new MemoryBackendError("READ_ONLY", "This backend is read-only and cannot write memory", backend.type);
+      }
       const rootDir = scopedStore.getRootDir();
 
-      // Read current memory
-      const result = await readMemory(rootDir, settings);
+      // Read the selected file in full before compaction.
+      const result = await readProjectMemoryFileContent(rootDir, requestedPath);
       const content = result.content;
 
       // Validate content length (must be at least 200 chars to compact)
@@ -2759,10 +2766,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { compactMemoryWithAi } = await import("@fusion/core");
       const compacted = await compactMemoryWithAi(content, rootDir, resolvedProvider, resolvedModelId);
 
-      // Write compacted content back
-      await writeMemory(rootDir, compacted, settings);
+      // Write compacted content back to the same selected memory file.
+      await writeProjectMemoryFile(rootDir, result.path, compacted);
 
-      res.json({ content: compacted });
+      res.json({ path: result.path, content: compacted });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;

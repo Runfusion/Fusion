@@ -591,6 +591,19 @@ export async function readProjectMemoryFile(rootDir: string, options: MemoryGetO
   return getMemoryFile(rootDir, options, "file");
 }
 
+export async function readProjectMemoryFileContent(rootDir: string, path: string): Promise<{ path: string; content: string }> {
+  const { absPath, displayPath } = resolveMemoryFilePath(rootDir, path);
+  try {
+    const content = await readFile(absPath, "utf-8");
+    return { path: displayPath, content };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new MemoryBackendError("NOT_FOUND", `Memory path '${path}' not found`, "file");
+    }
+    throw new MemoryBackendError("READ_FAILED", `Failed to read memory path '${path}': ${(err as Error).message}`, "file");
+  }
+}
+
 export async function writeProjectMemoryFile(rootDir: string, path: string, content: string): Promise<MemoryWriteResult> {
   const { absPath, displayPath } = resolveMemoryFilePath(rootDir, path);
   await mkdir(dirname(absPath), { recursive: true });

@@ -58,7 +58,6 @@ type SettingsSection = {
 
 const MOBILE_SETTINGS_MEDIA_QUERY = "(max-width: 768px)";
 const DEFAULT_MEMORY_EDITOR_PATH = ".fusion/memory/DREAMS.md";
-const LONG_TERM_MEMORY_EDITOR_PATH = ".fusion/memory/MEMORY.md";
 
 const SETTINGS_SECTIONS: SettingsSection[] = [
   // Global group
@@ -193,6 +192,7 @@ export function SettingsModal({
   const [memoryTestResult, setMemoryTestResult] = useState<MemoryRetrievalTestResult | null>(null);
   const [memoryCompactLoading, setMemoryCompactLoading] = useState(false);
   const [qmdInstallLoading, setQmdInstallLoading] = useState(false);
+  const skipNextMemoryReloadRef = useRef(false);
 
   // Global concurrency state
   const [globalMaxConcurrent, setGlobalMaxConcurrent] = useState<number | undefined>(4);
@@ -298,6 +298,10 @@ export function SettingsModal({
 
   useEffect(() => {
     if (activeSection !== "memory" || memoryDirty) {
+      return;
+    }
+    if (skipNextMemoryReloadRef.current) {
+      skipNextMemoryReloadRef.current = false;
       return;
     }
 
@@ -886,21 +890,25 @@ export function SettingsModal({
   const handleCompactMemory = useCallback(async () => {
     setMemoryCompactLoading(true);
     try {
-      const { content } = await compactMemory(projectId);
-      setSelectedMemoryPath(LONG_TERM_MEMORY_EDITOR_PATH);
+      const { path, content } = await compactMemory(selectedMemoryPath, projectId);
+      const nextPath = path ?? selectedMemoryPath;
+      if (selectedMemoryPath !== nextPath) {
+        skipNextMemoryReloadRef.current = true;
+      }
+      setSelectedMemoryPath(nextPath);
       setMemoryContent(content);
       setMemoryDirty(false);
 
       const { files } = await fetchMemoryFiles(projectId);
       setMemoryFiles(files);
 
-      addToast("Memory compacted", "success");
+      addToast("Memory file compacted", "success");
     } catch (err: any) {
       addToast(err?.message || "Failed to compact memory", "error");
     } finally {
       setMemoryCompactLoading(false);
     }
-  }, [projectId, addToast]);
+  }, [selectedMemoryPath, projectId, addToast]);
 
   const handleTestMemoryRetrieval = useCallback(async () => {
     setMemoryTestLoading(true);
@@ -2307,18 +2315,6 @@ export function SettingsModal({
               </div>
             )}
 
-            <div className="form-group">
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={handleCompactMemory}
-                disabled={!isEditingAllowed || memoryCompactLoading}
-              >
-                {memoryCompactLoading ? "Compacting…" : "Compact Memory"}
-              </button>
-              <small>Compacts the long-term project memory file and updates MEMORY.md.</small>
-            </div>
-
             <div className="memory-retrieval-test">
               <div className="form-group">
                 <label htmlFor="memoryRetrievalQuery">Test Retrieval</label>
@@ -2434,6 +2430,24 @@ export function SettingsModal({
                   />
                 </div>
               </div>
+              </div>
+            )}
+
+            {!memoryLoading && (
+              <div className="form-group">
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={handleCompactMemory}
+                  disabled={!isEditingAllowed || memoryDirty || memoryCompactLoading}
+                >
+                  {memoryCompactLoading ? "Compacting…" : "Compact Selected File"}
+                </button>
+                <small>
+                  {memoryDirty
+                    ? "Save or discard edits before compacting this file."
+                    : `Compacts ${selectedMemoryPath} and writes the result back to the same file.`}
+                </small>
               </div>
             )}
 
