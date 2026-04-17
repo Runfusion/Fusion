@@ -10,6 +10,7 @@ vi.mock("../../api", () => ({
   createChatSession: vi.fn(),
   fetchChatMessages: vi.fn(),
   streamChatResponse: vi.fn(),
+  fetchModels: vi.fn(),
 }));
 
 vi.mock("../../hooks/useAgents", () => ({
@@ -20,6 +21,7 @@ const mockFetchChatSessions = vi.mocked(apiModule.fetchChatSessions);
 const mockCreateChatSession = vi.mocked(apiModule.createChatSession);
 const mockFetchChatMessages = vi.mocked(apiModule.fetchChatMessages);
 const mockStreamChatResponse = vi.mocked(apiModule.streamChatResponse);
+const mockFetchModels = vi.mocked(apiModule.fetchModels);
 const mockUseAgents = vi.mocked(useAgents);
 
 const mockAgents: Agent[] = [
@@ -50,6 +52,23 @@ const mockSession: ChatSession = {
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 };
+
+const mockModels = [
+  {
+    provider: "anthropic",
+    id: "claude-sonnet-4-5",
+    name: "Claude Sonnet 4.5",
+    reasoning: true,
+    contextWindow: 200_000,
+  },
+  {
+    provider: "openai",
+    id: "gpt-4o",
+    name: "GPT-4o",
+    reasoning: true,
+    contextWindow: 128_000,
+  },
+];
 
 function mockAgentsHook(agents: Agent[], isLoading = false) {
   mockUseAgents.mockReturnValue({
@@ -103,6 +122,20 @@ function createMockStreamResponse() {
   return mockStream;
 }
 
+async function selectModelOption(optionName: string) {
+  const trigger = screen.getByRole("button", { name: "Select model override" });
+
+  await waitFor(() => {
+    expect(trigger).not.toBeDisabled();
+  });
+
+  fireEvent.click(trigger);
+
+  const optionLabel = await screen.findByText(optionName);
+  const option = optionLabel.closest('[role="option"]') ?? optionLabel;
+  fireEvent.click(option);
+}
+
 describe("QuickChatFAB", () => {
   const addToast = vi.fn();
 
@@ -112,15 +145,27 @@ describe("QuickChatFAB", () => {
     mockFetchChatSessions.mockResolvedValue({ sessions: [] });
     mockCreateChatSession.mockResolvedValue({ session: mockSession });
     mockFetchChatMessages.mockResolvedValue({ messages: [] });
+    mockFetchModels.mockResolvedValue({
+      models: mockModels,
+      favoriteProviders: [],
+      favoriteModels: [],
+    });
     createMockStreamResponse();
   });
 
-  it("renders nothing when no agents exist", () => {
+  it("keeps FAB visible when no agents exist so model chats can start", async () => {
     mockAgentsHook([]);
 
     render(<QuickChatFAB addToast={addToast} />);
 
-    expect(screen.queryByTestId("quick-chat-fab")).toBeNull();
+    expect(screen.getByTestId("quick-chat-fab")).toBeDefined();
+
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-agent-empty")).toBeDefined();
+      expect(screen.getByText("New model chat")).toBeDefined();
+    });
   });
 
   it("renders FAB button when agents exist", () => {
@@ -136,6 +181,18 @@ describe("QuickChatFAB", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("quick-chat-panel")).toBeDefined();
+    });
+  });
+
+  it("renders the model dropdown when panel is open", async () => {
+    render(<QuickChatFAB addToast={addToast} />);
+
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-model-select")).toBeDefined();
+      expect(screen.getByRole("button", { name: "Select model override" })).toBeDefined();
+      expect(mockFetchModels).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -172,6 +229,85 @@ describe("QuickChatFAB", () => {
     expect(select).toBeDefined();
     expect(screen.getByRole("option", { name: "Agent One (executor)" })).toBeDefined();
     expect(screen.getByRole("option", { name: "Agent Two (reviewer)" })).toBeDefined();
+  });
+
+  it("selecting a model with no agents creates a KB agent session with model override", async () => {
+    mockAgentsHook([]);
+
+    render(<QuickChatFAB addToast={addToast} projectId="proj-123" />);
+
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    await selectModelOption("Claude Sonnet 4.5");
+
+    await waitFor(() => {
+      expect(mockCreateChatSession).toHaveBeenCalledWith(
+        {
+          agentId: "__kb_agent__",
+          modelProvider: "anthropic",
+          modelId: "claude-sonnet-4-5",
+        },
+        "proj-123",
+      );
+    });
+
+    const input = await screen.findByTestId("quick-chat-input");
+    fireEvent.change(input, { target: { value: "Hello model" } });
+    fireEvent.click(screen.getByTestId("quick-chat-send"));
+
+    await waitFor(() => {
+      expect(mockStreamChatResponse).toHaveBeenCalledWith(
+        "session-001",
+        "Hello model",
+        expect.any(Object),
+        "proj-123",
+      );
+    });
+  });
+
+  it("selecting both an agent and a model creates session with both parameters", async () => {
+    render(<QuickChatFAB addToast={addToast} projectId="proj-123" />);
+
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    await selectModelOption("GPT-4o");
+
+    await waitFor(() => {
+      expect(mockCreateChatSession).toHaveBeenCalledWith(
+        {
+          agentId: "agent-001",
+          modelProvider: "openai",
+          modelId: "gpt-4o",
+        },
+        "proj-123",
+      );
+    });
+  });
+
+  it("clearing model selection uses the agent default model", async () => {
+    render(<QuickChatFAB addToast={addToast} projectId="proj-123" />);
+
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    await selectModelOption("GPT-4o");
+
+    await waitFor(() => {
+      expect(mockCreateChatSession).toHaveBeenCalledWith(
+        {
+          agentId: "agent-001",
+          modelProvider: "openai",
+          modelId: "gpt-4o",
+        },
+        "proj-123",
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Select model override" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Use default" }));
+
+    await waitFor(() => {
+      expect(mockCreateChatSession).toHaveBeenCalledWith({ agentId: "agent-001" }, "proj-123");
+    });
   });
 
   it("sending a message calls streamChatResponse API with expected params", async () => {
