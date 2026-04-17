@@ -499,16 +499,16 @@ describe("memory-backend", () => {
     });
 
     it("should export default backend type", () => {
-      expect(DEFAULT_MEMORY_BACKEND).toBe("file");
+      expect(DEFAULT_MEMORY_BACKEND).toBe("qmd");
     });
   });
 
   // ── Resolution Functions ──────────────────────────────────────────
 
   describe("resolveMemoryBackend", () => {
-    it("should resolve file backend by default", () => {
+    it("should resolve qmd backend by default", () => {
       const backend = resolveMemoryBackend();
-      expect(backend.type).toBe("file");
+      expect(backend.type).toBe("qmd");
     });
 
     it("should resolve file backend when explicitly set", () => {
@@ -529,18 +529,19 @@ describe("memory-backend", () => {
       expect(backend.type).toBe("qmd");
     });
 
-    it("should fall back to file backend for unknown type", () => {
+    it("should fall back to qmd backend for unknown type", () => {
       const settings = { [MEMORY_BACKEND_SETTINGS_KEYS.MEMORY_BACKEND_TYPE]: "unknown" };
       const backend = resolveMemoryBackend(settings);
-      expect(backend.type).toBe("file");
+      expect(backend.type).toBe("qmd");
     });
   });
 
   describe("getMemoryBackendCapabilities", () => {
-    it("should return file backend capabilities by default", () => {
+    it("should return qmd backend capabilities by default", () => {
       const caps = getMemoryBackendCapabilities();
       expect(caps.readable).toBe(true);
       expect(caps.writable).toBe(true);
+      expect(caps.supportsAtomicWrite).toBe(false);
     });
 
     it("should return readonly capabilities when configured", () => {
@@ -563,14 +564,14 @@ describe("memory-backend", () => {
   // ── Convenience Functions ────────────────────────────────────────
 
   describe("readMemory", () => {
-    it("should read using file backend by default", async () => {
+    it("should read using qmd backend by default", async () => {
       const memoryPath = join(tempDir, ".fusion", "memory.md");
       writeFileSync(memoryPath, "Test memory content", "utf-8");
 
       const result = await readMemory(tempDir);
       expect(result.content).toBe("Test memory content");
       expect(result.exists).toBe(true);
-      expect(result.backend).toBe("file");
+      expect(result.backend).toBe("qmd");
     });
 
     it("should return empty content when file does not exist", async () => {
@@ -588,11 +589,11 @@ describe("memory-backend", () => {
   });
 
   describe("writeMemory", () => {
-    it("should write using file backend by default", async () => {
+    it("should write using qmd backend by default", async () => {
       const result = await writeMemory(tempDir, "# Memory\n\nContent");
       
       expect(result.success).toBe(true);
-      expect(result.backend).toBe("file");
+      expect(result.backend).toBe("qmd");
 
       const memoryPath = join(tempDir, ".fusion", "memory.md");
       expect(readFileSync(memoryPath, "utf-8")).toBe("# Memory\n\nContent");

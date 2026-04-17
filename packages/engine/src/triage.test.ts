@@ -284,7 +284,8 @@ describe("buildSpecificationPrompt", () => {
       );
       expect(prompt).toContain("Specify this task");
       expect(prompt).toContain("## Project Memory");
-      expect(prompt).toContain(".fusion/memory.md");
+      expect(prompt).toContain("memory_search");
+      expect(prompt).toContain("memory_get");
     });
 
     it("excludes memory instructions when memoryEnabled: false", () => {
@@ -313,7 +314,8 @@ describe("buildSpecificationPrompt", () => {
       );
       expect(prompt).toContain("Specify this task");
       expect(prompt).toContain("## Project Memory");
-      expect(prompt).toContain(".fusion/memory.md");
+      expect(prompt).toContain("memory_search");
+      expect(prompt).toContain("memory_get");
     });
   });
 
@@ -377,8 +379,8 @@ describe("buildSpecificationPrompt", () => {
       expect(prompt).toContain("## Project Memory");
       // QMD should NOT unconditionally reference .fusion/memory.md
       expect(prompt).not.toContain(".fusion/memory.md");
-      // Should instruct to consult project memory
-      expect(prompt).toMatch(/consult.*project memory/i);
+      expect(prompt).toContain("memory_search");
+      expect(prompt).toContain("memory_get");
     });
 
     it("QMD prompt has actionable memory instructions", () => {
@@ -399,8 +401,7 @@ describe("buildSpecificationPrompt", () => {
       expect(prompt).toContain("## Project Memory");
       // QMD should NOT contain .fusion/memory.md
       expect(prompt).not.toContain(".fusion/memory.md");
-      // Contains consult guidance
-      expect(prompt).toMatch(/consult.*memory/i);
+      expect(prompt).toContain("memory_search");
     });
   });
 

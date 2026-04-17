@@ -13,6 +13,7 @@ import {
   buildExecutionMemoryInstructions,
   readProjectMemory,
   readProjectMemoryWithBackend,
+  searchProjectMemory,
   resolveMemoryInstructionContext,
 } from "./project-memory.js";
 
@@ -146,14 +147,15 @@ describe("project-memory", () => {
       expect(instructions.length).toBeGreaterThan(0);
     });
 
-    it("contains the memory file path", () => {
+    it("does not inject a raw memory file path by default", () => {
       const instructions = buildTriageMemoryInstructions(testDir);
-      expect(instructions).toContain(".fusion/memory.md");
+      expect(instructions).not.toContain(".fusion/memory.md");
     });
 
-    it("instructs agent to read the memory file", () => {
+    it("instructs agent to search memory first", () => {
       const instructions = buildTriageMemoryInstructions(testDir);
-      expect(instructions).toMatch(/read.*memory\.md/i);
+      expect(instructions).toContain("memory_search");
+      expect(instructions).toContain("memory_get");
     });
 
     it("instructs agent to incorporate learnings", () => {
@@ -170,15 +172,16 @@ describe("project-memory", () => {
       expect(instructions.length).toBeGreaterThan(0);
     });
 
-    it("contains the memory file path", () => {
+    it("does not inject a raw memory file path by default", () => {
       const instructions = buildExecutionMemoryInstructions(testDir);
-      expect(instructions).toContain(".fusion/memory.md");
+      expect(instructions).not.toContain(".fusion/memory.md");
     });
 
-    it("instructs agent to read memory at start", () => {
+    it("instructs agent to search memory at start", () => {
       const instructions = buildExecutionMemoryInstructions(testDir);
       expect(instructions).toMatch(/start of execution/i);
-      expect(instructions).toMatch(/read.*memory\.md/i);
+      expect(instructions).toContain("memory_search");
+      expect(instructions).toContain("memory_get");
     });
 
     it("instructs agent to selectively write learnings at end", () => {
@@ -206,10 +209,9 @@ describe("project-memory", () => {
       expect(instructions).toMatch(/consolidate|update.*refine.*existing|edit.*existing/i);
     });
 
-    it("specifies project-root path not worktree-local", () => {
+    it("keeps qmd default path-agnostic", () => {
       const instructions = buildExecutionMemoryInstructions(testDir);
-      // Should use .fusion/memory.md (project root relative) not absolute worktree paths
-      expect(instructions).toContain("`.fusion/memory.md`");
+      expect(instructions).not.toContain("`.fusion/memory.md`");
     });
   });
 
@@ -420,13 +422,13 @@ describe("project-memory", () => {
   // ── resolveMemoryInstructionContext ─────────────────────────────────────
 
   describe("resolveMemoryInstructionContext", () => {
-    it("returns file backend context by default", () => {
+    it("returns qmd backend context by default", () => {
       const ctx = resolveMemoryInstructionContext();
-      expect(ctx.backendType).toBe("file");
-      expect(ctx.backendName).toBe("File (.fusion/memory.md)");
+      expect(ctx.backendType).toBe("qmd");
+      expect(ctx.backendName).toBe("QMD (Quantized Memory Distillation)");
       expect(ctx.capabilities.readable).toBe(true);
       expect(ctx.capabilities.writable).toBe(true);
-      expect(ctx.instructionPathHint).toBe(".fusion/memory.md");
+      expect(ctx.instructionPathHint).toBeNull();
     });
 
     it("returns file backend context when explicitly set", () => {
@@ -453,10 +455,10 @@ describe("project-memory", () => {
       expect(ctx.instructionPathHint).toBeNull();
     });
 
-    it("returns file backend for unknown backend type", () => {
+    it("returns qmd backend for unknown backend type", () => {
       const ctx = resolveMemoryInstructionContext({ memoryBackendType: "unknown" });
-      expect(ctx.backendType).toBe("file"); // Falls back to file
-      expect(ctx.instructionPathHint).toBe(".fusion/memory.md");
+      expect(ctx.backendType).toBe("qmd");
+      expect(ctx.instructionPathHint).toBeNull();
     });
   });
 
@@ -488,8 +490,8 @@ describe("project-memory", () => {
       expect(instructions).toContain("## Project Memory");
       // QMD should NOT unconditionally reference .fusion/memory.md
       expect(instructions).not.toContain(".fusion/memory.md");
-      // Should instruct to consult project memory
-      expect(instructions).toMatch(/consult.*project memory/i);
+      expect(instructions).toContain("memory_search");
+      expect(instructions).toContain("memory_get");
     });
 
     it("QMD triage instructions completeness - contains consult guidance", () => {
@@ -497,22 +499,21 @@ describe("project-memory", () => {
       const instructions = buildTriageMemoryInstructions(testDir, settings);
       expect(instructions).toContain("## Project Memory");
       expect(instructions).not.toContain(".fusion/memory.md");
-      // Should contain consult guidance
-      expect(instructions).toMatch(/consult.*memory/i);
+      expect(instructions).toContain("memory_search");
     });
 
     it("does not include .fusion/memory.md for non-file backends without instructionPathHint", () => {
       const settings = { memoryBackendType: "some-custom-backend" };
       const instructions = buildTriageMemoryInstructions(testDir, settings);
-      // Non-file backends fall back to file behavior but with generic path
-      // Actually unknown backends fall back to file, so this test validates the fallback
-      // Let's test with explicit settings that have no path hint
+      expect(instructions).toContain("memory_search");
+      expect(instructions).not.toContain(".fusion/memory.md");
     });
 
-    it("maintains backward compatibility when settings omitted (file behavior)", () => {
+    it("defaults to qmd guidance when settings are omitted", () => {
       const instructions = buildTriageMemoryInstructions(testDir);
-      expect(instructions).toContain(".fusion/memory.md");
-      expect(instructions).toMatch(/read.*memory\.md/i);
+      expect(instructions).toContain("memory_search");
+      expect(instructions).toContain("memory_get");
+      expect(instructions).not.toContain(".fusion/memory.md");
     });
   });
 
@@ -546,8 +547,8 @@ describe("project-memory", () => {
       expect(instructions).toContain("## Project Memory");
       // QMD should NOT unconditionally reference .fusion/memory.md
       expect(instructions).not.toContain(".fusion/memory.md");
-      // Should instruct to consult project memory at start
-      expect(instructions).toMatch(/consult.*project memory/i);
+      expect(instructions).toContain("memory_search");
+      expect(instructions).toContain("memory_get");
     });
 
     it("QMD execution instructions completeness", () => {
@@ -555,8 +556,7 @@ describe("project-memory", () => {
       const instructions = buildExecutionMemoryInstructions(testDir, settings);
       expect(instructions).toContain("## Project Memory");
       expect(instructions).not.toContain(".fusion/memory.md");
-      // Contains consult guidance at start of execution
-      expect(instructions).toMatch(/consult.*memory/i);
+      expect(instructions).toContain("memory_search");
       // Contains "end of execution" write guidance
       expect(instructions).toMatch(/end of execution/i);
       // Contains "skip" wording for when nothing durable learned
@@ -565,10 +565,11 @@ describe("project-memory", () => {
       expect(instructions).toMatch(/trivia|avoid/i);
     });
 
-    it("maintains backward compatibility when settings omitted (file behavior)", () => {
+    it("defaults to qmd guidance when settings are omitted", () => {
       const instructions = buildExecutionMemoryInstructions(testDir);
-      expect(instructions).toContain(".fusion/memory.md");
-      expect(instructions).toMatch(/read.*memory\.md/i);
+      expect(instructions).toContain("memory_search");
+      expect(instructions).toContain("memory_get");
+      expect(instructions).not.toContain(".fusion/memory.md");
       expect(instructions).toMatch(/end of execution|before calling.*task_done/i);
     });
 
@@ -578,6 +579,22 @@ describe("project-memory", () => {
       // Should NOT contain the format guidance section
       expect(instructions).not.toContain("Format for additions");
       expect(instructions).not.toContain("\\`- \\`");
+    });
+  });
+
+  describe("searchProjectMemory", () => {
+    it("uses qmd backend by default and searches all memory files", async () => {
+      const memoryDir = join(testDir, ".fusion", "memory");
+      await mkdir(memoryDir, { recursive: true });
+      const token = `qmdindexunique${Date.now()}`;
+      await writeFile(join(memoryDir, "DREAMS.md"), `# Dreams\n\n- The scheduler retries ${token} failures.`, "utf-8");
+      await writeFile(join(memoryDir, "MEMORY.md"), "# Memory\n\n- Durable API decisions live here.", "utf-8");
+
+      const results = await searchProjectMemory(testDir, { query: token, limit: 5 });
+
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0].backend).toBe("qmd");
+      expect(results.some((result) => result.path === ".fusion/memory/DREAMS.md")).toBe(true);
     });
   });
 });

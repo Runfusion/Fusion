@@ -1265,11 +1265,11 @@ export interface ProjectSettings {
   memoryEnabled?: boolean;
   /** Memory backend type for pluggable memory storage.
    *  Available built-in backends:
-   *  - "file": File-based backend storing memory in `.fusion/memory.md` (default)
-   *  - "qmd": QMD (Quantized Memory Distillation) backend using the qmd CLI tool
+   *  - "qmd": QMD (Quantized Memory Distillation) backend using the qmd CLI tool (default)
+   *  - "file": File-based backend storing memory in `.fusion/memory.md`
    *  - "readonly": Read-only backend that returns empty memory (for external management)
    *  - Any registered custom backend type
-   *  Default: "file" */
+   *  Default: "qmd" */
   memoryBackendType?: string;
   /** When true, enables automatic AI-powered summarization and compression of the
    *  working memory file when it exceeds the configured size threshold.
@@ -1290,7 +1290,7 @@ export interface ProjectSettings {
    *  Default: false. */
   memoryDreamsEnabled?: boolean;
   /** Cron expression for dream processing. Only used when memoryDreamsEnabled
-   *  is true. Default: "0 4 * * *" (daily at 4 AM, after long-term compaction). */
+   *  is true. Default: "0 4 * * *" (daily at 4 AM). */
   memoryDreamsSchedule?: string;
   /** Maximum token count before auto-compact triggers. When undefined, compact
    *  only on overflow errors. When set, the engine monitors token usage after

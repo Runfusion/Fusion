@@ -14,7 +14,7 @@ import { homedir } from "node:os";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 const execAsync = promisify(exec);
-import { CentralCore } from "@fusion/core";
+import { CentralCore, QMD_INSTALL_COMMAND, isQmdAvailable } from "@fusion/core";
 import { resolveGlobalDir } from "@fusion/core";
 
 /** Options for the init command */
@@ -77,6 +77,7 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
 
   // Add local Fusion/Pi storage directories to .gitignore
   await addLocalStorageToGitignore(cwd);
+  await warnIfQmdMissing();
 
   // Create fusion.db (empty SQLite file)
   if (!existsSync(dbPath)) {
@@ -196,4 +197,14 @@ async function addLocalStorageToGitignore(cwd: string): Promise<void> {
     // Best-effort: don't fail init if we can't write to .gitignore
     console.log(`  ⚠ Could not update .gitignore (best-effort)`);
   }
+}
+
+async function warnIfQmdMissing(): Promise<void> {
+  if (await isQmdAvailable()) {
+    console.log(`  ✓ qmd available for memory search`);
+    return;
+  }
+
+  console.log(`  ⚠ qmd not found; memory search will use local file fallback`);
+  console.log(`    Install qmd for indexed retrieval: ${QMD_INSTALL_COMMAND}`);
 }

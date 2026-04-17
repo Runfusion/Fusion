@@ -52,6 +52,13 @@ vi.mock("../../api", () => ({
   fetchMemoryFiles: vi.fn(() => Promise.resolve({
     files: [
       {
+        path: ".fusion/memory/DREAMS.md",
+        label: "Dreams",
+        layer: "dreams",
+        size: 0,
+        updatedAt: "2026-04-17T12:00:00.000Z",
+      },
+      {
         path: ".fusion/memory/MEMORY.md",
         label: "Long-term memory",
         layer: "long-term",
@@ -60,8 +67,15 @@ vi.mock("../../api", () => ({
       },
     ],
   })),
-  fetchMemoryFile: vi.fn(() => Promise.resolve({ path: ".fusion/memory/MEMORY.md", content: "" })),
+  fetchMemoryFile: vi.fn((path = ".fusion/memory/DREAMS.md") => Promise.resolve({ path, content: "" })),
   saveMemoryFile: vi.fn(() => Promise.resolve({ success: true })),
+  testMemoryRetrieval: vi.fn(() => Promise.resolve({
+    query: "project memory",
+    qmdAvailable: true,
+    usedFallback: false,
+    qmdInstallCommand: "bun add -g qmd",
+    results: [],
+  })),
   fetchGlobalConcurrency: vi.fn(() => Promise.resolve({ globalMaxConcurrent: 4, currentlyActive: 0, queuedCount: 0, projectsActive: {} })),
   updateGlobalConcurrency: vi.fn(() => Promise.resolve({ globalMaxConcurrent: 4, currentlyActive: 0, queuedCount: 0, projectsActive: {} })),
   fetchMemoryBackendStatus: vi.fn(() => Promise.resolve({
@@ -74,11 +88,26 @@ vi.mock("../../api", () => ({
       persistent: true,
     },
     availableBackends: ["file", "readonly", "qmd"],
+    qmdAvailable: true,
+    qmdInstallCommand: "bun add -g qmd",
   })),
 }));
 
 vi.mock("../../hooks/useMemoryBackendStatus", () => ({
   useMemoryBackendStatus: vi.fn(() => ({
+    status: {
+      currentBackend: "qmd",
+      capabilities: {
+        readable: true,
+        writable: true,
+        supportsAtomicWrite: false,
+        hasConflictResolution: false,
+        persistent: true,
+      },
+      availableBackends: ["file", "readonly", "qmd"],
+      qmdAvailable: true,
+      qmdInstallCommand: "bun add -g qmd",
+    },
     currentBackend: "file",
     capabilities: {
       readable: true,
@@ -96,6 +125,22 @@ vi.mock("../../hooks/useMemoryBackendStatus", () => ({
 
 import { fetchSettings } from "../../api";
 
+function mockSettingsViewport(matches: boolean): void {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -110,6 +155,7 @@ function expectMobileRule(css: string, selector: string, declaration: string): v
 describe("SettingsModal mobile adaptations", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockSettingsViewport(false);
   });
 
   it("renders mobile-targeted settings layout classes", async () => {
@@ -119,6 +165,18 @@ describe("SettingsModal mobile adaptations", () => {
     expect(container.querySelector(".settings-layout")).toBeTruthy();
     expect(container.querySelector(".settings-sidebar")).toBeTruthy();
     expect(container.querySelector(".settings-content")).toBeTruthy();
+  });
+
+  it("can open memory settings from the mobile section picker", async () => {
+    mockSettingsViewport(true);
+    const user = userEvent.setup();
+    const { getByLabelText, findByText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    await user.selectOptions(getByLabelText("Settings Section"), "memory");
+
+    expect(await findByText(/Memory lives in/)).toBeTruthy();
+    expect(getByLabelText("Memory File")).toBeTruthy();
   });
 
   it("renders settings nav items with active class for touch styling", async () => {
@@ -172,11 +230,8 @@ describe("SettingsModal mobile adaptations", () => {
     const css = fs.readFileSync(stylesPath, "utf-8");
 
     expectMobileRule(css, ".settings-layout", "flex-direction: column;");
-    expectMobileRule(css, ".settings-sidebar", "flex-direction: row;");
-    expectMobileRule(css, ".settings-sidebar", "align-items: center;");
-    expectMobileRule(css, ".settings-sidebar", "overflow-x: auto;");
-    expectMobileRule(css, ".settings-sidebar", "scrollbar-width: none;");
-    expectMobileRule(css, ".settings-sidebar::-webkit-scrollbar", "display: none;");
+    expectMobileRule(css, ".settings-mobile-section-picker", "display: flex;");
+    expectMobileRule(css, ".settings-sidebar", "display: none;");
     expectMobileRule(css, ".settings-nav-item", "display: flex;");
     expectMobileRule(css, ".settings-nav-item", "align-items: center;");
     expectMobileRule(css, ".settings-nav-item", "justify-content: center;");

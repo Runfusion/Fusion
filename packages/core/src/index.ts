@@ -462,6 +462,8 @@ export {
   memoryExists,
   MEMORY_BACKEND_SETTINGS_KEYS,
   DEFAULT_MEMORY_BACKEND,
+  QMD_INSTALL_COMMAND,
+  isQmdAvailable,
 } from "./memory-backend.js";
 
 export { MemoryBackendError } from "./memory-backend.js";

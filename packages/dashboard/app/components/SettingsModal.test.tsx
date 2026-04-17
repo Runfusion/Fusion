@@ -25,6 +25,7 @@ const mockCompactMemory = vi.fn();
 const mockFetchGlobalConcurrency = vi.fn();
 const mockUpdateGlobalConcurrency = vi.fn();
 const mockFetchMemoryBackendStatus = vi.fn();
+const mockTestMemoryRetrieval = vi.fn();
 
 vi.mock("../api", () => ({
   fetchSettings: (...args: unknown[]) => mockFetchSettings(...args),
@@ -47,6 +48,7 @@ vi.mock("../api", () => ({
   fetchGlobalConcurrency: (...args: unknown[]) => mockFetchGlobalConcurrency(...args),
   updateGlobalConcurrency: (...args: unknown[]) => mockUpdateGlobalConcurrency(...args),
   fetchMemoryBackendStatus: (...args: unknown[]) => mockFetchMemoryBackendStatus(...args),
+  testMemoryRetrieval: (...args: unknown[]) => mockTestMemoryRetrieval(...args),
 }));
 
 // Mock the hook
@@ -108,9 +110,23 @@ describe("SettingsModal", () => {
         },
       ],
     });
-    mockFetchMemoryFile.mockResolvedValue({ path: ".fusion/memory/MEMORY.md", content: "## Existing memory\n- Learned pattern" });
+    mockFetchMemoryFile.mockImplementation((path: string) =>
+      Promise.resolve({
+        path,
+        content: path.endsWith("DREAMS.md")
+          ? "## Existing dreams\n- Pattern from daily notes"
+          : "## Existing memory\n- Learned pattern",
+      }),
+    );
     mockSaveMemoryFile.mockResolvedValue({ success: true });
     mockCompactMemory.mockResolvedValue({ content: "# Compacted Memory\n\nImportant content." });
+    mockTestMemoryRetrieval.mockResolvedValue({
+      query: "pattern",
+      qmdAvailable: true,
+      usedFallback: false,
+      qmdInstallCommand: "bun add -g qmd",
+      results: [],
+    });
     mockImportSettings.mockResolvedValue({ success: true, globalCount: 0, projectCount: 0 });
     mockFetchGlobalConcurrency.mockResolvedValue({ globalMaxConcurrent: 4, currentlyActive: 0, queuedCount: 0, projectsActive: {} });
     mockUpdateGlobalConcurrency.mockResolvedValue({ globalMaxConcurrent: 4, currentlyActive: 0, queuedCount: 0, projectsActive: {} });
@@ -124,8 +140,23 @@ describe("SettingsModal", () => {
         persistent: true,
       },
       availableBackends: ["file", "readonly", "qmd"],
+      qmdAvailable: true,
+      qmdInstallCommand: "bun add -g qmd",
     });
     mockUseMemoryBackendStatus.mockReturnValue({
+      status: {
+        currentBackend: "qmd",
+        capabilities: {
+          readable: true,
+          writable: true,
+          supportsAtomicWrite: false,
+          hasConflictResolution: false,
+          persistent: true,
+        },
+        availableBackends: ["file", "readonly", "qmd"],
+        qmdAvailable: true,
+        qmdInstallCommand: "bun add -g qmd",
+      },
       currentBackend: "file",
       capabilities: {
         readable: true,
@@ -355,7 +386,7 @@ describe("SettingsModal", () => {
       // Click the Memory section in the sidebar
       await userEvent.click(screen.getByText("Memory"));
 
-      const checkbox = screen.getByRole("checkbox", { name: /enable project memory/i });
+      const checkbox = screen.getByRole("checkbox", { name: /enable memory tools/i });
       expect(checkbox).toBeDefined();
       // Default is enabled, so checkbox should be checked
       expect(checkbox).toBeChecked();
@@ -376,7 +407,7 @@ describe("SettingsModal", () => {
       // Click the Memory section in the sidebar
       await userEvent.click(screen.getByText("Memory"));
 
-      const checkbox = screen.getByRole("checkbox", { name: /enable project memory/i });
+      const checkbox = screen.getByRole("checkbox", { name: /enable memory tools/i });
       expect(checkbox).toBeDefined();
       expect(checkbox).not.toBeChecked();
     });
@@ -391,7 +422,7 @@ describe("SettingsModal", () => {
       // Click the Memory section in the sidebar
       await userEvent.click(screen.getByText("Memory"));
 
-      const checkbox = screen.getByRole("checkbox", { name: /enable project memory/i });
+      const checkbox = screen.getByRole("checkbox", { name: /enable memory tools/i });
       expect(checkbox).toBeChecked();
 
       // Uncheck it
@@ -416,11 +447,11 @@ describe("SettingsModal", () => {
 
       await waitFor(() => {
         expect(mockFetchMemoryFiles).toHaveBeenCalledWith(undefined);
-        expect(mockFetchMemoryFile).toHaveBeenCalledWith(".fusion/memory/MEMORY.md", undefined);
+        expect(mockFetchMemoryFile).toHaveBeenCalledWith(".fusion/memory/DREAMS.md", undefined);
       });
 
-      const editor = await screen.findByLabelText("Editor for .fusion/memory/MEMORY.md") as HTMLTextAreaElement;
-      expect(editor.value).toContain("Existing memory");
+      const editor = await screen.findByLabelText("Editor for .fusion/memory/DREAMS.md") as HTMLTextAreaElement;
+      expect(editor.value).toContain("Existing dreams");
     });
 
     it("shows loading state while memory is being fetched", async () => {
@@ -444,7 +475,7 @@ describe("SettingsModal", () => {
       resolveMemory?.({ content: "# Loaded" });
 
       await waitFor(() => {
-        expect(screen.getByLabelText("Editor for .fusion/memory/MEMORY.md")).toBeDefined();
+        expect(screen.getByLabelText("Editor for .fusion/memory/DREAMS.md")).toBeDefined();
       });
     });
 
@@ -457,6 +488,13 @@ describe("SettingsModal", () => {
       });
 
       await userEvent.click(screen.getByText("Memory"));
+
+      await waitFor(() => {
+        expect(mockFetchMemoryFile).toHaveBeenCalledWith(".fusion/memory/DREAMS.md", undefined);
+      });
+
+      const select = await screen.findByLabelText("Memory File");
+      await userEvent.selectOptions(select, ".fusion/memory/MEMORY.md");
 
       const editor = await screen.findByLabelText("Editor for .fusion/memory/MEMORY.md");
       fireEvent.change(editor, { target: { value: "# Updated memory\n- Reusable learning" } });
@@ -475,7 +513,7 @@ describe("SettingsModal", () => {
     });
 
     it("handles empty memory content from API", async () => {
-      mockFetchMemoryFile.mockResolvedValueOnce({ path: ".fusion/memory/MEMORY.md", content: "" });
+      mockFetchMemoryFile.mockResolvedValueOnce({ path: ".fusion/memory/DREAMS.md", content: "" });
       renderModal();
 
       await waitFor(() => {
@@ -484,7 +522,7 @@ describe("SettingsModal", () => {
 
       await userEvent.click(screen.getByText("Memory"));
 
-      const editor = await screen.findByLabelText("Editor for .fusion/memory/MEMORY.md") as HTMLTextAreaElement;
+      const editor = await screen.findByLabelText("Editor for .fusion/memory/DREAMS.md") as HTMLTextAreaElement;
       expect(editor.value).toBe("");
     });
 

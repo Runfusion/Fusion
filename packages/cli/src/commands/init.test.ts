@@ -22,6 +22,8 @@ vi.mock("@fusion/core", () => ({
     registerProject: mockRegisterProject,
     updateProject: mockUpdateProject,
   })),
+  isQmdAvailable: vi.fn(() => Promise.resolve(true)),
+  QMD_INSTALL_COMMAND: "bun add -g qmd",
   resolveGlobalDir: vi.fn(),
 }));
 

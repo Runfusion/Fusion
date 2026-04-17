@@ -126,7 +126,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   insightExtractionSchedule: "0 2 * * *",
   insightExtractionMinIntervalMs: 86_400_000,
   memoryEnabled: true,
-  memoryBackendType: "file",
+  memoryBackendType: "qmd",
   memoryAutoSummarizeEnabled: false,
   memoryAutoSummarizeThresholdChars: 50_000,
   memoryAutoSummarizeSchedule: "0 3 * * *",

@@ -12691,7 +12691,7 @@ describe("GET /api/memory/backend", () => {
     });
   });
 
-  it("defaults to file backend when no backend type is set", async () => {
+  it("defaults to qmd backend when no backend type is set", async () => {
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       memoryEnabled: true,
     });
@@ -12699,11 +12699,11 @@ describe("GET /api/memory/backend", () => {
     const res = await GET(buildApp(), "/api/memory/backend");
 
     expect(res.status).toBe(200);
-    expect(res.body.currentBackend).toBe("file");
+    expect(res.body.currentBackend).toBe("qmd");
   });
 
-  it("returns file backend for unknown custom backend type (fallback)", async () => {
-    // Unknown backend types are persisted but fallback to file at runtime
+  it("returns qmd backend for unknown custom backend type (fallback)", async () => {
+    // Unknown backend types are persisted but fallback to qmd at runtime
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       memoryBackendType: "unknown-custom-backend",
       memoryEnabled: true,
@@ -12712,8 +12712,8 @@ describe("GET /api/memory/backend", () => {
     const res = await GET(buildApp(), "/api/memory/backend");
 
     expect(res.status).toBe(200);
-    // currentBackend reflects the effective backend (file fallback)
-    expect(res.body.currentBackend).toBe("file");
+    // currentBackend reflects the effective backend (qmd fallback)
+    expect(res.body.currentBackend).toBe("qmd");
     // But availableBackends is still the list of registered backends
     expect(res.body.availableBackends).toContain("file");
     expect(res.body.availableBackends).toContain("readonly");

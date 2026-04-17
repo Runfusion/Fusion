@@ -3282,6 +3282,10 @@ body {
   overflow: hidden;
 }
 
+.settings-mobile-section-picker {
+  display: none;
+}
+
 .settings-sidebar {
   width: 170px;
   min-width: 170px;
@@ -3419,100 +3423,56 @@ body {
 }
 
 /* === Memory Settings === */
-.memory-model-panel,
-.memory-prompt-contract {
-  margin: var(--space-md) var(--space-xl) var(--space-lg);
-  padding: var(--space-lg);
-  border: var(--btn-border-width) solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
+.memory-status-message {
+  margin-bottom: var(--space-md);
 }
 
-.memory-model-panel__header {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-lg);
-  align-items: flex-start;
-  margin-bottom: var(--space-lg);
+.memory-retrieval-test {
+  margin-top: var(--space-lg);
 }
 
-.memory-model-panel__header strong,
-.memory-prompt-contract strong {
-  color: var(--text);
-  font-size: 14px;
-}
-
-.memory-model-panel__header p,
-.memory-layer-card p {
-  margin: var(--space-xs) 0 0;
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.memory-model-panel__badge,
-.memory-layer-card__label {
-  display: inline-flex;
-  align-items: center;
-  border-radius: var(--radius-pill);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--color-info);
-  background: color-mix(in srgb, var(--color-info) 12%, transparent);
-}
-
-.memory-model-panel__badge {
-  padding: var(--space-xs) var(--space-sm);
-  white-space: nowrap;
-}
-
-.memory-layer-grid,
-.memory-settings-row {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-md);
-}
-
-.memory-settings-row {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.memory-layer-card {
-  min-width: 0;
+.memory-test-result {
+  margin: 0 var(--space-xl) var(--space-lg);
   padding: var(--space-md);
   border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius-md);
   background: var(--card);
 }
 
-.memory-layer-card__label {
-  padding: var(--space-xs) var(--space-sm);
-  margin-bottom: var(--space-sm);
-}
-
-.memory-layer-card strong {
-  display: block;
-  overflow-wrap: anywhere;
+.memory-test-result strong,
+.memory-test-result span {
   color: var(--text);
-  font-family: var(--font-mono);
   font-size: 12px;
 }
 
-.memory-prompt-contract ul {
-  margin: var(--space-sm) 0 0;
-  padding-left: var(--space-lg);
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.settings-subline {
+.memory-test-result small {
   display: block;
   margin-top: var(--space-xs);
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
-.memory-status-message {
-  margin-bottom: var(--space-md);
+.memory-test-result ul {
+  margin: var(--space-md) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.memory-test-result li {
+  padding-top: var(--space-sm);
+  border-top: var(--btn-border-width) solid var(--border);
+}
+
+.memory-test-result li + li {
+  margin-top: var(--space-sm);
+}
+
+.memory-test-result p {
+  margin: var(--space-xs) 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .memory-editor-section {
@@ -7005,27 +6965,38 @@ body {
     flex-shrink: 0;
   }
 
-  /* Settings modal: stack sidebar above content for mobile */
+  /* Settings modal: use the section picker as the only mobile navigation */
   .settings-layout {
     flex-direction: column;
     min-height: 0;
   }
 
-  .settings-sidebar {
-    width: auto;
-    min-width: 0;
-    flex-direction: row;
-    align-items: center;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    padding: 6px 8px;
-    gap: 2px;
+  .settings-mobile-section-picker {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    padding: var(--space-md) var(--space-lg);
+    border-bottom: var(--btn-border-width) solid var(--border);
+    background: var(--surface);
   }
 
-  .settings-sidebar::-webkit-scrollbar {
+  .settings-mobile-section-picker label {
+    color: var(--text-muted);
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .settings-mobile-section-picker select {
+    width: 100%;
+  }
+
+  .settings-mobile-section-picker select:focus-visible {
+    outline: none;
+    border-color: var(--todo);
+    box-shadow: var(--focus-ring-strong);
+  }
+
+  .settings-sidebar {
     display: none;
   }
 
@@ -7087,21 +7058,6 @@ body {
 
   .settings-empty-state {
     padding: 12px 14px;
-  }
-
-  .memory-model-panel,
-  .memory-prompt-contract {
-    margin: var(--space-md) var(--space-lg) var(--space-lg);
-  }
-
-  .memory-model-panel__header {
-    flex-direction: column;
-    gap: var(--space-sm);
-  }
-
-  .memory-layer-grid,
-  .memory-settings-row {
-    grid-template-columns: 1fr;
   }
 
   .memory-editor-frame {

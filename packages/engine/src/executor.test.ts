@@ -2476,8 +2476,8 @@ describe("buildExecutionPrompt", () => {
       const memorySection = memorySectionMatch![1];
       // QMD should NOT unconditionally reference .fusion/memory.md in the memory section
       expect(memorySection).not.toContain(".fusion/memory.md");
-      // Should instruct to consult project memory
-      expect(memorySection).toMatch(/consult.*project memory/i);
+      expect(memorySection).toContain("memory_search");
+      expect(memorySection).toContain("memory_get");
     });
 
     it("QMD prompt has actionable memory instructions", () => {
@@ -2493,8 +2493,7 @@ describe("buildExecutionPrompt", () => {
       const memorySection = memorySectionMatch![1];
       // QMD should NOT contain .fusion/memory.md
       expect(memorySection).not.toContain(".fusion/memory.md");
-      // Contains consult guidance at start of execution
-      expect(memorySection).toMatch(/consult.*memory/i);
+      expect(memorySection).toContain("memory_search");
       // Contains "end of execution" write guidance
       expect(memorySection).toMatch(/end of execution/i);
     });

@@ -5,8 +5,8 @@
  * Different backends can be plugged in based on project settings, with
  * each backend declaring its capabilities (readable, writable, etc.).
  *
- * The default backend is the file-based backend that stores memory in
- * `.fusion/memory.md`.
+ * The default backend is qmd-backed search over layered memory files, with
+ * local file search as a fallback when qmd is not installed.
  */
 
 import { readFile, writeFile, mkdir, access, constants, readdir, stat } from "node:fs/promises";
@@ -17,6 +17,7 @@ export const MEMORY_WORKSPACE_PATH = ".fusion/memory";
 export const MEMORY_LONG_TERM_FILENAME = "MEMORY.md";
 export const MEMORY_DREAMS_FILENAME = "DREAMS.md";
 export const LEGACY_MEMORY_FILE_PATH = ".fusion/memory.md";
+export const QMD_INSTALL_COMMAND = "bun add -g qmd";
 
 const DAILY_MEMORY_RE = /^\d{4}-\d{2}-\d{2}\.md$/;
 const MAX_MEMORY_SNIPPET_CHARS = 700;
@@ -193,7 +194,7 @@ const backendRegistry = new Map<string, MemoryBackend>();
  * File-based memory backend.
  *
  * Stores project memory in `.fusion/memory.md` at the project root.
- * This is the default backend that preserves existing UX.
+ * Preserves the legacy `.fusion/memory.md` storage path when explicitly selected.
  */
 export class FileMemoryBackend implements MemoryBackend {
   readonly type = "file";
@@ -442,7 +443,7 @@ export class QmdMemoryBackend implements MemoryBackend {
     if (qmdResults.length > 0) {
       return qmdResults.map((result) => ({ ...result, backend: this.type }));
     }
-    return searchMemoryFiles(rootDir, options, "file");
+    return searchMemoryFiles(rootDir, options, this.type);
   }
 }
 
@@ -762,6 +763,21 @@ async function searchWithQmd(rootDir: string, options: MemorySearchOptions): Pro
   }
 }
 
+export async function isQmdAvailable(): Promise<boolean> {
+  try {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const execFileAsync = promisify(execFile);
+    await execFileAsync("qmd", ["--help"], {
+      timeout: 3000,
+      maxBuffer: 128 * 1024,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ── Backend Registration ─────────────────────────────────────────────
 
 /**
@@ -812,7 +828,7 @@ export const MEMORY_BACKEND_SETTINGS_KEYS = {
 /**
  * Default memory backend type.
  */
-export const DEFAULT_MEMORY_BACKEND = "file";
+export const DEFAULT_MEMORY_BACKEND = "qmd";
 
 // ── Type for Settings ───────────────────────────────────────────────
 

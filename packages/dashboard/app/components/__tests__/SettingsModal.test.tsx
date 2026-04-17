@@ -82,6 +82,13 @@ vi.mock("../../api", () => ({
   fetchMemoryFiles: vi.fn(() => Promise.resolve({
     files: [
       {
+        path: ".fusion/memory/DREAMS.md",
+        label: "Dreams",
+        layer: "dreams",
+        size: 0,
+        updatedAt: "2026-04-17T12:00:00.000Z",
+      },
+      {
         path: ".fusion/memory/MEMORY.md",
         label: "Long-term memory",
         layer: "long-term",
@@ -90,14 +97,34 @@ vi.mock("../../api", () => ({
       },
     ],
   })),
-  fetchMemoryFile: vi.fn(() => Promise.resolve({ path: ".fusion/memory/MEMORY.md", content: "" })),
+  fetchMemoryFile: vi.fn((path = ".fusion/memory/DREAMS.md") => Promise.resolve({ path, content: "" })),
   saveMemoryFile: vi.fn(() => Promise.resolve({ success: true })),
   compactMemory: vi.fn(() => Promise.resolve({ content: "# Compacted Memory\n\nImportant content." })),
+  testMemoryRetrieval: vi.fn(() => Promise.resolve({
+    query: "project memory",
+    qmdAvailable: true,
+    usedFallback: false,
+    qmdInstallCommand: "bun add -g qmd",
+    results: [],
+  })),
 }));
 
 // Mock useMemoryBackendStatus hook
 vi.mock("../../hooks/useMemoryBackendStatus", () => ({
   useMemoryBackendStatus: vi.fn(() => ({
+    status: {
+      currentBackend: "qmd",
+      capabilities: {
+        readable: true,
+        writable: true,
+        supportsAtomicWrite: false,
+        hasConflictResolution: false,
+        persistent: true,
+      },
+      availableBackends: ["file", "readonly", "qmd"],
+      qmdAvailable: true,
+      qmdInstallCommand: "bun add -g qmd",
+    },
     currentBackend: "file",
     capabilities: {
       readable: true,
@@ -116,6 +143,19 @@ vi.mock("../../hooks/useMemoryBackendStatus", () => ({
 // Mock useMemoryBackendStatus hook
 vi.mock("../../hooks/useMemoryBackendStatus", () => ({
   useMemoryBackendStatus: vi.fn(() => ({
+    status: {
+      currentBackend: "qmd",
+      capabilities: {
+        readable: true,
+        writable: true,
+        supportsAtomicWrite: false,
+        hasConflictResolution: false,
+        persistent: true,
+      },
+      availableBackends: ["file", "readonly", "qmd"],
+      qmdAvailable: true,
+      qmdInstallCommand: "bun add -g qmd",
+    },
     currentBackend: "file",
     capabilities: {
       readable: true,
@@ -4030,128 +4070,17 @@ describe("Prompts section", () => {
     });
   });
 
-  describe("Memory section - Compact Memory", () => {
-    it("renders Compact Memory button in memory section", async () => {
+  describe("Memory section - file editor", () => {
+    it("shows the memory file selector and defaults to dreams", async () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
       await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-      // Navigate to Memory section
-      const memorySection = screen.getByText("Memory");
-      fireEvent.click(memorySection);
+      fireEvent.click(screen.getByText("Memory"));
 
-      await waitFor(() => {
-        // Should show Compact Memory button
-        expect(screen.getByText("Compact Memory")).toBeInTheDocument();
-      });
-    });
-
-    it("calls compactMemory when Compact Memory button is clicked", async () => {
-      const { compactMemory } = await import("../../api");
-      (compactMemory as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-        content: "# Compacted Memory\n\nImportant content.",
-      });
-
-      render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
-
-      // Navigate to Memory section
-      const memorySection = screen.getByText("Memory");
-      fireEvent.click(memorySection);
-
-      await waitFor(() => {
-        // Click Compact Memory button
-        const compactBtn = screen.getByText("Compact Memory");
-        fireEvent.click(compactBtn);
-      });
-
-      await waitFor(() => {
-        expect(compactMemory).toHaveBeenCalled();
-      });
-    });
-
-    it("updates editor content after successful compaction", async () => {
-      const { compactMemory } = await import("../../api");
-      const newContent = "# Compacted Memory\n\nImportant content.";
-      (compactMemory as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-        content: newContent,
-      });
-
-      render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
-
-      // Navigate to Memory section
-      const memorySection = screen.getByText("Memory");
-      fireEvent.click(memorySection);
-
-      await waitFor(() => {
-        // Click Compact Memory button
-        const compactBtn = screen.getByText("Compact Memory");
-        fireEvent.click(compactBtn);
-      });
-
-      await waitFor(() => {
-        // Should show success toast
-        expect(addToast).toHaveBeenCalledWith("Memory compacted successfully", "success");
-      });
-    });
-
-    it("disables button while compacting", async () => {
-      let resolveCompact: (value: { content: string }) => void;
-      const { compactMemory } = await import("../../api");
-      (compactMemory as ReturnType<typeof vi.fn>).mockImplementation(
-        () => new Promise((resolve) => { resolveCompact = resolve; })
-      );
-
-      render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
-
-      // Navigate to Memory section
-      const memorySection = screen.getByText("Memory");
-      fireEvent.click(memorySection);
-
-      await waitFor(() => {
-        // Click Compact Memory button
-        const compactBtn = screen.getByText("Compact Memory");
-        fireEvent.click(compactBtn);
-      });
-
-      await waitFor(() => {
-        // Button should show loading text
-        expect(screen.getByText("Compacting…")).toBeInTheDocument();
-      });
-
-      // Complete the promise
-      resolveCompact!({ content: "# Compacted Memory\n\nImportant content." });
-
-      await waitFor(() => {
-        // Button should be back to normal
-        expect(screen.getByText("Compact Memory")).toBeInTheDocument();
-      });
-    });
-
-    it("shows error toast when compaction fails", async () => {
-      const { compactMemory } = await import("../../api");
-      (compactMemory as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-        new Error("AI service unavailable")
-      );
-
-      render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
-
-      // Navigate to Memory section
-      const memorySection = screen.getByText("Memory");
-      fireEvent.click(memorySection);
-
-      await waitFor(() => {
-        // Click Compact Memory button
-        const compactBtn = screen.getByText("Compact Memory");
-        fireEvent.click(compactBtn);
-      });
-
-      await waitFor(() => {
-        // Should show error toast
-        expect(addToast).toHaveBeenCalledWith("AI service unavailable", "error");
-      });
+      const selector = await screen.findByLabelText("Memory File") as HTMLSelectElement;
+      expect(selector.value).toBe(".fusion/memory/DREAMS.md");
+      expect(screen.getByText(/Choose any project memory file to view or edit/i)).toBeInTheDocument();
+      expect(screen.queryByText("Compact Memory")).not.toBeInTheDocument();
     });
   });
 });

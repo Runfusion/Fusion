@@ -383,6 +383,27 @@ export interface MemoryBackendStatus {
   capabilities: MemoryBackendCapabilities;
   /** List of registered backend types available */
   availableBackends: string[];
+  /** Whether the qmd CLI is available on PATH */
+  qmdAvailable?: boolean;
+  /** Suggested install command when qmd is unavailable */
+  qmdInstallCommand?: string;
+}
+
+export interface MemorySearchResult {
+  path: string;
+  lineStart: number;
+  lineEnd: number;
+  snippet: string;
+  score: number;
+  backend: string;
+}
+
+export interface MemoryRetrievalTestResult {
+  query: string;
+  qmdAvailable: boolean;
+  usedFallback: boolean;
+  qmdInstallCommand: string;
+  results: MemorySearchResult[];
 }
 
 /**
@@ -391,6 +412,13 @@ export interface MemoryBackendStatus {
  */
 export function fetchMemoryBackendStatus(projectId?: string): Promise<MemoryBackendStatus> {
   return api<MemoryBackendStatus>(withProjectId("/memory/backend", projectId));
+}
+
+export function testMemoryRetrieval(query: string, projectId?: string): Promise<MemoryRetrievalTestResult> {
+  return api<MemoryRetrievalTestResult>(withProjectId("/memory/test", projectId), {
+    method: "POST",
+    body: JSON.stringify({ query }),
+  });
 }
 
 /** Fetch global (user-level) settings from ~/.fusion/settings.json */

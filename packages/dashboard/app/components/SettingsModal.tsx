@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Globe, Folder } from "lucide-react";
 import { THINKING_LEVELS, PROMPT_KEY_CATALOG, isGlobalSettingsKey, isProjectSettingsKey } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent, PromptKey, AgentPromptsConfig } from "@fusion/core";
-import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, fetchGlobalConcurrency, updateGlobalConcurrency, compactMemory, fetchPiExtensions, updatePiExtensions } from "../api";
-import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData, MemoryBackendCapabilities, MemoryFileInfo, PiExtensionSettings } from "../api";
+import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, fetchGlobalConcurrency, updateGlobalConcurrency, fetchPiExtensions, updatePiExtensions, testMemoryRetrieval } from "../api";
+import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData, MemoryBackendCapabilities, MemoryFileInfo, MemoryRetrievalTestResult, PiExtensionSettings } from "../api";
 import { useMemoryBackendStatus } from "../hooks/useMemoryBackendStatus";
 import type { ToastType } from "../hooks/useToast";
 import { ThemeSelector } from "./ThemeSelector";
@@ -55,6 +55,9 @@ type SettingsSection = {
   icon?: typeof Globe;
   isGroupHeader?: boolean;
 };
+
+const MOBILE_SETTINGS_MEDIA_QUERY = "(max-width: 768px)";
+const DEFAULT_MEMORY_EDITOR_PATH = ".fusion/memory/DREAMS.md";
 
 const SETTINGS_SECTIONS: SettingsSection[] = [
   // Global group
@@ -140,6 +143,11 @@ export function SettingsModal({
   // Find the first non-group-header section for default active section
   const firstNonHeaderSection = SETTINGS_SECTIONS.find((s) => !s.isGroupHeader);
   const [activeSection, setActiveSection] = useState<SectionId>(initialSection ?? firstNonHeaderSection?.id ?? "authentication");
+  const [showMobileSectionPicker, setShowMobileSectionPicker] = useState(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia(MOBILE_SETTINGS_MEDIA_QUERY)?.matches === true
+      : false,
+  );
   const [prefixError, setPrefixError] = useState<string | null>(null);
 
   /** Get the scope of the currently active section */
@@ -177,9 +185,11 @@ export function SettingsModal({
   const [memoryContent, setMemoryContent] = useState("");
   const [memoryLoading, setMemoryLoading] = useState(false);
   const [memoryDirty, setMemoryDirty] = useState(false);
-  const [compactLoading, setCompactLoading] = useState(false);
   const [memoryFiles, setMemoryFiles] = useState<MemoryFileInfo[]>([]);
-  const [selectedMemoryPath, setSelectedMemoryPath] = useState(".fusion/memory/MEMORY.md");
+  const [selectedMemoryPath, setSelectedMemoryPath] = useState(DEFAULT_MEMORY_EDITOR_PATH);
+  const [memoryTestQuery, setMemoryTestQuery] = useState("");
+  const [memoryTestLoading, setMemoryTestLoading] = useState(false);
+  const [memoryTestResult, setMemoryTestResult] = useState<MemoryRetrievalTestResult | null>(null);
 
   // Global concurrency state
   const [globalMaxConcurrent, setGlobalMaxConcurrent] = useState<number | undefined>(4);
@@ -195,13 +205,34 @@ export function SettingsModal({
 
   // Memory backend status - called at component top level to comply with React Rules of Hooks
   const {
-    currentBackend: memoryCurrentBackend,
+    status: memoryBackendStatus,
     capabilities: memoryCapabilities,
-    availableBackends: memoryAvailableBackends,
     loading: memoryBackendLoading,
     error: memoryBackendError,
-    refresh: refreshMemoryBackend,
   } = useMemoryBackendStatus({ projectId });
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia(MOBILE_SETTINGS_MEDIA_QUERY);
+    if (!mediaQuery) {
+      return;
+    }
+    const updateMobilePicker = (event?: MediaQueryListEvent) => {
+      setShowMobileSectionPicker(event ? event.matches : mediaQuery.matches);
+    };
+
+    updateMobilePicker();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", updateMobilePicker);
+      return () => mediaQuery.removeEventListener("change", updateMobilePicker);
+    }
+
+    mediaQuery.addListener(updateMobilePicker);
+    return () => mediaQuery.removeListener(updateMobilePicker);
+  }, []);
 
   useEffect(() => {
     // Load both merged and scoped settings to enable inheritance detection
@@ -274,7 +305,10 @@ export function SettingsModal({
         setMemoryFiles(files);
         const nextPath = files.some((file) => file.path === selectedMemoryPath)
           ? selectedMemoryPath
-          : files[0]?.path || ".fusion/memory/MEMORY.md";
+          : files.find((file) => file.path === DEFAULT_MEMORY_EDITOR_PATH)?.path
+            ?? files.find((file) => file.layer === "dreams")?.path
+            ?? files[0]?.path
+            ?? DEFAULT_MEMORY_EDITOR_PATH;
         setSelectedMemoryPath(nextPath);
         const { content } = await fetchMemoryFile(nextPath, projectId);
         if (cancelled) return;
@@ -845,20 +879,22 @@ export function SettingsModal({
     }
   }, [selectedMemoryPath, memoryContent, projectId, addToast]);
 
-  const handleCompactMemory = useCallback(async () => {
-    setCompactLoading(true);
+  const handleTestMemoryRetrieval = useCallback(async () => {
+    setMemoryTestLoading(true);
+    setMemoryTestResult(null);
     try {
-      const { content } = await compactMemory(projectId);
-      setSelectedMemoryPath(".fusion/memory/MEMORY.md");
-      setMemoryContent(content);
-      setMemoryDirty(true);
-      addToast("Memory compacted successfully", "success");
+      const result = await testMemoryRetrieval(memoryTestQuery, projectId);
+      setMemoryTestResult(result);
+      addToast(
+        result.qmdAvailable ? "Memory retrieval test complete" : "qmd is not installed; local fallback was used",
+        result.qmdAvailable ? "success" : "warning",
+      );
     } catch (err: any) {
-      addToast(err?.message || "Failed to compact memory", "error");
+      addToast(err?.message || "Failed to test memory retrieval", "error");
     } finally {
-      setCompactLoading(false);
+      setMemoryTestLoading(false);
     }
-  }, [projectId, addToast]);
+  }, [memoryTestQuery, projectId, addToast]);
 
   const savePresetDraft = () => {
     if (!presetDraft) return;
@@ -2125,15 +2161,13 @@ export function SettingsModal({
       case "memory": {
         // Use memory backend status from top-level hook call
         const {
-          currentBackend,
           capabilities,
-          availableBackends,
+          status: backendStatus,
           loading: backendLoading,
           error: backendError,
         } = {
-          currentBackend: memoryCurrentBackend,
           capabilities: memoryCapabilities,
-          availableBackends: memoryAvailableBackends,
+          status: memoryBackendStatus,
           loading: memoryBackendLoading,
           error: memoryBackendError,
         };
@@ -2143,23 +2177,6 @@ export function SettingsModal({
         const isBackendWritable = capabilities?.writable ?? true;
         const isEditingAllowed = isMemoryEnabled && isBackendWritable;
 
-        // Backend display names
-        const backendNames: Record<string, string> = {
-          file: "Markdown files",
-          readonly: "Read-Only",
-          qmd: "QMD search",
-        };
-        const backendDescriptions: Record<string, string> = {
-          file: "Stores MEMORY.md, daily notes, and DREAMS.md under .fusion/memory with built-in keyword search.",
-          qmd: "Uses qmd for memory_search when available, then falls back to the Markdown file search.",
-          readonly: "Allows read/search access without agent writes. Use this when memory is managed outside Fusion.",
-        };
-        const enabledCapabilities = [
-          capabilities?.readable ? "read" : null,
-          capabilities?.writable ? "write" : null,
-          capabilities?.supportsAtomicWrite ? "atomic writes" : null,
-          capabilities?.persistent ? "persistent" : null,
-        ].filter(Boolean);
         const selectedMemoryFile = memoryFiles.find((file) => file.path === selectedMemoryPath);
         const memoryLayerNames: Record<MemoryFileInfo["layer"], string> = {
           "long-term": "Long-term",
@@ -2172,34 +2189,12 @@ export function SettingsModal({
           <>
             {renderScopeBanner()}
             <h4 className="settings-section-heading">Memory</h4>
-            <div className="memory-model-panel">
-              <div className="memory-model-panel__header">
-                <div>
-                  <strong>Layered project memory</strong>
-                  <p>
-                    Agents search memory first, open bounded line windows only when needed, and append new durable notes instead of pasting the whole memory file into prompts.
-                  </p>
-                </div>
-                <span className="memory-model-panel__badge">OpenClaw-style</span>
-              </div>
-              <div className="memory-layer-grid">
-                <div className="memory-layer-card">
-                  <span className="memory-layer-card__label">Long-term</span>
-                  <strong>.fusion/memory/MEMORY.md</strong>
-                  <p>Curated decisions, conventions, constraints, and pitfalls.</p>
-                </div>
-                <div className="memory-layer-card">
-                  <span className="memory-layer-card__label">Daily</span>
-                  <strong>.fusion/memory/YYYY-MM-DD.md</strong>
-                  <p>Fresh observations and open loops from active work.</p>
-                </div>
-                <div className="memory-layer-card">
-                  <span className="memory-layer-card__label">Dreams</span>
-                  <strong>.fusion/memory/DREAMS.md</strong>
-                  <p>Periodic synthesis that promotes reusable lessons back into long-term memory.</p>
-                </div>
-              </div>
+            <div className="form-group">
+              <small className="settings-muted">
+                Memory lives in <code>.fusion/memory/</code>. Agents search with qmd first, fall back to local files when qmd is missing, and open exact line windows only when needed.
+              </small>
             </div>
+
             <div className="form-group">
               <label htmlFor="memoryEnabled" className="checkbox-label">
                 <input
@@ -2210,115 +2205,27 @@ export function SettingsModal({
                     setForm((f) => ({ ...f, memoryEnabled: e.target.checked }))
                   }
                 />
-                Enable project memory
+                Enable memory tools
               </label>
-              <small>Agents get memory_search, memory_get, and memory_append tools, plus a pre-compaction memory flush when context recovery needs it.</small>
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="memoryBackendType">Memory Backend</label>
-              <select
-                id="memoryBackendType"
-                value={form.memoryBackendType || "file"}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  setForm((f) => ({
-                    ...f,
-                    memoryBackendType: value === "file" ? undefined : value,
-                  }));
-                }}
-                disabled={!isMemoryEnabled}
-              >
-                {availableBackends.map((backend) => (
-                  <option key={backend} value={backend}>
-                    {backendNames[backend] || backend}
-                  </option>
-                ))}
-              </select>
-              <small>{backendDescriptions[form.memoryBackendType || "file"] || "Custom backend registered by the engine."}</small>
+              <small>Agents get memory_search, memory_get, and memory_append tools. Search defaults to qmd with a local file fallback.</small>
             </div>
 
             {backendLoading ? (
               <div className="form-group">
-                <small className="settings-muted">Loading backend status...</small>
+                <small className="settings-muted">Checking memory write access...</small>
               </div>
             ) : backendError ? (
               <div className="form-group">
                 <small className="field-error">Failed to load backend status: {backendError}</small>
               </div>
-            ) : currentBackend ? (
-              <div className="form-group">
-                <small className="settings-muted">
-                  Current backend: <strong>{backendNames[currentBackend] || currentBackend}</strong>
-                  {!isBackendWritable && " (read-only)"}
-                </small>
-                {isBackendWritable && capabilities && (
-                  <small className="settings-muted settings-subline">
-                    Supports: {enabledCapabilities.join(", ")}
-                  </small>
-                )}
-              </div>
             ) : null}
 
-            <div className="memory-prompt-contract">
-              <strong>Agent prompt contract</strong>
-              <ul>
-                <li>Search first with memory_search; do not read all memory by default.</li>
-                <li>Open exact context with memory_get line windows.</li>
-                <li>Append durable findings to daily notes or long-term memory with memory_append.</li>
-                <li>On context overflow, compact prompt memory before full session compaction.</li>
-              </ul>
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="memoryAutoSummarizeEnabled" className="checkbox-label">
-                <input
-                  id="memoryAutoSummarizeEnabled"
-                  type="checkbox"
-                  checked={form.memoryAutoSummarizeEnabled === true}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, memoryAutoSummarizeEnabled: e.target.checked }))
-                  }
-                  disabled={!isMemoryEnabled}
-                />
-                Compact long-term memory automatically
-              </label>
-              <small>Checks MEMORY.md on a schedule and distills it when it crosses the configured size threshold.</small>
-            </div>
-
-            <div className="memory-settings-row">
-              <div className="form-group">
-                <label htmlFor="memoryAutoSummarizeThresholdChars">Compaction Threshold</label>
-                <input
-                  id="memoryAutoSummarizeThresholdChars"
-                  type="number"
-                  min={1000}
-                  step={1000}
-                  value={form.memoryAutoSummarizeThresholdChars ?? 50000}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      memoryAutoSummarizeThresholdChars: Number(e.target.value) || undefined,
-                    }))
-                  }
-                  disabled={!isMemoryEnabled || form.memoryAutoSummarizeEnabled !== true}
-                />
-                <small>Characters before scheduled compaction runs.</small>
+            {backendStatus?.qmdAvailable === false && (
+              <div className="settings-empty-state memory-status-message">
+                qmd is not installed. Search will use local files.
+                Install indexed retrieval: <code>{backendStatus.qmdInstallCommand || "bun add -g qmd"}</code>
               </div>
-              <div className="form-group">
-                <label htmlFor="memoryAutoSummarizeSchedule">Compaction Schedule</label>
-                <input
-                  id="memoryAutoSummarizeSchedule"
-                  type="text"
-                  value={form.memoryAutoSummarizeSchedule ?? "0 3 * * *"}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, memoryAutoSummarizeSchedule: e.target.value }))
-                  }
-                  disabled={!isMemoryEnabled || form.memoryAutoSummarizeEnabled !== true}
-                />
-                <small>Cron expression for long-term memory compaction.</small>
-              </div>
-            </div>
+            )}
 
             <div className="form-group">
               <label htmlFor="memoryDreamsEnabled" className="checkbox-label">
@@ -2333,21 +2240,69 @@ export function SettingsModal({
                 />
                 Process dreams from daily memory
               </label>
-              <small>Turns daily notes into DREAMS.md synthesis and promotes reusable lessons into MEMORY.md.</small>
+              <small>Turns daily notes into DREAMS.md and promotes reusable lessons into MEMORY.md.</small>
             </div>
 
-            <div className="form-group">
-              <label htmlFor="memoryDreamsSchedule">Dream Processing Schedule</label>
-              <input
-                id="memoryDreamsSchedule"
-                type="text"
-                value={form.memoryDreamsSchedule ?? "0 4 * * *"}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, memoryDreamsSchedule: e.target.value }))
-                }
-                disabled={!isMemoryEnabled || form.memoryDreamsEnabled !== true}
-              />
-              <small>Cron expression for daily memory synthesis.</small>
+            {isMemoryEnabled && form.memoryDreamsEnabled === true && (
+              <div className="form-group">
+                <label htmlFor="memoryDreamsSchedule">Dream Schedule</label>
+                <input
+                  id="memoryDreamsSchedule"
+                  type="text"
+                  value={form.memoryDreamsSchedule ?? "0 4 * * *"}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, memoryDreamsSchedule: e.target.value }))
+                  }
+                />
+                <small>Cron expression for dream processing.</small>
+              </div>
+            )}
+
+            <div className="memory-retrieval-test">
+              <div className="form-group">
+                <label htmlFor="memoryRetrievalQuery">Test Retrieval</label>
+                <input
+                  id="memoryRetrievalQuery"
+                  type="text"
+                  value={memoryTestQuery}
+                  onChange={(e) => setMemoryTestQuery(e.target.value)}
+                  placeholder="Search memory with qmd"
+                />
+                <small>Runs the same qmd-backed memory_search path agents use.</small>
+              </div>
+              <div className="form-group">
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={handleTestMemoryRetrieval}
+                  disabled={memoryTestLoading}
+                >
+                  {memoryTestLoading ? "Testing…" : "Test Retrieval"}
+                </button>
+              </div>
+              {memoryTestResult && (
+                <div className="memory-test-result">
+                  <strong>
+                    {memoryTestResult.results.length} result{memoryTestResult.results.length === 1 ? "" : "s"}
+                    {" "}for "{memoryTestResult.query}"
+                  </strong>
+                  <small>
+                    qmd {memoryTestResult.qmdAvailable ? "available" : "missing"} · {memoryTestResult.usedFallback ? "local fallback used" : "qmd path used"}
+                  </small>
+                  {memoryTestResult.results.length > 0 ? (
+                    <ul>
+                      {memoryTestResult.results.map((result, index) => (
+                        <li key={`${result.path}-${result.lineStart}-${index}`}>
+                          <span>{result.path}:{result.lineStart}</span>
+                          <p>{result.snippet}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <small>No matching memory found.</small>
+                  )}
+                </div>
+              )}
             </div>
 
             {!isMemoryEnabled && (
@@ -2357,8 +2312,7 @@ export function SettingsModal({
             )}
             {isMemoryEnabled && !isBackendWritable && (
               <div className="settings-empty-state memory-status-message">
-                The selected backend ({backendNames[currentBackend || "file"] || currentBackend || "file"}) is read-only.
-                You can view the file, but saving is disabled. Select a writable backend to enable editing.
+                Memory is configured with a read-only backend. You can view the file, but saving is disabled.
               </div>
             )}
 
@@ -2386,7 +2340,7 @@ export function SettingsModal({
                   <small>
                     {memoryDirty
                       ? "Save or discard the current edits before switching files."
-                      : "Choose any project memory layer to inspect or edit."}
+                      : "Choose any project memory file to view or edit. Dreams is selected by default."}
                   </small>
                 </div>
                 {selectedMemoryFile && (
@@ -2401,7 +2355,7 @@ export function SettingsModal({
                 <div className="form-group">
                 <label>{selectedMemoryFile?.label || "Memory Editor"}</label>
                 <small>
-                  {selectedMemoryFile?.layer === "long-term" && "Curated durable decisions, conventions, constraints, and pitfalls."}
+                  {selectedMemoryFile?.layer === "long-term" && "Curated durable decisions, conventions, constraints, and pitfalls promoted from dreams."}
                   {selectedMemoryFile?.layer === "daily" && "Raw daily observations, open loops, and running context for dream processing."}
                   {selectedMemoryFile?.layer === "dreams" && "Synthesized patterns and open loops promoted from daily memory."}
                   {selectedMemoryFile?.layer === "legacy" && "Compatibility mirror for older agents and tools."}
@@ -2436,19 +2390,6 @@ export function SettingsModal({
             {memoryDirty && !isEditingAllowed && (
               <div className="form-group">
                 <small className="field-error">Cannot save: {isMemoryEnabled ? "Backend is read-only" : "Memory is disabled"}</small>
-              </div>
-            )}
-
-            {isEditingAllowed && (
-              <div className="form-group">
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  onClick={handleCompactMemory}
-                  disabled={compactLoading}
-                >
-                  {compactLoading ? "Compacting…" : "Compact Memory"}
-                </button>
               </div>
             )}
           </>
@@ -3145,6 +3086,23 @@ export function SettingsModal({
           <div className="settings-empty-state settings-loading">Loading…</div>
         ) : (
           <div className="settings-layout">
+            {showMobileSectionPicker && (
+              <div className="settings-mobile-section-picker">
+                <label htmlFor="settings-mobile-section">Settings Section</label>
+                <select
+                  id="settings-mobile-section"
+                  className="select touch-target"
+                  value={activeSection}
+                  onChange={(event) => setActiveSection(event.target.value as SectionId)}
+                >
+                  {SETTINGS_SECTIONS.filter((section) => !section.isGroupHeader).map((section) => (
+                    <option key={section.id} value={section.id}>
+                      {section.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <nav className="settings-sidebar">
               {SETTINGS_SECTIONS.map((section) => {
                 // Render group headers as non-clickable styled divs

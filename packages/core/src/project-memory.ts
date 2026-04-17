@@ -165,7 +165,7 @@ export function resolveMemoryInstructionContext(
   // Synchronous resolution using getMemoryBackendCapabilities
   // This avoids the async import but requires synchronous access to capabilities
   // For file backend (default), we can inline the capabilities
-  const backendType = settings?.memoryBackendType || "file";
+  const backendType = settings?.memoryBackendType || "qmd";
 
   switch (backendType) {
     case "readonly":
@@ -195,7 +195,6 @@ export function resolveMemoryInstructionContext(
         instructionPathHint: null,
       };
     case "file":
-    default:
       return {
         backendType: "file",
         backendName: "File (.fusion/memory.md)",
@@ -207,6 +206,19 @@ export function resolveMemoryInstructionContext(
           persistent: true,
         },
         instructionPathHint: ".fusion/memory.md",
+      };
+    default:
+      return {
+        backendType: "qmd",
+        backendName: "QMD (Quantized Memory Distillation)",
+        capabilities: {
+          readable: true,
+          writable: true,
+          supportsAtomicWrite: false,
+          hasConflictResolution: false,
+          persistent: true,
+        },
+        instructionPathHint: null,
       };
   }
 }
@@ -414,8 +426,9 @@ Do not read all memory or read \`.fusion/memory.md\` directly by default. If mem
 This project has a memory system that stores durable project learnings.
 
 **Before writing the specification:**
-1. Consult the project memory for relevant context
-2. Incorporate any useful learnings into your specification
+1. Use \`memory_search\` first for task-relevant context
+2. Use \`memory_get\` only for specific memory files/line ranges returned by search
+3. Incorporate useful learnings into your specification
 
 **If the memory contains useful context for this task, reference it in the specification.**
 `;
@@ -513,8 +526,9 @@ This project has OpenClaw-style memory files:
 This project has a memory system that stores durable project learnings accumulated from past task runs.
 
 **At the start of execution:**
-1. Consult the project memory for relevant context
-2. Apply any useful learnings to your implementation
+1. Use \`memory_search\` first for task-relevant context
+2. Use \`memory_get\` only for specific memory files/line ranges returned by search
+3. Apply useful learnings to your implementation
 
 **At the end of execution (before calling \`task_done()\`):**
 1. Review what you learned during this task that would genuinely benefit future runs
@@ -529,6 +543,7 @@ This project has a memory system that stores durable project learnings accumulat
    - Transient failures resolved without broader lessons
    - One-off file paths, variable names, or minor code changes
    - Notes about what you did rather than what future agents should know
+5. Consolidate when possible: refine an existing memory entry instead of adding duplicates.
 `;
 }
 

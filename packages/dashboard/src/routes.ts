@@ -18,7 +18,7 @@ import * as nodeFs from "node:fs";
 
 import { promisify } from "node:util";
 import type { TaskStore, Column, ScheduleType, ActivityEventType, ModelPreset, MessageType, ParticipantType, RoutineTriggerType, ProjectSettings } from "@fusion/core";
-import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, type PiExtensionEntry, type PiExtensionSettings, getCurrentRepo, isGhAuthenticated, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupRoutine, exportSettings, importSettings, validateImportData, MessageStore, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes, listProjectMemoryFiles, readProjectMemoryFile, writeProjectMemoryFile, readMemory, writeMemory, MemoryBackendError, discoverPiExtensions, updatePiExtensionDisabledIds, getFusionAgentDir, getLegacyPiAgentDir } from "@fusion/core";
+import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, type PiExtensionEntry, type PiExtensionSettings, getCurrentRepo, isGhAuthenticated, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupRoutine, exportSettings, importSettings, validateImportData, MessageStore, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes, listProjectMemoryFiles, readProjectMemoryFile, writeProjectMemoryFile, readMemory, writeMemory, searchProjectMemory, isQmdAvailable, QMD_INSTALL_COMMAND, MemoryBackendError, discoverPiExtensions, updatePiExtensionDisabledIds, getFusionAgentDir, getLegacyPiAgentDir } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
 import { GitHubClient, parseBadgeUrl } from "./github.js";
 import { githubRateLimiter } from "./github-poll.js";
@@ -2645,12 +2645,44 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         currentBackend: resolveMemoryBackend(settings).type,
         capabilities,
         availableBackends,
+        qmdAvailable: await isQmdAvailable(),
+        qmdInstallCommand: QMD_INSTALL_COMMAND,
       });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
       rethrowAsApiError(err, "Failed to get memory backend status");
+    }
+  });
+
+  router.post("/memory/test", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const settings = await scopedStore.getSettings();
+      const rootDir = scopedStore.getRootDir();
+      const query = typeof req.body?.query === "string" && req.body.query.trim()
+        ? req.body.query.trim()
+        : "project memory";
+      const qmdAvailable = await isQmdAvailable();
+      const results = await searchProjectMemory(
+        rootDir,
+        { query, limit: 5 },
+        { ...settings, memoryBackendType: "qmd" },
+      );
+
+      res.json({
+        query,
+        qmdAvailable,
+        usedFallback: !qmdAvailable,
+        qmdInstallCommand: QMD_INSTALL_COMMAND,
+        results,
+      });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to test memory retrieval");
     }
   });
 
