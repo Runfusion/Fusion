@@ -22,6 +22,7 @@ import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import { createTaskCreateTool, createTaskLogToolWithContext, createTaskDocumentWriteTool, createTaskDocumentReadTool, createListAgentsTool, createDelegateTaskTool, createSendMessageTool, createReadMessagesTool, taskCreateParams } from "./agent-tools.js";
 import { AgentLogger } from "./agent-logger.js";
+import { resolveAgentInstructionsWithRatings, buildSystemPromptWithInstructions } from "./agent-instructions.js";
 import { heartbeatLog } from "./logger.js";
 import { createRunAuditor, type EngineRunContext } from "./run-audit.js";
 
@@ -936,10 +937,19 @@ export class HeartbeatMonitor {
         // Build skill selection context for heartbeat session (uses waking agent's skills, no role fallback)
         const skillContext = buildSessionSkillContextSync(agent, "heartbeat", rootDir);
 
+        let systemPrompt = HEARTBEAT_SYSTEM_PROMPT;
+        try {
+          const agentInstructions = await resolveAgentInstructionsWithRatings(agent, rootDir, this.store);
+          systemPrompt = buildSystemPromptWithInstructions(HEARTBEAT_SYSTEM_PROMPT, agentInstructions);
+        } catch (instructionError) {
+          const message = instructionError instanceof Error ? instructionError.message : String(instructionError);
+          heartbeatLog.warn(`Failed to enrich heartbeat system prompt for ${agentId}: ${message}`);
+        }
+
         // Create agent session
         const { session } = await createKbAgent({
           cwd: rootDir,
-          systemPrompt: HEARTBEAT_SYSTEM_PROMPT,
+          systemPrompt,
           tools: "readonly",
           customTools: heartbeatTools,
           defaultProvider: agent.runtimeConfig?.modelProvider as string | undefined,

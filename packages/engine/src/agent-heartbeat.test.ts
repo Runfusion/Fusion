@@ -1159,6 +1159,7 @@ describe("HeartbeatMonitor", () => {
             status: "completed" as const,
           };
         }),
+        getRatingSummary: vi.fn().mockResolvedValue(undefined),
         endHeartbeatRun: vi.fn().mockResolvedValue(undefined),
         getBudgetStatus: vi.fn().mockResolvedValue(createBudgetStatus()),
         getCachedAgent: vi.fn().mockReturnValue(null),
@@ -1967,8 +1968,12 @@ describe("HeartbeatMonitor", () => {
     });
 
     describe("execution", () => {
-      it("creates session with correct system prompt and tools", async () => {
-        const store = createStoreWithAgentForExec();
+      it("creates session with enriched system prompt and expected tools", async () => {
+        const store = createStoreWithAgentForExec({
+          soul: "Act like a practical teammate who prioritizes clarity.",
+          memory: "Recent runs found flaky tests in integration suites.",
+          instructionsText: "Always log blockers with actionable next steps.",
+        });
         const mockSession = createMockAgentSession();
         mockedCreateKbAgent.mockResolvedValue({
           session: mockSession as any,
@@ -1981,7 +1986,12 @@ describe("HeartbeatMonitor", () => {
         expect(mockedCreateKbAgent).toHaveBeenCalledOnce();
         const callArgs = mockedCreateKbAgent.mock.calls[0]![0];
         expect(callArgs.cwd).toBe("/tmp/test");
-        expect(callArgs.systemPrompt).toBe(HEARTBEAT_SYSTEM_PROMPT);
+        expect(callArgs.systemPrompt).toContain(HEARTBEAT_SYSTEM_PROMPT);
+        expect(callArgs.systemPrompt).toContain("## Soul");
+        expect(callArgs.systemPrompt).toContain("Act like a practical teammate who prioritizes clarity.");
+        expect(callArgs.systemPrompt).toContain("## Memory");
+        expect(callArgs.systemPrompt).toContain("Recent runs found flaky tests in integration suites.");
+        expect(callArgs.systemPrompt).toContain("Always log blockers with actionable next steps.");
         expect(callArgs.tools).toBe("readonly");
         // Tools: task_create, task_log, task_document_write, task_document_read, list_agents, delegate_task, heartbeat_done
         expect(callArgs.customTools).toHaveLength(7);
@@ -1993,6 +2003,26 @@ describe("HeartbeatMonitor", () => {
         expect(callArgs.customTools![5]!.name).toBe("delegate_task");
         // heartbeat_done is last (terminal tool)
         expect(callArgs.customTools![6]!.name).toBe("heartbeat_done");
+      });
+
+      it("falls back to the base heartbeat prompt when agent has no custom instructions", async () => {
+        const store = createStoreWithAgentForExec({
+          soul: undefined,
+          memory: undefined,
+          instructionsText: undefined,
+          instructionsPath: undefined,
+        });
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({
+          session: mockSession as any,
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp/test" });
+
+        await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+        const callArgs = mockedCreateKbAgent.mock.calls[0]![0];
+        expect(callArgs.systemPrompt).toBe(HEARTBEAT_SYSTEM_PROMPT);
       });
 
       it("includes document tools in heartbeat session", async () => {
@@ -3883,6 +3913,7 @@ describe("executeHeartbeat — skill selection resolver contract (FN-1510/FN-151
           status: "completed" as const,
         };
       }),
+      getRatingSummary: vi.fn().mockResolvedValue(undefined),
       endHeartbeatRun: vi.fn().mockResolvedValue(undefined),
       getBudgetStatus: vi.fn().mockResolvedValue(createBudgetStatus()),
       getCachedAgent: vi.fn().mockReturnValue(null),
@@ -4069,6 +4100,7 @@ describe("executeHeartbeat — skill selection non-fatal (FN-1510/FN-1511)", () 
           status: "completed" as const,
         };
       }),
+      getRatingSummary: vi.fn().mockResolvedValue(undefined),
       endHeartbeatRun: vi.fn().mockResolvedValue(undefined),
       getBudgetStatus: vi.fn().mockResolvedValue(createBudgetStatus()),
       getCachedAgent: vi.fn().mockReturnValue(null),

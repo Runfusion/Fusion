@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ChatManager, __setCreateKbAgent, __resetChatState } from "../chat.js";
+import { ChatManager, __setBuildAgentChatPrompt, __setCreateKbAgent, __resetChatState } from "../chat.js";
 
 // ── Mock Setup ──────────────────────────────────────────────────────────────
 
@@ -27,6 +27,15 @@ const mockChatStore = {
   updateSession: vi.fn(),
 };
 
+const mockAgentStore = {
+  init: vi.fn(),
+  getAgent: vi.fn(),
+};
+
+function createChatManager(): ChatManager {
+  return new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any);
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 describe("ChatManager.sendMessage", () => {
@@ -45,6 +54,26 @@ describe("ChatManager.sendMessage", () => {
       sessionId: "chat-001",
       role: "assistant",
       content: "",
+    });
+    mockChatStore.getMessages.mockReturnValue([]);
+
+    mockAgentStore.init.mockResolvedValue(undefined);
+    mockAgentStore.getAgent.mockResolvedValue({
+      id: "agent-001",
+      name: "Avery",
+      role: "executor",
+      soul: "Be calm and precise.",
+      memory: "Remember to keep test coverage high.",
+      instructionsText: "Keep replies focused.",
+    });
+
+    __setBuildAgentChatPrompt(async ({ agent, basePrompt }: any) => {
+      return [
+        basePrompt,
+        `## Soul\n\n${agent.soul ?? ""}`,
+        `## Memory\n\n${agent.memory ?? ""}`,
+        `## Instructions\n\n${agent.instructionsText ?? ""}`,
+      ].join("\n\n");
     });
   });
 
@@ -78,10 +107,7 @@ describe("ChatManager.sendMessage", () => {
     });
 
     // Arrange
-    const chatManager = new ChatManager(
-      mockChatStore as any,
-      "/tmp/test",
-    );
+    const chatManager = createChatManager();
 
     // Act
     await chatManager.sendMessage("chat-001", "Hello");
@@ -114,10 +140,7 @@ describe("ChatManager.sendMessage", () => {
       };
     });
 
-    const chatManager = new ChatManager(
-      mockChatStore as any,
-      "/tmp/test",
-    );
+    const chatManager = createChatManager();
 
     await chatManager.sendMessage("chat-001", "Hello");
 
@@ -148,10 +171,7 @@ describe("ChatManager.sendMessage", () => {
       };
     });
 
-    const chatManager = new ChatManager(
-      mockChatStore as any,
-      "/tmp/test",
-    );
+    const chatManager = createChatManager();
 
     await chatManager.sendMessage("chat-001", "Hello");
 
@@ -179,10 +199,7 @@ describe("ChatManager.sendMessage", () => {
       };
     });
 
-    const chatManager = new ChatManager(
-      mockChatStore as any,
-      "/tmp/test",
-    );
+    const chatManager = createChatManager();
 
     await chatManager.sendMessage("chat-001", "Hello");
 
@@ -216,10 +233,7 @@ describe("ChatManager.sendMessage", () => {
       };
     });
 
-    const chatManager = new ChatManager(
-      mockChatStore as any,
-      "/tmp/test",
-    );
+    const chatManager = createChatManager();
 
     await chatManager.sendMessage("chat-001", "Hello");
 
@@ -243,10 +257,7 @@ describe("ChatManager.sendMessage", () => {
       };
     });
 
-    const chatManager = new ChatManager(
-      mockChatStore as any,
-      "/tmp/test",
-    );
+    const chatManager = createChatManager();
 
     await chatManager.sendMessage("chat-001", "User message");
 
@@ -264,6 +275,118 @@ describe("ChatManager.sendMessage", () => {
     expect(calls[1][1].role).toBe("assistant");
   });
 
+  it("passes enriched system prompt with agent soul when agent context is available", async () => {
+    let createOptions: any;
+    __setCreateKbAgent(async (options: any) => {
+      createOptions = options;
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          state: {
+            messages: [{ role: "assistant", content: "Done" }],
+          },
+        },
+      };
+    });
+
+    const chatManager = createChatManager();
+    await chatManager.sendMessage("chat-001", "Hello");
+
+    expect(mockAgentStore.init).toHaveBeenCalledTimes(1);
+    expect(mockAgentStore.getAgent).toHaveBeenCalledWith("agent-001");
+    expect(createOptions.systemPrompt).toContain("Be calm and precise.");
+  });
+
+  it("passes enriched system prompt with agent memory when agent context is available", async () => {
+    mockAgentStore.getAgent.mockResolvedValue({
+      id: "agent-001",
+      name: "Avery",
+      role: "executor",
+      soul: "Be concise.",
+      memory: "Remember repo conventions from prior tasks.",
+      instructionsText: "Focus on correctness.",
+    });
+
+    let createOptions: any;
+    __setCreateKbAgent(async (options: any) => {
+      createOptions = options;
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          state: {
+            messages: [{ role: "assistant", content: "Done" }],
+          },
+        },
+      };
+    });
+
+    const chatManager = createChatManager();
+    await chatManager.sendMessage("chat-001", "Hello");
+
+    expect(createOptions.systemPrompt).toContain("Remember repo conventions from prior tasks.");
+  });
+
+  it("falls back to generic chat system prompt when agent lookup returns null", async () => {
+    mockAgentStore.getAgent.mockResolvedValue(null);
+
+    let createOptions: any;
+    __setCreateKbAgent(async (options: any) => {
+      createOptions = options;
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          state: {
+            messages: [{ role: "assistant", content: "Done" }],
+          },
+        },
+      };
+    });
+
+    const chatManager = createChatManager();
+    await chatManager.sendMessage("chat-001", "Hello");
+
+    expect(createOptions.systemPrompt).toContain("You are a helpful AI assistant integrated into the fn task board system.");
+    expect(createOptions.systemPrompt).not.toContain("## Soul");
+  });
+
+  it("includes previous user and assistant messages in the prompt context", async () => {
+    const promptSpy = vi.fn().mockResolvedValue(undefined);
+
+    mockChatStore.getMessages.mockReturnValue([
+      { role: "user", content: "Earlier user question" },
+      { role: "assistant", content: "Earlier assistant answer" },
+      { role: "system", content: "System note should be filtered" },
+      { role: "user", content: "Current question" },
+    ]);
+
+    __setCreateKbAgent(async () => {
+      return {
+        session: {
+          prompt: promptSpy,
+          dispose: vi.fn(),
+          state: {
+            messages: [{ role: "assistant", content: "Done" }],
+          },
+        },
+      };
+    });
+
+    const chatManager = createChatManager();
+    await chatManager.sendMessage("chat-001", "Current question");
+
+    expect(promptSpy).toHaveBeenCalledTimes(1);
+    const promptArgument = promptSpy.mock.calls[0]?.[0];
+    expect(promptArgument).toContain("## Previous Conversation");
+    expect(promptArgument).toContain("[User]: Earlier user question");
+    expect(promptArgument).toContain("[Assistant]: Earlier assistant answer");
+    expect(promptArgument).not.toContain("System note should be filtered");
+    expect(promptArgument).toContain("## Current Message");
+    expect(promptArgument).toContain("Current question");
+  });
+
   it("generates title when session has no title", async () => {
     mockSummarizeTitle.mockResolvedValue("Short Title");
 
@@ -279,10 +402,7 @@ describe("ChatManager.sendMessage", () => {
       };
     });
 
-    const chatManager = new ChatManager(
-      mockChatStore as any,
-      "/tmp/test",
-    );
+    const chatManager = createChatManager();
 
     await chatManager.sendMessage("chat-001", "This is a long message that needs to be summarized");
 
@@ -316,10 +436,7 @@ describe("ChatManager.sendMessage", () => {
       };
     });
 
-    const chatManager = new ChatManager(
-      mockChatStore as any,
-      "/tmp/test",
-    );
+    const chatManager = createChatManager();
 
     const longMessage = "A".repeat(300);
     await chatManager.sendMessage("chat-001", longMessage);
@@ -354,10 +471,7 @@ describe("ChatManager.sendMessage", () => {
       };
     });
 
-    const chatManager = new ChatManager(
-      mockChatStore as any,
-      "/tmp/test",
-    );
+    const chatManager = createChatManager();
 
     await chatManager.sendMessage("chat-001", "This is a long message");
 

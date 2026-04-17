@@ -4,7 +4,7 @@ import { join, dirname } from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Task, TaskStore, MergeResult, AutomationStore, RoutineStore, CentralCore, MessageStore } from "@fusion/core";
-import { ChatStore } from "@fusion/core";
+import { AgentStore, ChatStore } from "@fusion/core";
 import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
 import { createApiRoutes } from "./routes.js";
 import { createSSE } from "./sse.js";
@@ -603,8 +603,11 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   // Create ChatStore for chat session management
   const chatStore = options?.chatStore ?? new ChatStore(store.getFusionDir(), store.getDatabase());
 
+  // Create AgentStore for chat prompt enrichment (lazy-initialized inside ChatManager)
+  const chatAgentStore = new AgentStore({ rootDir: store.getFusionDir() });
+
   // Create ChatManager for AI chat message handling
-  const chatManager = options?.chatManager ?? new ChatManager(chatStore, store.getRootDir());
+  const chatManager = options?.chatManager ?? new ChatManager(chatStore, store.getRootDir(), chatAgentStore);
 
   const runAiSessionCleanup = (maxAgeMs: number, source: "initial" | "scheduled") => {
     const result = aiSessionStore.cleanupStaleSessions(maxAgeMs);

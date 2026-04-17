@@ -30,6 +30,8 @@ const mockUpdateSettingsSyncState = vi.fn();
 const mockApplyRemoteSettings = vi.fn();
 const mockGetSettingsForSync = vi.fn();
 const mockChatStoreInit = vi.fn().mockResolvedValue(undefined);
+const mockAgentStoreInit = vi.fn().mockResolvedValue(undefined);
+const mockAgentStoreGetAgent = vi.fn().mockResolvedValue(null);
 
 vi.mock("@fusion/core", () => {
   return {
@@ -46,6 +48,10 @@ vi.mock("@fusion/core", () => {
     },
     ChatStore: class MockChatStore {
       init = mockChatStoreInit;
+    },
+    AgentStore: class MockAgentStore {
+      init = mockAgentStoreInit;
+      getAgent = mockAgentStoreGetAgent;
     },
   };
 });

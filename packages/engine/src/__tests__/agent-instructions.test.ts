@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Agent, AgentRating, AgentRatingSummary, AgentStore } from "@fusion/core";
 import {
   resolveAgentInstructions,
   resolveAgentInstructionsWithRatings,
+  buildAgentChatPrompt,
   buildSystemPromptWithInstructions,
 } from "../agent-instructions.js";
 
@@ -82,6 +83,19 @@ describe("resolveAgentInstructions", () => {
     const agent = makeAgent({ soul: "Be thorough and analytical." });
     const result = await resolveAgentInstructions(agent, testDir);
     expect(result).toBe("## Soul\n\nBe thorough and analytical.");
+  });
+
+  it("returns memory section when memory is set", async () => {
+    const agent = makeAgent({ memory: "Remember to keep CI green." });
+    const result = await resolveAgentInstructions(agent, testDir);
+    expect(result).toBe("## Memory\n\nRemember to keep CI green.");
+  });
+
+  it("omits memory section when memory is empty", async () => {
+    const agent = makeAgent({ instructionsText: "Base instructions", memory: "   " });
+    const result = await resolveAgentInstructions(agent, testDir);
+    expect(result).toBe("Base instructions");
+    expect(result).not.toContain("## Memory");
   });
 
   it("returns instructionsText when set", async () => {
@@ -219,7 +233,7 @@ describe("resolveAgentInstructions", () => {
     expect(result.length).toBe(10000 + "## Soul\n\n".length);
   });
 
-  it("places soul section after instructionsText and before performance feedback", async () => {
+  it("places memory section after soul", async () => {
     const filePath = join(testDir, "file-instructions.md");
     await writeFile(filePath, "File-based instructions here.");
 
@@ -227,18 +241,20 @@ describe("resolveAgentInstructions", () => {
       instructionsText: "Inline instructions.",
       instructionsPath: "file-instructions.md",
       soul: "Be methodical and detailed.",
+      memory: "Remember that this repository uses pnpm workspaces.",
     });
 
     const result = await resolveAgentInstructions(agent, testDir);
 
-    // Verify section order
-    const soulIndex = result.indexOf("## Soul");
     const instructionsTextIndex = result.indexOf("Inline instructions.");
     const instructionsFileIndex = result.indexOf("File-based instructions here.");
+    const soulIndex = result.indexOf("## Soul");
+    const memoryIndex = result.indexOf("## Memory");
 
     expect(instructionsTextIndex).toBeLessThan(soulIndex);
     expect(instructionsFileIndex).toBeLessThan(soulIndex);
-    expect(soulIndex).toBeLessThan(result.indexOf("## Soul") + 10); // Soul section is present
+    expect(soulIndex).toBeLessThan(memoryIndex);
+    expect(result).toContain("## Memory\n\nRemember that this repository uses pnpm workspaces.");
   });
 });
 
@@ -279,10 +295,11 @@ describe("resolveAgentInstructions with rating summary", () => {
     expect(result).toContain('  - "Could communicate blockers sooner" (score: 4.0)');
   });
 
-  it("places soul section before performance feedback and after instructions", async () => {
+  it("places soul and memory sections before performance feedback and after instructions", async () => {
     const agent = makeAgent({
       instructionsText: "Implement the feature.",
       soul: "Be pragmatic and efficient.",
+      memory: "Past tasks with flaky tests needed retries.",
     });
     const summary = makeRatingSummary({
       totalRatings: 3,
@@ -291,14 +308,16 @@ describe("resolveAgentInstructions with rating summary", () => {
 
     const result = await resolveAgentInstructions(agent, testDir, summary);
 
-    // Verify section order: instructionsText → soul → Performance Feedback
+    // Verify section order: instructionsText → soul → memory → Performance Feedback
     const instructionsIndex = result.indexOf("Implement the feature.");
     const soulIndex = result.indexOf("## Soul");
+    const memoryIndex = result.indexOf("## Memory");
     const feedbackIndex = result.indexOf("## Performance Feedback");
 
     expect(instructionsIndex).toBeLessThan(soulIndex);
-    expect(soulIndex).toBeLessThan(feedbackIndex);
-    expect(result).toContain("## Soul");
+    expect(soulIndex).toBeLessThan(memoryIndex);
+    expect(memoryIndex).toBeLessThan(feedbackIndex);
+    expect(result).toContain("## Memory");
     expect(result).toContain("## Performance Feedback");
   });
 
@@ -462,6 +481,49 @@ describe("resolveAgentInstructionsWithRatings", () => {
 
     expect(store.getRatingSummary).not.toHaveBeenCalled();
     expect(result).toBe("Fallback instructions");
+  });
+});
+
+describe("buildAgentChatPrompt", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = await mkdtemp(join(tmpdir(), "agent-chat-prompt-"));
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  it("builds an identity-aware prompt with soul, memory, instructions, and project memory", async () => {
+    await mkdir(join(testDir, ".fusion"), { recursive: true });
+    await writeFile(join(testDir, ".fusion", "memory.md"), "Project preference: avoid force pushes.");
+
+    const agent = makeAgent({
+      name: "Avery",
+      title: "Senior Engineer",
+      role: "reviewer",
+      instructionsText: "Always include focused tests.",
+      soul: "Be calm, direct, and empathetic.",
+      memory: "The team values short progress updates.",
+    });
+
+    const prompt = await buildAgentChatPrompt({
+      agent,
+      rootDir: testDir,
+      basePrompt: "You are a chat assistant.",
+      includeProjectMemory: true,
+    });
+
+    expect(prompt).toContain("You are a chat assistant.");
+    expect(prompt).toContain("## Custom Instructions");
+    expect(prompt).toContain(
+      "## Identity\n\nYou are Avery, Senior Engineer (agent ID: agent-test, role: reviewer).",
+    );
+    expect(prompt).toContain("Always include focused tests.");
+    expect(prompt).toContain("## Soul\n\nBe calm, direct, and empathetic.");
+    expect(prompt).toContain("## Memory\n\nThe team values short progress updates.");
+    expect(prompt).toContain("## Project Memory\n\nProject preference: avoid force pushes.");
   });
 });
 

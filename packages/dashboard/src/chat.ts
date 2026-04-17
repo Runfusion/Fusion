@@ -13,6 +13,8 @@
  */
 
 import type {
+  Agent,
+  AgentStore,
   ChatStore,
   ChatSession,
   ChatSessionCreateInput,
@@ -27,10 +29,12 @@ import { SessionEventBuffer } from "./sse-buffer.js";
 type AgentResult = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let createKbAgent: any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let buildAgentChatPromptFn: any;
 
 // Initialize the import (this runs in actual server, mocked in tests)
 async function initEngine() {
-  if (!createKbAgent) {
+  if (!createKbAgent || !buildAgentChatPromptFn) {
     try {
       // Use dynamic import with variable to prevent static analysis
       const engineModule = "@fusion/engine";
@@ -38,10 +42,16 @@ async function initEngine() {
       if (!createKbAgent) {
         createKbAgent = engine.createKbAgent;
       }
+      if (!buildAgentChatPromptFn) {
+        buildAgentChatPromptFn = engine.buildAgentChatPrompt;
+      }
     } catch {
       // Allow failure in test environments - agent functionality will be stubbed
       if (!createKbAgent) {
         createKbAgent = undefined;
+      }
+      if (!buildAgentChatPromptFn) {
+        buildAgentChatPromptFn = undefined;
       }
     }
   }
@@ -255,9 +265,12 @@ export function getRateLimitResetTime(ip: string): Date | null {
  * Creates sessions, sends messages, and streams AI responses via SSE.
  */
 export class ChatManager {
+  private agentStoreReady?: Promise<void>;
+
   constructor(
     private chatStore: ChatStore,
     private rootDir: string,
+    private agentStore?: AgentStore,
   ) {}
 
   /**
@@ -357,10 +370,60 @@ export class ChatManager {
         throw new Error("AI agent not available");
       }
 
+      let systemPrompt = CHAT_SYSTEM_PROMPT;
+      let agent: Agent | null = null;
+
+      if (this.agentStore && session.agentId) {
+        try {
+          this.agentStoreReady ??= this.agentStore.init();
+          await this.agentStoreReady;
+          agent = await this.agentStore.getAgent(session.agentId);
+        } catch (agentLoadError) {
+          const message = agentLoadError instanceof Error ? agentLoadError.message : String(agentLoadError);
+          console.warn(`[chat] Failed to load agent context for ${session.agentId}: ${message}`);
+        }
+      }
+
+      if (agent && buildAgentChatPromptFn) {
+        try {
+          systemPrompt = await buildAgentChatPromptFn({
+            agent,
+            rootDir: this.rootDir,
+            agentStore: this.agentStore,
+            basePrompt: CHAT_SYSTEM_PROMPT,
+            includeProjectMemory: true,
+          });
+        } catch (promptBuildError) {
+          const message = promptBuildError instanceof Error ? promptBuildError.message : String(promptBuildError);
+          console.warn(`[chat] Failed to build enriched system prompt for ${agent.id}: ${message}`);
+        }
+      }
+
+      const allMessages = this.chatStore.getMessages(sessionId, { limit: 10000 }) ?? [];
+      const previousMessages = allMessages.slice(-51, -1);
+      const conversationMessages = previousMessages.filter(
+        (message) => message.role === "user" || message.role === "assistant",
+      );
+
+      const promptContent = conversationMessages.length > 0
+        ? [
+            "## Previous Conversation",
+            "",
+            ...conversationMessages.map((message) => {
+              const speaker = message.role === "user" ? "User" : "Assistant";
+              return `[${speaker}]: ${message.content}`;
+            }),
+            "",
+            "## Current Message",
+            "",
+            content,
+          ].join("\n")
+        : content;
+
       // Create AI agent session
       agentResult = await createKbAgent({
         cwd: this.rootDir,
-        systemPrompt: CHAT_SYSTEM_PROMPT,
+        systemPrompt,
         tools: "readonly",
         ...(effectiveModelProvider && effectiveModelId
           ? {
@@ -385,7 +448,7 @@ export class ChatManager {
       });
 
       // Send user message and get response
-      await agentResult.session.prompt(content);
+      await agentResult.session.prompt(promptContent);
 
       // Extract response text from agent state
       let responseText = "";
@@ -453,9 +516,18 @@ export function __setCreateKbAgent(mock: typeof createKbAgent): void {
 }
 
 /**
+ * Inject a mock buildAgentChatPrompt function. Used for testing only.
+ */
+export function __setBuildAgentChatPrompt(mock: typeof buildAgentChatPromptFn): void {
+  buildAgentChatPromptFn = mock;
+}
+
+/**
  * Reset all chat state. Used for testing only.
  */
 export function __resetChatState(): void {
   chatStreamManager.reset();
   rateLimits.clear();
+  engineReady = undefined;
+  buildAgentChatPromptFn = undefined;
 }

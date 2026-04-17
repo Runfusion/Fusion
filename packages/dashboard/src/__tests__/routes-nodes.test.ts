@@ -15,6 +15,8 @@ const mockCheckNodeHealth = vi.fn();
 const mockIsDiscoveryActive = vi.fn().mockReturnValue(false);
 const mockGetDiscoveryConfig = vi.fn().mockReturnValue(null);
 const mockChatStoreInit = vi.fn().mockResolvedValue(undefined);
+const mockAgentStoreInit = vi.fn().mockResolvedValue(undefined);
+const mockAgentStoreGetAgent = vi.fn().mockResolvedValue(null);
 
 vi.mock("@fusion/core", () => {
   return {
@@ -32,6 +34,10 @@ vi.mock("@fusion/core", () => {
     },
     ChatStore: class MockChatStore {
       init = mockChatStoreInit;
+    },
+    AgentStore: class MockAgentStore {
+      init = mockAgentStoreInit;
+      getAgent = mockAgentStoreGetAgent;
     },
   };
 });

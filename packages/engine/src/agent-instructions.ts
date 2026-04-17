@@ -1,10 +1,16 @@
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve, relative, normalize, sep } from "node:path";
-import type { Agent, AgentRatingSummary, AgentStore } from "@fusion/core";
+import {
+  readProjectMemory,
+  type Agent,
+  type AgentRatingSummary,
+  type AgentStore,
+} from "@fusion/core";
 
 const MAX_INSTRUCTIONS_PATH_LENGTH = 500;
 const MAX_INSTRUCTIONS_TEXT_LENGTH = 50_000;
 const MAX_SOUL_LENGTH = 10_000;
+const MAX_MEMORY_LENGTH = 50_000;
 
 function trimAndClamp(value: string, maxLength: number, label: string, agentId: string): string {
   const trimmed = value.trim();
@@ -84,6 +90,14 @@ function formatSoulSection(soul: string, agentId: string): string {
     return "";
   }
   return `## Soul\n\n${trimmed}`;
+}
+
+function formatMemorySection(memory: string, agentId: string): string {
+  const trimmed = trimAndClamp(memory, MAX_MEMORY_LENGTH, "memory", agentId);
+  if (!trimmed) {
+    return "";
+  }
+  return `## Memory\n\n${trimmed}`;
 }
 
 function formatPerformanceFeedbackSection(ratingSummary: AgentRatingSummary): string {
@@ -179,11 +193,18 @@ export async function resolveAgentInstructions(
     }
   }
 
-  // Soul/personality section (after instructions, before performance feedback)
+  // Soul/personality section (after instructions, before memory/performance feedback)
   if (agent.soul?.trim()) {
     const soulSection = formatSoulSection(agent.soul, agent.id);
     if (soulSection) {
       parts.push(soulSection);
+    }
+  }
+
+  if (agent.memory?.trim()) {
+    const memorySection = formatMemorySection(agent.memory, agent.id);
+    if (memorySection) {
+      parts.push(memorySection);
     }
   }
 
@@ -219,6 +240,42 @@ export async function resolveAgentInstructionsWithRatings(
   } catch {
     return baseInstructions;
   }
+}
+
+export async function buildAgentChatPrompt(options: {
+  agent: Agent;
+  rootDir: string;
+  agentStore?: AgentStore;
+  basePrompt: string;
+  includeProjectMemory?: boolean;
+}): Promise<string> {
+  const { agent, rootDir, agentStore, basePrompt, includeProjectMemory = false } = options;
+
+  const titleSuffix = agent.title?.trim() ? `, ${agent.title.trim()}` : "";
+  const identitySection = `## Identity\n\nYou are ${agent.name}${titleSuffix} (agent ID: ${agent.id}, role: ${agent.role}).`;
+
+  const instructionParts = [identitySection];
+
+  const resolvedInstructions = await resolveAgentInstructionsWithRatings(agent, rootDir, agentStore);
+  if (resolvedInstructions.trim()) {
+    instructionParts.push(resolvedInstructions);
+  }
+
+  if (includeProjectMemory) {
+    try {
+      const projectMemory = (await readProjectMemory(rootDir)).trim();
+      if (projectMemory) {
+        instructionParts.push(`## Project Memory\n\n${projectMemory}`);
+      }
+    } catch (error: unknown) {
+      // Graceful fallback for chat/heartbeat: if project memory cannot be read,
+      // continue with available identity + agent instructions.
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[agent-instructions] Failed to read project memory for agent ${agent.id}: ${message}`);
+    }
+  }
+
+  return buildSystemPromptWithInstructions(basePrompt, instructionParts.join("\n\n"));
 }
 
 /**

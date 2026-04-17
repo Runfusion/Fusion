@@ -7,6 +7,8 @@ import { request, get } from "../test-request.js";
 const mockInit = vi.fn().mockResolvedValue(undefined);
 const mockClose = vi.fn().mockResolvedValue(undefined);
 const mockGetNode = vi.fn();
+const mockAgentStoreInit = vi.fn().mockResolvedValue(undefined);
+const mockAgentStoreGetAgent = vi.fn().mockResolvedValue(null);
 
 vi.mock("@fusion/core", () => {
   return {
@@ -17,6 +19,10 @@ vi.mock("@fusion/core", () => {
     },
     ChatStore: class MockChatStore {
       init = vi.fn().mockResolvedValue(undefined);
+    },
+    AgentStore: class MockAgentStore {
+      init = mockAgentStoreInit;
+      getAgent = mockAgentStoreGetAgent;
     },
   };
 });
