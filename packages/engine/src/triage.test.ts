@@ -1385,6 +1385,55 @@ describe("taskCreate tool model inheritance", () => {
   });
 
   describe("bounded recovery retries for triage", () => {
+    it("marks triage failed when the agent exits without calling review_spec", async () => {
+      const task = {
+        id: "FN-202",
+        description: "Test triage task",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [], comments: [] }),
+      });
+
+      mockCreateKbAgent.mockResolvedValue({
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          sessionManager: {
+            getLeafId: vi.fn().mockReturnValue(null),
+            navigateTree: vi.fn(),
+          },
+        },
+      });
+
+      const { promptWithFallback } = await import("./pi.js");
+      (promptWithFallback as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+
+      const processor = new TriageProcessor(store, "/test/root", {
+        pollIntervalMs: 100_000,
+      });
+
+      await processor.specifyTask(task);
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-202", expect.objectContaining({
+        status: "failed",
+        error: expect.stringContaining("review_spec was never called"),
+        recoveryRetryCount: null,
+        nextRecoveryAt: null,
+      }));
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-202",
+        expect.stringContaining("Specification failed: spec review not approved"),
+      );
+    });
+
     it("sets recoveryRetryCount and nextRecoveryAt on first transient error via specifyTask", async () => {
       const task = {
         id: "FN-200",
@@ -1456,6 +1505,38 @@ describe("taskCreate tool model inheritance", () => {
   });
 
   describe("recovery due-time gating (nextRecoveryAt)", () => {
+    it("skips failed triage tasks until they are explicitly retried", async () => {
+      const task = {
+        id: "FN-102",
+        description: "Failed triage task",
+        column: "triage",
+        status: "failed",
+        error: "Specification failed",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([task]),
+      });
+
+      const processor = new TriageProcessor(store, "/test/root", {
+        pollIntervalMs: 100_000,
+      });
+      const specifySpy = vi.spyOn(processor, "specifyTask");
+
+      processor.start();
+      await new Promise((r) => setTimeout(r, 50));
+      processor.stop();
+
+      expect(specifySpy).not.toHaveBeenCalled();
+      specifySpy.mockRestore();
+    });
+
     it("skips triage tasks whose nextRecoveryAt is in the future", async () => {
       const future = new Date(Date.now() + 60_000).toISOString();
       const task = {
@@ -2043,6 +2124,8 @@ describe("pause-abort status clearing (bug fix)", () => {
         navigateTree: vi.fn(),
       },
     });
+    const { promptWithFallback } = await import("./pi.js");
+    (promptWithFallback as ReturnType<typeof vi.fn>).mockReturnValueOnce(disposePromise);
 
     const task: Task = { id: "FN-001", description: "test", column: "triage", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" };
     const processor = new TriageProcessor(store, "/tmp/root");
@@ -2093,6 +2176,8 @@ describe("stuck task detector integration", () => {
         navigateTree: vi.fn(),
       },
     });
+    const { promptWithFallback } = await import("./pi.js");
+    (promptWithFallback as ReturnType<typeof vi.fn>).mockReturnValueOnce(disposePromise);
 
     const task: Task = { id: "FN-001", description: "test", column: "triage", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" };
     const processor = new TriageProcessor(store, "/tmp/root");

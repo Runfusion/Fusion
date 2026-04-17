@@ -507,6 +507,54 @@ describe("createKbAgent", () => {
     });
   });
 
+  it("falls back during prompt when the primary model has an auth failure", async () => {
+    const primaryPrompt = vi.fn().mockRejectedValue(new Error("401 unauthorized: invalid api key"));
+    const fallbackPrompt = vi.fn().mockResolvedValue(undefined);
+    const primaryDispose = vi.fn();
+
+    createAgentSessionMock
+      .mockResolvedValueOnce({
+        session: {
+          prompt: primaryPrompt,
+          subscribe: vi.fn(),
+          dispose: primaryDispose,
+          setThinkingLevel: vi.fn(),
+        },
+      })
+      .mockResolvedValueOnce({
+        session: {
+          prompt: fallbackPrompt,
+          subscribe: vi.fn(),
+          dispose: vi.fn(),
+          setThinkingLevel: vi.fn(),
+        },
+      });
+
+    const { createKbAgent } = await import("./pi.js");
+
+    const { session } = await createKbAgent({
+      cwd: "/tmp",
+      systemPrompt: "test",
+      tools: "readonly",
+      defaultProvider: "zai",
+      defaultModelId: "glm-5.1",
+      fallbackProvider: "openai-codex",
+      fallbackModelId: "gpt-5.3-codex",
+    });
+
+    await (session as any).promptWithFallback("make a spec");
+
+    expect(primaryPrompt).toHaveBeenCalledWith("make a spec");
+    expect(primaryDispose).toHaveBeenCalled();
+    expect(fallbackPrompt).toHaveBeenCalledWith("make a spec");
+    expect(createAgentSessionMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      model: { provider: "zai", id: "glm-5.1" },
+    }));
+    expect(createAgentSessionMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      model: { provider: "openai-codex", id: "gpt-5.3-codex" },
+    }));
+  });
+
   it("enables auto-compaction to prevent context-window overflow", async () => {
     const { createKbAgent } = await import("./pi.js");
 

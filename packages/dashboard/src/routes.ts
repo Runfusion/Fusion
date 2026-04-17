@@ -3385,7 +3385,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const task = await scopedStore.getTask(req.params.id);
       const retrySpecification =
         task.column === "triage" &&
-        (task.status === "specifying" || task.status === "needs-respecify" || (task.stuckKillCount ?? 0) > 0);
+        (task.status === "failed" ||
+          task.status === "specifying" ||
+          task.status === "needs-respecify" ||
+          (task.stuckKillCount ?? 0) > 0);
       if (task.status !== "failed" && task.status !== "stuck-killed" && !retrySpecification) {
         throw badRequest(`Task is not in a retryable state (current status: ${task.status || 'none'})`);
       }

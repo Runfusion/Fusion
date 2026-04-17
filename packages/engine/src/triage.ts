@@ -541,6 +541,9 @@ export class TriageProcessor {
         (t) => t.column === "triage" && !this.processing.has(t.id) && !t.paused
           // Skip tasks awaiting manual plan approval — they should not be auto-discovered
           && t.status !== "awaiting-approval"
+          // Skip failed specifications until the user explicitly retries them.
+          && t.status !== "failed"
+          && t.status !== "stuck-killed"
           // Skip tasks with a recovery backoff that hasn't elapsed yet
           && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),
       );
@@ -687,7 +690,7 @@ export class TriageProcessor {
           projectRootDir: this.rootDir,
         });
 
-        const { session } = await createKbAgent({
+        let { session } = await createKbAgent({
           cwd: this.rootDir,
           systemPrompt: triageSystemPrompt,
           tools: "coding",
@@ -790,6 +793,22 @@ export class TriageProcessor {
           // Re-raise errors that pi-coding-agent swallowed after exhausting retries.
           checkSessionError(session);
 
+          if (this.pauseAborted.has(task.id)) {
+            this.pauseAborted.delete(task.id);
+            triageLog.log(`${task.id} aborted by pause — clearing status`);
+            const restoreStatus = task.status === "needs-respecify" ? "needs-respecify" : null;
+            await this.store.updateTask(task.id, { status: restoreStatus }).catch(() => {});
+            return;
+          }
+
+          if (this.stuckAborted.has(task.id)) {
+            this.stuckAborted.delete(task.id);
+            triageLog.log(`${task.id} killed by stuck detector — clearing status for retry`);
+            const restoreStatus = task.status === "needs-respecify" ? "needs-respecify" : null;
+            await this.store.updateTask(task.id, { status: restoreStatus }).catch(() => {});
+            return;
+          }
+
           if (createdSubtasksRef.current.length > 0) {
             const childTaskIds = createdSubtasksRef.current.join(", ");
             await this.store.logEntry(
@@ -801,6 +820,85 @@ export class TriageProcessor {
             return;
           }
 
+          const planningFallbackProvider = settings.planningFallbackProvider;
+          const planningFallbackModelId = settings.planningFallbackModelId;
+          const canRetryWithPlanningFallback =
+            specReviewVerdictRef.current !== "APPROVE" &&
+            planningFallbackProvider &&
+            planningFallbackModelId &&
+            modelDesc !== `${planningFallbackProvider}/${planningFallbackModelId}`;
+
+          if (canRetryWithPlanningFallback) {
+            const verdictDesc =
+              specReviewVerdictRef.current === null
+                ? "review_spec was never called"
+                : `verdict was ${specReviewVerdictRef.current}`;
+            const fallbackDesc = `${planningFallbackProvider}/${planningFallbackModelId}`;
+            triageLog.warn(
+              `${task.id} primary planning model produced no approved spec (${verdictDesc}) — retrying with fallback ${fallbackDesc}`,
+            );
+            await this.store.logEntry(
+              task.id,
+              `Primary planning model produced no approved spec (${verdictDesc}) — retrying with fallback ${fallbackDesc}`,
+            );
+
+            session.dispose();
+            this.activeSessions.delete(task.id);
+            stuckDetector?.untrackTask(task.id);
+            specReviewVerdictRef.current = null;
+            approvedCommentFingerprintRef.current = "";
+
+            const fallbackResult = await createKbAgent({
+              cwd: this.rootDir,
+              systemPrompt: triageSystemPrompt,
+              tools: "coding",
+              customTools,
+              onText: agentLogger.onText,
+              onThinking: agentLogger.onThinking,
+              onToolStart: agentLogger.onToolStart,
+              onToolEnd: agentLogger.onToolEnd,
+              defaultProvider: planningFallbackProvider,
+              defaultModelId: planningFallbackModelId,
+              defaultThinkingLevel: settings.defaultThinkingLevel,
+              ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
+            });
+
+            session = fallbackResult.session;
+            const fallbackModelDesc = describeModel(session);
+            triageLog.log(`${task.id}: using fallback model ${fallbackModelDesc}`);
+            await this.store.logEntry(task.id, `Triage using fallback model: ${fallbackModelDesc}`);
+            await this.store.appendAgentLog(
+              task.id,
+              `Triage using fallback model: ${fallbackModelDesc}`,
+              "text",
+              undefined,
+              "triage",
+            );
+
+            sessionRef.current = session;
+            this.activeSessions.set(task.id, session);
+            stuckDetector?.trackTask(task.id, session);
+            stuckDetector?.recordActivity(task.id);
+
+            await promptWithFallback(
+              session,
+              agentPrompt,
+              imageContents.length > 0 ? { images: imageContents } : undefined,
+            );
+            checkSessionError(session);
+
+            if (createdSubtasksRef.current.length > 0) {
+              const childTaskIds = createdSubtasksRef.current.join(", ");
+              await this.store.logEntry(
+                task.id,
+                `Converted into subtasks: ${childTaskIds}`,
+              );
+              await this.store.deleteTask(task.id);
+              triageLog.log(`✓ ${task.id} split into subtasks (${childTaskIds}) and closed`);
+              return;
+            }
+          }
+
           // Post-session APPROVE gate: only advance to todo when the spec
           // reviewer explicitly approved.  Any other verdict (REVISE,
           // RETHINK, UNAVAILABLE) or a missing review (null) keeps the task
@@ -810,17 +908,21 @@ export class TriageProcessor {
               specReviewVerdictRef.current === null
                 ? "review_spec was never called"
                 : `verdict was ${specReviewVerdictRef.current}`;
+            const failureMessage =
+              `Specification failed: spec review not approved (${verdictDesc}). ` +
+              "Retry after adjusting the task prompt or model.";
             triageLog.log(
-              `${task.id} spec review not approved (${verdictDesc}) — not moving to todo`,
+              `${task.id} spec review not approved (${verdictDesc}) — marking specification failed`,
             );
             await this.store.logEntry(
               task.id,
-              `Spec review not approved (${verdictDesc}) — specification not approved`,
+              failureMessage,
             );
-            // For re-specification, keep the needs-respecify status so it can be retried
-            // For new specs, clear the status
             await this.store.updateTask(task.id, {
-              status: isRespecify ? "needs-respecify" : null,
+              status: "failed",
+              error: failureMessage,
+              recoveryRetryCount: null,
+              nextRecoveryAt: null,
             });
             return;
           }
