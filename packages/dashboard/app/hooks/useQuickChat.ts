@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChatSession } from "@fusion/core";
 import {
   fetchChatSessions,
@@ -7,6 +7,8 @@ import {
   streamChatResponse,
 } from "../api";
 
+export const KB_AGENT_ID = "__kb_agent__";
+
 export interface ChatMessageInfo {
   id: string;
   sessionId: string;
@@ -14,6 +16,17 @@ export interface ChatMessageInfo {
   content: string;
   thinkingOutput?: string | null;
   createdAt: string;
+}
+
+interface ModelSelection {
+  modelProvider?: string;
+  modelId?: string;
+}
+
+interface SessionTarget {
+  agentId: string;
+  modelProvider?: string;
+  modelId?: string;
 }
 
 export interface UseQuickChatReturn {
@@ -30,9 +43,61 @@ export interface UseQuickChatReturn {
 
   // Operations
   sendMessage: (content: string) => Promise<void>;
-  switchSession: (agentId: string) => Promise<void>;
+  switchSession: (agentId: string, modelProvider?: string, modelId?: string) => Promise<void>;
+  startModelChat: (modelProvider: string, modelId: string) => Promise<void>;
   loadMessages: () => Promise<void>;
   reloadMessages: () => Promise<void>;
+}
+
+function normalizeModelSelection(modelProvider?: string, modelId?: string): ModelSelection {
+  const provider = typeof modelProvider === "string" ? modelProvider.trim() : "";
+  const id = typeof modelId === "string" ? modelId.trim() : "";
+
+  if (!provider || !id) {
+    return {};
+  }
+
+  return { modelProvider: provider, modelId: id };
+}
+
+function resolveSessionTarget(agentId: string, modelProvider?: string, modelId?: string): SessionTarget | null {
+  const normalizedAgentId = typeof agentId === "string" ? agentId.trim() : "";
+  const normalizedModel = normalizeModelSelection(modelProvider, modelId);
+
+  const targetAgentId = normalizedAgentId || (normalizedModel.modelProvider && normalizedModel.modelId ? KB_AGENT_ID : "");
+  if (!targetAgentId) {
+    return null;
+  }
+
+  return {
+    agentId: targetAgentId,
+    ...normalizedModel,
+  };
+}
+
+function buildSessionKey(agentId: string, modelProvider?: string, modelId?: string): string {
+  const normalizedModel = normalizeModelSelection(modelProvider, modelId);
+  const provider = normalizedModel.modelProvider ?? "";
+  const id = normalizedModel.modelId ?? "";
+  return `${agentId}::${provider}/${id}`;
+}
+
+function findMatchingSession(sessions: ChatSession[], target: SessionTarget): ChatSession | undefined {
+  const candidateSessions = sessions.filter((session) => session.agentId === target.agentId);
+  if (candidateSessions.length === 0) {
+    return undefined;
+  }
+
+  if (target.modelProvider && target.modelId) {
+    return candidateSessions.find(
+      (session) => session.modelProvider === target.modelProvider && session.modelId === target.modelId,
+    );
+  }
+
+  // Prefer sessions without explicit model data when available,
+  // then fall back to the first session for this agent to preserve
+  // existing behavior.
+  return candidateSessions.find((session) => !session.modelProvider && !session.modelId) ?? candidateSessions[0];
 }
 
 /**
@@ -57,28 +122,38 @@ export function useQuickChat(
   // Stream connection ref for cleanup
   const streamRef = useRef<{ close: () => void } | null>(null);
 
-  // Track the current selected agent ID for session management
-  const currentAgentIdRef = useRef<string>("");
+  // Track the current selected chat target for session management
+  const currentSessionKeyRef = useRef<string>("");
 
-  // Fetch existing sessions and find/create one for the given agent
+  // Fetch existing sessions and find/create one for the given target
   const initializeSession = useCallback(
-    async (agentId: string) => {
-      if (!agentId) return;
+    async (agentId: string, modelProvider?: string, modelId?: string) => {
+      const target = resolveSessionTarget(agentId, modelProvider, modelId);
+      if (!target) return;
+
+      const sessionKey = buildSessionKey(target.agentId, target.modelProvider, target.modelId);
 
       setSessionsLoading(true);
       try {
         const data = await fetchChatSessions(projectId, "active");
-        // Find existing session for this agent
-        const existingSession = data.sessions.find((s) => s.agentId === agentId);
+        const existingSession = findMatchingSession(data.sessions, target);
 
         if (existingSession) {
           setActiveSession(existingSession);
-          currentAgentIdRef.current = agentId;
+          currentSessionKeyRef.current = sessionKey;
         } else {
-          // Create a new session for this agent
-          const newSession = await createChatSession({ agentId }, projectId);
+          const newSessionInput: { agentId: string; modelProvider?: string; modelId?: string } = {
+            agentId: target.agentId,
+          };
+
+          if (target.modelProvider && target.modelId) {
+            newSessionInput.modelProvider = target.modelProvider;
+            newSessionInput.modelId = target.modelId;
+          }
+
+          const newSession = await createChatSession(newSessionInput, projectId);
           setActiveSession(newSession.session);
-          currentAgentIdRef.current = agentId;
+          currentSessionKeyRef.current = sessionKey;
         }
       } catch (err) {
         console.error("[useQuickChat] Failed to initialize session:", err);
@@ -115,7 +190,7 @@ export function useQuickChat(
     }
   }, [activeSession, loadMessages]);
 
-  // Reload messages from server (for same-agent revisit)
+  // Reload messages from server (for same-session revisit)
   const reloadMessages = useCallback(async () => {
     if (!activeSession) return;
     setMessagesLoading(true);
@@ -129,9 +204,14 @@ export function useQuickChat(
     }
   }, [activeSession, projectId]);
 
-  // Switch to a different agent's session
+  // Switch to a different chat target session
   const switchSession = useCallback(
-    async (agentId: string) => {
+    async (agentId: string, modelProvider?: string, modelId?: string) => {
+      const target = resolveSessionTarget(agentId, modelProvider, modelId);
+      if (!target) return;
+
+      const targetSessionKey = buildSessionKey(target.agentId, target.modelProvider, target.modelId);
+
       // Close any existing stream
       if (streamRef.current) {
         streamRef.current.close();
@@ -143,21 +223,28 @@ export function useQuickChat(
       setStreamingThinking("");
       setIsStreaming(false);
 
-      if (agentId === currentAgentIdRef.current) {
-        // Same agent — just reload messages from server
+      if (targetSessionKey === currentSessionKeyRef.current && activeSession) {
+        // Same chat target — just reload messages from server
         await reloadMessages();
         return;
       }
 
       // Clear old messages immediately so stale conversation doesn't briefly flash
-      // while the new agent's session loads
+      // while the new session loads
       setMessages([]);
 
-      // New agent — initialize session
-      currentAgentIdRef.current = agentId;
-      await initializeSession(agentId);
+      // New chat target — initialize session
+      currentSessionKeyRef.current = targetSessionKey;
+      await initializeSession(target.agentId, target.modelProvider, target.modelId);
     },
-    [initializeSession, reloadMessages],
+    [initializeSession, reloadMessages, activeSession],
+  );
+
+  const startModelChat = useCallback(
+    async (modelProvider: string, modelId: string) => {
+      await switchSession(KB_AGENT_ID, modelProvider, modelId);
+    },
+    [switchSession],
   );
 
   // Send a message using SSE streaming
@@ -245,7 +332,7 @@ export function useQuickChat(
     };
   }, []);
 
-  return {
+  return useMemo(() => ({
     activeSession,
     sessionsLoading,
     messages,
@@ -255,7 +342,21 @@ export function useQuickChat(
     streamingThinking,
     sendMessage,
     switchSession,
+    startModelChat,
     loadMessages,
     reloadMessages,
-  };
+  }), [
+    activeSession,
+    sessionsLoading,
+    messages,
+    messagesLoading,
+    isStreaming,
+    streamingText,
+    streamingThinking,
+    sendMessage,
+    switchSession,
+    startModelChat,
+    loadMessages,
+    reloadMessages,
+  ]);
 }
