@@ -945,7 +945,13 @@ export class HeartbeatMonitor {
         let memorySettings: Settings | undefined;
         try {
           memorySettings = await getHeartbeatMemorySettings(taskStore);
-          heartbeatTools.push(...createMemoryTools(rootDir, memorySettings));
+          heartbeatTools.push(...createMemoryTools(rootDir, memorySettings, {
+            agentMemory: {
+              agentId: agent.id,
+              agentName: agent.name,
+              memory: agent.memory,
+            },
+          }));
         } catch (memorySettingsError) {
           const message = memorySettingsError instanceof Error ? memorySettingsError.message : String(memorySettingsError);
           heartbeatLog.warn(`Failed to configure heartbeat memory tools for ${agentId}: ${message}`);

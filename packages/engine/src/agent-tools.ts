@@ -7,7 +7,9 @@
  * The parameter schemas are canonical here — executor.ts imports and reuses them.
  */
 
-import { appendFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { join } from "node:path";
 import type { AgentStore, AgentState, AgentCapability, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message } from "@fusion/core";
 import { dailyMemoryPath, ensureOpenClawMemoryFiles, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, resolveMemoryBackend, scheduleQmdProjectMemoryRefresh, searchProjectMemory } from "@fusion/core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
@@ -105,6 +107,217 @@ type MemoryToolSettings = {
   memoryBackendType?: string;
   [key: string]: unknown;
 };
+
+type AgentMemoryContext = {
+  agentId: string;
+  agentName?: string;
+  memory?: string | null;
+};
+
+type MemoryToolOptions = {
+  agentMemory?: AgentMemoryContext;
+};
+
+type MemorySearchHit = {
+  path: string;
+  lineStart: number;
+  lineEnd: number;
+  snippet: string;
+  score: number;
+  backend: string;
+};
+
+const AGENT_MEMORY_ROOT = ".fusion/agent-memory";
+const AGENT_MEMORY_FILENAME = "MEMORY.md";
+const agentQmdRefreshState = new Map<string, { lastStartedAt: number; inFlight?: Promise<void> }>();
+const AGENT_QMD_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+
+function sanitizeAgentMemoryId(agentId: string): string {
+  return agentId.trim().replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "agent";
+}
+
+function agentMemoryDisplayPath(agentId: string): string {
+  return `${AGENT_MEMORY_ROOT}/${sanitizeAgentMemoryId(agentId)}/${AGENT_MEMORY_FILENAME}`;
+}
+
+function agentMemoryDirectory(rootDir: string, agentId: string): string {
+  return join(rootDir, AGENT_MEMORY_ROOT, sanitizeAgentMemoryId(agentId));
+}
+
+function agentMemoryFilePath(rootDir: string, agentId: string): string {
+  return join(agentMemoryDirectory(rootDir, agentId), AGENT_MEMORY_FILENAME);
+}
+
+export function qmdAgentMemoryCollectionName(rootDir: string, agentId: string): string {
+  const hash = createHash("sha1").update(`${rootDir}:${agentId}`).digest("hex").slice(0, 12);
+  return `fusion-agent-memory-${sanitizeAgentMemoryId(agentId).toLowerCase()}-${hash}`;
+}
+
+export function buildQmdAgentMemoryCollectionAddArgs(rootDir: string, agentId: string): string[] {
+  return [
+    "collection",
+    "add",
+    agentMemoryDirectory(rootDir, agentId),
+    "--name",
+    qmdAgentMemoryCollectionName(rootDir, agentId),
+    "--mask",
+    "**/*.md",
+  ];
+}
+
+export function buildQmdAgentMemorySearchArgs(rootDir: string, agentId: string, query: string, limit = 5): string[] {
+  return [
+    "search",
+    query,
+    "--json",
+    "--collection",
+    qmdAgentMemoryCollectionName(rootDir, agentId),
+    "-n",
+    String(Math.max(1, Math.min(limit, 20))),
+  ];
+}
+
+async function syncAgentMemoryFile(rootDir: string, agentMemory?: AgentMemoryContext): Promise<string | null> {
+  const content = agentMemory?.memory?.trim();
+  if (!agentMemory?.agentId || !content) {
+    return null;
+  }
+
+  const dir = agentMemoryDirectory(rootDir, agentMemory.agentId);
+  await mkdir(dir, { recursive: true });
+  const title = agentMemory.agentName?.trim()
+    ? `# Agent Memory: ${agentMemory.agentName.trim()}`
+    : "# Agent Memory";
+  const fileContent = `${title}\n\n<!-- Per-agent memory. Keep separate from workspace Project Memory. -->\n\n${content}\n`;
+  await writeFile(agentMemoryFilePath(rootDir, agentMemory.agentId), fileContent, "utf-8");
+  return agentMemoryDisplayPath(agentMemory.agentId);
+}
+
+function scoreAgentMemorySnippet(snippet: string, query: string): number {
+  const terms = query.toLowerCase().split(/[^a-z0-9_-]+/i).filter((term) => term.length >= 2);
+  const normalized = snippet.toLowerCase();
+  return terms.reduce((score, term) => score + (normalized.includes(term) ? 1 : 0), 0);
+}
+
+async function searchAgentMemoryFile(rootDir: string, agentMemory: AgentMemoryContext, query: string, limit: number): Promise<MemorySearchHit[]> {
+  const displayPath = await syncAgentMemoryFile(rootDir, agentMemory);
+  if (!displayPath) {
+    return [];
+  }
+
+  const content = await readFile(agentMemoryFilePath(rootDir, agentMemory.agentId), "utf-8");
+  const lines = content.split("\n");
+  const results: MemorySearchHit[] = [];
+  for (let index = 0; index < lines.length; index += 8) {
+    const chunk = lines.slice(index, index + 12).join("\n").trim();
+    if (!chunk) continue;
+    const score = scoreAgentMemorySnippet(chunk, query);
+    if (score === 0) continue;
+    results.push({
+      path: displayPath,
+      lineStart: index + 1,
+      lineEnd: Math.min(index + 12, lines.length),
+      snippet: chunk.slice(0, 1200),
+      score: score + 1000,
+      backend: "agent-memory",
+    });
+  }
+  return results.slice(0, limit);
+}
+
+async function refreshAgentMemoryQmdIndex(rootDir: string, agentMemory: AgentMemoryContext): Promise<void> {
+  await syncAgentMemoryFile(rootDir, agentMemory);
+  const key = `${rootDir}:${agentMemory.agentId}`;
+  const now = Date.now();
+  const current = agentQmdRefreshState.get(key);
+  if (current?.inFlight) {
+    return current.inFlight;
+  }
+  if (current && now - current.lastStartedAt < AGENT_QMD_REFRESH_INTERVAL_MS) {
+    return;
+  }
+
+  const promise = (async () => {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const execFileAsync = promisify(execFile);
+    try {
+      await execFileAsync("qmd", buildQmdAgentMemoryCollectionAddArgs(rootDir, agentMemory.agentId), {
+        cwd: rootDir,
+        timeout: 4000,
+        maxBuffer: 512 * 1024,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      const stderr = typeof error === "object" && error && "stderr" in error ? String((error as { stderr?: unknown }).stderr ?? "") : "";
+      if (!/already exists|exists/i.test(`${message}\n${stderr}`)) {
+        throw error;
+      }
+    }
+    await execFileAsync("qmd", ["update"], { cwd: rootDir, timeout: 30_000, maxBuffer: 1024 * 1024 });
+    await execFileAsync("qmd", ["embed"], { cwd: rootDir, timeout: 120_000, maxBuffer: 1024 * 1024 });
+  })();
+
+  agentQmdRefreshState.set(key, { lastStartedAt: now, inFlight: promise });
+  try {
+    await promise;
+  } finally {
+    const latest = agentQmdRefreshState.get(key);
+    if (latest?.inFlight === promise) {
+      agentQmdRefreshState.set(key, { lastStartedAt: latest.lastStartedAt });
+    }
+  }
+}
+
+async function searchAgentMemoryWithQmd(rootDir: string, agentMemory: AgentMemoryContext, query: string, limit: number): Promise<MemorySearchHit[]> {
+  if (!agentMemory.memory?.trim()) {
+    return [];
+  }
+  try {
+    await refreshAgentMemoryQmdIndex(rootDir, agentMemory);
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const execFileAsync = promisify(execFile);
+    const { stdout } = await execFileAsync("qmd", buildQmdAgentMemorySearchArgs(rootDir, agentMemory.agentId, query, limit), {
+      cwd: rootDir,
+      timeout: 4000,
+      maxBuffer: 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout);
+    const rawResults = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.results) ? parsed.results : [];
+    return rawResults.slice(0, limit).map((result: Record<string, unknown>) => ({
+      path: agentMemoryDisplayPath(agentMemory.agentId),
+      lineStart: Number(result.lineStart ?? result.startLine ?? 1),
+      lineEnd: Number(result.lineEnd ?? result.endLine ?? result.startLine ?? 1),
+      snippet: String(result.snippet ?? result.text ?? result.content ?? "").slice(0, 1200),
+      score: Number(result.score ?? 1) + 1000,
+      backend: "qmd-agent-memory",
+    })).filter((result: MemorySearchHit) => result.snippet.trim().length > 0);
+  } catch {
+    return searchAgentMemoryFile(rootDir, agentMemory, query, limit);
+  }
+}
+
+async function getAgentMemoryWindow(rootDir: string, agentMemory: AgentMemoryContext, path: string, startLine = 1, lineCount = 40) {
+  if (path !== agentMemoryDisplayPath(agentMemory.agentId) || !agentMemory.memory?.trim()) {
+    return null;
+  }
+  await syncAgentMemoryFile(rootDir, agentMemory);
+  const content = await readFile(agentMemoryFilePath(rootDir, agentMemory.agentId), "utf-8");
+  const lines = content.split("\n");
+  const start = Math.max(1, Math.floor(startLine));
+  const count = Math.max(1, Math.min(Math.floor(lineCount), 200));
+  const startIndex = Math.min(start - 1, lines.length);
+  const endIndex = Math.min(startIndex + count, lines.length);
+  return {
+    path: agentMemoryDisplayPath(agentMemory.agentId),
+    content: lines.slice(startIndex, endIndex).join("\n"),
+    startLine: start,
+    endLine: endIndex,
+    totalLines: lines.length,
+    backend: "agent-memory",
+  };
+}
 
 // ── Tool factory functions ────────────────────────────────────────────────
 
@@ -306,19 +519,28 @@ export function createTaskDocumentReadTool(store: TaskStore, taskId: string): To
   };
 }
 
-export function createMemorySearchTool(rootDir: string, settings?: MemoryToolSettings): ToolDefinition {
+export function createMemorySearchTool(rootDir: string, settings?: MemoryToolSettings, options?: MemoryToolOptions): ToolDefinition {
   return {
     name: "memory_search",
     label: "Search Memory",
     description:
-      "Search durable project memory and return small snippets with file paths and line ranges. " +
+      "Search durable project memory and this agent's own memory, returning small snippets with file paths and line ranges. " +
       "Use this before memory_get; do not read all memory by default.",
     parameters: memorySearchParams,
     execute: async (_id: string, params: Static<typeof memorySearchParams>) => {
-      const results = await searchProjectMemory(rootDir, {
+      const limit = params.limit ?? 5;
+      const agentResults = options?.agentMemory
+        ? resolveMemoryBackend(settings).type === "qmd"
+          ? await searchAgentMemoryWithQmd(rootDir, options.agentMemory, params.query, limit)
+          : await searchAgentMemoryFile(rootDir, options.agentMemory, params.query, limit)
+        : [];
+      const projectResults = await searchProjectMemory(rootDir, {
         query: params.query,
-        limit: params.limit,
+        limit,
       }, settings);
+      const results = [...agentResults, ...projectResults]
+        .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
+        .slice(0, limit);
 
       if (results.length === 0) {
         return {
@@ -336,15 +558,27 @@ export function createMemorySearchTool(rootDir: string, settings?: MemoryToolSet
   };
 }
 
-export function createMemoryGetTool(rootDir: string, settings?: MemoryToolSettings): ToolDefinition {
+export function createMemoryGetTool(rootDir: string, settings?: MemoryToolSettings, options?: MemoryToolOptions): ToolDefinition {
   return {
     name: "memory_get",
     label: "Get Memory",
     description:
       "Read a bounded line window from a memory file returned by memory_search. " +
-      "Allowed files are .fusion/memory/MEMORY.md, .fusion/memory/YYYY-MM-DD.md, and legacy .fusion/memory.md.",
+      "Allowed files include project memory under .fusion/memory/ and this agent's own .fusion/agent-memory/{agentId}/MEMORY.md file.",
     parameters: memoryGetParams,
     execute: async (_id: string, params: Static<typeof memoryGetParams>) => {
+      const agentResult = options?.agentMemory
+        ? await getAgentMemoryWindow(rootDir, options.agentMemory, params.path, params.startLine, params.lineCount)
+        : null;
+      if (agentResult) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: `${agentResult.path}:${agentResult.startLine}-${agentResult.endLine} (${agentResult.totalLines} total lines, ${agentResult.backend})\n\n${agentResult.content}`,
+          }],
+          details: agentResult,
+        };
+      }
       const result = await getProjectMemory(rootDir, {
         path: params.path,
         startLine: params.startLine,
@@ -389,13 +623,13 @@ export function createMemoryAppendTool(rootDir: string, settings?: MemoryToolSet
   };
 }
 
-export function createMemoryTools(rootDir: string, settings?: MemoryToolSettings): ToolDefinition[] {
+export function createMemoryTools(rootDir: string, settings?: MemoryToolSettings, options?: MemoryToolOptions): ToolDefinition[] {
   if (settings?.memoryEnabled === false) {
     return [];
   }
   const tools = [
-    createMemorySearchTool(rootDir, settings),
-    createMemoryGetTool(rootDir, settings),
+    createMemorySearchTool(rootDir, settings, options),
+    createMemoryGetTool(rootDir, settings, options),
   ];
   if (getMemoryBackendCapabilities(settings).writable) {
     tools.push(createMemoryAppendTool(rootDir, settings));

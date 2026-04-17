@@ -1,5 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createMemoryTools, createSendMessageTool, createReadMessagesTool, sendMessageParams, readMessagesParams } from "./agent-tools.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  buildQmdAgentMemoryCollectionAddArgs,
+  buildQmdAgentMemorySearchArgs,
+  createMemoryTools,
+  createSendMessageTool,
+  createReadMessagesTool,
+  qmdAgentMemoryCollectionName,
+  sendMessageParams,
+  readMessagesParams,
+} from "./agent-tools.js";
 import type { MessageStore, Message } from "@fusion/core";
 
 // Mock logger
@@ -16,6 +28,16 @@ vi.mock("./logger.js", () => {
 });
 
 describe("createMemoryTools", () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "agent-memory-tools-"));
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
   it("omits memory tools when memory is disabled", () => {
     expect(createMemoryTools("/repo", { memoryEnabled: false }).map((tool) => tool.name)).toEqual([]);
   });
@@ -32,6 +54,54 @@ describe("createMemoryTools", () => {
       "memory_search",
       "memory_get",
       "memory_append",
+    ]);
+  });
+
+  it("searches per-agent memory through the memory_search tool", async () => {
+    const [searchTool, getTool] = createMemoryTools(tempDir, { memoryBackendType: "file" }, {
+      agentMemory: {
+        agentId: "ceo-agent",
+        agentName: "CEO",
+        memory: "The CEO agent should prioritize roadmap sequencing and delegation.",
+      },
+    });
+
+    const searchResult = await (searchTool as any).execute("call-1", {
+      query: "roadmap delegation",
+      limit: 5,
+    }, undefined, undefined, undefined);
+
+    expect(searchResult.content[0]!.text).toContain(".fusion/agent-memory/ceo-agent/MEMORY.md");
+    expect(searchResult.details.results[0].backend).toBe("agent-memory");
+
+    const getResult = await (getTool as any).execute("call-2", {
+      path: ".fusion/agent-memory/ceo-agent/MEMORY.md",
+      startLine: 1,
+      lineCount: 20,
+    }, undefined, undefined, undefined);
+
+    expect(getResult.content[0]!.text).toContain("Agent Memory: CEO");
+    expect(getResult.content[0]!.text).toContain("roadmap sequencing");
+  });
+
+  it("builds qmd collection and search args for separate agent memory", () => {
+    expect(buildQmdAgentMemoryCollectionAddArgs(tempDir, "ceo-agent")).toEqual([
+      "collection",
+      "add",
+      join(tempDir, ".fusion", "agent-memory", "ceo-agent"),
+      "--name",
+      qmdAgentMemoryCollectionName(tempDir, "ceo-agent"),
+      "--mask",
+      "**/*.md",
+    ]);
+    expect(buildQmdAgentMemorySearchArgs(tempDir, "ceo-agent", "delegation", 7)).toEqual([
+      "search",
+      "delegation",
+      "--json",
+      "--collection",
+      qmdAgentMemoryCollectionName(tempDir, "ceo-agent"),
+      "-n",
+      "7",
     ]);
   });
 });

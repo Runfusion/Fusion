@@ -332,10 +332,25 @@ export async function reviewStep(
   }
 
   // Spawn a reviewer agent with read-only tools
+  const memoryAgent = options.rootDir && options.agentStore && options.task?.assignedAgentId
+    ? await options.agentStore.getAgent(options.task.assignedAgentId).catch(() => null)
+    : null;
   const memoryTools = options.rootDir && options.settings?.memoryEnabled !== false
     ? [
-        createMemorySearchTool(options.rootDir, options.settings),
-        createMemoryGetTool(options.rootDir, options.settings),
+        createMemorySearchTool(options.rootDir, options.settings, memoryAgent ? {
+          agentMemory: {
+            agentId: memoryAgent.id,
+            agentName: memoryAgent.name,
+            memory: memoryAgent.memory,
+          },
+        } : undefined),
+        createMemoryGetTool(options.rootDir, options.settings, memoryAgent ? {
+          agentMemory: {
+            agentId: memoryAgent.id,
+            agentName: memoryAgent.name,
+            memory: memoryAgent.memory,
+          },
+        } : undefined),
       ]
     : undefined;
   const { session } = await createKbAgent({

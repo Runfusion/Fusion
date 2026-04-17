@@ -2054,6 +2054,36 @@ describe("HeartbeatMonitor", () => {
         expect(toolNames).not.toContain("memory_append");
       });
 
+      it("wires user-created agent memory into the memory_search tool", async () => {
+        const store = createStoreWithAgentForExec({
+          name: "CEO",
+          memory: "Prioritize roadmap sequencing and delegate implementation follow-ups.",
+        });
+        const taskStore = createMockTaskStore({
+          getSettings: vi.fn().mockResolvedValue({ memoryBackendType: "file" }),
+        } as Partial<TaskStore>);
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({
+          session: mockSession as any,
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore, rootDir: "/tmp/test" });
+
+        await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+        const callArgs = mockedCreateKbAgent.mock.calls[0]![0];
+        const memorySearch = callArgs.customTools!.find((tool: any) => tool.name === "memory_search") as any;
+        expect(memorySearch).toBeDefined();
+        const result = await memorySearch.execute("call-1", {
+          query: "roadmap delegate",
+          limit: 5,
+        }, undefined, undefined, undefined);
+
+        expect(result.content[0].text).toContain(".fusion/agent-memory/agent-001/MEMORY.md");
+        expect(result.content[0].text).toContain("roadmap sequencing");
+        expect(result.details.results[0].backend).toBe("agent-memory");
+      });
+
       it("includes document tools in heartbeat session", async () => {
         const store = createStoreWithAgentForExec();
         const mockSession = createMockAgentSession();

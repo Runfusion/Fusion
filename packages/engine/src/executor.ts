@@ -1409,6 +1409,9 @@ export class TaskExecutor {
       const reflectionTools = this.options.reflectionService && settings.reflectionEnabled && assignedAgentId
         ? [createReflectOnPerformanceTool(this.options.reflectionService, assignedAgentId)]
         : [];
+      const assignedAgent = assignedAgentId && this.options.agentStore
+        ? await this.options.agentStore.getAgent(assignedAgentId).catch(() => null)
+        : null;
 
       const customTools = [
         this.createTaskUpdateTool(task.id, codeReviewVerdicts, sessionRef, stepCheckpoints, stuckDetector),
@@ -1420,7 +1423,13 @@ export class TaskExecutor {
         this.createSpawnAgentTool(task.id, worktreePath, settings),
         this.createTaskDocumentWriteTool(task.id),
         this.createTaskDocumentReadTool(task.id),
-        ...createMemoryTools(this.rootDir, settings),
+        ...createMemoryTools(this.rootDir, settings, assignedAgent ? {
+          agentMemory: {
+            agentId: assignedAgent.id,
+            agentName: assignedAgent.name,
+            memory: assignedAgent.memory,
+          },
+        } : undefined),
         // Conditionally add agent self-reflection when enabled and task has an assigned agent.
         ...reflectionTools,
         // Agent delegation tools — discover and delegate work to other agents.
