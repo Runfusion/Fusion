@@ -123,9 +123,9 @@ describe("tablet header controls", () => {
     expect(screen.queryByTitle("Open Terminal")).toBeNull();
   });
 
-  it("does not render schedules button inline on tablet", () => {
+  it("does not render automation button inline on tablet", () => {
     renderTabletHeader({ onOpenSchedules: noop });
-    expect(screen.queryByTitle("Scheduled tasks")).toBeNull();
+    expect(screen.queryByTitle("Automation")).toBeNull();
   });
 
   it("does not render usage button inline on tablet", () => {
@@ -194,10 +194,10 @@ describe("tablet header controls", () => {
     });
   });
 
-  it("overflow menu contains scheduled tasks on tablet", () => {
+  it("overflow menu contains automation on tablet", () => {
     renderTabletHeader({ onOpenSchedules: noop });
     fireEvent.click(screen.getByTitle("More header actions"));
-    expect(screen.getByText("Scheduled Tasks")).toBeDefined();
+    expect(screen.getByText("Automation")).toBeDefined();
   });
 
   it("overflow menu contains usage on tablet when provided", () => {
