@@ -23947,6 +23947,94 @@ html .column.drag-over * {
   background: color-mix(in srgb, var(--text-muted) 8%, transparent);
 }
 
+/* === Readiness Summary (FN-1939) === */
+.onboarding-readiness-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
+}
+
+.onboarding-readiness-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 var(--space-xs) 0;
+}
+
+.onboarding-readiness-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  border-left: calc(var(--space-xs) - 1px) solid transparent;
+}
+
+.onboarding-readiness-item--connected {
+  border-left-color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 6%, transparent);
+}
+
+.onboarding-readiness-item--missing {
+  border-left-color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 6%, transparent);
+}
+
+.onboarding-readiness-item--skipped {
+  border-left-color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 6%, transparent);
+}
+
+.onboarding-readiness-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+  width: calc(var(--space-lg) + var(--space-xs));
+  text-align: center;
+}
+
+.onboarding-readiness-item--connected .onboarding-readiness-icon {
+  color: var(--color-success);
+}
+
+.onboarding-readiness-item--missing .onboarding-readiness-icon {
+  color: var(--color-warning);
+}
+
+.onboarding-readiness-item--skipped .onboarding-readiness-icon {
+  color: var(--text-muted);
+}
+
+.onboarding-readiness-content {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.onboarding-readiness-label {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.onboarding-readiness-detail {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-left: var(--space-xs);
+}
+
+.onboarding-readiness-all-connected {
+  font-size: 13px;
+  color: var(--color-success);
+  font-weight: 500;
+  padding: var(--space-sm) var(--space-md);
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+  border-radius: var(--radius-md);
+  margin: 0 0 var(--space-md) 0;
+}
+
 /* Provider cards in onboarding - enhanced card layout for AI setup step */
 .onboarding-provider-card {
   display: flex;
@@ -24608,6 +24696,27 @@ html .column.drag-over * {
   .onboarding-provider-row {
     flex-direction: column;
     gap: var(--space-sm);
+  }
+
+  .onboarding-readiness-item {
+    align-items: flex-start;
+    min-height: calc(var(--space-md) * 3);
+  }
+
+  .onboarding-readiness-content {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-xs);
+  }
+
+  .onboarding-readiness-detail {
+    margin-left: 0;
+  }
+
+  .onboarding-readiness-all-connected {
+    min-height: calc(var(--space-md) * 3);
+    display: flex;
+    align-items: center;
   }
 
   .onboarding-github-feedback-actions .btn,

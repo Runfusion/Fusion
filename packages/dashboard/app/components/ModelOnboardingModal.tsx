@@ -235,6 +235,58 @@ function OnboardingDisclosure({ summary, children, className = "" }: OnboardingD
   );
 }
 
+interface ReadinessItem {
+  label: string;
+  status: "connected" | "missing" | "skipped";
+  detail?: string;
+}
+
+interface ReadinessSummaryProps {
+  items: ReadinessItem[];
+}
+
+function ReadinessSummary({ items }: ReadinessSummaryProps) {
+  const hasAttentionItems = items.some((item) => item.status !== "connected");
+
+  if (!hasAttentionItems) {
+    return (
+      <div className="onboarding-readiness-summary" data-testid="readiness-summary" role="status">
+        <p className="onboarding-readiness-all-connected">✓ All integrations connected</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="onboarding-readiness-summary" data-testid="readiness-summary" role="status">
+      <p className="onboarding-readiness-header">Setup Summary</p>
+      {items.map((item) => {
+        const statusIcon =
+          item.status === "connected"
+            ? "✓"
+            : item.status === "missing"
+              ? "⚠"
+              : "○";
+
+        return (
+          <div
+            key={item.label}
+            className={`onboarding-readiness-item onboarding-readiness-item--${item.status}`}
+            data-status={item.status}
+          >
+            <span className="onboarding-readiness-icon" aria-hidden="true">
+              {statusIcon}
+            </span>
+            <span className="onboarding-readiness-content">
+              <span className="onboarding-readiness-label">{item.label}</span>
+              {item.detail && <span className="onboarding-readiness-detail">{item.detail}</span>}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 interface ApiKeyEntryFormProps {
   provider: AuthProvider;
   apiKeyInfo: ApiKeyInfo;
@@ -1165,13 +1217,88 @@ export function ModelOnboardingModal({
 
   const githubStatus = getGitHubStatus();
 
-  // Skip-state detection: derived state for informational banners
-  // Detects whether at least one AI provider is connected (excludes GitHub)
-  const hasAiProvider = authProviders.some((p) => p.id !== "github" && p.authenticated);
+  const aiProviders = authProviders.filter((provider) => provider.id !== "github");
+  const connectedAiProviders = aiProviders.filter((provider) => provider.authenticated);
+  const hasAiProvider = connectedAiProviders.length > 0;
   // True when on GitHub step but skipped AI setup (no AI provider connected)
   const aiSetupSkipped = step === "github" && !hasAiProvider;
-  // True when on First Task step but skipped GitHub
-  const githubSkipped = step === "first-task" && !isGithubAuthenticated;
+
+  const selectedModelDisplayName = (() => {
+    if (!selectedModel) {
+      return "";
+    }
+
+    const slashIdx = selectedModel.indexOf("/");
+    const providerId = slashIdx === -1 ? undefined : selectedModel.slice(0, slashIdx);
+    const modelId = slashIdx === -1 ? selectedModel : selectedModel.slice(slashIdx + 1);
+    const matchingModel = availableModels.find(
+      (model) => model.id === modelId && (!providerId || model.provider === providerId),
+    );
+
+    if (matchingModel?.name) {
+      return matchingModel.name;
+    }
+
+    if (providerId) {
+      return `${getProviderDisplayName(providerId)} ${modelId}`;
+    }
+
+    return selectedModel;
+  })();
+
+  const readinessItems: ReadinessItem[] = [];
+
+  if (hasAiProvider) {
+    const firstConnectedProviderName = getProviderDisplayName(connectedAiProviders[0]?.id ?? "");
+    readinessItems.push({
+      label: "AI Provider",
+      status: "connected",
+      detail: `${firstConnectedProviderName} connected — AI agents can work on tasks`,
+    });
+  } else if (
+    aiProviders.length > 0
+    && aiProviders.some((provider) => skippedProviders[provider.id])
+  ) {
+    readinessItems.push({
+      label: "AI Provider",
+      status: "skipped",
+      detail: "AI agents won't be available until you connect a provider",
+    });
+  } else {
+    readinessItems.push({
+      label: "AI Provider",
+      status: "missing",
+      detail: "Connect a provider in Settings → AI Setup",
+    });
+  }
+
+  if (isGithubAuthenticated) {
+    readinessItems.push({
+      label: "GitHub",
+      status: "connected",
+      detail: "Issues and PRs can be imported",
+    });
+  } else if (!hasGithubProvider || isGithubSkipped) {
+    readinessItems.push({
+      label: "GitHub",
+      status: "skipped",
+      detail: "You can connect anytime from Settings",
+    });
+  } else {
+    readinessItems.push({
+      label: "GitHub",
+      status: "missing",
+      detail: "Connect to import issues as tasks",
+    });
+  }
+
+  if (selectedModelDisplayName) {
+    readinessItems.push({
+      label: "Default Model",
+      status: "connected",
+      detail: selectedModelDisplayName,
+    });
+  }
 
   return (
     <div
@@ -1693,27 +1820,7 @@ export function ModelOnboardingModal({
                 Your workspace is ready. Here's how to get started:
               </p>
 
-              {/* Skip-state banner: shown when GitHub was skipped */}
-              {githubSkipped && (
-                <div className="onboarding-skip-banner" role="status">
-                  <strong>GitHub not connected</strong>
-                  <p>
-                    You won&apos;t be able to import issues from GitHub, but you can still create tasks manually.
-                    Connect GitHub later from Settings.
-                  </p>
-                </div>
-              )}
-
-              {/* Skip-state banner: shown when AI setup was also skipped */}
-              {!hasAiProvider && (
-                <div className="onboarding-skip-banner" role="status">
-                  <strong>No AI provider connected</strong>
-                  <p>
-                    AI agents won&apos;t be able to work on tasks until you connect a provider.
-                    Set one up later in Settings → AI Setup.
-                  </p>
-                </div>
-              )}
+              <ReadinessSummary items={readinessItems} />
 
               <OnboardingDisclosure summary="What happens when I create a task?">
                 <p className="onboarding-helper-text">

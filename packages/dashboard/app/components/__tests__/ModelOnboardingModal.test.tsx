@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 import { ModelOnboardingModal } from "../ModelOnboardingModal";
 import type { AuthProvider } from "../../api";
 
@@ -2396,7 +2396,8 @@ describe("ModelOnboardingModal", () => {
 
       vi.useRealTimers();
     });
-  });
+});
+
 });
 
 describe("ModelOnboardingModal progressive disclosure", () => {
@@ -2864,7 +2865,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
 
       // Should show skip banner about AI provider
       const banners = screen.getAllByRole("status");
-      expect(banners.some(b => b.classList.contains("onboarding-skip-banner"))).toBe(true);
+      expect(banners.some((b) => b.classList.contains("onboarding-skip-banner"))).toBe(true);
 
       const skipBanner = screen.getByText("No AI provider connected").closest(".onboarding-skip-banner");
       expect(skipBanner).toBeTruthy();
@@ -2886,70 +2887,6 @@ describe("ModelOnboardingModal progressive disclosure", () => {
 
       // Should NOT show skip banner about AI provider
       expect(screen.queryByText("No AI provider connected")).toBeNull();
-    });
-
-    it("shows GitHub skip banner on First Task step when GitHub not connected", async () => {
-      // AI provider connected but GitHub not connected
-      mockFetchAuthStatus.mockResolvedValueOnce({
-        providers: [
-          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
-          { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
-        ],
-      });
-
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
-
-      await navigateToFirstTaskStep();
-
-      // Should show skip banner about GitHub
-      const skipBanner = screen.getByText("GitHub not connected").closest(".onboarding-skip-banner");
-      expect(skipBanner).toBeTruthy();
-      expect(skipBanner).toHaveTextContent(/won't be able to import issues from GitHub/);
-    });
-
-    it("does not show GitHub skip banner on First Task step when GitHub is connected", async () => {
-      // Both AI and GitHub connected - mock for all auth status calls
-      mockFetchAuthStatus.mockResolvedValue({
-        providers: [
-          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
-          { id: "github", name: "GitHub", authenticated: true, type: "oauth" },
-        ],
-      });
-
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
-
-      await navigateToFirstTaskStep();
-
-      // Should NOT show skip banner about GitHub (use querySelector to avoid matching the auth badge)
-      const skipBanners = document.querySelectorAll(".onboarding-skip-banner");
-      const githubSkipBanner = Array.from(skipBanners).find(
-        (banner) => banner.textContent?.includes("GitHub not connected")
-      );
-      expect(githubSkipBanner).toBeUndefined();
-    });
-
-    it("shows both skip banners on First Task step when both AI and GitHub are skipped", async () => {
-      // Neither AI nor GitHub connected
-      mockFetchAuthStatus.mockResolvedValueOnce({
-        providers: [
-          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
-          { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
-        ],
-      });
-
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
-
-      await navigateToFirstTaskStep();
-
-      // Should show BOTH skip banners
-      expect(screen.getByText("GitHub not connected")).toBeTruthy();
-      expect(screen.getByText("No AI provider connected")).toBeTruthy();
-
-      // Both should have the skip-banner class
-      const githubBanner = screen.getByText("GitHub not connected").closest(".onboarding-skip-banner");
-      const aiBanner = screen.getByText("No AI provider connected").closest(".onboarding-skip-banner");
-      expect(githubBanner).toBeTruthy();
-      expect(aiBanner).toBeTruthy();
     });
 
     it("does not show any skip banner on AI Setup step", async () => {
@@ -2988,6 +2925,196 @@ describe("ModelOnboardingModal progressive disclosure", () => {
       // Check that skip banner has role="status"
       const skipBanner = screen.getByText("No AI provider connected").closest(".onboarding-skip-banner");
       expect(skipBanner).toHaveAttribute("role", "status");
+    });
+  });
+
+  describe("First-task readiness summary (FN-1939)", () => {
+    const setFirstTaskState = (stepData: Record<string, unknown> = {}) => {
+      mockGetOnboardingState.mockReturnValue({
+        currentStep: "first-task",
+        updatedAt: new Date().toISOString(),
+        completedSteps: ["ai-setup", "github"],
+        skippedSteps: [],
+        dismissed: false,
+        completed: false,
+        completedAt: undefined,
+        stepData,
+      });
+    };
+
+    const getReadinessItem = (label: string): HTMLElement => {
+      const readinessSummary = screen.getByTestId("readiness-summary");
+      const row = within(readinessSummary)
+        .getByText(label)
+        .closest(".onboarding-readiness-item");
+
+      expect(row).toBeTruthy();
+      return row as HTMLElement;
+    };
+
+    it("shows all-connected message when everything is set up", async () => {
+      setFirstTaskState();
+      mockFetchAuthStatus.mockResolvedValue({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+          { id: "github", name: "GitHub", authenticated: true, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Create Your First Task")).toBeTruthy();
+      });
+
+      const readinessSummary = screen.getByTestId("readiness-summary");
+      expect(within(readinessSummary).getByText(/All integrations connected/)).toBeTruthy();
+      expect(readinessSummary.querySelectorAll(".onboarding-readiness-item")).toHaveLength(0);
+    });
+
+    it("shows AI provider as missing when no provider is connected", async () => {
+      setFirstTaskState();
+      mockFetchAuthStatus.mockResolvedValue({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+          { id: "github", name: "GitHub", authenticated: true, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Create Your First Task")).toBeTruthy();
+      });
+
+      const aiProviderItem = getReadinessItem("AI Provider");
+      expect(aiProviderItem).toHaveAttribute("data-status", "missing");
+      expect(aiProviderItem).toHaveClass("onboarding-readiness-item--missing");
+      expect(aiProviderItem).toHaveTextContent(/Connect a provider in Settings/i);
+    });
+
+    it("shows AI provider as skipped when explicitly skipped", async () => {
+      setFirstTaskState({
+        "ai-setup": {
+          skippedProviders: { anthropic: true },
+        },
+      });
+      mockFetchAuthStatus.mockResolvedValue({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+          { id: "github", name: "GitHub", authenticated: true, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Create Your First Task")).toBeTruthy();
+      });
+
+      const aiProviderItem = getReadinessItem("AI Provider");
+      expect(aiProviderItem).toHaveAttribute("data-status", "skipped");
+      expect(aiProviderItem).toHaveTextContent(/AI agents won't be available/i);
+    });
+
+    it("shows GitHub as missing when available but not connected", async () => {
+      setFirstTaskState();
+      mockFetchAuthStatus.mockResolvedValue({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+          { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Create Your First Task")).toBeTruthy();
+      });
+
+      const githubItem = getReadinessItem("GitHub");
+      expect(githubItem).toHaveAttribute("data-status", "missing");
+      expect(githubItem).toHaveTextContent(/import issues as tasks/i);
+    });
+
+    it("shows GitHub as skipped when no GitHub provider is available", async () => {
+      setFirstTaskState();
+      mockFetchAuthStatus.mockResolvedValue({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Create Your First Task")).toBeTruthy();
+      });
+
+      const githubItem = getReadinessItem("GitHub");
+      expect(githubItem).toHaveAttribute("data-status", "skipped");
+      expect(githubItem).toHaveTextContent(/connect anytime from Settings/i);
+    });
+
+    it("shows default model when selected", async () => {
+      setFirstTaskState();
+      mockFetchAuthStatus.mockResolvedValue({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+          { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
+        ],
+      });
+      mockFetchGlobalSettings.mockResolvedValueOnce({
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Create Your First Task")).toBeTruthy();
+      });
+
+      const modelItem = getReadinessItem("Default Model");
+      expect(modelItem).toHaveAttribute("data-status", "connected");
+      expect(modelItem).toHaveTextContent("Claude Sonnet 4.5");
+    });
+
+    it("hides default model item when no model is selected", async () => {
+      setFirstTaskState();
+      mockFetchAuthStatus.mockResolvedValue({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+          { id: "github", name: "GitHub", authenticated: true, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Create Your First Task")).toBeTruthy();
+      });
+
+      expect(screen.queryByText("Default Model")).toBeNull();
+    });
+
+    it("removes first-task skip banners in favor of readiness summary", async () => {
+      setFirstTaskState();
+      mockFetchAuthStatus.mockResolvedValue({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+          { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Create Your First Task")).toBeTruthy();
+      });
+
+      expect(screen.getByTestId("readiness-summary")).toBeTruthy();
+      expect(document.querySelectorAll(".onboarding-skip-banner")).toHaveLength(0);
     });
   });
 });
