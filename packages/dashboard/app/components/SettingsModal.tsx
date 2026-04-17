@@ -24,28 +24,15 @@ import { applyPresetToSelection, generateUniquePresetId } from "../utils/modelPr
  *   - undefined: Section operates independently of settings storage (e.g. authentication)
  *
  * Group headers (isGroupHeader: true) are non-clickable labels that visually group sections.
+ * The sidebar is organized into three groups:
+ *   - Account: Scope-less sections (authentication, pi-extensions)
+ *   - Global: Global-scoped sections (appearance, notifications, node-sync, global-models)
+ *   - Project: Project-scoped sections (project-models, general, scheduling, worktrees, commands,
+ *     merge, memory, experimental, prompts, backups, plugins)
  *
  * To add a new section:
  *   1. Add an entry to SETTINGS_SECTIONS with a unique id, label, and scope
  *   2. Add a corresponding case in renderSectionFields()
- *
- * Sections:
- *   - authentication: OAuth provider status, login/logout (independent)
- *   - appearance: Theme and color settings (global)
- *   - notifications: ntfy.sh notification settings (global)
- *   - node-sync: Settings sync between nodes (global)
- *   - global-models: Default/fallback models and thinking level (global)
- *   - project-models: Planning & validator models, model presets, and AI summarization (project)
- *   - general: Task prefix configuration (project)
- *   - scheduling: Concurrency, poll interval, file overlap serialization, task auto-archive,
- *     and step execution settings (runStepsInNewSessions, maxParallelSteps) (project)
- *   - worktrees: Worktree limits, init commands, recycling (project)
- *   - commands: Test and build command configuration (project)
- *   - merge: Auto-merge settings (project)
- *   - memory: Project memory settings (project)
- *   - prompts: Agent prompt customization (project)
- *   - backups: Database backup settings (project)
- *   - plugins: Plugin management (project)
  */
 /** Section entry type with optional icon */
 type SettingsSection = {
@@ -60,17 +47,21 @@ const MOBILE_SETTINGS_MEDIA_QUERY = "(max-width: 768px)";
 const DEFAULT_MEMORY_EDITOR_PATH = ".fusion/memory/DREAMS.md";
 
 const SETTINGS_SECTIONS: SettingsSection[] = [
-  // Global group
+  // Account group (scope-less items — independent of settings storage)
+  { id: "__account_header", label: "Account", scope: undefined, isGroupHeader: true },
   { id: "authentication", label: "Authentication", scope: undefined, icon: Globe },
   { id: "pi-extensions", label: "Pi Extensions", scope: undefined },
+
+  // Global group (shared across all Fusion projects)
+  { id: "__global_header", label: "Global", scope: undefined, isGroupHeader: true },
   { id: "appearance", label: "Appearance", scope: "global" },
   { id: "notifications", label: "Notifications", scope: "global" },
   { id: "node-sync", label: "Node Sync", scope: "global" },
   { id: "global-models", label: "Models", scope: "global" },
-  { id: "project-models", label: "Project Models", scope: "project" },
-  { id: "__global_header", label: "Global", scope: undefined, isGroupHeader: true },
-  // Project group
+
+  // Project group (specific to this project)
   { id: "__project_header", label: "Project", scope: undefined, isGroupHeader: true },
+  { id: "project-models", label: "Project Models", scope: "project" },
   { id: "general", label: "General", scope: "project" },
   { id: "scheduling", label: "Scheduling", scope: "project" },
   { id: "worktrees", label: "Worktrees", scope: "project" },
