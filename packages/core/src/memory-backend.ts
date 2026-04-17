@@ -18,13 +18,22 @@ export const MEMORY_WORKSPACE_PATH = ".fusion/memory";
 export const MEMORY_LONG_TERM_FILENAME = "MEMORY.md";
 export const MEMORY_DREAMS_FILENAME = "DREAMS.md";
 export const LEGACY_MEMORY_FILE_PATH = ".fusion/memory.md";
-export const QMD_INSTALL_COMMAND = "bun add -g qmd";
+export const QMD_INSTALL_COMMAND = "bun install -g @tobilu/qmd";
+export const QMD_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
 const DAILY_MEMORY_RE = /^\d{4}-\d{2}-\d{2}\.md$/;
 const MAX_MEMORY_SNIPPET_CHARS = 700;
 const DEFAULT_MEMORY_GET_LINES = 120;
 const MAX_MEMORY_GET_LINES = 400;
 const QMD_COLLECTION_PREFIX = "fusion-memory";
+
+type ExecFileAsync = (
+  file: string,
+  args: readonly string[],
+  options?: { cwd?: string; timeout?: number; maxBuffer?: number },
+) => Promise<{ stdout: string; stderr: string }>;
+
+const qmdRefreshState = new Map<string, { lastStartedAt: number; inFlight?: Promise<void> }>();
 
 // ── Type Definitions ────────────────────────────────────────────────
 
@@ -420,6 +429,7 @@ export class QmdMemoryBackend implements MemoryBackend {
   async write(rootDir: string, content: string): Promise<MemoryWriteResult> {
     // Delegate to file backend, but return "qmd" as the backend identifier
     const result = await this.fileBackend.write(rootDir, content);
+    scheduleQmdProjectMemoryRefresh(rootDir);
     return {
       ...result,
       backend: this.type,
@@ -482,6 +492,26 @@ export function buildQmdSearchArgs(rootDir: string, options: MemorySearchOptions
     qmdMemoryCollectionName(rootDir),
     "-n",
     String(limit),
+  ];
+}
+
+export function buildQmdCollectionAddArgs(rootDir: string): string[] {
+  return [
+    "collection",
+    "add",
+    memoryWorkspacePath(rootDir),
+    "--name",
+    qmdMemoryCollectionName(rootDir),
+    "--mask",
+    "**/*.md",
+  ];
+}
+
+export function buildQmdRefreshCommands(rootDir: string): string[][] {
+  return [
+    buildQmdCollectionAddArgs(rootDir),
+    ["update"],
+    ["embed"],
   ];
 }
 
@@ -774,6 +804,52 @@ async function searchMemoryFiles(rootDir: string, options: MemorySearchOptions, 
     .slice(0, limit);
 }
 
+function normalizeQmdSearchResultPath(rootDir: string, rawPath: unknown): string {
+  const original = String(rawPath ?? "").trim();
+  if (!original) {
+    return "";
+  }
+
+  let candidate = original.replace(/\\/g, "/");
+  const uriMatch = candidate.match(/^qmd:\/\/[^/]+\/(.+)$/i);
+  if (uriMatch?.[1]) {
+    candidate = uriMatch[1];
+  }
+
+  candidate = candidate.split("?")[0]?.split("#")[0] ?? "";
+  candidate = candidate.replace(/^\.\/+/, "");
+
+  if (isAbsolute(candidate)) {
+    const rel = relative(resolve(rootDir), resolve(candidate)).replace(/\\/g, "/");
+    if (rel && rel !== "." && rel !== ".." && !rel.startsWith("../") && !isAbsolute(rel)) {
+      candidate = rel;
+    }
+  }
+
+  const lowerCandidate = candidate.toLowerCase();
+  const legacyLower = LEGACY_MEMORY_FILE_PATH.toLowerCase();
+  if (lowerCandidate === legacyLower || lowerCandidate.endsWith(`/${legacyLower}`)) {
+    return LEGACY_MEMORY_FILE_PATH;
+  }
+
+  const normalizedBaseName = basename(candidate).toLowerCase();
+  if (normalizedBaseName === MEMORY_LONG_TERM_FILENAME.toLowerCase()) {
+    return `${MEMORY_WORKSPACE_PATH}/${MEMORY_LONG_TERM_FILENAME}`;
+  }
+  if (normalizedBaseName === MEMORY_DREAMS_FILENAME.toLowerCase()) {
+    return `${MEMORY_WORKSPACE_PATH}/${MEMORY_DREAMS_FILENAME}`;
+  }
+  if (DAILY_MEMORY_RE.test(normalizedBaseName)) {
+    return `${MEMORY_WORKSPACE_PATH}/${normalizedBaseName}`;
+  }
+
+  try {
+    return normalizeMemoryRequestPath(candidate);
+  } catch {
+    return original;
+  }
+}
+
 async function searchWithQmd(rootDir: string, options: MemorySearchOptions): Promise<MemorySearchResult[]> {
   const command = "qmd";
   const limit = Math.max(1, Math.min(options.limit ?? 5, 20));
@@ -782,6 +858,7 @@ async function searchWithQmd(rootDir: string, options: MemorySearchOptions): Pro
     const { promisify } = await import("node:util");
     const execFileAsync = promisify(execFile);
     await ensureQmdProjectMemoryCollection(rootDir, execFileAsync);
+    scheduleQmdProjectMemoryRefresh(rootDir);
     const args = buildQmdSearchArgs(rootDir, options);
     const { stdout } = await execFileAsync(command, args, {
       cwd: rootDir,
@@ -790,14 +867,23 @@ async function searchWithQmd(rootDir: string, options: MemorySearchOptions): Pro
     });
     const parsed = JSON.parse(stdout);
     const rawResults = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.results) ? parsed.results : [];
-    return rawResults.slice(0, limit).map((result: Record<string, unknown>, index: number) => ({
-      path: String(result.path ?? result.file ?? `qmd/result-${index + 1}`),
-      lineStart: Number(result.lineStart ?? result.startLine ?? 1),
-      lineEnd: Number(result.lineEnd ?? result.endLine ?? result.startLine ?? 1),
-      snippet: String(result.snippet ?? result.text ?? result.content ?? "").slice(0, MAX_MEMORY_SNIPPET_CHARS),
-      score: Number(result.score ?? 1),
-      backend: "qmd",
-    })).filter((result: MemorySearchResult) => result.snippet.trim().length > 0);
+    return rawResults
+      .slice(0, limit)
+      .map((result: Record<string, unknown>, index: number) => {
+        const rawPath = result.path ?? result.file ?? `qmd/result-${index + 1}`;
+        return {
+          path: normalizeQmdSearchResultPath(rootDir, rawPath) || String(rawPath),
+          lineStart: Number(result.lineStart ?? result.startLine ?? 1),
+          lineEnd: Number(result.lineEnd ?? result.endLine ?? result.startLine ?? 1),
+          snippet: String(result.snippet ?? result.text ?? result.content ?? "").slice(
+            0,
+            MAX_MEMORY_SNIPPET_CHARS,
+          ),
+          score: Number(result.score ?? 1),
+          backend: "qmd",
+        };
+      })
+      .filter((result: MemorySearchResult) => result.snippet.trim().length > 0);
   } catch {
     return [];
   }
@@ -805,18 +891,14 @@ async function searchWithQmd(rootDir: string, options: MemorySearchOptions): Pro
 
 async function ensureQmdProjectMemoryCollection(
   rootDir: string,
-  execFileAsync: (
-    file: string,
-    args: readonly string[],
-    options?: { cwd?: string; timeout?: number; maxBuffer?: number },
-  ) => Promise<{ stdout: string; stderr: string }>,
+  execFileAsync: ExecFileAsync,
 ): Promise<string> {
   const collectionName = qmdMemoryCollectionName(rootDir);
   const memoryDir = memoryWorkspacePath(rootDir);
   await mkdir(memoryDir, { recursive: true });
 
   try {
-    await execFileAsync("qmd", ["collection", "add", memoryDir, "--name", collectionName, "--mask", "**/*.md"], {
+    await execFileAsync("qmd", buildQmdCollectionAddArgs(rootDir), {
       cwd: rootDir,
       timeout: 4000,
       maxBuffer: 512 * 1024,
@@ -830,6 +912,62 @@ async function ensureQmdProjectMemoryCollection(
   }
 
   return collectionName;
+}
+
+async function getDefaultExecFileAsync(): Promise<ExecFileAsync> {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  return promisify(execFile);
+}
+
+export async function refreshQmdProjectMemoryIndex(
+  rootDir: string,
+  options?: { force?: boolean; execFileAsync?: ExecFileAsync },
+): Promise<void> {
+  const key = resolve(rootDir);
+  const now = Date.now();
+  const current = qmdRefreshState.get(key);
+
+  if (!options?.force) {
+    if (current?.inFlight) {
+      return current.inFlight;
+    }
+    if (current && now - current.lastStartedAt < QMD_REFRESH_INTERVAL_MS) {
+      return;
+    }
+  }
+
+  const promise = (async () => {
+    const execFileAsync = options?.execFileAsync ?? await getDefaultExecFileAsync();
+    await ensureQmdProjectMemoryCollection(rootDir, execFileAsync);
+    await execFileAsync("qmd", ["update"], {
+      cwd: rootDir,
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    });
+    await execFileAsync("qmd", ["embed"], {
+      cwd: rootDir,
+      timeout: 120_000,
+      maxBuffer: 1024 * 1024,
+    });
+  })();
+
+  qmdRefreshState.set(key, { lastStartedAt: now, inFlight: promise });
+
+  try {
+    await promise;
+  } finally {
+    const latest = qmdRefreshState.get(key);
+    if (latest?.inFlight === promise) {
+      qmdRefreshState.set(key, { lastStartedAt: latest.lastStartedAt });
+    }
+  }
+}
+
+export function scheduleQmdProjectMemoryRefresh(rootDir: string): void {
+  void refreshQmdProjectMemoryIndex(rootDir).catch(() => {
+    // qmd is optional. Search falls back to local file scanning when refresh fails.
+  });
 }
 
 export async function isQmdAvailable(): Promise<boolean> {

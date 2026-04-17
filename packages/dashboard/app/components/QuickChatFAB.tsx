@@ -1,7 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from "react";
 import { MessageSquare, Send, X } from "lucide-react";
 import { fetchModels, type Agent, type ModelInfo } from "../api";
 import { CustomModelDropdown } from "./CustomModelDropdown";
+import { AgentMentionPopup } from "./AgentMentionPopup";
 import { KB_AGENT_ID, useQuickChat, type ChatMessageInfo } from "../hooks/useQuickChat";
 import { useAgents } from "../hooks/useAgents";
 
@@ -93,6 +102,25 @@ function formatModelTagName(modelInfo: ModelInfo | null, parsedSelection: Parsed
     .replace(/\s+/g, " ")
     .replace(/^\w/, (letter) => letter.toUpperCase())
     .trim();
+}
+
+function getMentionTriggerMatch(
+  value: string,
+  cursorPos: number,
+): { filter: string; start: number; end: number } | null {
+  const textBeforeCursor = value.slice(0, cursorPos);
+  const triggerMatch = /(^|[\s])@([\w-]*)$/.exec(textBeforeCursor);
+  if (!triggerMatch) {
+    return null;
+  }
+
+  const filter = triggerMatch[2] ?? "";
+  const start = textBeforeCursor.length - filter.length - 1;
+  return {
+    filter,
+    start,
+    end: cursorPos,
+  };
 }
 
 /** Position type for FAB positioning (right and bottom offsets from viewport edges) */
@@ -293,11 +321,17 @@ export function QuickChatFAB({ projectId, addToast, showFAB = true, open, onOpen
   const [modelsLoading, setModelsLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [messageInput, setMessageInput] = useState("");
+  const [mentionFilter, setMentionFilter] = useState("");
+  const [mentionPopupVisible, setMentionPopupVisible] = useState(false);
+  const [mentionHighlightIndex, setMentionHighlightIndex] = useState(0);
+  const [mentionStartPos, setMentionStartPos] = useState(-1);
 
   // Track if we just finished a drag (to prevent click from firing after drag)
   const didDragRef = useRef(false);
   const modelsRequestedRef = useRef(false);
   const prevSessionTargetRef = useRef("");
+  const mentionCursorPosRef = useRef(0);
+  const hideMentionPopupTimeoutRef = useRef<number | null>(null);
 
   // Draggable hook for FAB positioning
   const {
@@ -325,6 +359,7 @@ export function QuickChatFAB({ projectId, addToast, showFAB = true, open, onOpen
   const panelRef = useRef<HTMLDivElement | null>(null);
   const fabRef = useRef<HTMLButtonElement | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const parsedModelSelection = useMemo(() => parseModelSelection(selectedModel), [selectedModel]);
   const selectedModelInfo = useMemo(
@@ -412,6 +447,16 @@ export function QuickChatFAB({ projectId, addToast, showFAB = true, open, onOpen
     void switchSession(selectedAgentId);
   }, [isOpen, parsedModelSelection, selectedAgentId, sessionTargetKey, startModelChat, switchSession]);
 
+  useEffect(() => {
+    if (isOpen) {
+      return;
+    }
+
+    setMentionPopupVisible(false);
+    setMentionFilter("");
+    setMentionStartPos(-1);
+  }, [isOpen]);
+
   const handleAgentChange = useCallback((agentId: string) => {
     setSelectedAgentId(agentId);
   }, []);
@@ -424,6 +469,36 @@ export function QuickChatFAB({ projectId, addToast, showFAB = true, open, onOpen
     () => agents.find((agent) => agent.id === selectedAgentId) ?? null,
     [agents, selectedAgentId],
   );
+
+  const filteredMentionAgents = useMemo(() => {
+    const normalizedFilter = mentionFilter.trim().toLowerCase();
+    if (!normalizedFilter) {
+      return agents;
+    }
+
+    return agents.filter((agent) => agent.name.toLowerCase().includes(normalizedFilter));
+  }, [agents, mentionFilter]);
+
+  const mentionAgentsByName = useMemo(() => {
+    const byName = new Map<string, Agent>();
+    for (const agent of agents) {
+      byName.set(agent.name.toLowerCase(), agent);
+    }
+    return byName;
+  }, [agents]);
+
+  useEffect(() => {
+    setMentionHighlightIndex(0);
+  }, [mentionFilter, mentionPopupVisible]);
+
+  useEffect(() => {
+    return () => {
+      if (hideMentionPopupTimeoutRef.current !== null) {
+        window.clearTimeout(hideMentionPopupTimeoutRef.current);
+        hideMentionPopupTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   // Click outside and escape handling
   useEffect(() => {
@@ -476,14 +551,203 @@ export function QuickChatFAB({ projectId, addToast, showFAB = true, open, onOpen
     if (!trimmed || inputDisabled) return;
 
     setMessageInput("");
+    setMentionPopupVisible(false);
+    setMentionFilter("");
+    setMentionStartPos(-1);
     await sendMessage(trimmed);
   }, [sendMessage, inputDisabled, messageInput]);
 
-  const handleInputKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (event.key !== "Enter" || event.shiftKey) return;
-    event.preventDefault();
-    void handleSendMessage();
-  }, [handleSendMessage]);
+  const updateMentionState = useCallback((value: string, cursorPos: number) => {
+    const mentionTriggerMatch = getMentionTriggerMatch(value, cursorPos);
+    if (mentionTriggerMatch) {
+      setMentionPopupVisible(true);
+      setMentionFilter(mentionTriggerMatch.filter);
+      setMentionStartPos(mentionTriggerMatch.start);
+      return;
+    }
+
+    setMentionPopupVisible(false);
+    setMentionFilter("");
+    setMentionStartPos(-1);
+  }, []);
+
+  const handleMentionSelect = useCallback(
+    (agent: Agent) => {
+      const input = inputRef.current;
+      if (!input || mentionStartPos < 0) {
+        return;
+      }
+
+      const selectionStart = input.selectionStart ?? mentionCursorPosRef.current;
+      const selectionEnd = input.selectionEnd ?? selectionStart;
+      const cursorPos = Math.max(selectionStart, selectionEnd);
+      const safeStart = Math.min(mentionStartPos, cursorPos);
+      const mentionText = `@${agent.name.replace(/\s+/g, "_")}`;
+      const replacement = `${mentionText} `;
+      const nextInput = messageInput.slice(0, safeStart) + replacement + messageInput.slice(cursorPos);
+      const nextCursorPos = safeStart + replacement.length;
+
+      setMessageInput(nextInput);
+      setMentionPopupVisible(false);
+      setMentionFilter("");
+      setMentionHighlightIndex(0);
+      setMentionStartPos(-1);
+
+      window.requestAnimationFrame(() => {
+        if (!inputRef.current) return;
+        inputRef.current.focus();
+        inputRef.current.setSelectionRange(nextCursorPos, nextCursorPos);
+      });
+    },
+    [mentionStartPos, messageInput],
+  );
+
+  const handleInputChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const nextValue = event.target.value;
+      const cursorPos = event.target.selectionStart ?? nextValue.length;
+      mentionCursorPosRef.current = cursorPos;
+      setMessageInput(nextValue);
+      updateMentionState(nextValue, cursorPos);
+    },
+    [updateMentionState],
+  );
+
+  const handleInputBlur = useCallback(() => {
+    if (hideMentionPopupTimeoutRef.current !== null) {
+      window.clearTimeout(hideMentionPopupTimeoutRef.current);
+    }
+
+    hideMentionPopupTimeoutRef.current = window.setTimeout(() => {
+      setMentionPopupVisible(false);
+      setMentionFilter("");
+      setMentionStartPos(-1);
+      hideMentionPopupTimeoutRef.current = null;
+    }, 120);
+  }, []);
+
+  const handleInputFocus = useCallback(() => {
+    if (hideMentionPopupTimeoutRef.current !== null) {
+      window.clearTimeout(hideMentionPopupTimeoutRef.current);
+      hideMentionPopupTimeoutRef.current = null;
+    }
+  }, []);
+
+  const handleInputSelectionChange = useCallback(
+    (event: React.SyntheticEvent<HTMLInputElement>) => {
+      const input = event.currentTarget;
+      const cursorPos = input.selectionStart ?? input.value.length;
+      mentionCursorPosRef.current = cursorPos;
+      updateMentionState(input.value, cursorPos);
+    },
+    [updateMentionState],
+  );
+
+  const handleInputKeyUp = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Escape") {
+        return;
+      }
+      handleInputSelectionChange(event);
+    },
+    [handleInputSelectionChange],
+  );
+
+  const renderMessageContent = useCallback(
+    (content: string) => {
+      const mentionRegex = /@([\w-]+)/g;
+      const parts: ReactNode[] = [];
+      let lastIndex = 0;
+      let match = mentionRegex.exec(content);
+
+      while (match) {
+        const [fullMatch, rawName = ""] = match;
+        const start = match.index;
+        if (start > lastIndex) {
+          parts.push(content.slice(lastIndex, start));
+        }
+
+        const normalizedName = rawName.replace(/_/g, " ").toLowerCase();
+        const mentionedAgent = mentionAgentsByName.get(normalizedName);
+        if (mentionedAgent) {
+          parts.push(
+            <span key={`${mentionedAgent.id}-${start}`} className="chat-mention-chip">
+              @{mentionedAgent.name.replace(/\s+/g, "_")}
+            </span>,
+          );
+        } else {
+          parts.push(fullMatch);
+        }
+
+        lastIndex = start + fullMatch.length;
+        match = mentionRegex.exec(content);
+      }
+
+      if (lastIndex < content.length) {
+        parts.push(content.slice(lastIndex));
+      }
+
+      if (parts.length === 0) {
+        return content;
+      }
+
+      return parts;
+    },
+    [mentionAgentsByName],
+  );
+
+  const handleInputKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      mentionCursorPosRef.current = event.currentTarget.selectionStart ?? mentionCursorPosRef.current;
+
+      if (mentionPopupVisible && event.key === "ArrowDown") {
+        event.preventDefault();
+        if (filteredMentionAgents.length > 0) {
+          setMentionHighlightIndex((prev) => (prev + 1) % filteredMentionAgents.length);
+        }
+        return;
+      }
+
+      if (mentionPopupVisible && event.key === "ArrowUp") {
+        event.preventDefault();
+        if (filteredMentionAgents.length > 0) {
+          setMentionHighlightIndex((prev) =>
+            prev === 0 ? filteredMentionAgents.length - 1 : prev - 1,
+          );
+        }
+        return;
+      }
+
+      if (mentionPopupVisible && event.key === "Enter") {
+        event.preventDefault();
+        const agentToSelect = filteredMentionAgents[mentionHighlightIndex] ?? filteredMentionAgents[0];
+        if (agentToSelect) {
+          handleMentionSelect(agentToSelect);
+        }
+        return;
+      }
+
+      if (mentionPopupVisible && event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setMentionPopupVisible(false);
+        setMentionFilter("");
+        setMentionStartPos(-1);
+        return;
+      }
+
+      if (event.key !== "Enter" || event.shiftKey) return;
+      event.preventDefault();
+      void handleSendMessage();
+    },
+    [
+      mentionPopupVisible,
+      filteredMentionAgents,
+      mentionHighlightIndex,
+      handleMentionSelect,
+      handleSendMessage,
+    ],
+  );
 
   // Handle FAB click - only toggle if this was a click (not a drag)
   // Reset didDragRef after checking to prevent double-toggle
@@ -603,7 +867,7 @@ export function QuickChatFAB({ projectId, addToast, showFAB = true, open, onOpen
                       className={`quick-chat-panel-message ${isSent ? "quick-chat-panel-message--sent" : "quick-chat-panel-message--received"}`}
                       data-testid={`quick-chat-message-${message.id}`}
                     >
-                      <p>{message.content}</p>
+                      <p>{renderMessageContent(message.content)}</p>
                     </div>
                   );
                 })}
@@ -619,7 +883,7 @@ export function QuickChatFAB({ projectId, addToast, showFAB = true, open, onOpen
                       </p>
                     )}
                     {streamingText && (
-                      <p data-testid="quick-chat-streaming-text">{streamingText}</p>
+                      <p data-testid="quick-chat-streaming-text">{renderMessageContent(streamingText)}</p>
                     )}
                   </div>
                 )}
@@ -628,15 +892,30 @@ export function QuickChatFAB({ projectId, addToast, showFAB = true, open, onOpen
           </div>
 
           <div className="quick-chat-panel-input">
-            <input
-              type="text"
-              value={messageInput}
-              onChange={(event) => setMessageInput(event.target.value)}
-              onKeyDown={handleInputKeyDown}
-              placeholder={inputPlaceholder}
-              disabled={inputDisabled}
-              data-testid="quick-chat-input"
-            />
+            <div className="quick-chat-input-wrapper">
+              <input
+                ref={inputRef}
+                type="text"
+                value={messageInput}
+                onChange={handleInputChange}
+                onKeyDown={handleInputKeyDown}
+                onKeyUp={handleInputKeyUp}
+                onClick={handleInputSelectionChange}
+                onBlur={handleInputBlur}
+                onFocus={handleInputFocus}
+                placeholder={inputPlaceholder}
+                disabled={inputDisabled}
+                data-testid="quick-chat-input"
+              />
+              <AgentMentionPopup
+                agents={agents}
+                filter={mentionFilter}
+                highlightedIndex={mentionHighlightIndex}
+                visible={mentionPopupVisible}
+                onSelect={handleMentionSelect}
+                position="above"
+              />
+            </div>
             <button
               type="button"
               onClick={() => void handleSendMessage()}

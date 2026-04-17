@@ -603,7 +603,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   // Create ChatStore for chat session management
   const chatStore = options?.chatStore ?? new ChatStore(store.getFusionDir(), store.getDatabase());
 
-  // Create AgentStore for chat prompt enrichment (lazy-initialized inside ChatManager)
+  // Create AgentStore for chat prompt enrichment (initialized lazily by ChatManager)
   const chatAgentStore = new AgentStore({ rootDir: store.getFusionDir() });
 
   // Create ChatManager for AI chat message handling

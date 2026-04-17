@@ -31028,6 +31028,100 @@ html .column.drag-over * {
   cursor: not-allowed;
 }
 
+/* === AgentMentionPopup === */
+.chat-input-wrapper,
+.quick-chat-input-wrapper {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-mention-popup {
+  position: absolute;
+  z-index: 250;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 240px;
+  overflow-y: auto;
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-xs) 0;
+}
+
+.agent-mention-popup--below {
+  top: calc(100% + var(--space-xs));
+  left: 0;
+}
+
+.agent-mention-popup--above {
+  bottom: calc(100% + var(--space-xs));
+  left: 0;
+}
+
+.agent-mention-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 6px 12px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+}
+
+.agent-mention-item:hover,
+.agent-mention-item--highlighted {
+  background: var(--card-hover);
+}
+
+.agent-mention-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  background: var(--card-hover);
+}
+
+.agent-mention-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-mention-role {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.agent-mention-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.chat-mention-chip {
+  display: inline;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--text);
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+}
+
+@media (max-width: 768px) {
+  .agent-mention-popup {
+    max-width: 280px;
+    min-width: 200px;
+  }
+}
+
 /* Empty state */
 .chat-empty-state {
   flex: 1;

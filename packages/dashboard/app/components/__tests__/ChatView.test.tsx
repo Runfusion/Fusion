@@ -422,6 +422,81 @@ describe("ChatView", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
+  describe("agent mentions", () => {
+    it("shows mention popup when @ is typed", async () => {
+      setupMockChat({ activeSession: activeSessionFixture, messages: [] });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const textarea = screen.getByTestId("chat-input");
+      await userEvent.type(textarea, "@");
+
+      expect(await screen.findByTestId("agent-mention-popup")).toBeInTheDocument();
+    });
+
+    it("filters mention popup by text after @", async () => {
+      setupMockChat({ activeSession: activeSessionFixture, messages: [] });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const textarea = screen.getByTestId("chat-input");
+      await userEvent.type(textarea, "@be");
+
+      expect(await screen.findByTestId("agent-mention-item-agent-002")).toBeInTheDocument();
+      expect(screen.queryByTestId("agent-mention-item-agent-001")).not.toBeInTheDocument();
+    });
+
+    it("hides mention popup on Escape", async () => {
+      setupMockChat({ activeSession: activeSessionFixture, messages: [] });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const textarea = screen.getByTestId("chat-input");
+      await userEvent.type(textarea, "@");
+      expect(await screen.findByTestId("agent-mention-popup")).toBeInTheDocument();
+
+      await userEvent.keyboard("{Escape}");
+      expect(screen.queryByTestId("agent-mention-popup")).not.toBeInTheDocument();
+    });
+
+    it("inserts mention text when selecting an agent", async () => {
+      setupMockChat({ activeSession: activeSessionFixture, messages: [] });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const textarea = screen.getByTestId("chat-input") as HTMLTextAreaElement;
+      await userEvent.type(textarea, "@al");
+
+      const mentionItem = await screen.findByTestId("agent-mention-item-agent-001");
+      await userEvent.click(mentionItem);
+
+      expect(textarea.value).toBe("@Alpha ");
+      expect(screen.queryByTestId("agent-mention-popup")).not.toBeInTheDocument();
+    });
+
+    it("renders known @mentions as highlighted chips", async () => {
+      setupMockChat({
+        activeSession: activeSessionFixture,
+        messages: [
+          {
+            id: "msg-001",
+            sessionId: "session-001",
+            role: "assistant",
+            content: "Talk to @Alpha and @Unknown next.",
+            createdAt: "2026-04-08T00:00:00.000Z",
+          },
+        ],
+      });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("@Alpha")).toHaveClass("chat-mention-chip");
+      });
+      expect(screen.getByText(/@Unknown/)).not.toHaveClass("chat-mention-chip");
+    });
+  });
+
   describe("slash skill autocomplete", () => {
     it("shows the skill menu when typing slash in the chat input", async () => {
       mockFetchDiscoveredSkills.mockResolvedValueOnce([

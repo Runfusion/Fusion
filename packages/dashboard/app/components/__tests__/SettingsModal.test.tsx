@@ -4075,6 +4075,53 @@ describe("Prompts section", () => {
   });
 
   describe("Memory section - file editor", () => {
+    it("renders auto-summarize controls and toggles threshold/schedule inputs", async () => {
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      fireEvent.click(screen.getByText("Memory"));
+
+      const autoSummarizeCheckbox = await screen.findByLabelText("Auto-Summarize Memory");
+      expect(autoSummarizeCheckbox).toBeInTheDocument();
+      expect(screen.queryByLabelText("Compaction Threshold (chars)")).toBeNull();
+      expect(screen.queryByLabelText("Schedule (cron)")).toBeNull();
+
+      fireEvent.click(autoSummarizeCheckbox);
+
+      expect(screen.getByLabelText("Compaction Threshold (chars)")).toHaveValue(50000);
+      expect(screen.getByLabelText("Schedule (cron)")).toHaveValue("0 3 * * *");
+    });
+
+    it("persists auto-summarize settings changes on save", async () => {
+      render(<SettingsModal onClose={onClose} addToast={addToast} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      fireEvent.click(screen.getByText("Memory"));
+
+      fireEvent.click(await screen.findByLabelText("Auto-Summarize Memory"));
+      fireEvent.change(screen.getByLabelText("Compaction Threshold (chars)"), {
+        target: { value: "60000" },
+      });
+      fireEvent.change(screen.getByLabelText("Schedule (cron)"), {
+        target: { value: "15 2 * * *" },
+      });
+
+      fireEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(updateSettings).toHaveBeenCalled();
+      });
+
+      const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(payload).toEqual(
+        expect.objectContaining({
+          memoryAutoSummarizeEnabled: true,
+          memoryAutoSummarizeThresholdChars: 60000,
+          memoryAutoSummarizeSchedule: "15 2 * * *",
+        }),
+      );
+    });
+
     it("shows the memory file selector and defaults to dreams", async () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
       await waitFor(() => expect(fetchSettings).toHaveBeenCalled());

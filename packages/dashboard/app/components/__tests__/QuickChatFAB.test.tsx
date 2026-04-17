@@ -231,6 +231,33 @@ describe("QuickChatFAB", () => {
     expect(screen.getByRole("option", { name: "Agent Two (reviewer)" })).toBeDefined();
   });
 
+  it("shows mention popup when @ is typed in quick chat input", async () => {
+    render(<QuickChatFAB addToast={addToast} />);
+
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    const input = await screen.findByTestId("quick-chat-input");
+    fireEvent.change(input, { target: { value: "@" } });
+
+    expect(await screen.findByTestId("agent-mention-popup")).toBeDefined();
+    expect(screen.getByTestId("agent-mention-item-agent-001")).toBeDefined();
+  });
+
+  it("selecting mention item inserts @AgentName into quick chat input", async () => {
+    render(<QuickChatFAB addToast={addToast} />);
+
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    const input = await screen.findByTestId("quick-chat-input") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "@agent" } });
+
+    const mentionItem = await screen.findByTestId("agent-mention-item-agent-001");
+    fireEvent.click(mentionItem);
+
+    expect((screen.getByTestId("quick-chat-input") as HTMLInputElement).value).toBe("@Agent_One ");
+    expect(screen.queryByTestId("agent-mention-popup")).toBeNull();
+  });
+
   it("selecting a model with no agents creates a KB agent session with model override", async () => {
     mockAgentsHook([]);
 

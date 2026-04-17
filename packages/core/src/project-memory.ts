@@ -120,6 +120,7 @@ async function getMemoryBackendUtils() {
     getMemoryBackendCapabilities: module.getMemoryBackendCapabilities,
     MEMORY_BACKEND_SETTINGS_KEYS: module.MEMORY_BACKEND_SETTINGS_KEYS,
     DEFAULT_MEMORY_BACKEND: module.DEFAULT_MEMORY_BACKEND,
+    scheduleQmdProjectMemoryRefresh: module.scheduleQmdProjectMemoryRefresh,
   };
 }
 
@@ -239,13 +240,22 @@ export async function ensureMemoryFileWithBackend(
   rootDir: string,
   settings?: MemorySettings,
 ): Promise<boolean> {
-  const { resolveMemoryBackend, MEMORY_BACKEND_SETTINGS_KEYS, DEFAULT_MEMORY_BACKEND } =
-    await getMemoryBackendUtils();
+  const {
+    resolveMemoryBackend,
+    MEMORY_BACKEND_SETTINGS_KEYS,
+    DEFAULT_MEMORY_BACKEND,
+    scheduleQmdProjectMemoryRefresh,
+  } = await getMemoryBackendUtils();
 
   const backendType =
     (settings?.[MEMORY_BACKEND_SETTINGS_KEYS.MEMORY_BACKEND_TYPE] as string) ||
     DEFAULT_MEMORY_BACKEND;
   const backend = resolveMemoryBackend(settings);
+  const refreshQmdIfNeeded = () => {
+    if (backend.type === "qmd" || backendType === "qmd") {
+      scheduleQmdProjectMemoryRefresh(rootDir);
+    }
+  };
 
   // Check if memory already exists using the backend
   if (backend.exists) {
@@ -260,6 +270,7 @@ export async function ensureMemoryFileWithBackend(
           }
         }
       }
+      refreshQmdIfNeeded();
       return false; // Memory already exists, don't overwrite
     }
   } else {
@@ -275,6 +286,7 @@ export async function ensureMemoryFileWithBackend(
           }
         }
       }
+      refreshQmdIfNeeded();
       return false; // Memory already exists, don't overwrite
     }
   }
@@ -295,6 +307,7 @@ export async function ensureMemoryFileWithBackend(
   // Try to write using the backend
   try {
     const result = await backend.write(rootDir, getDefaultMemoryScaffold());
+    refreshQmdIfNeeded();
     return result.success;
   } catch (err) {
     // Non-writable backends (readonly) don't throw during bootstrap
@@ -544,6 +557,30 @@ This project has a memory system that stores durable project learnings accumulat
    - One-off file paths, variable names, or minor code changes
    - Notes about what you did rather than what future agents should know
 5. Consolidate when possible: refine an existing memory entry instead of adding duplicates.
+`;
+}
+
+export function buildReviewerMemoryInstructions(
+  rootDir: string,
+  settings?: MemorySettings,
+): string {
+  void rootDir;
+  const ctx = resolveMemoryInstructionContext(settings);
+  if (!ctx.capabilities.readable) {
+    return "";
+  }
+
+  return `
+## Project Memory
+
+This project has a memory system that stores durable project learnings.
+
+**During review:**
+1. Use \`memory_search\` for task-relevant project conventions, pitfalls, and prior decisions when they could affect your verdict
+2. Use \`memory_get\` only for specific memory files/line ranges returned by search
+3. Treat documented durable conventions and pitfalls as review evidence when deciding APPROVE, REVISE, or RETHINK
+4. Do not update memory during review; reviewer memory access is read-only
+5. Skip memory reads when they are not relevant to the reviewed plan or code
 `;
 }
 

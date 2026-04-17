@@ -30,10 +30,15 @@ const mockChatStore = {
 const mockAgentStore = {
   init: vi.fn(),
   getAgent: vi.fn(),
+  listAgents: vi.fn(),
 };
 
 function createChatManager(): ChatManager {
   return new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any);
+}
+
+function createChatManagerWithoutAgentStore(): ChatManager {
+  return new ChatManager(mockChatStore as any, "/tmp/test");
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -66,6 +71,17 @@ describe("ChatManager.sendMessage", () => {
       memory: "Remember to keep test coverage high.",
       instructionsText: "Keep replies focused.",
     });
+    mockAgentStore.listAgents.mockResolvedValue([
+      {
+        id: "agent-001",
+        name: "Avery",
+        role: "executor",
+        state: "idle",
+        createdAt: "2026-04-08T00:00:00.000Z",
+        updatedAt: "2026-04-08T00:00:00.000Z",
+        metadata: {},
+      },
+    ]);
 
     __setBuildAgentChatPrompt(async ({ agent, basePrompt }: any) => {
       return [
@@ -79,6 +95,173 @@ describe("ChatManager.sendMessage", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  describe("mention parsing and context", () => {
+    it("parseMentions extracts known agent names from content", async () => {
+      mockAgentStore.listAgents.mockResolvedValue([
+        {
+          id: "agent-001",
+          name: "Alpha",
+          role: "executor",
+          state: "idle",
+          createdAt: "2026-04-08T00:00:00.000Z",
+          updatedAt: "2026-04-08T00:00:00.000Z",
+          metadata: {},
+        },
+      ]);
+
+      const chatManager = createChatManager();
+      const mentions = await (chatManager as any).parseMentions("hello @Alpha how are you");
+
+      expect(mentions).toEqual([{ agentId: "agent-001", agentName: "Alpha" }]);
+    });
+
+    it("parseMentions handles underscores in mentions", async () => {
+      mockAgentStore.listAgents.mockResolvedValue([
+        {
+          id: "agent-003",
+          name: "My Agent",
+          role: "reviewer",
+          state: "idle",
+          createdAt: "2026-04-08T00:00:00.000Z",
+          updatedAt: "2026-04-08T00:00:00.000Z",
+          metadata: {},
+        },
+      ]);
+
+      const chatManager = createChatManager();
+      const mentions = await (chatManager as any).parseMentions("ping @My_Agent please");
+
+      expect(mentions).toEqual([{ agentId: "agent-003", agentName: "My Agent" }]);
+    });
+
+    it("parseMentions returns empty array when no mentions are present", async () => {
+      const chatManager = createChatManager();
+      const mentions = await (chatManager as any).parseMentions("hello there");
+
+      expect(mentions).toEqual([]);
+      expect(mockAgentStore.listAgents).not.toHaveBeenCalled();
+    });
+
+    it("parseMentions returns empty array when agentStore is unavailable", async () => {
+      const chatManager = createChatManagerWithoutAgentStore();
+      const mentions = await (chatManager as any).parseMentions("hello @Alpha");
+
+      expect(mentions).toEqual([]);
+    });
+
+    it("buildMentionContext includes agent details", async () => {
+      mockAgentStore.listAgents.mockResolvedValue([
+        {
+          id: "agent-001",
+          name: "Alpha",
+          role: "executor",
+          state: "running",
+          taskId: "FN-2000",
+          soul: "A".repeat(260),
+          createdAt: "2026-04-08T00:00:00.000Z",
+          updatedAt: "2026-04-08T00:00:00.000Z",
+          metadata: {},
+        },
+      ]);
+
+      const chatManager = createChatManager();
+      const context = await (chatManager as any).buildMentionContext([
+        { agentId: "agent-001", agentName: "Alpha" },
+      ]);
+
+      expect(context).toContain("The user mentioned the following agents in their message:");
+      expect(context).toContain("@Alpha");
+      expect(context).toContain("role: executor");
+      expect(context).toContain("currently working on: FN-2000");
+      expect(context).toContain("…");
+    });
+
+    it("buildMentionContext returns empty string when mentions are empty", async () => {
+      const chatManager = createChatManager();
+      const context = await (chatManager as any).buildMentionContext([]);
+
+      expect(context).toBe("");
+    });
+
+    it("sendMessage appends mention context to system prompt when mentions are present", async () => {
+      mockAgentStore.listAgents.mockResolvedValue([
+        {
+          id: "agent-001",
+          name: "Avery",
+          role: "executor",
+          state: "running",
+          taskId: "FN-1948",
+          soul: "Mention-aware executor",
+          createdAt: "2026-04-08T00:00:00.000Z",
+          updatedAt: "2026-04-08T00:00:00.000Z",
+          metadata: {},
+        },
+      ]);
+
+      let createOptions: any;
+      __setCreateKbAgent(async (options: any) => {
+        createOptions = options;
+        return {
+          session: {
+            prompt: vi.fn().mockResolvedValue(undefined),
+            dispose: vi.fn(),
+            state: {
+              messages: [{ role: "assistant", content: "Done" }],
+            },
+          },
+        };
+      });
+
+      const chatManager = createChatManager();
+      await chatManager.sendMessage("chat-001", "hello @Avery");
+
+      expect(createOptions.systemPrompt).toContain("The user mentioned the following agents in their message:");
+      expect(createOptions.systemPrompt).toContain("@Avery");
+      expect(createOptions.systemPrompt).toContain("currently working on: FN-1948");
+    });
+
+    it("sendMessage stores mention metadata on the user message", async () => {
+      mockAgentStore.listAgents.mockResolvedValue([
+        {
+          id: "agent-001",
+          name: "Avery",
+          role: "executor",
+          state: "idle",
+          createdAt: "2026-04-08T00:00:00.000Z",
+          updatedAt: "2026-04-08T00:00:00.000Z",
+          metadata: {},
+        },
+      ]);
+
+      __setCreateKbAgent(async () => {
+        return {
+          session: {
+            prompt: vi.fn().mockResolvedValue(undefined),
+            dispose: vi.fn(),
+            state: {
+              messages: [{ role: "assistant", content: "Done" }],
+            },
+          },
+        };
+      });
+
+      const chatManager = createChatManager();
+      await chatManager.sendMessage("chat-001", "hello @Avery");
+
+      expect(mockChatStore.addMessage).toHaveBeenNthCalledWith(
+        1,
+        "chat-001",
+        expect.objectContaining({
+          role: "user",
+          content: "hello @Avery",
+          metadata: {
+            mentions: [{ agentId: "agent-001", agentName: "Avery" }],
+          },
+        }),
+      );
+    });
   });
 
   it("accumulates streamed text and uses it for message persistence", async () => {

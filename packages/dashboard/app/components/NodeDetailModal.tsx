@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, Download, Key, Pencil, Save, Shield, Upload, X } from "lucide-react";
 import type { NodeInfo, NodeUpdateInput, ProjectInfo } from "../api";
 import type { ToastType } from "../hooks/useToast";
@@ -50,6 +50,7 @@ export function NodeDetailModal({
   syncHistory = [],
   onResolveConflicts,
 }: NodeDetailModalProps) {
+  const isMountedRef = useRef(true);
   const [editMode, setEditMode] = useState(false);
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
@@ -66,6 +67,13 @@ export function NodeDetailModal({
   // Conflict resolution modal state
   const [showConflictModal, setShowConflictModal] = useState(false);
   const [conflicts, setConflicts] = useState<SettingsConflictEntry[]>([]);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!node || !isOpen) {
@@ -104,8 +112,10 @@ export function NodeDetailModal({
 
     try {
       await onHealthCheck(node.id);
+      if (!isMountedRef.current) return;
       addToast(`Health check completed for ${node.name}`, "success");
     } catch (error) {
+      if (!isMountedRef.current) return;
       const message = error instanceof Error ? error.message : "Health check failed";
       addToast(message, "error");
     }
@@ -117,13 +127,17 @@ export function NodeDetailModal({
     setIsPushing(true);
     try {
       await onPushSettings(node.id);
+      if (!isMountedRef.current) return;
       addToast("Settings pushed successfully", "success");
     } catch (error) {
+      if (!isMountedRef.current) return;
       const message = error instanceof Error ? error.message : "Push settings failed";
       setSyncError(message);
       addToast(message, "error");
     } finally {
-      setIsPushing(false);
+      if (isMountedRef.current) {
+        setIsPushing(false);
+      }
     }
   }, [addToast, node, onPushSettings]);
 

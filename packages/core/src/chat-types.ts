@@ -45,6 +45,12 @@ export interface ChatSession {
  */
 export type ChatSessionSummary = ChatSession;
 
+/** A parsed @ mention of an agent in a chat message */
+export interface ChatMention {
+  agentId: string;
+  agentName: string;
+}
+
 /**
  * A single message within a chat session.
  */

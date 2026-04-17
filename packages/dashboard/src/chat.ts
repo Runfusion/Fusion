@@ -15,6 +15,7 @@
 import type {
   Agent,
   AgentStore,
+  ChatMention,
   ChatStore,
   ChatSession,
   ChatSessionCreateInput,
@@ -273,6 +274,106 @@ export class ChatManager {
     private agentStore?: AgentStore,
   ) {}
 
+  private async listAgentsForMentions(): Promise<Agent[]> {
+    if (!this.agentStore) {
+      return [];
+    }
+
+    try {
+      this.agentStoreReady ??= this.agentStore.init();
+      await this.agentStoreReady;
+      return await this.agentStore.listAgents();
+    } catch (agentListError) {
+      const message = agentListError instanceof Error ? agentListError.message : String(agentListError);
+      console.warn(`[chat] Failed to list agents for mention parsing: ${message}`);
+      return [];
+    }
+  }
+
+  /** A parsed @ mention of an agent in a chat message */
+  private async parseMentions(content: string, agents?: Agent[]): Promise<ChatMention[]> {
+    if (!this.agentStore) {
+      return [];
+    }
+
+    const candidates = Array.from(content.matchAll(/@([\w-]+)/g), (match) => match[1] ?? "");
+    if (candidates.length === 0) {
+      return [];
+    }
+
+    const availableAgents = agents ?? (await this.listAgentsForMentions());
+    if (availableAgents.length === 0) {
+      return [];
+    }
+
+    const agentsByName = new Map<string, Agent>();
+    for (const agent of availableAgents) {
+      agentsByName.set(agent.name.toLowerCase(), agent);
+    }
+
+    const mentions: ChatMention[] = [];
+    const seenAgentIds = new Set<string>();
+
+    for (const candidate of candidates) {
+      const normalizedName = candidate.replace(/_/g, " ").toLowerCase();
+      const matchedAgent = agentsByName.get(normalizedName);
+      if (!matchedAgent || seenAgentIds.has(matchedAgent.id)) {
+        continue;
+      }
+
+      mentions.push({
+        agentId: matchedAgent.id,
+        agentName: matchedAgent.name,
+      });
+      seenAgentIds.add(matchedAgent.id);
+    }
+
+    return mentions;
+  }
+
+  private async buildMentionContext(mentions: ChatMention[], agents?: Agent[]): Promise<string> {
+    if (!this.agentStore || mentions.length === 0) {
+      return "";
+    }
+
+    const availableAgents = agents ?? (await this.listAgentsForMentions());
+    if (availableAgents.length === 0) {
+      return "";
+    }
+
+    const agentsById = new Map<string, Agent>();
+    for (const agent of availableAgents) {
+      agentsById.set(agent.id, agent);
+    }
+
+    const lines: string[] = [];
+    for (const mention of mentions) {
+      const matchedAgent = agentsById.get(mention.agentId);
+      if (!matchedAgent) {
+        continue;
+      }
+
+      const taskAssignment = matchedAgent.taskId?.trim() ? matchedAgent.taskId.trim() : "none";
+      const soulOrInstructions = (matchedAgent.soul?.trim() || matchedAgent.instructionsText?.trim() || "")
+        .replace(/\s+/g, " ");
+      const description = soulOrInstructions.length > 200
+        ? `${soulOrInstructions.slice(0, 200)}…`
+        : soulOrInstructions;
+
+      const base = `- @${mention.agentName.replace(/\s+/g, "_")} (role: ${matchedAgent.role}, currently working on: ${taskAssignment})`;
+      lines.push(description ? `${base}: ${description}` : base);
+    }
+
+    if (lines.length === 0) {
+      return "";
+    }
+
+    return [
+      "The user mentioned the following agents in their message:",
+      ...lines,
+    ].join("\n");
+  }
+
   /**
    * Create a new chat session.
    */
@@ -312,12 +413,17 @@ export class ChatManager {
       return;
     }
 
+    const hasMentionCandidates = /@[\w-]+/.test(content);
+    const mentionAgents = hasMentionCandidates ? await this.listAgentsForMentions() : [];
+    const mentions = hasMentionCandidates ? await this.parseMentions(content, mentionAgents) : [];
+
     // Persist user message
     let _userMessageId: string;
     try {
       const userMessage = this.chatStore.addMessage(sessionId, {
         role: "user",
         content,
+        metadata: mentions.length > 0 ? { mentions } : undefined,
       });
       _userMessageId = userMessage.id;
     } catch (err) {
@@ -396,6 +502,13 @@ export class ChatManager {
         } catch (promptBuildError) {
           const message = promptBuildError instanceof Error ? promptBuildError.message : String(promptBuildError);
           console.warn(`[chat] Failed to build enriched system prompt for ${agent.id}: ${message}`);
+        }
+      }
+
+      if (mentions.length > 0) {
+        const mentionContext = await this.buildMentionContext(mentions, mentionAgents);
+        if (mentionContext) {
+          systemPrompt = `${systemPrompt}\n\n${mentionContext}`;
         }
       }
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   MessageSquare,
   Send,
@@ -16,6 +16,7 @@ import type { Agent } from "@fusion/core";
 import type { DiscoveredSkill } from "@fusion/dashboard";
 import type { ModelInfo } from "../api";
 import { CustomModelDropdown } from "./CustomModelDropdown";
+import { AgentMentionPopup } from "./AgentMentionPopup";
 
 export interface ChatViewProps {
   projectId?: string;
@@ -124,6 +125,25 @@ function getSkillTriggerMatch(value: string): { filter: string; start: number; e
     filter,
     start,
     end: value.length,
+  };
+}
+
+function getMentionTriggerMatch(
+  value: string,
+  cursorPos: number,
+): { filter: string; start: number; end: number } | null {
+  const textBeforeCursor = value.slice(0, cursorPos);
+  const triggerMatch = /(^|[\s\n])@([\w-]*)$/.exec(textBeforeCursor);
+  if (!triggerMatch) {
+    return null;
+  }
+
+  const filter = triggerMatch[2] ?? "";
+  const start = textBeforeCursor.length - filter.length - 1;
+  return {
+    filter,
+    start,
+    end: cursorPos,
   };
 }
 
@@ -285,11 +305,16 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
   const [showSkillMenu, setShowSkillMenu] = useState(false);
   const [skillFilter, setSkillFilter] = useState("");
   const [highlightedSkillIndex, setHighlightedSkillIndex] = useState(0);
+  const [mentionFilter, setMentionFilter] = useState("");
+  const [mentionPopupVisible, setMentionPopupVisible] = useState(false);
+  const [mentionHighlightIndex, setMentionHighlightIndex] = useState(0);
+  const [mentionStartPos, setMentionStartPos] = useState(-1);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const hideSkillMenuTimeoutRef = useRef<number | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const mentionCursorPosRef = useRef(0);
   const mode = useViewportMode();
   const isMobile = mode === "mobile";
 
@@ -301,9 +326,31 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
     return matchingSkills.slice(0, 10);
   }, [discoveredSkills, skillFilter]);
 
+  const mentionAgents = useMemo(() => Array.from(agentsMap.values()), [agentsMap]);
+
+  const filteredMentionAgents = useMemo(() => {
+    const normalizedFilter = mentionFilter.trim().toLowerCase();
+    if (!normalizedFilter) {
+      return mentionAgents;
+    }
+    return mentionAgents.filter((agent) => agent.name.toLowerCase().includes(normalizedFilter));
+  }, [mentionAgents, mentionFilter]);
+
+  const mentionAgentsByName = useMemo(() => {
+    const byName = new Map<string, Agent>();
+    for (const agent of mentionAgents) {
+      byName.set(agent.name.toLowerCase(), agent);
+    }
+    return byName;
+  }, [mentionAgents]);
+
   useEffect(() => {
     setHighlightedSkillIndex(0);
   }, [filteredSkills]);
+
+  useEffect(() => {
+    setMentionHighlightIndex(0);
+  }, [mentionFilter, mentionPopupVisible]);
 
   useEffect(() => {
     return () => {
@@ -391,6 +438,9 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
     setMessageInput("");
     setShowSkillMenu(false);
     setSkillFilter("");
+    setMentionPopupVisible(false);
+    setMentionFilter("");
+    setMentionStartPos(-1);
     try {
       await sendMessage(trimmed);
     } catch {
@@ -427,9 +477,122 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
     [],
   );
 
+  const handleMentionSelect = useCallback(
+    (agent: Agent) => {
+      const textarea = inputRef.current;
+      if (!textarea || mentionStartPos < 0) {
+        return;
+      }
+
+      const selectionStart = textarea.selectionStart ?? mentionCursorPosRef.current;
+      const selectionEnd = textarea.selectionEnd ?? selectionStart;
+      const cursorPos = Math.max(selectionStart, selectionEnd);
+      const safeStart = Math.min(mentionStartPos, cursorPos);
+      const mentionText = `@${agent.name.replace(/\s+/g, "_")}`;
+      const replacement = `${mentionText} `;
+      const nextInput = messageInput.slice(0, safeStart) + replacement + messageInput.slice(cursorPos);
+      const nextCursorPos = safeStart + replacement.length;
+
+      setMessageInput(nextInput);
+      setMentionPopupVisible(false);
+      setMentionFilter("");
+      setMentionHighlightIndex(0);
+      setMentionStartPos(-1);
+
+      window.requestAnimationFrame(() => {
+        if (!inputRef.current) return;
+        inputRef.current.style.height = "auto";
+        inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 120)}px`;
+        inputRef.current.focus();
+        inputRef.current.setSelectionRange(nextCursorPos, nextCursorPos);
+      });
+    },
+    [mentionStartPos, messageInput],
+  );
+
+  const renderMessageContent = useCallback(
+    (content: string) => {
+      const mentionRegex = /@([\w-]+)/g;
+      const parts: ReactNode[] = [];
+      let lastIndex = 0;
+      let match = mentionRegex.exec(content);
+
+      while (match) {
+        const [fullMatch, rawName = ""] = match;
+        const start = match.index;
+        if (start > lastIndex) {
+          parts.push(content.slice(lastIndex, start));
+        }
+
+        const normalizedName = rawName.replace(/_/g, " ").toLowerCase();
+        const mentionedAgent = mentionAgentsByName.get(normalizedName);
+        if (mentionedAgent) {
+          parts.push(
+            <span key={`${mentionedAgent.id}-${start}`} className="chat-mention-chip">
+              @{mentionedAgent.name.replace(/\s+/g, "_")}
+            </span>,
+          );
+        } else {
+          parts.push(fullMatch);
+        }
+
+        lastIndex = start + fullMatch.length;
+        match = mentionRegex.exec(content);
+      }
+
+      if (lastIndex < content.length) {
+        parts.push(content.slice(lastIndex));
+      }
+
+      if (parts.length === 0) {
+        return content;
+      }
+
+      return parts;
+    },
+    [mentionAgentsByName],
+  );
+
   // Handle input key down
   const handleInputKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      mentionCursorPosRef.current = e.currentTarget.selectionStart ?? mentionCursorPosRef.current;
+
+      if (mentionPopupVisible && e.key === "ArrowDown") {
+        e.preventDefault();
+        if (filteredMentionAgents.length > 0) {
+          setMentionHighlightIndex((prev) => (prev + 1) % filteredMentionAgents.length);
+        }
+        return;
+      }
+
+      if (mentionPopupVisible && e.key === "ArrowUp") {
+        e.preventDefault();
+        if (filteredMentionAgents.length > 0) {
+          setMentionHighlightIndex((prev) =>
+            prev === 0 ? filteredMentionAgents.length - 1 : prev - 1,
+          );
+        }
+        return;
+      }
+
+      if (mentionPopupVisible && e.key === "Enter") {
+        e.preventDefault();
+        const agentToSelect = filteredMentionAgents[mentionHighlightIndex] ?? filteredMentionAgents[0];
+        if (agentToSelect) {
+          handleMentionSelect(agentToSelect);
+        }
+        return;
+      }
+
+      if (mentionPopupVisible && e.key === "Escape") {
+        e.preventDefault();
+        setMentionPopupVisible(false);
+        setMentionFilter("");
+        setMentionStartPos(-1);
+        return;
+      }
+
       if (showSkillMenu && e.key === "ArrowDown") {
         e.preventDefault();
         if (filteredSkills.length > 0) {
@@ -468,27 +631,76 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
         void handleSend();
       }
     },
-    [showSkillMenu, filteredSkills, highlightedSkillIndex, handleSkillSelect, handleSend],
+    [
+      mentionPopupVisible,
+      filteredMentionAgents,
+      mentionHighlightIndex,
+      handleMentionSelect,
+      showSkillMenu,
+      filteredSkills,
+      highlightedSkillIndex,
+      handleSkillSelect,
+      handleSend,
+    ],
   );
+
+  const updateMentionState = useCallback((value: string, cursorPos: number) => {
+    const mentionTriggerMatch = getMentionTriggerMatch(value, cursorPos);
+    if (mentionTriggerMatch) {
+      setMentionPopupVisible(true);
+      setMentionFilter(mentionTriggerMatch.filter);
+      setMentionStartPos(mentionTriggerMatch.start);
+      return;
+    }
+
+    setMentionPopupVisible(false);
+    setMentionFilter("");
+    setMentionStartPos(-1);
+  }, []);
 
   // Handle textarea resize
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const textarea = e.target;
     const nextValue = textarea.value;
+    const cursorPos = textarea.selectionStart ?? nextValue.length;
+
+    mentionCursorPosRef.current = cursorPos;
     setMessageInput(nextValue);
 
-    const triggerMatch = getSkillTriggerMatch(nextValue);
-    if (triggerMatch) {
+    const skillTriggerMatch = getSkillTriggerMatch(nextValue);
+    if (skillTriggerMatch) {
       setShowSkillMenu(true);
-      setSkillFilter(triggerMatch.filter);
+      setSkillFilter(skillTriggerMatch.filter);
     } else {
       setShowSkillMenu(false);
       setSkillFilter("");
     }
 
+    updateMentionState(nextValue, cursorPos);
+
     textarea.style.height = "auto";
     textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`;
-  }, []);
+  }, [updateMentionState]);
+
+  const handleInputSelectionChange = useCallback(
+    (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
+      const textarea = e.currentTarget;
+      const cursorPos = textarea.selectionStart ?? textarea.value.length;
+      mentionCursorPosRef.current = cursorPos;
+      updateMentionState(textarea.value, cursorPos);
+    },
+    [updateMentionState],
+  );
+
+  const handleInputKeyUp = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Escape") {
+        return;
+      }
+      handleInputSelectionChange(e);
+    },
+    [handleInputSelectionChange],
+  );
 
   const handleInputBlur = useCallback(() => {
     if (hideSkillMenuTimeoutRef.current !== null) {
@@ -497,6 +709,9 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
 
     hideSkillMenuTimeoutRef.current = window.setTimeout(() => {
       setShowSkillMenu(false);
+      setMentionPopupVisible(false);
+      setMentionFilter("");
+      setMentionStartPos(-1);
       hideSkillMenuTimeoutRef.current = null;
     }, 120);
   }, []);
@@ -742,7 +957,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                       })()}
                     </div>
                   )}
-                  <div className="chat-message-content">{message.content}</div>
+                  <div className="chat-message-content">{renderMessageContent(message.content)}</div>
                   {message.thinkingOutput && (
                     <details className="chat-message-thinking">
                       <summary>Thinking</summary>
@@ -762,7 +977,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                       return modelTag ? <span className="chat-model-tag">{modelTag}</span> : null;
                     })()}
                   </div>
-                  <div className="chat-message-content">{streamingText}</div>
+                  <div className="chat-message-content">{renderMessageContent(streamingText)}</div>
                   {streamingThinking && (
                     <details className="chat-message-thinking">
                       <summary>Thinking</summary>
@@ -813,19 +1028,31 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                 )}
               </div>
             )}
-            <textarea
-              ref={inputRef}
-              className="chat-input-textarea"
-              placeholder="Type a message..."
-              value={messageInput}
-              onChange={handleInputChange}
-              onKeyDown={handleInputKeyDown}
-              onBlur={handleInputBlur}
-              onFocus={handleInputFocus}
-              disabled={isStreaming}
-              rows={1}
-              data-testid="chat-input"
-            />
+            <div className="chat-input-wrapper">
+              <textarea
+                ref={inputRef}
+                className="chat-input-textarea"
+                placeholder="Type a message..."
+                value={messageInput}
+                onChange={handleInputChange}
+                onKeyDown={handleInputKeyDown}
+                onKeyUp={handleInputKeyUp}
+                onClick={handleInputSelectionChange}
+                onBlur={handleInputBlur}
+                onFocus={handleInputFocus}
+                disabled={isStreaming}
+                rows={1}
+                data-testid="chat-input"
+              />
+              <AgentMentionPopup
+                agents={mentionAgents}
+                filter={mentionFilter}
+                highlightedIndex={mentionHighlightIndex}
+                visible={mentionPopupVisible}
+                onSelect={handleMentionSelect}
+                position="below"
+              />
+            </div>
             <button
               className="chat-input-send"
               onClick={() => void handleSend()}

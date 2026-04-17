@@ -168,15 +168,26 @@ export class ProjectEngine {
         scope: "project", // Project-scoped execution — global schedules run separately
       });
 
+      const settings = await store.getSettings();
+
       // Sync insight extraction automation on startup
       try {
         const { syncInsightExtractionAutomation } = await import("@fusion/core");
         if (typeof syncInsightExtractionAutomation === "function") {
-          const settings = await store.getSettings();
           await syncInsightExtractionAutomation(this.automationStore, settings);
         }
       } catch {
         // syncInsightExtractionAutomation may not be exported yet
+      }
+
+      // Sync auto-summarize automation on startup
+      try {
+        const { syncAutoSummarizeAutomation } = await import("@fusion/core");
+        if (typeof syncAutoSummarizeAutomation === "function") {
+          await syncAutoSummarizeAutomation(this.automationStore, settings);
+        }
+      } catch {
+        // syncAutoSummarizeAutomation may not be exported yet
       }
 
       this.cronRunner.start();
@@ -969,6 +980,40 @@ export class ProjectEngine {
     };
     store.on("settings:updated", onInsightSettingsChange);
     this.settingsHandlers.push(onInsightSettingsChange);
+
+    // 6. Auto-summarize settings change — sync automation
+    const onAutoSummarizeSettingsChange = async ({
+      settings: s,
+      previous: prev,
+    }: {
+      settings: Settings;
+      previous: Settings;
+    }) => {
+      const autoSummarizeKeys = [
+        "memoryAutoSummarizeEnabled",
+        "memoryAutoSummarizeThresholdChars",
+        "memoryAutoSummarizeSchedule",
+      ] as const;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const changed = autoSummarizeKeys.some((key) => (s as any)[key] !== (prev as any)[key]);
+      if (!changed || !this.automationStore) return;
+
+      try {
+        const { syncAutoSummarizeAutomation } = await import("@fusion/core");
+        if (typeof syncAutoSummarizeAutomation === "function") {
+          await syncAutoSummarizeAutomation(this.automationStore, s);
+          runtimeLog.log("Auto-summarize automation synced with settings");
+        }
+      } catch (err) {
+        runtimeLog.warn(
+          "Failed to sync auto-summarize automation:",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    };
+    store.on("settings:updated", onAutoSummarizeSettingsChange);
+    this.settingsHandlers.push(onAutoSummarizeSettingsChange);
   }
 
   /**

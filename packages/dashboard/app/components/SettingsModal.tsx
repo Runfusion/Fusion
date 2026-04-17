@@ -2285,6 +2285,59 @@ export function SettingsModal({
             )}
 
             <div className="form-group">
+              <label htmlFor="memoryAutoSummarizeEnabled" className="checkbox-label">
+                <input
+                  id="memoryAutoSummarizeEnabled"
+                  type="checkbox"
+                  checked={form.memoryAutoSummarizeEnabled || false}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, memoryAutoSummarizeEnabled: e.target.checked }))
+                  }
+                />
+                Auto-Summarize Memory
+              </label>
+              <small>Automatically compact memory when it exceeds the threshold on a schedule</small>
+            </div>
+
+            {(form.memoryAutoSummarizeEnabled || false) && (
+              <>
+                <div className="form-group">
+                  <label htmlFor="memoryAutoSummarizeThresholdChars">Compaction Threshold (chars)</label>
+                  <input
+                    id="memoryAutoSummarizeThresholdChars"
+                    type="number"
+                    className="input"
+                    value={form.memoryAutoSummarizeThresholdChars ?? 50000}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        memoryAutoSummarizeThresholdChars: parseInt(e.target.value, 10) || 50000,
+                      }))
+                    }
+                    min={1000}
+                  />
+                  <small>Memory will be compacted when it exceeds this character count</small>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="memoryAutoSummarizeSchedule">Schedule (cron)</label>
+                  <input
+                    id="memoryAutoSummarizeSchedule"
+                    type="text"
+                    className="input"
+                    value={form.memoryAutoSummarizeSchedule ?? "0 3 * * *"}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, memoryAutoSummarizeSchedule: e.target.value }))
+                    }
+                    placeholder="0 3 * * *"
+                  />
+                  <small>Cron expression for auto-summarize schedule (default: daily at 3 AM)</small>
+                </div>
+              </>
+            )}
+
+            <div style={{ borderTop: "1px solid var(--border)", margin: "var(--space-lg) 0" }} />
+
+            <div className="form-group">
               <label htmlFor="memoryDreamsEnabled" className="checkbox-label">
                 <input
                   id="memoryDreamsEnabled"
