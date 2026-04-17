@@ -1088,9 +1088,7 @@ export function ModelOnboardingModal({
     setSelectedModel(value);
   }, []);
 
-  // Complete onboarding
-  const handleComplete = useCallback(async () => {
-    setSaving(true);
+  const completeOnboarding = useCallback(async () => {
     try {
       const updates: Record<string, unknown> = {
         modelOnboardingComplete: true,
@@ -1098,7 +1096,6 @@ export function ModelOnboardingModal({
 
       // If a model was selected, persist it as the default
       if (selectedModel) {
-        // Parse the provider/modelId format from CustomModelDropdown
         const slashIdx = selectedModel.indexOf("/");
         const provider =
           slashIdx !== -1 ? selectedModel.slice(0, slashIdx) : undefined;
@@ -1117,18 +1114,23 @@ export function ModelOnboardingModal({
       }
 
       await updateGlobalSettings(updates);
-      setStep("complete");
       // Mark onboarding as completed (preserves state for completion timestamp)
       markOnboardingCompleted();
-    } catch (err: unknown) {
-      addToast(
-        err instanceof Error ? err.message : "Failed to save settings",
-        "error",
-      );
+    } catch {
+      // Best-effort: continue even if save fails
+    }
+  }, [selectedModel, availableModels, updateGlobalSettings, markOnboardingCompleted]);
+
+  // Complete onboarding
+  const handleComplete = useCallback(async () => {
+    setSaving(true);
+    try {
+      await completeOnboarding();
+      setStep("complete");
     } finally {
       setSaving(false);
     }
-  }, [selectedModel, availableModels, addToast]);
+  }, [completeOnboarding]);
 
   const handleCreateFirstTask = useCallback(async () => {
     const trimmedDescription = firstTaskDescription.trim();
@@ -1140,11 +1142,14 @@ export function ModelOnboardingModal({
     setTaskCreationError(null);
     setIsCreatingFirstTask(true);
 
+    let success = false;
+
     try {
       const createdTask = await createTask({ description: trimmedDescription });
       setInlineCreatedTask(createdTask);
       setShowTaskCreated(true);
       addToast("Task created", "success");
+      success = true;
     } catch (err: unknown) {
       const message =
         err instanceof Error
@@ -1155,80 +1160,32 @@ export function ModelOnboardingModal({
     } finally {
       setIsCreatingFirstTask(false);
     }
-  }, [firstTaskDescription, addToast]);
+
+    if (success) {
+      void completeOnboarding();
+    }
+  }, [firstTaskDescription, addToast, completeOnboarding]);
 
   // Handle first task CTA - mark complete, close modal, then open new task
   const handleOpenNewTask = useCallback(async () => {
     // First complete the onboarding
     setSaving(true);
     try {
-      const updates: Record<string, unknown> = {
-        modelOnboardingComplete: true,
-      };
-
-      // If a model was selected, persist it as the default
-      if (selectedModel) {
-        const slashIdx = selectedModel.indexOf("/");
-        const provider =
-          slashIdx !== -1 ? selectedModel.slice(0, slashIdx) : undefined;
-        const modelId =
-          slashIdx !== -1 ? selectedModel.slice(slashIdx + 1) : selectedModel;
-
-        const model = availableModels.find((m) => m.id === modelId);
-        if (model) {
-          updates.defaultProvider = model.provider;
-          updates.defaultModelId = model.id;
-        } else if (provider && modelId) {
-          updates.defaultProvider = provider;
-          updates.defaultModelId = modelId;
-        }
-      }
-
-      await updateGlobalSettings(updates);
-      // Mark onboarding as completed (preserves state for completion timestamp)
-      markOnboardingCompleted();
-    } catch {
-      // Best-effort: continue even if save fails
+      await completeOnboarding();
     } finally {
       setSaving(false);
     }
 
     // Keep onboarding open so task creation can hand back to a success state
     onOpenNewTask?.();
-  }, [selectedModel, availableModels, onOpenNewTask]);
+  }, [completeOnboarding, onOpenNewTask]);
 
   // Handle GitHub import CTA - mark complete, close modal, then open GitHub import
   const handleOpenGitHubImport = useCallback(async () => {
     // First complete the onboarding
     setSaving(true);
     try {
-      const updates: Record<string, unknown> = {
-        modelOnboardingComplete: true,
-      };
-
-      // If a model was selected, persist it as the default
-      if (selectedModel) {
-        const slashIdx = selectedModel.indexOf("/");
-        const provider =
-          slashIdx !== -1 ? selectedModel.slice(0, slashIdx) : undefined;
-        const modelId =
-          slashIdx !== -1 ? selectedModel.slice(slashIdx + 1) : selectedModel;
-
-        const model = availableModels.find((m) => m.id === modelId);
-        if (model) {
-          updates.defaultProvider = model.provider;
-          updates.defaultModelId = model.id;
-        } else if (provider && modelId) {
-          updates.defaultProvider = provider;
-          updates.defaultModelId = modelId;
-        }
-      }
-
-      await updateGlobalSettings(updates);
-      // Mark onboarding as completed (preserves state for completion timestamp)
-      markOnboardingCompleted();
-    } catch {
-      // Best-effort: continue even if save fails
+      await completeOnboarding();
     } finally {
       setSaving(false);
     }
@@ -1237,7 +1194,7 @@ export function ModelOnboardingModal({
     setIsOpen(false);
     onComplete();
     onOpenGitHubImport?.();
-  }, [selectedModel, availableModels, onComplete, onOpenGitHubImport]);
+  }, [completeOnboarding, onComplete, onOpenGitHubImport]);
 
   // Dismiss without completing (still marks onboarding complete)
   const handleDismiss = useCallback(async () => {
@@ -1263,13 +1220,15 @@ export function ModelOnboardingModal({
       return;
     }
 
+    void completeOnboarding();
     onViewTask?.(createdTask);
     onComplete();
-  }, [firstCreatedTask, inlineCreatedTask, onViewTask, onComplete]);
+  }, [firstCreatedTask, inlineCreatedTask, completeOnboarding, onViewTask, onComplete]);
 
   const handleGoToDashboard = useCallback(() => {
+    void completeOnboarding();
     onComplete();
-  }, [onComplete]);
+  }, [completeOnboarding, onComplete]);
 
   if (!isOpen) return null;
 

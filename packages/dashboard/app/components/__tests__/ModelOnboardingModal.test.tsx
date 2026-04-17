@@ -2106,7 +2106,7 @@ describe("ModelOnboardingModal", () => {
   });
 
   describe("completion state tracking", () => {
-    it("completing onboarding (Finish Setup) calls markOnboardingCompleted instead of clearOnboardingState", async () => {
+    it("marks onboarding complete when Finish Setup is clicked", async () => {
       const onComplete = vi.fn();
 
       mockFetchAuthStatus.mockResolvedValueOnce({
@@ -2119,16 +2119,18 @@ describe("ModelOnboardingModal", () => {
 
       await navigateToFirstTaskStep();
 
-      // Click Finish Setup
       fireEvent.click(screen.getByText("Finish Setup"));
 
-      // Should show completion screen
       await waitFor(() => {
         expect(screen.getByText("All Set!")).toBeTruthy();
       });
 
-      // Should call markOnboardingCompleted (not clearOnboardingState)
       expect(mockMarkOnboardingCompleted).toHaveBeenCalled();
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelOnboardingComplete: true,
+        }),
+      );
       expect(mockClearOnboardingState).not.toHaveBeenCalled();
     });
 
@@ -2234,6 +2236,108 @@ describe("ModelOnboardingModal", () => {
       // Should call markOnboardingCompleted
       expect(mockMarkOnboardingCompleted).toHaveBeenCalled();
       expect(mockClearOnboardingState).not.toHaveBeenCalled();
+    });
+
+    it("marks onboarding complete when first task is created inline", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToFirstTaskStep();
+
+      fireEvent.change(screen.getByTestId("onboarding-first-task-input"), {
+        target: { value: "Create a basic deployment checklist" },
+      });
+      fireEvent.click(screen.getByTestId("onboarding-first-task-submit"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Your first task is ready!")).toBeTruthy();
+      });
+
+      await waitFor(() => {
+        expect(mockMarkOnboardingCompleted).toHaveBeenCalled();
+      });
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelOnboardingComplete: true,
+        }),
+      );
+    });
+
+    it("marks onboarding complete when View Task is clicked after inline creation", async () => {
+      const onComplete = vi.fn();
+      const onViewTask = vi.fn();
+
+      render(
+        <ModelOnboardingModal
+          onComplete={onComplete}
+          addToast={vi.fn()}
+          onViewTask={onViewTask}
+        />,
+      );
+
+      await navigateToFirstTaskStep();
+
+      fireEvent.change(screen.getByTestId("onboarding-first-task-input"), {
+        target: { value: "Wire up release notes" },
+      });
+      fireEvent.click(screen.getByTestId("onboarding-first-task-submit"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Your first task is ready!")).toBeTruthy();
+      });
+      await waitFor(() => {
+        expect(mockMarkOnboardingCompleted).toHaveBeenCalled();
+      });
+
+      mockMarkOnboardingCompleted.mockClear();
+      mockUpdateGlobalSettings.mockClear();
+
+      fireEvent.click(screen.getByRole("button", { name: "View Task" }));
+
+      expect(onViewTask).toHaveBeenCalled();
+      expect(onComplete).toHaveBeenCalled();
+      await waitFor(() => {
+        expect(mockMarkOnboardingCompleted).toHaveBeenCalled();
+      });
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelOnboardingComplete: true,
+        }),
+      );
+    });
+
+    it("marks onboarding complete when Go to Dashboard is clicked after inline creation", async () => {
+      const onComplete = vi.fn();
+
+      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} />);
+
+      await navigateToFirstTaskStep();
+
+      fireEvent.change(screen.getByTestId("onboarding-first-task-input"), {
+        target: { value: "Prepare telemetry checklist" },
+      });
+      fireEvent.click(screen.getByTestId("onboarding-first-task-submit"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Your first task is ready!")).toBeTruthy();
+      });
+      await waitFor(() => {
+        expect(mockMarkOnboardingCompleted).toHaveBeenCalled();
+      });
+
+      mockMarkOnboardingCompleted.mockClear();
+      mockUpdateGlobalSettings.mockClear();
+
+      fireEvent.click(screen.getByRole("button", { name: "Go to Dashboard" }));
+
+      expect(onComplete).toHaveBeenCalled();
+      await waitFor(() => {
+        expect(mockMarkOnboardingCompleted).toHaveBeenCalled();
+      });
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelOnboardingComplete: true,
+        }),
+      );
     });
   });
 
