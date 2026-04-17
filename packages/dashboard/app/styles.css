@@ -24140,7 +24140,56 @@ html .column.drag-over * {
 .model-onboarding-github {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-lg);
+}
+
+.onboarding-feature-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: calc(var(--space-md) + (var(--space-xs) / 4));
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.onboarding-feature-list ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.onboarding-feature-list .onboarding-feature-list-heading strong {
+  display: block;
+  font-size: var(--space-md);
+  font-weight: 600;
+  color: var(--text);
+  margin-top: var(--space-sm);
+}
+
+.onboarding-feature-list .onboarding-feature-list-heading:first-child strong {
+  margin-top: 0;
+}
+
+.onboarding-feature-list li:not(.onboarding-feature-list-heading) {
+  padding-left: var(--space-md);
+  position: relative;
+}
+
+.onboarding-feature-list li:not(.onboarding-feature-list-heading)::before {
+  content: "•";
+  position: absolute;
+  left: 0;
+}
+
+.onboarding-feature-list .onboarding-feature-list-item--with-github {
+  color: var(--text-muted);
 }
 
 /* === Onboarding GitHub Step === */
@@ -24324,6 +24373,17 @@ html .column.drag-over * {
 .onboarding-cta-card .cta-content span {
   font-size: 13px;
   color: var(--text-muted);
+}
+
+.onboarding-cta-card--disabled {
+  opacity: 0.6;
+}
+
+.onboarding-cta-note {
+  display: block;
+  font-size: calc(var(--space-md) - (var(--space-xs) / 4));
+  color: var(--text-dim);
+  margin-top: calc(var(--space-xs) / 2);
 }
 
 .onboarding-skip-note {

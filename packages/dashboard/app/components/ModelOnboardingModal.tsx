@@ -1492,22 +1492,24 @@ export function ModelOnboardingModal({
           {step === "github" && (
             <div className="model-onboarding-github">
               <p className="model-onboarding-description">
-                Connect GitHub to unlock issue and PR integration:
+                Connecting GitHub unlocks issue imports and pull request tracking. You can skip this — task creation works without it.
               </p>
-              <ul className="onboarding-github-benefits">
-                <li>
-                  <strong>Import issues as tasks</strong> — Turn GitHub issues into trackable tasks
-                </li>
-                <li>
-                  <strong>Track pull requests</strong> — See PR status alongside your work
-                </li>
-                <li>
-                  <strong>Link code changes</strong> — Connect commits and PRs to tasks automatically
-                </li>
-              </ul>
-              <p className="onboarding-helper-text">
-                GitHub integration is entirely optional — Fusion works without it.
-              </p>
+              <div className="onboarding-feature-list">
+                <ul>
+                  <li className="onboarding-feature-list-heading">
+                    <strong>Without GitHub (available now):</strong>
+                  </li>
+                  <li className="onboarding-helper-text">Create tasks manually</li>
+                  <li className="onboarding-helper-text">Describe work for AI agents</li>
+                  <li className="onboarding-helper-text">Track progress on the board</li>
+                  <li className="onboarding-feature-list-heading">
+                    <strong>With GitHub (after connecting):</strong>
+                  </li>
+                  <li className="onboarding-helper-text onboarding-feature-list-item--with-github">Import issues as tasks</li>
+                  <li className="onboarding-helper-text onboarding-feature-list-item--with-github">Sync pull request status</li>
+                  <li className="onboarding-helper-text onboarding-feature-list-item--with-github">Link code changes to tasks</li>
+                </ul>
+              </div>
 
               {/* Skip-state banner: shown when AI setup was skipped */}
               {aiSetupSkipped && (
@@ -1522,9 +1524,7 @@ export function ModelOnboardingModal({
 
               <OnboardingDisclosure summary="What does GitHub integration do?">
                 <p className="onboarding-helper-text">
-                  Connecting GitHub lets you import issues as tasks, track pull requests,
-                  and link code changes to your work. This is optional — you can create
-                  tasks manually without it.
+                  Without GitHub, you can still create and manage tasks manually. GitHub integration adds the ability to import issues as tasks, track pull request status alongside your work, and automatically link commits to tasks. Connect anytime from Settings → Authentication.
                 </p>
               </OnboardingDisclosure>
 
@@ -1704,7 +1704,8 @@ export function ModelOnboardingModal({
                 </button>
 
                 <button
-                  className="onboarding-cta-card"
+                  className={`onboarding-cta-card${!isGithubAuthenticated ? " onboarding-cta-card--disabled" : ""}`}
+                  data-testid="cta-github-import"
                   onClick={handleOpenGitHubImport}
                   disabled={saving}
                 >
@@ -1714,6 +1715,9 @@ export function ModelOnboardingModal({
                   <div className="cta-content">
                     <strong>Import from GitHub</strong>
                     <span>Turn GitHub issues into tasks you can track here</span>
+                    {!isGithubAuthenticated && (
+                      <small className="onboarding-cta-note">Requires GitHub connection</small>
+                    )}
                   </div>
                 </button>
               </div>

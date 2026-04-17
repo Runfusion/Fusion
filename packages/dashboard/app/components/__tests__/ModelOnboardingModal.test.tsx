@@ -751,7 +751,7 @@ describe("ModelOnboardingModal", () => {
       expect(screen.getByRole("button", { name: "Continue without GitHub →" })).toBeTruthy();
     });
 
-    it("GitHub step shows benefits list with connect action", async () => {
+    it("shows feature availability callout on GitHub step", async () => {
       mockFetchAuthStatus.mockResolvedValueOnce({
         providers: [
           { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
@@ -762,15 +762,25 @@ describe("ModelOnboardingModal", () => {
 
       await navigateToGitHubStep();
 
-      expect(screen.getByText("Connect GitHub to unlock issue and PR integration:")).toBeTruthy();
-      expect(screen.getByText(/Import issues as tasks/)).toBeTruthy();
-      expect(screen.getByText(/Track pull requests/)).toBeTruthy();
-      expect(screen.getByText(/Link code changes/)).toBeTruthy();
+      const featureCallout = document.querySelector(".onboarding-feature-list");
+      expect(featureCallout).toBeTruthy();
+      expect(featureCallout).toHaveTextContent("Without GitHub");
+      expect(featureCallout).toHaveTextContent("With GitHub");
+      expect(featureCallout).toHaveTextContent("Create tasks manually");
+      expect(featureCallout).toHaveTextContent("Import issues as tasks");
 
       const ctaContainer = screen.getByTestId("onboarding-github-connect-cta");
       expect(ctaContainer).toHaveClass("onboarding-github-connect-cta");
       const connectButton = screen.getByRole("button", { name: /Connect/ });
       expect(connectButton).toHaveClass("btn", "btn-primary", "btn-sm");
+    });
+
+    it("GitHub step description mentions task creation works without GitHub", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToGitHubStep();
+
+      expect(screen.getByText(/task creation works without it/i)).toBeTruthy();
     });
 
     it("GitHub step shows connected state when already authenticated", async () => {
@@ -1060,12 +1070,71 @@ describe("ModelOnboardingModal", () => {
       expect(screen.getByText("Import from GitHub")).toBeTruthy();
     });
 
+    it("Import from GitHub card shows connection note when GitHub not connected", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToFirstTaskStep();
+
+      const githubImportCard = screen.getByTestId("cta-github-import");
+      expect(githubImportCard).toHaveClass("onboarding-cta-card--disabled");
+      expect(screen.getByText("Requires GitHub connection")).toBeTruthy();
+    });
+
+    it("Import from GitHub card has no connection note when GitHub is connected", async () => {
+      mockFetchAuthStatus.mockResolvedValue({
+        providers: [
+          { id: "github", name: "GitHub", authenticated: true, type: "oauth" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToFirstTaskStep();
+
+      const githubImportCard = screen.getByTestId("cta-github-import");
+      expect(githubImportCard).not.toHaveClass("onboarding-cta-card--disabled");
+      expect(screen.queryByText("Requires GitHub connection")).toBeNull();
+    });
+
+    it("Create a New Task card is never dimmed regardless of GitHub status", async () => {
+      const renderAndAssert = async () => {
+        const view = render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+        await navigateToFirstTaskStep();
+
+        const createTaskCard = screen.getByText("Create a New Task").closest("button");
+        expect(createTaskCard).toBeTruthy();
+        expect(createTaskCard).not.toHaveClass("onboarding-cta-card--disabled");
+
+        view.unmount();
+      };
+
+      await renderAndAssert();
+
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "github", name: "GitHub", authenticated: true, type: "oauth" },
+        ],
+      });
+
+      await renderAndAssert();
+    });
+
     it("shows skip note about CLI and board creation", async () => {
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
 
       await navigateToFirstTaskStep();
 
       expect(screen.getByText(/fn task create/)).toBeTruthy();
+    });
+
+    it("feature callout does not appear on ai-setup or first-task steps", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      expect(document.querySelector(".onboarding-feature-list")).toBeNull();
+
+      await navigateToFirstTaskStep();
+
+      expect(document.querySelector(".onboarding-feature-list")).toBeNull();
     });
 
     it("allows navigation back to GitHub step", async () => {
