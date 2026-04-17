@@ -272,6 +272,69 @@ describe("GET /plugins/:id", () => {
   });
 });
 
+describe("GET /plugins/:id/settings", () => {
+  let store: TaskStore;
+  let pluginStore: PluginStore;
+
+  beforeEach(() => {
+    pluginStore = createMockPluginStore();
+    store = createMockTaskStore({
+      getPluginStore: vi.fn().mockReturnValue(pluginStore),
+    });
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, {
+      pluginStore,
+      pluginLoader: createMockPluginLoader(),
+    }));
+    return app;
+  }
+
+  it("returns plugin settings by id", async () => {
+    (pluginStore.getPlugin as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...FAKE_PLUGIN,
+      settings: { apiKey: "secret", enabled: true },
+    });
+
+    const res = await GET(buildApp(), "/api/plugins/test-plugin/settings");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ apiKey: "secret", enabled: true });
+  });
+
+  it("returns 404 for non-existent plugin", async () => {
+    (pluginStore.getPlugin as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      Object.assign(new Error('Plugin "nonexistent" not found'), { code: "ENOENT" }),
+    );
+
+    const res = await GET(buildApp(), "/api/plugins/nonexistent/settings");
+
+    expect(res.status).toBe(404);
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("supports projectId query param scoping", async () => {
+    const scopedPluginStore = createMockPluginStore();
+    (scopedPluginStore.getPlugin as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...FAKE_PLUGIN,
+      settings: { scoped: true },
+    });
+    const scopedStore = createMockTaskStore({
+      getPluginStore: vi.fn().mockReturnValue(scopedPluginStore),
+    });
+    mockGetOrCreateProjectStore.mockResolvedValue(scopedStore);
+
+    const res = await GET(buildApp(), "/api/plugins/test-plugin/settings?projectId=proj_123");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ scoped: true });
+    expect(mockGetOrCreateProjectStore).toHaveBeenCalledWith("proj_123");
+  });
+});
+
 describe("POST /plugins", () => {
   let store: TaskStore;
   let pluginStore: PluginStore;
@@ -586,7 +649,94 @@ describe("POST /plugins/:id/disable", () => {
   });
 });
 
-describe("PATCH /plugins/:id/settings", () => {
+describe("POST /plugins/:id/reload", () => {
+  let store: TaskStore;
+  let pluginStore: PluginStore;
+  let pluginRunner: { getPluginRoutes: ReturnType<typeof vi.fn>; reloadPlugin: ReturnType<typeof vi.fn> };
+
+  beforeEach(() => {
+    pluginStore = createMockPluginStore();
+    pluginRunner = {
+      getPluginRoutes: vi.fn().mockReturnValue([]),
+      reloadPlugin: vi.fn().mockResolvedValue(undefined),
+    };
+    store = createMockTaskStore({
+      getPluginStore: vi.fn().mockReturnValue(pluginStore),
+    });
+  });
+
+  function buildApp(includeRunner = true) {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, {
+      pluginStore,
+      pluginLoader: createMockPluginLoader(),
+      pluginRunner: includeRunner ? pluginRunner : undefined,
+    }));
+    return app;
+  }
+
+  it("reloads a started plugin", async () => {
+    (pluginStore.getPlugin as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ ...FAKE_PLUGIN, state: "started" })
+      .mockResolvedValueOnce({ ...FAKE_PLUGIN, state: "started", updatedAt: "2026-02-01T00:00:00.000Z" });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/plugins/test-plugin/reload", {});
+
+    expect(res.status).toBe(200);
+    expect(pluginRunner.reloadPlugin).toHaveBeenCalledWith("test-plugin");
+    expect(res.body.id).toBe("test-plugin");
+  });
+
+  it("returns 404 when plugin is not found", async () => {
+    (pluginStore.getPlugin as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      Object.assign(new Error('Plugin "nonexistent" not found'), { code: "ENOENT" }),
+    );
+
+    const res = await REQUEST(buildApp(), "POST", "/api/plugins/nonexistent/reload", {});
+
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 when plugin is not started", async () => {
+    (pluginStore.getPlugin as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...FAKE_PLUGIN,
+      state: "installed",
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/plugins/test-plugin/reload", {});
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Use enable instead");
+  });
+
+  it("returns 500 when plugin runner is unavailable", async () => {
+    (pluginStore.getPlugin as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...FAKE_PLUGIN,
+      state: "started",
+    });
+
+    const res = await REQUEST(buildApp(false), "POST", "/api/plugins/test-plugin/reload", {});
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain("Plugin runner not available");
+  });
+
+  it("returns 500 when reload operation fails", async () => {
+    (pluginStore.getPlugin as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...FAKE_PLUGIN,
+      state: "started",
+    });
+    pluginRunner.reloadPlugin.mockRejectedValueOnce(new Error("boom"));
+
+    const res = await REQUEST(buildApp(), "POST", "/api/plugins/test-plugin/reload", {});
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain("Reload failed: boom");
+  });
+});
+
+describe("PUT /plugins/:id/settings", () => {
   let store: TaskStore;
   let pluginStore: PluginStore;
 
@@ -613,7 +763,7 @@ describe("PATCH /plugins/:id/settings", () => {
       settings: { apiKey: "new-secret" },
     });
 
-    const res = await REQUEST(buildApp(), "PATCH", "/api/plugins/test-plugin/settings", {
+    const res = await REQUEST(buildApp(), "PUT", "/api/plugins/test-plugin/settings", {
       settings: { apiKey: "new-secret" },
     });
 
@@ -622,7 +772,7 @@ describe("PATCH /plugins/:id/settings", () => {
   });
 
   it("returns 400 when settings is missing", async () => {
-    const res = await REQUEST(buildApp(), "PATCH", "/api/plugins/test-plugin/settings", {});
+    const res = await REQUEST(buildApp(), "PUT", "/api/plugins/test-plugin/settings", {});
 
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("'settings'");
@@ -633,7 +783,7 @@ describe("PATCH /plugins/:id/settings", () => {
       Object.assign(new Error('Plugin "nonexistent" not found'), { code: "ENOENT" }),
     );
 
-    const res = await REQUEST(buildApp(), "PATCH", "/api/plugins/nonexistent/settings", {
+    const res = await REQUEST(buildApp(), "PUT", "/api/plugins/nonexistent/settings", {
       settings: { key: "value" },
     });
 
@@ -645,7 +795,7 @@ describe("PATCH /plugins/:id/settings", () => {
       new Error("Settings validation failed: setting 'apiKey' is required"),
     );
 
-    const res = await REQUEST(buildApp(), "PATCH", "/api/plugins/test-plugin/settings", {
+    const res = await REQUEST(buildApp(), "PUT", "/api/plugins/test-plugin/settings", {
       settings: {},
     });
 

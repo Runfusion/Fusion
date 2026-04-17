@@ -175,9 +175,10 @@ export interface ServerOptions {
   pluginStore?: import("@fusion/core").PluginStore;
   /** Optional PluginLoader for plugin lifecycle management */
   pluginLoader?: import("@fusion/core").PluginLoader;
-  /** Optional PluginRunner for plugin hooks and tools */
+  /** Optional PluginRunner for plugin hooks, routes, and lifecycle operations */
   pluginRunner?: {
     getPluginRoutes(): Array<{ pluginId: string; route: import("@fusion/core").PluginRouteDefinition }>;
+    reloadPlugin?(pluginId: string): Promise<unknown>;
   };
   /** Optional ChatStore for chat session management */
   chatStore?: import("@fusion/core").ChatStore;

@@ -4,7 +4,7 @@ import { basename, join, relative, resolve, sep } from "node:path";
 
 const FUSION_DISABLED_EXTENSIONS_KEY = "fusionDisabledExtensions";
 
-export type PiExtensionSource = "fusion-global" | "pi-global" | "fusion-project" | "pi-project";
+export type PiExtensionSource = "fusion-global" | "pi-global" | "fusion-project" | "pi-project" | "package";
 
 export interface PiExtensionEntry {
   id: string;
@@ -199,7 +199,7 @@ export function getEnabledPiExtensionPaths(cwd: string, home?: string): string[]
     .map((entry) => entry.path);
 }
 
-export function updatePiExtensionDisabledIds(cwd: string, disabledIds: string[], home?: string): PiExtensionSettings {
+export function updatePiExtensionDisabledIds(cwd: string, disabledIds: string[], home?: string, extraKnownIds: string[] = []): PiExtensionSettings {
   const settingsPath = getFusionAgentSettingsPath(home);
   const existing = (() => {
     try {
@@ -209,7 +209,10 @@ export function updatePiExtensionDisabledIds(cwd: string, disabledIds: string[],
     }
   })();
 
-  const known = new Set(discoverPiExtensions(cwd, home).extensions.map((entry) => entry.id));
+  const known = new Set([
+    ...discoverPiExtensions(cwd, home).extensions.map((entry) => entry.id),
+    ...extraKnownIds.map((entry) => resolve(entry)),
+  ]);
   const normalizedDisabledIds = Array.from(new Set(
     disabledIds.map((entry) => resolve(entry)).filter((entry) => known.has(entry)),
   )).sort();

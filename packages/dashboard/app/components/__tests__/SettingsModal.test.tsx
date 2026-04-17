@@ -2008,20 +2008,21 @@ describe("SettingsModal", () => {
     expect(layout!.querySelector(".settings-content")).toBeTruthy();
   });
 
-  it("has .settings-sidebar with 15 .settings-nav-item buttons for all sections", async () => {
+  it("has .settings-sidebar with 17 .settings-nav-item buttons for all sections", async () => {
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     const sidebar = container.querySelector(".settings-sidebar");
     expect(sidebar).toBeTruthy();
     const navItems = sidebar!.querySelectorAll(".settings-nav-item");
-    // 15 nav items (group headers are not nav items)
-    expect(navItems.length).toBe(16);
+    // 17 nav items (group headers are not nav items)
+    expect(navItems.length).toBe(17);
 
     // Labels include scope icons (Globe for global, Folder for project)
     const labels = Array.from(navItems).map((el) => el.textContent?.trim());
     expect(labels).toEqual([
       "Authentication",
+      "Pi Extensions",
       "Appearance",
       "Notifications",
       "Node Sync",

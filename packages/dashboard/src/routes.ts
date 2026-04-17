@@ -18,7 +18,7 @@ import * as nodeFs from "node:fs";
 
 import { promisify } from "node:util";
 import type { TaskStore, Column, ScheduleType, ActivityEventType, ModelPreset, MessageType, ParticipantType, RoutineTriggerType, ProjectSettings } from "@fusion/core";
-import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, getCurrentRepo, isGhAuthenticated, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupAutomation, exportSettings, importSettings, validateImportData, MessageStore, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes, readMemory, writeMemory, MemoryBackendError, discoverPiExtensions, updatePiExtensionDisabledIds } from "@fusion/core";
+import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, type PiExtensionEntry, type PiExtensionSettings, getCurrentRepo, isGhAuthenticated, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupAutomation, exportSettings, importSettings, validateImportData, MessageStore, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes, readMemory, writeMemory, MemoryBackendError, discoverPiExtensions, updatePiExtensionDisabledIds, getFusionAgentDir, getLegacyPiAgentDir } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
 import { GitHubClient, parseBadgeUrl } from "./github.js";
 import { githubRateLimiter } from "./github-poll.js";
@@ -13219,6 +13219,27 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   });
 
   /**
+   * GET /api/plugins/:id/settings
+   * Get plugin settings by plugin ID.
+   * Query: { projectId?: string }
+   */
+  router.get("/plugins/:id/settings", async (req: Request, res: Response) => {
+    const { store: scopedStore } = await getProjectContext(req);
+    const pluginStore = scopedStore.getPluginStore();
+    const id = req.params.id as string;
+
+    try {
+      const plugin = await pluginStore.getPlugin(id);
+      res.json(plugin.settings);
+    } catch (err: unknown) {
+      if (err instanceof Error && (err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(`Plugin "${id}" not found`);
+      }
+      throw internalError(err instanceof Error ? err.message : "Unknown error");
+    }
+  });
+
+  /**
    * POST /api/plugins
    * Create or register a plugin.
    * Requires `mode` discriminator in body:
@@ -13396,11 +13417,49 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   });
 
   /**
-   * PATCH /api/plugins/:id/settings
+   * POST /api/plugins/:id/reload
+   * Reload a running plugin with updated code.
+   * Body: { projectId?: string }
+   */
+  router.post("/plugins/:id/reload", async (req: Request, res: Response) => {
+    const { store: scopedStore } = await getProjectContext(req);
+    const pluginStore = scopedStore.getPluginStore();
+    const id = req.params.id as string;
+
+    let plugin: import("@fusion/core").PluginInstallation;
+    try {
+      plugin = await pluginStore.getPlugin(id);
+    } catch (err: unknown) {
+      if (err instanceof Error && (err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(`Plugin "${id}" not found`);
+      }
+      throw internalError(err instanceof Error ? err.message : "Unknown error");
+    }
+
+    if (plugin.state !== "started") {
+      throw badRequest("Plugin is not currently loaded. Use enable instead.");
+    }
+
+    if (!options?.pluginRunner?.reloadPlugin) {
+      throw internalError("Plugin runner not available");
+    }
+
+    try {
+      await options.pluginRunner.reloadPlugin(id);
+    } catch (reloadErr: unknown) {
+      throw internalError(`Reload failed: ${reloadErr instanceof Error ? reloadErr.message : String(reloadErr)}`);
+    }
+
+    const updatedPlugin = await pluginStore.getPlugin(id);
+    res.json(updatedPlugin);
+  });
+
+  /**
+   * PUT /api/plugins/:id/settings
    * Update plugin settings.
    * Body: { settings: Record<string, unknown>, projectId?: string }
    */
-  router.patch("/plugins/:id/settings", async (req: Request, res: Response) => {
+  router.put("/plugins/:id/settings", async (req: Request, res: Response) => {
     const { store: scopedStore } = await getProjectContext(req);
     const pluginStore = scopedStore.getPluginStore();
     const id = req.params.id as string;
