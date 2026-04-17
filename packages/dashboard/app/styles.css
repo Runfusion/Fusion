@@ -24109,6 +24109,54 @@ html .column.drag-over * {
   gap: 16px;
 }
 
+/* === Onboarding GitHub Step === */
+.onboarding-github-benefits {
+  margin: 0;
+  padding-left: var(--space-xl);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+}
+
+.onboarding-github-benefits li {
+  line-height: 1.5;
+}
+
+.onboarding-github-benefits li strong {
+  color: var(--text);
+}
+
+.onboarding-github-connect-cta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border: 1px solid color-mix(in srgb, var(--todo) 35%, var(--border));
+  border-left: var(--space-xs) solid var(--todo);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--todo) 10%, transparent);
+}
+
+.onboarding-github-connect-cta:focus-within {
+  box-shadow: var(--focus-ring);
+}
+
+.onboarding-github-connect-cta .btn {
+  align-self: flex-start;
+}
+
+.onboarding-github-connect-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.onboarding-github-connect-feedback {
+  margin: 0;
+}
+
 .model-onboarding-github-optional {
   display: flex;
   flex-direction: column;

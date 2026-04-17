@@ -490,16 +490,17 @@ describe("ModelOnboardingModal", () => {
   });
 
   describe("GitHub step", () => {
-    it("shows optional guidance when GitHub provider is not configured", async () => {
+    it("GitHub step shows fallback when no GitHub provider", async () => {
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
 
       await navigateToGitHubStep();
 
       expect(screen.getByText(/GitHub integration isn't set up yet/)).toBeTruthy();
-      expect(screen.getByText("Continue without GitHub →")).toBeTruthy();
+      expect(screen.getByText(/Settings → Authentication/)).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Continue without GitHub →" })).toBeTruthy();
     });
 
-    it("shows GitHub status and login/logout actions when GitHub provider is present", async () => {
+    it("GitHub step shows benefits list with connect action", async () => {
       mockFetchAuthStatus.mockResolvedValueOnce({
         providers: [
           { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
@@ -510,13 +511,18 @@ describe("ModelOnboardingModal", () => {
 
       await navigateToGitHubStep();
 
-      // Use more specific selector to avoid matching the header title
-      expect(screen.getByTestId("onboarding-auth-status-github")).toBeTruthy();
-      expect(screen.getByText("Not connected")).toBeTruthy();
-      expect(screen.getByText("Connect")).toBeTruthy();
+      expect(screen.getByText("Connect GitHub to unlock issue and PR integration:")).toBeTruthy();
+      expect(screen.getByText(/Import issues as tasks/)).toBeTruthy();
+      expect(screen.getByText(/Track pull requests/)).toBeTruthy();
+      expect(screen.getByText(/Link code changes/)).toBeTruthy();
+
+      const ctaContainer = screen.getByTestId("onboarding-github-connect-cta");
+      expect(ctaContainer).toHaveClass("onboarding-github-connect-cta");
+      const connectButton = screen.getByRole("button", { name: /Connect/ });
+      expect(connectButton).toHaveClass("btn", "btn-primary", "btn-sm");
     });
 
-    it("shows connected status when GitHub is authenticated", async () => {
+    it("GitHub step shows connected state when already authenticated", async () => {
       mockFetchAuthStatus.mockResolvedValueOnce({
         providers: [
           { id: "github", name: "GitHub", authenticated: true, type: "oauth" },
@@ -527,9 +533,11 @@ describe("ModelOnboardingModal", () => {
 
       await navigateToGitHubStep();
 
+      expect(screen.getByText(/Import issues as tasks/)).toBeTruthy();
       expect(screen.getByTestId("onboarding-auth-status-github")).toBeTruthy();
       expect(screen.getByText("✓ Connected")).toBeTruthy();
-      expect(screen.getByText("Disconnect")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Disconnect" })).toBeTruthy();
+      expect(screen.queryByTestId("onboarding-github-connect-cta")).toBeNull();
     });
 
     it("allows navigating to First Task step via Continue without GitHub", async () => {

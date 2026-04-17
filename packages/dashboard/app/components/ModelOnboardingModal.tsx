@@ -1249,9 +1249,21 @@ export function ModelOnboardingModal({
           {step === "github" && (
             <div className="model-onboarding-github">
               <p className="model-onboarding-description">
-                Linking GitHub lets you import issues as tasks and keep pull
-                requests in sync with your work. This is entirely optional —
-                Fusion works without it.
+                Connect GitHub to unlock issue and PR integration:
+              </p>
+              <ul className="onboarding-github-benefits">
+                <li>
+                  <strong>Import issues as tasks</strong> — Turn GitHub issues into trackable tasks
+                </li>
+                <li>
+                  <strong>Track pull requests</strong> — See PR status alongside your work
+                </li>
+                <li>
+                  <strong>Link code changes</strong> — Connect commits and PRs to tasks automatically
+                </li>
+              </ul>
+              <p className="onboarding-helper-text">
+                GitHub integration is entirely optional — Fusion works without it.
               </p>
 
               {/* Skip-state banner: shown when AI setup was skipped */}
@@ -1281,7 +1293,7 @@ export function ModelOnboardingModal({
                     in Settings → Authentication.
                   </p>
                   <button
-                    className="btn btn-sm"
+                    className="btn btn-primary btn-sm"
                     onClick={() => setStep("first-task")}
                   >
                     Continue without GitHub →
@@ -1304,51 +1316,61 @@ export function ModelOnboardingModal({
                           : "Not connected"}
                       </span>
                     </div>
-                    <div>
-                      {authActionInProgress === "github" ? (
-                        <>
-                          <button className="btn btn-sm" disabled>
-                            {isGithubAuthenticated
-                              ? "Logging out…"
-                              : "Waiting for login…"}
-                          </button>
-                          <button
-                            className="btn btn-sm"
-                            onClick={() => handleCancelLogin("github")}
-                            style={{ marginLeft: 8 }}
-                          >
-                            Cancel
-                          </button>
-                        </>
-                      ) : isGithubAuthenticated ? (
+                    {isGithubAuthenticated && (
+                      authActionInProgress === "github" ? (
+                        <button className="btn btn-sm" disabled>
+                          Logging out…
+                        </button>
+                      ) : (
                         <button
                           className="btn btn-sm"
                           onClick={() => handleLogout("github")}
                         >
                           Disconnect
                         </button>
+                      )
+                    )}
+                  </div>
+
+                  {!isGithubAuthenticated && (
+                    <div className="onboarding-github-connect-cta" data-testid="onboarding-github-connect-cta">
+                      {authActionInProgress === "github" ? (
+                        <div className="onboarding-github-connect-actions">
+                          <button className="btn btn-sm" disabled>
+                            Waiting for login…
+                          </button>
+                          <button
+                            className="btn btn-sm"
+                            onClick={() => handleCancelLogin("github")}
+                          >
+                            Cancel
+                          </button>
+                        </div>
                       ) : (
                         <button
                           className="btn btn-primary btn-sm"
                           onClick={() => handleLogin("github")}
                         >
+                          <GitPullRequest size={16} />
                           Connect
                         </button>
                       )}
+
+                      {/* Show timeout message */}
+                      {loginOutcomes["github"] === "timeout" && authActionInProgress !== "github" && (
+                        <p className="onboarding-helper-text onboarding-github-connect-feedback">
+                          Login timed out. Please try again.
+                        </p>
+                      )}
+                      {/* Show failure message */}
+                      {loginOutcomes["github"] === "failed" && authActionInProgress !== "github" && (
+                        <p className="field-error onboarding-github-connect-feedback">
+                          Login failed. Please try again.
+                        </p>
+                      )}
                     </div>
-                    {/* Show timeout message */}
-                    {loginOutcomes["github"] === "timeout" && authActionInProgress !== "github" && (
-                      <p className="onboarding-helper-text" style={{ marginTop: 4 }}>
-                        Login timed out. Please try again.
-                      </p>
-                    )}
-                    {/* Show failure message */}
-                    {loginOutcomes["github"] === "failed" && authActionInProgress !== "github" && (
-                      <p className="field-error" style={{ marginTop: 4 }}>
-                        Login failed. Please try again.
-                      </p>
-                    )}
-                  </div>
+                  )}
+
                   {!isGithubAuthenticated && (
                     <p className="onboarding-helper-text">
                       No worries if you're not ready — connect GitHub anytime from Settings → Authentication.
