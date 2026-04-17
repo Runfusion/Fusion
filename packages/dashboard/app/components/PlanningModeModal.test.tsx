@@ -6,7 +6,6 @@ import { TaskDetailModal } from "./TaskDetailModal";
 import { useSessionLock } from "../hooks/useSessionLock";
 import { getSessionTabId } from "../utils/getSessionTabId";
 import type { Task, TaskDetail, PlanningQuestion, PlanningSummary, MergeResult } from "@fusion/core";
-import * as api from "../api";
 
 // Mock the API functions
 const mockStartPlanning = vi.fn();
@@ -1815,6 +1814,165 @@ describe("PlanningModeModal", () => {
       expect(mockOnClose).toHaveBeenCalled();
     });
   });
+
+  describe("Model favorites persistence", () => {
+    it("persists provider favorite toggle to global settings", async () => {
+      mockFetchModels.mockResolvedValue({
+        models: mockModels,
+        favoriteProviders: ["anthropic"],
+        favoriteModels: [],
+      });
+      vi.mocked(api.updateGlobalSettings).mockResolvedValue({});
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          tasks={mockTasks}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(mockFetchModels).toHaveBeenCalled();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Planning Model" }));
+
+      await waitFor(() => {
+        expect(document.body.querySelector('[data-testid="model-combobox-portal"]')).not.toBeNull();
+      });
+
+      const portal = document.body.querySelector('[data-testid="model-combobox-portal"]')!;
+      // When provider is favorited, the optgroup header shows "Remove" button
+      const removeButton = within(portal).queryByRole("button", { name: "Remove anthropic from favorites" });
+      expect(removeButton).not.toBeNull();
+      fireEvent.click(removeButton!);
+
+      expect(api.updateGlobalSettings).toHaveBeenCalledWith({
+        favoriteProviders: [],
+        favoriteModels: [],
+      });
+    });
+
+    it("persists model favorite toggle to global settings", async () => {
+      mockFetchModels.mockResolvedValue({
+        models: mockModels,
+        favoriteProviders: [],
+        favoriteModels: ["anthropic/claude-sonnet-4-5"],
+      });
+      vi.mocked(api.updateGlobalSettings).mockResolvedValue({});
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          tasks={mockTasks}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(mockFetchModels).toHaveBeenCalled();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Planning Model" }));
+
+      await waitFor(() => {
+        expect(document.body.querySelector('[data-testid="model-combobox-portal"]')).not.toBeNull();
+      });
+
+      const portal = document.body.querySelector('[data-testid="model-combobox-portal"]')!;
+      // When model is favorited, it appears as a pinned row with "Remove" button
+      // There may be duplicates (in pinned row + provider group), use first one
+      const removeButtons = within(portal).queryAllByRole("button", { name: "Remove Claude Sonnet 4.5 from favorites" });
+      expect(removeButtons.length).toBeGreaterThan(0);
+      fireEvent.click(removeButtons[0]);
+
+      expect(api.updateGlobalSettings).toHaveBeenCalledWith({
+        favoriteProviders: [],
+        favoriteModels: [],
+      });
+    });
+
+    it("adds provider to favorites", async () => {
+      mockFetchModels.mockResolvedValue({
+        models: mockModels,
+        favoriteProviders: [],
+        favoriteModels: [],
+      });
+      vi.mocked(api.updateGlobalSettings).mockResolvedValue({});
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          tasks={mockTasks}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(mockFetchModels).toHaveBeenCalled();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Planning Model" }));
+
+      await waitFor(() => {
+        expect(document.body.querySelector('[data-testid="model-combobox-portal"]')).not.toBeNull();
+      });
+
+      const portal = document.body.querySelector('[data-testid="model-combobox-portal"]')!;
+      const addButton = within(portal).getByRole("button", { name: "Add anthropic to favorites" });
+      fireEvent.click(addButton);
+
+      expect(api.updateGlobalSettings).toHaveBeenCalledWith({
+        favoriteProviders: ["anthropic"],
+        favoriteModels: [],
+      });
+    });
+
+    it("rolls back local favorite state when updateGlobalSettings fails", async () => {
+      mockFetchModels.mockResolvedValue({
+        models: mockModels,
+        favoriteProviders: ["anthropic"],
+        favoriteModels: [],
+      });
+      vi.mocked(api.updateGlobalSettings).mockRejectedValueOnce(new Error("Network error"));
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          tasks={mockTasks}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(mockFetchModels).toHaveBeenCalled();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Planning Model" }));
+
+      await waitFor(() => {
+        expect(document.body.querySelector('[data-testid="model-combobox-portal"]')).not.toBeNull();
+      });
+
+      const portal = document.body.querySelector('[data-testid="model-combobox-portal"]')!;
+      const removeButton = within(portal).getByRole("button", { name: "Remove anthropic from favorites" });
+      fireEvent.click(removeButton);
+
+      // Wait for the rejected promise to settle
+      await waitFor(() => {
+        expect(api.updateGlobalSettings).toHaveBeenCalled();
+      });
+
+      // After rollback, the provider should still show as favorited (★ button with "Remove" aria-label)
+      const portalAfterRollback = document.body.querySelector('[data-testid="model-combobox-portal"]')!;
+      expect(within(portalAfterRollback).getByRole("button", { name: "Remove anthropic from favorites" })).toBeTruthy();
+    });
+  });
 });
 
 describe("getSessionTabId", () => {
@@ -1931,95 +2089,4 @@ describe("useSessionLock", () => {
     );
   });
 
-  describe("model favorites persistence", () => {
-    const mockUpdateGlobalSettings = vi.fn();
-
-    beforeEach(() => {
-      vi.mocked(api.updateGlobalSettings).mockImplementation(mockUpdateGlobalSettings);
-      mockUpdateGlobalSettings.mockResolvedValue({});
-      mockFetchModels.mockResolvedValue({
-        models: mockModels,
-        favoriteProviders: ["anthropic"],
-        favoriteModels: ["anthropic/claude-sonnet-4-5"],
-      });
-    });
-
-    it.skip("persists provider favorite toggle to global settings", async () => {
-      // Skipped - tests are in wrong describe block without access to required mocks
-      // mockOnClose and mockOnTaskCreated are defined in parent describe block
-      render(
-        <PlanningModeModal
-          isOpen={true}
-          onClose={mockOnClose}
-          onTaskCreated={mockOnTaskCreated}
-          tasks={mockTasks}
-        />,
-      );
-
-      await waitFor(() => {
-        expect(mockFetchModels).toHaveBeenCalled();
-      });
-
-      // Simulate the toggle by calling updateGlobalSettings
-      await mockUpdateGlobalSettings({
-        favoriteProviders: ["openai"],
-        favoriteModels: ["anthropic/claude-sonnet-4-5"],
-      });
-
-      expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({
-        favoriteProviders: ["openai"],
-        favoriteModels: ["anthropic/claude-sonnet-4-5"],
-      });
-    });
-
-    it.skip("persists model favorite toggle to global settings", async () => {
-      // Skipped - tests are in wrong describe block without access to required mocks
-      // mockOnClose and mockOnTaskCreated are defined in parent describe block
-      render(
-        <PlanningModeModal
-          isOpen={true}
-          onClose={mockOnClose}
-          onTaskCreated={mockOnTaskCreated}
-          tasks={mockTasks}
-        />,
-      );
-
-      await waitFor(() => {
-        expect(mockFetchModels).toHaveBeenCalled();
-      });
-
-      await mockUpdateGlobalSettings({
-        favoriteProviders: ["anthropic"],
-        favoriteModels: ["openai/gpt-4o"],
-      });
-
-      expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({
-        favoriteProviders: ["anthropic"],
-        favoriteModels: ["openai/gpt-4o"],
-      });
-    });
-
-    it.skip("rolls back local state on updateGlobalSettings failure", async () => {
-      // This test is skipped because the component does not automatically call updateGlobalSettings
-      // during render - it only calls it when the user interacts with the favorite toggles.
-      // The test was incorrectly written expecting automatic behavior that doesn't exist.
-      mockUpdateGlobalSettings.mockRejectedValueOnce(new Error("Network error"));
-
-      render(
-        <PlanningModeModal
-          isOpen={true}
-          onClose={mockOnClose}
-          onTaskCreated={mockOnTaskCreated}
-          tasks={mockTasks}
-        />,
-      );
-
-      await waitFor(() => {
-        expect(mockFetchModels).toHaveBeenCalled();
-      });
-
-      // The toggle should have been attempted
-      expect(mockUpdateGlobalSettings).toHaveBeenCalled();
-    });
-  });
 });
