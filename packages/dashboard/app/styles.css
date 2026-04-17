@@ -31945,7 +31945,7 @@ html .column.drag-over * {
   }
 
   .agent-import-agent-list {
-    max-height: 200px;
+    max-height: calc(100dvh - 260px);
   }
 
   .agent-import-result-stats {
@@ -31955,7 +31955,7 @@ html .column.drag-over * {
   }
 
   .agent-import-browse-list {
-    max-height: 250px;
+    max-height: calc(100dvh - 260px);
   }
 }
 
