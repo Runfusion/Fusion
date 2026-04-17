@@ -1758,15 +1758,13 @@ export function TaskDetailModal({
                       )}
 
                       {/* Respecify */}
-                      {task.column !== "triage" && (
-                        <button
-                          className="detail-actions-menu-item"
-                          role="menuitem"
-                          onClick={() => handleActionsMenuItemClick(handleRespecify)}
-                        >
-                          Respecify
-                        </button>
-                      )}
+                      <button
+                        className="detail-actions-menu-item"
+                        role="menuitem"
+                        onClick={() => handleActionsMenuItemClick(handleRespecify)}
+                      >
+                        Respecify
+                      </button>
 
                       {/* Retry */}
                       {canRetryTask && onRetryTask && (

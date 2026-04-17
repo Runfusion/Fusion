@@ -6075,21 +6075,41 @@ describe("POST /tasks/:id/spec/revise", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage");
   });
 
-  it("returns 400 when task is already in triage", async () => {
+  it("allows spec revision for task already in triage", async () => {
     const triageTask = { ...FAKE_TASK_DETAIL, column: "triage" as const };
-    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(triageTask);
+    const updatedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: "needs-respecify" as const };
+    const tempRoot = mkdtempSync(join(tmpdir(), "kb-spec-revise-triage-"));
+    const taskDir = join(tempRoot, ".fusion", "tasks", "FN-001");
+    mkdirSync(taskDir, { recursive: true });
+    writeFileSync(join(taskDir, "PROMPT.md"), "# stale spec\n");
 
-    const res = await REQUEST(
-      buildApp(),
-      "POST",
-      "/api/tasks/KB-001/spec/revise",
-      JSON.stringify({ feedback: "Some feedback" }),
-      { "Content-Type": "application/json" }
-    );
+    (store.getTask as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(triageTask)
+      .mockResolvedValueOnce(updatedTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(updatedTask);
+    (store.getRootDir as ReturnType<typeof vi.fn>).mockReturnValue(tempRoot);
 
-    expect(res.status).toBe(400);
-    expect(res.body.error).toContain("Cannot request spec revision");
-    expect(store.moveTask).not.toHaveBeenCalled();
+    try {
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/tasks/KB-001/spec/revise",
+        JSON.stringify({ feedback: "Some feedback" }),
+        { "Content-Type": "application/json" }
+      );
+
+      expect(res.status).toBe(200);
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-001",
+        "AI spec revision requested",
+        "Some feedback"
+      );
+      expect(store.moveTask).not.toHaveBeenCalled();
+      expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(false);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-respecify" });
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("returns 400 when task is in in-review", async () => {
@@ -6297,15 +6317,34 @@ describe("POST /tasks/:id/spec/rebuild", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage");
   });
 
-  it("returns 400 when task is already in triage", async () => {
+  it("allows rebuild for task already in triage", async () => {
     const triageTask = { ...FAKE_TASK_DETAIL, column: "triage" as const };
-    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(triageTask);
+    const updatedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: "needs-respecify" as const };
+    const tempRoot = mkdtempSync(join(tmpdir(), "kb-spec-rebuild-triage-"));
+    const taskDir = join(tempRoot, ".fusion", "tasks", "FN-001");
+    mkdirSync(taskDir, { recursive: true });
+    writeFileSync(join(taskDir, "PROMPT.md"), "# stale spec\n");
 
-    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
+    (store.getTask as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(triageTask)
+      .mockResolvedValueOnce(updatedTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(updatedTask);
+    (store.getRootDir as ReturnType<typeof vi.fn>).mockReturnValue(tempRoot);
 
-    expect(res.status).toBe(400);
-    expect(res.body.error).toContain("Cannot rebuild spec");
-    expect(store.moveTask).not.toHaveBeenCalled();
+    try {
+      const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
+
+      expect(res.status).toBe(200);
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-001",
+        "Specification rebuild requested by user"
+      );
+      expect(store.moveTask).not.toHaveBeenCalled();
+      expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(false);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-respecify" });
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("returns 400 when task is in in-review (cannot transition to triage)", async () => {

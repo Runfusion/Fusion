@@ -4533,6 +4533,27 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Get current task state
       const task = await scopedStore.getTask(req.params.id);
 
+      // If task is already in triage, skip the transition check and moveTask.
+      // Just reset for re-specification in place.
+      if (task.column === "triage") {
+        // Log the revision request
+        await scopedStore.logEntry(task.id, "AI spec revision requested", feedback);
+
+        // Remove the existing spec so re-specification starts from the task
+        // description and feedback rather than revising stale PROMPT.md content.
+        const { rm } = await import("node:fs/promises");
+        const { join } = await import("node:path");
+        const promptPath = join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md");
+        await rm(promptPath, { force: true });
+
+        // Update status to indicate needs re-specification
+        await scopedStore.updateTask(task.id, { status: "needs-respecify" });
+
+        const updated = await scopedStore.getTask(task.id);
+        res.json(updated);
+        return;
+      }
+
       // Check if task can transition to triage
       const canTransition = VALID_TRANSITIONS[task.column]?.includes("triage");
       if (!canTransition) {
@@ -4544,7 +4565,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Log the revision request
       await scopedStore.logEntry(task.id, "AI spec revision requested", feedback);
 
-      // Move to triage for re-specification (only valid for todo/in-progress)
+      // Move to triage for re-specification
       const updated = await scopedStore.moveTask(task.id, "triage");
 
       // Remove the existing spec so re-specification starts from the task
@@ -4577,6 +4598,27 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       // Get current task state
       const task = await scopedStore.getTask(req.params.id);
+
+      // If task is already in triage, skip the transition check and moveTask.
+      // Just reset for re-specification in place.
+      if (task.column === "triage") {
+        // Log the rebuild request
+        await scopedStore.logEntry(task.id, "Specification rebuild requested by user");
+
+        // Remove the existing spec so rebuilds produce a fresh PROMPT.md instead
+        // of asking triage to revise whatever was already on disk.
+        const { rm } = await import("node:fs/promises");
+        const { join } = await import("node:path");
+        const promptPath = join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md");
+        await rm(promptPath, { force: true });
+
+        // Update status to indicate needs re-specification
+        await scopedStore.updateTask(task.id, { status: "needs-respecify" });
+
+        const updated = await scopedStore.getTask(task.id);
+        res.json(updated);
+        return;
+      }
 
       // Check if task can transition to triage
       const canTransition = VALID_TRANSITIONS[task.column]?.includes("triage");
