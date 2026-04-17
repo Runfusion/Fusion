@@ -113,6 +113,232 @@ Typical flow:
 | `POST /api/missions/:missionId/autopilot/start` | Start watching manually |
 | `POST /api/missions/:missionId/autopilot/stop` | Stop watching manually |
 
+## Factory Operating Model
+
+The Factory operating model is Fusion's structured feature delivery system for missions. It combines validation contracts, AI validation, and bounded retries to provide systematic, auditable feature completion. The model covers the full end-to-end lifecycle from clarification through blocked handoff.
+
+### End-to-End Flow
+
+```
+Clarification → Validation Contract → Feature Execution → Validator Loop
+      ↑                                                         ↓
+      │    Fix-Feature Retry ←─ (budget exhausted?) ←───────────┘
+      │
+Blocked Handoff ←── (budget exhausted, root cause unresolvable)
+```
+
+### Phase 1: Clarification
+
+The clarification phase occurs during mission interview and planning. Operators define:
+- **Milestone outcomes** and **slice verification criteria** stored in dedicated `verification` fields
+- **Feature descriptions** and **acceptance criteria**
+
+These inputs flow directly into assertion auto-generation in the next phase.
+
+### Phase 2: Validation Contract
+
+Contract assertions (`MissionContractAssertion`) formalize what must be true for a feature to be considered complete:
+
+```typescript
+interface MissionContractAssertion {
+  id: string;              // e.g., "CA-A3B7CD-E9F2"
+  milestoneId: string;     // Parent milestone
+  title: string;           // Human-readable title
+  assertion: string;       // Behavioral specification
+  status: AssertionStatus; // pending | passed | failed | blocked
+  orderIndex: number;      // Sort order within milestone
+  featureIds: string[];    // Linked features (many-to-many)
+}
+```
+
+**Assertion text source priority:**
+1. `acceptanceCriteria` (from feature planning)
+2. `feature.description` (fallback)
+3. Fallback text: `"Verify implementation of: {feature.title}"`
+
+**Coverage tracking:** `MilestoneValidationRollup` computes per-milestone coverage:
+
+```typescript
+interface MilestoneValidationRollup {
+  milestoneId: string;
+  totalAssertions: number;
+  passed: number;
+  failed: number;
+  blocked: number;
+  pending: number;
+  unlinked: number;
+  state: MilestoneValidationState;
+}
+```
+
+**Validation state precedence** (highest priority wins):
+1. `not_started` — no assertions exist
+2. `needs_coverage` — assertions exist but some are not linked to features
+3. `ready` — assertions exist and are linked, but not all have passed
+4. `passed` — all assertions have passed
+5. `failed` — at least one assertion failed
+6. `blocked` — at least one assertion is blocked
+
+### Phase 3: Feature Execution Loop
+
+Features track their implementation state via `FeatureLoopState` separate from task status:
+
+```typescript
+type FeatureLoopState =
+  | "idle"         // Not yet started
+  | "implementing" // Tasks are in-flight
+  | "validating"   // Awaiting AI validation
+  | "needs_fix"    // Validation failed, retry in progress
+  | "passed"       // All assertions passed
+  | "blocked";     // Retry budget exhausted, cannot proceed
+```
+
+**State transitions:**
+```
+idle → implementing → validating → passed (all assertions pass)
+                          ↓
+                   needs_fix → implementing (retry feature created)
+                          ↓
+                      blocked (budget exhausted)
+```
+
+When a feature enters the `implementing` state, `implementationAttemptCount` is initialized and incremented on each retry.
+
+### Phase 4: Validator Loop
+
+On task completion, the scheduler calls `MissionExecutionLoop.processTaskOutcome()` to run AI validation:
+
+1. Find the feature linked to the completed task
+2. Transition feature to `validating` state
+3. Fire AI validator agent against contract assertions
+4. Record `MissionValidatorRun` with per-assertion results
+
+```typescript
+interface MissionValidatorRun {
+  id: string;
+  featureId: string;
+  missionId: string;
+  taskId: string;
+  triggerType: "manual" | "automatic";
+  implementationAttempt: number;
+  validatorAttempt: number;
+  status: "started" | "passed" | "failed" | "blocked" | "error";
+  summary: string;
+  results: AssertionResult[];
+  blockedReason?: string;
+  startedAt: string;
+  completedAt?: string;
+}
+```
+
+**Validation timeout:** 10 minutes (`VALIDATION_TIMEOUT_MS = 10 * 60 * 1000`). If the validator times out, the run is marked `error` and the feature remains in `needs_fix` for retry.
+
+### Phase 5: Fix-Feature Retries
+
+When validation fails, `MissionStore.createGeneratedFixFeature()` creates a fix feature with lineage tracking:
+
+```typescript
+interface MissionFixFeatureLineage {
+  sourceFeatureId: string;      // Original feature being remediated
+  fixFeatureId: string;         // New fix feature
+  runId: string;                // Validator run that triggered this fix
+  failedAssertionIds: string[]; // Assertions that failed
+}
+```
+
+The fix feature is **auto-triaged** (converted to tasks) for immediate execution. Each fix increments `implementationAttemptCount`.
+
+**Default retry budget:** 3 (`DEFAULT_IMPLEMENTATION_RETRY_BUDGET`). When `implementationAttemptCount >= maxRetryBudget`, the feature transitions to `blocked`.
+
+### Phase 6: Blocked Handoff
+
+A feature transitions to `blocked` when:
+1. All retry budget is exhausted (`implementationAttemptCount >= maxRetryBudget`)
+2. Validation continues to fail
+3. Root cause cannot be resolved through iteration
+
+**Blocked semantics:**
+- Autopilot stops advancing the slice containing the blocked feature
+- `MilestoneValidationRollup.state` reflects `blocked` assertions
+- The feature remains in `blocked` state until operator intervention
+
+On engine restart, `recoverActiveMissions()` re-enqueues features in `validating` or `needs_fix` states from the `activeValidations` set, ensuring no validation work is lost.
+
+### Autopilot / Scheduler Interplay
+
+The scheduler and autopilot collaborate through a carefully ordered call sequence:
+
+```
+1. Task completes → scheduler detects completion
+2. scheduler.missionExecutionLoop.processTaskOutcome() — validation FIRST
+   - Finds linked feature, runs AI validation, records MissionValidatorRun
+3. autopilot.handleTaskCompletion() — feature status sync SECOND
+   - Syncs feature status from task state, advances slice if complete
+4. scheduler filters blocked missions from further advancement (line ~532)
+```
+
+**Autopilot vs Execution Loop retry tracking:**
+- **Autopilot**: Per-task retry tracking for slice/feature completion events
+- **Execution Loop**: `implementationAttemptCount` for retry budget enforcement (default: 3)
+
+These are independent tracking mechanisms — autopilot monitors mission progress while the execution loop manages feature-level retry budgets.
+
+### Telemetry and Observability
+
+**MissionHealth snapshot fields:**
+- `activeSlices`, `activeFeatures`, `blockedFeatures`
+- `validationState`, `validationRollup`
+- `inProgressCount`, `passedCount`, `failedCount`, `blockedCount`
+
+**MissionEvent audit types:**
+- `slice_activated`, `feature_triaged`, `feature_completed`
+- `validation:started`, `validation:passed`, `validation:failed`, `validation:blocked`
+- `fix_feature:created`, `feature:blocked`
+
+**Validator run telemetry:**
+- `triggerType` — manual vs automatic
+- `implementationAttempt` — which retry attempt this was
+- `validatorAttempt` — how many validator runs for this implementation
+- `status` — started | passed | failed | blocked | error
+- `summary` — natural language summary of results
+
+**Assertion failure records:**
+```typescript
+interface MissionAssertionFailureRecord {
+  assertionId: string;
+  assertionTitle: string;
+  expected: string;
+  actual: string;
+  message: string;
+}
+```
+
+**Full state snapshots:** `MissionFeatureLoopSnapshot` captures complete loop state including all validator runs and lineage chains for post-mortem analysis.
+
+### Operator Troubleshooting
+
+| Symptom | Diagnosis | Resolution |
+|---------|-----------|------------|
+| Feature stuck in "validating" | `activeValidations` set may be stale; engine restart needed | Check logs for validator errors; restart engine to trigger `recoverActiveMissions()` |
+| Fix feature not auto-triaging | `triageFeature()` may have errored; check logs | Manual triage via `fn mission triage-feature <id>`; investigate `triageFeature()` errors |
+| Budget exhaustion loop | `implementationAttemptCount >= maxRetryBudget` (default: 3) | Increase `maxRetryBudget` in mission settings or fix root cause |
+| Blocked mission not advancing | `MilestoneValidationRollup.state` shows `blocked` | Identify blocked assertions; operator must resolve root cause |
+| Validation agent errors | AI session creation failed or `VALIDATION_TIMEOUT_MS` (10 min) exceeded | Check model configuration and logs; verify AI provider auth |
+| No validation runs after task completion | `processTaskOutcome()` not called; check scheduler logs | Verify mission linkage on feature → task mapping; check scheduler event handlers |
+| Recovery after engine restart | Features in `validating`/`needs_fix` state may not re-enqueue | `recoverActiveMissions()` should run on startup; check recovery log count |
+
+### Parity Verification Tests
+
+The Factory model is validated by integration tests in two dependent tasks:
+
+**FN-1571 — Core parity tests:**
+- `packages/core/src/mission-factory-parity.integration.test.ts` — MissionStore rollups, assertion persistence, validator run records, fix feature lineage
+- `packages/engine/src/mission-factory-parity.integration.test.ts` — Scheduler/autopilot/runtime parity with the validation loop
+
+**FN-1572 — Dashboard parity tests:**
+- `packages/dashboard/src/mission-e2e.test.ts` — API contract telemetry round-trip (MissionContractAssertion → validator run → MissionHealth)
+- `packages/dashboard/app/components/__tests__/MissionManager.test.tsx` — UI blocked/iterating state rendering
+
 ## Screenshot
 
 ![Mission manager](./screenshots/mission-manager.png)

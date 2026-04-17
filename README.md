@@ -122,7 +122,7 @@ In **Triage**, an AI agent reads your project, understands context, and writes a
 - **Workflow Steps** — Configurable quality gates (pre-merge: blocks merge; post-merge: informational)
 - **GitHub Integration** — Import issues, create PRs, real-time PR/issue badges
 - **Dashboard** — Real-time kanban board, agent management, terminal, git manager, mission planner
-- **Missions** — Hierarchical planning (Mission → Milestone → Slice → Feature → Task) with autopilot
+- **Missions** — Hierarchical planning (Mission → Milestone → Slice → Feature → Task) with autopilot, validation contracts, fix-feature retries, and blocked-handoff semantics for systematic feature delivery. See [Factory Operating Model](./docs/missions.md#factory-operating-model) for the full validation-contract lifecycle.
 - **Multi-Project** — Manage multiple projects from a single installation with project isolation
 - **Inter-Agent Messaging** — Built-in messaging for coordination between agents and users
 
