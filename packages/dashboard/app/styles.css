@@ -30539,6 +30539,43 @@ html .column.drag-over * {
   color: var(--text);
 }
 
+.quick-chat-mode-toggle {
+  display: flex;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--border);
+}
+
+.quick-chat-mode-btn {
+  flex: 1;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.quick-chat-mode-btn:hover {
+  background: color-mix(in srgb, var(--todo) 10%, transparent);
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--todo) 40%, var(--border));
+}
+
+.quick-chat-mode-btn--active {
+  background: color-mix(in srgb, var(--todo) 18%, transparent);
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--todo) 50%, var(--border));
+  font-weight: 500;
+}
+
+.quick-chat-mode-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
 .quick-chat-panel-agent-select {
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
@@ -31212,6 +31249,41 @@ html .column.drag-over * {
   background: var(--bg);
   color: var(--text);
   font-size: 14px;
+}
+
+.chat-new-dialog-mode-toggle {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.chat-new-dialog-mode-btn {
+  flex: 1;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.chat-new-dialog-mode-btn:hover {
+  background: color-mix(in srgb, var(--todo) 10%, transparent);
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--todo) 40%, var(--border));
+}
+
+.chat-new-dialog-mode-btn--active {
+  background: color-mix(in srgb, var(--todo) 18%, transparent);
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--todo) 50%, var(--border));
+  font-weight: 500;
+}
+
+.chat-new-dialog-mode-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
 }
 
 .chat-new-dialog-actions {

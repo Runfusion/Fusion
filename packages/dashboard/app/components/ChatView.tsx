@@ -153,6 +153,7 @@ interface NewChatDialogProps {
 }
 
 function NewChatDialog({ onClose, onCreate }: NewChatDialogProps) {
+  const [chatMode, setChatMode] = useState<"agent" | "model">("agent");
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(true);
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
@@ -194,67 +195,95 @@ function NewChatDialog({ onClose, onCreate }: NewChatDialogProps) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedAgentId) return;
 
-    // Parse model selection into provider and modelId
-    let modelProvider: string | undefined;
-    let modelId: string | undefined;
-    if (selectedModel) {
-      const slashIdx = selectedModel.indexOf("/");
-      if (slashIdx > 0) {
-        modelProvider = selectedModel.slice(0, slashIdx);
-        modelId = selectedModel.slice(slashIdx + 1);
-      }
+    if (chatMode === "agent") {
+      if (!selectedAgentId) return;
+      onCreate({ agentId: selectedAgentId });
+      return;
     }
 
-    onCreate({
-      agentId: selectedAgentId,
-      ...(modelProvider && modelId ? { modelProvider, modelId } : {}),
-    });
+    // model mode
+    if (!selectedModel) return;
+    const slashIdx = selectedModel.indexOf("/");
+    if (slashIdx <= 0) return;
+    const modelProvider = selectedModel.slice(0, slashIdx);
+    const modelId = selectedModel.slice(slashIdx + 1);
+    onCreate({ agentId: KB_AGENT_ID, modelProvider, modelId });
   };
+
+  const isSubmitDisabled =
+    chatMode === "agent" ? !selectedAgentId : !selectedModel;
 
   return (
     <div className="chat-new-dialog-backdrop" onClick={onClose} role="dialog" aria-modal="true">
       <div className="chat-new-dialog" onClick={(e) => e.stopPropagation()}>
         <h3>New Chat</h3>
-        <form onSubmit={handleSubmit}>
-          <label className="chat-new-dialog-model-label">
+        <div className="chat-new-dialog-mode-toggle" data-testid="chat-new-dialog-mode-toggle">
+          <button
+            type="button"
+            className={`chat-new-dialog-mode-btn${chatMode === "agent" ? " chat-new-dialog-mode-btn--active" : ""}`}
+            data-testid="chat-new-dialog-mode-agent"
+            onClick={() => {
+              setChatMode("agent");
+              setSelectedModel("");
+            }}
+          >
             Agent
-            {agentsLoading ? (
-              <div className="chat-new-dialog-loading">Loading agents...</div>
-            ) : agents.length === 0 ? (
-              <div className="chat-new-dialog-empty">No agents available</div>
-            ) : (
-              <div className="chat-new-dialog-agent-list">
-                {agents.map((agent) => (
-                  <button
-                    key={agent.id}
-                    type="button"
-                    className={`chat-new-dialog-agent-item${selectedAgentId === agent.id ? " chat-new-dialog-agent-item--selected" : ""}`}
-                    onClick={() => setSelectedAgentId(agent.id)}
-                    data-testid={`agent-option-${agent.id}`}
-                  >
-                    <Bot size={16} />
-                    <span className="chat-new-dialog-agent-name">{agent.name}</span>
-                    <span className="chat-new-dialog-agent-role">{agent.role}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </label>
-          <div className="chat-new-dialog-model-dropdown">
-            {modelsLoading ? (
-              <div className="chat-new-dialog-loading">Loading models...</div>
-            ) : (
-              <CustomModelDropdown
-                models={models}
-                value={selectedModel}
-                onChange={setSelectedModel}
-                label="Model"
-                placeholder="Use agent default"
-              />
-            )}
-          </div>
+          </button>
+          <button
+            type="button"
+            className={`chat-new-dialog-mode-btn${chatMode === "model" ? " chat-new-dialog-mode-btn--active" : ""}`}
+            data-testid="chat-new-dialog-mode-model"
+            onClick={() => {
+              setChatMode("model");
+              setSelectedAgentId("");
+            }}
+          >
+            Model
+          </button>
+        </div>
+        <form onSubmit={handleSubmit}>
+          {chatMode === "agent" && (
+            <label className="chat-new-dialog-model-label">
+              Agent
+              {agentsLoading ? (
+                <div className="chat-new-dialog-loading">Loading agents...</div>
+              ) : agents.length === 0 ? (
+                <div className="chat-new-dialog-empty">No agents available</div>
+              ) : (
+                <div className="chat-new-dialog-agent-list">
+                  {agents.map((agent) => (
+                    <button
+                      key={agent.id}
+                      type="button"
+                      className={`chat-new-dialog-agent-item${selectedAgentId === agent.id ? " chat-new-dialog-agent-item--selected" : ""}`}
+                      onClick={() => setSelectedAgentId(agent.id)}
+                      data-testid={`agent-option-${agent.id}`}
+                    >
+                      <Bot size={16} />
+                      <span className="chat-new-dialog-agent-name">{agent.name}</span>
+                      <span className="chat-new-dialog-agent-role">{agent.role}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </label>
+          )}
+          {chatMode === "model" && (
+            <div className="chat-new-dialog-model-dropdown" data-testid="chat-new-dialog-model-section">
+              {modelsLoading ? (
+                <div className="chat-new-dialog-loading">Loading models...</div>
+              ) : (
+                <CustomModelDropdown
+                  models={models}
+                  value={selectedModel}
+                  onChange={setSelectedModel}
+                  label="Model"
+                  placeholder="Select a model"
+                />
+              )}
+            </div>
+          )}
           <div className="chat-new-dialog-actions">
             <button type="button" className="btn btn-sm" onClick={onClose}>
               Cancel
@@ -262,7 +291,7 @@ function NewChatDialog({ onClose, onCreate }: NewChatDialogProps) {
             <button
               type="submit"
               className="btn btn-sm btn-primary"
-              disabled={!selectedAgentId}
+              disabled={isSubmitDisabled}
             >
               Create
             </button>

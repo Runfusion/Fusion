@@ -30,13 +30,6 @@ interface ParsedModelSelection {
   modelId: string;
 }
 
-const modelMetaTextStyle = {
-  marginTop: "var(--space-xs)",
-  color: "var(--text-muted)",
-  fontSize: "12px",
-  lineHeight: "1.4",
-} as const;
-
 const modelTagStyle = {
   display: "inline-flex",
   alignItems: "center",
@@ -59,15 +52,6 @@ const headerTitleWrapStyle = {
   minWidth: 0,
 } as const;
 
-const emptyAgentLabelStyle = {
-  width: "100%",
-  border: "1px dashed var(--border)",
-  borderRadius: "var(--radius-sm)",
-  background: "color-mix(in srgb, var(--surface) 90%, var(--bg))",
-  color: "var(--text-muted)",
-  padding: "var(--space-sm) var(--space-md)",
-  fontSize: "12px",
-} as const;
 
 function getAgentLabel(agent: Agent): string {
   const base = agent.name?.trim() || agent.id;
@@ -316,6 +300,7 @@ export function QuickChatFAB({ projectId, addToast, showFAB = true, open, onOpen
       }
     : setInternalOpen;
 
+  const [chatMode, setChatMode] = useState<"agent" | "model">("agent");
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -372,21 +357,25 @@ export function QuickChatFAB({ projectId, addToast, showFAB = true, open, onOpen
   );
 
   const sessionTargetKey = useMemo(() => {
-    if (parsedModelSelection) {
-      const targetAgentId = selectedAgentId || KB_AGENT_ID;
-      return `${targetAgentId}::${parsedModelSelection.modelProvider}/${parsedModelSelection.modelId}`;
+    if (chatMode === "model") {
+      if (parsedModelSelection) {
+        return `${KB_AGENT_ID}::${parsedModelSelection.modelProvider}/${parsedModelSelection.modelId}`;
+      }
+      return "";
     }
+    // chatMode === "agent"
     if (selectedAgentId) {
       return `${selectedAgentId}::`;
     }
     return "";
-  }, [parsedModelSelection, selectedAgentId]);
+  }, [chatMode, parsedModelSelection, selectedAgentId]);
 
-  const hasChatTarget = Boolean(selectedAgentId || parsedModelSelection);
+  const hasChatTarget = chatMode === "agent" ? Boolean(selectedAgentId) : Boolean(parsedModelSelection);
 
   useEffect(() => {
     if (agents.length === 0) {
       setSelectedAgentId("");
+      setChatMode("model");
       return;
     }
 
@@ -421,6 +410,7 @@ export function QuickChatFAB({ projectId, addToast, showFAB = true, open, onOpen
   // Initialize/switch quick chat session whenever the selected target changes.
   useEffect(() => {
     if (!isOpen) {
+      prevSessionTargetRef.current = "";
       return;
     }
 
@@ -435,17 +425,15 @@ export function QuickChatFAB({ projectId, addToast, showFAB = true, open, onOpen
 
     prevSessionTargetRef.current = sessionTargetKey;
 
-    if (parsedModelSelection) {
-      if (selectedAgentId) {
-        void switchSession(selectedAgentId, parsedModelSelection.modelProvider, parsedModelSelection.modelId);
-      } else {
-        void startModelChat(parsedModelSelection.modelProvider, parsedModelSelection.modelId);
-      }
+    if (chatMode === "model" && parsedModelSelection) {
+      void startModelChat(parsedModelSelection.modelProvider, parsedModelSelection.modelId);
       return;
     }
 
-    void switchSession(selectedAgentId);
-  }, [isOpen, parsedModelSelection, selectedAgentId, sessionTargetKey, startModelChat, switchSession]);
+    if (chatMode === "agent" && selectedAgentId) {
+      void switchSession(selectedAgentId);
+    }
+  }, [isOpen, chatMode, parsedModelSelection, selectedAgentId, sessionTargetKey, startModelChat, switchSession]);
 
   useEffect(() => {
     if (isOpen) {
@@ -535,14 +523,18 @@ export function QuickChatFAB({ projectId, addToast, showFAB = true, open, onOpen
   }, [messages, streamingText, streamingThinking, isOpen]);
 
   const inputPlaceholder = useMemo(() => {
-    if (selectedAgent) {
-      return `Message ${selectedAgent.name || selectedAgent.id}`;
+    if (chatMode === "agent") {
+      if (selectedAgent) {
+        return `Message ${selectedAgent.name || selectedAgent.id}`;
+      }
+      return "Select an agent to start chatting";
     }
+    // model mode
     if (selectedModelTag) {
       return `Message ${selectedModelTag}`;
     }
     return "Select a model to start chatting";
-  }, [selectedAgent, selectedModelTag]);
+  }, [chatMode, selectedAgent, selectedModelTag]);
 
   const inputDisabled = !hasChatTarget || !activeSession || sessionsLoading || isStreaming;
 
@@ -810,47 +802,65 @@ export function QuickChatFAB({ projectId, addToast, showFAB = true, open, onOpen
             </button>
           </div>
 
-          <div className="quick-chat-panel-agent-select">
-            {agents.length > 0 ? (
-              <>
-                <label htmlFor="quick-chat-agent-select" className="visually-hidden">Select agent</label>
-                <select
-                  id="quick-chat-agent-select"
-                  value={selectedAgentId}
-                  onChange={(event) => handleAgentChange(event.target.value)}
-                  data-testid="quick-chat-agent-select"
-                >
-                  {agents.map((agent) => (
-                    <option key={agent.id} value={agent.id}>
-                      {getAgentLabel(agent)}
-                    </option>
-                  ))}
-                </select>
-              </>
-            ) : (
-              <div style={emptyAgentLabelStyle} data-testid="quick-chat-agent-empty">New model chat</div>
-            )}
-          </div>
+          {agents.length > 0 && (
+            <div className="quick-chat-mode-toggle" data-testid="quick-chat-mode-toggle">
+              <button
+                type="button"
+                className={`quick-chat-mode-btn${chatMode === "agent" ? " quick-chat-mode-btn--active" : ""}`}
+                data-testid="quick-chat-mode-agent"
+                onClick={() => {
+                  setChatMode("agent");
+                  setSelectedModel("");
+                }}
+              >
+                Agent
+              </button>
+              <button
+                type="button"
+                className={`quick-chat-mode-btn${chatMode === "model" ? " quick-chat-mode-btn--active" : ""}`}
+                data-testid="quick-chat-mode-model"
+                onClick={() => {
+                  setChatMode("model");
+                  setSelectedAgentId("");
+                }}
+              >
+                Model
+              </button>
+            </div>
+          )}
 
-          <div className="quick-chat-panel-agent-select" data-testid="quick-chat-model-select">
-            <label htmlFor="quick-chat-model-override" className="visually-hidden">Select model override</label>
-            <CustomModelDropdown
-              id="quick-chat-model-override"
-              models={models}
-              value={selectedModel}
-              onChange={handleModelChange}
-              label="Select model override"
-              placeholder={modelsLoading ? "Loading models…" : "Use agent's model"}
-              disabled={modelsLoading || models.length === 0}
-            />
-            <p style={modelMetaTextStyle} data-testid="quick-chat-model-helper">
-              {modelsLoading
-                ? "Loading models…"
-                : models.length > 0
-                  ? "Use default to use agent's model."
-                  : "No models available."}
-            </p>
-          </div>
+          {chatMode === "agent" && agents.length > 0 && (
+            <div className="quick-chat-panel-agent-select">
+              <label htmlFor="quick-chat-agent-select" className="visually-hidden">Select agent</label>
+              <select
+                id="quick-chat-agent-select"
+                value={selectedAgentId}
+                onChange={(event) => handleAgentChange(event.target.value)}
+                data-testid="quick-chat-agent-select"
+              >
+                {agents.map((agent) => (
+                  <option key={agent.id} value={agent.id}>
+                    {getAgentLabel(agent)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {chatMode === "model" && (
+            <div className="quick-chat-panel-agent-select" data-testid="quick-chat-model-select">
+              <label htmlFor="quick-chat-model-override" className="visually-hidden">Select model override</label>
+              <CustomModelDropdown
+                id="quick-chat-model-override"
+                models={models}
+                value={selectedModel}
+                onChange={handleModelChange}
+                label="Select model override"
+                placeholder={modelsLoading ? "Loading models…" : "Select a model"}
+                disabled={modelsLoading || models.length === 0}
+              />
+            </div>
+          )}
 
           <div className="quick-chat-panel-messages" ref={messagesRef} data-testid="quick-chat-messages">
             {sessionsLoading || messagesLoading ? (

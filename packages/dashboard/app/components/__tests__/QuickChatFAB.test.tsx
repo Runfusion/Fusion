@@ -162,10 +162,12 @@ describe("QuickChatFAB", () => {
 
     fireEvent.click(screen.getByTestId("quick-chat-fab"));
 
+    // With no agents, auto-switches to model mode: model dropdown visible, no toggle, no agent select
     await waitFor(() => {
-      expect(screen.getByTestId("quick-chat-agent-empty")).toBeDefined();
-      expect(screen.getByText("New model chat")).toBeDefined();
+      expect(screen.getByTestId("quick-chat-model-select")).toBeDefined();
     });
+    expect(screen.queryByTestId("quick-chat-mode-toggle")).toBeNull();
+    expect(screen.queryByTestId("quick-chat-agent-select")).toBeNull();
   });
 
   it("renders FAB button when agents exist", () => {
@@ -184,16 +186,56 @@ describe("QuickChatFAB", () => {
     });
   });
 
-  it("renders the model dropdown when panel is open", async () => {
+  it("renders the model dropdown when panel is open in model mode", async () => {
     render(<QuickChatFAB addToast={addToast} />);
 
     fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    // Switch to model mode via the toggle
+    const modelModeBtn = await screen.findByTestId("quick-chat-mode-model");
+    fireEvent.click(modelModeBtn);
 
     await waitFor(() => {
       expect(screen.getByTestId("quick-chat-model-select")).toBeDefined();
       expect(screen.getByRole("button", { name: "Select model override" })).toBeDefined();
       expect(mockFetchModels).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("switching to model mode hides agent dropdown and shows model dropdown", async () => {
+    render(<QuickChatFAB addToast={addToast} />);
+
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    // Default is agent mode — agent select visible, model select hidden
+    expect(await screen.findByTestId("quick-chat-agent-select")).toBeDefined();
+    expect(screen.queryByTestId("quick-chat-model-select")).toBeNull();
+
+    // Switch to model mode
+    fireEvent.click(screen.getByTestId("quick-chat-mode-model"));
+
+    // Agent select should be hidden, model select visible
+    expect(screen.queryByTestId("quick-chat-agent-select")).toBeNull();
+    expect(screen.getByTestId("quick-chat-model-select")).toBeDefined();
+  });
+
+  it("switching to agent mode hides model dropdown and shows agent dropdown", async () => {
+    render(<QuickChatFAB addToast={addToast} />);
+
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    // Start in agent mode, switch to model mode
+    const modelModeBtn = await screen.findByTestId("quick-chat-mode-model");
+    fireEvent.click(modelModeBtn);
+
+    expect(screen.queryByTestId("quick-chat-agent-select")).toBeNull();
+    expect(screen.getByTestId("quick-chat-model-select")).toBeDefined();
+
+    // Switch back to agent mode
+    fireEvent.click(screen.getByTestId("quick-chat-mode-agent"));
+
+    expect(screen.getByTestId("quick-chat-agent-select")).toBeDefined();
+    expect(screen.queryByTestId("quick-chat-model-select")).toBeNull();
   });
 
   it("closes panel via close button and Escape key", async () => {
@@ -292,17 +334,21 @@ describe("QuickChatFAB", () => {
     });
   });
 
-  it("selecting both an agent and a model creates session with both parameters", async () => {
+  it("model mode creates a KB agent session with the selected model", async () => {
     render(<QuickChatFAB addToast={addToast} projectId="proj-123" />);
 
     fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    // Switch to model mode
+    const modelModeBtn = await screen.findByTestId("quick-chat-mode-model");
+    fireEvent.click(modelModeBtn);
 
     await selectModelOption("GPT-4o");
 
     await waitFor(() => {
       expect(mockCreateChatSession).toHaveBeenCalledWith(
         {
-          agentId: "agent-001",
+          agentId: "__kb_agent__",
           modelProvider: "openai",
           modelId: "gpt-4o",
         },
@@ -311,17 +357,21 @@ describe("QuickChatFAB", () => {
     });
   });
 
-  it("clearing model selection uses the agent default model", async () => {
+  it("switching from model mode to agent mode creates session with only agentId", async () => {
     render(<QuickChatFAB addToast={addToast} projectId="proj-123" />);
 
     fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    // Switch to model mode and select a model
+    const modelModeBtn = await screen.findByTestId("quick-chat-mode-model");
+    fireEvent.click(modelModeBtn);
 
     await selectModelOption("GPT-4o");
 
     await waitFor(() => {
       expect(mockCreateChatSession).toHaveBeenCalledWith(
         {
-          agentId: "agent-001",
+          agentId: "__kb_agent__",
           modelProvider: "openai",
           modelId: "gpt-4o",
         },
@@ -329,8 +379,9 @@ describe("QuickChatFAB", () => {
       );
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Select model override" }));
-    fireEvent.click(await screen.findByRole("option", { name: "Use default" }));
+    // Switch back to agent mode — clears model selection, uses agent's default
+    const agentModeBtn = screen.getByTestId("quick-chat-mode-agent");
+    fireEvent.click(agentModeBtn);
 
     await waitFor(() => {
       expect(mockCreateChatSession).toHaveBeenCalledWith({ agentId: "agent-001" }, "proj-123");

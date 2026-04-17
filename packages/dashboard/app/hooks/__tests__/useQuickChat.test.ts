@@ -60,6 +60,25 @@ describe("useQuickChat", () => {
     });
   });
 
+  it("switchSession with only agentId creates session without model params", async () => {
+    const { result } = renderHook(() => useQuickChat("proj-123"));
+
+    await act(async () => {
+      await result.current.switchSession("agent-001");
+    });
+
+    await waitFor(() => {
+      expect(mockCreateChatSession).toHaveBeenCalledWith(
+        { agentId: "agent-001" },
+        "proj-123",
+      );
+      // Ensure model params are not included
+      const callArg = mockCreateChatSession.mock.calls[0][0];
+      expect(callArg).not.toHaveProperty("modelProvider");
+      expect(callArg).not.toHaveProperty("modelId");
+    });
+  });
+
   it("switchSession falls back to KB agent when no explicit agent is provided", async () => {
     const { result } = renderHook(() => useQuickChat("proj-123"));
 

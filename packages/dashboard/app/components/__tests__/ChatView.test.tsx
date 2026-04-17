@@ -212,8 +212,10 @@ describe("ChatView", () => {
     // Dialog should be open - check for dialog content
     const dialog = document.querySelector(".chat-new-dialog");
     expect(dialog).toBeInTheDocument();
-    // Should show Agent label (current copy: "Agent (optional)")
-    expect(within(dialog!).getByText(/Agent(?:\s*\(optional\))?/i)).toBeInTheDocument();
+    // Should show mode toggle with Agent and Model buttons
+    expect(within(dialog!).getByTestId("chat-new-dialog-mode-toggle")).toBeInTheDocument();
+    expect(within(dialog!).getByTestId("chat-new-dialog-mode-agent")).toBeInTheDocument();
+    expect(within(dialog!).getByTestId("chat-new-dialog-mode-model")).toBeInTheDocument();
   });
 
   it("creates session without model selection (uses default)", async () => {
@@ -267,8 +269,8 @@ describe("ChatView", () => {
     });
   });
 
-  it("creates session with model selection", async () => {
-    const createSession = vi.fn().mockResolvedValue({ id: "session-new", agentId: "agent-001" });
+  it("creates session with model selection (model mode uses KB agent ID)", async () => {
+    const createSession = vi.fn().mockResolvedValue({ id: "session-new", agentId: "__kb_agent__" });
     setupMockChat({ sessions: [], filteredSessions: [], createSession });
 
     render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
@@ -277,10 +279,10 @@ describe("ChatView", () => {
 
     const dialog = document.querySelector(".chat-new-dialog");
 
-    // Click on an agent to select it
-    await userEvent.click(within(dialog!).getByTestId("agent-option-agent-001"));
+    // Switch to model mode
+    await userEvent.click(within(dialog!).getByTestId("chat-new-dialog-mode-model"));
 
-    // Select a model from the dropdown
+    // Select a model from the dropdown (now visible in model mode)
     const modelDropdown = within(dialog!).getByTestId("mock-model-dropdown");
     await userEvent.selectOptions(modelDropdown, "anthropic/claude-sonnet-4-5");
 
@@ -288,14 +290,14 @@ describe("ChatView", () => {
 
     await waitFor(() => {
       expect(createSession).toHaveBeenCalledWith({
-        agentId: "agent-001",
+        agentId: "__kb_agent__",
         modelProvider: "anthropic",
         modelId: "claude-sonnet-4-5",
       });
     });
   });
 
-  it("creates session without model selection omits model fields", async () => {
+  it("creates session without model selection omits model fields (agent mode)", async () => {
     const createSession = vi.fn().mockResolvedValue({ id: "session-new", agentId: "agent-001" });
     setupMockChat({ sessions: [], filteredSessions: [], createSession });
 
@@ -305,12 +307,8 @@ describe("ChatView", () => {
 
     const dialog = document.querySelector(".chat-new-dialog");
 
-    // Click on an agent to select it
+    // Agent mode is default — just select an agent and create
     await userEvent.click(within(dialog!).getByTestId("agent-option-agent-001"));
-
-    // Make sure no model is selected (use default)
-    const modelDropdown = within(dialog!).getByTestId("mock-model-dropdown");
-    await userEvent.selectOptions(modelDropdown, "");
 
     await userEvent.click(within(dialog!).getByText("Create"));
 
@@ -318,6 +316,65 @@ describe("ChatView", () => {
       expect(createSession).toHaveBeenCalledWith({
         agentId: "agent-001",
       });
+    });
+  });
+
+  it("agent mode shows agent list without model dropdown", async () => {
+    setupMockChat({ sessions: [], filteredSessions: [] });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    await userEvent.click(screen.getByTestId("chat-new-btn"));
+
+    const dialog = document.querySelector(".chat-new-dialog");
+
+    // Agent mode is active by default — agent list visible, model section hidden
+    await waitFor(() => {
+      expect(within(dialog!).getByTestId("agent-option-agent-001")).toBeInTheDocument();
+    });
+    expect(within(dialog!).queryByTestId("chat-new-dialog-model-section")).toBeNull();
+  });
+
+  it("model mode shows model dropdown without agent list", async () => {
+    setupMockChat({ sessions: [], filteredSessions: [] });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    await userEvent.click(screen.getByTestId("chat-new-btn"));
+
+    const dialog = document.querySelector(".chat-new-dialog");
+
+    // Switch to model mode
+    await userEvent.click(within(dialog!).getByTestId("chat-new-dialog-mode-model"));
+
+    // Model section visible, no agent list
+    await waitFor(() => {
+      expect(within(dialog!).getByTestId("chat-new-dialog-model-section")).toBeInTheDocument();
+    });
+    expect(within(dialog!).queryByTestId("agent-option-agent-001")).toBeNull();
+  });
+
+  it("toggle between modes clears opposite selection", async () => {
+    setupMockChat({ sessions: [], filteredSessions: [] });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    await userEvent.click(screen.getByTestId("chat-new-btn"));
+
+    const dialog = document.querySelector(".chat-new-dialog");
+
+    // Select an agent in agent mode
+    await userEvent.click(within(dialog!).getByTestId("agent-option-agent-001"));
+    expect(within(dialog!).getByTestId("agent-option-agent-001").classList.contains("chat-new-dialog-agent-item--selected")).toBe(true);
+
+    // Switch to model mode — agent selection should be cleared
+    await userEvent.click(within(dialog!).getByTestId("chat-new-dialog-mode-model"));
+
+    // Switch back to agent mode — Create should be disabled (no agent selected)
+    await userEvent.click(within(dialog!).getByTestId("chat-new-dialog-mode-agent"));
+
+    await waitFor(() => {
+      expect(within(dialog!).getByText("Create")).toBeDisabled();
     });
   });
 
