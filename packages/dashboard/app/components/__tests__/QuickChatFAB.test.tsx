@@ -423,7 +423,7 @@ describe("QuickChatFAB", () => {
     });
   });
 
-  it("streaming state shows streaming message and disables input", async () => {
+  it("streaming state shows streaming message and keeps input enabled", async () => {
     render(<QuickChatFAB addToast={addToast} projectId="proj-123" />);
 
     fireEvent.click(screen.getByTestId("quick-chat-fab"));
@@ -437,11 +437,38 @@ describe("QuickChatFAB", () => {
     fireEvent.change(input, { target: { value: "Hello" } });
     fireEvent.click(screen.getByTestId("quick-chat-send"));
 
-    // Input should be cleared and disabled during streaming
+    // Input should be cleared but NOT disabled during streaming
     await waitFor(() => {
       expect((screen.getByTestId("quick-chat-input") as HTMLInputElement).value).toBe("");
     });
-    expect(screen.getByTestId("quick-chat-input")).toBeDisabled();
+    expect(screen.getByTestId("quick-chat-input")).not.toBeDisabled();
+
+    // Send button should be disabled during streaming
+    expect(screen.getByTestId("quick-chat-send")).toBeDisabled();
+  });
+
+  it("user can type while streaming", async () => {
+    render(<QuickChatFAB addToast={addToast} projectId="proj-123" />);
+
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    // Wait for session initialization
+    await waitFor(() => {
+      expect(mockFetchChatSessions).toHaveBeenCalled();
+    });
+
+    const input = await screen.findByTestId("quick-chat-input");
+    fireEvent.change(input, { target: { value: "Hello" } });
+    fireEvent.click(screen.getByTestId("quick-chat-send"));
+
+    // Input should be cleared after send
+    await waitFor(() => {
+      expect((screen.getByTestId("quick-chat-input") as HTMLInputElement).value).toBe("");
+    });
+
+    // User should still be able to type in the input while streaming
+    fireEvent.change(input, { target: { value: "Second message" } });
+    expect((screen.getByTestId("quick-chat-input") as HTMLInputElement).value).toBe("Second message");
   });
 
   it("after streaming completes, assistant message is shown", async () => {
@@ -483,17 +510,22 @@ describe("QuickChatFAB", () => {
     fireEvent.change(input, { target: { value: "Hello" } });
     fireEvent.click(screen.getByTestId("quick-chat-send"));
 
-    // Wait for streaming to complete
-    await waitFor(() => {
-      expect(screen.getByTestId("quick-chat-input")).not.toBeDisabled();
-    });
+    // Wait for streaming to complete and assistant response to appear
+    await waitFor(
+      () => {
+        expect(screen.getByText(/Here's my response/)).toBeDefined();
+      },
+      { timeout: 5000 },
+    );
 
     // Check that user's "Hello" message is preserved
     expect(screen.getByText("Hello")).toBeDefined();
 
-    // Check that assistant response is shown (mock concatenates thinking + text)
-    // The mock sends "Thinking..." then "Here's my response." which concatenates
-    expect(screen.getByText(/Here's my response/)).toBeDefined();
+    // Input should be enabled after streaming completes
+    expect(screen.getByTestId("quick-chat-input")).not.toBeDisabled();
+
+    // Send button should be enabled after streaming completes (input is empty so still disabled)
+    expect(screen.getByTestId("quick-chat-send")).toBeDisabled();
   });
 
   it("switching agents creates a new session for the selected agent", async () => {

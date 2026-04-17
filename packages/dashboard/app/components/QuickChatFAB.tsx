@@ -536,9 +536,9 @@ export function QuickChatFAB({ projectId, addToast, showFAB = true, open, onOpen
     return "Select a model to start chatting";
   }, [chatMode, selectedAgent, selectedModelTag]);
 
-  const inputDisabled = !hasChatTarget || !activeSession || sessionsLoading || isStreaming;
+  const inputDisabled = !hasChatTarget || !activeSession || sessionsLoading;
 
-  const handleSendMessage = useCallback(async () => {
+  const handleSendMessage = useCallback(() => {
     const trimmed = messageInput.trim();
     if (!trimmed || inputDisabled) return;
 
@@ -546,7 +546,7 @@ export function QuickChatFAB({ projectId, addToast, showFAB = true, open, onOpen
     setMentionPopupVisible(false);
     setMentionFilter("");
     setMentionStartPos(-1);
-    await sendMessage(trimmed);
+    sendMessage(trimmed);
   }, [sendMessage, inputDisabled, messageInput]);
 
   const updateMentionState = useCallback((value: string, cursorPos: number) => {
@@ -929,7 +929,7 @@ export function QuickChatFAB({ projectId, addToast, showFAB = true, open, onOpen
             <button
               type="button"
               onClick={() => void handleSendMessage()}
-              disabled={inputDisabled || messageInput.trim().length === 0}
+              disabled={inputDisabled || isStreaming || messageInput.trim().length === 0}
               data-testid="quick-chat-send"
             >
               <Send size={16} />

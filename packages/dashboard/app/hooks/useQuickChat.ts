@@ -42,7 +42,7 @@ export interface UseQuickChatReturn {
   streamingThinking: string;
 
   // Operations
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string) => void;
   switchSession: (agentId: string, modelProvider?: string, modelId?: string) => Promise<void>;
   startModelChat: (modelProvider: string, modelId: string) => Promise<void>;
   loadMessages: () => Promise<void>;
@@ -248,7 +248,7 @@ export function useQuickChat(
 
   // Send a message using SSE streaming
   const sendMessage = useCallback(
-    async (content: string) => {
+    (content: string) => {
       if (!activeSession || !content.trim()) return;
 
       // Close any existing stream

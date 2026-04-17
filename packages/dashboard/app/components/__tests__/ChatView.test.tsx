@@ -5,7 +5,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { userEvent } from "@testing-library/user-event";
 import { ChatView } from "../ChatView";
@@ -740,6 +740,41 @@ describe("ChatView", () => {
 
     const sendButton = screen.getByTestId("chat-send-btn");
     expect(sendButton).toBeDisabled();
+  });
+
+  it("textarea is enabled during streaming", () => {
+    setupMockChat({
+      activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
+      messages: [
+        { id: "msg-001", sessionId: "session-001", role: "user", content: "Hello", createdAt: "2026-04-08T00:00:00.000Z" },
+      ],
+      isStreaming: true,
+      streamingText: "Thinking...",
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const textarea = screen.getByTestId("chat-input");
+    expect(textarea).not.toBeDisabled();
+  });
+
+  it("user can type while streaming", async () => {
+    setupMockChat({
+      activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
+      messages: [
+        { id: "msg-001", sessionId: "session-001", role: "user", content: "Hello", createdAt: "2026-04-08T00:00:00.000Z" },
+      ],
+      isStreaming: true,
+      streamingText: "Thinking...",
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const textarea = screen.getByTestId("chat-input");
+
+    // User should be able to type in the textarea while streaming
+    fireEvent.change(textarea, { target: { value: "Second message" } });
+    expect((textarea as HTMLTextAreaElement).value).toBe("Second message");
   });
 
   it("shows streaming indicator when isStreaming is true", () => {

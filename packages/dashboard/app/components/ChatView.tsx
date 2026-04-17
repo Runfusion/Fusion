@@ -461,21 +461,17 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
   );
 
   // Handle send message
-  const handleSend = useCallback(async () => {
+  const handleSend = useCallback(() => {
     const trimmed = messageInput.trim();
-    if (!trimmed || isStreaming || !activeSession) return;
+    if (!trimmed || !activeSession) return;
     setMessageInput("");
     setShowSkillMenu(false);
     setSkillFilter("");
     setMentionPopupVisible(false);
     setMentionFilter("");
     setMentionStartPos(-1);
-    try {
-      await sendMessage(trimmed);
-    } catch {
-      addToast("Failed to send message", "error");
-    }
-  }, [messageInput, isStreaming, activeSession, sendMessage, addToast]);
+    sendMessage(trimmed);
+  }, [messageInput, activeSession, sendMessage]);
 
   const handleSkillSelect = useCallback(
     (skill: DiscoveredSkill) => {
@@ -1069,7 +1065,6 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                 onClick={handleInputSelectionChange}
                 onBlur={handleInputBlur}
                 onFocus={handleInputFocus}
-                disabled={isStreaming}
                 rows={1}
                 data-testid="chat-input"
               />

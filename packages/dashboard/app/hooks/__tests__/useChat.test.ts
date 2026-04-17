@@ -109,6 +109,30 @@ describe("useChat", () => {
     expect(result.current.sessions[1]?.id).toBe("session-002");
   });
 
+  it("sendMessage is synchronous and returns void", async () => {
+    const session = makeSession({ id: "session-001", agentId: "agent-001" });
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+    mockFetchChatMessages.mockResolvedValueOnce({ messages: [] });
+
+    const { result } = renderHook(() => useChat("proj-123"));
+
+    await waitFor(() => {
+      expect(result.current.sessions).toHaveLength(1);
+    });
+
+    act(() => {
+      result.current.selectSession("session-001");
+    });
+
+    await waitFor(() => {
+      expect(result.current.activeSession?.id).toBe("session-001");
+    });
+
+    // sendMessage should return void (undefined), not a Promise
+    const sendResult = result.current.sendMessage("Hello");
+    expect(sendResult).toBeUndefined();
+  });
+
   it("populates agentsMap on mount", async () => {
     const { result } = renderHook(() => useChat("proj-123"));
 

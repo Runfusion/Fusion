@@ -58,7 +58,7 @@ export interface UseChatReturn {
   deleteSession: (id: string) => Promise<void>;
 
   // Message operations
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string) => void;
   loadMoreMessages: () => Promise<void>;
   hasMoreMessages: boolean;
 
@@ -291,7 +291,7 @@ export function useChat(projectId?: string): UseChatReturn {
 
   // Send a message
   const sendMessage = useCallback(
-    async (content: string) => {
+    (content: string) => {
       if (!activeSession) return;
 
       // Close any existing stream
