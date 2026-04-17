@@ -22,6 +22,8 @@ import type {
   MissionHealth,
   MissionContractAssertion,
   ContractAssertionCreateInput,
+  MissionValidatorRun,
+  MissionAssertionFailureRecord,
 } from "@fusion/core";
 import type { AiSessionRow } from "./ai-session-store.js";
 import {
@@ -45,6 +47,8 @@ function createMockMissionStore() {
   const missionEvents: Map<string, MissionEvent[]> = new Map();
   const assertions: Map<string, MissionContractAssertion> = new Map();
   const assertionLinks: Array<{ featureId: string; assertionId: string }> = [];
+  const validatorRuns: Map<string, MissionValidatorRun> = new Map();
+  const runFailures: Map<string, MissionAssertionFailureRecord[]> = new Map();
 
   let missionCounter = 1;
   let milestoneCounter = 1;
@@ -420,6 +424,39 @@ function createMockMissionStore() {
 
       assertionLinks.push({ featureId, assertionId });
     }),
+
+    listAssertionsForFeature: vi.fn((featureId: string) =>
+      assertionLinks
+        .filter((link) => link.featureId === featureId)
+        .map((link) => assertions.get(link.assertionId))
+        .filter((assertion): assertion is MissionContractAssertion => Boolean(assertion))
+    ),
+
+    listFeaturesForAssertion: vi.fn((assertionId: string) =>
+      assertionLinks
+        .filter((link) => link.assertionId === assertionId)
+        .map((link) => features.get(link.featureId))
+        .filter((feature): feature is MissionFeature => Boolean(feature))
+    ),
+
+    getValidatorRunsByFeature: vi.fn((featureId: string) =>
+      Array.from(validatorRuns.values())
+        .filter((run) => run.featureId === featureId)
+        .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+    ),
+
+    getFailuresForRun: vi.fn((runId: string) => runFailures.get(runId) ?? []),
+
+    getMilestoneValidationRollup: vi.fn((milestoneId: string) => ({
+      milestoneId,
+      totalAssertions: 0,
+      passedAssertions: 0,
+      failedAssertions: 0,
+      blockedAssertions: 0,
+      pendingAssertions: 0,
+      unlinkedAssertions: 0,
+      state: "not_started",
+    })),
 
     reorderMilestones: vi.fn((missionId: string, orderedIds: string[]) => {
       orderedIds.forEach((id, index) => {
@@ -4314,6 +4351,172 @@ describe("Mission API", () => {
       );
 
       expect(res.status).toBe(404);
+    });
+  });
+
+  describe("GET /milestones/:milestoneId/validation-telemetry", () => {
+    it("returns empty grouped telemetry for milestones without assertions or runs", async () => {
+      const { app, missionStore } = buildApp();
+      const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+      const mission = ms.createMission({ title: "Telemetry Mission" });
+      const milestone = ms.addMilestone(mission.id, { title: "Milestone A" });
+
+      const res = await get(app, `/api/missions/milestones/${milestone.id}/validation-telemetry`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.validationContract.assertions).toEqual([]);
+      expect(res.body.validationContract.featureFulfillment).toEqual({});
+      expect(res.body.validationTelemetry.validationRounds).toEqual([]);
+      expect(res.body.validationTelemetry.lastValidatorStatus).toBeNull();
+      expect(res.body.validationTelemetry.totalRuns).toBe(0);
+      expect(res.body.fixFeatures).toEqual([]);
+      expect(res.body.rollup.state).toBe("not_started");
+    });
+
+    it("returns contract assertions and feature fulfillment links", async () => {
+      const { app, missionStore } = buildApp();
+      const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+      const mission = ms.createMission({ title: "Contract Mission" });
+      const milestone = ms.addMilestone(mission.id, { title: "Milestone B" });
+      const slice = ms.addSlice(milestone.id, { title: "Slice B" });
+      const featureOne = ms.addFeature(slice.id, { title: "Feature One" });
+      const featureTwo = ms.addFeature(slice.id, { title: "Feature Two" });
+      const assertionOne = ms.addContractAssertion(milestone.id, {
+        title: "Assertion One",
+        assertion: "Feature one must pass",
+      });
+      const assertionTwo = ms.addContractAssertion(milestone.id, {
+        title: "Assertion Two",
+        assertion: "Feature two must pass",
+      });
+
+      ms.linkFeatureToAssertion(featureOne.id, assertionOne.id);
+      ms.linkFeatureToAssertion(featureTwo.id, assertionTwo.id);
+
+      const res = await get(app, `/api/missions/milestones/${milestone.id}/validation-telemetry`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.validationContract.assertions).toHaveLength(2);
+      expect(res.body.validationContract.assertions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: assertionOne.id,
+            title: assertionOne.title,
+            assertion: assertionOne.assertion,
+            status: assertionOne.status,
+          }),
+          expect.objectContaining({
+            id: assertionTwo.id,
+            title: assertionTwo.title,
+            assertion: assertionTwo.assertion,
+            status: assertionTwo.status,
+          }),
+        ])
+      );
+      expect(res.body.validationContract.featureFulfillment[featureOne.id]).toEqual({
+        assertionIds: [assertionOne.id],
+        featureTitle: featureOne.title,
+        featureStatus: featureOne.status,
+      });
+      expect(res.body.validationContract.featureFulfillment[featureTwo.id]).toEqual({
+        assertionIds: [assertionTwo.id],
+        featureTitle: featureTwo.title,
+        featureStatus: featureTwo.status,
+      });
+    });
+
+    it("returns validator rounds and generated fix-feature lineage", async () => {
+      const { app, missionStore } = buildApp();
+      const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+      const mission = ms.createMission({ title: "Validation Mission" });
+      const milestone = ms.addMilestone(mission.id, { title: "Milestone C" });
+      const slice = ms.addSlice(milestone.id, { title: "Slice C" });
+      const sourceFeature = ms.addFeature(slice.id, { title: "Source Feature" });
+      const fixFeature = ms.addFeature(slice.id, { title: "Fix Feature" });
+      const assertion = ms.addContractAssertion(milestone.id, {
+        title: "Fails assertion",
+        assertion: "Must not regress",
+      });
+
+      ms.updateFeature(fixFeature.id, {
+        generatedFromFeatureId: sourceFeature.id,
+        generatedFromRunId: "VR-FAILED-001",
+      });
+
+      (missionStore.getValidatorRunsByFeature as ReturnType<typeof vi.fn>).mockImplementation((featureId: string) => {
+        if (featureId !== sourceFeature.id) {
+          return [];
+        }
+
+        return [
+          {
+            id: "VR-FAILED-001",
+            featureId: sourceFeature.id,
+            milestoneId: milestone.id,
+            sliceId: slice.id,
+            status: "failed",
+            implementationAttempt: 2,
+            validatorAttempt: 2,
+            startedAt: "2026-04-16T12:00:00.000Z",
+            completedAt: "2026-04-16T12:02:00.000Z",
+            createdAt: "2026-04-16T12:00:00.000Z",
+            updatedAt: "2026-04-16T12:02:00.000Z",
+          },
+        ] as MissionValidatorRun[];
+      });
+
+      (missionStore.getFailuresForRun as ReturnType<typeof vi.fn>).mockImplementation((runId: string) => {
+        if (runId !== "VR-FAILED-001") {
+          return [];
+        }
+
+        return [
+          {
+            id: "VAF-001",
+            runId: "VR-FAILED-001",
+            featureId: sourceFeature.id,
+            assertionId: assertion.id,
+            message: "Assertion failed",
+            createdAt: "2026-04-16T12:01:00.000Z",
+          },
+        ] as MissionAssertionFailureRecord[];
+      });
+
+      const res = await get(app, `/api/missions/milestones/${milestone.id}/validation-telemetry`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.validationTelemetry.validationRounds).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            roundId: "VR-FAILED-001",
+            validatorStatus: "failed",
+            failedAssertionIds: [assertion.id],
+            generatedFixFeatureIds: [fixFeature.id],
+          }),
+        ])
+      );
+      expect(res.body.fixFeatures).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: fixFeature.id,
+            sourceFeatureId: sourceFeature.id,
+            runId: "VR-FAILED-001",
+            failedAssertionIds: [assertion.id],
+          }),
+        ])
+      );
+    });
+
+    it("returns 404 when milestone does not exist", async () => {
+      const { app } = buildApp();
+
+      const res = await get(app, "/api/missions/milestones/MS-MISSING-TST/validation-telemetry");
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("Milestone not found");
     });
   });
 });

@@ -22,6 +22,7 @@ vi.mock("../../api", async () => {
     skipMilestoneInterview: (...args: any[]) => mockSkipMilestoneInterview(...args),
     skipSliceInterview: (...args: any[]) => mockSkipSliceInterview(...args),
     triageFeature: (...args: any[]) => mockTriageFeature(...args),
+    fetchMilestoneValidationTelemetry: (...args: any[]) => actual.fetchMilestoneValidationTelemetry(...args),
     fetchModels: () => Promise.resolve({ models: [], favoriteProviders: [], favoriteModels: [] }),
   };
 });
@@ -51,6 +52,7 @@ vi.mock("lucide-react", () => ({
   Minimize2: () => <span data-testid="minimize-icon">Minimize2</span>,
   Lock: () => <span data-testid="lock-icon">Lock</span>,
   RefreshCw: ({ className }: any) => <span data-testid="refresh-icon" className={className}>Refresh</span>,
+  AlertCircle: () => <span data-testid="alert-circle-icon">AlertCircle</span>,
 }));
 
 // Mock data
@@ -131,6 +133,31 @@ const mockAutopilotStatus = {
   enabled: false,
   state: "inactive",
   watched: false,
+};
+
+const mockMilestoneValidationRollup = {
+  milestoneId: "MS-001",
+  totalAssertions: 0,
+  passedAssertions: 0,
+  failedAssertions: 0,
+  blockedAssertions: 0,
+  pendingAssertions: 0,
+  unlinkedAssertions: 0,
+  state: "not_started",
+};
+
+const mockMilestoneValidationTelemetry = {
+  validationContract: {
+    assertions: [],
+    featureFulfillment: {},
+  },
+  validationTelemetry: {
+    validationRounds: [],
+    lastValidatorStatus: null,
+    totalRuns: 0,
+  },
+  fixFeatures: [],
+  rollup: mockMilestoneValidationRollup,
 };
 
 const mockMissionEvents = [
@@ -265,6 +292,37 @@ function parseMissionEventsResponse(url: string, events = mockMissionEvents) {
   };
 }
 
+function getValidationApiMock(url: string): unknown | null {
+  if (url.includes("/validation-telemetry")) {
+    return mockMilestoneValidationTelemetry;
+  }
+
+  if (url.includes("/validation-runs")) {
+    return { runs: [], total: 0, limit: 10, offset: 0 };
+  }
+
+  if (url.includes("/validation-loop")) {
+    return {
+      featureId: "F-001",
+      feature: mockMissionDetail.milestones[0].slices[0].features[0],
+      loopState: "idle",
+      implementationAttemptCount: 0,
+      validatorAttemptCount: 0,
+      retryBudgetRemaining: 3,
+    };
+  }
+
+  if (url.includes("/validation")) {
+    return mockMilestoneValidationRollup;
+  }
+
+  if (url.includes("/assertions")) {
+    return [];
+  }
+
+  return null;
+}
+
 class MockEventSource {
   static instances: MockEventSource[] = [];
 
@@ -321,6 +379,11 @@ function createFetchMock() {
       return Promise.resolve(mockApiResponse(mockAutopilotStatus));
     }
 
+    const validationResponse = getValidationApiMock(url);
+    if (validationResponse !== null) {
+      return Promise.resolve(mockApiResponse(validationResponse));
+    }
+
     if (url.includes("/api/missions/") && !url.includes("/milestones") && !url.includes("/status")) {
       return Promise.resolve(mockApiResponse(mockMissionDetail));
     }
@@ -348,6 +411,11 @@ function createDetailFetchMock(events = mockMissionEvents) {
 
     if (url.includes("/autopilot")) {
       return Promise.resolve(mockApiResponse(mockAutopilotStatus));
+    }
+
+    const validationResponse = getValidationApiMock(url);
+    if (validationResponse !== null) {
+      return Promise.resolve(mockApiResponse(validationResponse));
     }
 
     if (url.includes("/api/missions/") && !url.includes("/milestones") && !url.includes("/status")) {
@@ -384,6 +452,11 @@ function createFetchMockWithHealth(
 
     if (url.includes("/autopilot")) {
       return Promise.resolve(mockApiResponse(mockAutopilotStatus));
+    }
+
+    const validationResponse = getValidationApiMock(url);
+    if (validationResponse !== null) {
+      return Promise.resolve(mockApiResponse(validationResponse));
     }
 
     if (url.includes("/api/missions/") && !url.includes("/milestones") && !url.includes("/status")) {
@@ -861,6 +934,66 @@ describe("MissionManager", () => {
         (call) => typeof call[0] === "string" && call[0].includes("/api/missions/M-001")
       ).length;
       expect(updatedFetchCount).toBeGreaterThan(initialFetchCount);
+    });
+  });
+
+  it("fetches milestone validation telemetry when mission detail opens", async () => {
+    const fetchMock = createDetailFetchMock(mockMissionEvents);
+    globalThis.fetch = fetchMock;
+
+    render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Build Auth System")).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByText("Build Auth System"));
+
+    await waitFor(() => {
+      const telemetryCalls = fetchMock.mock.calls.filter(
+        (call) => typeof call[0] === "string" && call[0].includes("/milestones/MS-001/validation-telemetry")
+      ).length;
+      expect(telemetryCalls).toBeGreaterThan(0);
+    });
+  });
+
+  it("refreshes validation telemetry when validator-run SSE event targets selected milestone", async () => {
+    const fetchMock = createDetailFetchMock(mockMissionEvents);
+    globalThis.fetch = fetchMock;
+    globalThis.EventSource = MockEventSource as unknown as typeof globalThis.EventSource;
+
+    render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Build Auth System")).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByText("Build Auth System"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mission-back-btn")).toBeDefined();
+    });
+
+    const initialTelemetryCalls = fetchMock.mock.calls.filter(
+      (call) => typeof call[0] === "string" && call[0].includes("/milestones/MS-001/validation-telemetry")
+    ).length;
+
+    await act(async () => {
+      for (const source of MockEventSource.instances) {
+        source.emit("validator-run:started", {
+          id: "VR-001",
+          featureId: "F-001",
+          milestoneId: "MS-001",
+          status: "running",
+        });
+      }
+    });
+
+    await waitFor(() => {
+      const updatedTelemetryCalls = fetchMock.mock.calls.filter(
+        (call) => typeof call[0] === "string" && call[0].includes("/milestones/MS-001/validation-telemetry")
+      ).length;
+      expect(updatedTelemetryCalls).toBeGreaterThan(initialTelemetryCalls);
     });
   });
 

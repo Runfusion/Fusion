@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   X,
   Plus,
@@ -49,6 +49,7 @@ import type {
   ContractAssertionCreateInput,
   ContractAssertionUpdateInput,
   MilestoneValidationRollup,
+  MilestoneValidationTelemetry,
   MissionFeatureLoopSnapshot,
   MissionValidatorRun,
 } from "./mission-types";
@@ -90,6 +91,7 @@ import {
   fetchAssertionsForFeature,
   fetchFeaturesForAssertion,
   fetchMilestoneValidation,
+  fetchMilestoneValidationTelemetry,
   triggerValidation,
   fetchValidationLoopState,
   fetchValidationRuns,
@@ -169,6 +171,17 @@ const assertionStatusColors: Record<MissionAssertionStatus, { bg: string; text: 
   failed: { bg: "var(--assertion-failed-bg)", text: "var(--assertion-failed-text)" },
   blocked: { bg: "var(--assertion-blocked-bg)", text: "var(--assertion-blocked-text)" },
 };
+
+const validationStateColors: Record<string, { bg: string; text: string }> = {
+  not_started: { bg: "var(--assertion-pending-bg)", text: "var(--assertion-pending-text)" },
+  needs_coverage: { bg: "var(--loop-needs-fix-bg)", text: "var(--loop-needs-fix-text)" },
+  ready: { bg: "var(--loop-validating-bg)", text: "var(--loop-validating-text)" },
+  passed: { bg: "var(--loop-passed-bg)", text: "var(--loop-passed-text)" },
+  failed: { bg: "var(--loop-blocked-bg)", text: "var(--loop-blocked-text)" },
+  blocked: { bg: "var(--loop-blocked-bg)", text: "var(--loop-blocked-text)" },
+};
+
+const featureRetryBudgetMax = 3;
 
 /** Get the plan state for a milestone (derived from interviewState) */
 function getMilestonePlanState(interviewState?: string): "not_started" | "planned" | "needs_update" {
@@ -335,6 +348,22 @@ function isMissionEvent(value: unknown): value is MissionEvent {
     typeof candidate.eventType === "string" &&
     typeof candidate.description === "string" &&
     typeof candidate.timestamp === "string"
+  );
+}
+
+function isMilestoneValidationTelemetry(value: unknown): value is MilestoneValidationTelemetry {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<MilestoneValidationTelemetry>;
+  return (
+    typeof candidate.rollup?.milestoneId === "string" &&
+    typeof candidate.rollup?.state === "string" &&
+    Array.isArray(candidate.validationTelemetry?.validationRounds) &&
+    typeof candidate.validationTelemetry?.totalRuns === "number" &&
+    candidate.validationContract !== undefined &&
+    Array.isArray(candidate.fixFeatures)
   );
 }
 
@@ -546,6 +575,9 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   const [unlinkingFeatures, setUnlinkingFeatures] = useState<Set<string>>(new Set());
   const [featurePickerOpenForAssertion, setFeaturePickerOpenForAssertion] = useState<string | null>(null);
   const [validationRollupByMilestone, setValidationRollupByMilestone] = useState<Map<string, MilestoneValidationRollup>>(new Map());
+  const [selectedMilestoneId, setSelectedMilestoneId] = useState<string | null>(null);
+  const [validationTelemetry, setValidationTelemetry] = useState<MilestoneValidationTelemetry | null>(null);
+  const [validationRoundsExpanded, setValidationRoundsExpanded] = useState(true);
   const [validatingFeatures, setValidatingFeatures] = useState<Set<string>>(new Set());
 
   // Feature loop state
@@ -570,6 +602,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   const missionEventsRef = useRef<MissionEvent[]>([]);
   const missionsRef = useRef<MissionWithSummary[]>([]);
   const selectedMissionRef = useRef<MissionWithHierarchy | null>(null);
+  const selectedMilestoneIdRef = useRef<string | null>(null);
   const activeTabRef = useRef<"structure" | "activity">("structure");
   const eventsFilterRef = useRef<"all" | "errors" | "state_changes" | "tasks" | "slices" | "autopilot">("all");
   const [eventsLoading, setEventsLoading] = useState(false);
@@ -585,6 +618,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   // Keep latest state available to long-lived SSE handlers without reconnect churn.
   missionsRef.current = missions;
   selectedMissionRef.current = selectedMission;
+  selectedMilestoneIdRef.current = selectedMilestoneId;
   activeTabRef.current = activeTab;
   eventsFilterRef.current = eventsFilter;
 
@@ -652,6 +686,8 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       // Auto-expand first milestone and slice
       if (data.milestones.length > 0) {
         const firstMilestoneId = data.milestones[0].id;
+        setSelectedMilestoneId(firstMilestoneId);
+        setValidationRoundsExpanded(true);
         setExpandedMilestones(new Set([firstMilestoneId]));
         // Load assertions and validation rollup for the first milestone (inline to avoid forward ref)
         fetchAssertions(firstMilestoneId, projectId).then((assertions) => {
@@ -671,6 +707,9 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         if (data.milestones[0].slices.length > 0) {
           setExpandedSlices(new Set([data.milestones[0].slices[0].id]));
         }
+      } else {
+        setSelectedMilestoneId(null);
+        setValidationTelemetry(null);
       }
     } catch (err: any) {
       addToast(err.message || "Failed to load mission details", "error");
@@ -678,6 +717,69 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       setDetailLoading(false);
     }
   }, [addToast, projectId]);
+
+  useEffect(() => {
+    if (!isActive || !selectedMilestoneId) {
+      setValidationTelemetry(null);
+      return;
+    }
+
+    let cancelled = false;
+    setValidationTelemetry(null);
+
+    fetchMilestoneValidationTelemetry(selectedMilestoneId, projectId)
+      .then((telemetry) => {
+        if (cancelled) {
+          return;
+        }
+        if (!isMilestoneValidationTelemetry(telemetry)) {
+          setValidationTelemetry(null);
+          return;
+        }
+
+        setValidationTelemetry(telemetry);
+        setValidationRollupByMilestone((prev) => {
+          const next = new Map(prev);
+          next.set(selectedMilestoneId, telemetry.rollup);
+          return next;
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setValidationTelemetry(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isActive, selectedMilestoneId, projectId]);
+
+  useEffect(() => {
+    setValidationRoundsExpanded(true);
+  }, [selectedMilestoneId]);
+
+  const refreshValidationTelemetry = useCallback((milestoneId: string) => {
+    if (!milestoneId || milestoneId !== selectedMilestoneIdRef.current) {
+      return;
+    }
+
+    void fetchMilestoneValidationTelemetry(milestoneId, projectId)
+      .then((telemetry) => {
+        if (selectedMilestoneIdRef.current !== milestoneId || !isMilestoneValidationTelemetry(telemetry)) {
+          return;
+        }
+        setValidationTelemetry(telemetry);
+        setValidationRollupByMilestone((prev) => {
+          const next = new Map(prev);
+          next.set(milestoneId, telemetry.rollup);
+          return next;
+        });
+      })
+      .catch(() => {
+        // Silently fail - telemetry is supplemental
+      });
+  }, [projectId]);
 
   const loadMissionEvents = useCallback(async (
     missionId: string,
@@ -743,6 +845,8 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     if (isActive) {
       loadMissions();
       setSelectedMission(null);
+      setSelectedMilestoneId(null);
+      setValidationTelemetry(null);
       setMissionEvents([]);
       setEventsTotal(0);
       setActiveTab("structure");
@@ -852,13 +956,16 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
           void loadFeatureLoopState(payload.featureId);
           // Refresh validation runs
           void loadValidationRuns(payload.featureId);
+          if (payload.milestoneId) {
+            refreshValidationTelemetry(payload.milestoneId);
+          }
         }
       } catch {
         // ignore invalid payloads
       }
     };
 
-    // Handler for validator run completed - refresh feature loop state, runs, and mission detail
+    // Handler for validator run completed - refresh feature loop state, runs, mission detail, and telemetry
     const handleValidatorRunCompleted = (rawEvent: Event) => {
       const messageEvent = rawEvent as MessageEvent<string>;
       if (!messageEvent.data) return;
@@ -869,6 +976,9 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
           void loadFeatureLoopState(payload.featureId);
           // Refresh validation runs
           void loadValidationRuns(payload.featureId);
+          if (payload.milestoneId) {
+            refreshValidationTelemetry(payload.milestoneId);
+          }
           // Refresh mission detail to update feature status
           if (selectedMissionRef.current) {
             void loadMissionDetail(selectedMissionRef.current.id);
@@ -887,6 +997,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         const payload = JSON.parse(messageEvent.data);
         if (payload && payload.milestoneId) {
           void loadValidationRollup(payload.milestoneId);
+          refreshValidationTelemetry(payload.milestoneId);
         }
       } catch {
         // ignore invalid payloads
@@ -902,6 +1013,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         if (payload && payload.milestoneId) {
           void loadAssertionsForMilestone(payload.milestoneId);
           void loadValidationRollup(payload.milestoneId);
+          refreshValidationTelemetry(payload.milestoneId);
         }
       } catch {
         // ignore invalid payloads
@@ -917,6 +1029,18 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         if (payload && payload.sourceFeatureId) {
           // Refresh feature loop state for the source feature
           void loadFeatureLoopState(payload.sourceFeatureId);
+
+          const createdFeatureSliceId = payload?.feature?.sliceId as string | undefined;
+          const selectedMission = selectedMissionRef.current;
+          if (createdFeatureSliceId && selectedMission) {
+            const containingMilestone = selectedMission.milestones.find((milestone) =>
+              milestone.slices.some((slice) => slice.id === createdFeatureSliceId)
+            );
+            if (containingMilestone) {
+              refreshValidationTelemetry(containingMilestone.id);
+            }
+          }
+
           // Refresh mission detail to show the new fix feature in the list
           if (selectedMissionRef.current) {
             void loadMissionDetail(selectedMissionRef.current.id);
@@ -1011,6 +1135,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     loadMissionDetail,
     loadMissionHealth,
     projectId,
+    refreshValidationTelemetry,
   ]);
 
   // Mission handlers
@@ -1163,6 +1288,8 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   }, [addToast, loadMissionDetail, selectedMission, projectId]);
 
   const toggleMilestoneExpanded = useCallback((milestoneId: string) => {
+    setSelectedMilestoneId(milestoneId);
+    setValidationRoundsExpanded(true);
     setExpandedMilestones((prev) => {
       const next = new Set(prev);
       const isExpanding = !next.has(milestoneId);
@@ -1553,6 +1680,17 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     }
   }, [expandedAssertionId, loadLinkedFeaturesForAssertion]);
 
+  const focusAssertion = useCallback((assertionId: string) => {
+    setExpandedAssertionId(assertionId);
+    void loadLinkedFeaturesForAssertion(assertionId);
+    requestAnimationFrame(() => {
+      const assertionElement = document.querySelector(`[data-mission-assertion-id="${assertionId}"]`);
+      if (assertionElement instanceof HTMLElement && typeof assertionElement.scrollIntoView === "function") {
+        assertionElement.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    });
+  }, [loadLinkedFeaturesForAssertion]);
+
   const handleLinkFeatureToAssertion = useCallback(async (featureId: string, assertionId: string) => {
     try {
       setLinkingAssertions((prev) => new Set(prev).add(assertionId));
@@ -1640,6 +1778,46 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       // Silently fail
     }
   }, [projectId]);
+
+  const focusFeature = useCallback((featureId: string) => {
+    const mission = selectedMissionRef.current;
+    if (!mission) {
+      return;
+    }
+
+    for (const milestone of mission.milestones) {
+      for (const slice of milestone.slices) {
+        const targetFeature = slice.features.find((feature) => feature.id === featureId);
+        if (!targetFeature) {
+          continue;
+        }
+
+        setExpandedMilestones((prev) => {
+          const next = new Set(prev);
+          next.add(milestone.id);
+          return next;
+        });
+        setExpandedSlices((prev) => {
+          const next = new Set(prev);
+          next.add(slice.id);
+          return next;
+        });
+        setExpandedFeatureId(featureId);
+        setSelectedMilestoneId(milestone.id);
+
+        void loadFeatureLoopState(featureId);
+        void loadValidationRuns(featureId);
+
+        requestAnimationFrame(() => {
+          const featureElement = document.querySelector(`[data-mission-feature-id="${featureId}"]`);
+          if (featureElement instanceof HTMLElement && typeof featureElement.scrollIntoView === "function") {
+            featureElement.scrollIntoView({ behavior: "smooth", block: "center" });
+          }
+        });
+        return;
+      }
+    }
+  }, [loadFeatureLoopState, loadValidationRuns]);
 
   // Load run detail with failures
   const loadRunDetail = useCallback(async (runId: string) => {
@@ -1730,6 +1908,8 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
   const handleSelectMission = useCallback((mission: Mission) => {
     setActiveTab("structure");
+    setSelectedMilestoneId(null);
+    setValidationTelemetry(null);
     setMissionEvents([]);
     setEventsTotal(0);
     setEventsFilter("all");
@@ -1739,6 +1919,8 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
   const handleBackToList = useCallback(() => {
     setSelectedMission(null);
+    setSelectedMilestoneId(null);
+    setValidationTelemetry(null);
     setActiveTab("structure");
     setMissionEvents([]);
     setEventsTotal(0);
@@ -1754,6 +1936,24 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     autopilotState,
     selectedMission?.lastAutopilotActivityAt,
   );
+
+  const selectedMilestoneTelemetry = useMemo(() => {
+    if (!validationTelemetry || !selectedMilestoneId || !isMilestoneValidationTelemetry(validationTelemetry)) {
+      return null;
+    }
+    return validationTelemetry.rollup.milestoneId === selectedMilestoneId ? validationTelemetry : null;
+  }, [selectedMilestoneId, validationTelemetry]);
+
+  const latestRoundsByFeatureId = useMemo(() => {
+    const roundsByFeature = new Map<string, MilestoneValidationTelemetry["validationTelemetry"]["validationRounds"][number]>();
+    for (const round of selectedMilestoneTelemetry?.validationTelemetry.validationRounds ?? []) {
+      const existing = roundsByFeature.get(round.featureId);
+      if (!existing || round.startedAt > existing.startedAt) {
+        roundsByFeature.set(round.featureId, round);
+      }
+    }
+    return roundsByFeature;
+  }, [selectedMilestoneTelemetry]);
 
   const handleLoadMoreEvents = useCallback(() => {
     if (!selectedMission || eventsLoading || !hasMoreEvents) {
@@ -2064,7 +2264,21 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
               {activeTab === "structure" ? (
                 <div className="mission-detail__milestones">
-                {selectedMission.milestones.map((milestone) => (
+                {selectedMission.milestones.map((milestone) => {
+                  const milestoneTelemetry = selectedMilestoneTelemetry?.rollup.milestoneId === milestone.id
+                    ? selectedMilestoneTelemetry
+                    : null;
+                  const milestoneRollup = milestoneTelemetry?.rollup ?? validationRollupByMilestone.get(milestone.id);
+                  const milestoneRounds = milestoneTelemetry?.validationTelemetry.validationRounds ?? [];
+                  const milestoneFixFeatures = milestoneTelemetry?.fixFeatures ?? [];
+                  const milestoneValidationColors = validationStateColors[milestoneRollup?.state ?? "not_started"]
+                    ?? validationStateColors.not_started;
+                  const milestoneBlockedReason =
+                    milestoneRollup && (milestoneRollup.state === "blocked" || milestoneRollup.state === "failed")
+                      ? milestoneTelemetry?.validationTelemetry.validationRounds.find((round) => round.blockedReason)?.blockedReason
+                      : undefined;
+
+                  return (
                   <div key={milestone.id} className="mission-milestone">
                     <div className="mission-milestone__header" onClick={() => toggleMilestoneExpanded(milestone.id)}>
                       <button className="mission-milestone__expand">
@@ -2084,40 +2298,28 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                       <span className="mission-milestone__count">{milestone.slices.length} slices</span>
                       <PlanStateIndicator state={getMilestonePlanState(milestone.interviewState)} />
                       {/* Validation state badge and coverage bar in milestone header */}
-                      {validationRollupByMilestone.get(milestone.id) && (
+                      {milestoneRollup && (
                         <>
                           <span
                             className="mission-status-badge mission-status-badge--sm"
                             style={{
-                              backgroundColor: validationRollupByMilestone.get(milestone.id)?.state === "passed"
-                                ? "var(--loop-passed-bg)"
-                                : validationRollupByMilestone.get(milestone.id)?.state === "failed"
-                                  ? "var(--loop-blocked-bg)"
-                                  : validationRollupByMilestone.get(milestone.id)?.state === "blocked"
-                                    ? "var(--loop-blocked-bg)"
-                                    : "var(--assertion-pending-bg)",
-                              color: validationRollupByMilestone.get(milestone.id)?.state === "passed"
-                                ? "var(--loop-passed-text)"
-                                : validationRollupByMilestone.get(milestone.id)?.state === "failed"
-                                  ? "var(--loop-blocked-text)"
-                                  : validationRollupByMilestone.get(milestone.id)?.state === "blocked"
-                                    ? "var(--loop-blocked-text)"
-                                    : "var(--assertion-pending-text)",
+                              backgroundColor: milestoneValidationColors.bg,
+                              color: milestoneValidationColors.text,
                             }}
                             title="Validation state"
                           >
-                            {formatValidationState(validationRollupByMilestone.get(milestone.id)?.state)}
+                            {formatValidationState(milestoneRollup.state)}
                           </span>
-                          {validationRollupByMilestone.get(milestone.id)!.totalAssertions > 0 && (
+                          {milestoneRollup.totalAssertions > 0 && (
                             <div
                               className="mission-milestone__coverage-bar"
-                              title={`${(validationRollupByMilestone.get(milestone.id)!.passedAssertions ?? 0)} of ${validationRollupByMilestone.get(milestone.id)!.totalAssertions} assertions passing`}
+                              title={`${(milestoneRollup.passedAssertions ?? 0)} of ${milestoneRollup.totalAssertions} assertions passing`}
                             >
                               <div
                                 className="mission-milestone__coverage-bar-fill"
                                 style={{
-                                  width: `${((validationRollupByMilestone.get(milestone.id)!.passedAssertions ?? 0) / validationRollupByMilestone.get(milestone.id)!.totalAssertions) * 100}%`,
-                                  backgroundColor: (validationRollupByMilestone.get(milestone.id)!.passedAssertions ?? 0) === validationRollupByMilestone.get(milestone.id)!.totalAssertions
+                                  width: `${((milestoneRollup.passedAssertions ?? 0) / milestoneRollup.totalAssertions) * 100}%`,
+                                  backgroundColor: (milestoneRollup.passedAssertions ?? 0) === milestoneRollup.totalAssertions
                                     ? "var(--color-success)"
                                     : "var(--color-warning)",
                                 }}
@@ -2189,6 +2391,167 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                 Cancel
                               </button>
                             </div>
+                          </div>
+                        )}
+
+                        {milestoneTelemetry && (
+                          <div className="mission-validation-telemetry">
+                            <div className="mission-validation-telemetry__header">
+                              <span className="mission-validation-telemetry__title">Validation Telemetry</span>
+                              <span className="mission-validation-telemetry__meta">
+                                {milestoneTelemetry.validationTelemetry.totalRuns} rounds
+                                {milestoneTelemetry.validationTelemetry.lastValidatorStatus
+                                  ? ` · Last ${milestoneTelemetry.validationTelemetry.lastValidatorStatus}`
+                                  : ""}
+                              </span>
+                            </div>
+
+                            {milestoneBlockedReason && (
+                              <div className="mission-blocked-reason">
+                                <strong>Blocked reason:</strong> {milestoneBlockedReason}
+                              </div>
+                            )}
+
+                            {milestoneRounds.length > 0 && (
+                              <div className="mission-validation-rounds">
+                                <button
+                                  className="mission-btn mission-btn--ghost mission-btn--sm mission-validation-rounds__toggle"
+                                  onClick={() => setValidationRoundsExpanded((prev) => !prev)}
+                                  title={validationRoundsExpanded ? "Hide validation rounds" : "Show validation rounds"}
+                                >
+                                  {validationRoundsExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                                  Validation rounds ({milestoneRounds.length})
+                                </button>
+
+                                {validationRoundsExpanded && (
+                                  <div className="mission-validation-rounds__list">
+                                    {milestoneRounds.map((round) => (
+                                      <div key={round.roundId} className="mission-validation-round">
+                                        <div className="mission-validation-round__header">
+                                          <span className={`mission-status-badge mission-status-badge--sm mission-validation-round__status mission-validation-round__status--${round.validatorStatus}`}>
+                                            {round.validatorStatus}
+                                          </span>
+                                          <span className="mission-validation-round__feature">{round.featureTitle}</span>
+                                          <span className="mission-validation-round__attempts">
+                                            impl #{round.implementationAttempt} · validator #{round.validatorAttempt}
+                                          </span>
+                                        </div>
+
+                                        <div className="mission-validation-round__links">
+                                          <span className="mission-validation-round__label">Failed assertions:</span>
+                                          {round.failedAssertionIds.length > 0 ? (
+                                            <div className="mission-validation-round__chip-list">
+                                              {round.failedAssertionIds.map((assertionId) => (
+                                                <button
+                                                  key={`${round.roundId}-${assertionId}`}
+                                                  className="mission-validation-round__link-chip"
+                                                  onClick={() => focusAssertion(assertionId)}
+                                                  title={`Jump to assertion ${assertionId}`}
+                                                >
+                                                  {assertionId}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          ) : (
+                                            <span className="mission-validation-round__empty">None</span>
+                                          )}
+                                        </div>
+
+                                        <div className="mission-validation-round__links">
+                                          <span className="mission-validation-round__label">Generated fix features:</span>
+                                          {round.generatedFixFeatureIds.length > 0 ? (
+                                            <div className="mission-validation-round__chip-list">
+                                              {round.generatedFixFeatureIds.map((fixFeatureId) => (
+                                                <button
+                                                  key={`${round.roundId}-${fixFeatureId}`}
+                                                  className="mission-validation-round__link-chip"
+                                                  onClick={() => focusFeature(fixFeatureId)}
+                                                  title={`Jump to fix feature ${fixFeatureId}`}
+                                                >
+                                                  {fixFeatureId}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          ) : (
+                                            <span className="mission-validation-round__empty">None</span>
+                                          )}
+                                        </div>
+
+                                        {round.blockedReason && (
+                                          <div className="mission-validation-round__blocked-reason">
+                                            {round.blockedReason}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {milestoneFixFeatures.length > 0 && (
+                              <div className="mission-fix-features">
+                                <div className="mission-fix-features__title">Generated Fix Features</div>
+                                <div className="mission-fix-features__list">
+                                  {milestoneFixFeatures.map((fixFeature) => (
+                                    <div key={fixFeature.id} className="mission-fix-feature">
+                                      <div className="mission-fix-feature__header">
+                                        <button
+                                          className="mission-fix-feature__title"
+                                          onClick={() => focusFeature(fixFeature.id)}
+                                          title={`Jump to feature ${fixFeature.id}`}
+                                        >
+                                          {fixFeature.title}
+                                        </button>
+                                        <span
+                                          className="mission-status-badge mission-status-badge--sm"
+                                          style={{
+                                            backgroundColor: featureStatusColors[fixFeature.status].bg,
+                                            color: featureStatusColors[fixFeature.status].text,
+                                          }}
+                                        >
+                                          {fixFeature.status}
+                                        </span>
+                                        {fixFeature.loopState && (
+                                          <span className={`mission-loop-state mission-loop-state--${fixFeature.loopState}`}>
+                                            {fixFeature.loopState}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="mission-fix-feature__meta">
+                                        <span>Source:</span>
+                                        <button
+                                          className="mission-validation-round__link-chip"
+                                          onClick={() => focusFeature(fixFeature.sourceFeatureId)}
+                                          title={`Jump to source feature ${fixFeature.sourceFeatureId}`}
+                                        >
+                                          {fixFeature.sourceFeatureId}
+                                        </button>
+                                        <span>Run:</span>
+                                        <span className="mission-fix-feature__run">{fixFeature.runId}</span>
+                                      </div>
+                                      {fixFeature.failedAssertionIds.length > 0 && (
+                                        <div className="mission-fix-feature__assertions">
+                                          <span className="mission-validation-round__label">Failed assertions:</span>
+                                          <div className="mission-validation-round__chip-list">
+                                            {fixFeature.failedAssertionIds.map((assertionId) => (
+                                              <button
+                                                key={`${fixFeature.id}-${assertionId}`}
+                                                className="mission-validation-round__link-chip"
+                                                onClick={() => focusAssertion(assertionId)}
+                                                title={`Jump to assertion ${assertionId}`}
+                                              >
+                                                {assertionId}
+                                              </button>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
 
@@ -2338,7 +2701,11 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                   {/* Features */}
                                   <div className="mission-features">
                                     {slice.features?.map((feature) => (
-                                      <div key={feature.id} className="mission-feature">
+                                      <div
+                                        key={feature.id}
+                                        className="mission-feature"
+                                        data-mission-feature-id={feature.id}
+                                      >
                                         <div className="mission-feature__header">
                                           <button
                                             className="mission-feature__expand"
@@ -2375,46 +2742,32 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                           {feature.generatedFromFeatureId && (
                                             <button
                                               className="mission-feature__lineage"
-                                              onClick={() => {
-                                                // Navigate to source feature: find its milestone/slice and expand to it
-                                                // Find the source feature in the mission hierarchy
-                                                for (const m of selectedMission?.milestones ?? []) {
-                                                  for (const s of m.slices) {
-                                                    const sourceFeature = s.features.find((f) => f.id === feature.generatedFromFeatureId);
-                                                    if (sourceFeature) {
-                                                      setExpandedMilestones((prev) => {
-                                                        const next = new Set(prev);
-                                                        next.add(m.id);
-                                                        return next;
-                                                      });
-                                                      setExpandedSlices((prev) => {
-                                                        const next = new Set(prev);
-                                                        next.add(s.id);
-                                                        return next;
-                                                      });
-                                                      setExpandedFeatureId(sourceFeature.id);
-                                                      // Load loop state for source feature
-                                                      void loadFeatureLoopState(sourceFeature.id);
-                                                      void loadValidationRuns(sourceFeature.id);
-                                                      return;
-                                                    }
-                                                  }
-                                                }
-                                              }}
+                                              onClick={() => focusFeature(feature.generatedFromFeatureId!)}
                                               title={`Generated from feature: ${feature.generatedFromFeatureId}`}
                                             >
                                               🔗 Fix
                                             </button>
                                           )}
-                                          {/* Retry budget display */}
-                                          {feature.loopState && feature.loopState !== "idle" && featureLoopStates.get(feature.id) && (
-                                            <span
-                                              className="mission-feature__retry-budget"
-                                              title="Implementation attempts remaining"
-                                            >
-                                              Attempt {featureLoopStates.get(feature.id)!.implementationAttemptCount} of {featureLoopStates.get(feature.id)!.implementationAttemptCount + featureLoopStates.get(feature.id)!.retryBudgetRemaining}
-                                            </span>
-                                          )}
+                                          {/* Retry/iteration display for validating and needs-fix states */}
+                                          {(feature.loopState === "validating" || feature.loopState === "needs_fix") && (() => {
+                                            const loopSnapshot = featureLoopStates.get(feature.id);
+                                            const latestRound = latestRoundsByFeatureId.get(feature.id);
+                                            const implementationAttempt = loopSnapshot?.implementationAttemptCount
+                                              ?? latestRound?.implementationAttempt
+                                              ?? feature.implementationAttemptCount
+                                              ?? 0;
+                                            const retryBudgetRemaining = loopSnapshot?.retryBudgetRemaining
+                                              ?? Math.max(0, featureRetryBudgetMax - implementationAttempt);
+
+                                            return (
+                                              <span
+                                                className="mission-feature__retry-budget"
+                                                title="Implementation attempts and remaining retry budget"
+                                              >
+                                                Attempt {implementationAttempt} · {retryBudgetRemaining} {retryBudgetRemaining === 1 ? "retry" : "retries"} left
+                                              </span>
+                                            );
+                                          })()}
                                           {/* Validation trigger button for implementing features */}
                                           {feature.loopState === "implementing" && (
                                             <button
@@ -2714,33 +3067,25 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                           <div className="mission-assertions">
                             <div className="mission-assertions__header">
                               <span className="mission-assertions__title">Assertions</span>
-                              {validationRollupByMilestone.get(milestone.id) && (
+                              {milestoneRollup && (
                                 <span
                                   className="mission-status-badge mission-status-badge--sm"
                                   style={{
-                                    backgroundColor: validationRollupByMilestone.get(milestone.id)?.state === "passed"
-                                      ? "var(--loop-passed-bg)"
-                                      : validationRollupByMilestone.get(milestone.id)?.state === "failed"
-                                        ? "var(--loop-blocked-bg)"
-                                        : "var(--assertion-pending-bg)",
-                                    color: validationRollupByMilestone.get(milestone.id)?.state === "passed"
-                                      ? "var(--loop-passed-text)"
-                                      : validationRollupByMilestone.get(milestone.id)?.state === "failed"
-                                        ? "var(--loop-blocked-text)"
-                                        : "var(--assertion-pending-text)",
+                                    backgroundColor: milestoneValidationColors.bg,
+                                    color: milestoneValidationColors.text,
                                   }}
                                 >
-                                  {formatValidationState(validationRollupByMilestone.get(milestone.id)?.state)}
+                                  {formatValidationState(milestoneRollup.state)}
                                 </span>
                               )}
                               {/* Assertion coverage bar */}
-                              {validationRollupByMilestone.get(milestone.id) && validationRollupByMilestone.get(milestone.id)!.totalAssertions > 0 && (
-                                <div className="mission-assertions__coverage-bar" title={`${(validationRollupByMilestone.get(milestone.id)!.passedAssertions ?? 0)} of ${validationRollupByMilestone.get(milestone.id)!.totalAssertions} assertions passing`}>
+                              {milestoneRollup && milestoneRollup.totalAssertions > 0 && (
+                                <div className="mission-assertions__coverage-bar" title={`${(milestoneRollup.passedAssertions ?? 0)} of ${milestoneRollup.totalAssertions} assertions passing`}>
                                   <div
                                     className="mission-assertions__coverage-bar-fill"
                                     style={{
-                                      width: `${((validationRollupByMilestone.get(milestone.id)!.passedAssertions ?? 0) / validationRollupByMilestone.get(milestone.id)!.totalAssertions) * 100}%`,
-                                      backgroundColor: (validationRollupByMilestone.get(milestone.id)!.passedAssertions ?? 0) === validationRollupByMilestone.get(milestone.id)!.totalAssertions
+                                      width: `${((milestoneRollup.passedAssertions ?? 0) / milestoneRollup.totalAssertions) * 100}%`,
+                                      backgroundColor: (milestoneRollup.passedAssertions ?? 0) === milestoneRollup.totalAssertions
                                         ? "var(--color-success)"
                                         : "var(--color-warning)",
                                     }}
@@ -2800,7 +3145,11 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                             {/* Assertions list */}
                             <div className="mission-assertions__list">
                               {(Array.isArray(assertionsByMilestone.get(milestone.id)) ? assertionsByMilestone.get(milestone.id)! : [] as MissionContractAssertion[]).map((assertion) => (
-                                <div key={assertion.id} className="mission-assertion">
+                                <div
+                                  key={assertion.id}
+                                  className="mission-assertion"
+                                  data-mission-assertion-id={assertion.id}
+                                >
                                   <div className="mission-assertion__header">
                                     {editingAssertionId === assertion.id ? (
                                       <div className="mission-form-card">
@@ -2972,7 +3321,8 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                       </div>
                     )}
                   </div>
-                ))}
+                  );
+                })}
 
                 {/* Create milestone button/form */}
                 {selectedMission && !isCreatingMilestone && editingMilestoneId === null && (

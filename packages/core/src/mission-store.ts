@@ -40,6 +40,7 @@ import type {
   SlicePlanState,
   MissionContractAssertion,
   FeatureAssertionLink,
+  FixFeatureCreatedPayload,
   MilestoneValidationRollup,
   ContractAssertionCreateInput,
   ContractAssertionUpdateInput,
@@ -122,6 +123,8 @@ export interface MissionStoreEvents {
   "validator-run:started": [MissionValidatorRun];
   /** Emitted when a validator run is completed (run, final status, durationMs) */
   "validator-run:completed": [MissionValidatorRun, ValidatorRunStatus, number];
+  /** Emitted when a generated fix feature is created after failed validation */
+  "fix-feature:created": [FixFeatureCreatedPayload];
 }
 
 // ── MissionStore Class ──────────────────────────────────────────────
@@ -2177,6 +2180,12 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
 
     this.db.bumpLastModified();
     this.emit("feature:created", fixFeature);
+    this.emit("fix-feature:created", {
+      feature: fixFeature,
+      sourceFeatureId,
+      runId,
+      failedAssertionIds,
+    });
 
     return fixFeature;
   }

@@ -32,6 +32,7 @@ import type {
   InterviewState,
   MissionAssertionStatus,
   FeatureLoopState,
+  ValidatorRunStatus,
   ContractAssertionCreateInput,
   ContractAssertionUpdateInput,
 } from "@fusion/core";
@@ -1866,6 +1867,150 @@ export function createMissionRouter(
 
       const rollup = missionStore.getMilestoneValidationRollup(milestoneId);
       res.json(rollup);
+    })
+  );
+
+  /**
+   * GET /api/missions/milestones/:milestoneId/validation-telemetry
+   *
+   * Returns grouped milestone validation data by combining:
+   * - Contract assertions (`listContractAssertions`) and per-feature assertion links (`listAssertionsForFeature`)
+   * - Validator run rounds (`getValidatorRunsByFeature`) and failures (`getFailuresForRun`)
+   * - Generated fix feature lineage (features with `generatedFromFeatureId` and `generatedFromRunId`)
+   * - Milestone validation rollup (`getMilestoneValidationRollup`)
+   */
+  router.get(
+    "/milestones/:milestoneId/validation-telemetry",
+    catchTypedHandler(async (req, res) => {
+      const { milestoneId } = req.params;
+
+      if (!validateMilestoneId(milestoneId)) {
+        throw badRequest("Invalid milestone ID format");
+      }
+
+      const milestone = missionStore.getMilestone(milestoneId);
+      if (!milestone) {
+        throw notFound("Milestone not found");
+      }
+
+      const assertions = missionStore.listContractAssertions(milestoneId);
+      const slices = missionStore.listSlices(milestoneId);
+      const allFeatures: MissionFeature[] = slices.flatMap((slice) => missionStore.listFeatures(slice.id));
+
+      const featureFulfillment: Record<string, {
+        assertionIds: string[];
+        featureTitle: string;
+        featureStatus: string;
+      }> = {};
+
+      for (const feature of allFeatures) {
+        const linkedAssertions = missionStore.listAssertionsForFeature(feature.id);
+        featureFulfillment[feature.id] = {
+          assertionIds: linkedAssertions.map((assertion) => assertion.id),
+          featureTitle: feature.title,
+          featureStatus: feature.status,
+        };
+      }
+
+      const generatedFixFeatureIdsByRunId = new Map<string, string[]>();
+      for (const feature of allFeatures) {
+        const runId = feature.generatedFromRunId;
+        if (!runId) continue;
+        const existing = generatedFixFeatureIdsByRunId.get(runId) ?? [];
+        existing.push(feature.id);
+        generatedFixFeatureIdsByRunId.set(runId, existing);
+      }
+
+      const failedAssertionIdsByRunId = new Map<string, string[]>();
+      const validationRounds = [] as Array<{
+        roundId: string;
+        featureId: string;
+        featureTitle: string;
+        validatorStatus: ValidatorRunStatus;
+        implementationAttempt: number;
+        validatorAttempt: number;
+        failedAssertionIds: string[];
+        generatedFixFeatureIds: string[];
+        blockedReason?: string;
+        startedAt: string;
+        completedAt?: string;
+      }>;
+
+      for (const feature of allFeatures) {
+        const runs = missionStore.getValidatorRunsByFeature(feature.id);
+        for (const run of runs) {
+          let failedAssertionIds: string[] = [];
+          if (run.status === "failed") {
+            failedAssertionIds = missionStore
+              .getFailuresForRun(run.id)
+              .map((failure) => failure.assertionId);
+            failedAssertionIdsByRunId.set(run.id, failedAssertionIds);
+          }
+
+          validationRounds.push({
+            roundId: run.id,
+            featureId: run.featureId,
+            featureTitle: feature.title,
+            validatorStatus: run.status,
+            implementationAttempt: run.implementationAttempt,
+            validatorAttempt: run.validatorAttempt,
+            failedAssertionIds,
+            generatedFixFeatureIds: generatedFixFeatureIdsByRunId.get(run.id) ?? [],
+            blockedReason: run.blockedReason,
+            startedAt: run.startedAt,
+            completedAt: run.completedAt,
+          });
+        }
+      }
+
+      validationRounds.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+      const lastValidatorStatus = validationRounds[0]?.validatorStatus ?? null;
+
+      const fixFeatures = allFeatures
+        .filter((feature) => feature.generatedFromFeatureId && feature.generatedFromRunId)
+        .map((feature) => {
+          const runId = feature.generatedFromRunId as string;
+          let failedAssertionIds = failedAssertionIdsByRunId.get(runId);
+
+          if (!failedAssertionIds) {
+            failedAssertionIds = missionStore
+              .getFailuresForRun(runId)
+              .map((failure) => failure.assertionId);
+            failedAssertionIdsByRunId.set(runId, failedAssertionIds);
+          }
+
+          return {
+            id: feature.id,
+            title: feature.title,
+            sourceFeatureId: feature.generatedFromFeatureId as string,
+            runId,
+            failedAssertionIds,
+            status: feature.status,
+            loopState: feature.loopState,
+          };
+        });
+
+      const rollup = missionStore.getMilestoneValidationRollup(milestoneId);
+
+      res.json({
+        validationContract: {
+          assertions: assertions.map((assertion) => ({
+            id: assertion.id,
+            title: assertion.title,
+            assertion: assertion.assertion,
+            status: assertion.status,
+            orderIndex: assertion.orderIndex,
+          })),
+          featureFulfillment,
+        },
+        validationTelemetry: {
+          validationRounds,
+          lastValidatorStatus,
+          totalRuns: validationRounds.length,
+        },
+        fixFeatures,
+        rollup,
+      });
     })
   );
 

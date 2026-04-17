@@ -276,6 +276,7 @@ export type {
   FeatureEventPayload,
   FeatureDeletedPayload,
   FeatureLinkedPayload,
+  FixFeatureCreatedPayload,
   // Validator run types
   MissionValidatorRun,
   MissionAssertionFailureRecord,

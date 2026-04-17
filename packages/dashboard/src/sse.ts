@@ -1,5 +1,15 @@
 import type { Request, Response } from "express";
-import type { TaskStore, MissionStore, PluginStore, PluginInstallation, PluginState, AgentStore, MessageStore } from "@fusion/core";
+import type {
+  TaskStore,
+  MissionStore,
+  PluginStore,
+  PluginInstallation,
+  PluginState,
+  AgentStore,
+  MessageStore,
+  MissionValidatorRun,
+  FixFeatureCreatedPayload,
+} from "@fusion/core";
 import type { AiSessionStore } from "./ai-session-store.js";
 
 let activeConnections = 0;
@@ -289,6 +299,18 @@ export function createSSE(
       send(`event: milestone:validation:updated\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
+    const onValidatorRunStarted = (run: MissionValidatorRun) => {
+      send(`event: validator-run:started\ndata: ${JSON.stringify(run)}\n\n`);
+    };
+
+    const onValidatorRunCompleted = (run: MissionValidatorRun) => {
+      send(`event: validator-run:completed\ndata: ${JSON.stringify(run)}\n\n`);
+    };
+
+    const onFixFeatureCreated = (payload: FixFeatureCreatedPayload) => {
+      send(`event: fix-feature:created\ndata: ${JSON.stringify(payload)}\n\n`);
+    };
+
     const onAiSessionUpdated = (data: any) => {
       send(`event: ai_session:updated\ndata: ${JSON.stringify(data)}\n\n`);
     };
@@ -402,6 +424,9 @@ export function createSSE(
         missionStore.off("assertion:unlinked", onAssertionUnlinked);
         missionStore.off("mission:event", onMissionEvent);
         missionStore.off("milestone:validation:updated", onMilestoneValidationUpdated);
+        missionStore.off("validator-run:started", onValidatorRunStarted);
+        missionStore.off("validator-run:completed", onValidatorRunCompleted);
+        missionStore.off("fix-feature:created", onFixFeatureCreated);
       }
       if (aiSessionStore) {
         aiSessionStore.off("ai_session:updated", onAiSessionUpdated);
@@ -459,6 +484,9 @@ export function createSSE(
       missionStore.on("assertion:unlinked", onAssertionUnlinked);
       missionStore.on("mission:event", onMissionEvent);
       missionStore.on("milestone:validation:updated", onMilestoneValidationUpdated);
+      missionStore.on("validator-run:started", onValidatorRunStarted);
+      missionStore.on("validator-run:completed", onValidatorRunCompleted);
+      missionStore.on("fix-feature:created", onFixFeatureCreated);
     }
 
     if (aiSessionStore) {

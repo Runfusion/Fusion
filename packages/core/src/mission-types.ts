@@ -484,6 +484,18 @@ export interface FeatureLinkedPayload {
   taskId: string;
 }
 
+/** Payload for fix-feature:created event */
+export interface FixFeatureCreatedPayload {
+  /** The generated fix feature */
+  feature: MissionFeature;
+  /** Source feature ID that failed validation */
+  sourceFeatureId: string;
+  /** Validator run ID that triggered the fix generation */
+  runId: string;
+  /** Assertion IDs that failed and triggered the fix */
+  failedAssertionIds: string[];
+}
+
 // ── Contract Assertion Types ────────────────────────────────────────
 
 /**

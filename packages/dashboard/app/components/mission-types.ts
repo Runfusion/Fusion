@@ -117,6 +117,7 @@ export interface MilestoneValidationRollup {
   failedAssertions: number;
   blockedAssertions: number;
   pendingAssertions: number;
+  unlinkedAssertions: number;
   state: MilestoneValidationState;
 }
 
@@ -136,6 +137,51 @@ export interface MissionValidatorRun {
   completedAt?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Grouped validation telemetry for a milestone */
+export interface MilestoneValidationTelemetry {
+  validationContract: {
+    assertions: Array<{
+      id: string;
+      title: string;
+      assertion: string;
+      status: MissionAssertionStatus;
+      orderIndex: number;
+    }>;
+    featureFulfillment: Record<string, {
+      assertionIds: string[];
+      featureTitle: string;
+      featureStatus: string;
+    }>;
+  };
+  validationTelemetry: {
+    validationRounds: Array<{
+      roundId: string;
+      featureId: string;
+      featureTitle: string;
+      validatorStatus: ValidatorRunStatus;
+      implementationAttempt: number;
+      validatorAttempt: number;
+      failedAssertionIds: string[];
+      generatedFixFeatureIds: string[];
+      blockedReason?: string;
+      startedAt: string;
+      completedAt?: string;
+    }>;
+    lastValidatorStatus: ValidatorRunStatus | null;
+    totalRuns: number;
+  };
+  fixFeatures: Array<{
+    id: string;
+    title: string;
+    sourceFeatureId: string;
+    runId: string;
+    failedAssertionIds: string[];
+    status: FeatureStatus;
+    loopState?: FeatureLoopState;
+  }>;
+  rollup: MilestoneValidationRollup;
 }
 
 /** Loop state snapshot for a feature */

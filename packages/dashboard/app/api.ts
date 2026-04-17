@@ -63,6 +63,7 @@ import type {
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 import type { ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult } from "@fusion/core";
 import type { DiscoveredSkill, CatalogEntry, CatalogFetchResult, ToggleSkillResult } from "@fusion/dashboard";
+import type { MilestoneValidationTelemetry } from "./components/mission-types";
 
 // Re-export skills types for use by hooks and components
 export type { DiscoveredSkill, CatalogEntry, CatalogFetchResult, ToggleSkillResult };
@@ -3925,12 +3926,18 @@ export interface MilestoneValidationRollup {
   failedAssertions: number;
   blockedAssertions: number;
   pendingAssertions: number;
+  unlinkedAssertions: number;
   state: "not_started" | "needs_coverage" | "ready" | "passed" | "failed" | "blocked";
 }
 
 /** Get milestone validation rollup */
 export function fetchMilestoneValidation(milestoneId: string, projectId?: string): Promise<MilestoneValidationRollup> {
   return api<MilestoneValidationRollup>(withProjectId(`/missions/milestones/${encodeURIComponent(milestoneId)}/validation`, projectId));
+}
+
+/** Fetch grouped validation telemetry for a milestone */
+export function fetchMilestoneValidationTelemetry(milestoneId: string, projectId?: string): Promise<MilestoneValidationTelemetry> {
+  return api<MilestoneValidationTelemetry>(withProjectId(`/missions/milestones/${encodeURIComponent(milestoneId)}/validation-telemetry`, projectId));
 }
 
 // ── Validation Loop API ───────────────────────────────────────────────────────
