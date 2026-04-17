@@ -540,6 +540,200 @@ describe("ModelOnboardingModal", () => {
       expect(screen.queryByTestId("onboarding-github-connect-cta")).toBeNull();
     });
 
+    describe("GitHub connection status feedback", () => {
+      it("shows connected status with success feedback", async () => {
+        mockFetchAuthStatus.mockResolvedValueOnce({
+          providers: [
+            { id: "github", name: "GitHub", authenticated: true, type: "oauth" },
+          ],
+        });
+
+        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+        await navigateToGitHubStep();
+
+        const badge = screen.getByTestId("github-status-badge");
+        expect(badge).toHaveTextContent("✓ Connected");
+        expect(badge).toHaveClass("connected");
+        expect(screen.getByText("GitHub is connected. You can import issues and track pull requests.")).toBeTruthy();
+      });
+
+      it("shows not-connected status and keeps default helper text", async () => {
+        mockFetchAuthStatus.mockResolvedValueOnce({
+          providers: [
+            { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
+          ],
+        });
+
+        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+        await navigateToGitHubStep();
+
+        const badge = screen.getByTestId("github-status-badge");
+        expect(badge).toHaveTextContent("Not connected");
+        expect(badge).toHaveClass("not-connected");
+        expect(screen.queryByText("Connection failed or timed out.")).toBeNull();
+        expect(screen.getByText("No worries if you're not ready — connect GitHub anytime from Settings → Authentication.")).toBeTruthy();
+      });
+
+      it("shows pending status while GitHub login is in progress", async () => {
+        mockFetchAuthStatus.mockResolvedValueOnce({
+          providers: [
+            { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
+          ],
+        });
+        mockLoginProvider.mockImplementationOnce(() => new Promise(() => {}));
+
+        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+        await navigateToGitHubStep();
+
+        fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+
+        await waitFor(() => {
+          const badge = screen.getByTestId("github-status-badge");
+          expect(badge).toHaveTextContent("⏳ Connecting…");
+          expect(badge).toHaveClass("pending");
+        });
+      });
+
+      it("shows failed status feedback with retry action", async () => {
+        mockFetchAuthStatus.mockResolvedValueOnce({
+          providers: [
+            { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
+          ],
+        });
+        mockLoginProvider.mockRejectedValueOnce(new Error("GitHub login failed"));
+
+        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+        await navigateToGitHubStep();
+
+        fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+
+        await waitFor(() => {
+          const badge = screen.getByTestId("github-status-badge");
+          expect(badge).toHaveTextContent("✗ Connection failed");
+          expect(badge).toHaveClass("retry");
+        });
+
+        expect(screen.getByText("Connection failed or timed out.")).toBeTruthy();
+        expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+      });
+
+      it("retries login from failed feedback", async () => {
+        mockFetchAuthStatus.mockResolvedValueOnce({
+          providers: [
+            { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
+          ],
+        });
+        mockLoginProvider
+          .mockRejectedValueOnce(new Error("Initial GitHub failure"))
+          .mockImplementationOnce(() => new Promise(() => {}));
+
+        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+        await navigateToGitHubStep();
+
+        fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+
+        await waitFor(() => {
+          expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+        });
+
+        fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+        await waitFor(() => {
+          expect(mockLoginProvider).toHaveBeenCalledTimes(2);
+        });
+      });
+
+      it("persists skipped status from Skip GitHub link and restores skipped feedback", async () => {
+        mockFetchAuthStatus.mockResolvedValueOnce({
+          providers: [
+            { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
+          ],
+        });
+
+        const { unmount } = render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+        await navigateToGitHubStep();
+
+        fireEvent.click(screen.getByText("Skip GitHub →"));
+
+        const persistedSkipCall = mockSaveOnboardingState.mock.calls.some((call) => {
+          return call[1]?.stepData?.github?.skipped === true;
+        });
+        expect(persistedSkipCall).toBe(true);
+
+        unmount();
+
+        const persistedState = {
+          currentStep: "github",
+          completedSteps: ["ai-setup"],
+          updatedAt: "2026-04-17T00:00:00.000Z",
+          dismissed: false,
+          completed: false,
+          stepData: {
+            github: {
+              skipped: true,
+            },
+          },
+        };
+        mockGetOnboardingState.mockReturnValue(persistedState);
+        mockFetchAuthStatus.mockResolvedValueOnce({
+          providers: [
+            { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
+          ],
+        });
+
+        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+        await waitFor(() => {
+          expect(screen.getByText("Connect GitHub")).toBeTruthy();
+        });
+
+        const badge = screen.getByTestId("github-status-badge");
+        expect(badge).toHaveTextContent("Skipped");
+        expect(badge).toHaveClass("skipped");
+        expect(screen.getByText(/GitHub was skipped/)).toBeTruthy();
+        expect(screen.getByRole("button", { name: "Connect anyway" })).toBeTruthy();
+      });
+
+      it("connects from skipped feedback via Connect anyway", async () => {
+        const persistedState = {
+          currentStep: "github",
+          completedSteps: ["ai-setup"],
+          updatedAt: "2026-04-17T00:00:00.000Z",
+          dismissed: false,
+          completed: false,
+          stepData: {
+            github: {
+              skipped: true,
+            },
+          },
+        };
+        mockGetOnboardingState.mockReturnValue(persistedState);
+        mockFetchAuthStatus.mockResolvedValueOnce({
+          providers: [
+            { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
+          ],
+        });
+
+        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+        await waitFor(() => {
+          expect(screen.getByRole("button", { name: "Connect anyway" })).toBeTruthy();
+        });
+
+        fireEvent.click(screen.getByRole("button", { name: "Connect anyway" }));
+
+        await waitFor(() => {
+          expect(mockLoginProvider).toHaveBeenCalledWith("github");
+        });
+      });
+    });
+
     it("allows navigating to First Task step via Continue without GitHub", async () => {
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
 
@@ -2175,7 +2369,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
 
       // GitHub should show Not connected
       expect(screen.getByTestId("onboarding-auth-status-github")).toHaveTextContent("Not connected");
-      expect(screen.getByTestId("onboarding-auth-status-github")).toHaveClass("auth-status-badge");
+      expect(screen.getByTestId("github-status-badge")).toHaveClass("auth-status-badge", "not-connected");
     });
   });
 

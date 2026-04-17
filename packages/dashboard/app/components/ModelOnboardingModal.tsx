@@ -284,6 +284,9 @@ export type LoginOutcome = "pending" | "success" | "timeout" | "failed" | "cance
 /** Provider connection status for UI display */
 export type ProviderConnectionStatus = "connected" | "not-connected" | "skipped" | "retry";
 
+/** GitHub-specific status variants for richer connection feedback */
+type GitHubConnectionStatus = "connected" | "failed" | "pending" | "skipped" | "not-connected";
+
 /** Maximum number of poll cycles before timing out (150 × 2s = 5 minutes) */
 const MAX_POLL_CYCLES = 150;
 
@@ -322,6 +325,10 @@ export function ModelOnboardingModal({
   const [apiKeyErrors, setApiKeyErrors] = useState<Record<string, string>>({});
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [loginOutcomes, setLoginOutcomes] = useState<Record<string, LoginOutcome>>({});
+  const [isGithubSkipped, setIsGithubSkipped] = useState<boolean>(() => {
+    const state = getOnboardingState();
+    return state?.stepData?.github?.skipped === true;
+  });
   const pollCountRef = useRef<number>(0);
 
   // Initialize skippedProviders from persisted state
@@ -408,6 +415,11 @@ export function ModelOnboardingModal({
     aiSetupReturnRef.current = step !== "ai-setup";
   }, [step, loadAuthStatus]);
 
+  // Check if GitHub provider is configured and currently authenticated
+  const githubProvider = authProviders.find((p) => p.id === "github");
+  const hasGithubProvider = !!githubProvider;
+  const isGithubAuthenticated = githubProvider?.authenticated ?? false;
+
   // Get provider connection status for UI display
   const getProviderStatus = useCallback((provider: AuthProvider): ProviderConnectionStatus => {
     if (provider.authenticated) {
@@ -436,6 +448,46 @@ export function ModelOnboardingModal({
     return (
       <span
         data-testid="provider-status-badge"
+        className={badgeClassName}
+        data-status={status}
+      >
+        {text}
+      </span>
+    );
+  }
+
+  const getGitHubStatus = useCallback((): GitHubConnectionStatus => {
+    if (isGithubAuthenticated) {
+      return "connected";
+    }
+
+    const githubOutcome = loginOutcomes["github"];
+    if (githubOutcome === "pending") {
+      return "pending";
+    }
+    if (githubOutcome === "failed" || githubOutcome === "timeout") {
+      return "failed";
+    }
+    if (isGithubSkipped) {
+      return "skipped";
+    }
+
+    return "not-connected";
+  }, [isGithubAuthenticated, loginOutcomes, isGithubSkipped]);
+
+  function GitHubStatusBadge({ status }: { status: GitHubConnectionStatus }) {
+    const config: Record<GitHubConnectionStatus, { text: string; className: string }> = {
+      connected: { text: "✓ Connected", className: "auth-status-badge connected" },
+      pending: { text: "⏳ Connecting…", className: "auth-status-badge pending" },
+      failed: { text: "✗ Connection failed", className: "auth-status-badge retry" },
+      skipped: { text: "Skipped", className: "auth-status-badge skipped" },
+      "not-connected": { text: "Not connected", className: "auth-status-badge not-connected" },
+    };
+
+    const { text, className: badgeClassName } = config[status];
+    return (
+      <span
+        data-testid="github-status-badge"
         className={badgeClassName}
         data-status={status}
       >
@@ -517,11 +569,6 @@ export function ModelOnboardingModal({
     }
   }, [loginOutcomes, persistLoginOutcome]);
 
-  // Check if we have GitHub provider
-  const githubProvider = authProviders.find((p) => p.id === "github");
-  const hasGithubProvider = !!githubProvider;
-  const isGithubAuthenticated = githubProvider?.authenticated ?? false;
-
   // Cleanup polling on unmount
   useEffect(() => {
     return () => {
@@ -553,6 +600,25 @@ export function ModelOnboardingModal({
       setStep("github");
     }
   }, [step]);
+
+  const setGitHubSkippedState = useCallback((skipped: boolean) => {
+    setIsGithubSkipped(skipped);
+    saveOnboardingState(step, {
+      completedSteps,
+      stepData: {
+        github: {
+          skipped,
+        },
+      },
+    });
+  }, [step, completedSteps]);
+
+  const handleSkipGitHubStep = useCallback(() => {
+    if (!isGithubAuthenticated) {
+      setGitHubSkippedState(true);
+    }
+    handleNext();
+  }, [isGithubAuthenticated, setGitHubSkippedState, handleNext]);
 
   // OAuth login handler
   const handleLogin = useCallback(
@@ -603,6 +669,9 @@ export function ModelOnboardingModal({
               }
               setAuthActionInProgress(null);
               setLoginOutcomes((prev) => ({ ...prev, [providerId]: "success" }));
+              if (providerId === "github") {
+                setGitHubSkippedState(false);
+              }
               addToast("Login successful", "success");
             }
           } catch {
@@ -625,7 +694,7 @@ export function ModelOnboardingModal({
         setAuthActionInProgress(null);
       }
     },
-    [addToast],
+    [addToast, setGitHubSkippedState],
   );
 
   // Cancellation handler for in-progress logins
@@ -892,6 +961,8 @@ export function ModelOnboardingModal({
   // Filter out GitHub from AI providers list
   const aiOauthProviders = oauthProviders.filter((p) => p.id !== "github");
   const aiApiKeyProviders = apiKeyProviders.filter((p) => p.id !== "github");
+
+  const githubStatus = getGitHubStatus();
 
   // Skip-state detection: derived state for informational banners
   // Detects whether at least one AI provider is connected (excludes GitHub)
@@ -1307,13 +1378,8 @@ export function ModelOnboardingModal({
                         <GitPullRequest size={16} style={{ marginRight: 8 }} />
                         GitHub
                       </strong>
-                      <span
-                        data-testid="onboarding-auth-status-github"
-                        className={`auth-status-badge ${isGithubAuthenticated ? "connected" : "not-connected"}`}
-                      >
-                        {isGithubAuthenticated
-                          ? "✓ Connected"
-                          : "Not connected"}
+                      <span data-testid="onboarding-auth-status-github">
+                        <GitHubStatusBadge status={githubStatus} />
                       </span>
                     </div>
                     {isGithubAuthenticated && (
@@ -1332,7 +1398,7 @@ export function ModelOnboardingModal({
                     )}
                   </div>
 
-                  {!isGithubAuthenticated && (
+                  {(githubStatus === "not-connected" || githubStatus === "pending") && (
                     <div className="onboarding-github-connect-cta" data-testid="onboarding-github-connect-cta">
                       {authActionInProgress === "github" ? (
                         <div className="onboarding-github-connect-actions">
@@ -1355,23 +1421,56 @@ export function ModelOnboardingModal({
                           Connect
                         </button>
                       )}
-
-                      {/* Show timeout message */}
-                      {loginOutcomes["github"] === "timeout" && authActionInProgress !== "github" && (
-                        <p className="onboarding-helper-text onboarding-github-connect-feedback">
-                          Login timed out. Please try again.
-                        </p>
-                      )}
-                      {/* Show failure message */}
-                      {loginOutcomes["github"] === "failed" && authActionInProgress !== "github" && (
-                        <p className="field-error onboarding-github-connect-feedback">
-                          Login failed. Please try again.
-                        </p>
-                      )}
                     </div>
                   )}
 
-                  {!isGithubAuthenticated && (
+                  {githubStatus === "connected" && (
+                    <div className="onboarding-github-feedback onboarding-github-feedback--success">
+                      GitHub is connected. You can import issues and track pull requests.
+                    </div>
+                  )}
+
+                  {githubStatus === "failed" && (
+                    <div className="onboarding-github-feedback onboarding-github-feedback--error">
+                      <p>Connection failed or timed out.</p>
+                      <div className="onboarding-github-feedback-actions">
+                        <button
+                          className="btn btn-sm"
+                          onClick={() => handleLogin("github")}
+                        >
+                          Retry
+                        </button>
+                        <button
+                          className="onboarding-skip-step-link"
+                          onClick={handleSkipGitHubStep}
+                        >
+                          Skip for now
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {githubStatus === "pending" && (
+                    <div className="onboarding-github-feedback onboarding-github-feedback--info">
+                      Waiting for GitHub authorization…
+                    </div>
+                  )}
+
+                  {githubStatus === "skipped" && (
+                    <div className="onboarding-github-feedback onboarding-github-feedback--info">
+                      <p>GitHub was skipped. You can connect anytime from Settings → Authentication.</p>
+                      <div className="onboarding-github-feedback-actions">
+                        <button
+                          className="btn btn-sm"
+                          onClick={() => handleLogin("github")}
+                        >
+                          Connect anyway
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {githubStatus === "not-connected" && (
                     <p className="onboarding-helper-text">
                       No worries if you're not ready — connect GitHub anytime from Settings → Authentication.
                     </p>
@@ -1490,7 +1589,7 @@ export function ModelOnboardingModal({
               <button className="btn btn-sm" onClick={handleBack}>
                 ← Back
               </button>
-              <button className="onboarding-skip-step-link" onClick={handleNext}>
+              <button className="onboarding-skip-step-link" onClick={handleSkipGitHubStep}>
                 Skip GitHub →
               </button>
               <button className="btn btn-primary" onClick={handleNext}>

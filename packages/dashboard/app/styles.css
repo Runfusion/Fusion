@@ -3503,6 +3503,16 @@ body {
   color: var(--color-success);
 }
 
+.auth-status-badge.pending {
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
+  color: var(--color-info);
+}
+
+.auth-status-badge.not-connected {
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  color: var(--color-error);
+}
+
 .auth-status-badge.skipped {
   background: color-mix(in srgb, var(--color-warning) 15%, transparent);
   color: var(--color-warning);
@@ -24157,6 +24167,42 @@ html .column.drag-over * {
   margin: 0;
 }
 
+/* === GitHub Connection Status Feedback (FN-1934) === */
+.onboarding-github-feedback {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.onboarding-github-feedback p {
+  margin: 0;
+}
+
+.onboarding-github-feedback--success {
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
+  color: var(--color-success);
+}
+
+.onboarding-github-feedback--error {
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  color: var(--color-error);
+}
+
+.onboarding-github-feedback--info {
+  background: color-mix(in srgb, var(--color-info) 8%, transparent);
+  color: var(--text-muted);
+}
+
+.onboarding-github-feedback-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  margin-top: var(--space-sm);
+}
+
 .model-onboarding-github-optional {
   display: flex;
   flex-direction: column;
@@ -24467,6 +24513,11 @@ html .column.drag-over * {
   .onboarding-provider-row {
     flex-direction: column;
     gap: var(--space-sm);
+  }
+
+  .onboarding-github-feedback-actions .btn,
+  .onboarding-github-feedback-actions .onboarding-skip-step-link {
+    min-height: 36px;
   }
 
   .onboarding-provider-card {
