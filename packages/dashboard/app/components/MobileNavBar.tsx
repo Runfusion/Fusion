@@ -447,7 +447,7 @@ export function MobileNavBar({
               onClick={() => handleMoreAction(onOpenSchedules)}
             >
               <Clock />
-              <span>Schedules</span>
+              <span>Automation</span>
             </button>
 
             <button

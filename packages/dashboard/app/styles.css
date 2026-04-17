@@ -17149,7 +17149,12 @@ html .column.drag-over * {
 @media (max-width: 768px) {
   .schedule-modal-content {
     max-height: none;
-    padding: var(--space-md) 14px;
+    padding: var(--space-md) var(--space-lg);
+  }
+
+  .schedule-card {
+    margin: 0;
+    padding: var(--space-md);
   }
 
   .schedule-card-header {
@@ -17161,6 +17166,28 @@ html .column.drag-over * {
     flex-wrap: wrap;
     width: 100%;
     justify-content: flex-end;
+  }
+
+  .schedule-empty-state {
+    padding: var(--space-xl) var(--space-lg);
+  }
+
+  .schedule-form {
+    padding-left: var(--space-lg);
+    padding-right: var(--space-lg);
+  }
+
+  .scheduling-scope-selector {
+    flex-shrink: 0;
+  }
+
+  .modal-header-actions {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
+  .detail-tabs {
+    padding: 0 var(--space-lg);
   }
 }
 
@@ -17405,6 +17432,11 @@ html .column.drag-over * {
 
 /* Routine mobile responsive */
 @media (max-width: 768px) {
+  .routine-card {
+    margin: 0;
+    padding: var(--space-md);
+  }
+
   .routine-card-header {
     flex-wrap: wrap;
     gap: var(--space-sm);
@@ -17414,6 +17446,15 @@ html .column.drag-over * {
     flex-wrap: wrap;
     width: 100%;
     justify-content: flex-end;
+  }
+
+  .routine-empty-state {
+    padding: var(--space-xl) var(--space-lg);
+  }
+
+  .routine-form {
+    padding-left: var(--space-lg);
+    padding-right: var(--space-lg);
   }
 
   .routine-trigger-type-selector {

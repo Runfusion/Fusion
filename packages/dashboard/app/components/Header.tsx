@@ -829,7 +829,7 @@ export function Header({
           <button
             className="btn-icon"
             onClick={onOpenSchedules}
-            title="Scheduled tasks"
+            title="Automation"
             data-testid="schedules-btn"
           >
             <Clock size={16} />
@@ -1120,7 +1120,7 @@ export function Header({
               data-testid="overflow-schedules-btn"
             >
               <Clock size={16} />
-              <span>Scheduled Tasks</span>
+              <span>Automation</span>
             </button>
             {/* Activity Log - in overflow on mobile */}
             {onOpenActivityLog && (

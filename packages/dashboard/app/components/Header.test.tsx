@@ -799,21 +799,21 @@ describe("Header", () => {
     });
   });
 
-  describe("schedules button", () => {
-    it("renders schedules button on desktop", () => {
+  describe("automation button", () => {
+    it("renders automation button on desktop", () => {
       renderHeader({ onOpenSchedules: vi.fn() }, "desktop");
-      expect(screen.getByTitle("Scheduled tasks")).toBeDefined();
+      expect(screen.getByTitle("Automation")).toBeDefined();
     });
 
-    it("does not render schedules button inline on mobile", () => {
+    it("does not render automation button inline on mobile", () => {
       renderHeader({ onOpenSchedules: vi.fn() }, "mobile");
-      expect(screen.queryByTitle("Scheduled tasks")).toBeNull();
+      expect(screen.queryByTitle("Automation")).toBeNull();
     });
 
-    it("calls onOpenSchedules when schedules button is clicked", () => {
+    it("calls onOpenSchedules when automation button is clicked", () => {
       const onOpenSchedules = vi.fn();
       renderHeader({ onOpenSchedules }, "desktop");
-      fireEvent.click(screen.getByTitle("Scheduled tasks"));
+      fireEvent.click(screen.getByTitle("Automation"));
       expect(onOpenSchedules).toHaveBeenCalled();
     });
 
@@ -822,10 +822,10 @@ describe("Header", () => {
       expect(screen.getByTestId("schedules-btn")).toBeDefined();
     });
 
-    it("includes scheduled tasks in overflow menu on mobile", () => {
+    it("includes automation in overflow menu on mobile", () => {
       renderHeader({ onOpenSchedules: vi.fn() }, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
-      expect(screen.getByText("Scheduled Tasks")).toBeDefined();
+      expect(screen.getByText("Automation")).toBeDefined();
     });
 
     it("calls onOpenSchedules from mobile overflow menu", () => {

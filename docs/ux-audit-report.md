@@ -57,7 +57,7 @@ This audit acknowledges and does not duplicate the following existing backlog it
 ### 1.1 Header Overload on Desktop
 
 - **Component:** `packages/dashboard/app/components/Header.tsx` (lines ~200-650)
-- **Current behavior:** The header displays 15+ icon buttons without labels on desktop, including: Usage, Activity Log, Mailbox, GitHub Import, Planning, Schedules, Terminal, Files, Git Manager, Nodes, Workflow Steps, Scripts, Pause, Stop, Settings, plus view toggle buttons and project selector. Users must hover over each icon to discover its function.
+- **Current behavior:** The header displays 15+ icon buttons without labels on desktop, including: Usage, Activity Log, Mailbox, GitHub Import, Planning, Automation, Terminal, Files, Git Manager, Nodes, Workflow Steps, Scripts, Pause, Stop, Settings, plus view toggle buttons and project selector. Users must hover over each icon to discover its function.
 - **Recommended fix:** Group related actions into collapsible sections or a hamburger menu. Primary actions (Settings, Planning, Usage) should remain visible; secondary actions (Nodes, Workflow Steps, Scripts) should move to an overflow menu. Consider a "compact mode" toggle for users who want maximum screen space.
 - **Impact:** All users are affected. New users cannot discover functionality, and power users waste time finding actions.
 - **Effort estimate:** M
