@@ -67,6 +67,38 @@ describe("RoutineEditor", () => {
       expect(screen.getByLabelText("Cron Expression")).toHaveValue("0 * * * *");
     });
 
+    it("shows frequency dropdown with preset options when triggerType is 'cron'", () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+
+      const frequency = screen.getByLabelText("Frequency");
+      expect(frequency).toBeDefined();
+      expect(screen.getByRole("option", { name: "Every hour" })).toBeDefined();
+      expect(screen.getByRole("option", { name: "Every day (midnight)" })).toBeDefined();
+      expect(screen.getByRole("option", { name: "Every week (Monday)" })).toBeDefined();
+      expect(screen.getByRole("option", { name: "Every month (1st)" })).toBeDefined();
+      expect(screen.getByRole("option", { name: "Custom cron expression" })).toBeDefined();
+    });
+
+    it("selecting a preset auto-fills the cron expression and disables the input", () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+
+      fireEvent.change(screen.getByLabelText("Frequency"), { target: { value: "daily" } });
+
+      const cronInput = screen.getByLabelText("Cron Expression");
+      expect(cronInput).toHaveValue("0 0 * * *");
+      expect(cronInput).toBeDisabled();
+      expect(screen.getByText("Auto-filled from preset: 0 0 * * *")).toBeDefined();
+    });
+
+    it("selecting 'Custom' enables the cron expression input", () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+
+      fireEvent.change(screen.getByLabelText("Frequency"), { target: { value: "custom" } });
+
+      expect(screen.getByLabelText("Cron Expression")).not.toBeDisabled();
+      expect(screen.getByText(/crontab\.guru/)).toBeDefined();
+    });
+
     it("defaults executionPolicy to 'queue'", () => {
       render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
       expect(screen.getByLabelText("Execution Policy")).toHaveValue("queue");
@@ -152,6 +184,24 @@ describe("RoutineEditor", () => {
       expect(screen.getByText("Save Changes")).toBeDefined();
     });
 
+    it("editing an existing routine with a preset cron expression selects the matching preset", () => {
+      const routine = makeRoutine({
+        trigger: { type: "cron", cronExpression: "0 0 * * *" },
+      });
+      render(<RoutineEditor routine={routine} onSubmit={onSubmit} onCancel={onCancel} />);
+      expect(screen.getByLabelText("Frequency")).toHaveValue("daily");
+      expect(screen.getByLabelText("Cron Expression")).toBeDisabled();
+    });
+
+    it("editing an existing routine with a non-preset cron expression selects 'Custom'", () => {
+      const routine = makeRoutine({
+        trigger: { type: "cron", cronExpression: "0 9 * * 1-5" },
+      });
+      render(<RoutineEditor routine={routine} onSubmit={onSubmit} onCancel={onCancel} />);
+      expect(screen.getByLabelText("Frequency")).toHaveValue("custom");
+      expect(screen.getByLabelText("Cron Expression")).not.toBeDisabled();
+    });
+
     it("pre-fills webhook trigger fields", () => {
       const routine = makeRoutine({
         trigger: { type: "webhook", webhookPath: "/trigger/test", secret: "secret123" },
@@ -185,8 +235,9 @@ describe("RoutineEditor", () => {
       expect(onSubmit).not.toHaveBeenCalled();
     });
 
-    it("shows error when triggerType is 'cron' and cronExpression is empty", async () => {
+    it("shows error when triggerType is 'cron' and custom cronExpression is empty", async () => {
       render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.change(screen.getByLabelText("Frequency"), { target: { value: "custom" } });
       fireEvent.change(screen.getByLabelText("Cron Expression"), { target: { value: "" } });
       fireEvent.click(screen.getByText("Create Routine"));
       await waitFor(() => {
@@ -195,8 +246,9 @@ describe("RoutineEditor", () => {
       expect(onSubmit).not.toHaveBeenCalled();
     });
 
-    it("shows error when triggerType is 'cron' and cronExpression is invalid", async () => {
+    it("shows error when triggerType is 'cron' and custom cronExpression is invalid", async () => {
       render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.change(screen.getByLabelText("Frequency"), { target: { value: "custom" } });
       fireEvent.change(screen.getByLabelText("Cron Expression"), { target: { value: "invalid" } });
       fireEvent.click(screen.getByText("Create Routine"));
       await waitFor(() => {
@@ -243,6 +295,22 @@ describe("RoutineEditor", () => {
             executionPolicy: "queue",
             catchUpPolicy: "run_one",
             enabled: true,
+          })
+        );
+      });
+    });
+
+    it("submitting with a preset sends the correct cron expression", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Weekly Routine" } });
+      fireEvent.change(screen.getByLabelText("Frequency"), { target: { value: "weekly" } });
+      fireEvent.click(screen.getByText("Create Routine"));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            name: "Weekly Routine",
+            trigger: { type: "cron", cronExpression: "0 0 * * 1" },
           })
         );
       });

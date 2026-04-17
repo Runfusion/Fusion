@@ -14,6 +14,33 @@ import type {
   RoutineExecutionPolicy,
 } from "@fusion/core";
 
+type CronPresetType = "hourly" | "daily" | "weekly" | "monthly" | "custom";
+
+const CRON_PRESETS: Record<Exclude<CronPresetType, "custom">, string> = {
+  hourly: "0 * * * *",
+  daily: "0 0 * * *",
+  weekly: "0 0 * * 1",
+  monthly: "0 0 1 * *",
+};
+
+const CRON_PRESET_LABELS: Record<CronPresetType, string> = {
+  hourly: "Every hour",
+  daily: "Every day (midnight)",
+  weekly: "Every week (Monday)",
+  monthly: "Every month (1st)",
+  custom: "Custom cron expression",
+};
+
+function resolveCronPreset(cronExpression: string): CronPresetType {
+  const normalizedCron = cronExpression.trim();
+  for (const [preset, value] of Object.entries(CRON_PRESETS)) {
+    if (value === normalizedCron) {
+      return preset as Exclude<CronPresetType, "custom">;
+    }
+  }
+  return "custom";
+}
+
 /**
  * Simple cron expression validator (5-field format).
  * Checks basic structure — authoritative validation happens server-side.
@@ -143,6 +170,10 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
   const [description, setDescription] = useState(routine?.description ?? "");
   const [triggerType, setTriggerType] = useState<RoutineTriggerType>(initialTriggerFields.triggerType);
   const [cronExpression, setCronExpression] = useState(initialTriggerFields.cronExpression);
+  const [cronPreset, setCronPreset] = useState<CronPresetType>(() => {
+    if (initialTriggerFields.triggerType !== "cron") return "custom";
+    return resolveCronPreset(initialTriggerFields.cronExpression);
+  });
   const [webhookPath, setWebhookPath] = useState(initialTriggerFields.webhookPath);
   const [webhookSecret, setWebhookSecret] = useState(initialTriggerFields.webhookSecret);
   const [endpoint, setEndpoint] = useState(initialTriggerFields.endpoint);
@@ -166,7 +197,7 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
       e.scope = "Project-specific entries require an active project.";
     }
     
-    if (triggerType === "cron") {
+    if (triggerType === "cron" && cronPreset === "custom") {
       if (!cronExpression.trim()) {
         e.cronExpression = "Cron expression is required";
       } else if (!isLikelyCron(cronExpression)) {
@@ -181,7 +212,7 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
     }
     setErrors(e);
     return Object.keys(e).length === 0;
-  }, [name, triggerType, cronExpression, webhookPath, endpoint, formScope, projectId]);
+  }, [name, triggerType, cronExpression, cronPreset, webhookPath, endpoint, formScope, projectId]);
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -219,6 +250,13 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
   const cronErrorId = "routine-cron-error";
   const webhookErrorId = "routine-webhook-error";
   const endpointErrorId = "routine-endpoint-error";
+
+  const handleCronPresetChange = useCallback((preset: CronPresetType) => {
+    setCronPreset(preset);
+    if (preset !== "custom") {
+      setCronExpression(CRON_PRESETS[preset]);
+    }
+  }, []);
 
   return (
     <form className="routine-form" onSubmit={handleSubmit} noValidate>
@@ -343,6 +381,17 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
       {/* Cron Expression */}
       {triggerType === "cron" && (
         <div className="form-group">
+          <label htmlFor="routine-frequency">Frequency</label>
+          <select
+            id="routine-frequency"
+            value={cronPreset}
+            onChange={(e) => handleCronPresetChange(e.target.value as CronPresetType)}
+          >
+            {Object.entries(CRON_PRESET_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+
           <label htmlFor="routine-cron">Cron Expression</label>
           <input
             id="routine-cron"
@@ -350,13 +399,20 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
             placeholder="* * * * *"
             value={cronExpression}
             onChange={(e) => setCronExpression(e.target.value)}
+            disabled={cronPreset !== "custom"}
             aria-invalid={!!errors.cronExpression}
             aria-describedby={errors.cronExpression ? cronErrorId : undefined}
           />
           {errors.cronExpression ? (
             <small id={cronErrorId} className="field-error">{errors.cronExpression}</small>
           ) : (
-            <small>min hour day month weekday — <a href="https://crontab.guru" target="_blank" rel="noopener noreferrer">crontab.guru</a></small>
+            <small>
+              {cronPreset === "custom" ? (
+                <>min hour day month weekday — <a href="https://crontab.guru" target="_blank" rel="noopener noreferrer">crontab.guru</a></>
+              ) : (
+                `Auto-filled from preset: ${cronExpression}`
+              )}
+            </small>
           )}
         </div>
       )}
