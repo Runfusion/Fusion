@@ -39,6 +39,7 @@ const {
   mockGetOrCreateProjectStore,
   mockListNodes,
   mockGetNode,
+  mockEnsureMemoryFileWithBackend,
 } = vi.hoisted(() => ({
   mockListProjects: vi.fn().mockResolvedValue([]),
   mockGetProject: vi.fn().mockResolvedValue(null),
@@ -90,6 +91,7 @@ const {
   mockGetOrCreateProjectStore: vi.fn(),
   mockListNodes: vi.fn().mockResolvedValue([]),
   mockGetNode: vi.fn().mockResolvedValue(null),
+  mockEnsureMemoryFileWithBackend: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock("@fusion/core", async () => {
@@ -112,6 +114,7 @@ vi.mock("@fusion/core", async () => {
       listNodes: mockListNodes,
       getNode: mockGetNode,
     })),
+    ensureMemoryFileWithBackend: mockEnsureMemoryFileWithBackend,
   };
 });
 
@@ -579,6 +582,7 @@ describe("POST /api/projects route handler", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
+    mockEnsureMemoryFileWithBackend.mockResolvedValue(true);
   });
 
   it("calls updateProject with status 'active' after registration", async () => {
@@ -626,6 +630,43 @@ describe("POST /api/projects route handler", () => {
       isolationMode: "in-process",
       nodeId: "node-remote-1",
     });
+  });
+
+  it("calls ensureMemoryFileWithBackend after project activation", async () => {
+    const store = new MockStoreForRoutes();
+    const app = createServer(store as any);
+    mockEnsureMemoryFileWithBackend.mockResolvedValue(true);
+
+    const res = await request(
+      app,
+      "POST",
+      "/api/projects",
+      JSON.stringify({ name: "Test Project", path: "/tmp" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    // Allow fire-and-forget promise to complete
+    await new Promise(resolve => setImmediate(resolve));
+    expect(mockEnsureMemoryFileWithBackend).toHaveBeenCalledWith("/tmp");
+  });
+
+  it("returns 201 even when memory bootstrap fails", async () => {
+    const store = new MockStoreForRoutes();
+    const app = createServer(store as any);
+    mockEnsureMemoryFileWithBackend.mockRejectedValue(new Error("disk full"));
+
+    const res = await request(
+      app,
+      "POST",
+      "/api/projects",
+      JSON.stringify({ name: "Test Project", path: "/tmp" }),
+      { "Content-Type": "application/json" },
+    );
+
+    // Project registration should still succeed
+    expect(res.status).toBe(201);
+    expect((res.body as any).status).toBe("active");
   });
 });
 

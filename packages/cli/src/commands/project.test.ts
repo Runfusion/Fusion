@@ -21,6 +21,7 @@ const mockGetSettings = vi.fn();
 const mockGlobalInit = vi.fn();
 const mockTaskStoreInit = vi.fn();
 const mockTaskStoreListTasks = vi.fn();
+const mockEnsureMemoryFileWithBackend = vi.fn();
 
 // Mock @fusion/core
 vi.mock("@fusion/core", () => ({
@@ -43,6 +44,7 @@ vi.mock("@fusion/core", () => ({
     init: mockTaskStoreInit,
     listTasks: mockTaskStoreListTasks,
   })),
+  ensureMemoryFileWithBackend: mockEnsureMemoryFileWithBackend,
   COLUMNS: ["triage", "todo", "in-progress", "in-review", "done", "archived"],
   COLUMN_LABELS: {
     triage: "Triage",
@@ -70,6 +72,7 @@ vi.mock("../project-context.js", () => ({
 
 describe("project commands", () => {
   let consoleSpy: ReturnType<typeof vi.spyOn>;
+  let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
@@ -77,6 +80,7 @@ describe("project commands", () => {
     vi.resetModules();
     vi.clearAllMocks();
     consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: string | number | null) => {
       throw new Error(`process.exit:${code ?? 0}`);
@@ -91,6 +95,7 @@ describe("project commands", () => {
 
   afterEach(() => {
     consoleSpy.mockRestore();
+    consoleWarnSpy.mockRestore();
     consoleErrorSpy.mockRestore();
     exitSpy.mockRestore();
   });
@@ -340,5 +345,89 @@ describe("project commands", () => {
   it("validation exits on missing required args for runProjectSetDefault", async () => {
     const { runProjectSetDefault } = await import("./project.js");
     await expect(runProjectSetDefault("")).rejects.toThrow("process.exit:1");
+  });
+
+  describe("runProjectAdd memory bootstrap", () => {
+    // Use "." as path like the existing runProjectAdd test - it resolves to cwd which exists
+    const testPath = ".";
+
+    beforeEach(() => {
+      mockEnsureMemoryFileWithBackend.mockReset();
+      mockEnsureMemoryFileWithBackend.mockResolvedValue(true);
+    });
+
+    it("calls ensureMemoryFileWithBackend after project registration", async () => {
+      mockListProjects.mockResolvedValue([]);
+      mockRegisterProject.mockResolvedValue({
+        id: "proj-1",
+        name: "demo",
+        path: "/fake/demo",
+        isolationMode: "in-process",
+      });
+
+      const { runProjectAdd } = await import("./project.js");
+      await runProjectAdd("demo", testPath, { force: true });
+
+      expect(mockEnsureMemoryFileWithBackend).toHaveBeenCalled();
+      // Verify it was called with an absolute path
+      const callArg = mockEnsureMemoryFileWithBackend.mock.calls[0][0];
+      expect(callArg).toBe(process.cwd());
+    });
+
+    it("shows memory initialized message when memory files are created", async () => {
+      mockListProjects.mockResolvedValue([]);
+      mockRegisterProject.mockResolvedValue({
+        id: "proj-1",
+        name: "demo",
+        path: "/fake/demo",
+        isolationMode: "in-process",
+      });
+      mockEnsureMemoryFileWithBackend.mockResolvedValue(true);
+
+      const { runProjectAdd } = await import("./project.js");
+      await runProjectAdd("demo", testPath, { force: true });
+
+      const output = consoleSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(output).toContain("Memory: initialized");
+    });
+
+    it("does not show memory message when memory files already exist", async () => {
+      mockListProjects.mockResolvedValue([]);
+      mockRegisterProject.mockResolvedValue({
+        id: "proj-1",
+        name: "demo",
+        path: "/fake/demo",
+        isolationMode: "in-process",
+      });
+      mockEnsureMemoryFileWithBackend.mockResolvedValue(false); // Files already exist
+
+      const { runProjectAdd } = await import("./project.js");
+      await runProjectAdd("demo", testPath, { force: true });
+
+      const output = consoleSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(output).not.toContain("Memory: initialized");
+    });
+
+    it("does not block project registration when memory bootstrap fails", async () => {
+      mockListProjects.mockResolvedValue([]);
+      mockRegisterProject.mockResolvedValue({
+        id: "proj-1",
+        name: "demo",
+        path: "/fake/demo",
+        isolationMode: "in-process",
+      });
+      mockEnsureMemoryFileWithBackend.mockRejectedValue(new Error("disk full"));
+
+      const { runProjectAdd } = await import("./project.js");
+      await runProjectAdd("demo", testPath, { force: true });
+
+      // Project should still be registered
+      expect(mockRegisterProject).toHaveBeenCalled();
+      expect(mockUpdateProject).toHaveBeenCalledWith("proj-1", { status: "active" });
+
+      // Should show warning about memory failure on console.warn
+      const warnOutput = consoleWarnSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(warnOutput).toContain("Could not initialize project memory");
+    });
   });
 });

@@ -14,6 +14,7 @@ import {
   CentralCore,
   GlobalSettingsStore,
   TaskStore,
+  ensureMemoryFileWithBackend,
   type RegisteredProject,
   type IsolationMode,
   type ProjectHealth,
@@ -364,11 +365,22 @@ export async function runProjectAdd(
     // Activate the project (registration sets it to 'initializing')
     await central.updateProject(project.id, { status: "active" });
 
+    // Bootstrap memory files (non-fatal if it fails)
+    let memoryInitialized = false;
+    try {
+      memoryInitialized = await ensureMemoryFileWithBackend(absolutePath);
+    } catch (err) {
+      console.warn(`  ⚠ Warning: Could not initialize project memory: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
     console.log();
     console.log(`  ✓ Registered project '${projectName}'`);
     console.log(`    Location: ${formatDisplayPath(project.path)}`);
     console.log(`    ID: ${project.id}`);
     console.log(`    Isolation: ${project.isolationMode}`);
+    if (memoryInitialized) {
+      console.log(`    Memory: initialized`);
+    }
     console.log();
   } finally {
     await central.close();
