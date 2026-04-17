@@ -3,6 +3,8 @@ import type {
   AuthStorage,
   ModelRegistry,
 } from "@mariozechner/pi-coding-agent";
+import { getOAuthProvider } from "@mariozechner/pi-ai/oauth";
+import type { OAuthCredentials } from "@mariozechner/pi-ai/oauth";
 
 export type LoginCallbacks = Parameters<AuthStorage["login"]>[1];
 
@@ -24,10 +26,19 @@ interface ReadFallbackAuthStorage {
   reload(): void;
   hasAuth(provider: string): boolean;
   getApiKey(providerId: string): Promise<string | undefined>;
-  get(providerId: string): { type?: string; key?: string } | undefined;
-  getAll(): Record<string, { type?: string; key?: string }>;
+  get(providerId: string): StoredCredential | undefined;
+  getAll(): Record<string, StoredCredential>;
   list(): string[];
 }
+
+type StoredCredential = {
+  type?: string;
+  key?: string;
+  access?: string;
+  refresh?: string;
+  expires?: number;
+  [key: string]: unknown;
+};
 
 const BUILT_IN_API_KEY_PROVIDERS: Array<{ id: string; name: string }> = [
   { id: "kimi-coding", name: "Kimi" },
@@ -171,17 +182,46 @@ export function mergeAuthStorageReads(
   }) as AuthStorage;
 }
 
+function resolveStoredApiKey(key: string | undefined): string | undefined {
+  if (!key) return undefined;
+  return process.env[key] ?? key;
+}
+
+function resolveOAuthApiKey(providerId: string, credential: StoredCredential): string | undefined {
+  if (
+    credential.type !== "oauth" ||
+    typeof credential.access !== "string" ||
+    typeof credential.refresh !== "string" ||
+    typeof credential.expires !== "number" ||
+    Date.now() >= credential.expires
+  ) {
+    return undefined;
+  }
+
+  return getOAuthProvider(providerId)?.getApiKey(credential as OAuthCredentials);
+}
+
+function resolveStoredCredentialApiKey(providerId: string, credential: StoredCredential | undefined): string | undefined {
+  if (credential?.type === "api_key") {
+    return resolveStoredApiKey(credential.key);
+  }
+  if (credential?.type === "oauth") {
+    return resolveOAuthApiKey(providerId, credential);
+  }
+  return undefined;
+}
+
 export function createReadOnlyAuthFileStorage(authPaths: string[]): ReadFallbackAuthStorage {
-  let credentials: Record<string, { type?: string; key?: string }> = {};
+  let credentials: Record<string, StoredCredential> = {};
 
   const reload = () => {
-    const nextCredentials: Record<string, { type?: string; key?: string }> = {};
+    const nextCredentials: Record<string, StoredCredential> = {};
     for (const authPath of authPaths) {
       if (!existsSync(authPath)) {
         continue;
       }
       try {
-        const parsed = JSON.parse(readFileSync(authPath, "utf-8")) as Record<string, { type?: string; key?: string }>;
+        const parsed = JSON.parse(readFileSync(authPath, "utf-8")) as Record<string, StoredCredential>;
         for (const [provider, credential] of Object.entries(parsed)) {
           nextCredentials[provider] ??= credential;
         }
@@ -201,8 +241,7 @@ export function createReadOnlyAuthFileStorage(authPaths: string[]): ReadFallback
     getAll: () => ({ ...credentials }),
     list: () => Object.keys(credentials),
     getApiKey: async (provider) => {
-      const credential = credentials[provider];
-      return credential?.type === "api_key" ? credential.key : undefined;
+      return resolveStoredCredentialApiKey(provider, credentials[provider]);
     },
   };
 }

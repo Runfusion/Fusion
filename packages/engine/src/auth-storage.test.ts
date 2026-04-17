@@ -42,6 +42,46 @@ describe("createFusionAuthStorage", () => {
     expect(existsSync(getFusionAuthPath(homeDir))).toBe(true);
   });
 
+  it("reads non-expired legacy Pi OAuth credentials as fallback", async () => {
+    const legacyAgentDir = join(homeDir, ".pi", "agent");
+    mkdirSync(legacyAgentDir, { recursive: true });
+    writeFileSync(
+      join(legacyAgentDir, "auth.json"),
+      JSON.stringify({
+        "openai-codex": {
+          type: "oauth",
+          access: "legacy-access-token",
+          refresh: "legacy-refresh-token",
+          expires: Date.now() + 60_000,
+        },
+      }),
+    );
+
+    const authStorage = createFusionAuthStorage();
+
+    expect(await authStorage.getApiKey("openai-codex")).toBe("legacy-access-token");
+  });
+
+  it("does not use expired legacy Pi OAuth credentials", async () => {
+    const legacyAgentDir = join(homeDir, ".pi", "agent");
+    mkdirSync(legacyAgentDir, { recursive: true });
+    writeFileSync(
+      join(legacyAgentDir, "auth.json"),
+      JSON.stringify({
+        "openai-codex": {
+          type: "oauth",
+          access: "expired-access-token",
+          refresh: "legacy-refresh-token",
+          expires: Date.now() - 60_000,
+        },
+      }),
+    );
+
+    const authStorage = createFusionAuthStorage();
+
+    expect(await authStorage.getApiKey("openai-codex")).toBeUndefined();
+  });
+
   it("does not create missing legacy Pi auth files", async () => {
     const authStorage = createFusionAuthStorage();
 

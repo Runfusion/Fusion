@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createReadOnlyAuthFileStorage, mergeAuthStorageReads, wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
 
-function makeAuthStorage(credentials: Record<string, { type: string; key?: string }> = {}) {
+function makeAuthStorage(credentials: Record<string, { type: string; key?: string; access?: string; refresh?: string; expires?: number }> = {}) {
   return {
     reload: vi.fn(),
     getOAuthProviders: vi.fn(() => []),
@@ -98,5 +98,27 @@ describe("wrapAuthStorageWithApiKeyProviders", () => {
 
     expect(await storage.getApiKey("openrouter")).toBe("legacy-key");
     expect(existsSync(missingLegacyAuth)).toBe(false);
+  });
+
+  it("reads non-expired OAuth credentials from legacy auth JSON", async () => {
+    const tempDir = join(tmpdir(), `fusion-provider-auth-oauth-${process.pid}-${Date.now()}`);
+    const legacyAgentDir = join(tempDir, ".pi", "agent");
+    const legacyAgentAuth = join(legacyAgentDir, "auth.json");
+    mkdirSync(legacyAgentDir, { recursive: true });
+    writeFileSync(
+      legacyAgentAuth,
+      JSON.stringify({
+        "openai-codex": {
+          type: "oauth",
+          access: "legacy-access-token",
+          refresh: "legacy-refresh-token",
+          expires: Date.now() + 60_000,
+        },
+      }),
+    );
+
+    const storage = createReadOnlyAuthFileStorage([legacyAgentAuth]);
+
+    expect(await storage.getApiKey("openai-codex")).toBe("legacy-access-token");
   });
 });

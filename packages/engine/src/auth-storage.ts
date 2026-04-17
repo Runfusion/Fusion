@@ -2,8 +2,17 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { AuthStorage } from "@mariozechner/pi-coding-agent";
+import { getOAuthProvider } from "@mariozechner/pi-ai/oauth";
+import type { OAuthCredentials } from "@mariozechner/pi-ai/oauth";
 
-type StoredCredential = { type?: string; key?: string };
+type StoredCredential = {
+  type?: string;
+  key?: string;
+  access?: string;
+  refresh?: string;
+  expires?: number;
+  [key: string]: unknown;
+};
 
 function getHomeDir(): string {
   return process.env.HOME || process.env.USERPROFILE || homedir();
@@ -45,6 +54,30 @@ function resolveStoredApiKey(key: string | undefined): string | undefined {
   return process.env[key] ?? key;
 }
 
+function resolveOAuthApiKey(providerId: string, credential: StoredCredential): string | undefined {
+  if (
+    credential.type !== "oauth" ||
+    typeof credential.access !== "string" ||
+    typeof credential.refresh !== "string" ||
+    typeof credential.expires !== "number" ||
+    Date.now() >= credential.expires
+  ) {
+    return undefined;
+  }
+
+  return getOAuthProvider(providerId)?.getApiKey(credential as OAuthCredentials);
+}
+
+function resolveStoredCredentialApiKey(providerId: string, credential: StoredCredential | undefined): string | undefined {
+  if (credential?.type === "api_key") {
+    return resolveStoredApiKey(credential.key);
+  }
+  if (credential?.type === "oauth") {
+    return resolveOAuthApiKey(providerId, credential);
+  }
+  return undefined;
+}
+
 export function createFusionAuthStorage(): AuthStorage {
   const primary = AuthStorage.create(getFusionAuthPath());
   let legacyCredentials = readLegacyCredentials();
@@ -83,8 +116,7 @@ export function createFusionAuthStorage(): AuthStorage {
           const primaryKey = await target.getApiKey(provider);
           if (primaryKey) return primaryKey;
 
-          const credential = legacyCredentials[provider];
-          return credential?.type === "api_key" ? resolveStoredApiKey(credential.key) : undefined;
+          return resolveStoredCredentialApiKey(provider, legacyCredentials[provider]);
         };
       }
 
