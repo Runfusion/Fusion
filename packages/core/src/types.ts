@@ -494,6 +494,9 @@ export interface AgentLogEntry {
   agent?: AgentRole;
 }
 
+/** How much of `.fusion/tasks/{ID}/agent.log` is copied into cold archive storage. */
+export type ArchiveAgentLogMode = "none" | "compact" | "full";
+
 export interface TaskAttachment {
   filename: string;
   originalName: string;
@@ -1193,6 +1196,15 @@ export interface ProjectSettings {
   /** Interval in milliseconds for periodic maintenance (worktree pruning, WAL checkpoint,
    *  orphan cleanup). 0 disables. Default: 900000 (15 min). */
   maintenanceIntervalMs?: number;
+  /** When true, periodic maintenance archives done tasks after the configured age. Default: true. */
+  autoArchiveDoneTasksEnabled?: boolean;
+  /** Age in milliseconds after a task enters done before auto-archive. Default: 172800000 (48h). */
+  autoArchiveDoneAfterMs?: number;
+  /** How much agent log content to preserve when a task is moved to cold archive storage.
+   *  - "compact": deterministic summary plus a small recent-entry snapshot (default)
+   *  - "full": copy the full agent.log into archive.db
+   *  - "none": do not copy agent.log content */
+  archiveAgentLogMode?: ArchiveAgentLogMode;
   /** When true, automatically poll and update PR status badges for tasks linked to GitHub PRs.
    *  Default: false. */
   autoUpdatePrStatus?: boolean;
@@ -1439,6 +1451,18 @@ export interface ArchivedTaskEntry {
   issueInfo?: IssueInfo;
   /** Attachment metadata (filenames, mime types, etc.) without file content */
   attachments?: TaskAttachment[];
+  /** User and agent comments remain searchable in the archive DB. */
+  comments?: TaskComment[];
+  /** Reconstructed prompt content at archive time, without attachment blobs. */
+  prompt?: string;
+  /** Agent log retention mode used when this archive entry was written. */
+  agentLogMode?: ArchiveAgentLogMode;
+  /** Deterministic compact summary of the historical agent log. */
+  agentLogSummary?: string;
+  /** Bounded recent agent log entries retained in compact mode. */
+  agentLogSnapshot?: AgentLogEntry[];
+  /** Full historical agent log. Only present when archiveAgentLogMode is "full". */
+  agentLogFull?: AgentLogEntry[];
   log: TaskLogEntry[];
   createdAt: string;
   updatedAt: string;

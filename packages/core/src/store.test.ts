@@ -5672,7 +5672,7 @@ Task with acceptance criteria
       const events: any[] = [];
       store.on("task:moved", (data) => events.push(data));
 
-      await store.archiveTask(task.id);
+      await store.archiveTask(task.id, false);
 
       expect(events).toHaveLength(1);
       expect(events[0].from).toBe("done");
@@ -5686,7 +5686,7 @@ Task with acceptance criteria
       await store.moveTask(task.id, "in-review");
       await store.moveTask(task.id, "done");
 
-      await store.archiveTask(task.id);
+      await store.archiveTask(task.id, false);
       const fetched = await store.getTask(task.id);
 
       expect(fetched.column).toBe("archived");
@@ -5723,7 +5723,7 @@ Task with acceptance criteria
       await store.moveTask(task.id, "in-progress");
       await store.moveTask(task.id, "in-review");
       await store.moveTask(task.id, "done");
-      await store.archiveTask(task.id);
+      await store.archiveTask(task.id, false);
 
       const unarchived = await store.unarchiveTask(task.id);
 
@@ -5736,7 +5736,7 @@ Task with acceptance criteria
       await store.moveTask(task.id, "in-progress");
       await store.moveTask(task.id, "in-review");
       await store.moveTask(task.id, "done");
-      await store.archiveTask(task.id);
+      await store.archiveTask(task.id, false);
 
       const unarchived = await store.unarchiveTask(task.id);
 
@@ -5749,7 +5749,7 @@ Task with acceptance criteria
       await store.moveTask(task.id, "in-progress");
       await store.moveTask(task.id, "in-review");
       await store.moveTask(task.id, "done");
-      await store.archiveTask(task.id);
+      await store.archiveTask(task.id, false);
 
       const events: any[] = [];
       store.on("task:moved", (data) => events.push(data));
@@ -5767,7 +5767,7 @@ Task with acceptance criteria
       await store.moveTask(task.id, "in-progress");
       await store.moveTask(task.id, "in-review");
       await store.moveTask(task.id, "done");
-      await store.archiveTask(task.id);
+      await store.archiveTask(task.id, false);
 
       await store.unarchiveTask(task.id);
       const fetched = await store.getTask(task.id);
@@ -5803,7 +5803,7 @@ Task with acceptance criteria
       });
 
       // Archive the task with stale state
-      await store.archiveTask(task.id);
+      await store.archiveTask(task.id, false);
 
       // Unarchive — should clear all transient fields
       const unarchived = await store.unarchiveTask(task.id);
@@ -5915,7 +5915,7 @@ Task with acceptance criteria
       await store.moveTask(task.id, "in-progress");
       await store.moveTask(task.id, "in-review");
       await store.moveTask(task.id, "done");
-      await store.archiveTask(task.id);
+      await store.archiveTask(task.id, false);
 
       await expect(store.moveTask(task.id, "in-progress")).rejects.toThrow("Invalid transition");
     });
@@ -5926,7 +5926,7 @@ Task with acceptance criteria
       await store.moveTask(task.id, "in-progress");
       await store.moveTask(task.id, "in-review");
       await store.moveTask(task.id, "done");
-      await store.archiveTask(task.id);
+      await store.archiveTask(task.id, false);
 
       await expect(store.moveTask(task.id, "triage")).rejects.toThrow("Invalid transition");
     });
@@ -5937,7 +5937,7 @@ Task with acceptance criteria
       await store.moveTask(task.id, "in-progress");
       await store.moveTask(task.id, "in-review");
       await store.moveTask(task.id, "done");
-      await store.archiveTask(task.id);
+      await store.archiveTask(task.id, false);
 
       await expect(store.moveTask(task.id, "todo")).rejects.toThrow("Invalid transition");
     });
@@ -5948,7 +5948,7 @@ Task with acceptance criteria
       await store.moveTask(task.id, "in-progress");
       await store.moveTask(task.id, "in-review");
       await store.moveTask(task.id, "done");
-      await store.archiveTask(task.id);
+      await store.archiveTask(task.id, false);
 
       await expect(store.moveTask(task.id, "in-review")).rejects.toThrow("Invalid transition");
     });
@@ -6072,19 +6072,18 @@ Task with acceptance criteria
   // ── Archive Cleanup Tests ────────────────────────────────────────
 
   describe("cleanupArchivedTasks", () => {
-    it("writes compact entry to archivedTasks table without agent log", async () => {
+    it("writes compact entry to archive DB with compact agent log", async () => {
       // Create and archive a task
       const task = await store.createTask({ description: "Test cleanup", title: "Cleanup Task" });
       await store.moveTask(task.id, "todo");
       await store.moveTask(task.id, "in-progress");
       await store.moveTask(task.id, "in-review");
       await store.moveTask(task.id, "done");
-      await store.archiveTask(task.id);
-
-      // Add an agent log entry (should not be in archive)
+      // Add an agent log entry before archive; compact archive mode should
+      // preserve a bounded snapshot, not the legacy task.log payload.
       await store.appendAgentLog(task.id, "Test agent log", "text");
+      await store.archiveTask(task.id, false);
 
-      // Cleanup archived tasks
       const cleaned = await store.cleanupArchivedTasks();
       expect(cleaned).toContain(task.id);
 
@@ -6095,8 +6094,15 @@ Task with acceptance criteria
       expect(entry!.title).toBe("Cleanup Task");
       expect(entry!.description).toBe("Test cleanup");
       expect(entry!.column).toBe("archived");
-      // Agent log should NOT be in the archive entry
-      expect(entry).not.toHaveProperty("agentLog");
+      expect(entry!.log).toHaveLength(1);
+      expect(entry!.log[0].action).toBe("Task archived");
+      expect(entry!.agentLogMode).toBe("compact");
+      expect(entry!.agentLogSummary).toContain("Agent log entries: 1");
+      expect(entry!.agentLogSnapshot).toHaveLength(1);
+      expect(entry).not.toHaveProperty("agentLogFull");
+      const archivedDetail = await store.getTask(task.id);
+      expect(archivedDetail.column).toBe("archived");
+      expect(existsSync(join(rootDir, ".fusion", "archive.db"))).toBe(true);
     });
 
     it("removes task directory after archiving", async () => {
@@ -6105,10 +6111,10 @@ Task with acceptance criteria
       await store.moveTask(task.id, "in-progress");
       await store.moveTask(task.id, "in-review");
       await store.moveTask(task.id, "done");
-      await store.archiveTask(task.id);
+      await store.archiveTask(task.id, false);
 
       const dir = join(rootDir, ".fusion", "tasks", task.id);
-      expect(existsSync(dir)).toBe(true);
+      expect(existsSync(dir)).toBe(false);
 
       await store.cleanupArchivedTasks();
 
@@ -6121,15 +6127,12 @@ Task with acceptance criteria
       await store.moveTask(task.id, "in-progress");
       await store.moveTask(task.id, "in-review");
       await store.moveTask(task.id, "done");
-      await store.archiveTask(task.id);
+      await store.archiveTask(task.id, false);
 
-      // First cleanup
       const cleaned1 = await store.cleanupArchivedTasks();
-      expect(cleaned1).toContain(task.id);
+      expect(cleaned1).toEqual([]);
 
-      // Second cleanup should skip
       const cleaned2 = await store.cleanupArchivedTasks();
-      expect(cleaned2).not.toContain(task.id);
       expect(cleaned2).toHaveLength(0);
     });
 
@@ -6152,7 +6155,7 @@ Task with acceptance criteria
       // Add an attachment (metadata only, no content)
       await store.addAttachment(task.id, "test.txt", Buffer.from("test"), "text/plain");
 
-      await store.archiveTask(task.id);
+      await store.archiveTask(task.id, false);
       await store.cleanupArchivedTasks();
 
       // Read from store's archive API
@@ -6165,21 +6168,58 @@ Task with acceptance criteria
       expect(entry!.attachments).toHaveLength(1);
       expect(entry!.attachments![0].originalName).toBe("test.txt");
     });
+
+    it("honors archiveAgentLogMode none", async () => {
+      await store.updateSettings({ archiveAgentLogMode: "none" });
+      const task = await store.createTask({ description: "No agent log archive" });
+      await store.appendAgentLog(task.id, "Should not be archived", "text");
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      await store.archiveTask(task.id);
+
+      const entry = await store.findInArchive(task.id);
+      expect(entry?.agentLogMode).toBe("none");
+      expect(entry?.agentLogSummary).toBeUndefined();
+      expect(entry?.agentLogSnapshot).toBeUndefined();
+      expect(entry?.agentLogFull).toBeUndefined();
+    });
+
+    it("honors archiveAgentLogMode full", async () => {
+      await store.updateSettings({ archiveAgentLogMode: "full" });
+      const task = await store.createTask({ description: "Full agent log archive" });
+      await store.appendAgentLog(task.id, "First full entry", "text");
+      await store.appendAgentLog(task.id, "Second full entry", "tool", "Read file", "executor");
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      await store.archiveTask(task.id);
+
+      const entry = await store.findInArchive(task.id);
+      expect(entry?.agentLogMode).toBe("full");
+      expect(entry?.agentLogSummary).toContain("Agent log entries: 2");
+      expect(entry?.agentLogFull).toHaveLength(2);
+      expect(entry?.agentLogSnapshot).toBeUndefined();
+    });
   });
 
   describe("readArchiveLog", () => {
-    it("returns empty array when archive.jsonl does not exist", async () => {
+    it("returns empty array when archive DB has no tasks", async () => {
       const entries = await store.readArchiveLog();
       expect(entries).toEqual([]);
     });
 
-    it("returns parsed entries from archive.jsonl", async () => {
+    it("returns parsed entries from archive DB", async () => {
       const task = await store.createTask({ description: "Test read" });
       await store.moveTask(task.id, "todo");
       await store.moveTask(task.id, "in-progress");
       await store.moveTask(task.id, "in-review");
       await store.moveTask(task.id, "done");
-      await store.archiveTask(task.id);
+      await store.archiveTask(task.id, false);
       await store.cleanupArchivedTasks();
 
       const entries = await store.readArchiveLog();
@@ -6188,7 +6228,7 @@ Task with acceptance criteria
       expect(entries[0].description).toBe("Test read");
     });
 
-    it("handles multiple entries in archive.jsonl", async () => {
+    it("handles multiple entries in archive DB", async () => {
       // Archive and cleanup task 1
       const task1 = await store.createTask({ description: "Task 1" });
       await store.moveTask(task1.id, "todo");
@@ -6233,10 +6273,28 @@ Task with acceptance criteria
       expect(entry!.id).toBe(task.id);
       expect(entry!.description).toBe("Test find");
     });
+
+    it("keeps comments searchable from the archive database while excluding task logs", async () => {
+      const task = await store.createTask({ description: "Archived search body" });
+      await store.addComment(task.id, "needle-comment", "tester");
+      await store.logEntry(task.id, "needle-log-only");
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      await store.archiveTaskAndCleanup(task.id);
+
+      const commentMatches = await store.searchTasks("needle-comment", { includeArchived: true });
+      expect(commentMatches.map((match) => match.id)).toContain(task.id);
+
+      const logMatches = await store.searchTasks("needle-log-only", { includeArchived: true });
+      expect(logMatches.map((match) => match.id)).not.toContain(task.id);
+    });
   });
 
   describe("unarchiveTask with restore", () => {
-    it("restores missing task from archive.jsonl", async () => {
+    it("restores missing task from archive DB", async () => {
       const task = await store.createTask({ description: "Test restore" });
       await store.moveTask(task.id, "todo");
       await store.moveTask(task.id, "in-progress");
@@ -6300,6 +6358,7 @@ Task with acceptance criteria
       await store.moveTask(task.id, "in-review");
       await store.moveTask(task.id, "done");
       await store.archiveTask(task.id);
+      (store as any).archiveDb.delete(task.id);
 
       // Delete directory without archiving
       const dir = join(rootDir, ".fusion", "tasks", task.id);
@@ -6379,7 +6438,7 @@ Task with acceptance criteria
       const dir = join(rootDir, ".fusion", "tasks", task.id);
       expect(existsSync(dir)).toBe(false);
 
-      // Should be in archive.jsonl
+      // Should be in archive DB
       const entry = await store.findInArchive(task.id);
       expect(entry).toBeDefined();
       expect(entry!.description).toBe("Immediate cleanup");
@@ -6399,7 +6458,7 @@ Task with acceptance criteria
       expect(existsSync(dir)).toBe(false);
     });
 
-    it("archiveTask(false) preserves directory (backward compatibility)", async () => {
+    it("archiveTask(false) still removes active task storage", async () => {
       const task = await store.createTask({ description: "No cleanup" });
       await store.moveTask(task.id, "todo");
       await store.moveTask(task.id, "in-progress");
@@ -6409,12 +6468,11 @@ Task with acceptance criteria
       const archived = await store.archiveTask(task.id, false);
       expect(archived.column).toBe("archived");
 
-      // Directory should still exist
       const dir = join(rootDir, ".fusion", "tasks", task.id);
-      expect(existsSync(dir)).toBe(true);
+      expect(existsSync(dir)).toBe(false);
     });
 
-    it("default cleanup parameter is false", async () => {
+    it("default cleanup parameter removes active task storage", async () => {
       const task = await store.createTask({ description: "Default cleanup" });
       await store.moveTask(task.id, "todo");
       await store.moveTask(task.id, "in-progress");
@@ -6424,9 +6482,9 @@ Task with acceptance criteria
       const archived = await store.archiveTask(task.id); // No cleanup param
       expect(archived.column).toBe("archived");
 
-      // Directory should still exist (default is false)
+      // Directory should be removed by default
       const dir = join(rootDir, ".fusion", "tasks", task.id);
-      expect(existsSync(dir)).toBe(true);
+      expect(existsSync(dir)).toBe(false);
     });
   });
 

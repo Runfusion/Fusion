@@ -3,10 +3,11 @@ import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, open, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync, watch, type FSWatcher } from "node:fs";
-import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter } from "./types.js";
+import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode } from "./types.js";
 import { VALID_TRANSITIONS, DEFAULT_SETTINGS, isGlobalSettingsKey, WORKFLOW_STEP_TEMPLATES, validateDocumentKey } from "./types.js";
 import { GlobalSettingsStore } from "./global-settings.js";
 import { Database, toJson, toJsonNullable, fromJson } from "./db.js";
+import { ArchiveDatabase } from "./archive-db.js";
 import { detectLegacyData, migrateFromLegacy } from "./db-migrate.js";
 import { MissionStore } from "./mission-store.js";
 import { PluginStore } from "./plugin-store.js";
@@ -27,6 +28,8 @@ import { runCommandAsync } from "./run-command.js";
 const LEGACY_BACKUP_DIR = ".kb/backups";
 const TASK_ACTIVITY_LOG_ENTRY_LIMIT = 1_000;
 const TASK_ACTIVITY_LOG_OUTCOME_LIMIT = 4_000;
+const ARCHIVE_AGENT_LOG_SNAPSHOT_LIMIT = 25;
+const ARCHIVE_AGENT_LOG_SNIPPET_LIMIT = 160;
 
 function truncateTaskLogOutcome(outcome: string | undefined): string | undefined {
   if (!outcome || outcome.length <= TASK_ACTIVITY_LOG_OUTCOME_LIMIT) {
@@ -124,6 +127,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   private configPath: string;
   /** SQLite database for structured data storage */
   private _db: Database | null = null;
+  /** Separate SQLite database for compact archived task snapshots. */
+  private _archiveDb: ArchiveDatabase | null = null;
 
   /** File-system watcher instance */
   private watcher: FSWatcher | null = null;
@@ -192,6 +197,15 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return this._db;
   }
 
+  private get archiveDb(): ArchiveDatabase {
+    if (!this._archiveDb) {
+      this._archiveDb = new ArchiveDatabase(this.kbDir);
+      this._archiveDb.init();
+      this.migrateLegacyArchiveEntriesToArchiveDb();
+    }
+    return this._archiveDb;
+  }
+
   async init(): Promise<void> {
     await mkdir(this.tasksDir, { recursive: true });
     
@@ -205,6 +219,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     if (detectLegacyData(this.kbDir)) {
       await migrateFromLegacy(this.kbDir, this._db);
     }
+    await this.migrateActiveArchivedTasksToArchiveDb();
     
     // Write config.json for backward compatibility if it doesn't exist
     if (!existsSync(this.configPath)) {
@@ -304,6 +319,166 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       assigneeUserId: row.assigneeUserId || undefined,
       checkedOutBy: row.checkedOutBy || undefined,
       checkedOutAt: row.checkedOutAt || undefined,
+    };
+  }
+
+  private archiveEntryToTask(entry: ArchivedTaskEntry, slim = false): Task {
+    return {
+      id: entry.id,
+      title: entry.title,
+      description: entry.description,
+      column: "archived",
+      dependencies: entry.dependencies ?? [],
+      steps: entry.steps ?? [],
+      currentStep: entry.currentStep ?? 0,
+      size: entry.size,
+      reviewLevel: entry.reviewLevel,
+      prInfo: slim ? undefined : entry.prInfo,
+      issueInfo: slim ? undefined : entry.issueInfo,
+      attachments: slim ? undefined : entry.attachments,
+      comments: entry.comments,
+      log: slim ? [] : entry.log ?? [],
+      createdAt: entry.createdAt,
+      updatedAt: entry.updatedAt,
+      columnMovedAt: entry.columnMovedAt,
+      modelPresetId: entry.modelPresetId,
+      modelProvider: entry.modelProvider,
+      modelId: entry.modelId,
+      validatorModelProvider: entry.validatorModelProvider,
+      validatorModelId: entry.validatorModelId,
+      planningModelProvider: entry.planningModelProvider,
+      planningModelId: entry.planningModelId,
+      breakIntoSubtasks: entry.breakIntoSubtasks,
+      modifiedFiles: slim ? undefined : entry.modifiedFiles,
+      missionId: entry.missionId,
+      sliceId: entry.sliceId,
+      assigneeUserId: entry.assigneeUserId,
+    };
+  }
+
+  private summarizeAgentLog(entries: AgentLogEntry[], totalCount: number): string | undefined {
+    if (totalCount === 0) {
+      return undefined;
+    }
+
+    const countsByType = new Map<string, number>();
+    const countsByAgent = new Map<string, number>();
+    for (const entry of entries) {
+      countsByType.set(entry.type, (countsByType.get(entry.type) ?? 0) + 1);
+      if (entry.agent) {
+        countsByAgent.set(entry.agent, (countsByAgent.get(entry.agent) ?? 0) + 1);
+      }
+    }
+
+    const typeSummary = Array.from(countsByType.entries())
+      .map(([type, count]) => `${type}:${count}`)
+      .join(", ");
+    const agentSummary = Array.from(countsByAgent.entries())
+      .map(([agent, count]) => `${agent}:${count}`)
+      .join(", ");
+    const recentText = entries
+      .slice(-5)
+      .map((entry) => {
+        const source = entry.agent ? `${entry.agent}/${entry.type}` : entry.type;
+        const text = (entry.detail || entry.text || "").replace(/\s+/g, " ").trim();
+        const snippet = text.length > ARCHIVE_AGENT_LOG_SNIPPET_LIMIT
+          ? `${text.slice(0, ARCHIVE_AGENT_LOG_SNIPPET_LIMIT)}...`
+          : text;
+        return snippet ? `${source}: ${snippet}` : source;
+      })
+      .filter(Boolean)
+      .join("\n");
+
+    return [
+      `Agent log entries: ${totalCount}`,
+      typeSummary ? `Types: ${typeSummary}` : undefined,
+      agentSummary ? `Agents: ${agentSummary}` : undefined,
+      recentText ? `Recent entries:\n${recentText}` : undefined,
+    ].filter(Boolean).join("\n");
+  }
+
+  private async readPromptForArchive(taskId: string): Promise<string | undefined> {
+    const promptPath = join(this.taskDir(taskId), "PROMPT.md");
+    if (!existsSync(promptPath)) {
+      return undefined;
+    }
+    return readFile(promptPath, "utf-8");
+  }
+
+  private async buildArchivedAgentLogFields(
+    taskId: string,
+    mode: ArchiveAgentLogMode,
+  ): Promise<Pick<ArchivedTaskEntry, "agentLogMode" | "agentLogSummary" | "agentLogSnapshot" | "agentLogFull">> {
+    if (mode === "none") {
+      return { agentLogMode: mode };
+    }
+
+    if (mode === "full") {
+      const entries = await this.getAgentLogs(taskId);
+      return {
+        agentLogMode: mode,
+        agentLogSummary: this.summarizeAgentLog(entries, entries.length),
+        agentLogFull: entries,
+      };
+    }
+
+    const [totalCount, snapshot] = await Promise.all([
+      this.getAgentLogCount(taskId),
+      this.getAgentLogs(taskId, { limit: ARCHIVE_AGENT_LOG_SNAPSHOT_LIMIT }),
+    ]);
+    return {
+      agentLogMode: mode,
+      agentLogSummary: this.summarizeAgentLog(snapshot, totalCount),
+      agentLogSnapshot: snapshot,
+    };
+  }
+
+  private async taskToArchiveEntry(task: Task, archivedAt: string): Promise<ArchivedTaskEntry> {
+    const settings = await this.getSettingsFast();
+    const agentLogMode = settings.archiveAgentLogMode ?? "compact";
+    const [prompt, agentLogFields] = await Promise.all([
+      this.readPromptForArchive(task.id),
+      this.buildArchivedAgentLogFields(task.id, agentLogMode),
+    ]);
+
+    return {
+      id: task.id,
+      title: task.title,
+      description: task.description,
+      column: "archived",
+      dependencies: task.dependencies,
+      steps: task.steps,
+      currentStep: task.currentStep,
+      size: task.size,
+      reviewLevel: task.reviewLevel,
+      prInfo: task.prInfo,
+      issueInfo: task.issueInfo,
+      attachments: task.attachments,
+      comments: task.comments,
+      prompt,
+      ...agentLogFields,
+      log: [{ timestamp: archivedAt, action: "Task archived" }],
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
+      columnMovedAt: task.columnMovedAt,
+      archivedAt,
+      modelPresetId: task.modelPresetId,
+      modelProvider: task.modelProvider,
+      modelId: task.modelId,
+      validatorModelProvider: task.validatorModelProvider,
+      validatorModelId: task.validatorModelId,
+      planningModelProvider: task.planningModelProvider,
+      planningModelId: task.planningModelId,
+      breakIntoSubtasks: task.breakIntoSubtasks,
+      baseBranch: task.baseBranch,
+      branch: task.branch,
+      baseCommitSha: task.baseCommitSha,
+      mergeRetries: task.mergeRetries,
+      error: task.error,
+      modifiedFiles: task.modifiedFiles,
+      missionId: task.missionId,
+      sliceId: task.sliceId,
+      assigneeUserId: task.assigneeUserId,
     };
   }
 
@@ -1478,7 +1653,15 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async getTask(id: string, options?: { activityLogLimit?: number }): Promise<TaskDetail> {
     const task = this.readTaskFromDb(id, options);
     if (!task) {
-      throw new Error(`Task ${id} not found`);
+      const archived = this.archiveDb.get(id);
+      if (!archived) {
+        throw new Error(`Task ${id} not found`);
+      }
+      const archivedTask = this.archiveEntryToTask(archived, false);
+      return {
+        ...archivedTask,
+        prompt: archived.prompt ?? this.generatePromptFromArchiveEntry(archived),
+      };
     }
 
     // Sync steps from PROMPT.md if task.steps is empty
@@ -1533,7 +1716,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const sql = `SELECT ${selectClause} FROM tasks${whereClause} ORDER BY createdAt ASC`;
 
     const rows = this.db.prepare(sql).all(...params);
-    const tasks = await Promise.all((rows as any[]).map(async (row) => {
+    const activeTasks = await Promise.all((rows as any[]).map(async (row) => {
       const task = this.rowToTask(row);
       if (!slim || task.steps.length > 0) {
         return task;
@@ -1542,6 +1725,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       const steps = await this.parseStepsFromPrompt(task.id);
       return steps.length > 0 ? { ...task, steps } : task;
     }));
+    const archivedTasks = includeArchived && (!columnFilter || columnFilter === "archived")
+      ? this.archiveDb.list().map((entry) => this.archiveEntryToTask(entry, slim))
+      : [];
+    const tasks = [...activeTasks, ...archivedTasks];
 
     // Sort by createdAt, then by numeric ID suffix for tie-breaking
     const sorted = tasks.sort((a, b) => {
@@ -1635,7 +1822,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       LIMIT ${limit >= 0 ? limit : -1}${offsetClause}
     `).all(ftsQuery) as any[];
 
-    return Promise.all(rows.map(async (row) => {
+    const activeMatches = await Promise.all(rows.map(async (row) => {
       const task = this.rowToTask(row);
       if (task.steps.length > 0) {
         return task;
@@ -1644,6 +1831,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       const steps = await this.parseStepsFromPrompt(task.id);
       return steps.length > 0 ? { ...task, steps } : task;
     }));
+    const archiveMatches = includeArchived
+      ? this.archiveDb.search(ftsQuery, limit >= 0 ? limit : 100).map((entry) => this.archiveEntryToTask(entry, options?.slim ?? false))
+      : [];
+
+    const matches = [...activeMatches, ...archiveMatches];
+    return limit >= 0 ? matches.slice(0, limit) : matches;
   }
 
   async selectNextTaskForAgent(agentId: string): Promise<InboxTask | null> {
@@ -1726,7 +1919,16 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async moveTask(id: string, toColumn: Column): Promise<Task> {
     return this.withTaskLock(id, async () => {
       const dir = this.taskDir(id);
-      const task = await this.readTaskJson(dir);
+      let task: Task;
+      try {
+        task = await this.readTaskJson(dir);
+      } catch (error) {
+        const archived = this.archiveDb.get(id);
+        if (!archived) {
+          throw error;
+        }
+        task = this.archiveEntryToTask(archived, false);
+      }
 
       if (task.column === "done" && toColumn === "done") {
         if (this.clearDoneTransientFields(task)) {
@@ -2721,11 +2923,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   /**
    * Archive a done task (move from done → archived).
    * Logs the action and emits `task:moved` event.
-   * @param cleanup - If true, immediately cleans up the task directory after archiving
-   *                  by writing a compact entry to archive.jsonl and removing files.
-   *                  Default: false for backward compatibility.
+   * @param cleanup - When true, also attempts branch cleanup before writing the
+   *                  cold archive entry. Active task storage is always removed.
    */
-  async archiveTask(id: string, cleanup: boolean = false): Promise<Task> {
+  async archiveTask(id: string, cleanup: boolean = true): Promise<Task> {
     return this.withTaskLock(id, async () => {
       const dir = this.taskDir(id);
       const task = await this.readTaskJson(dir);
@@ -2749,9 +2950,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         action: "Task archived",
       });
 
-      // If cleanup requested, write archive entry BEFORE removing directory
       if (cleanup) {
-        // Clean up the task's branch before removing from DB
         const cleanedBranches = await this.cleanupBranchForTask(task);
         if (cleanedBranches.length > 0) {
           task.log.push({
@@ -2759,69 +2958,23 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
             action: `Cleaned up branch: ${cleanedBranches.join(", ")}`,
           });
         }
+      }
 
-        const entry: import("./types.js").ArchivedTaskEntry = {
-          id: task.id,
-          title: task.title,
-          description: task.description,
-          column: "archived",
-          dependencies: task.dependencies,
-          steps: task.steps,
-          currentStep: task.currentStep,
-          size: task.size,
-          reviewLevel: task.reviewLevel,
-          prInfo: task.prInfo,
-          issueInfo: task.issueInfo,
-          attachments: task.attachments,
-          log: task.log,
-          createdAt: task.createdAt,
-          updatedAt: task.updatedAt,
-          columnMovedAt: task.columnMovedAt,
-          archivedAt: task.columnMovedAt,
-          modelPresetId: task.modelPresetId,
-          modelProvider: task.modelProvider,
-          modelId: task.modelId,
-          validatorModelProvider: task.validatorModelProvider,
-          validatorModelId: task.validatorModelId,
-          planningModelProvider: task.planningModelProvider,
-          planningModelId: task.planningModelId,
-          breakIntoSubtasks: task.breakIntoSubtasks,
-          paused: task.paused,
-          baseBranch: task.baseBranch,
-          branch: task.branch,
-          baseCommitSha: task.baseCommitSha,
-          mergeRetries: task.mergeRetries,
-          error: task.error,
-          modifiedFiles: task.modifiedFiles,
-        };
+      const entry = await this.taskToArchiveEntry(task, task.columnMovedAt);
+      this.archiveDb.upsert(entry);
 
-        // Write to archivedTasks table in SQLite
-        this.db.prepare(
-          `INSERT OR REPLACE INTO archivedTasks (id, data, archivedAt) VALUES (?, ?, ?)`,
-        ).run(entry.id, JSON.stringify(entry), entry.archivedAt!);
+      this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+      this.db.bumpLastModified();
 
-        // Remove from tasks table
-        this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
-        this.db.bumpLastModified();
+      const { rm } = await import("node:fs/promises");
+      await rm(dir, { recursive: true, force: true });
 
-        // Remove task directory recursively
-        const { rm } = await import("node:fs/promises");
-        await rm(dir, { recursive: true, force: true });
-
-        // Remove from cache if watcher is active
-        if (this.isWatching) {
-          this.taskCache.delete(id);
-        }
-      } else {
-        // Normal archive - update task in SQLite
-        await this.atomicWriteTaskJson(dir, task);
-
-        // Update cache if watcher is active
-        if (this.isWatching) this.taskCache.set(id, { ...task });
+      if (this.isWatching) {
+        this.taskCache.delete(id);
       }
 
       this.emit("task:moved", { task, from: "done" as Column, to: "archived" as Column });
-      return task;
+      return this.archiveEntryToTask(entry, false);
     });
   }
 
@@ -2835,23 +2988,22 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   /**
    * Unarchive an archived task (move from archived → done).
-   * If the task directory was cleaned up, restores from archive.jsonl first.
+   * If the active task row was cleaned up, restores from archive.db first.
    * Logs the action and emits `task:moved` event.
    */
   async unarchiveTask(id: string): Promise<Task> {
     const dir = this.taskDir(id);
 
-    // Check if directory exists BEFORE acquiring lock
-    if (!existsSync(dir)) {
-      // Task was cleaned up - restore from archive
+    // If the active row is gone, restore from cold archive storage before
+    // taking the task lock. A stale directory may still exist after manual
+    // filesystem edits, so database presence is the source of truth.
+    if (!this.readTaskFromDb(id)) {
       const entry = await this.findInArchive(id);
       if (!entry) {
         throw new Error(
-          `Cannot unarchive ${id}: task directory missing and not found in archive`,
+          `Cannot unarchive ${id}: task is missing from active storage and not found in archive`,
         );
       }
-
-      // Restore the task directory first
       await this.restoreFromArchive(entry);
     }
 
@@ -2896,6 +3048,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       });
 
       await this.atomicWriteTaskJson(dir, task);
+      this.archiveDb.delete(id);
 
       // Update cache if watcher is active
       if (this.isWatching) this.taskCache.set(id, { ...task });
@@ -3899,7 +4052,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       if (limit === 0) return [];
       // When offset is provided, read limit + offset entries and slice off the first offset
       const readCount = offset > 0 ? limit + offset : limit;
-      const entries = await this.readAgentLogTailAsync(logPath, readCount);
+      const entries = await this.readAgentLogTail(logPath, readCount);
       if (offset > 0) {
         // Slice off the first 'offset' entries (oldest in the returned batch)
         // This skips the most recent entries to get older entries
@@ -3918,17 +4071,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   /**
-   * Async version of readAgentLogTail that reads entries from end of file.
-   * Returns entries in chronological order (oldest first).
-   * Uses async file operations for consistency with the rest of the codebase.
-   */
-  private async readAgentLogTailAsync(logPath: string, limit: number): Promise<AgentLogEntry[]> {
-    const content = await readFile(logPath, "utf-8");
-    const allEntries = this.parseAgentLogContent(content);
-    return allEntries.slice(-limit);
-  }
-
-  /**
    * Count total number of log entries in the agent log file.
    * Uses efficient newline counting to avoid parsing entire file.
    *
@@ -3940,10 +4082,36 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const logPath = join(dir, "agent.log");
     if (!existsSync(logPath)) return 0;
 
-    // Count newlines efficiently - each entry is a JSON line ending with \n
-    const content = await readFile(logPath, "utf-8");
-    if (!content.trim()) return 0;
-    return content.split("\n").filter((line) => line.trim()).length;
+    const handle = await open(logPath, "r");
+    try {
+      const { size } = await handle.stat();
+      if (size === 0) return 0;
+
+      const chunkSize = 64 * 1024;
+      const buffer = Buffer.allocUnsafe(chunkSize);
+      let position = 0;
+      let count = 0;
+      let hasNonWhitespace = false;
+      let lastByte = 0;
+
+      while (position < size) {
+        const readSize = Math.min(chunkSize, size - position);
+        const { bytesRead } = await handle.read(buffer, 0, readSize, position);
+        if (bytesRead <= 0) break;
+        for (let i = 0; i < bytesRead; i++) {
+          const byte = buffer[i];
+          if (byte === 10) count++;
+          if (byte > 32) hasNonWhitespace = true;
+          lastByte = byte;
+        }
+        position += bytesRead;
+      }
+
+      if (!hasNonWhitespace) return 0;
+      return lastByte === 10 ? count : count + 1;
+    } finally {
+      await handle.close();
+    }
   }
 
   /**
@@ -3976,22 +4144,59 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    * Read all archived task entries from SQLite.
    */
   async readArchiveLog(): Promise<import("./types.js").ArchivedTaskEntry[]> {
-    const rows = this.db.prepare("SELECT * FROM archivedTasks ORDER BY archivedAt DESC").all() as any[];
-    return rows.map((row) => JSON.parse(row.data) as import("./types.js").ArchivedTaskEntry);
+    return this.archiveDb.list();
   }
 
   /**
    * Find a specific task in the archive by ID.
    */
   async findInArchive(id: string): Promise<import("./types.js").ArchivedTaskEntry | undefined> {
-    const row = this.db.prepare("SELECT * FROM archivedTasks WHERE id = ?").get(id) as any;
-    if (!row) return undefined;
-    return JSON.parse(row.data) as import("./types.js").ArchivedTaskEntry;
+    return this.archiveDb.get(id);
+  }
+
+  private migrateLegacyArchiveEntriesToArchiveDb(): void {
+    const rows = this.db.prepare("SELECT id, data FROM archivedTasks").all() as Array<{ id: string; data: string }>;
+    if (rows.length === 0) {
+      return;
+    }
+
+    for (const row of rows) {
+      const entry = JSON.parse(row.data) as ArchivedTaskEntry;
+      this._archiveDb?.upsert({
+        ...entry,
+        log: compactTaskActivityLog(entry.log ?? []),
+      });
+    }
+
+    this.db.prepare("DELETE FROM archivedTasks").run();
+    this.db.bumpLastModified();
+  }
+
+  private async migrateActiveArchivedTasksToArchiveDb(): Promise<void> {
+    const rows = this.db.prepare(`SELECT * FROM tasks WHERE "column" = 'archived'`).all() as any[];
+    if (rows.length === 0) {
+      return;
+    }
+
+    const { rm } = await import("node:fs/promises");
+    for (const row of rows) {
+      const task = this.rowToTask(row);
+      const archivedAt = task.columnMovedAt ?? task.updatedAt ?? new Date().toISOString();
+      const entry = await this.taskToArchiveEntry(task, archivedAt);
+      this.archiveDb.upsert(entry);
+      this.db.prepare("DELETE FROM tasks WHERE id = ?").run(task.id);
+      await rm(this.taskDir(task.id), { recursive: true, force: true });
+      if (this.isWatching) {
+        this.taskCache.delete(task.id);
+      }
+    }
+
+    this.db.bumpLastModified();
   }
 
   /**
-   * Cleanup archived tasks by writing compact entries to archivedTasks table
-   * and removing task directories. Also removes from tasks table.
+   * Cleanup any legacy active archived tasks by writing compact entries to
+   * archive.db and removing task directories.
    */
   async cleanupArchivedTasks(): Promise<string[]> {
     const archivedTasks = await this.listTasks({ column: "archived" });
@@ -4006,43 +4211,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         continue;
       }
 
-      // Create compact archive entry (exclude agent logs)
-      const entry: import("./types.js").ArchivedTaskEntry = {
-        id: task.id,
-        title: task.title,
-        description: task.description,
-        column: "archived",
-        dependencies: task.dependencies,
-        steps: task.steps,
-        currentStep: task.currentStep,
-        size: task.size,
-        reviewLevel: task.reviewLevel,
-        prInfo: task.prInfo,
-        issueInfo: task.issueInfo,
-        attachments: task.attachments,
-        log: task.log,
-        createdAt: task.createdAt,
-        updatedAt: task.updatedAt,
-        columnMovedAt: task.columnMovedAt,
-        archivedAt: new Date().toISOString(),
-        modelProvider: task.modelProvider,
-        modelId: task.modelId,
-        validatorModelProvider: task.validatorModelProvider,
-        validatorModelId: task.validatorModelId,
-        breakIntoSubtasks: task.breakIntoSubtasks,
-        paused: task.paused,
-        baseBranch: task.baseBranch,
-        branch: task.branch,
-        baseCommitSha: task.baseCommitSha,
-        mergeRetries: task.mergeRetries,
-        error: task.error,
-        modifiedFiles: task.modifiedFiles,
-      };
-
-      // Write to archivedTasks table
-      this.db.prepare(
-        `INSERT OR REPLACE INTO archivedTasks (id, data, archivedAt) VALUES (?, ?, ?)`,
-      ).run(entry.id, JSON.stringify(entry), entry.archivedAt);
+      const entry = await this.taskToArchiveEntry(task, new Date().toISOString());
+      this.archiveDb.upsert(entry);
 
       // Remove task from tasks table
       this.db.prepare('DELETE FROM tasks WHERE id = ?').run(task.id);
@@ -4090,6 +4260,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       issueInfo: entry.issueInfo,
       attachments: entry.attachments,
       log: [...entry.log, { timestamp: new Date().toISOString(), action: "Task restored from archive" }],
+      comments: entry.comments,
       createdAt: entry.createdAt,
       updatedAt: new Date().toISOString(),
       columnMovedAt: entry.columnMovedAt,
@@ -4102,14 +4273,14 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       planningModelId: entry.planningModelId,
       breakIntoSubtasks: entry.breakIntoSubtasks,
       modifiedFiles: entry.modifiedFiles,
-      // Intentionally NOT restoring: worktree, status, blockedBy, paused, baseBranch, baseCommitSha, error, comments
+      // Intentionally NOT restoring: worktree, status, blockedBy, paused, baseBranch, baseCommitSha, error
     };
 
     // Write task.json
     await this.atomicWriteTaskJson(dir, restoredTask);
 
     // Generate PROMPT.md with preserved steps
-    const prompt = this.generatePromptFromArchiveEntry(entry);
+    const prompt = entry.prompt ?? this.generatePromptFromArchiveEntry(entry);
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "PROMPT.md"), prompt);
 
@@ -4482,6 +4653,10 @@ ${stepsSection}`;
     if (this._db) {
       this._db.close();
       this._db = null;
+    }
+    if (this._archiveDb) {
+      this._archiveDb.close();
+      this._archiveDb = null;
     }
   }
 

@@ -91,6 +91,7 @@ function createMockStore(overrides: Record<string, unknown> = {}): TaskStore & E
     logEntry: vi.fn().mockResolvedValue(undefined),
     moveTask: vi.fn().mockResolvedValue(undefined),
     mergeTask: vi.fn().mockResolvedValue(undefined),
+    archiveTaskAndCleanup: vi.fn().mockResolvedValue({} as Task),
     walCheckpoint: vi.fn().mockReturnValue({ busy: 0, log: 5, checkpointed: 5 }),
     listTasks: vi.fn().mockResolvedValue([]),
     getRootDir: vi.fn().mockReturnValue("/tmp/test-project"),
@@ -559,6 +560,51 @@ describe("SelfHealingManager", () => {
       const result = await manager.cleanupOrphanedBranches();
 
       expect(result).toBe(0);
+    });
+  });
+
+  // ── Auto-archive ────────────────────────────────────────────────────
+
+  describe("archiveStaleDoneTasks", () => {
+    it("skips when auto-archive is disabled", async () => {
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoArchiveDoneTasksEnabled: false,
+      } as unknown as Settings);
+
+      const result = await manager.archiveStaleDoneTasks();
+
+      expect(result).toBe(0);
+      expect(store.listTasks).not.toHaveBeenCalled();
+      expect(store.archiveTaskAndCleanup).not.toHaveBeenCalled();
+    });
+
+    it("archives stale done tasks with cleanup using the configured age", async () => {
+      vi.setSystemTime(new Date("2026-01-04T00:00:00.000Z"));
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoArchiveDoneTasksEnabled: true,
+        autoArchiveDoneAfterMs: 24 * 60 * 60 * 1000,
+      } as unknown as Settings);
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-001",
+          column: "done",
+          columnMovedAt: "2026-01-02T23:59:00.000Z",
+          updatedAt: "2026-01-02T23:59:00.000Z",
+        },
+        {
+          id: "FN-002",
+          column: "done",
+          columnMovedAt: "2026-01-03T12:00:00.000Z",
+          updatedAt: "2026-01-03T12:00:00.000Z",
+        },
+      ]);
+
+      const result = await manager.archiveStaleDoneTasks();
+
+      expect(result).toBe(1);
+      expect(store.listTasks).toHaveBeenCalledWith({ slim: true, includeArchived: false });
+      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-001");
+      expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-002");
     });
   });
 

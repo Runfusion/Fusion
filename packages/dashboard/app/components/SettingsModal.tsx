@@ -37,8 +37,8 @@ import { applyPresetToSelection, generateUniquePresetId } from "../utils/modelPr
  *   - global-models: Default/fallback models and thinking level (global)
  *   - project-models: Planning & validator models, model presets, and AI summarization (project)
  *   - general: Task prefix configuration (project)
- *   - scheduling: Concurrency, poll interval, file overlap serialization, and step execution
- *     settings (runStepsInNewSessions, maxParallelSteps) (project)
+ *   - scheduling: Concurrency, poll interval, file overlap serialization, task auto-archive,
+ *     and step execution settings (runStepsInNewSessions, maxParallelSteps) (project)
  *   - worktrees: Worktree limits, init commands, recycling (project)
  *   - commands: Test and build command configuration (project)
  *   - merge: Auto-merge settings (project)
@@ -79,6 +79,9 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "plugins", label: "Plugins", scope: "project" },
 ];
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const AUTO_ARCHIVE_DEFAULT_AFTER_DAYS = 2;
+
 export type SectionId = SettingsSection["id"];
 
 interface SettingsModalProps {
@@ -110,7 +113,21 @@ export function SettingsModal({
   onColorThemeChange,
   onReopenOnboarding,
 }: SettingsModalProps) {
-  const [form, setForm] = useState<Settings & { worktreeInitCommand?: string }>({ maxConcurrent: 2, maxTriageConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 15000, groupOverlappingFiles: true, autoMerge: true, mergeStrategy: "direct", recycleWorktrees: false, worktreeNaming: "random", includeTaskIdInCommit: true, worktreeInitCommand: "", ntfyEnabled: false, ntfyTopic: undefined });
+  const [form, setForm] = useState<Settings & { worktreeInitCommand?: string }>({
+    maxConcurrent: 2,
+    maxTriageConcurrent: 2,
+    maxWorktrees: 4,
+    pollIntervalMs: 15000,
+    groupOverlappingFiles: true,
+    autoMerge: true,
+    mergeStrategy: "direct",
+    recycleWorktrees: false,
+    worktreeNaming: "random",
+    includeTaskIdInCommit: true,
+    worktreeInitCommand: "",
+    ntfyEnabled: false,
+    ntfyTopic: undefined,
+  });
   const [loading, setLoading] = useState(true);
   // Track initial values to detect explicit clears for null-as-delete semantics
   const [initialValues, setInitialValues] = useState<Settings | null>(null);
@@ -1547,7 +1564,7 @@ export function SettingsModal({
               <input
                 id="globalMaxConcurrent"
                 type="number"
-                min={1}
+                min={0}
                 max={10000}
                 value={globalMaxConcurrent ?? ""}
                 onChange={(e) => {
@@ -1646,6 +1663,62 @@ export function SettingsModal({
                 disabled={!form.specStalenessEnabled}
               />
               <small>Maximum age in hours before a specification is considered stale. Default: 6 hours.</small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="autoArchiveDoneTasksEnabled" className="checkbox-label">
+                <input
+                  id="autoArchiveDoneTasksEnabled"
+                  type="checkbox"
+                  checked={form.autoArchiveDoneTasksEnabled ?? true}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      autoArchiveDoneTasksEnabled: e.target.checked,
+                    }))
+                  }
+                />
+                Enable automatic task archiving
+              </label>
+              <small>Completed tasks older than the threshold are moved out of the active task database.</small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="autoArchiveDoneAfterMs">Archive Completed Tasks After (days)</label>
+              <input
+                id="autoArchiveDoneAfterMs"
+                type="number"
+                min={1}
+                step={1}
+                value={form.autoArchiveDoneAfterMs !== undefined ? Math.round(form.autoArchiveDoneAfterMs / MS_PER_DAY) : AUTO_ARCHIVE_DEFAULT_AFTER_DAYS}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  const num = Number(val);
+                  setForm((f) => ({
+                    ...f,
+                    autoArchiveDoneAfterMs: val === "" ? undefined : num * MS_PER_DAY,
+                  }));
+                }}
+                disabled={form.autoArchiveDoneTasksEnabled === false}
+              />
+              <small>Number of days a task can stay in Done before it is archived. Default: 2 days (48 hours).</small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="archiveAgentLogMode">Archive Agent Log</label>
+              <select
+                id="archiveAgentLogMode"
+                value={form.archiveAgentLogMode ?? "compact"}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    archiveAgentLogMode: e.target.value as "none" | "compact" | "full",
+                  }))
+                }
+                disabled={form.autoArchiveDoneTasksEnabled === false}
+              >
+                <option value="compact">Compact summary and recent entries</option>
+                <option value="none">Do not archive agent logs</option>
+                <option value="full">Full agent log</option>
+              </select>
+              <small>Compact mode keeps archive size low while preserving recent agent activity for context.</small>
             </div>
             <div className="form-group">
               <label htmlFor="maxStuckKills">Max Stuck Retries</label>

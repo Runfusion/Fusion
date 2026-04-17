@@ -5,7 +5,13 @@ import userEvent from "@testing-library/user-event";
 import { SettingsModal } from "../SettingsModal";
 import type { Settings, ThemeMode, ColorTheme } from "@fusion/core";
 
-const defaultSettings: Settings = {
+type SettingsWithAutoArchive = Settings & {
+  autoArchiveDoneTasksEnabled?: boolean;
+  autoArchiveDoneAfterMs?: number;
+  archiveAgentLogMode?: "none" | "compact" | "full";
+};
+
+const defaultSettings: SettingsWithAutoArchive = {
   maxConcurrent: 2,
   maxTriageConcurrent: 2,
   maxWorktrees: 4,
@@ -2877,6 +2883,77 @@ describe("SettingsModal", () => {
     expect(thresholdInput).toBeTruthy();
     expect(thresholdInput.getAttribute("type")).toBe("number");
     expect(thresholdInput.getAttribute("min")).toBe("0");
+  });
+
+  it("shows auto-archive fields in Scheduling section", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Scheduling"));
+    const checkbox = screen.getByLabelText("Enable automatic task archiving");
+    expect(checkbox).toBeTruthy();
+    expect(checkbox.getAttribute("type")).toBe("checkbox");
+
+    const ageInput = screen.getByLabelText("Archive Completed Tasks After (days)");
+    expect(ageInput).toBeTruthy();
+    expect(ageInput.getAttribute("type")).toBe("number");
+    expect(ageInput.getAttribute("min")).toBe("1");
+
+    const logMode = screen.getByLabelText("Archive Agent Log") as HTMLSelectElement;
+    expect(logMode).toBeTruthy();
+    expect(logMode.value).toBe("compact");
+  });
+
+  it("auto-archive age input shows default days and disables when archiving is off", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Scheduling"));
+    const ageInput = screen.getByLabelText("Archive Completed Tasks After (days)") as HTMLInputElement;
+    expect(ageInput.value).toBe("2");
+
+    const checkbox = screen.getByLabelText("Enable automatic task archiving") as HTMLInputElement;
+    const logMode = screen.getByLabelText("Archive Agent Log") as HTMLSelectElement;
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(false);
+    expect(ageInput).toBeDisabled();
+    expect(logMode).toBeDisabled();
+
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(true);
+    expect(ageInput).not.toBeDisabled();
+    expect(logMode).not.toBeDisabled();
+  });
+
+  it("auto-archive age renders from milliseconds and converts days back to milliseconds on save", async () => {
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...defaultSettings,
+      autoArchiveDoneTasksEnabled: true,
+      autoArchiveDoneAfterMs: 5 * 24 * 60 * 60 * 1000,
+      archiveAgentLogMode: "compact",
+    } as SettingsWithAutoArchive);
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Scheduling"));
+    const checkbox = screen.getByLabelText("Enable automatic task archiving") as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+
+    const ageInput = screen.getByLabelText("Archive Completed Tasks After (days)") as HTMLInputElement;
+    expect(ageInput.value).toBe("5");
+
+    fireEvent.change(ageInput, { target: { value: "7" } });
+    expect(ageInput.value).toBe("7");
+    fireEvent.change(screen.getByLabelText("Archive Agent Log"), { target: { value: "none" } });
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.autoArchiveDoneTasksEnabled).toBe(true);
+    expect(payload.autoArchiveDoneAfterMs).toBe(7 * 24 * 60 * 60 * 1000);
+    expect(payload.archiveAgentLogMode).toBe("none");
   });
 
   it("Specification Staleness threshold input is disabled when toggle is off", async () => {

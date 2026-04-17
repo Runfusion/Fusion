@@ -2287,6 +2287,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       if (clientSettings.autoBackupDir !== undefined && !validateBackupDir(clientSettings.autoBackupDir)) {
         throw badRequest("autoBackupDir must be a relative path without '..' traversal");
       }
+      if (clientSettings.autoArchiveDoneAfterMs !== undefined) {
+        const ageMs = clientSettings.autoArchiveDoneAfterMs;
+        if (!Number.isInteger(ageMs) || ageMs < 60_000 || ageMs > 10 * 365 * 24 * 60 * 60 * 1000) {
+          throw badRequest("autoArchiveDoneAfterMs must be between 60000 and 315360000000");
+        }
+      }
+      if (
+        clientSettings.archiveAgentLogMode !== undefined &&
+        !["none", "compact", "full"].includes(clientSettings.archiveAgentLogMode)
+      ) {
+        throw badRequest("archiveAgentLogMode must be one of: none, compact, full");
+      }
 
       // Validate memoryBackendType if provided - must be string or null (for explicit clear)
       // Unknown backend IDs are accepted and persisted verbatim (for custom backend compatibility)

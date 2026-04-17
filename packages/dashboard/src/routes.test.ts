@@ -12010,6 +12010,34 @@ describe("PUT /settings", () => {
     expect(store.updateSettings).toHaveBeenCalledWith({ maxConcurrent: 8, autoMerge: false });
   });
 
+  it("validates auto-archive age settings", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "PUT",
+      "/api/settings",
+      JSON.stringify({ autoArchiveDoneAfterMs: 0 }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("autoArchiveDoneAfterMs");
+    expect(store.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("validates archive agent log mode", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "PUT",
+      "/api/settings",
+      JSON.stringify({ archiveAgentLogMode: "everything" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("archiveAgentLogMode");
+    expect(store.updateSettings).not.toHaveBeenCalled();
+  });
+
   it("returns 500 on store update error", async () => {
     (store.updateSettings as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Write failed"));
 

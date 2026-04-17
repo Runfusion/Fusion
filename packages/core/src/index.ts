@@ -44,6 +44,7 @@ export type { MessageStoreEvents } from "./message-store.js";
 export { TaskStore } from "./store.js";
 export { Database, createDatabase, toJson, toJsonNullable, fromJson } from "./db.js";
 export type { Statement } from "./db.js";
+export { ArchiveDatabase } from "./archive-db.js";
 export { detectLegacyData, migrateFromLegacy, getMigrationStatus } from "./db-migrate.js";
 export { GlobalSettingsStore, resolveGlobalDir } from "./global-settings.js";
 export { DaemonTokenManager, DAEMON_TOKEN_PREFIX, DAEMON_TOKEN_HEX_LENGTH, isDaemonTokenFormat } from "./daemon-token.js";

@@ -476,20 +476,29 @@ export class SelfHealingManager {
   // ── Auto-archive of stale done tasks ──────────────────────────────
 
   /**
-   * Auto-archive done tasks older than 48 hours so the dashboard board view
-   * stops accumulating thousands of completed tasks. Data remains in SQLite —
-   * the task is moved from `done` to `archived`, which the slim list endpoint
-   * excludes by default. Users can still expand the archived column or unarchive.
+   * Auto-archive done tasks older than the project retention setting so the
+   * active task database does not accumulate completed task payloads forever.
+   * Archived task metadata is retained in the separate archive database and can
+   * be restored by unarchiving.
    */
   private static readonly AUTO_ARCHIVE_AFTER_MS = 48 * 60 * 60 * 1000;
 
   async archiveStaleDoneTasks(): Promise<number> {
     try {
+      const settings = await this.store.getSettings();
+      if (settings.autoArchiveDoneTasksEnabled === false) {
+        return 0;
+      }
+      const archiveAfterMs = settings.autoArchiveDoneAfterMs ?? SelfHealingManager.AUTO_ARCHIVE_AFTER_MS;
+      if (!Number.isFinite(archiveAfterMs) || archiveAfterMs <= 0) {
+        return 0;
+      }
+
       // Slim listing — we only need id/column/columnMovedAt/updatedAt to decide
       // staleness. Pulling full task payloads (logs, comments, steps) here used
       // to drag in tens of MB on busy boards and stalled the maintenance loop.
-      const tasks = await this.store.listTasks({ slim: true });
-      const cutoff = Date.now() - SelfHealingManager.AUTO_ARCHIVE_AFTER_MS;
+      const tasks = await this.store.listTasks({ slim: true, includeArchived: false });
+      const cutoff = Date.now() - archiveAfterMs;
 
       const stale = tasks.filter((t) => {
         if (t.column !== "done") return false;
@@ -503,12 +512,12 @@ export class SelfHealingManager {
 
       if (stale.length === 0) return 0;
 
-      log.log(`Auto-archiving ${stale.length} done task(s) older than 48h`);
+      log.log(`Auto-archiving ${stale.length} done task(s) older than ${archiveAfterMs}ms`);
 
       let archived = 0;
       for (const task of stale) {
         try {
-          await this.store.archiveTask(task.id);
+          await this.store.archiveTaskAndCleanup(task.id);
           archived++;
         } catch (err: unknown) { const errorMessage = err instanceof Error ? err.message : String(err);
           log.error(`Failed to auto-archive ${task.id}: ${errorMessage}`);
