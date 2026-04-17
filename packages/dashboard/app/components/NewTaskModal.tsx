@@ -4,6 +4,8 @@ import type { ToastType } from "../hooks/useToast";
 import { uploadAttachment, fetchAgents } from "../api";
 import type { Agent } from "../api";
 import { Bot } from "lucide-react";
+import { useSetupReadiness } from "../hooks/useSetupReadiness";
+import { SetupWarningBanner } from "./SetupWarningBanner";
 import { TaskForm, type PendingImage } from "./TaskForm";
 
 interface NewTaskModalProps {
@@ -38,6 +40,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   const [showAgentPicker, setShowAgentPicker] = useState(false);
   const [agentsLoading, setAgentsLoading] = useState(false);
   const agentPickerRef = useRef<HTMLDivElement>(null);
+  const { hasAiProvider, hasGithub, loading: setupReadinessLoading } = useSetupReadiness(projectId);
 
   // Handler for workflow step changes that detects explicit user interaction
   const handleWorkflowStepsChange = useCallback((steps: string[]) => {
@@ -221,6 +224,13 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
         </div>
 
         <div className="modal-body">
+          {!setupReadinessLoading && (
+            <SetupWarningBanner
+              hasAiProvider={hasAiProvider}
+              hasGithub={hasGithub}
+            />
+          )}
+
           <TaskForm
             mode="create"
             description={description}

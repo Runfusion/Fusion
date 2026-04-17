@@ -23826,6 +23826,48 @@ html .column.drag-over * {
   line-height: 1.4;
 }
 
+/* === SetupWarningBanner === */
+.setup-warning-banner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-md);
+  border-radius: var(--radius-md);
+  border-inline-start: var(--space-xs) solid var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+}
+
+.setup-warning-banner__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.setup-warning-banner__title {
+  color: var(--text);
+}
+
+.setup-warning-banner__description {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.setup-warning-banner--compact {
+  gap: 0;
+}
+
+.setup-warning-banner__compact-text {
+  margin: 0;
+  color: var(--text);
+}
+
+@media (max-width: 768px) {
+  .setup-warning-banner--compact {
+    padding: var(--space-xs) var(--space-sm);
+  }
+}
+
 /* === OnboardingDisclosure === */
 .onboarding-disclosure {
   display: flex;

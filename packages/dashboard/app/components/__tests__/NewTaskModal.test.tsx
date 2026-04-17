@@ -29,6 +29,7 @@ vi.mock("../../api", () => ({
   }),
   fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
   fetchAgents: vi.fn().mockResolvedValue([]),
+  fetchAuthStatus: vi.fn().mockResolvedValue({ providers: [] }),
   refineText: vi.fn(),
   getRefineErrorMessage: vi.fn((err) => err?.message || "Failed to refine text. Please try again."),
   updateGlobalSettings: vi.fn().mockResolvedValue({}),
@@ -134,6 +135,32 @@ describe("NewTaskModal", () => {
       expect(props.onCreateTask).toHaveBeenCalledWith(
         expect.objectContaining({
           description: "Test description",
+        }),
+      );
+    });
+  });
+
+  it("still submits when setup warnings are shown", async () => {
+    const { fetchAuthStatus } = await import("../../api");
+    vi.mocked(fetchAuthStatus).mockResolvedValueOnce({
+      providers: [{ id: "github", name: "GitHub", authenticated: false, type: "oauth" }],
+    });
+
+    const { props } = renderNewTaskModal();
+
+    await waitFor(() => {
+      expect(screen.getByText("No AI provider connected")).toBeTruthy();
+      expect(screen.getByText("GitHub not connected")).toBeTruthy();
+    });
+
+    const descTextarea = screen.getByRole("textbox");
+    fireEvent.change(descTextarea, { target: { value: "Submit despite warning" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+
+    await waitFor(() => {
+      expect(props.onCreateTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: "Submit despite warning",
         }),
       );
     });

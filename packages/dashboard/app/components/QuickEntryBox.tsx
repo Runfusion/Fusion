@@ -6,6 +6,8 @@ import type { ModelInfo, RefinementType, Agent } from "../api";
 import { fetchModels, fetchSettings, refineText, getRefineErrorMessage, updateGlobalSettings, fetchAgents, uploadAttachment } from "../api";
 import { Link, Paperclip, Brain, Lightbulb, ListTree, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
+import { SetupWarningBanner } from "./SetupWarningBanner";
+import { useSetupReadiness } from "../hooks/useSetupReadiness";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 
 const STORAGE_KEY = "kb-quick-entry-text";
@@ -150,6 +152,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
 
   // If onCreate is not provided, the component is disabled
   const isDisabled = !onCreate;
+  const { hasAiProvider, hasGithub, loading: setupReadinessLoading } = useSetupReadiness(projectId);
 
   // Fetch models and settings if not provided by parent
   useEffect(() => {
@@ -1134,6 +1137,14 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         hidden={!showExpandedControls}
         aria-hidden={!showExpandedControls}
       >
+        {showExpandedControls && !setupReadinessLoading && (
+          <SetupWarningBanner
+            hasAiProvider={hasAiProvider}
+            hasGithub={hasGithub}
+            compact
+          />
+        )}
+
         {/* All quick-create actions behind single disclosure toggle */}
         {showExpandedControls && !isSubmitting && (
           <div className="quick-entry-actions" data-testid="quick-entry-actions">

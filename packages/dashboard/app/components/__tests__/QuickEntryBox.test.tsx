@@ -93,6 +93,7 @@ vi.mock("../../api", () => ({
     groupOverlappingFiles: true,
     autoMerge: true,
   }),
+  fetchAuthStatus: vi.fn().mockResolvedValue({ providers: [] }),
   refineText: vi.fn(),
   getRefineErrorMessage: vi.fn((err) => err?.message || "Failed to refine text. Please try again."),
   fetchAgents: vi.fn().mockResolvedValue([]),
