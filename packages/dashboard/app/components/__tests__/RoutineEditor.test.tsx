@@ -13,6 +13,11 @@ vi.mock("lucide-react", () => ({
   Folder: () => <span data-testid="icon-folder">📁</span>,
 }));
 
+// Mock API
+vi.mock("../api", () => ({
+  fetchModels: vi.fn(() => new Promise(() => {})),
+}));
+
 // Mock @fusion/core
 vi.mock("@fusion/core", () => ({}));
 
@@ -224,6 +229,109 @@ describe("RoutineEditor", () => {
       render(<RoutineEditor routine={routine} onSubmit={onSubmit} onCancel={onCancel} />);
       expect(screen.getByText("API")).toBeDefined();
       expect(screen.getByLabelText("API Endpoint")).toHaveValue("/api/test");
+    });
+  });
+
+  // ── Scope selector ──────────────────────────────────────────────────
+
+  describe("Scope selector", () => {
+    it("clicking Global sets active state", () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} scope="project" projectId="proj-1" />);
+
+      const globalButton = screen.getByRole("radio", { name: /Global/i });
+      const projectButton = screen.getByRole("radio", { name: /Project/i });
+
+      expect(globalButton).toHaveAttribute("aria-checked", "false");
+      expect(projectButton).toHaveAttribute("aria-checked", "true");
+
+      fireEvent.click(globalButton);
+
+      expect(globalButton).toHaveAttribute("aria-checked", "true");
+      expect(projectButton).toHaveAttribute("aria-checked", "false");
+    });
+
+    it("clicking Project sets active state", () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} scope="global" projectId="proj-1" />);
+
+      const globalButton = screen.getByRole("radio", { name: /Global/i });
+      const projectButton = screen.getByRole("radio", { name: /Project/i });
+
+      expect(globalButton).toHaveAttribute("aria-checked", "true");
+      expect(projectButton).toHaveAttribute("aria-checked", "false");
+
+      fireEvent.click(projectButton);
+
+      expect(globalButton).toHaveAttribute("aria-checked", "false");
+      expect(projectButton).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("calls onScopeChange when clicking scope buttons", () => {
+      const onScopeChange = vi.fn();
+      render(
+        <RoutineEditor
+          onSubmit={onSubmit}
+          onCancel={onCancel}
+          scope="global"
+          projectId="proj-1"
+          onScopeChange={onScopeChange}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("radio", { name: /Project/i }));
+      fireEvent.click(screen.getByRole("radio", { name: /Global/i }));
+
+      expect(onScopeChange).toHaveBeenNthCalledWith(1, "project");
+      expect(onScopeChange).toHaveBeenNthCalledWith(2, "global");
+    });
+
+    it("disables Project scope button when no projectId is provided", () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} scope="global" />);
+      expect(screen.getByRole("radio", { name: /Project/i })).toBeDisabled();
+    });
+
+    it("disables both scope buttons when editing an existing routine with locked scope", () => {
+      render(
+        <RoutineEditor
+          routine={makeRoutine({ scope: "project" })}
+          onSubmit={onSubmit}
+          onCancel={onCancel}
+          projectId="proj-1"
+        />,
+      );
+
+      expect(screen.getByRole("radio", { name: /Global/i })).toBeDisabled();
+      expect(screen.getByRole("radio", { name: /Project/i })).toBeDisabled();
+    });
+
+    it("submits selected scope from the scope toggle", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} scope="global" projectId="proj-1" />);
+
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Scoped Routine" } });
+      fillCommand();
+      fireEvent.click(screen.getByRole("radio", { name: /Project/i }));
+      fireEvent.click(screen.getByText("Create Routine"));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            scope: "project",
+          }),
+        );
+      });
+    });
+
+    it("syncs local scope when parent scope prop changes", () => {
+      const { rerender } = render(
+        <RoutineEditor onSubmit={onSubmit} onCancel={onCancel} scope="global" projectId="proj-1" />,
+      );
+
+      expect(screen.getByRole("radio", { name: /Global/i })).toHaveAttribute("aria-checked", "true");
+      expect(screen.getByRole("radio", { name: /Project/i })).toHaveAttribute("aria-checked", "false");
+
+      rerender(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} scope="project" projectId="proj-1" />);
+
+      expect(screen.getByRole("radio", { name: /Global/i })).toHaveAttribute("aria-checked", "false");
+      expect(screen.getByRole("radio", { name: /Project/i })).toHaveAttribute("aria-checked", "true");
     });
   });
 

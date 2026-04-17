@@ -166,9 +166,11 @@ interface RoutineEditorProps {
   scope?: "global" | "project";
   /** Project ID for project-scoped routines. */
   projectId?: string;
+  /** Called when the user changes the scope via the toggle buttons. */
+  onScopeChange?: (scope: "global" | "project") => void;
 }
 
-export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, projectId }: RoutineEditorProps) {
+export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, projectId, onScopeChange }: RoutineEditorProps) {
   const isEditing = !!routine;
 
   // Extract trigger fields if editing
@@ -228,8 +230,16 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
 
+  // Scope toggle state
+  const [localScope, setLocalScope] = useState<"global" | "project">(formScope ?? "global");
+
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+
+  // Sync localScope when formScope prop changes (e.g., when parent resets)
+  useEffect(() => {
+    if (formScope) setLocalScope(formScope);
+  }, [formScope]);
 
   useEffect(() => {
     let cancelled = false;
@@ -269,7 +279,7 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
     if (!name.trim()) e.name = "Name is required";
     
     // Scope validation: project scope requires projectId
-    if (formScope === "project" && !projectId) {
+    if (localScope === "project" && !projectId) {
       e.scope = "Project-specific entries require an active project.";
     }
     
@@ -308,7 +318,7 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
     if (timeoutMs < 1000) e.timeoutMs = "Timeout must be at least 1 second (1000ms)";
     setErrors(e);
     return Object.keys(e).length === 0;
-  }, [name, triggerType, cronExpression, cronPreset, webhookPath, endpoint, formScope, projectId, actionMode, simpleActionType, command, prompt, taskDescription, modelProvider, modelId, steps, hasEditingSteps, timeoutMs]);
+  }, [name, triggerType, cronExpression, cronPreset, webhookPath, endpoint, localScope, projectId, actionMode, simpleActionType, command, prompt, taskDescription, modelProvider, modelId, steps, hasEditingSteps, timeoutMs]);
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -316,9 +326,9 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
       if (!validate()) return;
       setSubmitting(true);
       try {
-        // Determine scope: use edit mode's existing scope, otherwise use formScope prop
-        // When formScope is "project" but no projectId provided, fall back to "global"
-        let effectiveScope = routine?.scope ?? formScope ?? (projectId ? "project" : "global");
+        // Determine scope: use edit mode's existing scope, otherwise use localScope
+        // When localScope is "project" but no projectId provided, fall back to "global"
+        let effectiveScope = routine?.scope ?? localScope ?? (projectId ? "project" : "global");
         if (effectiveScope === "project" && !projectId) {
           effectiveScope = "global";
         }
@@ -371,7 +381,7 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
         setSubmitting(false);
       }
     },
-    [validate, onSubmit, name, description, triggerType, cronExpression, webhookPath, webhookSecret, endpoint, actionMode, simpleActionType, command, prompt, modelProvider, modelId, taskTitle, taskDescription, taskColumn, steps, timeoutMs, executionPolicy, catchUpPolicy, enabled, formScope, projectId, routine?.scope, routine?.agentId],
+    [validate, onSubmit, name, description, triggerType, cronExpression, webhookPath, webhookSecret, endpoint, actionMode, simpleActionType, command, prompt, modelProvider, modelId, taskTitle, taskDescription, taskColumn, steps, timeoutMs, executionPolicy, catchUpPolicy, enabled, localScope, projectId, routine?.scope, routine?.agentId],
   );
 
   const nameErrorId = "routine-name-error";
@@ -431,9 +441,10 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
         <div className="routine-scope-toggle" role="radiogroup" aria-label="Routine scope">
           <button
             type="button"
-            className={`routine-scope-btn${(!formScope || formScope === 'global') ? " active" : ""}`}
+            className={`routine-scope-btn${localScope === "global" ? " active" : ""}`}
+            onClick={() => { setLocalScope("global"); onScopeChange?.("global"); }}
             role="radio"
-            aria-checked={(!formScope || formScope === 'global') ? "true" : "false"}
+            aria-checked={localScope === "global" ? "true" : "false"}
             disabled={!!routine?.scope}
             title={routine?.scope ? `Scope is locked to ${routine.scope} for existing routines` : "Global scope"}
           >
@@ -442,9 +453,10 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
           </button>
           <button
             type="button"
-            className={`routine-scope-btn${formScope === 'project' ? " active" : ""}`}
+            className={`routine-scope-btn${localScope === "project" ? " active" : ""}`}
+            onClick={() => { setLocalScope("project"); onScopeChange?.("project"); }}
             role="radio"
-            aria-checked={formScope === 'project' ? "true" : "false"}
+            aria-checked={localScope === "project" ? "true" : "false"}
             disabled={!!routine?.scope || !projectId}
             title={routine?.scope ? `Scope is locked to ${routine.scope} for existing routines` : !projectId ? "Select a project to enable project scope" : "Project scope"}
           >
@@ -455,7 +467,7 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
         <small>
           {!projectId && !routine?.scope
             ? "No active project. Routines will be created at global scope."
-            : formScope === "project" && projectId
+            : localScope === "project" && projectId
               ? `This routine will be scoped to the current project.`
               : "This routine will be created at global scope."}
         </small>
