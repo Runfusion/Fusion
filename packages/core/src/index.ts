@@ -452,6 +452,7 @@ export {
   buildQmdRefreshCommands,
   refreshQmdProjectMemoryIndex,
   scheduleQmdProjectMemoryRefresh,
+  shouldSkipBackgroundQmdRefresh,
   installQmd,
   ensureQmdInstalled,
   ensureQmdInstalledAndRefresh,

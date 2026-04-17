@@ -857,6 +857,9 @@ function normalizeQmdSearchResultPath(rootDir: string, rawPath: unknown): string
 }
 
 async function searchWithQmd(rootDir: string, options: MemorySearchOptions): Promise<MemorySearchResult[]> {
+  if (shouldSkipBackgroundQmdRefresh()) {
+    return [];
+  }
   const command = "qmd";
   const limit = Math.max(1, Math.min(options.limit ?? 5, 20));
   try {

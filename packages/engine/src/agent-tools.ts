@@ -12,7 +12,7 @@ import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { AgentStore, AgentState, AgentCapability, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message } from "@fusion/core";
-import { dailyMemoryPath, ensureOpenClawMemoryFiles, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, resolveMemoryBackend, scheduleQmdProjectMemoryRefresh, searchProjectMemory } from "@fusion/core";
+import { dailyMemoryPath, ensureOpenClawMemoryFiles, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, resolveMemoryBackend, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh } from "@fusion/core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import type { AgentReflectionService } from "./agent-reflection.js";
@@ -283,6 +283,9 @@ async function searchAgentMemoryFile(rootDir: string, agentMemory: AgentMemoryCo
 }
 
 async function refreshAgentMemoryQmdIndex(rootDir: string, agentMemory: AgentMemoryContext): Promise<void> {
+  if (shouldSkipBackgroundQmdRefresh()) {
+    return;
+  }
   await syncAgentMemoryFile(rootDir, agentMemory);
   const key = `${rootDir}:${agentMemory.agentId}`;
   const now = Date.now();
@@ -329,6 +332,9 @@ async function refreshAgentMemoryQmdIndex(rootDir: string, agentMemory: AgentMem
 async function searchAgentMemoryWithQmd(rootDir: string, agentMemory: AgentMemoryContext, query: string, limit: number): Promise<MemorySearchHit[]> {
   if (!agentMemory.memory?.trim()) {
     return [];
+  }
+  if (shouldSkipBackgroundQmdRefresh()) {
+    return searchAgentMemoryFile(rootDir, agentMemory, query, limit);
   }
   try {
     await refreshAgentMemoryQmdIndex(rootDir, agentMemory);
