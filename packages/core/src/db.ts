@@ -59,7 +59,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 36;
+const SCHEMA_VERSION = 37;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -1461,6 +1461,12 @@ export class Database {
         this.addColumnIfMissing("routines", "command", "TEXT");
         this.addColumnIfMissing("routines", "steps", "TEXT");
         this.addColumnIfMissing("routines", "timeoutMs", "INTEGER");
+      });
+    }
+
+    if (version < 37) {
+      this.applyMigration(37, () => {
+        this.addColumnIfMissing("mission_validator_runs", "taskId", "TEXT");
       });
     }
 

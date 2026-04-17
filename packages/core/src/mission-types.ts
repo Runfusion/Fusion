@@ -268,6 +268,8 @@ export interface MissionValidatorRun {
   implementationAttempt: number;
   /** Which validation attempt this run corresponds to */
   validatorAttempt: number;
+  /** Board task ID created for this validation run (for board visibility) */
+  taskId?: string;
   /** Summary of the validation run results */
   summary?: string;
   /** Reason for blocked status if applicable */

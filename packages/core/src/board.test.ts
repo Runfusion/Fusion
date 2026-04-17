@@ -46,8 +46,8 @@ describe("board", () => {
       expect(canTransition("triage", "in-progress")).toBe(false);
       // todo cannot skip to in-review
       expect(canTransition("todo", "in-review")).toBe(false);
-      // in-progress cannot skip to done
-      expect(canTransition("in-progress", "done")).toBe(false);
+      // Note: in-progress can transition to done for mission validation tasks
+      // so we don't test that case here
     });
   });
 
@@ -75,7 +75,7 @@ describe("board", () => {
     });
 
     it("returns correct transitions for in-progress", () => {
-      expect(getValidTransitions("in-progress")).toEqual(["in-review", "todo", "triage"]);
+      expect(getValidTransitions("in-progress")).toEqual(["in-review", "todo", "triage", "done"]);
     });
 
     it("returns correct transitions for in-review", () => {

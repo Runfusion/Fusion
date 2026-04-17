@@ -294,6 +294,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       triggerType: row.triggerType || undefined,
       implementationAttempt: row.implementationAttempt ?? 0,
       validatorAttempt: row.validatorAttempt ?? 0,
+      taskId: row.taskId || undefined,
       summary: row.summary || undefined,
       blockedReason: row.blockedReason || undefined,
       startedAt: row.startedAt,
@@ -1786,10 +1787,11 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
    *
    * @param featureId - Feature ID to start validation for
    * @param triggerType - What triggered this run (e.g., 'task_completion', 'manual', 'scheduled')
+   * @param taskId - Optional board task ID for this validation run (enables board visibility)
    * @returns The created validator run
    * @throws Error if feature not found
    */
-  startValidatorRun(featureId: string, triggerType?: string): MissionValidatorRun {
+  startValidatorRun(featureId: string, triggerType?: string, taskId?: string): MissionValidatorRun {
     const feature = this.getFeature(featureId);
     if (!feature) {
       throw new Error(`Feature ${featureId} not found`);
@@ -1821,6 +1823,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       triggerType,
       implementationAttempt: feature.implementationAttemptCount ?? 0,
       validatorAttempt: newValidatorAttemptCount,
+      taskId,
       startedAt: now,
       createdAt: now,
       updatedAt: now,
@@ -1829,8 +1832,8 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     this.db.transaction(() => {
       // Insert the validator run
       this.db.prepare(`
-        INSERT INTO mission_validator_runs (id, featureId, milestoneId, sliceId, status, triggerType, implementationAttempt, validatorAttempt, startedAt, createdAt, updatedAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO mission_validator_runs (id, featureId, milestoneId, sliceId, status, triggerType, implementationAttempt, validatorAttempt, taskId, startedAt, createdAt, updatedAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         run.id,
         run.featureId,
@@ -1840,6 +1843,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
         run.triggerType ?? "auto",
         run.implementationAttempt,
         run.validatorAttempt,
+        run.taskId ?? null,
         run.startedAt,
         run.createdAt,
         run.updatedAt,

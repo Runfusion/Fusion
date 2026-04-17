@@ -2543,8 +2543,8 @@ describe("MissionStore", () => {
   // ── Loop State & Validator Run Schema Tests ───────────────────────────
 
   describe("Loop State & Validator Run Schema (v31)", () => {
-    it("schema version is 32 after migration", () => {
-      expect(db.getSchemaVersion()).toBe(36);
+    it("schema version is 37 after migration", () => {
+      expect(db.getSchemaVersion()).toBe(37);
     });
 
     it("mission_features table has loop state columns", () => {
@@ -2570,6 +2570,7 @@ describe("MissionStore", () => {
       expect(colNames).toContain("triggerType");
       expect(colNames).toContain("implementationAttempt");
       expect(colNames).toContain("validatorAttempt");
+      expect(colNames).toContain("taskId");
       expect(colNames).toContain("summary");
       expect(colNames).toContain("blockedReason");
       expect(colNames).toContain("startedAt");
@@ -2768,6 +2769,36 @@ describe("MissionStore", () => {
       const updatedFeature = store.getFeature(feature.id);
       expect(updatedFeature!.validatorAttemptCount).toBe(2);
       expect(updatedFeature!.lastValidatorRunId).toBe(run2.id);
+    });
+
+    it("startValidatorRun accepts and persists optional taskId", () => {
+      const mission = store.createMission({ title: "Validator Run Test" });
+      const milestone = store.addMilestone(mission.id, { title: "MS" });
+      const slice = store.addSlice(milestone.id, { title: "SL" });
+      const feature = store.addFeature(slice.id, { title: "Test Feature" });
+
+      const run = store.startValidatorRun(feature.id, "task_completion", "KB-999");
+
+      expect(run.taskId).toBe("KB-999");
+
+      // Verify by reading back from DB
+      const runFromDb = store.getValidatorRun(run.id);
+      expect(runFromDb?.taskId).toBe("KB-999");
+    });
+
+    it("startValidatorRun works without taskId (backward compatibility)", () => {
+      const mission = store.createMission({ title: "Validator Run Test" });
+      const milestone = store.addMilestone(mission.id, { title: "MS" });
+      const slice = store.addSlice(milestone.id, { title: "SL" });
+      const feature = store.addFeature(slice.id, { title: "Test Feature" });
+
+      const run = store.startValidatorRun(feature.id, "manual");
+
+      expect(run.taskId).toBeUndefined();
+
+      // Verify by reading back from DB
+      const runFromDb = store.getValidatorRun(run.id);
+      expect(runFromDb?.taskId).toBeUndefined();
     });
 
     it("completeValidatorRun transitions to passed (VAL-DM-016)", () => {

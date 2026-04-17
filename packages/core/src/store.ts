@@ -1484,6 +1484,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       planningModelProvider: input.planningModelProvider,
       planningModelId: input.planningModelId,
       thinkingLevel: input.thinkingLevel,
+      missionId: input.missionId,
+      sliceId: input.sliceId,
       steps: [],
       currentStep: 0,
       log: [{ timestamp: now, action: "Task created" }],

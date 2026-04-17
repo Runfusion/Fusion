@@ -174,6 +174,34 @@ describe("TaskStore", () => {
       const detail = await store.getTask(task.id);
       expect(detail.breakIntoSubtasks).toBeUndefined();
     });
+
+    it("persists missionId and sliceId when provided during task creation", async () => {
+      const task = await store.createTask({
+        description: "Mission-linked task",
+        missionId: "MS-001",
+        sliceId: "SL-001",
+      });
+
+      expect(task.missionId).toBe("MS-001");
+      expect(task.sliceId).toBe("SL-001");
+
+      const detail = await store.getTask(task.id);
+      expect(detail.missionId).toBe("MS-001");
+      expect(detail.sliceId).toBe("SL-001");
+    });
+
+    it("leaves missionId and sliceId unset when not provided", async () => {
+      const task = await store.createTask({
+        description: "Regular task",
+      });
+
+      expect(task.missionId).toBeUndefined();
+      expect(task.sliceId).toBeUndefined();
+
+      const detail = await store.getTask(task.id);
+      expect(detail.missionId).toBeUndefined();
+      expect(detail.sliceId).toBeUndefined();
+    });
   });
 
   describe("assignedAgentId persistence", () => {

@@ -1219,3 +1219,17 @@ The cross-node system uses a **proxy-based model** where the local dashboard ser
 - Use `async function` declarations (not arrow functions) for the route handlers to ensure proper TypeScript scope resolution
 - For mock fetch responses in tests: always use `ReadableStream` for the body — never return `null` for body, or the streaming pipe won't work
 - `proxyToRemoteNode` helper uses `new URL(req.url, 'http://localhost')` to reliably extract query params for forwarding
+
+## Mission Validation Board Tasks (FN-1982)
+
+When a mission feature's implementation task completes, `MissionExecutionLoop.processTaskOutcome()` runs validation against contract assertions. As of FN-1982, each validation run creates a visible board task:
+
+- **Task creation**: `taskStore.createTask()` with `column: "in-progress"`, `missionId`, `sliceId`, and `status: "mission-validation"`
+- **Task lifecycle**:
+  - `in-progress` → `done` (validation passes)
+  - `in-progress` → `in-review` (validation fails, blocked, or errors)
+- **Status marker**: `status: "mission-validation"` prevents scheduler/stuck-detector from dispatching the task
+- **Validator run linkage**: `MissionValidatorRun.taskId` stores the board task ID for cross-referencing
+- **VALID_TRANSITIONS**: `"in-progress"` → `"done"` was added specifically for validation tasks (note in `types.ts`)
+
+The error status from `parseValidationResult()` (empty response, invalid JSON, invalid status) is now handled in `processTaskOutcome()` alongside pass/fail/blocked.

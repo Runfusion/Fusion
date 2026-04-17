@@ -173,9 +173,17 @@ function createMockMissionStore() {
     }),
     listAssertionsForFeature: vi.fn(() => []),
     getAssertionsForFeature: vi.fn(() => []),
+    getSlice: vi.fn((id: string) => {
+      // Return a mock slice with milestoneId for the hierarchy
+      return createMockSlice({ id });
+    }),
+    getMilestone: vi.fn((id: string) => {
+      // Return a mock milestone with missionId for the hierarchy
+      return createMockMilestone({ id });
+    }),
 
     // Validator run methods
-    startValidatorRun: vi.fn((featureId: string, _triggerType?: string) => {
+    startValidatorRun: vi.fn((featureId: string, _triggerType?: string, _taskId?: string) => {
       const run = createMockValidatorRun({ featureId });
       validatorRuns.set(run.id, run);
       return run;
@@ -249,12 +257,18 @@ function createMockMissionStore() {
 }
 
 function createMockTaskStore() {
-  const tasks = new Map<string, { id: string; title?: string; description?: string; log?: Array<{ action?: string }> }>();
+  const tasks = new Map<string, { id: string; title?: string; description?: string; log?: Array<{ action?: string }>; column?: string; missionId?: string; sliceId?: string; status?: string }>();
 
   const store = {
     getTask: vi.fn(async (id: string) => tasks.get(id)),
-    moveTask: vi.fn(),
-    updateTask: vi.fn(),
+    createTask: vi.fn(async (input: { title?: string; description?: string; column?: string; missionId?: string; sliceId?: string }) => {
+      const id = `KB-${tasks.size + 1}`;
+      const task = { id, ...input };
+      tasks.set(id, task);
+      return task;
+    }),
+    moveTask: vi.fn(async () => {}),
+    updateTask: vi.fn(async () => {}),
     getSettings: vi.fn().mockResolvedValue({
       missionStaleThresholdMs: 600_000,
       missionMaxTaskRetries: 3,
@@ -262,7 +276,7 @@ function createMockTaskStore() {
     on: vi.fn(),
     off: vi.fn(),
 
-    _setTask: (t: { id: string; title?: string; description?: string; log?: Array<{ action?: string }> }) => tasks.set(t.id, t),
+    _setTask: (t: { id: string; title?: string; description?: string; log?: Array<{ action?: string }>; column?: string; missionId?: string; sliceId?: string; status?: string }) => tasks.set(t.id, t),
     _clear: () => tasks.clear(),
   };
 
@@ -447,6 +461,87 @@ describe("MissionExecutionLoop", () => {
       expect(emitSpy).toHaveBeenCalledWith(
         "validation:passed",
         expect.objectContaining({ featureId: "F-001" }),
+      );
+    });
+
+    it("creates validation board task when feature has assertions", async () => {
+      const feature = createMockFeature({ loopState: "implementing", taskId: "FN-001", sliceId: "SL-001" });
+      missionStore._setFeature(feature);
+      taskStore._setTask({ id: "FN-001", title: "Test", description: "Test task", log: [] });
+      missionStore.getFeatureByTaskId = vi.fn().mockReturnValue(feature);
+      missionStore.listAssertionsForFeature = vi.fn().mockReturnValue([
+        { id: "CA-1", milestoneId: "MS-001", title: "Test assertion", assertion: "Should work", status: "pending" as const, orderIndex: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+      ]);
+
+      loop = new MissionExecutionLoop({
+        taskStore: taskStore as any,
+        missionStore: missionStore as any,
+        rootDir: "/tmp",
+      });
+      loop.start();
+
+      await loop.processTaskOutcome("FN-001");
+
+      // Should create a validation board task
+      expect(taskStore.createTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: expect.stringContaining("Validate:"),
+          column: "in-progress",
+          sliceId: "SL-001",
+        }),
+      );
+    });
+
+    it("sets validation task status to mission-validation", async () => {
+      const feature = createMockFeature({ loopState: "implementing", taskId: "FN-001", sliceId: "SL-001" });
+      missionStore._setFeature(feature);
+      taskStore._setTask({ id: "FN-001", title: "Test", description: "Test task", log: [] });
+      missionStore.getFeatureByTaskId = vi.fn().mockReturnValue(feature);
+      missionStore.listAssertionsForFeature = vi.fn().mockReturnValue([
+        { id: "CA-1", milestoneId: "MS-001", title: "Test assertion", assertion: "Should work", status: "pending" as const, orderIndex: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+      ]);
+
+      loop = new MissionExecutionLoop({
+        taskStore: taskStore as any,
+        missionStore: missionStore as any,
+        rootDir: "/tmp",
+      });
+      loop.start();
+
+      await loop.processTaskOutcome("FN-001");
+
+      // Should update the task status to mission-validation
+      expect(taskStore.updateTask).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ status: "mission-validation" }),
+      );
+    });
+
+    it("passes taskId to startValidatorRun", async () => {
+      const feature = createMockFeature({ loopState: "implementing", taskId: "FN-001", sliceId: "SL-001" });
+      missionStore._setFeature(feature);
+      taskStore._setTask({ id: "FN-001", title: "Test", description: "Test task", log: [] });
+      missionStore.getFeatureByTaskId = vi.fn().mockReturnValue(feature);
+      missionStore.listAssertionsForFeature = vi.fn().mockReturnValue([
+        { id: "CA-1", milestoneId: "MS-001", title: "Test assertion", assertion: "Should work", status: "pending" as const, orderIndex: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+      ]);
+      // Make createTask return a predictable ID
+      taskStore.createTask = vi.fn().mockResolvedValue({ id: "KB-999" });
+
+      loop = new MissionExecutionLoop({
+        taskStore: taskStore as any,
+        missionStore: missionStore as any,
+        rootDir: "/tmp",
+      });
+      loop.start();
+
+      await loop.processTaskOutcome("FN-001");
+
+      // Should pass the created task ID to startValidatorRun
+      expect(missionStore.startValidatorRun).toHaveBeenCalledWith(
+        "F-001",
+        "task_completion",
+        "KB-999",
       );
     });
   });
