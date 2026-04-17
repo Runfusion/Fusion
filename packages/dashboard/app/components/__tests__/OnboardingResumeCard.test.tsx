@@ -7,6 +7,13 @@ vi.mock("../model-onboarding-state", () => ({
   getOnboardingResumeStep: vi.fn(),
 }));
 
+const mockTrackOnboardingEvent = vi.fn();
+
+vi.mock("../onboarding-events", () => ({
+  trackOnboardingEvent: (...args: unknown[]) => mockTrackOnboardingEvent(...args),
+  getOnboardingSessionId: () => "test-session-id",
+}));
+
 import { getOnboardingResumeStep } from "../model-onboarding-state";
 
 describe("OnboardingResumeCard", () => {
@@ -14,11 +21,13 @@ describe("OnboardingResumeCard", () => {
 
   beforeEach(() => {
     mockGetOnboardingResumeStep.mockReset();
+    mockTrackOnboardingEvent.mockReset();
     mockGetOnboardingResumeStep.mockReturnValue(null);
   });
 
   afterEach(() => {
     mockGetOnboardingResumeStep.mockReset();
+    mockTrackOnboardingEvent.mockReset();
   });
 
   describe("rendering", () => {
@@ -93,6 +102,10 @@ describe("OnboardingResumeCard", () => {
       const button = screen.getByRole("button", { name: "Continue onboarding" });
       fireEvent.click(button);
 
+      expect(mockTrackOnboardingEvent).toHaveBeenCalledWith(
+        "onboarding:resumed",
+        expect.objectContaining({ source: "resume-card" }),
+      );
       expect(onResume).toHaveBeenCalledTimes(1);
     });
 

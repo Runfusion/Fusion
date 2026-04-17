@@ -61,6 +61,13 @@ vi.mock("../model-onboarding-state", () => ({
   getStepData: (...args: unknown[]) => mockGetStepData(...args),
 }));
 
+const mockTrackOnboardingEvent = vi.fn();
+
+vi.mock("../onboarding-events", () => ({
+  trackOnboardingEvent: (...args: unknown[]) => mockTrackOnboardingEvent(...args),
+  getOnboardingSessionId: () => "test-session-id",
+}));
+
 // Mock ProviderIcon for test isolation
 vi.mock("../ProviderIcon", () => ({
   ProviderIcon: ({ provider, size }: { provider: string; size?: string }) => (
@@ -124,6 +131,7 @@ async function navigateToFirstTaskStep() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockTrackOnboardingEvent.mockReset();
   mockFetchModels.mockResolvedValue({ models: defaultModels, favoriteProviders: [], favoriteModels: [] });
   mockFetchGlobalSettings.mockResolvedValue({});
   mockUpdateGlobalSettings.mockResolvedValue({});

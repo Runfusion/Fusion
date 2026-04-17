@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { fetchAuthStatus, fetchGlobalSettings } from "../api";
 import { isOnboardingCompleted } from "../components/model-onboarding-state";
+import { trackOnboardingEvent } from "../components/onboarding-events";
 import type { SectionId } from "../components/SettingsModal";
 
 export interface UseAuthOnboardingOptions {
@@ -70,8 +71,10 @@ export function useAuthOnboarding({
       .then(() => {
         // Execute after the promise chain resolves
         if (shouldOpenOnboarding) {
+          trackOnboardingEvent("onboarding:auto-triggered", { trigger: "first-run" });
           openModelOnboarding();
         } else if (shouldOpenSettings) {
+          trackOnboardingEvent("onboarding:auto-triggered", { trigger: "missing-provider" });
           openSettings("authentication");
         }
       })

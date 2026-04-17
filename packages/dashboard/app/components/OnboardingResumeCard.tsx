@@ -1,5 +1,6 @@
 import { Play, Sparkles } from "lucide-react";
 import { getOnboardingResumeStep } from "./model-onboarding-state";
+import { trackOnboardingEvent } from "./onboarding-events";
 
 interface OnboardingResumeCardProps {
   /** Called when the user clicks "Continue onboarding" */
@@ -45,7 +46,13 @@ export function OnboardingResumeCard({ onResume }: OnboardingResumeCardProps) {
       <div className="onboarding-resume-card__actions">
         <button
           className="onboarding-resume-card__resume-btn"
-          onClick={onResume}
+          onClick={() => {
+            trackOnboardingEvent("onboarding:resumed", {
+              source: "resume-card",
+              resumedFromStep: resumeStep.currentStep,
+            });
+            onResume();
+          }}
         >
           <Play size={14} aria-hidden="true" />
           <span>Continue onboarding</span>

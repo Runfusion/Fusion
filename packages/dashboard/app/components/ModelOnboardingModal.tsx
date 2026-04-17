@@ -411,6 +411,7 @@ import {
   getStepData,
   type OnboardingStep,
 } from "./model-onboarding-state";
+import { trackOnboardingEvent } from "./onboarding-events";
 import type { SectionId } from "./SettingsModal";
 
 export interface ModelOnboardingModalProps {
@@ -492,6 +493,9 @@ export function ModelOnboardingModal({
   });
   const pollCountRef = useRef<number>(0);
   const previousCreatedTaskRef = useRef<Task | null | undefined>(firstCreatedTask);
+  const hasTrackedWizardOpenRef = useRef(false);
+  const resumedFromStep = persistedState?.currentStep;
+  const isResumedFlow = !!persistedState && persistedState.currentStep !== "complete";
 
   // Initialize skippedProviders from persisted state
   const [skippedProviders, setSkippedProviders] = useState<Record<string, boolean>>(
@@ -518,6 +522,18 @@ export function ModelOnboardingModal({
       saveOnboardingState(step, { completedSteps, skippedSteps });
     }
   }, [step, completedSteps, skippedSteps]);
+
+  useEffect(() => {
+    if (hasTrackedWizardOpenRef.current) {
+      return;
+    }
+
+    hasTrackedWizardOpenRef.current = true;
+    trackOnboardingEvent("onboarding:wizard-opened", {
+      source: isResumedFlow ? "resume" : "initial",
+      resumedFromStep,
+    });
+  }, [isResumedFlow, resumedFromStep]);
 
   useEffect(() => {
     const hadCreatedTask = previousCreatedTaskRef.current != null;
@@ -775,6 +791,7 @@ export function ModelOnboardingModal({
     setCompletedSteps((prev) => [...new Set([...prev, step])]);
     // Completing a step clears any prior skipped status
     setSkippedSteps((prev) => prev.filter((s) => s !== step));
+    trackOnboardingEvent("onboarding:step-completed", { step });
 
     if (step === "github" && !isGithubAuthenticated) {
       setGitHubSkippedState(false);
@@ -791,6 +808,7 @@ export function ModelOnboardingModal({
   const handleSkip = useCallback(() => {
     setSkippedSteps((prev) => [...new Set([...prev, step])]);
     markStepSkipped(step);
+    trackOnboardingEvent("onboarding:step-skipped", { step });
 
     if (step === "github" && !isGithubAuthenticated) {
       setGitHubSkippedState(true);
@@ -1126,11 +1144,12 @@ export function ModelOnboardingModal({
     setSaving(true);
     try {
       await completeOnboarding();
+      trackOnboardingEvent("onboarding:completed", { completedSteps, skippedSteps });
       setStep("complete");
     } finally {
       setSaving(false);
     }
-  }, [completeOnboarding]);
+  }, [completeOnboarding, completedSteps, skippedSteps]);
 
   const handleCreateFirstTask = useCallback(async () => {
     const trimmedDescription = firstTaskDescription.trim();
@@ -1148,6 +1167,7 @@ export function ModelOnboardingModal({
       const createdTask = await createTask({ description: trimmedDescription });
       setInlineCreatedTask(createdTask);
       setShowTaskCreated(true);
+      trackOnboardingEvent("onboarding:first-task-created", { taskId: createdTask?.id });
       addToast("Task created", "success");
       success = true;
     } catch (err: unknown) {
@@ -1177,6 +1197,7 @@ export function ModelOnboardingModal({
     }
 
     // Keep onboarding open so task creation can hand back to a success state
+    trackOnboardingEvent("onboarding:open-new-task", {});
     onOpenNewTask?.();
   }, [completeOnboarding, onOpenNewTask]);
 
@@ -1193,11 +1214,18 @@ export function ModelOnboardingModal({
     // Close modal and trigger callback
     setIsOpen(false);
     onComplete();
+    trackOnboardingEvent("onboarding:open-github-import", {});
     onOpenGitHubImport?.();
   }, [completeOnboarding, onComplete, onOpenGitHubImport]);
 
   // Dismiss without completing (still marks onboarding complete)
   const handleDismiss = useCallback(async () => {
+    trackOnboardingEvent("onboarding:dismissed", {
+      currentStep: step,
+      completedSteps,
+      skippedSteps,
+    });
+
     setSaving(true);
     try {
       await updateGlobalSettings({ modelOnboardingComplete: true });
@@ -1206,10 +1234,11 @@ export function ModelOnboardingModal({
     }
     setIsOpen(false);
     onComplete();
-  }, [onComplete]);
+  }, [step, completedSteps, skippedSteps, onComplete]);
 
   // Close from the completion step
   const handleFinish = useCallback(() => {
+    trackOnboardingEvent("onboarding:finished", {});
     setIsOpen(false);
     onComplete();
   }, [onComplete]);

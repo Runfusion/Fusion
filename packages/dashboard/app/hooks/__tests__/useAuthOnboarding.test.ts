@@ -5,6 +5,7 @@ import * as api from "../../api";
 
 // Mock model-onboarding-state for isOnboardingCompleted
 const mockIsOnboardingCompleted = vi.fn();
+const mockTrackOnboardingEvent = vi.fn();
 
 vi.mock("../../api", () => ({
   fetchAuthStatus: vi.fn(),
@@ -13,6 +14,11 @@ vi.mock("../../api", () => ({
 
 vi.mock("../../components/model-onboarding-state", () => ({
   isOnboardingCompleted: (...args: unknown[]) => mockIsOnboardingCompleted(...args),
+}));
+
+vi.mock("../../components/onboarding-events", () => ({
+  trackOnboardingEvent: (...args: unknown[]) => mockTrackOnboardingEvent(...args),
+  getOnboardingSessionId: () => "test-session-id",
 }));
 
 const mockFetchAuthStatus = vi.mocked(api.fetchAuthStatus);
@@ -24,6 +30,7 @@ describe("useAuthOnboarding", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockTrackOnboardingEvent.mockReset();
   });
 
   // --- Trigger branches ---
@@ -50,6 +57,7 @@ describe("useAuthOnboarding", () => {
       expect(openModelOnboarding).toHaveBeenCalledTimes(1);
     });
 
+    expect(mockTrackOnboardingEvent).toHaveBeenCalledWith("onboarding:auto-triggered", { trigger: "first-run" });
     expect(openSettings).not.toHaveBeenCalled();
   });
 
@@ -101,6 +109,7 @@ describe("useAuthOnboarding", () => {
       expect(openSettings).toHaveBeenCalledWith("authentication");
     });
 
+    expect(mockTrackOnboardingEvent).toHaveBeenCalledWith("onboarding:auto-triggered", { trigger: "missing-provider" });
     expect(openModelOnboarding).not.toHaveBeenCalled();
   });
 
