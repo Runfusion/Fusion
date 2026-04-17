@@ -412,6 +412,12 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
     );
   };
 
+  const agentName =
+    agentsMap.get(activeSession?.agentId ?? "")?.name ||
+    (activeSession?.agentId === KB_AGENT_ID
+      ? "Fusion"
+      : (activeSession?.agentId?.slice(0, 30) ?? "Fusion"));
+
   return (
     <div className="chat-view">
       {/* Sidebar */}
@@ -566,7 +572,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                   {message.role === "assistant" && (
                     <div className="chat-message-avatar">
                       <Bot size={14} />
-                      <span>Fusion</span>
+                      <span>{agentName}</span>
                       {activeSession && (() => {
                         const modelTag = formatModelTag(activeSession.modelProvider, activeSession.modelId);
                         return modelTag ? <span className="chat-model-tag">{modelTag}</span> : null;
@@ -587,7 +593,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                 <div className="chat-message chat-message--assistant chat-message--streaming">
                   <div className="chat-message-avatar">
                     <Bot size={14} />
-                    <span>Fusion</span>
+                    <span>{agentName}</span>
                     {activeSession && (() => {
                       const modelTag = formatModelTag(activeSession.modelProvider, activeSession.modelId);
                       return modelTag ? <span className="chat-model-tag">{modelTag}</span> : null;

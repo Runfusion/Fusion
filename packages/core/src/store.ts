@@ -1431,11 +1431,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       Promise.resolve().then(async () => {
         try {
           const generatedTitle = await options.onSummarize!(input.description);
-          if (generatedTitle) {
-            // Guard against races: fetch current task and only update if no title set
-            const currentTask = await this.getTask(id);
+          const normalizedTitle = generatedTitle?.trim();
+          if (normalizedTitle) {
+            // Guard against races: read directly from SQLite to avoid extra
+            // prompt/step file I/O in this background path.
+            const currentTask = this.readTaskFromDb(id);
             if (currentTask && !currentTask.title) {
-              await this.updateTask(id, { title: generatedTitle });
+              await this.updateTask(id, { title: normalizedTitle });
             }
           }
         } catch (err) {

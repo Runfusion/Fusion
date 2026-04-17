@@ -181,8 +181,8 @@ describe("ChatView", () => {
     // Dialog should be open - check for dialog content
     const dialog = document.querySelector(".chat-new-dialog");
     expect(dialog).toBeInTheDocument();
-    // Should show Agent label
-    expect(within(dialog!).getByText("Agent")).toBeInTheDocument();
+    // Should show Agent label (current copy: "Agent (optional)")
+    expect(within(dialog!).getByText(/Agent(?:\s*\(optional\))?/i)).toBeInTheDocument();
   });
 
   it("creates session without model selection (uses default)", async () => {
@@ -303,6 +303,60 @@ describe("ChatView", () => {
 
     expect(screen.getByText("Hello")).toBeInTheDocument();
     expect(screen.getByText("Hi there!")).toBeInTheDocument();
+  });
+
+  it("shows resolved agent name in assistant message avatar", async () => {
+    setupMockChat({
+      activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Agent Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
+      messages: [
+        { id: "msg-001", sessionId: "session-001", role: "assistant", content: "Hello from Alpha", createdAt: "2026-04-08T00:00:00.000Z" },
+      ],
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const avatar = document.querySelector(".chat-message-avatar");
+    expect(avatar).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(within(avatar!).getByText("Alpha")).toBeInTheDocument();
+    });
+    expect(within(avatar!).queryByText("Fusion")).not.toBeInTheDocument();
+  });
+
+  it("shows Fusion in assistant message avatar for kb agent sessions", () => {
+    setupMockChat({
+      activeSession: { id: "session-001", agentId: "__kb_agent__", status: "active", title: "Fusion Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
+      messages: [
+        { id: "msg-001", sessionId: "session-001", role: "assistant", content: "Built-in assistant response", createdAt: "2026-04-08T00:00:00.000Z" },
+      ],
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const avatar = document.querySelector(".chat-message-avatar");
+    expect(avatar).toBeInTheDocument();
+    expect(within(avatar!).getByText("Fusion")).toBeInTheDocument();
+  });
+
+  it("shows resolved agent name in streaming assistant avatar", async () => {
+    setupMockChat({
+      activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Agent Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
+      messages: [
+        { id: "msg-001", sessionId: "session-001", role: "user", content: "Think", createdAt: "2026-04-08T00:00:00.000Z" },
+      ],
+      isStreaming: true,
+      streamingText: "Thinking...",
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const avatar = document.querySelector(".chat-message--streaming .chat-message-avatar");
+    expect(avatar).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(within(avatar!).getByText("Alpha")).toBeInTheDocument();
+    });
   });
 
   it("sends message on Enter key", async () => {
