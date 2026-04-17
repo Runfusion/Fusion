@@ -26,6 +26,7 @@ const mockFetchGlobalConcurrency = vi.fn();
 const mockUpdateGlobalConcurrency = vi.fn();
 const mockFetchMemoryBackendStatus = vi.fn();
 const mockTestMemoryRetrieval = vi.fn();
+const mockInstallQmd = vi.fn();
 
 vi.mock("../api", () => ({
   fetchSettings: (...args: unknown[]) => mockFetchSettings(...args),
@@ -49,6 +50,7 @@ vi.mock("../api", () => ({
   updateGlobalConcurrency: (...args: unknown[]) => mockUpdateGlobalConcurrency(...args),
   fetchMemoryBackendStatus: (...args: unknown[]) => mockFetchMemoryBackendStatus(...args),
   testMemoryRetrieval: (...args: unknown[]) => mockTestMemoryRetrieval(...args),
+  installQmd: (...args: unknown[]) => mockInstallQmd(...args),
 }));
 
 // Mock the hook
@@ -126,6 +128,11 @@ describe("SettingsModal", () => {
       usedFallback: false,
       qmdInstallCommand: "bun add -g qmd",
       results: [],
+    });
+    mockInstallQmd.mockResolvedValue({
+      success: true,
+      qmdAvailable: true,
+      qmdInstallCommand: "bun add -g qmd",
     });
     mockImportSettings.mockResolvedValue({ success: true, globalCount: 0, projectCount: 0 });
     mockFetchGlobalConcurrency.mockResolvedValue({ globalMaxConcurrent: 4, currentlyActive: 0, queuedCount: 0, projectsActive: {} });
@@ -432,6 +439,53 @@ describe("SettingsModal", () => {
       // Check it again
       await userEvent.click(checkbox);
       expect(checkbox).toBeChecked();
+    });
+
+    it("installs qmd from the missing qmd prompt", async () => {
+      const addToast = vi.fn();
+      const refresh = vi.fn(() => Promise.resolve());
+      mockUseMemoryBackendStatus.mockReturnValue({
+        status: {
+          currentBackend: "qmd",
+          capabilities: {
+            readable: true,
+            writable: true,
+            supportsAtomicWrite: false,
+            hasConflictResolution: false,
+            persistent: true,
+          },
+          availableBackends: ["file", "readonly", "qmd"],
+          qmdAvailable: false,
+          qmdInstallCommand: "bun add -g qmd",
+        },
+        currentBackend: "qmd",
+        capabilities: {
+          readable: true,
+          writable: true,
+          supportsAtomicWrite: false,
+          hasConflictResolution: false,
+          persistent: true,
+        },
+        availableBackends: ["file", "readonly", "qmd"],
+        loading: false,
+        error: null,
+        refresh,
+      });
+
+      renderModal({ addToast });
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+      await userEvent.click(screen.getByText("Memory"));
+
+      await userEvent.click(await screen.findByRole("button", { name: "Install qmd" }));
+
+      await waitFor(() => {
+        expect(mockInstallQmd).toHaveBeenCalledWith(undefined);
+      });
+      expect(refresh).toHaveBeenCalled();
+      expect(addToast).toHaveBeenCalledWith("qmd installed successfully", "success");
     });
 
     it("loads and shows memory editor content when navigating to Memory", async () => {

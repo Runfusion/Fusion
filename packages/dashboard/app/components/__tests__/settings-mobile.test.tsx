@@ -69,6 +69,7 @@ vi.mock("../../api", () => ({
   })),
   fetchMemoryFile: vi.fn((path = ".fusion/memory/DREAMS.md") => Promise.resolve({ path, content: "" })),
   saveMemoryFile: vi.fn(() => Promise.resolve({ success: true })),
+  installQmd: vi.fn(() => Promise.resolve({ success: true, qmdAvailable: true, qmdInstallCommand: "bun add -g qmd" })),
   testMemoryRetrieval: vi.fn(() => Promise.resolve({
     query: "project memory",
     qmdAvailable: true,

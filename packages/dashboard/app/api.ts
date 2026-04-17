@@ -406,12 +406,24 @@ export interface MemoryRetrievalTestResult {
   results: MemorySearchResult[];
 }
 
+export interface QmdInstallResult {
+  success: boolean;
+  qmdAvailable: boolean;
+  qmdInstallCommand: string;
+}
+
 /**
  * Fetch the current memory backend status and capabilities.
  * Use this to determine which backend is active and what operations it supports.
  */
 export function fetchMemoryBackendStatus(projectId?: string): Promise<MemoryBackendStatus> {
   return api<MemoryBackendStatus>(withProjectId("/memory/backend", projectId));
+}
+
+export function installQmd(projectId?: string): Promise<QmdInstallResult> {
+  return api<QmdInstallResult>(withProjectId("/memory/install-qmd", projectId), {
+    method: "POST",
+  });
 }
 
 export function testMemoryRetrieval(query: string, projectId?: string): Promise<MemoryRetrievalTestResult> {

@@ -3424,7 +3424,15 @@ body {
 
 /* === Memory Settings === */
 .memory-status-message {
+  display: flex;
+  gap: var(--space-md);
+  align-items: center;
+  justify-content: space-between;
   margin-bottom: var(--space-md);
+}
+
+.memory-status-message span {
+  min-width: 0;
 }
 
 .memory-retrieval-test {
@@ -7067,6 +7075,11 @@ body {
   .memory-file-summary {
     grid-template-columns: 1fr;
     margin: 0 var(--space-lg) var(--space-md);
+  }
+
+  .memory-status-message {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .memory-file-summary span {

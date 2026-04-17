@@ -3506,6 +3506,74 @@ describe("fetchMemoryBackendStatus", () => {
   });
 });
 
+describe("installQmd", () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    globalThis.fetch = vi.fn();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("calls POST /api/memory/install-qmd without projectId", async () => {
+    const { installQmd } = await import("./api");
+    const response = {
+      success: true,
+      qmdAvailable: true,
+      qmdInstallCommand: "bun add -g qmd",
+    };
+
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: {
+        get: (name: string) =>
+          name.toLowerCase() === "content-type" ? "application/json" : null,
+      },
+      json: () => Promise.resolve(response),
+      text: () => Promise.resolve(JSON.stringify(response)),
+    } as unknown as Response);
+
+    const result = await installQmd();
+
+    expect(result).toEqual(response);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[0]).toContain("/api/memory/install-qmd");
+    expect(call[1]).toMatchObject({ method: "POST" });
+  });
+
+  it("includes projectId when installing qmd for a project context", async () => {
+    const { installQmd } = await import("./api");
+    const response = {
+      success: true,
+      qmdAvailable: true,
+      qmdInstallCommand: "bun add -g qmd",
+    };
+
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: {
+        get: (name: string) =>
+          name.toLowerCase() === "content-type" ? "application/json" : null,
+      },
+      json: () => Promise.resolve(response),
+      text: () => Promise.resolve(JSON.stringify(response)),
+    } as unknown as Response);
+
+    await installQmd("proj_abc");
+
+    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[0]).toContain("/api/memory/install-qmd");
+    expect(call[0]).toContain("projectId=proj_abc");
+  });
+});
+
 describe("compactMemory", () => {
   const originalFetch = globalThis.fetch;
 

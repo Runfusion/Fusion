@@ -2656,6 +2656,31 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  router.post("/memory/install-qmd", async (_req, res) => {
+    try {
+      const [command, ...args] = QMD_INSTALL_COMMAND.split(" ");
+      if (!command || args.length === 0) {
+        throw new Error("qmd install command is not configured");
+      }
+
+      await execFileAsync(command, args, {
+        timeout: 120_000,
+        maxBuffer: 1024 * 1024,
+      });
+
+      res.json({
+        success: true,
+        qmdAvailable: await isQmdAvailable(),
+        qmdInstallCommand: QMD_INSTALL_COMMAND,
+      });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to install qmd");
+    }
+  });
+
   router.post("/memory/test", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);

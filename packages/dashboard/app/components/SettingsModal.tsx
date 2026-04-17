@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Globe, Folder } from "lucide-react";
 import { THINKING_LEVELS, PROMPT_KEY_CATALOG, isGlobalSettingsKey, isProjectSettingsKey } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent, PromptKey, AgentPromptsConfig } from "@fusion/core";
-import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, fetchGlobalConcurrency, updateGlobalConcurrency, fetchPiExtensions, updatePiExtensions, testMemoryRetrieval } from "../api";
+import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, fetchGlobalConcurrency, updateGlobalConcurrency, fetchPiExtensions, updatePiExtensions, installQmd, testMemoryRetrieval } from "../api";
 import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData, MemoryBackendCapabilities, MemoryFileInfo, MemoryRetrievalTestResult, PiExtensionSettings } from "../api";
 import { useMemoryBackendStatus } from "../hooks/useMemoryBackendStatus";
 import type { ToastType } from "../hooks/useToast";
@@ -190,6 +190,7 @@ export function SettingsModal({
   const [memoryTestQuery, setMemoryTestQuery] = useState("");
   const [memoryTestLoading, setMemoryTestLoading] = useState(false);
   const [memoryTestResult, setMemoryTestResult] = useState<MemoryRetrievalTestResult | null>(null);
+  const [qmdInstallLoading, setQmdInstallLoading] = useState(false);
 
   // Global concurrency state
   const [globalMaxConcurrent, setGlobalMaxConcurrent] = useState<number | undefined>(4);
@@ -209,6 +210,7 @@ export function SettingsModal({
     capabilities: memoryCapabilities,
     loading: memoryBackendLoading,
     error: memoryBackendError,
+    refresh: refreshMemoryBackend,
   } = useMemoryBackendStatus({ projectId });
 
   useEffect(() => {
@@ -895,6 +897,22 @@ export function SettingsModal({
       setMemoryTestLoading(false);
     }
   }, [memoryTestQuery, projectId, addToast]);
+
+  const handleInstallQmd = useCallback(async () => {
+    setQmdInstallLoading(true);
+    try {
+      const result = await installQmd(projectId);
+      await refreshMemoryBackend();
+      addToast(
+        result.qmdAvailable ? "qmd installed successfully" : "qmd install finished, but qmd is still unavailable",
+        result.qmdAvailable ? "success" : "warning",
+      );
+    } catch (err: any) {
+      addToast(err?.message || "Failed to install qmd", "error");
+    } finally {
+      setQmdInstallLoading(false);
+    }
+  }, [projectId, refreshMemoryBackend, addToast]);
 
   const savePresetDraft = () => {
     if (!presetDraft) return;
@@ -2222,8 +2240,18 @@ export function SettingsModal({
 
             {backendStatus?.qmdAvailable === false && (
               <div className="settings-empty-state memory-status-message">
-                qmd is not installed. Search will use local files.
-                Install indexed retrieval: <code>{backendStatus.qmdInstallCommand || "bun add -g qmd"}</code>
+                <span>
+                  qmd is not installed. Search will use local files.
+                  Install indexed retrieval: <code>{backendStatus.qmdInstallCommand || "bun add -g qmd"}</code>
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={handleInstallQmd}
+                  disabled={qmdInstallLoading}
+                >
+                  {qmdInstallLoading ? "Installing…" : "Install qmd"}
+                </button>
               </div>
             )}
 
