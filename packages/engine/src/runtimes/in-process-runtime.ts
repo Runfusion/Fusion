@@ -292,10 +292,10 @@ export class InProcessRuntime
       }
 
       // 5c. Initialize AgentReflectionService (requires agentStore and reflectionStore)
-      let reflectionService: import("@fusion/engine").AgentReflectionService | undefined;
+      let reflectionService: import("../agent-reflection.js").AgentReflectionService | undefined;
       if (agentStoreForReflection && reflectionStoreForService) {
         try {
-          const { AgentReflectionService: AgentReflectionServiceClass } = await import("@fusion/engine");
+          const { AgentReflectionService: AgentReflectionServiceClass } = await import("../agent-reflection.js");
           reflectionService = new AgentReflectionServiceClass({
             agentStore: agentStoreForReflection,
             taskStore: this.taskStore,

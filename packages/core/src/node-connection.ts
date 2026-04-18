@@ -15,7 +15,7 @@ export type ConnectionErrorType =
 export interface ConnectionResult {
   /** Whether the connection test succeeded */
   success: boolean;
-  /** Normalized URL (e.g., "http://192.168.1.100:3000") */
+  /** Normalized URL (e.g., "http://192.0.2.10:3000") */
   url: string;
   /** Latency in milliseconds for the successful health check */
   latencyMs?: number;
@@ -40,7 +40,7 @@ export interface ConnectionResult {
 }
 
 export interface ConnectionOptions {
-  /** IP address or hostname (e.g., "192.168.1.100" or "my-server.local") */
+  /** IP address or hostname (e.g., "192.0.2.10" or "my-server.local") */
   host: string;
   /** Port number (1-65535) */
   port: number;

@@ -1,22 +1,17 @@
 /**
- * Seed script for populating the central database with sample nodes.
+ * Test utility for populating a CentralCore instance with sample nodes.
  *
- * This script creates a realistic set of nodes (1 local + 5 remote) for
- * visual testing of the multi-node dashboard.
+ * Used exclusively in tests — creates 1 local + 5 remote nodes
+ * for testing the multi-node dashboard. Must only be called with
+ * test-scoped CentralCore instances (temp directories).
  *
- * Usage:
- *   - Direct execution (seeds real central database):
- *     npx tsx packages/core/src/__tests__/seed-sample-nodes.ts
- *
- *   - As a module (for tests):
- *     import { seedSampleNodes } from "./seed-sample-nodes";
- *     await seedSampleNodes(central);
+ * Usage (tests only):
+ *   import { seedSampleNodes } from "./seed-sample-nodes";
+ *   await seedSampleNodes(central); // central backed by temp directory
  */
 
 import { CentralCore } from "../central-core.js";
 import type { NodeConfig, NodeStatus } from "../types.js";
-import { homedir } from "node:os";
-import { join } from "node:path";
 
 /** Sample remote nodes to create for visual testing */
 const SAMPLE_REMOTE_NODES = [
@@ -111,60 +106,4 @@ export async function seedSampleNodes(central: CentralCore): Promise<NodeConfig[
   }
 
   return nodes;
-}
-
-/**
- * Seed the real central database and print results.
- * Use this when running directly via tsx.
- */
-async function main(): Promise<void> {
-  console.log("\n🌐 Seeding sample nodes into central database...\n");
-
-  const central = new CentralCore();
-  await central.init();
-
-  try {
-    const nodes = await seedSampleNodes(central);
-
-    console.log("\n📊 Registered nodes:\n");
-    console.log("┌─────────────────────────────────────────┬────────┬──────────────────────────────┬─────────┐");
-    console.log("│ Name                                    │ Type   │ URL                         │ Status  │");
-    console.log("├─────────────────────────────────────────┼────────┼──────────────────────────────┼─────────┤");
-
-    for (const node of nodes) {
-      const type = node.type.padEnd(6);
-      const name = node.name.slice(0, 39).padEnd(39);
-      const url = (node.url ?? "-").slice(0, 28).padEnd(28);
-      const status = node.status.padEnd(7);
-      console.log(`│ ${name} │ ${type} │ ${url} │ ${status} │`);
-    }
-
-    console.log("└─────────────────────────────────────────┴────────┴──────────────────────────────┴─────────┘");
-
-    // Summary stats
-    const total = nodes.length;
-    const localCount = nodes.filter((n) => n.type === "local").length;
-    const remoteCount = nodes.filter((n) => n.type === "remote").length;
-    const onlineCount = nodes.filter((n) => n.status === "online").length;
-    const offlineCount = nodes.filter((n) => n.status === "offline").length;
-    const errorCount = nodes.filter((n) => n.status === "error").length;
-    const connectingCount = nodes.filter((n) => n.status === "connecting").length;
-
-    console.log("\n📈 Summary:");
-    console.log(`   Total nodes: ${total}`);
-    console.log(`   Local: ${localCount}, Remote: ${remoteCount}`);
-    console.log(`   Online: ${onlineCount}, Offline: ${offlineCount}, Error: ${errorCount}, Connecting: ${connectingCount}`);
-    console.log(`\n✅ Database: ${central.getDatabasePath()}\n`);
-  } finally {
-    await central.close();
-  }
-}
-
-// Run if executed directly
-const isMainModule = process.argv[1]?.endsWith("seed-sample-nodes.ts");
-if (isMainModule) {
-  main().catch((err) => {
-    console.error("\n❌ Seeding failed:", err);
-    process.exit(1);
-  });
 }

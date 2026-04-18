@@ -198,7 +198,7 @@ export function ConnectNodeModal({ open, onClose, onConnected, addToast, onSubmi
               type="text"
               value={host}
               onChange={(event) => setHost(event.target.value)}
-              placeholder="192.168.1.100 or my-server.local"
+              placeholder="192.0.2.10 or my-server.local"
               disabled={isSubmitting}
               aria-invalid={Boolean(errors.host)}
             />

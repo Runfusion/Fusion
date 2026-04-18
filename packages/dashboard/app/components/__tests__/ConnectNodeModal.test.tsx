@@ -44,7 +44,7 @@ describe("ConnectNodeModal", () => {
 
     expect(screen.getByLabelText("Connect to Node")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Build Server")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("192.168.1.100 or my-server.local")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("192.0.2.10 or my-server.local")).toBeInTheDocument();
   });
 
   it("does not render when closed", () => {
@@ -57,7 +57,7 @@ describe("ConnectNodeModal", () => {
     render(<ConnectNodeModal {...defaultProps} />);
 
     // Fill in host but not name
-    fireEvent.change(screen.getByPlaceholderText("192.168.1.100 or my-server.local"), {
+    fireEvent.change(screen.getByPlaceholderText("192.0.2.10 or my-server.local"), {
       target: { value: "192.168.1.100" },
     });
 
@@ -72,7 +72,7 @@ describe("ConnectNodeModal", () => {
     render(<ConnectNodeModal {...defaultProps} />);
 
     // Get the host input directly
-    const hostInput = screen.getByPlaceholderText("192.168.1.100 or my-server.local");
+    const hostInput = screen.getByPlaceholderText("192.0.2.10 or my-server.local");
     expect(hostInput).toBeInTheDocument();
 
     // Host should be empty initially
@@ -85,7 +85,7 @@ describe("ConnectNodeModal", () => {
     fireEvent.change(screen.getByPlaceholderText("Build Server"), {
       target: { value: "Test Node" },
     });
-    fireEvent.change(screen.getByPlaceholderText("192.168.1.100 or my-server.local"), {
+    fireEvent.change(screen.getByPlaceholderText("192.0.2.10 or my-server.local"), {
       target: { value: "192.168.1.100" },
     });
 
@@ -103,7 +103,7 @@ describe("ConnectNodeModal", () => {
   it("shows URL preview as host and port are filled", () => {
     render(<ConnectNodeModal {...defaultProps} />);
 
-    fireEvent.change(screen.getByPlaceholderText("192.168.1.100 or my-server.local"), {
+    fireEvent.change(screen.getByPlaceholderText("192.0.2.10 or my-server.local"), {
       target: { value: "192.168.1.100" },
     });
 
@@ -113,7 +113,7 @@ describe("ConnectNodeModal", () => {
   it("updates URL preview when port changes", () => {
     render(<ConnectNodeModal {...defaultProps} />);
 
-    fireEvent.change(screen.getByPlaceholderText("192.168.1.100 or my-server.local"), {
+    fireEvent.change(screen.getByPlaceholderText("192.0.2.10 or my-server.local"), {
       target: { value: "my-server.local" },
     });
 
@@ -127,7 +127,7 @@ describe("ConnectNodeModal", () => {
   it("strips protocol from host in URL preview", () => {
     render(<ConnectNodeModal {...defaultProps} />);
 
-    fireEvent.change(screen.getByPlaceholderText("192.168.1.100 or my-server.local"), {
+    fireEvent.change(screen.getByPlaceholderText("192.0.2.10 or my-server.local"), {
       target: { value: "https://my-server.local" },
     });
 
@@ -146,7 +146,7 @@ describe("ConnectNodeModal", () => {
     fireEvent.change(screen.getByPlaceholderText("Build Server"), {
       target: { value: "Test Node" },
     });
-    fireEvent.change(screen.getByPlaceholderText("192.168.1.100 or my-server.local"), {
+    fireEvent.change(screen.getByPlaceholderText("192.0.2.10 or my-server.local"), {
       target: { value: "192.168.1.100" },
     });
 
@@ -171,7 +171,7 @@ describe("ConnectNodeModal", () => {
     fireEvent.change(screen.getByPlaceholderText("Build Server"), {
       target: { value: "Test Node" },
     });
-    fireEvent.change(screen.getByPlaceholderText("192.168.1.100 or my-server.local"), {
+    fireEvent.change(screen.getByPlaceholderText("192.0.2.10 or my-server.local"), {
       target: { value: "invalid-host" },
     });
 
@@ -189,7 +189,7 @@ describe("ConnectNodeModal", () => {
     fireEvent.change(screen.getByPlaceholderText("Build Server"), {
       target: { value: "Test Node" },
     });
-    fireEvent.change(screen.getByPlaceholderText("192.168.1.100 or my-server.local"), {
+    fireEvent.change(screen.getByPlaceholderText("192.0.2.10 or my-server.local"), {
       target: { value: "192.168.1.100" },
     });
 
@@ -226,7 +226,7 @@ describe("ConnectNodeModal", () => {
     fireEvent.change(screen.getByPlaceholderText("Build Server"), {
       target: { value: "Custom Node" },
     });
-    fireEvent.change(screen.getByPlaceholderText("192.168.1.100 or my-server.local"), {
+    fireEvent.change(screen.getByPlaceholderText("192.0.2.10 or my-server.local"), {
       target: { value: "192.168.1.100" },
     });
 

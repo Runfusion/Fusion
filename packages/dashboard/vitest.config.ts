@@ -11,6 +11,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@fusion/core": resolve(__dirname, "../core/src/index.ts"),
+      "@fusion/engine": resolve(__dirname, "../engine/src/index.ts"),
     },
   },
   test: {
