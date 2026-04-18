@@ -39,6 +39,7 @@ import type {
   AgentRatingInput,
   ChatSession,
   ChatMessage,
+  EnrichedChatSession,
   Roadmap,
   RoadmapMilestone,
   RoadmapFeature,
@@ -5298,8 +5299,10 @@ export async function fetchSkillsCatalog(
 
 // ── Chat API ─────────────────────────────────────────────────────────────────
 
+// EnrichedChatSession is imported from @fusion/core above
+
 export interface ChatSessionListResponse {
-  sessions: ChatSession[];
+  sessions: EnrichedChatSession[];
 }
 
 export interface ChatSessionResponse {

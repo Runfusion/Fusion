@@ -30,11 +30,18 @@ vi.mock("../../utils/projectStorage", () => ({
   removeScopedItem: vi.fn(),
 }));
 
+// Mock the SSE bus
+vi.mock("../../sse-bus", () => ({
+  subscribeSse: vi.fn(() => () => {}),
+}));
+
 import * as projectStorageModule from "../../utils/projectStorage";
+import * as sseBusModule from "../../sse-bus";
 
 const mockGetScopedItem = vi.mocked(projectStorageModule.getScopedItem);
 const mockSetScopedItem = vi.mocked(projectStorageModule.setScopedItem);
 const mockRemoveScopedItem = vi.mocked(projectStorageModule.removeScopedItem);
+const mockSubscribeSse = vi.mocked(sseBusModule.subscribeSse);
 
 const mockFetchChatSessions = vi.mocked(apiModule.fetchChatSessions);
 const mockCreateChatSession = vi.mocked(apiModule.createChatSession);
@@ -577,6 +584,307 @@ describe("useChat", () => {
 
     await waitFor(() => {
       expect(result.current.sessions).toHaveLength(2);
+    });
+  });
+
+  describe("SSE real-time updates", () => {
+    let subscribeHandler: Record<string, (event: MessageEvent) => void> = {};
+
+    beforeEach(() => {
+      subscribeHandler = {};
+      mockSubscribeSse.mockImplementation((_url, options) => {
+        // Capture the event handlers
+        if (options?.events) {
+          subscribeHandler = options.events as typeof subscribeHandler;
+        }
+        return () => {};
+      });
+    });
+
+    afterEach(() => {
+      subscribeHandler = {};
+    });
+
+    it("subscribes to chat SSE events", async () => {
+      mockFetchChatSessions.mockResolvedValueOnce({ sessions: [] });
+
+      renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(mockSubscribeSse).toHaveBeenCalledWith(
+          "/api/events?projectId=proj-123",
+          expect.objectContaining({
+            events: expect.objectContaining({
+              "chat:session:created": expect.any(Function),
+              "chat:session:updated": expect.any(Function),
+              "chat:session:deleted": expect.any(Function),
+              "chat:message:added": expect.any(Function),
+              "chat:message:deleted": expect.any(Function),
+            }),
+          }),
+        );
+      });
+    });
+
+    it("adds new session on chat:session:created event", async () => {
+      mockFetchChatSessions.mockResolvedValueOnce({
+        sessions: [makeSession({ id: "session-001", agentId: "agent-001" })],
+      });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(1);
+      });
+
+      // Simulate SSE event
+      const newSession = makeSession({ id: "session-002", agentId: "agent-002", title: "New Chat" });
+      act(() => {
+        subscribeHandler["chat:session:created"]?.({
+          data: JSON.stringify(newSession),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(2);
+        expect(result.current.sessions[0]?.id).toBe("session-002");
+      });
+    });
+
+    it("avoids duplicate sessions on chat:session:created", async () => {
+      mockFetchChatSessions.mockResolvedValueOnce({
+        sessions: [makeSession({ id: "session-001", agentId: "agent-001" })],
+      });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(1);
+      });
+
+      // Simulate SSE event for the same session
+      const sameSession = makeSession({ id: "session-001", agentId: "agent-001" });
+      act(() => {
+        subscribeHandler["chat:session:created"]?.({
+          data: JSON.stringify(sameSession),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(1);
+      });
+    });
+
+    it("updates session on chat:session:updated event", async () => {
+      mockFetchChatSessions.mockResolvedValueOnce({
+        sessions: [makeSession({ id: "session-001", agentId: "agent-001", title: "Old Title" })],
+      });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(1);
+        expect(result.current.sessions[0]?.title).toBe("Old Title");
+      });
+
+      // Simulate SSE event
+      const updatedSession = makeSession({ id: "session-001", agentId: "agent-001", title: "New Title" });
+      act(() => {
+        subscribeHandler["chat:session:updated"]?.({
+          data: JSON.stringify(updatedSession),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        expect(result.current.sessions[0]?.title).toBe("New Title");
+      });
+    });
+
+    it("removes session on chat:session:deleted event", async () => {
+      mockFetchChatSessions.mockResolvedValueOnce({
+        sessions: [
+          makeSession({ id: "session-001", agentId: "agent-001" }),
+          makeSession({ id: "session-002", agentId: "agent-002" }),
+        ],
+      });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(2);
+      });
+
+      // Simulate SSE event
+      act(() => {
+        subscribeHandler["chat:session:deleted"]?.({
+          data: JSON.stringify({ id: "session-001" }),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(1);
+        expect(result.current.sessions[0]?.id).toBe("session-002");
+      });
+    });
+
+    it("clears active session when it is deleted", async () => {
+      mockFetchChatSessions.mockResolvedValueOnce({
+        sessions: [makeSession({ id: "session-001", agentId: "agent-001" })],
+      });
+      mockFetchChatMessages.mockResolvedValueOnce({ messages: [] });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(1);
+      });
+
+      act(() => {
+        result.current.selectSession("session-001");
+      });
+
+      await waitFor(() => {
+        expect(result.current.activeSession?.id).toBe("session-001");
+      });
+
+      // Simulate SSE event for the active session
+      act(() => {
+        subscribeHandler["chat:session:deleted"]?.({
+          data: JSON.stringify({ id: "session-001" }),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        expect(result.current.activeSession).toBeNull();
+        expect(result.current.messages).toHaveLength(0);
+      });
+    });
+
+    it("adds message on chat:message:added event for active session", async () => {
+      mockFetchChatSessions.mockResolvedValueOnce({
+        sessions: [makeSession({ id: "session-001", agentId: "agent-001" })],
+      });
+      mockFetchChatMessages.mockResolvedValueOnce({
+        messages: [makeMessage({ id: "msg-001", sessionId: "session-001", role: "user", content: "Hello" })],
+      });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(1);
+      });
+
+      act(() => {
+        result.current.selectSession("session-001");
+      });
+
+      await waitFor(() => {
+        expect(result.current.messages).toHaveLength(1);
+      });
+
+      // Simulate SSE event for a new message in the active session
+      const newMessage = makeMessage({ id: "msg-002", sessionId: "session-001", role: "assistant", content: "Hi there" });
+      act(() => {
+        subscribeHandler["chat:message:added"]?.({
+          data: JSON.stringify(newMessage),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        expect(result.current.messages).toHaveLength(2);
+        expect(result.current.messages[1]?.content).toBe("Hi there");
+      });
+    });
+
+    it("does not add message on chat:message:added when streaming", async () => {
+      mockFetchChatSessions.mockResolvedValueOnce({
+        sessions: [makeSession({ id: "session-001", agentId: "agent-001" })],
+      });
+      mockFetchChatMessages.mockResolvedValueOnce({ messages: [] });
+
+      // Track stream handlers separately from SSE handlers
+      let streamDoneHandler: ((data: { messageId: string }) => void) | undefined;
+      mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+        // Capture the onDone handler for stream completion
+        streamDoneHandler = handlers.onDone;
+        return { close: vi.fn(), isConnected: () => true };
+      });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(1);
+      });
+
+      act(() => {
+        result.current.selectSession("session-001");
+      });
+
+      await waitFor(() => {
+        expect(result.current.messages).toHaveLength(0);
+      });
+
+      // Start streaming
+      await act(async () => {
+        await result.current.sendMessage("Hello!");
+      });
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(true);
+      });
+
+      // Simulate SSE event - should not add message during streaming
+      // because isStreaming is true
+      const newMessage = makeMessage({ id: "msg-002", sessionId: "session-001", role: "assistant", content: "Hi" });
+      act(() => {
+        subscribeHandler["chat:message:added"]?.({
+          data: JSON.stringify(newMessage),
+        } as MessageEvent);
+      });
+
+      // Message should not be added during streaming
+      // (the SSE handler checks isStreaming and skips adding)
+      await waitFor(() => {
+        expect(result.current.messages).toHaveLength(1); // Only the optimistic user message
+      });
+    });
+
+    it("removes message on chat:message:deleted event", async () => {
+      mockFetchChatSessions.mockResolvedValueOnce({
+        sessions: [makeSession({ id: "session-001", agentId: "agent-001" })],
+      });
+      mockFetchChatMessages.mockResolvedValueOnce({
+        messages: [
+          makeMessage({ id: "msg-001", sessionId: "session-001", role: "user", content: "Hello" }),
+          makeMessage({ id: "msg-002", sessionId: "session-001", role: "assistant", content: "Hi there" }),
+        ],
+      });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(1);
+      });
+
+      act(() => {
+        result.current.selectSession("session-001");
+      });
+
+      await waitFor(() => {
+        expect(result.current.messages).toHaveLength(2);
+      });
+
+      // Simulate SSE event for deleted message
+      act(() => {
+        subscribeHandler["chat:message:deleted"]?.({
+          data: JSON.stringify({ id: "msg-001" }),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        expect(result.current.messages).toHaveLength(1);
+        expect(result.current.messages[0]?.id).toBe("msg-002");
+      });
     });
   });
 

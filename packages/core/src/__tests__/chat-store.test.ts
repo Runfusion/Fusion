@@ -555,6 +555,31 @@ describe("ChatStore", () => {
         expect(store.getMessages(session2.id)).toHaveLength(1);
         expect(store.getMessages(session2.id)[0].content).toBe("Session 2");
       });
+
+      it("updates the parent session's updatedAt timestamp", async () => {
+        const session = createTestSession(store);
+        store.addMessage(session.id, { role: "user", content: "Hello" });
+        const originalUpdatedAt = store.getSession(session.id)!.updatedAt;
+
+        await new Promise((r) => setTimeout(r, 5));
+
+        const msg = store.addMessage(session.id, { role: "assistant", content: "Reply" });
+        const afterAddUpdatedAt = store.getSession(session.id)!.updatedAt;
+
+        await new Promise((r) => setTimeout(r, 5));
+
+        store.deleteMessage(msg.id);
+
+        const afterDeleteUpdatedAt = store.getSession(session.id)!.updatedAt;
+
+        // The updatedAt should be newer after adding and after deleting
+        expect(new Date(afterAddUpdatedAt).getTime()).toBeGreaterThan(
+          new Date(originalUpdatedAt).getTime(),
+        );
+        expect(new Date(afterDeleteUpdatedAt).getTime()).toBeGreaterThan(
+          new Date(afterAddUpdatedAt).getTime(),
+        );
+      });
     });
   });
 
@@ -627,9 +652,32 @@ describe("ChatStore", () => {
       expect(handler).toHaveBeenCalledWith(message.id);
     });
 
+    it("deleteMessage emits chat:session:updated for the parent session", () => {
+      const handler = vi.fn();
+      store.on("chat:session:updated", handler);
+
+      const session = createTestSession(store);
+      const message = store.addMessage(session.id, { role: "user", content: "Hello" });
+      handler.mockClear();
+
+      store.deleteMessage(message.id);
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler.mock.calls[0][0].id).toBe(session.id);
+    });
+
     it("deleteMessage does NOT emit for non-existent message", () => {
       const handler = vi.fn();
       store.on("chat:message:deleted", handler);
+
+      store.deleteMessage("msg-nonexistent");
+
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("deleteMessage does NOT emit chat:session:updated for non-existent message", () => {
+      const handler = vi.fn();
+      store.on("chat:session:updated", handler);
 
       store.deleteMessage("msg-nonexistent");
 

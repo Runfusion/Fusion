@@ -387,9 +387,23 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
     const existing = this.getMessage(id);
     if (!existing) return false;
 
+    const sessionId = existing.sessionId;
+    const now = new Date().toISOString();
+
     this.db.prepare("DELETE FROM chat_messages WHERE id = ?").run(id);
+
+    // Update the parent session's updatedAt timestamp
+    this.db.prepare("UPDATE chat_sessions SET updatedAt = ? WHERE id = ?").run(now, sessionId);
+
     this.db.bumpLastModified();
     this.emit("chat:message:deleted", id);
+
+    // Emit session:updated for the parent session
+    const updatedSession = this.getSession(sessionId);
+    if (updatedSession) {
+      this.emit("chat:session:updated", updatedSession);
+    }
+
     return true;
   }
 }

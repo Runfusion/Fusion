@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import * as nodeFs from "node:fs";
 
 import { promisify } from "node:util";
-import type { TaskStore, Column, ScheduleType, ActivityEventType, ModelPreset, MessageType, ParticipantType, RoutineTriggerType, ProjectSettings } from "@fusion/core";
+import type { TaskStore, Column, ScheduleType, ActivityEventType, ModelPreset, MessageType, ParticipantType, RoutineTriggerType, ProjectSettings, EnrichedChatSession } from "@fusion/core";
 import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, type PiExtensionEntry, type PiExtensionSettings, getCurrentRepo, isGhAuthenticated, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupRoutine, exportSettings, importSettings, validateImportData, MessageStore, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes, listProjectMemoryFiles, readProjectMemoryFile, readProjectMemoryFileContent, writeProjectMemoryFile, readMemory, writeMemory, searchProjectMemory, isQmdAvailable, installQmd, refreshQmdProjectMemoryIndex, QMD_INSTALL_COMMAND, MemoryBackendError, scheduleQmdProjectMemoryRefresh, discoverPiExtensions, updatePiExtensionDisabledIds, getFusionAgentDir, getLegacyPiAgentDir, ensureMemoryFileWithBackend } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
 import { GitHubClient, parseBadgeUrl } from "./github.js";
@@ -8770,9 +8770,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           if (lastMessage) {
             // Truncate content to 100 chars for preview
             const content = lastMessage.content || "";
-            (session as any).lastMessagePreview =
+            const enriched: EnrichedChatSession = session;
+            enriched.lastMessagePreview =
               content.length > 100 ? content.slice(0, 100) + "…" : content;
-            (session as any).lastMessageAt = lastMessage.createdAt;
+            enriched.lastMessageAt = lastMessage.createdAt;
           }
         }
       }

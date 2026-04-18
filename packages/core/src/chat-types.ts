@@ -45,6 +45,18 @@ export interface ChatSession {
  */
 export type ChatSessionSummary = ChatSession;
 
+/**
+ * Chat session enriched with last message preview data.
+ * The server enriches sessions with lastMessagePreview and lastMessageAt
+ * by fetching the most recent message for each session.
+ */
+export type EnrichedChatSession = ChatSession & {
+  /** Preview of the last message in the session (truncated to 100 chars) */
+  lastMessagePreview?: string;
+  /** Timestamp of the last message in the session */
+  lastMessageAt?: string;
+};
+
 /** A parsed @ mention of an agent in a chat message */
 export interface ChatMention {
   agentId: string;

@@ -588,6 +588,7 @@ export type {
   ChatMessageRole,
   ChatSession,
   ChatSessionSummary,
+  EnrichedChatSession,
   ChatMention,
   ChatMessage,
   ChatMessageCreateInput,

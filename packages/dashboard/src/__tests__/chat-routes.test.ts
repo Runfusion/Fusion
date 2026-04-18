@@ -928,6 +928,21 @@ describe("Chat API Routes", () => {
 
       expect(response.status).toBe(404);
     });
+
+    it("returns 404 when deleteMessage returns false", async () => {
+      mockGetSession.mockReturnValue(sampleSession);
+      mockGetMessage.mockReturnValue(sampleMessage);
+      mockDeleteMessage.mockReturnValue(false);
+
+      const response = await request(
+        app,
+        "DELETE",
+        "/api/chat/sessions/chat-abc123/messages/msg-xyz789",
+      );
+
+      expect(response.status).toBe(404);
+      expect(mockDeleteMessage).toHaveBeenCalledWith("msg-xyz789");
+    });
   });
 
   // ── SSE Streaming Tests ────────────────────────────────────────────────────

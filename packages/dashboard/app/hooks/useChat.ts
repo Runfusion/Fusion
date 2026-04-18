@@ -9,6 +9,7 @@ import {
   fetchAgents,
   type ChatSessionListResponse,
 } from "../api";
+import { subscribeSse } from "../sse-bus";
 import { getScopedItem, setScopedItem, removeScopedItem } from "../utils/projectStorage";
 import type { Agent } from "@fusion/core";
 
@@ -98,6 +99,30 @@ export function useChat(projectId?: string): UseChatReturn {
 
   // Stream connection ref for cleanup
   const streamRef = useRef<{ close: () => void } | null>(null);
+
+  // Refs for SSE event handlers to access current state
+  const sessionsRef = useRef(sessions);
+  const activeSessionRef = useRef(activeSession);
+  const isStreamingRef = useRef(isStreaming);
+  sessionsRef.current = sessions;
+  activeSessionRef.current = activeSession;
+  isStreamingRef.current = isStreaming;
+
+  // Tracks message IDs that were added via streaming completion.
+  // Used to prevent duplicate messages when SSE event arrives before streaming state clears.
+  const streamingMessageIdsRef = useRef<Set<string>>(new Set());
+
+  // Tracks the project context version to detect stale SSE events after project switches.
+  // Incremented whenever projectId changes, invalidating any in-flight SSE handlers.
+  const projectContextVersionRef = useRef(0);
+  // Track previous projectId to detect changes
+  const previousProjectIdRef = useRef<string | undefined>(projectId);
+
+  // Detect project changes and invalidate SSE context
+  if (previousProjectIdRef.current !== projectId) {
+    previousProjectIdRef.current = projectId;
+    projectContextVersionRef.current++;
+  }
 
   // Fetch agents on mount for name resolution
   useEffect(() => {
@@ -339,6 +364,9 @@ export function useChat(projectId?: string): UseChatReturn {
             createdAt: new Date().toISOString(),
           };
 
+          // Track this message ID so SSE handler skips it if event arrives first
+          streamingMessageIdsRef.current.add(assistantMessage.id);
+
           // Preserve user message and add assistant message
           setMessages((prev) => [...prev, assistantMessage]);
 
@@ -346,6 +374,12 @@ export function useChat(projectId?: string): UseChatReturn {
           setStreamingThinking("");
           setIsStreaming(false);
           streamRef.current = null;
+
+          // Clean up tracked ID after a short delay (SSE event should arrive quickly)
+          setTimeout(() => {
+            streamingMessageIdsRef.current.delete(assistantMessage.id);
+          }, 1000);
+
           refreshSessions();
         },
         onError: (data: string) => {
@@ -371,6 +405,89 @@ export function useChat(projectId?: string): UseChatReturn {
           s.agentId.toLowerCase().includes(searchQuery.toLowerCase()),
       )
     : sessions;
+
+  // SSE real-time updates
+  useEffect(() => {
+    const contextVersionAtStart = projectContextVersionRef.current;
+    const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+
+    const isStale = () => projectContextVersionRef.current !== contextVersionAtStart;
+
+    const handleChatSessionCreated = (e: MessageEvent) => {
+      if (isStale()) return;
+      const session: ChatSessionInfo = JSON.parse(e.data);
+      // Avoid duplicates
+      setSessions((prev) => {
+        if (prev.some((s) => s.id === session.id)) return prev;
+        // Add at the top (sessions are sorted by updatedAt desc)
+        return [session, ...prev];
+      });
+    };
+
+    const handleChatSessionUpdated = (e: MessageEvent) => {
+      if (isStale()) return;
+      const updatedSession: ChatSessionInfo = JSON.parse(e.data);
+      setSessions((prev) => {
+        const updated = prev.map((s) => (s.id === updatedSession.id ? updatedSession : s));
+        return [...updated];
+      });
+      // If this is the active session, update it too
+      if (activeSessionRef.current?.id === updatedSession.id) {
+        setActiveSession(updatedSession);
+      }
+    };
+
+    const handleChatSessionDeleted = (e: MessageEvent) => {
+      if (isStale()) return;
+      const { id: sessionId }: { id: string } = JSON.parse(e.data);
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      // If this was the active session, clear it
+      if (activeSessionRef.current?.id === sessionId) {
+        setActiveSession(null);
+        setMessages([]);
+      }
+    };
+
+    const handleChatMessageAdded = (e: MessageEvent) => {
+      if (isStale()) return;
+      const message: ChatMessageInfo = JSON.parse(e.data);
+
+      // Skip if this message was already added via streaming completion
+      // (SSE event may arrive before streaming state clears)
+      if (streamingMessageIdsRef.current.has(message.id)) {
+        return;
+      }
+
+      // Only add if this is the active session AND we're not streaming
+      // (during streaming, messages are managed locally to avoid duplicates)
+      // Use ref to get the current value (state may not be updated yet when handler runs)
+      if (activeSessionRef.current?.id === message.sessionId && !isStreamingRef.current) {
+        setMessages((prev) => {
+          // Avoid duplicates
+          if (prev.some((m) => m.id === message.id)) return prev;
+          return [...prev, message];
+        });
+      }
+    };
+
+    const handleChatMessageDeleted = (e: MessageEvent) => {
+      if (isStale()) return;
+      const { id: messageId }: { id: string } = JSON.parse(e.data);
+      setMessages((prev) => prev.filter((m) => m.id !== messageId));
+    };
+
+    const unsubscribe = subscribeSse(`/api/events${query}`, {
+      events: {
+        "chat:session:created": handleChatSessionCreated,
+        "chat:session:updated": handleChatSessionUpdated,
+        "chat:session:deleted": handleChatSessionDeleted,
+        "chat:message:added": handleChatMessageAdded,
+        "chat:message:deleted": handleChatMessageDeleted,
+      },
+    });
+
+    return unsubscribe;
+  }, [projectId]);
 
   // Cleanup on unmount
   useEffect(() => {

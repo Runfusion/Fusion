@@ -355,6 +355,132 @@ describe("createSSE", () => {
 
   // ── Plugin Lifecycle Event Tests ─────────────────────────────────────────────
 
+  describe("chat store events", () => {
+    it("relays chat:session:created events when chatStore is provided", () => {
+      const chatStore = createMockStore();
+      const req = createMockRequest();
+      const { res, chunks } = createMockResponse();
+      createSSE(store, undefined, undefined, undefined, undefined, undefined, undefined, chatStore)(req, res);
+
+      const session = {
+        id: "chat-abc123",
+        agentId: "agent-001",
+        title: "Test Session",
+        status: "active",
+        projectId: null,
+        modelProvider: null,
+        modelId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      };
+      chatStore.emit("chat:session:created", session);
+
+      const sseMsg = chunks.find((c) => c.includes("event: chat:session:created"));
+      expect(sseMsg).toBeDefined();
+      expect(extractSSEPayload(sseMsg!).id).toBe("chat-abc123");
+    });
+
+    it("relays chat:session:updated events", () => {
+      const chatStore = createMockStore();
+      const req = createMockRequest();
+      const { res, chunks } = createMockResponse();
+      createSSE(store, undefined, undefined, undefined, undefined, undefined, undefined, chatStore)(req, res);
+
+      const session = {
+        id: "chat-abc123",
+        agentId: "agent-001",
+        title: "Updated Title",
+        status: "active",
+        projectId: null,
+        modelProvider: null,
+        modelId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-02T00:00:00.000Z",
+      };
+      chatStore.emit("chat:session:updated", session);
+
+      const sseMsg = chunks.find((c) => c.includes("event: chat:session:updated"));
+      expect(sseMsg).toBeDefined();
+      const payload = extractSSEPayload(sseMsg!);
+      expect(payload.id).toBe("chat-abc123");
+      expect(payload.title).toBe("Updated Title");
+    });
+
+    it("relays chat:session:deleted events with session ID", () => {
+      const chatStore = createMockStore();
+      const req = createMockRequest();
+      const { res, chunks } = createMockResponse();
+      createSSE(store, undefined, undefined, undefined, undefined, undefined, undefined, chatStore)(req, res);
+
+      chatStore.emit("chat:session:deleted", "chat-abc123");
+
+      const sseMsg = chunks.find((c) => c.includes("event: chat:session:deleted"));
+      expect(sseMsg).toBeDefined();
+      expect(extractSSEPayload(sseMsg!).id).toBe("chat-abc123");
+    });
+
+    it("relays chat:message:added events with full message", () => {
+      const chatStore = createMockStore();
+      const req = createMockRequest();
+      const { res, chunks } = createMockResponse();
+      createSSE(store, undefined, undefined, undefined, undefined, undefined, undefined, chatStore)(req, res);
+
+      const message = {
+        id: "msg-xyz789",
+        sessionId: "chat-abc123",
+        role: "user",
+        content: "Hello, how are you?",
+        thinkingOutput: null,
+        metadata: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      };
+      chatStore.emit("chat:message:added", message);
+
+      const sseMsg = chunks.find((c) => c.includes("event: chat:message:added"));
+      expect(sseMsg).toBeDefined();
+      const payload = extractSSEPayload(sseMsg!);
+      expect(payload.id).toBe("msg-xyz789");
+      expect(payload.sessionId).toBe("chat-abc123");
+      expect(payload.content).toBe("Hello, how are you?");
+    });
+
+    it("relays chat:message:deleted events with message ID", () => {
+      const chatStore = createMockStore();
+      const req = createMockRequest();
+      const { res, chunks } = createMockResponse();
+      createSSE(store, undefined, undefined, undefined, undefined, undefined, undefined, chatStore)(req, res);
+
+      chatStore.emit("chat:message:deleted", "msg-xyz789");
+
+      const sseMsg = chunks.find((c) => c.includes("event: chat:message:deleted"));
+      expect(sseMsg).toBeDefined();
+      expect(extractSSEPayload(sseMsg!).id).toBe("msg-xyz789");
+    });
+
+    it("cleans up chat store listeners on disconnect", () => {
+      const chatStore = createMockStore();
+      const req = createMockRequest();
+      const { res } = createMockResponse();
+      createSSE(store, undefined, undefined, undefined, undefined, undefined, undefined, chatStore)(req, res);
+
+      expect(chatStore.listenerCount("chat:session:created")).toBe(1);
+      expect(chatStore.listenerCount("chat:session:updated")).toBe(1);
+      expect(chatStore.listenerCount("chat:session:deleted")).toBe(1);
+      expect(chatStore.listenerCount("chat:message:added")).toBe(1);
+      expect(chatStore.listenerCount("chat:message:deleted")).toBe(1);
+
+      req.emit("close");
+
+      expect(chatStore.listenerCount("chat:session:created")).toBe(0);
+      expect(chatStore.listenerCount("chat:session:updated")).toBe(0);
+      expect(chatStore.listenerCount("chat:session:deleted")).toBe(0);
+      expect(chatStore.listenerCount("chat:message:added")).toBe(0);
+      expect(chatStore.listenerCount("chat:message:deleted")).toBe(0);
+    });
+  });
+
+  // ── Plugin Lifecycle Event Tests ─────────────────────────────────────────────
+
   describe("plugin lifecycle events", () => {
     it("emits plugin:lifecycle event for plugin:registered (installing transition)", () => {
       const pluginStore = createMockStore();

@@ -9,6 +9,7 @@ import type {
   MessageStore,
   MissionValidatorRun,
   FixFeatureCreatedPayload,
+  ChatStore,
 } from "@fusion/core";
 import type { AiSessionStore } from "./ai-session-store.js";
 
@@ -191,6 +192,7 @@ export function createSSE(
   options?: CreateSSEOptions,
   agentStore?: AgentStore,
   messageStore?: MessageStore,
+  chatStore?: ChatStore,
 ) {
   const { projectId } = options ?? {};
 
@@ -389,6 +391,27 @@ export function createSSE(
       send(`event: message:deleted\ndata: ${JSON.stringify({ id: messageId })}\n\n`);
     };
 
+    // --- Chat store event handlers ---
+    const onChatSessionCreated = (session: any) => {
+      send(`event: chat:session:created\ndata: ${JSON.stringify(session)}\n\n`);
+    };
+
+    const onChatSessionUpdated = (session: any) => {
+      send(`event: chat:session:updated\ndata: ${JSON.stringify(session)}\n\n`);
+    };
+
+    const onChatSessionDeleted = (sessionId: string) => {
+      send(`event: chat:session:deleted\ndata: ${JSON.stringify({ id: sessionId })}\n\n`);
+    };
+
+    const onChatMessageAdded = (message: any) => {
+      send(`event: chat:message:added\ndata: ${JSON.stringify(message)}\n\n`);
+    };
+
+    const onChatMessageDeleted = (messageId: string) => {
+      send(`event: chat:message:deleted\ndata: ${JSON.stringify({ id: messageId })}\n\n`);
+    };
+
     // --- Cleanup (all handlers are defined above, safe to reference) ---
 
     let cleaned = false;
@@ -451,6 +474,13 @@ export function createSSE(
         messageStore.off("message:received", onMessageReceived);
         messageStore.off("message:read", onMessageRead);
         messageStore.off("message:deleted", onMessageDeleted);
+      }
+      if (chatStore) {
+        chatStore.off("chat:session:created", onChatSessionCreated);
+        chatStore.off("chat:session:updated", onChatSessionUpdated);
+        chatStore.off("chat:session:deleted", onChatSessionDeleted);
+        chatStore.off("chat:message:added", onChatMessageAdded);
+        chatStore.off("chat:message:deleted", onChatMessageDeleted);
       }
     };
 
@@ -515,6 +545,14 @@ export function createSSE(
       messageStore.on("message:received", onMessageReceived);
       messageStore.on("message:read", onMessageRead);
       messageStore.on("message:deleted", onMessageDeleted);
+    }
+
+    if (chatStore) {
+      chatStore.on("chat:session:created", onChatSessionCreated);
+      chatStore.on("chat:session:updated", onChatSessionUpdated);
+      chatStore.on("chat:session:deleted", onChatSessionDeleted);
+      chatStore.on("chat:message:added", onChatMessageAdded);
+      chatStore.on("chat:message:deleted", onChatMessageDeleted);
     }
 
     // Heartbeat every 30s to keep connection alive.

@@ -413,6 +413,9 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     app.use(express.static(clientDir));
   }
 
+  // Create ChatStore for chat session management (available for SSE event forwarding)
+  const chatStore = options?.chatStore ?? new ChatStore(store.getFusionDir(), store.getDatabase());
+
   // Rate limiting — stricter limit on SSE connections
   app.get("/api/events", rateLimit(RATE_LIMITS.sse), async (req, res) => {
     const projectId = typeof req.query.projectId === "string" ? req.query.projectId : undefined;
@@ -432,6 +435,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
         undefined,
         defaultAgentStore,
         defaultMessageStore,
+        chatStore,
       )(req, res);
       return;
     }
@@ -468,6 +472,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
         },
         agentStore,
         messageStore,
+        chatStore,
       )(req, res);
     } catch (err: unknown) {
       sendErrorResponse(res, 500, err instanceof Error ? err.message : "Failed to open project event stream");
@@ -654,9 +659,6 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       `[server] Rehydrated ${planningRehydratedCount} planning, ${subtaskRehydratedCount} subtask, ${missionRehydratedCount} mission, ${milestoneSliceRehydratedCount} milestone/slice sessions from SQLite`,
     );
   }
-
-  // Create ChatStore for chat session management
-  const chatStore = options?.chatStore ?? new ChatStore(store.getFusionDir(), store.getDatabase());
 
   // Create AgentStore for chat prompt enrichment (initialized lazily by ChatManager)
   const chatAgentStore = new AgentStore({ rootDir: store.getFusionDir() });
