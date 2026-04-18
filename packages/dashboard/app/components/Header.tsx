@@ -269,10 +269,13 @@ export function Header({
   const [isNodeSelectorOpen, setIsNodeSelectorOpen] = useState(false);
   const [isMobileProjectSwitchOpen, setIsMobileProjectSwitchOpen] = useState(false);
   const [isViewOverflowOpen, setIsViewOverflowOpen] = useState(false);
+  const [isDesktopOverflowOpen, setIsDesktopOverflowOpen] = useState(false);
   const [overflowScripts, setOverflowScripts] = useState<Record<string, string>>({});
   const [overflowScriptsLoading, setOverflowScriptsLoading] = useState(false);
   const overflowButtonRef = useRef<HTMLButtonElement>(null);
   const overflowMenuRef = useRef<HTMLDivElement>(null);
+  const desktopOverflowTriggerRef = useRef<HTMLButtonElement>(null);
+  const desktopOverflowRef = useRef<HTMLDivElement>(null);
   const mobileSearchRef = useRef<HTMLDivElement>(null);
   const mobileSearchInputRef = useRef<HTMLInputElement>(null);
   const terminalSubmenuOpenRef = useRef(false);
@@ -362,6 +365,25 @@ export function Header({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isOverflowMenuOpen]);
 
+  // Close desktop overflow menu on outside click
+  useEffect(() => {
+    if (!isDesktopOverflowOpen) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        desktopOverflowRef.current &&
+        !desktopOverflowRef.current.contains(e.target as Node) &&
+        desktopOverflowTriggerRef.current &&
+        !desktopOverflowTriggerRef.current.contains(e.target as Node)
+      ) {
+        setIsDesktopOverflowOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isDesktopOverflowOpen]);
+
   // Close node selector on outside click
   useEffect(() => {
     if (!isNodeSelectorOpen) return;
@@ -384,6 +406,7 @@ export function Header({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setIsViewOverflowOpen(false);
+        setIsDesktopOverflowOpen(false);
         if (terminalSubmenuOpenRef.current) {
           setIsTerminalSubmenuOpen(false);
           return;
@@ -897,18 +920,6 @@ export function Header({
           </button>
         )}
 
-        {/* Schedules button - desktop only (moved to overflow on mobile/tablet) */}
-        {!isCompact && (
-          <button
-            className="btn-icon"
-            onClick={onOpenSchedules}
-            title="Automation"
-            data-testid="schedules-btn"
-          >
-            <Clock size={16} />
-          </button>
-        )}
-
         {/* Terminal button - desktop only (moved to overflow on mobile/tablet) */}
         {!isCompact && (
           <button
@@ -945,18 +956,6 @@ export function Header({
           </button>
         )}
 
-        {/* Nodes button - desktop only (moved to overflow on mobile/tablet) */}
-        {!isCompact && onOpenNodes && showNodesButton !== false && (
-          <button
-            className="btn-icon"
-            onClick={onOpenNodes}
-            title="Nodes"
-            data-testid="nodes-btn"
-          >
-            <Server size={16} />
-          </button>
-        )}
-
         {/* Workflow Steps - desktop only (moved to overflow on mobile/tablet) */}
         {!isCompact && onOpenWorkflowSteps && (
           <button
@@ -976,6 +975,59 @@ export function Header({
             onRunScript={onRunScript}
             projectId={projectId}
           />
+        )}
+
+        {/* Desktop overflow menu for Nodes and Schedules */}
+        {!isCompact && (
+          <div style={{ position: "relative" }}>
+            <button
+              ref={desktopOverflowTriggerRef}
+              className="btn-icon"
+              onClick={() => setIsDesktopOverflowOpen((prev) => !prev)}
+              title="More actions"
+              aria-label="More actions"
+              aria-expanded={isDesktopOverflowOpen}
+              aria-haspopup="menu"
+              data-testid="desktop-overflow-trigger"
+            >
+              <MoreHorizontal size={16} />
+            </button>
+            {isDesktopOverflowOpen && (
+              <div
+                ref={desktopOverflowRef}
+                className="desktop-overflow-menu"
+                role="menu"
+                aria-label="More actions"
+              >
+                {onOpenNodes && showNodesButton !== false && (
+                  <button
+                    className="view-toggle-overflow-item"
+                    onClick={() => {
+                      onOpenNodes();
+                      setIsDesktopOverflowOpen(false);
+                    }}
+                    role="menuitem"
+                    data-testid="desktop-overflow-nodes-btn"
+                  >
+                    <Server size={14} />
+                    <span>Nodes</span>
+                  </button>
+                )}
+                <button
+                  className="view-toggle-overflow-item"
+                  onClick={() => {
+                    handleOverflowAction(onOpenSchedules);
+                    setIsDesktopOverflowOpen(false);
+                  }}
+                  role="menuitem"
+                  data-testid="desktop-overflow-schedules-btn"
+                >
+                  <Clock size={14} />
+                  <span>Automation</span>
+                </button>
+              </div>
+            )}
+          </div>
         )}
 
         {/* Pause button (soft pause) - always inline */}

@@ -647,15 +647,18 @@ describe("Header", () => {
   });
 
   describe("nodes button", () => {
-    it("renders Nodes button on desktop when handler is provided", () => {
+    it("renders Nodes button in desktop overflow when handler is provided", () => {
       renderHeader({ onOpenNodes: vi.fn() }, "desktop");
-      expect(screen.getByTitle("Nodes")).toBeDefined();
+      expect(screen.getByTestId("desktop-overflow-trigger")).toBeDefined();
+      fireEvent.click(screen.getByTestId("desktop-overflow-trigger"));
+      expect(screen.getByTestId("desktop-overflow-nodes-btn")).toBeDefined();
     });
 
-    it("calls onOpenNodes when Nodes button is clicked", () => {
+    it("calls onOpenNodes when Nodes button is clicked from desktop overflow", () => {
       const onOpenNodes = vi.fn();
       renderHeader({ onOpenNodes }, "desktop");
-      fireEvent.click(screen.getByTitle("Nodes"));
+      fireEvent.click(screen.getByTestId("desktop-overflow-trigger"));
+      fireEvent.click(screen.getByTestId("desktop-overflow-nodes-btn"));
       expect(onOpenNodes).toHaveBeenCalled();
     });
 
@@ -800,9 +803,11 @@ describe("Header", () => {
   });
 
   describe("automation button", () => {
-    it("renders automation button on desktop", () => {
+    it("renders automation button in desktop overflow", () => {
       renderHeader({ onOpenSchedules: vi.fn() }, "desktop");
-      expect(screen.getByTitle("Automation")).toBeDefined();
+      expect(screen.getByTestId("desktop-overflow-trigger")).toBeDefined();
+      fireEvent.click(screen.getByTestId("desktop-overflow-trigger"));
+      expect(screen.getByTestId("desktop-overflow-schedules-btn")).toBeDefined();
     });
 
     it("does not render automation button inline on mobile", () => {
@@ -810,16 +815,18 @@ describe("Header", () => {
       expect(screen.queryByTitle("Automation")).toBeNull();
     });
 
-    it("calls onOpenSchedules when automation button is clicked", () => {
+    it("calls onOpenSchedules when automation button is clicked from desktop overflow", () => {
       const onOpenSchedules = vi.fn();
       renderHeader({ onOpenSchedules }, "desktop");
-      fireEvent.click(screen.getByTitle("Automation"));
+      fireEvent.click(screen.getByTestId("desktop-overflow-trigger"));
+      fireEvent.click(screen.getByTestId("desktop-overflow-schedules-btn"));
       expect(onOpenSchedules).toHaveBeenCalled();
     });
 
     it("has correct data-testid for testing on desktop", () => {
       renderHeader({ onOpenSchedules: vi.fn() }, "desktop");
-      expect(screen.getByTestId("schedules-btn")).toBeDefined();
+      fireEvent.click(screen.getByTestId("desktop-overflow-trigger"));
+      expect(screen.getByTestId("desktop-overflow-schedules-btn")).toBeDefined();
     });
 
     it("includes automation in overflow menu on mobile", () => {

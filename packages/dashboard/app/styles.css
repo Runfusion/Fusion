@@ -930,6 +930,21 @@ body {
   color: var(--todo);
 }
 
+/* Desktop Overflow Menu */
+.desktop-overflow-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: var(--space-xs);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  min-width: 140px;
+  z-index: 200;
+  padding: var(--space-xs) 0;
+}
+
 /* Header Search */
 .header-search {
   display: flex;

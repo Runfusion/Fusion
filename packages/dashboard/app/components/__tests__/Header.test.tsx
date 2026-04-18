@@ -1632,25 +1632,32 @@ describe("Header", () => {
 
   describe("Nodes button visibility", () => {
     describe("desktop viewport", () => {
-      it("shows nodes button by default when onOpenNodes is provided without showNodesButton", () => {
+      it("shows nodes button in desktop overflow by default when onOpenNodes is provided without showNodesButton", () => {
         render(<Header onOpenSettings={vi.fn()} onOpenNodes={vi.fn()} />);
-        expect(screen.getByTestId("nodes-btn")).toBeDefined();
+        expect(screen.getByTestId("desktop-overflow-trigger")).toBeDefined();
+        fireEvent.click(screen.getByTestId("desktop-overflow-trigger"));
+        expect(screen.getByTestId("desktop-overflow-nodes-btn")).toBeDefined();
       });
 
-      it("shows nodes button when showNodesButton is true and onOpenNodes is provided", () => {
+      it("shows nodes button in desktop overflow when showNodesButton is true and onOpenNodes is provided", () => {
         render(<Header onOpenSettings={vi.fn()} onOpenNodes={vi.fn()} showNodesButton={true} />);
-        expect(screen.getByTestId("nodes-btn")).toBeDefined();
+        expect(screen.getByTestId("desktop-overflow-trigger")).toBeDefined();
+        fireEvent.click(screen.getByTestId("desktop-overflow-trigger"));
+        expect(screen.getByTestId("desktop-overflow-nodes-btn")).toBeDefined();
       });
 
-      it("hides nodes button when showNodesButton is false", () => {
+      it("hides nodes button from desktop overflow when showNodesButton is false", () => {
         render(<Header onOpenSettings={vi.fn()} onOpenNodes={vi.fn()} showNodesButton={false} />);
-        expect(screen.queryByTestId("nodes-btn")).toBeNull();
+        expect(screen.getByTestId("desktop-overflow-trigger")).toBeDefined();
+        fireEvent.click(screen.getByTestId("desktop-overflow-trigger"));
+        expect(screen.queryByTestId("desktop-overflow-nodes-btn")).toBeNull();
       });
 
-      it("calls onOpenNodes when nodes button is clicked", () => {
+      it("calls onOpenNodes when nodes button is clicked from desktop overflow", () => {
         const onOpenNodes = vi.fn();
         render(<Header onOpenSettings={vi.fn()} onOpenNodes={onOpenNodes} />);
-        fireEvent.click(screen.getByTestId("nodes-btn"));
+        fireEvent.click(screen.getByTestId("desktop-overflow-trigger"));
+        fireEvent.click(screen.getByTestId("desktop-overflow-nodes-btn"));
         expect(onOpenNodes).toHaveBeenCalledOnce();
       });
     });
