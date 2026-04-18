@@ -29388,9 +29388,9 @@ html .column.drag-over * {
   transform: translateX(18px);
 }
 
-/* Catalog search */
+/* Skills search — at top */
 .skills-view-search {
-  margin-bottom: var(--space-md);
+  margin-bottom: var(--space-lg);
 }
 
 .skills-view-search .form-input {

@@ -620,4 +620,74 @@ describe("SkillsView", () => {
       });
     });
   });
+
+  describe("discovered skills filtering", () => {
+    it("filters discovered skills by search query", async () => {
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("test-skill")).toBeTruthy();
+        expect(screen.getByText("another-skill")).toBeTruthy();
+      });
+
+      const searchInput = screen.getByPlaceholderText("Search skills...");
+      fireEvent.change(searchInput, { target: { value: "test-skill" } });
+
+      await waitFor(() => {
+        expect(screen.getByText("test-skill")).toBeTruthy();
+        expect(screen.queryByText("another-skill")).toBeNull();
+      });
+    });
+
+    it("shows filtered empty state when no discovered skills match search", async () => {
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("test-skill")).toBeTruthy();
+      });
+
+      const searchInput = screen.getByPlaceholderText("Search skills...");
+      fireEvent.change(searchInput, { target: { value: "zzz-nonexistent" } });
+
+      await waitFor(() => {
+        expect(screen.getByText("No discovered skills match your search.")).toBeTruthy();
+      });
+    });
+
+    it("shows original empty state when no skills are discovered", async () => {
+      mockFetchDiscoveredSkills.mockResolvedValue([]);
+
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("No skills discovered in this project.")).toBeTruthy();
+      });
+
+      // Search should not override the "no skills discovered" empty state
+      const searchInput = screen.getByPlaceholderText("Search skills...");
+      fireEvent.change(searchInput, { target: { value: "test" } });
+
+      await waitFor(() => {
+        expect(screen.getByText("No skills discovered in this project.")).toBeTruthy();
+      });
+    });
+
+    it("filters discovered skills by relativePath", async () => {
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("test-skill")).toBeTruthy();
+        expect(screen.getByText("another-skill")).toBeTruthy();
+      });
+
+      // Search by path instead of name
+      const searchInput = screen.getByPlaceholderText("Search skills...");
+      fireEvent.change(searchInput, { target: { value: "another-skill" } });
+
+      await waitFor(() => {
+        expect(screen.queryByText("test-skill")).toBeNull();
+        expect(screen.getByText("another-skill")).toBeTruthy();
+      });
+    });
+  });
 });

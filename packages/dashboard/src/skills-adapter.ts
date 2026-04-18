@@ -429,8 +429,8 @@ export function createSkillsAdapter(options: {
           };
         }
 
-        // 401/403 from authenticated request - fall back to public search endpoint
-        if (authResponse.status === 401 || authResponse.status === 403) {
+        // 400/401/403 from authenticated request - fall back to public search endpoint
+        if (authResponse.status === 400 || authResponse.status === 401 || authResponse.status === 403) {
           return fetchPublicCatalog(searchUrl, {
             mode: "fallback-unauthenticated",
             tokenPresent: true,

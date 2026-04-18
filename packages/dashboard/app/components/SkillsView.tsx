@@ -30,6 +30,15 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [debouncedQuery, setDebouncedQuery] = useState("");
 
+  // Client-side filtering for discovered skills
+  const filteredDiscoveredSkills = searchQuery.trim()
+    ? discoveredSkills.filter(
+        (s) =>
+          s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          s.relativePath.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : discoveredSkills;
+
   // Fetch discovered skills
   const loadDiscoveredSkills = useCallback(async () => {
     setIsLoadingDiscovered(true);
@@ -152,6 +161,18 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
 
       {/* Scrollable content area */}
       <div className="skills-view-content">
+        {/* Search — at top for both sections */}
+        <div className="skills-view-search">
+          <input
+            type="text"
+            className="form-input"
+            placeholder="Search skills..."
+            value={searchQuery}
+            onChange={(e) => handleSearchChange(e.target.value)}
+            aria-label="Search skills"
+          />
+        </div>
+
         {/* Discovered Skills Section */}
         <section className="skills-view-section" aria-labelledby="discovered-skills-title">
           <h3 id="discovered-skills-title" className="skills-view-section-title">
@@ -167,9 +188,13 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
             <div className="skills-view-empty">
               <p>No skills discovered in this project.</p>
             </div>
+          ) : filteredDiscoveredSkills.length === 0 ? (
+            <div className="skills-view-empty">
+              <p>No discovered skills match your search.</p>
+            </div>
           ) : (
             <div className="skills-view-list">
-              {discoveredSkills.map((skill) => (
+              {filteredDiscoveredSkills.map((skill) => (
                 <div key={skill.id} className="skills-view-item">
                   <div className="skills-view-item-info">
                     <span className="skills-view-item-name">{skill.name}</span>
@@ -197,18 +222,6 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
           <h3 id="catalog-title" className="skills-view-section-title">
             Skills Catalog
           </h3>
-
-          {/* Search */}
-          <div className="skills-view-search">
-            <input
-              type="text"
-              className="form-input"
-              placeholder="Search skills..."
-              value={searchQuery}
-              onChange={(e) => handleSearchChange(e.target.value)}
-              aria-label="Search skills catalog"
-            />
-          </div>
 
           {/* Catalog Content */}
           {catalogError ? (
