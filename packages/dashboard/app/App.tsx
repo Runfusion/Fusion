@@ -683,7 +683,6 @@ function AppInner() {
         onOpenQuickChat={() => setQuickChatOpen(true)}
         projectId={currentProject?.id}
         showSkillsTab={skillsEnabled}
-        showAgentsTab={agentsEnabled}
         experimentalFeatures={{ insights: insightsEnabled, roadmap: roadmapEnabled, memoryView: memoryEnabled }}
       />
       {viewMode === "project" && currentProject && taskView !== "chat" && taskView !== "mailbox" && taskView !== "insights" && (

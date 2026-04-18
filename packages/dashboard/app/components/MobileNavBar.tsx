@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
-  Bot,
   Brain,
   ChevronRight,
   Clock,
@@ -59,8 +58,6 @@ export interface MobileNavBarProps {
   onViewAllProjects?: () => void;
   /** Whether to show the skills tab */
   showSkillsTab?: boolean;
-  /** When true, shows the Agents mobile tab. Hidden by default (experimental feature). */
-  showAgentsTab?: boolean;
   /** Experimental feature flags controlling visibility of nav items. */
   experimentalFeatures?: { insights?: boolean; roadmap?: boolean; memoryView?: boolean };
 }
@@ -108,7 +105,6 @@ export function MobileNavBar({
   projectId,
   onViewAllProjects,
   showSkillsTab,
-  showAgentsTab,
   experimentalFeatures,
 }: MobileNavBarProps) {
   const mode = useViewportMode();
@@ -199,20 +195,6 @@ export function MobileNavBar({
           <LayoutGrid />
           <span className="mobile-nav-tab-label">Tasks</span>
         </button>
-
-        {showAgentsTab && (
-          <button
-            type="button"
-            className={`mobile-nav-tab${view === "agents" ? " mobile-nav-tab--active" : ""}`}
-            data-testid="mobile-nav-tab-agents"
-            role="tab"
-            aria-selected={view === "agents"}
-            onClick={() => onChangeView("agents")}
-          >
-            <Bot />
-            <span className="mobile-nav-tab-label">Agents</span>
-          </button>
-        )}
 
         <button
           type="button"

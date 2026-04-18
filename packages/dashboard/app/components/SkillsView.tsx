@@ -97,7 +97,17 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
 
     debounceRef.current = setTimeout(() => {
       setDebouncedQuery(value);
+      debounceRef.current = null;
     }, 300);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+    };
   }, []);
 
   // Fetch catalog when debounced query changes

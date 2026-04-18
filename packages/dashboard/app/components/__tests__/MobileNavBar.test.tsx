@@ -56,24 +56,11 @@ describe("MobileNavBar", () => {
     mockViewport("mobile");
   });
 
-  it("renders six tab buttons (tasks + missions + chat + mailbox + skills + more) when showSkillsTab is true and agents is hidden by default", () => {
+  it("renders six tab buttons (tasks + missions + chat + mailbox + skills + more) when showSkillsTab is true", () => {
     render(<MobileNavBar {...createDefaultProps()} showSkillsTab={true} />);
 
     expect(screen.getByTestId("mobile-nav-tab-tasks")).toBeDefined();
     expect(screen.queryByTestId("mobile-nav-tab-agents")).toBeNull();
-    expect(screen.getByTestId("mobile-nav-tab-missions")).toBeDefined();
-    expect(screen.getByTestId("mobile-nav-tab-chat")).toBeDefined();
-    expect(screen.getByTestId("mobile-nav-tab-mailbox")).toBeDefined();
-    expect(screen.getByTestId("mobile-nav-tab-skills")).toBeDefined();
-    expect(screen.queryByTestId("mobile-nav-tab-roadmaps")).toBeNull();
-    expect(screen.getByTestId("mobile-nav-tab-more")).toBeDefined();
-  });
-
-  it("renders seven tab buttons when showSkillsTab and showAgentsTab are both true", () => {
-    render(<MobileNavBar {...createDefaultProps()} showSkillsTab={true} showAgentsTab={true} />);
-
-    expect(screen.getByTestId("mobile-nav-tab-tasks")).toBeDefined();
-    expect(screen.getByTestId("mobile-nav-tab-agents")).toBeDefined();
     expect(screen.getByTestId("mobile-nav-tab-missions")).toBeDefined();
     expect(screen.getByTestId("mobile-nav-tab-chat")).toBeDefined();
     expect(screen.getByTestId("mobile-nav-tab-mailbox")).toBeDefined();
@@ -116,15 +103,9 @@ describe("MobileNavBar", () => {
     expect(badge?.textContent).toBe("5");
   });
 
-  it("active tab is highlighted for agents", () => {
-    render(<MobileNavBar {...createDefaultProps()} view="agents" showAgentsTab={true} />);
-
-    expect(screen.getByTestId("mobile-nav-tab-agents").className).toContain("mobile-nav-tab--active");
-  });
-
   it("tasks tab calls onChangeView with 'board' when coming from a non-tasks view", () => {
     const props = createDefaultProps();
-    render(<MobileNavBar {...props} view="agents" showAgentsTab={true} />);
+    render(<MobileNavBar {...props} view="missions" />);
 
     fireEvent.click(screen.getByTestId("mobile-nav-tab-tasks"));
     expect(props.onChangeView).toHaveBeenCalledWith("board");
@@ -154,11 +135,6 @@ describe("MobileNavBar", () => {
   it("tasks tab is active when view is 'list'", () => {
     render(<MobileNavBar {...createDefaultProps()} view="list" />);
     expect(screen.getByTestId("mobile-nav-tab-tasks").className).toContain("mobile-nav-tab--active");
-  });
-
-  it("tasks tab is not active when view is 'agents'", () => {
-    render(<MobileNavBar {...createDefaultProps()} view="agents" showAgentsTab={true} />);
-    expect(screen.getByTestId("mobile-nav-tab-tasks").className).not.toContain("mobile-nav-tab--active");
   });
 
   it("missions tab calls onChangeView with 'missions'", () => {
@@ -335,32 +311,9 @@ describe("MobileNavBar", () => {
     expect(container.querySelector(".mobile-nav-bar")).toBeNull();
   });
 
-  it("tab click calls onChangeView", () => {
-    const props = createDefaultProps();
-    render(<MobileNavBar {...props} showAgentsTab={true} />);
-
-    fireEvent.click(screen.getByTestId("mobile-nav-tab-agents"));
-    expect(props.onChangeView).toHaveBeenCalledWith("agents");
-  });
-
   it("applies footer-visible class when footer is shown", () => {
     const { container } = render(<MobileNavBar {...createDefaultProps()} footerVisible={true} />);
     expect(container.querySelector(".mobile-nav-bar--with-footer")).not.toBeNull();
-  });
-
-  it("hides agents tab when showAgentsTab is false", () => {
-    render(<MobileNavBar {...createDefaultProps()} showAgentsTab={false} />);
-    expect(screen.queryByTestId("mobile-nav-tab-agents")).toBeNull();
-  });
-
-  it("hides agents tab by default when showAgentsTab is not provided", () => {
-    render(<MobileNavBar {...createDefaultProps()} />);
-    expect(screen.queryByTestId("mobile-nav-tab-agents")).toBeNull();
-  });
-
-  it("shows agents tab when showAgentsTab is true", () => {
-    render(<MobileNavBar {...createDefaultProps()} showAgentsTab={true} />);
-    expect(screen.getByTestId("mobile-nav-tab-agents")).toBeDefined();
   });
 
   it("returns null on desktop viewport", () => {

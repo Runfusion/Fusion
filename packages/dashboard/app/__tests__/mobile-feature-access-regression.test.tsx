@@ -11,7 +11,7 @@
  * Protected features:
  * - List view toggle
  * - Board view toggle
- * - Agents view toggle
+ * - Agents view toggle (via header fallback on mobile when mobile nav is disabled)
  * - Project overview / "All Projects" navigation
  * - Secondary features via "More" sheet (settings, git, terminal, etc.)
  */
@@ -111,15 +111,10 @@ describe("Mobile Feature Access Regression Guard", () => {
     expect(props.onChangeView).toHaveBeenCalledWith("list");
   });
 
-  it("agents view is accessible via mobile nav bar", () => {
-    const props = createDefaultMobileNavProps();
-    render(<MobileNavBar {...props} showAgentsTab={true} />);
+  it("agents tab is not rendered in the mobile nav bar", () => {
+    render(<MobileNavBar {...createDefaultMobileNavProps()} />);
 
-    const agentsTab = screen.getByTestId("mobile-nav-tab-agents");
-    expect(agentsTab).toBeDefined();
-
-    fireEvent.click(agentsTab);
-    expect(props.onChangeView).toHaveBeenCalledWith("agents");
+    expect(screen.queryByTestId("mobile-nav-tab-agents")).toBeNull();
   });
 
   it("project list is accessible via header overflow menu on mobile", () => {
@@ -206,21 +201,20 @@ describe("Mobile Feature Access Regression Guard", () => {
     expect(screen.getByTitle("Agents view")).toBeDefined();
   });
 
-  it("all three task views remain reachable from mobile navigation surfaces", () => {
+  it("all three task views remain reachable across mobile navigation surfaces", () => {
     const mobileNavOnChangeView = vi.fn();
     const mobileNav = render(
       <MobileNavBar
         {...createDefaultMobileNavProps()}
+        view="missions"
         onChangeView={mobileNavOnChangeView}
-        showAgentsTab={true}
       />,
     );
 
     fireEvent.click(screen.getByTestId("mobile-nav-tab-tasks"));
-    fireEvent.click(screen.getByTestId("mobile-nav-tab-agents"));
 
     expect(mobileNavOnChangeView).toHaveBeenCalledWith("board");
-    expect(mobileNavOnChangeView).toHaveBeenCalledWith("agents");
+    expect(screen.queryByTestId("mobile-nav-tab-agents")).toBeNull();
 
     mobileNav.unmount();
 
@@ -230,10 +224,13 @@ describe("Mobile Feature Access Regression Guard", () => {
         view="board"
         onChangeView={headerOnChangeView}
         mobileNavEnabled={false}
+        showAgentsTab={true}
       />,
     );
 
     fireEvent.click(screen.getByTitle("List view"));
+    fireEvent.click(screen.getByTitle("Agents view"));
     expect(headerOnChangeView).toHaveBeenCalledWith("list");
+    expect(headerOnChangeView).toHaveBeenCalledWith("agents");
   });
 });
