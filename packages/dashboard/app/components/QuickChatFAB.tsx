@@ -496,6 +496,8 @@ export function QuickChatFAB({ projectId, addToast, showFAB = true, open, onOpen
       const target = event.target as Node;
       if (panelRef.current?.contains(target)) return;
       if (fabRef.current?.contains(target)) return;
+      // Don't close if clicking inside a portaled dropdown (e.g., CustomModelDropdown)
+      if ((target as HTMLElement).closest(".model-combobox-dropdown--portal")) return;
       setIsOpen(false);
     };
 

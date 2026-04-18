@@ -709,6 +709,43 @@ describe("QuickChatFAB", () => {
     });
   });
 
+  it("does not close panel when clicking inside portaled model dropdown", async () => {
+    // Render with no agents so it defaults to model mode
+    mockAgentsHook([]);
+
+    render(<QuickChatFAB addToast={addToast} />);
+
+    // Open the quick chat panel
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-panel")).toBeDefined();
+    });
+
+    // Click the model combobox trigger to open the dropdown portal
+    const trigger = screen.getByRole("button", { name: "Select model override" });
+    fireEvent.click(trigger);
+
+    // Verify the portaled dropdown appears
+    const portalDropdown = await screen.findByTestId("model-combobox-portal");
+    expect(portalDropdown).toBeDefined();
+
+    // Click inside the portaled dropdown (on the search input)
+    const searchInput = portalDropdown.querySelector("input");
+    expect(searchInput).not.toBeNull();
+    fireEvent.mouseDown(searchInput!);
+
+    // Panel should still be visible (not closed by the dropdown click)
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-panel")).toBeDefined();
+    });
+
+    // Control: clicking outside the panel and dropdown should still close the panel
+    fireEvent.mouseDown(document.body);
+    await waitFor(() => {
+      expect(screen.queryByTestId("quick-chat-panel")).toBeNull();
+    });
+  });
+
   it("hides FAB button when showFAB is false", () => {
     render(<QuickChatFAB addToast={addToast} showFAB={false} />);
 
