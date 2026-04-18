@@ -18,7 +18,7 @@ import * as nodeFs from "node:fs";
 
 import { promisify } from "node:util";
 import type { TaskStore, Column, ScheduleType, ActivityEventType, ModelPreset, MessageType, ParticipantType, RoutineTriggerType, ProjectSettings, EnrichedChatSession } from "@fusion/core";
-import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, type PiExtensionEntry, type PiExtensionSettings, getCurrentRepo, isGhAuthenticated, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupRoutine, exportSettings, importSettings, validateImportData, MessageStore, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes, listProjectMemoryFiles, readProjectMemoryFile, readProjectMemoryFileContent, writeProjectMemoryFile, readMemory, writeMemory, searchProjectMemory, isQmdAvailable, installQmd, refreshQmdProjectMemoryIndex, QMD_INSTALL_COMMAND, MemoryBackendError, scheduleQmdProjectMemoryRefresh, discoverPiExtensions, updatePiExtensionDisabledIds, getFusionAgentDir, getLegacyPiAgentDir, ensureMemoryFileWithBackend, readWorkingMemory, readInsightsMemory, writeInsightsMemory, generateMemoryAudit, buildInsightExtractionPrompt, parseInsightExtractionResponse, processAndAuditInsightExtraction } from "@fusion/core";
+import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, type PiExtensionEntry, type PiExtensionSettings, getCurrentRepo, isGhAuthenticated, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupRoutine, exportSettings, importSettings, validateImportData, MessageStore, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes, listProjectMemoryFiles, readProjectMemoryFile, readProjectMemoryFileContent, writeProjectMemoryFile, readMemory, writeMemory, searchProjectMemory, isQmdAvailable, installQmd, refreshQmdProjectMemoryIndex, QMD_INSTALL_COMMAND, MemoryBackendError, scheduleQmdProjectMemoryRefresh, discoverPiExtensions, updatePiExtensionDisabledIds, getFusionAgentDir, getLegacyPiAgentDir, ensureMemoryFileWithBackend, readInsightsMemory, writeInsightsMemory, generateMemoryAudit, buildInsightExtractionPrompt, parseInsightExtractionResponse, processAndAuditInsightExtraction } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
 import { GitHubClient, parseBadgeUrl } from "./github.js";
 import { githubRateLimiter } from "./github-poll.js";
@@ -2901,7 +2901,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const rootDir = scopedStore.getRootDir();
 
       // Read working memory and existing insights
-      const workingMemory = await readWorkingMemory(rootDir);
+      // Use readMemory (from memory-backend.ts) to handle both legacy and multi-file paths
+      const memoryResult = await readMemory(rootDir, settings);
+      const workingMemory = memoryResult.content;
       const existingInsights = await readInsightsMemory(rootDir);
 
       // Validate working memory is not empty
@@ -2962,6 +2964,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw new ApiError(503, err.message || "AI service temporarily unavailable");
       }
 
+      // Map model not found errors to 400 with helpful message
+      if (err instanceof Error && err.message.includes("not found in the pi model registry")) {
+        throw badRequest(
+          "AI model not configured. Please open Settings → AI and select a valid model for insight extraction.",
+        );
+      }
+
       // Map other extraction errors
       if (err instanceof Error && err.message.includes("No working memory")) {
         throw badRequest(err.message);
@@ -3011,16 +3020,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.get("/memory/stats", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
+      const settings = await scopedStore.getSettings();
       const rootDir = scopedStore.getRootDir();
 
       // Read both files concurrently
-      const [workingContent, insightsContent] = await Promise.all([
-        readWorkingMemory(rootDir),
+      // Use readMemory to handle both legacy and multi-file memory paths
+      const [workingResult, insightsContent] = await Promise.all([
+        readMemory(rootDir, settings),
         readInsightsMemory(rootDir).catch(() => null),
       ]);
 
       res.json({
-        workingMemorySize: workingContent.length,
+        workingMemorySize: workingResult.content.length,
         insightsSize: insightsContent?.length ?? 0,
         insightsExists: insightsContent !== null,
       });

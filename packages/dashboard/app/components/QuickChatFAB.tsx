@@ -436,7 +436,15 @@ export function QuickChatFAB({
 
     fetchModels()
       .then((response) => {
-        setModels(response.models ?? []);
+        const loadedModels = response.models ?? [];
+        setModels(loadedModels);
+        // Auto-select first model when no agents exist and no model selected yet
+        if (agents.length === 0 && loadedModels.length > 0 && !selectedModel) {
+          const firstModel = loadedModels[0];
+          if (firstModel) {
+            setSelectedModel(`${firstModel.provider}/${firstModel.id}`);
+          }
+        }
       })
       .catch((error: unknown) => {
         console.error("[QuickChatFAB] Failed to load models:", error);
@@ -445,7 +453,7 @@ export function QuickChatFAB({
       .finally(() => {
         setModelsLoading(false);
       });
-  }, [isOpen]);
+  }, [isOpen, agents.length, selectedModel]);
 
   // Initialize/switch quick chat session whenever the selected target changes.
   useEffect(() => {

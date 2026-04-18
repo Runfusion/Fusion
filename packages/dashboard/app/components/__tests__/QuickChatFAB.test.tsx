@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { Agent, ChatSession } from "../../api";
 import * as apiModule from "../../api";
 import { useAgents } from "../../hooks/useAgents";
@@ -132,7 +132,8 @@ async function selectModelOption(optionName: string) {
 
   fireEvent.click(trigger);
 
-  const optionLabel = await screen.findByText(optionName);
+  const listbox = await screen.findByRole("listbox");
+  const optionLabel = await within(listbox).findByText(optionName);
   const option = optionLabel.closest('[role="option"]') ?? optionLabel;
   fireEvent.click(option);
 }

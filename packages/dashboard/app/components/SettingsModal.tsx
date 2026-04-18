@@ -84,7 +84,7 @@ const AUTO_ARCHIVE_DEFAULT_AFTER_DAYS = 2;
 const KNOWN_EXPERIMENTAL_FEATURES: Record<string, string> = {
   insights: "Insights",
   roadmap: "Roadmaps",
-  memoryView: "Memory",
+  memoryView: "Memory Editor",
 };
 
 export type SectionId = SettingsSection["id"];
