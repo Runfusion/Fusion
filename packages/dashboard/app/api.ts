@@ -5679,10 +5679,9 @@ export function streamChatResponse(
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
 
-        // Only push complete SSE lines (ending with \n) to lines for processing.
-        // Incomplete lines (no trailing \n) are intentionally left in the buffer
-        // to be continued by the next chunk or properly handled at stream end.
-        if (flushPendingEvent && buffer.length > 0 && buffer.endsWith("\n")) {
+        // At stream end, flush any remaining buffered line so complete trailing
+        // events are parsed even when the payload has no final newline.
+        if (flushPendingEvent && buffer.length > 0) {
           lines.push(buffer);
           buffer = "";
         }

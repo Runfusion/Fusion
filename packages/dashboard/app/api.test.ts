@@ -3524,11 +3524,7 @@ describe("streamChatResponse", () => {
     );
   });
 
-  // TODO(FN-1719): Skipped because this test exposes a pre-existing bug where the
-  // implementation doesn't flush pending events when the stream ends without a
-  // trailing newline. The condition `buffer.endsWith("\n")` should just be
-  // `buffer.length > 0`. Also flaky in CI due to stream timing issues.
-  it.skip("flushes a final complete event when the stream ends without a trailing blank line", async () => {
+  it("flushes a final complete event when the stream ends without a trailing blank line", async () => {
     await withStreamResult(
       [
         "event: text\ndata: \"tail\"\n\nevent: done\ndata: {\"messageId\":\"msg-tail\"}",
@@ -3539,6 +3535,64 @@ describe("streamChatResponse", () => {
         expect(callbacks.error).toEqual([]);
       },
     );
+  });
+
+  it("flushes events built from partial chunks when stream ends without trailing newline", async () => {
+    await withStreamResult(
+      [
+        "event: text\ndata: \"partial",
+        " chunk\"\n\nevent: done\ndata: {\"messageId\":\"msg-x\"}",
+      ],
+      (callbacks) => {
+        expect(callbacks.text).toEqual(["partial chunk"]);
+        expect(callbacks.done).toEqual([{ messageId: "msg-x" }]);
+        expect(callbacks.error).toEqual([]);
+      },
+    );
+  });
+
+  it("still delivers events normally when stream ends with proper newlines", async () => {
+    await withStreamResult(
+      [
+        "event: text\ndata: \"hello\"\n\nevent: done\ndata: {\"messageId\":\"msg-n\"}\n\n",
+      ],
+      (callbacks) => {
+        expect(callbacks.text).toEqual(["hello"]);
+        expect(callbacks.done).toEqual([{ messageId: "msg-n" }]);
+        expect(callbacks.error).toEqual([]);
+      },
+    );
+  });
+
+  it("does not dispatch when stream ends mid-event with incomplete data", async () => {
+    const callbacks = {
+      thinking: [] as string[],
+      text: [] as string[],
+      done: [] as Array<{ messageId: string }>,
+      error: [] as string[],
+      connectionStates: [] as string[],
+    };
+
+    globalThis.fetch = vi.fn().mockImplementation(() =>
+      createStreamResponse([
+        'event: text\ndata: "complete"\n\ndata: "incomp',
+      ]),
+    );
+
+    const stream = streamChatResponse("chat-1", "hello", {
+      onThinking: (data) => callbacks.thinking.push(data),
+      onText: (data) => callbacks.text.push(data),
+      onDone: (data) => callbacks.done.push(data),
+      onError: (data) => callbacks.error.push(data),
+      onConnectionStateChange: (state) => callbacks.connectionStates.push(state),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    stream.close();
+
+    expect(callbacks.text).toEqual(["complete"]);
+    expect(callbacks.done).toEqual([]);
+    expect(callbacks.error).toEqual([]);
   });
 });
 
