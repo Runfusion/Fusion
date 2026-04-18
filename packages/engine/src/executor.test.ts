@@ -10786,3 +10786,169 @@ describe("TaskExecutor skillSelection regression (FN-1511)", () => {
     it.skip("step-session skill selection covered in step-session-executor.test.ts", () => {});
   });
 });
+
+// ── Agent Messaging Tool Tests ────────────────────────────────────────
+
+describe("TaskExecutor messaging tools", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        sessionManager: {
+          getLeafId: vi.fn().mockReturnValue("leaf-id"),
+          branchWithSummary: vi.fn(),
+          navigateTree: vi.fn().mockResolvedValue({ cancelled: false }),
+        },
+        navigateTree: vi.fn().mockResolvedValue({ cancelled: false }),
+      },
+    } as any);
+  });
+
+  /**
+   * Helper: execute a task and capture the customTools array passed to createKbAgent.
+   */
+  async function captureCustomTools(options?: {
+    messageStore?: unknown;
+    agentStore?: unknown;
+    assignedAgentId?: string;
+  }): Promise<any[]> {
+    const { messageStore, agentStore, assignedAgentId } = options || {};
+    let captured: any[] = [];
+
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      captured = opts.customTools || [];
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          sessionManager: {
+            getLeafId: vi.fn().mockReturnValue("leaf-id"),
+            branchWithSummary: vi.fn(),
+            navigateTree: vi.fn().mockResolvedValue({ cancelled: false }),
+          },
+          navigateTree: vi.fn().mockResolvedValue({ cancelled: false }),
+        },
+      } as any;
+    });
+
+    const store = createMockStore();
+    // Override getTask to return the correct assignedAgentId
+    store.getTask.mockImplementation(async (id: string) => ({
+      id,
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      assignedAgentId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }));
+
+    const taskExecutor = new TaskExecutor(store, "/tmp/test", {
+      messageStore: messageStore as any,
+      agentStore: agentStore as any,
+    });
+
+    await taskExecutor.execute({
+      id: "FN-MSG",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      assignedAgentId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    return captured;
+  }
+
+  it("includes send_message when messageStore and assignedAgentId are available", async () => {
+    const mockMessageStore = {
+      sendMessage: vi.fn().mockReturnValue({ id: "msg-001" }),
+    };
+    const tools = await captureCustomTools({
+      messageStore: mockMessageStore,
+      assignedAgentId: "agent-001",
+    });
+
+    const toolNames = tools.map((t: any) => t.name);
+    expect(toolNames).toContain("send_message");
+  });
+
+  it("includes read_messages when messageStore and assignedAgentId are available", async () => {
+    const mockMessageStore = {
+      sendMessage: vi.fn().mockReturnValue({ id: "msg-001" }),
+      getInbox: vi.fn().mockReturnValue([]),
+    };
+    const tools = await captureCustomTools({
+      messageStore: mockMessageStore,
+      assignedAgentId: "agent-001",
+    });
+
+    const toolNames = tools.map((t: any) => t.name);
+    expect(toolNames).toContain("read_messages");
+  });
+
+  it("excludes read_messages when messageStore is not provided", async () => {
+    const tools = await captureCustomTools({
+      assignedAgentId: "agent-001",
+    });
+
+    const toolNames = tools.map((t: any) => t.name);
+    expect(toolNames).not.toContain("read_messages");
+  });
+
+  it("excludes read_messages when assignedAgentId is not provided", async () => {
+    const mockMessageStore = {
+      sendMessage: vi.fn().mockReturnValue({ id: "msg-001" }),
+      getInbox: vi.fn().mockReturnValue([]),
+    };
+    const tools = await captureCustomTools({
+      messageStore: mockMessageStore,
+    });
+
+    const toolNames = tools.map((t: any) => t.name);
+    expect(toolNames).not.toContain("read_messages");
+  });
+
+  it("excludes messaging tools when messageStore is not provided", async () => {
+    const tools = await captureCustomTools({
+      assignedAgentId: "agent-001",
+    });
+
+    const toolNames = tools.map((t: any) => t.name);
+    expect(toolNames).not.toContain("send_message");
+    expect(toolNames).not.toContain("read_messages");
+  });
+
+  it("includes list_agents and delegate_task when agentStore is available", async () => {
+    const mockAgentStore = {
+      listAgents: vi.fn().mockResolvedValue([]),
+      getAgent: vi.fn().mockResolvedValue(null),
+    };
+    const tools = await captureCustomTools({
+      agentStore: mockAgentStore,
+    });
+
+    const toolNames = tools.map((t: any) => t.name);
+    expect(toolNames).toContain("list_agents");
+    expect(toolNames).toContain("delegate_task");
+  });
+
+  it("excludes delegation tools when agentStore is not provided", async () => {
+    const tools = await captureCustomTools({});
+
+    const toolNames = tools.map((t: any) => t.name);
+    expect(toolNames).not.toContain("list_agents");
+    expect(toolNames).not.toContain("delegate_task");
+  });
+});

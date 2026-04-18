@@ -35,6 +35,7 @@ import {
   createDelegateTaskTool,
   createListAgentsTool,
   createMemoryTools,
+  createReadMessagesTool,
   createReflectOnPerformanceTool,
   createSendMessageTool,
   createTaskCreateTool as sharedCreateTaskCreateTool,
@@ -50,6 +51,7 @@ export { summarizeToolArgs } from "./agent-logger.js";
 export {
   createDelegateTaskTool,
   createListAgentsTool,
+  createReadMessagesTool,
   createSendMessageTool,
   createTaskCreateTool,
   createTaskDocumentReadTool,
@@ -60,6 +62,7 @@ export {
   memoryAppendParams,
   memoryGetParams,
   memorySearchParams,
+  readMessagesParams,
   sendMessageParams,
   taskCreateParams,
   taskLogParams,
@@ -1292,6 +1295,9 @@ export class TaskExecutor {
           pluginRunner: this.options.pluginRunner,
           // Pass skill selection context from the main executor session
           skillSelection: skillContext.skillSelectionContext,
+          // Pass agentStore and messageStore for delegation and messaging tools
+          agentStore: this.options.agentStore,
+          messageStore: this.options.messageStore,
           onStepStart: (stepIndex) => {
             this.options.stuckTaskDetector?.recordProgress(task.id);
             try {
@@ -1543,9 +1549,10 @@ export class TaskExecutor {
           createListAgentsTool(this.options.agentStore),
           createDelegateTaskTool(this.options.agentStore, this.store),
         ] : []),
-        // Messaging tool — allows executor agents to send messages to other agents.
+        // Messaging tools — allows executor agents to send and receive messages.
         ...(this.options.messageStore && assignedAgentId ? [
           createSendMessageTool(this.options.messageStore, assignedAgentId),
+          createReadMessagesTool(this.options.messageStore, assignedAgentId),
         ] : []),
         // Add plugin tools from PluginRunner
         ...(this.options.pluginRunner?.getPluginTools() ?? []),

@@ -17,7 +17,7 @@ const execAsync = promisify(exec);
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
-import type { TaskDetail, Settings, TaskStore } from "@fusion/core";
+import type { AgentStore, MessageStore, TaskDetail, Settings, TaskStore } from "@fusion/core";
 
 import { createKbAgent, promptWithFallback, describeModel } from "./pi.js";
 import type { SkillSelectionContext } from "./skill-resolver.js";
@@ -28,7 +28,17 @@ import { AgentLogger } from "./agent-logger.js";
 import { createLogger } from "./logger.js";
 import { isContextLimitError } from "./context-limit-detector.js";
 import { checkSessionError } from "./usage-limit-detector.js";
-import { createMemoryTools, createTaskDocumentWriteTool, createTaskDocumentReadTool } from "./agent-tools.js";
+import {
+  createDelegateTaskTool,
+  createListAgentsTool,
+  createMemoryTools,
+  createReadMessagesTool,
+  createSendMessageTool,
+  createTaskCreateTool,
+  createTaskDocumentReadTool,
+  createTaskDocumentWriteTool,
+  createTaskLogTool,
+} from "./agent-tools.js";
 
 const stepExecLog = createLogger("step-session-executor");
 
@@ -78,6 +88,10 @@ export interface StepSessionExecutorOptions {
   onStepComplete?: (stepIndex: number, result: StepResult) => void;
   /** Optional skill selection context for session creation. */
   skillSelection?: SkillSelectionContext;
+  /** Optional agent store for delegation tools. */
+  agentStore?: AgentStore;
+  /** Optional message store for messaging tools. */
+  messageStore?: MessageStore;
 }
 
 // ── File Scope Extraction ─────────────────────────────────────────────
@@ -788,6 +802,31 @@ export class StepSessionExecutor {
             : [];
           const memoryTools = createMemoryTools(this.options.rootDir, settings);
 
+          // Task log and create tools — task context for step sessions.
+          const taskLogTool = this.options.store
+            ? [createTaskLogTool(this.options.store, taskDetail.id)]
+            : [];
+          const taskCreateTool = this.options.store
+            ? [createTaskCreateTool(this.options.store)]
+            : [];
+
+          // Agent delegation tools — discover and delegate work to other agents.
+          const delegationTools = this.options.agentStore
+            ? [
+                createListAgentsTool(this.options.agentStore),
+                createDelegateTaskTool(this.options.agentStore, this.options.store!),
+              ]
+            : [];
+
+          // Messaging tools — allows step sessions to send and receive messages.
+          const messagingTools =
+            this.options.messageStore && taskDetail.assignedAgentId
+              ? [
+                  createSendMessageTool(this.options.messageStore, taskDetail.assignedAgentId),
+                  createReadMessagesTool(this.options.messageStore, taskDetail.assignedAgentId),
+                ]
+              : [];
+
           // Create fresh agent session for this attempt
           // Resolve executor model using canonical lane hierarchy:
           // 1. Task override pair (taskDetail.modelProvider + taskDetail.modelId)
@@ -817,7 +856,15 @@ export class StepSessionExecutor {
             fallbackProvider: settings.fallbackProvider,
             fallbackModelId: settings.fallbackModelId,
             defaultThinkingLevel: taskDetail.thinkingLevel ?? settings.defaultThinkingLevel,
-            customTools: [...pluginTools, ...documentTools, ...memoryTools],
+            customTools: [
+              ...pluginTools,
+              ...documentTools,
+              ...memoryTools,
+              ...taskLogTool,
+              ...taskCreateTool,
+              ...delegationTools,
+              ...messagingTools,
+            ],
             onText: (delta) => {
               agentLogger.onText(delta);
               stuckTaskDetector?.recordActivity(trackingKey);

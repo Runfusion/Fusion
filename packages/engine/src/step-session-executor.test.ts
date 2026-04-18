@@ -1933,3 +1933,141 @@ describe("StepSessionExecutor skillSelection regression (FN-1511)", () => {
     });
   });
 });
+
+// ── Agent Tool Availability Tests ──────────────────────────────────────
+
+describe("StepSessionExecutor tool availability", () => {
+  /**
+   * These tests verify tool configuration by capturing the customTools
+   * passed to createKbAgent during executeStep execution. Each test
+   * uses fake timers and advances time to resolve any pending sleep()s.
+   */
+  async function captureCustomTools(options?: {
+    agentStore?: unknown;
+    messageStore?: unknown;
+    assignedAgentId?: string;
+  }): Promise<any[]> {
+    let captured: any[] = [];
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mockedCreateKbAgent.mockImplementation(async (opts: any) => {
+      captured = opts.customTools || [];
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+        },
+      } as any;
+    });
+
+    const taskDetail = makeTaskDetail({
+      prompt: makeStepPrompt("FN-TOOLS", 0),
+      steps: [{ name: "Step 0", status: "pending" }],
+      assignedAgentId: options?.assignedAgentId,
+    });
+
+    const mockStore = {
+      appendAgentLog: vi.fn().mockResolvedValue(undefined),
+      getTaskDocument: vi.fn().mockResolvedValue(null),
+      upsertTaskDocument: vi.fn().mockResolvedValue({ id: "doc-001", key: "test", content: "test", revision: 1, updatedAt: new Date().toISOString(), createdAt: new Date().toISOString(), author: "test" }),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+    } as any;
+
+    const mockSettings = makeSettings({ maxParallelSteps: 1 });
+
+    const executor = new StepSessionExecutor({
+      store: mockStore,
+      taskDetail,
+      worktreePath: "/project/.worktrees/main",
+      rootDir: "/project",
+      settings: mockSettings,
+      agentStore: options?.agentStore as any,
+      messageStore: options?.messageStore as any,
+    });
+
+    try {
+      const executePromise = executor.executeAll();
+      // Advance fake timers to allow sleep() calls in retry loop to complete
+      await vi.advanceTimersByTimeAsync(30000);
+      await executePromise;
+    } catch {
+      // Ignore execution errors — we're only capturing the tools
+    } finally {
+      vi.useRealTimers();
+    }
+
+    return captured;
+  }
+
+  it("includes list_agents and delegate_task when agentStore is available", async () => {
+    const mockAgentStore = {
+      listAgents: vi.fn().mockResolvedValue([]),
+      getAgent: vi.fn().mockResolvedValue(null),
+    };
+
+    const tools = await captureCustomTools({
+      agentStore: mockAgentStore,
+    });
+
+    const toolNames = tools.map((t: any) => t.name);
+    expect(toolNames).toContain("list_agents");
+    expect(toolNames).toContain("delegate_task");
+  });
+
+  it("excludes delegation tools when agentStore is not provided", async () => {
+    const tools = await captureCustomTools({});
+
+    const toolNames = tools.map((t: any) => t.name);
+    expect(toolNames).not.toContain("list_agents");
+    expect(toolNames).not.toContain("delegate_task");
+  });
+
+  it("includes send_message and read_messages when messageStore and assignedAgentId are available", async () => {
+    const mockMessageStore = {
+      sendMessage: vi.fn().mockReturnValue({ id: "msg-001" }),
+      getInbox: vi.fn().mockReturnValue([]),
+    };
+
+    const tools = await captureCustomTools({
+      messageStore: mockMessageStore,
+      assignedAgentId: "agent-001",
+    });
+
+    const toolNames = tools.map((t: any) => t.name);
+    expect(toolNames).toContain("send_message");
+    expect(toolNames).toContain("read_messages");
+  });
+
+  it("excludes messaging tools when messageStore is not provided", async () => {
+    const tools = await captureCustomTools({
+      assignedAgentId: "agent-001",
+    });
+
+    const toolNames = tools.map((t: any) => t.name);
+    expect(toolNames).not.toContain("send_message");
+    expect(toolNames).not.toContain("read_messages");
+  });
+
+  it("excludes messaging tools when assignedAgentId is not provided", async () => {
+    const mockMessageStore = {
+      sendMessage: vi.fn().mockReturnValue({ id: "msg-001" }),
+      getInbox: vi.fn().mockReturnValue([]),
+    };
+
+    const tools = await captureCustomTools({
+      messageStore: mockMessageStore,
+    });
+
+    const toolNames = tools.map((t: any) => t.name);
+    expect(toolNames).not.toContain("send_message");
+    expect(toolNames).not.toContain("read_messages");
+  });
+
+  it("includes task_log and task_create when store is available", async () => {
+    const tools = await captureCustomTools({});
+
+    const toolNames = tools.map((t: any) => t.name);
+    expect(toolNames).toContain("task_log");
+    expect(toolNames).toContain("task_create");
+  });
+});

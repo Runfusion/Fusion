@@ -2649,3 +2649,75 @@ describe("evictStaleProcessing", () => {
     expect(processor.getProcessingTaskIds().has("FN-002")).toBe(true);
   });
 });
+
+// ── Agent Delegation Tool Tests ──────────────────────────────────────
+
+describe("TriageProcessor delegation tools", () => {
+  function createMockAgentStore() {
+    return {
+      listAgents: vi.fn().mockResolvedValue([]),
+      getAgent: vi.fn().mockResolvedValue(null),
+    };
+  }
+
+  function createMockStore() {
+    return {
+      listTasks: vi.fn().mockResolvedValue([]),
+      getTask: vi.fn().mockResolvedValue({
+        id: "FN-TRIAGE",
+        title: "Test",
+        description: "Test task",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        status: "specifying",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        defaultProvider: "openai",
+        defaultModelId: "gpt-4o",
+      }),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+      appendAgentLog: vi.fn().mockResolvedValue(undefined),
+      updateTask: vi.fn().mockResolvedValue({}),
+      on: vi.fn(),
+      emit: vi.fn(),
+    };
+  }
+
+  it("createTriageTools returns task_list, task_get, task_create (no delegation tools — those are in customTools)", () => {
+    const store = createMockStore();
+    const processor = new TriageProcessor(store as any, "/tmp/root");
+
+    const tools = (processor as any).createTriageTools({
+      parentTaskId: "FN-TRIAGE",
+      allowTaskCreate: true,
+      createdSubtasksRef: { current: [] },
+    });
+
+    const toolNames = tools.map((t: any) => t.name);
+    expect(toolNames).toContain("task_list");
+    expect(toolNames).toContain("task_get");
+    expect(toolNames).toContain("task_create");
+    // list_agents and delegate_task are added in customTools, not createTriageTools
+    expect(toolNames).not.toContain("list_agents");
+    expect(toolNames).not.toContain("delegate_task");
+  });
+
+  it("delegation tools are accessible when agentStore is available", () => {
+    const mockAgentStore = createMockAgentStore();
+    const store = createMockStore();
+    const processor = new TriageProcessor(store as any, "/tmp/root", {
+      agentStore: mockAgentStore as any,
+    });
+
+    // Verify agentStore is injected into processor options
+    expect((processor as any).options.agentStore).toBe(mockAgentStore);
+  });
+});
