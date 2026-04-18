@@ -95,6 +95,12 @@ function createMockMissionStore(missions: Mission[] = []) {
     listFeatures: vi.fn(),
     updateFeatureStatus: vi.fn(),
     getMissionWithHierarchy: vi.fn(),
+    updateSlice: vi.fn((id: string, updates: Partial<any>) => ({
+      id,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    })),
+    computeSliceStatus: vi.fn((id: string) => "pending"),
     on: vi.fn(),
     off: vi.fn(),
     emit: vi.fn(),
@@ -607,6 +613,110 @@ describe("MissionAutopilot", () => {
     it("should return false for non-existent mission", async () => {
       const result = await autopilot.checkMissionCompletion("M-NONEXISTENT");
       expect(result).toBe(false);
+    });
+
+    it("should return false when all milestones are complete but one feature is defined", async () => {
+      // Simulate the stale status gap: all milestones are "complete" but a feature
+      // is still "defined" (e.g., added after milestones appeared complete).
+      missionStore.listMilestones.mockReturnValue([createMockMilestone({ status: "complete" })]);
+      missionStore.getMissionWithHierarchy.mockReturnValue({
+        ...createMockMission(),
+        milestones: [{
+          ...createMockMilestone({ id: "MS-001", status: "complete" }),
+          slices: [{
+            ...createMockSlice({ id: "SL-001", status: "complete" }),
+            features: [
+              createMockFeature({ id: "F-DONE", status: "done" }),
+              createMockFeature({ id: "F-DEFINED", status: "defined" }),
+            ],
+          }],
+        }],
+      });
+
+      const result = await autopilot.checkMissionCompletion("M-TEST1");
+      expect(result).toBe(false);
+      // recomputeMissionStatusChain should have been called to fix stale statuses
+      expect(missionStore.updateSlice).toHaveBeenCalled();
+      expect(missionStore.logMissionEvent).toHaveBeenCalledWith(
+        "M-TEST1",
+        "error",
+        expect.stringContaining("stale"),
+        expect.objectContaining({ source: "checkMissionCompletion" }),
+      );
+    });
+
+    it("should return true when all milestones and all features are done", async () => {
+      missionStore.listMilestones.mockReturnValue([createMockMilestone({ status: "complete" })]);
+      missionStore.getMissionWithHierarchy.mockReturnValue({
+        ...createMockMission(),
+        milestones: [{
+          ...createMockMilestone({ id: "MS-001", status: "complete" }),
+          slices: [{
+            ...createMockSlice({ id: "SL-001", status: "complete" }),
+            features: [
+              createMockFeature({ id: "F-001", status: "done" }),
+              createMockFeature({ id: "F-002", status: "done" }),
+            ],
+          }],
+        }],
+      });
+
+      const result = await autopilot.checkMissionCompletion("M-TEST1");
+      expect(result).toBe(true);
+      expect(missionStore.updateMission).toHaveBeenCalledWith(
+        "M-TEST1",
+        expect.objectContaining({ status: "complete" }),
+      );
+    });
+  });
+
+  describe("reconcileMissionConsistency", () => {
+    it("should fix stale complete slices with defined features", async () => {
+      // Simulate a slice marked "complete" but with a "defined" feature.
+      // This is a stale state that reconciliation should detect and fix.
+      const mission = createMockMission();
+      const staleHierarchy = {
+        ...mission,
+        milestones: [{
+          ...createMockMilestone({ id: "MS-001", status: "complete" }),
+          slices: [{
+            ...createMockSlice({ id: "SL-001", status: "complete" }),
+            features: [
+              createMockFeature({ id: "F-001", status: "done" }),
+              createMockFeature({ id: "F-DEFINED", status: "defined" }),
+            ],
+          }],
+        }],
+      };
+
+      // getMissionWithHierarchy is called by recomputeMissionStatusChain.
+      // We need to return something (even if stale) so the method doesn't error.
+      missionStore.getMissionWithHierarchy.mockReturnValue(staleHierarchy);
+
+      const fixed = await (autopilot as any).reconcileMissionConsistency(staleHierarchy);
+      expect(fixed).toBe(1);
+      // getMissionWithHierarchy called → recomputeMissionStatusChain triggered
+      expect(missionStore.getMissionWithHierarchy).toHaveBeenCalled();
+    });
+
+    it("should return 0 when all complete slices have all features done", async () => {
+      const mission = createMockMission();
+      const hierarchy = {
+        ...mission,
+        milestones: [{
+          ...createMockMilestone({ id: "MS-001", status: "complete" }),
+          slices: [{
+            ...createMockSlice({ id: "SL-001", status: "complete" }),
+            features: [
+              createMockFeature({ id: "F-001", status: "done" }),
+              createMockFeature({ id: "F-002", status: "done" }),
+            ],
+          }],
+        }],
+      };
+
+      const fixed = await (autopilot as any).reconcileMissionConsistency(hierarchy);
+      expect(fixed).toBe(0);
     });
   });
 

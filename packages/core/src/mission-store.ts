@@ -1507,6 +1507,13 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
 
     this.db.bumpLastModified();
     this.emit("feature:created", feature);
+
+    // Cascade status recompute upward: a newly added feature with status "defined"
+    // may downgrade the slice from "complete" → "pending", which in turn should
+    // update the parent milestone and mission statuses. Calling recomputeSliceStatus
+    // here ensures the full chain is updated atomically when a feature is added.
+    this.recomputeSliceStatus(sliceId);
+
     return feature;
   }
 

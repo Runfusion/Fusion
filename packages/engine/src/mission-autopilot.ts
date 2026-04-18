@@ -24,7 +24,9 @@ import type {
   MissionStore,
   AutopilotState,
   AutopilotStatus,
+  MissionWithHierarchy,
   Slice,
+  SliceWithFeatures,
   MissionEventType,
 } from "@fusion/core";
 import { autopilotLog } from "./logger.js";
@@ -446,8 +448,15 @@ export class MissionAutopilot {
   }
 
   /**
-   * Check if all milestones in a mission are complete.
-   * If so, set the mission to complete and return true.
+   * Check if all milestones in a mission are complete AND all features are done.
+   * The milestone-level check alone is insufficient — if features were added after
+   * all milestones appeared complete, the milestone/slice statuses may be stale.
+   * This method performs a secondary verification that ALL features across ALL
+   * slices are status "done" before marking the mission complete.
+   *
+   * If milestones appear complete but some features are not done, this method
+   * recomputes the status chain (cascading fixes to slices, milestones, and mission)
+   * and returns false.
    *
    * @param missionId - Mission ID to check
    * @returns true if mission is complete, false otherwise
@@ -461,6 +470,35 @@ export class MissionAutopilot {
 
     const allComplete = milestones.every((m) => m.status === "complete");
     if (allComplete) {
+      // Secondary check: verify all features are actually done.
+      // This guards against stale milestone statuses caused by the addFeature
+      // gap (where features were added after milestones appeared complete).
+      const hierarchy = this.missionStore.getMissionWithHierarchy(missionId);
+      if (hierarchy) {
+        const allFeaturesDone = hierarchy.milestones.every((milestone) =>
+          milestone.slices.every((slice) => {
+            const features = (slice as import("@fusion/core").SliceWithFeatures).features;
+            return features.every((feature) => feature.status === "done");
+          }),
+        );
+
+        if (!allFeaturesDone) {
+          // Milestones appear complete but some features are not done.
+          // Recompute the full status chain to fix stale slice/milestone statuses.
+          await this.recomputeMissionStatusChain(missionId);
+          autopilotLog.warn(
+            `Mission ${missionId} milestones appear complete but some features are not done; recomputing status chain`,
+          );
+          this.logMissionEventSafe(
+            missionId,
+            "error",
+            `Mission ${missionId} has stale milestone/slice status; status chain recomputed`,
+            { source: "checkMissionCompletion" },
+          );
+          return false;
+        }
+      }
+
       autopilotLog.log(`Mission ${missionId} is complete!`);
       this.setAutopilotState(missionId, "completing");
       this.missionStore.updateMission(missionId, { status: "complete" });
@@ -478,6 +516,34 @@ export class MissionAutopilot {
     }
 
     return false;
+  }
+
+  /**
+   * Recompute the status chain for every slice in a mission.
+   *
+   * Iterates all slices in the mission and calls missionStore.recomputeSliceStatus
+   * for each. Since updateSlice internally calls recomputeMilestoneStatus (which
+   * internally calls recomputeMissionStatus), calling this for each slice ensures
+   * the full mission → milestone → slice → feature chain is synchronized.
+   *
+   * Used to fix stale statuses when inconsistencies are detected.
+   *
+   * @param missionId - Mission ID whose slices should be recomputed
+   */
+  private async recomputeMissionStatusChain(missionId: string): Promise<void> {
+    const hierarchy = this.missionStore.getMissionWithHierarchy(missionId);
+    if (!hierarchy) return;
+
+    for (const milestone of hierarchy.milestones) {
+      for (const slice of milestone.slices) {
+        // recomputeSliceStatus is private on missionStore; use the public updateSlice
+        // with the computed status to trigger the cascade.
+        const computed = this.missionStore.computeSliceStatus(slice.id);
+        if (slice.status !== computed) {
+          this.missionStore.updateSlice(slice.id, { status: computed });
+        }
+      }
+    }
   }
 
   // ── Background Poll ────────────────────────────────────────────────
@@ -736,7 +802,7 @@ export class MissionAutopilot {
   }
 
   private async reconcileMissionConsistency(
-    mission: ReturnType<MissionStore["getMissionWithHierarchy"]>,
+    mission: MissionWithHierarchy,
   ): Promise<number> {
     if (!mission) {
       return 0;
@@ -745,6 +811,39 @@ export class MissionAutopilot {
     const activeSlices = mission.milestones
       .flatMap((milestone) => milestone.slices)
       .filter((slice) => slice.status === "active");
+
+    const completeSlices = mission.milestones
+      .flatMap((milestone) => milestone.slices)
+      .filter((slice) => slice.status === "complete");
+
+    // Process complete slices: check for stale "defined" features.
+    // Features with status "defined" should never exist in a "complete" slice.
+    // If found, recompute the status chain to fix the stale state.
+    if (completeSlices.length > 0) {
+      for (const slice of completeSlices) {
+        const definedFeatures = slice.features.filter((f) => f.status !== "done");
+        if (definedFeatures.length > 0) {
+          autopilotLog.warn(
+            `Slice ${slice.id} is marked complete but has ${definedFeatures.length} feature(s) not done; recomputing status chain`,
+            {
+              missionId: mission.id,
+              sliceId: slice.id,
+              definedFeatureIds: definedFeatures.map((f) => f.id),
+            },
+          );
+          this.logMissionEventSafe(
+            mission.id,
+            "error",
+            `Slice ${slice.id} has stale "complete" status (${definedFeatures.length} feature(s) not done); recomputing status chain`,
+            { source: "reconcileMissionConsistency" },
+          );
+          await this.recomputeMissionStatusChain(mission.id);
+          // One recompute is sufficient for all complete slices; break after first hit
+          return 1;
+        }
+      }
+    }
+
     if (activeSlices.length === 0) {
       return 0;
     }

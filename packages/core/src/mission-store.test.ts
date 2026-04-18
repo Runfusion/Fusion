@@ -1371,6 +1371,90 @@ describe("MissionStore", () => {
         expect(store.computeMilestoneStatus(milestone.id)).toBe("complete");
       });
     });
+
+    describe("addFeature status cascade", () => {
+      it("addFeature triggers status recompute and downgrades slice from complete to pending", () => {
+        const mission = store.createMission({ title: "Mission" });
+        const milestone = store.addMilestone(mission.id, { title: "Milestone" });
+        const slice = store.addSlice(milestone.id, { title: "Slice" });
+        const feature = store.addFeature(slice.id, { title: "Feature" });
+
+        // Initially slice should be pending (one defined feature)
+        expect(store.getSlice(slice.id)?.status).toBe("pending");
+
+        // Mark feature done
+        store.updateFeature(feature.id, { status: "done" });
+
+        // Slice should now be complete
+        expect(store.getSlice(slice.id)?.status).toBe("complete");
+        expect(store.getMilestone(milestone.id)?.status).toBe("complete");
+        expect(store.getMission(mission.id)?.status).toBe("complete");
+
+        // Add a new feature → slice should downgrade
+        const newFeature = store.addFeature(slice.id, { title: "New Feature" });
+
+        // New feature is "defined", so slice should no longer be complete
+        expect(newFeature.status).toBe("defined");
+        expect(store.getSlice(slice.id)?.status).toBe("pending");
+        // Milestone with only "pending" slices becomes "planning"
+        expect(store.getMilestone(milestone.id)?.status).toBe("planning");
+        // Mission with only "planning" milestones becomes "planning"
+        expect(store.getMission(mission.id)?.status).toBe("planning");
+      });
+
+      it("adding feature to complete slice downgrades mission from complete to active", () => {
+        const mission = store.createMission({ title: "Mission" });
+        const milestone = store.addMilestone(mission.id, { title: "Milestone" });
+        const slice = store.addSlice(milestone.id, { title: "Slice" });
+        const f1 = store.addFeature(slice.id, { title: "Feature 1" });
+        const f2 = store.addFeature(slice.id, { title: "Feature 2" });
+
+        // Both features done → all complete
+        store.updateFeature(f1.id, { status: "done" });
+        store.updateFeature(f2.id, { status: "done" });
+
+        expect(store.getMission(mission.id)?.status).toBe("complete");
+
+        // Add third feature → mission should no longer be complete
+        const f3 = store.addFeature(slice.id, { title: "Feature 3" });
+        expect(f3.status).toBe("defined");
+        expect(store.getMission(mission.id)?.status).not.toBe("complete");
+      });
+
+      it("computeSliceStatus returns pending when features are mixed defined/done", () => {
+        const mission = store.createMission({ title: "Mission" });
+        const milestone = store.addMilestone(mission.id, { title: "Milestone" });
+        const slice = store.addSlice(milestone.id, { title: "Slice" });
+        const f1 = store.addFeature(slice.id, { title: "F1" });
+        const f2 = store.addFeature(slice.id, { title: "F2" });
+
+        // Mark f1 done (has taskId), f2 stays defined
+        store.updateFeature(f1.id, { status: "done" });
+        // f2 is still "defined"
+
+        // computeSliceStatus: allDone=false, anyActive=false (no taskId on any feature)
+        // → returns "pending"
+        const status = store.computeSliceStatus(slice.id);
+        expect(status).toBe("pending");
+      });
+
+      it("computeSliceStatus returns active when a feature has taskId linked", () => {
+        createTaskInDb(db, "FN-001");
+
+        const mission = store.createMission({ title: "Mission" });
+        const milestone = store.addMilestone(mission.id, { title: "Milestone" });
+        const slice = store.addSlice(milestone.id, { title: "Slice" });
+        const f1 = store.addFeature(slice.id, { title: "F1" });
+        const f2 = store.addFeature(slice.id, { title: "F2" });
+
+        // f1 has taskId → anyActive=true → slice is "active"
+        store.linkFeatureToTask(f1.id, "FN-001");
+        // f2 stays "defined"
+
+        const status = store.computeSliceStatus(slice.id);
+        expect(status).toBe("active");
+      });
+    });
   });
 
   // ── Mission With Hierarchy Tests ──────────────────────────────────────
