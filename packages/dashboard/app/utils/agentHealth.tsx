@@ -46,6 +46,19 @@ function isHeartbeatEnabled(runtimeConfig?: Record<string, unknown>): boolean {
   return true;
 }
 
+/**
+ * Determines if the agent has periodic heartbeat configuration.
+ * An agent has periodic heartbeats if heartbeatIntervalMs is a positive number.
+ * Agents with periodic heartbeat timers should show "Unresponsive" if no heartbeat
+ * is received within the timeout window. Agents without periodic heartbeat (event-driven)
+ * should not be marked "Unresponsive" based on elapsed time.
+ */
+function hasPeriodicHeartbeat(runtimeConfig?: Record<string, unknown>): boolean {
+  if (!runtimeConfig) return false;
+  const intervalMs = runtimeConfig.heartbeatIntervalMs;
+  return typeof intervalMs === "number" && Number.isFinite(intervalMs) && intervalMs > 0;
+}
+
 function isTaskWorkerAgent(agent: AgentHealthInput): boolean {
   const metadata = agent.metadata as Record<string, unknown> | null | undefined;
   if (metadata) {
@@ -135,7 +148,19 @@ export function getAgentHealthStatus(agent: AgentHealthInput): AgentHealthStatus
     };
   }
 
-  // Compute elapsed time since last heartbeat
+  // For agents without periodic heartbeat configuration (event-driven agents),
+  // return "Healthy" if they have a lastHeartbeatAt. These agents don't have
+  // timer-based triggers, so absence of recent heartbeats is not a signal of
+  // unresponsiveness.
+  if (!hasPeriodicHeartbeat(runtimeConfig)) {
+    return {
+      label: "Healthy",
+      icon: <Heart size={14} />,
+      color: "var(--state-active-text)",
+    };
+  }
+
+  // Agent has periodic heartbeat — check if within timeout window
   const lastHeartbeat = new Date(lastHeartbeatAt).getTime();
   const elapsed = Date.now() - lastHeartbeat;
   const timeoutMs = getHeartbeatTimeoutMs(runtimeConfig) ?? DEFAULT_HEARTBEAT_TIMEOUT_MS;

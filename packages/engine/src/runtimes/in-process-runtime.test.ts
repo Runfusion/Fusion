@@ -684,4 +684,153 @@ describe("InProcessRuntime", () => {
       expect(MessageStore).toHaveBeenCalled();
     });
   });
+
+  describe("dynamic agent registration with HeartbeatTriggerScheduler", () => {
+    beforeEach(async () => {
+      vi.useFakeTimers();
+      await runtime.start();
+    });
+
+    afterEach(async () => {
+      await runtime.stop();
+      vi.useRealTimers();
+    });
+
+    it("registers a new agent when agent:created event is emitted", async () => {
+      // Create a new agent via the AgentStore
+      const store = getAgentStore(runtime);
+      const agent = await store.createAgent({
+        name: "test-agent-dynamic",
+        role: "executor",
+      });
+
+      // Verify the agent was registered with the trigger scheduler
+      const scheduler = runtime.getTriggerScheduler();
+      expect(scheduler).toBeDefined();
+      expect(scheduler!.getRegisteredAgents()).toContain(agent.id);
+    });
+
+    it("registers agent without explicit heartbeatIntervalMs using default 30s interval", async () => {
+      // Create a new agent with only enabled: true (no heartbeatIntervalMs)
+      // This tests that the default 30-second interval is applied
+      const store = getAgentStore(runtime);
+      const agent = await store.createAgent({
+        name: "test-agent-default-interval",
+        role: "executor",
+        runtimeConfig: { enabled: true }, // No heartbeatIntervalMs - should use default 30s
+      });
+
+      // Verify the agent was registered with the trigger scheduler
+      const scheduler = runtime.getTriggerScheduler();
+      expect(scheduler).toBeDefined();
+      expect(scheduler!.getRegisteredAgents()).toContain(agent.id);
+    });
+
+    it("registers a new agent with explicit heartbeatIntervalMs", async () => {
+      // Create a new agent with explicit heartbeat config
+      const store = getAgentStore(runtime);
+      const agent = await store.createAgent({
+        name: "test-agent-explicit",
+        role: "executor",
+        runtimeConfig: {
+          heartbeatIntervalMs: 15000,
+          enabled: true,
+        },
+      });
+
+      // Verify the agent was registered with the trigger scheduler
+      const scheduler = runtime.getTriggerScheduler();
+      expect(scheduler).toBeDefined();
+      expect(scheduler!.getRegisteredAgents()).toContain(agent.id);
+    });
+
+    it("does not register a new agent when enabled is false", async () => {
+      // Create a new agent with heartbeat disabled
+      const store = getAgentStore(runtime);
+      const agent = await store.createAgent({
+        name: "test-agent-disabled",
+        role: "executor",
+        runtimeConfig: {
+          enabled: false,
+        },
+      });
+
+      // Verify the agent was NOT registered with the trigger scheduler
+      const scheduler = runtime.getTriggerScheduler();
+      expect(scheduler).toBeDefined();
+      expect(scheduler!.getRegisteredAgents()).not.toContain(agent.id);
+    });
+
+    it("re-registers an existing agent when agent:updated event is emitted", async () => {
+      // Create a new agent
+      const store = getAgentStore(runtime);
+      const agent = await store.createAgent({
+        name: "test-agent-update",
+        role: "executor",
+      });
+
+      const scheduler = runtime.getTriggerScheduler();
+      expect(scheduler!.getRegisteredAgents()).toContain(agent.id);
+
+      // Update the agent
+      await store.updateAgent(agent.id, {
+        name: "test-agent-update-renamed",
+      });
+
+      // Verify the agent is still registered (re-registration succeeded)
+      expect(scheduler!.getRegisteredAgents()).toContain(agent.id);
+    });
+
+    it("unregisters an agent when enabled is set to false in update", async () => {
+      // Create a new agent with heartbeat enabled
+      const store = getAgentStore(runtime);
+      const agent = await store.createAgent({
+        name: "test-agent-toggle",
+        role: "executor",
+        runtimeConfig: {
+          enabled: true,
+        },
+      });
+
+      const scheduler = runtime.getTriggerScheduler();
+      expect(scheduler!.getRegisteredAgents()).toContain(agent.id);
+
+      // Update the agent to disable heartbeat
+      await store.updateAgent(agent.id, {
+        runtimeConfig: {
+          enabled: false,
+        },
+      });
+
+      // Verify the agent was unregistered
+      expect(scheduler!.getRegisteredAgents()).not.toContain(agent.id);
+    });
+
+    it("removes event listeners when runtime is stopped", async () => {
+      // Create a new agent before stopping
+      const store = getAgentStore(runtime);
+      const agent = await store.createAgent({
+        name: "test-agent-cleanup",
+        role: "executor",
+      });
+
+      const scheduler = runtime.getTriggerScheduler();
+      expect(scheduler!.getRegisteredAgents()).toContain(agent.id);
+
+      // Stop the runtime
+      await runtime.stop();
+
+      // The agent should still be registered (unregister is internal to scheduler)
+      // But the listeners should be removed - verify by checking they don't fire
+      // Create another agent - it won't be registered since runtime is stopped
+      const agent2 = await store.createAgent({
+        name: "test-agent-after-stop",
+        role: "executor",
+      });
+
+      // Since runtime is stopped, trigger scheduler is stopped
+      // The agent won't be in registered list
+      expect(scheduler!.getRegisteredAgents()).not.toContain(agent2.id);
+    });
+  });
 });

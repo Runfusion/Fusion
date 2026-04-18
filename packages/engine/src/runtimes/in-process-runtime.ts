@@ -97,6 +97,8 @@ export class InProcessRuntime
   private triageProcessor?: TriageProcessor;
   private messageStore?: MessageStore;
   private concurrencyChangedListener?: (state: { globalMaxConcurrent: number }) => void;
+  private agentCreatedListener?: (agent: import("@fusion/core").Agent) => void;
+  private agentUpdatedListener?: (agent: import("@fusion/core").Agent, previousState?: import("@fusion/core").AgentState) => void;
 
   /**
    * @param config - Runtime configuration
@@ -409,21 +411,55 @@ export class InProcessRuntime
         );
         this.triggerScheduler.start();
 
-        // Register existing agents that have heartbeat config
+        // Set up dynamic registration for agents created or updated after startup
+        this.agentCreatedListener = (agent) => {
+          if (!this.triggerScheduler) return;
+          const rc = agent.runtimeConfig;
+          if (rc?.enabled === false) return;
+          this.triggerScheduler.registerAgent(agent.id, {
+            heartbeatIntervalMs: rc?.heartbeatIntervalMs as number | undefined,
+            enabled: rc?.enabled as boolean | undefined,
+            maxConcurrentRuns: rc?.maxConcurrentRuns as number | undefined,
+          });
+          runtimeLog.log(`Registered new agent ${agent.id} for heartbeat triggers`);
+        };
+        this.agentStore.on("agent:created", this.agentCreatedListener);
+
+        this.agentUpdatedListener = (agent) => {
+          if (!this.triggerScheduler) return;
+          const rc = agent.runtimeConfig;
+          if (rc?.enabled === false) {
+            this.triggerScheduler.unregisterAgent(agent.id);
+            runtimeLog.log(`Unregistered agent ${agent.id} from heartbeat triggers (disabled)`);
+          } else {
+            this.triggerScheduler.registerAgent(agent.id, {
+              heartbeatIntervalMs: rc?.heartbeatIntervalMs as number | undefined,
+              enabled: rc?.enabled as boolean | undefined,
+              maxConcurrentRuns: rc?.maxConcurrentRuns as number | undefined,
+            });
+            runtimeLog.log(`Re-registered agent ${agent.id} for heartbeat triggers`);
+          }
+        };
+        this.agentStore.on("agent:updated", this.agentUpdatedListener);
+
+        // Register existing agents with heartbeat monitoring not explicitly disabled
+        // Agents without explicit heartbeat config will use the default 30-second interval
         try {
           const agents = await this.agentStore.listAgents();
+          let registeredCount = 0;
           for (const agent of agents) {
             const rc = agent.runtimeConfig;
-            if (rc && (rc.heartbeatIntervalMs || rc.enabled !== undefined || rc.maxConcurrentRuns)) {
+            if (rc?.enabled !== false) {
               this.triggerScheduler.registerAgent(agent.id, {
-                heartbeatIntervalMs: rc.heartbeatIntervalMs as number | undefined,
-                enabled: rc.enabled as boolean | undefined,
-                maxConcurrentRuns: rc.maxConcurrentRuns as number | undefined,
+                heartbeatIntervalMs: rc?.heartbeatIntervalMs as number | undefined,
+                enabled: rc?.enabled as boolean | undefined,
+                maxConcurrentRuns: rc?.maxConcurrentRuns as number | undefined,
               });
+              registeredCount++;
             }
           }
           if (agents.length > 0) {
-            runtimeLog.log(`Registered ${this.triggerScheduler.getRegisteredAgents().length} agents for heartbeat triggers`);
+            runtimeLog.log(`Registered ${registeredCount} of ${agents.length} agents for heartbeat triggers`);
           }
         } catch (regErr) {
           runtimeLog.warn(`Failed to register agents for heartbeat triggers:`, regErr);
@@ -612,7 +648,20 @@ export class InProcessRuntime
         runtimeLog.log("RoutineScheduler stopped");
       }
 
-      // 3. Stop trigger scheduler
+      // 3. Remove agent event listeners (before stopping trigger scheduler)
+      // Guard on this.agentStore being defined - it may not exist if AgentStore init failed
+      if (this.agentCreatedListener && this.agentStore) {
+        this.agentStore.off("agent:created", this.agentCreatedListener);
+        this.agentCreatedListener = undefined;
+        runtimeLog.log("AgentStore agent:created listener removed");
+      }
+      if (this.agentUpdatedListener && this.agentStore) {
+        this.agentStore.off("agent:updated", this.agentUpdatedListener);
+        this.agentUpdatedListener = undefined;
+        runtimeLog.log("AgentStore agent:updated listener removed");
+      }
+
+      // 4. Stop trigger scheduler
       if (this.triggerScheduler) {
         this.triggerScheduler.stop();
         runtimeLog.log("TriggerScheduler stopped");

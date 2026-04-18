@@ -1459,6 +1459,9 @@ export class HeartbeatTriggerScheduler {
     return this.running;
   }
 
+  /** Default heartbeat interval when not explicitly configured (30 seconds) */
+  private static readonly DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
+
   /**
    * Register an agent for timer-based heartbeat triggers.
    * @param agentId - The agent ID
@@ -1471,11 +1474,14 @@ export class HeartbeatTriggerScheduler {
       return;
     }
 
-    // Skip if no interval configured
-    const rawIntervalMs = config.heartbeatIntervalMs;
+    // Apply default interval if not explicitly configured
+    // This ensures agents with heartbeat monitoring enabled but no explicit interval
+    // still get periodic timer triggers (matching HeartbeatMonitor constructor default)
+    let rawIntervalMs = config.heartbeatIntervalMs;
+    let usingDefaultInterval = false;
     if (!rawIntervalMs || typeof rawIntervalMs !== "number" || !Number.isFinite(rawIntervalMs) || rawIntervalMs <= 0) {
-      heartbeatLog.log(`Skipping timer registration for ${agentId} (no interval)`);
-      return;
+      rawIntervalMs = HeartbeatTriggerScheduler.DEFAULT_HEARTBEAT_INTERVAL_MS;
+      usingDefaultInterval = true;
     }
 
     const intervalMs = Math.max(1000, Math.round(rawIntervalMs));
@@ -1488,7 +1494,11 @@ export class HeartbeatTriggerScheduler {
     }, intervalMs);
 
     this.timers.set(agentId, { intervalMs, handle });
-    heartbeatLog.log(`Registered timer for ${agentId} (every ${intervalMs}ms)`);
+    heartbeatLog.log(
+      usingDefaultInterval
+        ? `Registered timer for ${agentId} (every ${intervalMs}ms, default interval)`
+        : `Registered timer for ${agentId} (every ${intervalMs}ms)`,
+    );
   }
 
   /**
