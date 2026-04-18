@@ -7392,11 +7392,11 @@ body {
     overflow-y: auto;
     flex: 1;
     min-height: 0;
-    padding: 14px 0;
+    padding: var(--space-md) var(--space-sm);
   }
 
   .new-task-modal .form-group {
-    padding: 0 14px;
+    padding: 0 var(--space-md);
   }
 
   .task-form .dep-dropdown {
@@ -7428,8 +7428,23 @@ body {
   }
 
   .task-form-more-options-toggle {
-    margin: 0 14px var(--space-sm);
-    width: calc(100% - 28px);
+    margin: 0 var(--space-md) var(--space-sm);
+    width: calc(100% - var(--space-md) * 2);
+  }
+
+  .new-task-quick-fields {
+    padding: 0 var(--space-md);
+  }
+
+  .new-task-quick-fields .dep-trigger {
+    width: 100%;
+    min-height: 36px;
+  }
+
+  .new-task-quick-fields .dep-dropdown {
+    left: 0;
+    right: 0;
+    max-width: 100%;
   }
 
   .task-form-more-options {
@@ -15182,6 +15197,27 @@ html .column.drag-over * {
 .workflow-step-order-actions .btn-icon:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+/* === New Task Modal Quick Fields === */
+.new-task-quick-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-sm) 0;
+}
+
+.new-task-quick-fields .form-group {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.new-task-quick-fields .form-group label {
+  margin-bottom: var(--space-xs);
+}
+
+.new-task-quick-fields .dep-trigger {
+  width: 100%;
 }
 
 /* === Workflow Step Manager Modal === */

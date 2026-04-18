@@ -1254,4 +1254,63 @@ describe("TaskForm focus behavior (FN-1459)", () => {
       expect(document.activeElement).not.toBe(textarea);
     });
   });
+
+  // renderBelowPrimary and hideDependencies slot tests
+  describe("renderBelowPrimary and hideDependencies", () => {
+    it("renders renderBelowPrimary content between primary section and More options toggle", () => {
+      renderTaskForm({
+        renderBelowPrimary: <div data-testid="injected">Custom content</div>,
+      });
+
+      const injected = screen.getByTestId("injected");
+      const toggle = screen.getByTestId("task-form-more-options-toggle");
+      const descriptionArea = screen.getByRole("textbox", { name: /Description/i });
+
+      expect(injected).toBeInTheDocument();
+      // Injected element should appear AFTER the primary section (description area)
+      expect(
+        descriptionArea.compareDocumentPosition(injected) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      // Injected element should appear BEFORE the more-options toggle
+      expect(
+        injected.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+
+    it("hides dependencies section when hideDependencies is true", async () => {
+      renderTaskForm({ hideDependencies: true });
+
+      // Expand "More options"
+      const toggle = screen.getByTestId("task-form-more-options-toggle");
+      fireEvent.click(toggle);
+
+      await waitFor(() => {
+        expect(toggle).toHaveAttribute("aria-expanded", "true");
+      });
+
+      // Dependencies label and dep-trigger should not be in the document
+      expect(screen.queryByText("Dependencies")).toBeNull();
+      expect(screen.queryByRole("button", { name: /Add dependencies/i })).toBeNull();
+      expect(screen.queryByText(/selected/i)).toBeNull();
+    });
+
+    it("does not auto-expand More options for dependency selections when hideDependencies is true", async () => {
+      renderTaskForm({
+        hideDependencies: true,
+        dependencies: ["FN-001"],
+      });
+
+      const toggle = screen.getByTestId("task-form-more-options-toggle");
+      await waitFor(() => {
+        expect(toggle).toHaveAttribute("aria-expanded", "false");
+      });
+    });
+
+    it("renders nothing when renderBelowPrimary is not provided", () => {
+      renderTaskForm({});
+      // Should not have any unexpected elements - just verify normal rendering works
+      expect(screen.getByRole("textbox", { name: /Description/i })).toBeInTheDocument();
+      expect(screen.getByTestId("task-form-more-options-toggle")).toBeInTheDocument();
+    });
+  });
 });

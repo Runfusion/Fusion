@@ -167,4 +167,43 @@ describe("core modals mobile css coverage", () => {
     expect(fullscreenBlockMatch).not.toBeNull();
     expect(fullscreenBlockMatch![0]).toContain("max-height: unset");
   });
+
+  it("NewTaskModal: quick fields buttons meet 36px touch target on mobile", () => {
+    const css = fs.readFileSync(stylesPath, "utf-8");
+    const mobileBlock = getMainMobileBlock(css);
+
+    // Verify the quick-fields dep-trigger rule exists with min-height: 36px
+    const quickFieldsTriggerMatch = mobileBlock.match(
+      /\.new-task-quick-fields \.dep-trigger\s*\{[^}]+\}/,
+    );
+    expect(quickFieldsTriggerMatch).not.toBeNull();
+    expect(quickFieldsTriggerMatch![0]).toContain("min-height: 36px");
+  });
+
+  it("NewTaskModal: modal body uses token-based padding on mobile", () => {
+    const css = fs.readFileSync(stylesPath, "utf-8");
+    const mobileBlock = getMainMobileBlock(css);
+
+    // Extract the new-task-modal .modal-body rule
+    const modalBodyMatch = mobileBlock.match(
+      /\.new-task-modal \.modal-body\s*\{[^}]+\}/,
+    );
+    expect(modalBodyMatch).not.toBeNull();
+    // Should use var(--space-sm) for horizontal padding (not hardcoded 0)
+    expect(modalBodyMatch![0]).toContain("var(--space-sm)");
+    expect(modalBodyMatch![0]).toContain("var(--space-md)");
+  });
+
+  it("NewTaskModal: more options toggle uses token-based margin on mobile", () => {
+    const css = fs.readFileSync(stylesPath, "utf-8");
+    const mobileBlock = getMainMobileBlock(css);
+
+    // Extract the more-options-toggle rule
+    const toggleMatch = mobileBlock.match(
+      /\.task-form-more-options-toggle\s*\{[^}]+\}/,
+    );
+    expect(toggleMatch).not.toBeNull();
+    // Should use var(--space-md) for horizontal margin (not hardcoded 14px)
+    expect(toggleMatch![0]).toContain("var(--space-md)");
+  });
 });
