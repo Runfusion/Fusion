@@ -23,6 +23,14 @@ interface QuickChatFABProps {
   open?: boolean;
   /** Callback when the panel should be opened/closed */
   onOpenChange?: (open: boolean) => void;
+  /** List of favorite provider names in preferred order */
+  favoriteProviders?: string[];
+  /** List of favorited model identifiers in format "{provider}/{modelId}" */
+  favoriteModels?: string[];
+  /** Called when user toggles a provider's favorite status */
+  onToggleFavorite?: (provider: string) => void;
+  /** Called when user toggles a model's favorite status */
+  onToggleModelFavorite?: (modelId: string) => void;
 }
 
 interface ParsedModelSelection {
@@ -284,7 +292,17 @@ function useDraggable(projectId?: string, externalDidDragRef?: React.MutableRefO
   };
 }
 
-export function QuickChatFAB({ projectId, addToast, showFAB = true, open, onOpenChange }: QuickChatFABProps) {
+export function QuickChatFAB({
+  projectId,
+  addToast,
+  showFAB = true,
+  open,
+  onOpenChange,
+  favoriteProviders = [],
+  favoriteModels = [],
+  onToggleFavorite,
+  onToggleModelFavorite,
+}: QuickChatFABProps) {
   const { agents } = useAgents(projectId);
   // Internal state for uncontrolled mode, controlled state when open prop is provided
   const [internalOpen, setInternalOpen] = useState(false);
@@ -860,6 +878,10 @@ export function QuickChatFAB({ projectId, addToast, showFAB = true, open, onOpen
                 label="Select model override"
                 placeholder={modelsLoading ? "Loading models…" : "Select a model"}
                 disabled={modelsLoading || models.length === 0}
+                favoriteProviders={favoriteProviders}
+                favoriteModels={favoriteModels}
+                onToggleFavorite={onToggleFavorite}
+                onToggleModelFavorite={onToggleModelFavorite}
               />
             </div>
           )}

@@ -794,15 +794,6 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
 
   // Render empty state (no active session)
   const renderEmptyState = () => {
-    if (showNewDialog) {
-      return (
-        <NewChatDialog
-          onClose={() => setShowNewDialog(false)}
-          onCreate={handleCreateSession}
-        />
-      );
-    }
-
     return (
       <div className="chat-empty-state">
         <MessageSquare size={48} strokeWidth={1.5} />

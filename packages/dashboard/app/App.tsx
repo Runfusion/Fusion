@@ -680,6 +680,10 @@ function AppInner() {
           showFAB={showQuickChatFAB}
           open={quickChatOpen}
           onOpenChange={setQuickChatOpen}
+          favoriteProviders={favoriteProviders}
+          favoriteModels={favoriteModels}
+          onToggleFavorite={handleToggleFavorite}
+          onToggleModelFavorite={handleToggleModelFavorite}
         />
       )}
       <AppModals

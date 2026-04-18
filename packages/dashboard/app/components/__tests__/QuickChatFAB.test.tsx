@@ -746,6 +746,149 @@ describe("QuickChatFAB", () => {
     });
   });
 
+  it("shows favorited models as pinned rows in the model dropdown when favoriteModels prop is provided", async () => {
+    // Render with no agents to default to model mode
+    mockAgentsHook([]);
+
+    // Provide a favorited model
+    const favoriteModels = ["openai/gpt-4o"];
+    render(<QuickChatFAB addToast={addToast} favoriteModels={favoriteModels} />);
+
+    // Open the quick chat panel
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    // Switch to model mode (should already be default with no agents)
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-model-select")).toBeDefined();
+    });
+
+    // Open the model dropdown
+    const trigger = screen.getByRole("button", { name: "Select model override" });
+    fireEvent.click(trigger);
+
+    // The favorited model should appear as a pinned row (before the provider groups)
+    const portalDropdown = await screen.findByTestId("model-combobox-portal");
+    expect(portalDropdown).toBeDefined();
+
+    // Find the favorited model option
+    const gpt4oOption = portalDropdown.querySelector('.model-combobox-option--favorite');
+    expect(gpt4oOption).not.toBeNull();
+
+    // Verify it contains the model name
+    const gpt4oText = gpt4oOption?.querySelector(".model-combobox-option-text");
+    expect(gpt4oText?.textContent).toBe("GPT-4o");
+  });
+
+  it("shows favorited providers sorted first in the model dropdown when favoriteProviders prop is provided", async () => {
+    // Render with no agents to default to model mode
+    mockAgentsHook([]);
+
+    // Provide a favorited provider (and onToggleFavorite so the star button is rendered)
+    const favoriteProviders = ["openai"];
+    const onToggleFavorite = vi.fn();
+    render(<QuickChatFAB addToast={addToast} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} />);
+
+    // Open the quick chat panel
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-model-select")).toBeDefined();
+    });
+
+    // Open the model dropdown
+    const trigger = screen.getByRole("button", { name: "Select model override" });
+    fireEvent.click(trigger);
+
+    // The portaled dropdown should show
+    const portalDropdown = await screen.findByTestId("model-combobox-portal");
+    expect(portalDropdown).toBeDefined();
+
+    // Check that the "Use default" option is first
+    const options = portalDropdown.querySelectorAll('[role="option"]');
+    expect(options.length).toBeGreaterThan(0);
+    expect(options[0].textContent).toContain("Use default");
+
+    // OpenAI should be marked as favorite with an active star button
+    const openaiOptgroup = portalDropdown.querySelector(".model-combobox-optgroup");
+    expect(openaiOptgroup).not.toBeNull();
+
+    const favoriteBtn = openaiOptgroup?.querySelector(".model-combobox-optgroup-favorite--active");
+    expect(favoriteBtn).not.toBeNull();
+    expect(favoriteBtn?.textContent).toBe("★");
+  });
+
+  it("calls onToggleModelFavorite when the favorite button on a model is clicked", async () => {
+    // Render with no agents to default to model mode
+    mockAgentsHook([]);
+
+    const onToggleModelFavorite = vi.fn();
+    render(<QuickChatFAB addToast={addToast} onToggleModelFavorite={onToggleModelFavorite} />);
+
+    // Open the quick chat panel
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-model-select")).toBeDefined();
+    });
+
+    // Open the model dropdown
+    const trigger = screen.getByRole("button", { name: "Select model override" });
+    fireEvent.click(trigger);
+
+    const portalDropdown = await screen.findByTestId("model-combobox-portal");
+    expect(portalDropdown).toBeDefined();
+
+    // Find a model's favorite toggle button (☆ means not favorited)
+    const unfavoritedBtn = portalDropdown.querySelector(".model-combobox-option-favorite:not(.model-combobox-option-favorite--active)");
+    expect(unfavoritedBtn).not.toBeNull();
+
+    // Click the toggle button (stopPropagation prevents dropdown close)
+    fireEvent.click(unfavoritedBtn!);
+
+    // The callback should have been called with the model ID
+    expect(onToggleModelFavorite).toHaveBeenCalledTimes(1);
+    const calledWith = onToggleModelFavorite.mock.calls[0][0];
+    // Should be in "{provider}/{modelId}" format
+    expect(calledWith).toMatch(/\w+\/\w+/);
+  });
+
+  it("calls onToggleFavorite when the favorite button on a provider group is clicked", async () => {
+    // Render with no agents to default to model mode
+    mockAgentsHook([]);
+
+    const onToggleFavorite = vi.fn();
+    render(<QuickChatFAB addToast={addToast} onToggleFavorite={onToggleFavorite} />);
+
+    // Open the quick chat panel
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-model-select")).toBeDefined();
+    });
+
+    // Open the model dropdown
+    const trigger = screen.getByRole("button", { name: "Select model override" });
+    fireEvent.click(trigger);
+
+    const portalDropdown = await screen.findByTestId("model-combobox-portal");
+    expect(portalDropdown).toBeDefined();
+
+    // Find the provider optgroup
+    const openaiOptgroup = portalDropdown.querySelector(".model-combobox-optgroup");
+    expect(openaiOptgroup).not.toBeNull();
+
+    // Click the provider's favorite toggle button
+    const favoriteBtn = openaiOptgroup?.querySelector(".model-combobox-optgroup-favorite");
+    expect(favoriteBtn).not.toBeNull();
+    fireEvent.click(favoriteBtn!);
+
+    // The callback should have been called with the provider name
+    expect(onToggleFavorite).toHaveBeenCalledTimes(1);
+    const calledWith = onToggleFavorite.mock.calls[0][0];
+    expect(typeof calledWith).toBe("string");
+    expect(calledWith.length).toBeGreaterThan(0);
+  });
+
   it("hides FAB button when showFAB is false", () => {
     render(<QuickChatFAB addToast={addToast} showFAB={false} />);
 
