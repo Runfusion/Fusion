@@ -40,6 +40,12 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   const [showAgentPicker, setShowAgentPicker] = useState(false);
   const [agentsLoading, setAgentsLoading] = useState(false);
   const agentPickerRef = useRef<HTMLDivElement>(null);
+
+  // Quick-fields dependency picker state
+  const [showDeps, setShowDeps] = useState(false);
+  const [depSearch, setDepSearch] = useState("");
+  const quickFieldsDepRef = useRef<HTMLDivElement>(null);
+
   const { hasAiProvider, hasGithub, loading: setupReadinessLoading } = useSetupReadiness(projectId);
 
   // Handler for workflow step changes that detects explicit user interaction
@@ -87,6 +93,43 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [showAgentPicker]);
+
+  // Close quick-fields dep dropdown when clicking outside
+  useEffect(() => {
+    if (!showDeps) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (quickFieldsDepRef.current && !quickFieldsDepRef.current.contains(e.target as Node)) {
+        setShowDeps(false);
+        setDepSearch("");
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showDeps]);
+
+  // Compute available deps for quick-fields picker (same logic as TaskForm)
+  const availableDeps = tasks
+    .filter((t) => !dependencies.includes(t.id))
+    .sort((a, b) => {
+      const cmp = b.createdAt.localeCompare(a.createdAt);
+      if (cmp !== 0) return cmp;
+      const aNum = parseInt(a.id.slice(a.id.lastIndexOf("-") + 1), 10) || 0;
+      const bNum = parseInt(b.id.slice(b.id.lastIndexOf("-") + 1), 10) || 0;
+      return bNum - aNum;
+    });
+
+  const filteredDeps = depSearch
+    ? availableDeps.filter((t) =>
+        t.id.toLowerCase().includes(depSearch.toLowerCase()) ||
+        (t.title && t.title.toLowerCase().includes(depSearch.toLowerCase())) ||
+        (t.description && t.description.toLowerCase().includes(depSearch.toLowerCase()))
+      )
+    : availableDeps;
+
+  const truncate = (s: string, len: number) =>
+    s.length > len ? s.slice(0, len) + "…" : s;
 
   // Track dirty state
   useEffect(() => {
@@ -208,6 +251,137 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   const selectedAgent = selectedAgentId ? agents.find((agent) => agent.id === selectedAgentId) : undefined;
   const selectedAgentLabel = selectedAgent?.name ?? selectedAgentId;
 
+  // Quick fields: promoted dependencies and agent assignment
+  const quickFields = (
+    <div className="new-task-quick-fields">
+      {/* Dependencies field */}
+      <div className="form-group">
+        <label>Dependencies</label>
+        <div className="dep-trigger-wrap" ref={quickFieldsDepRef}>
+          <button
+            type="button"
+            className="btn btn-sm dep-trigger"
+            onClick={() => setShowDeps((v) => !v)}
+            disabled={isSubmitting}
+            data-testid="dep-trigger"
+          >
+            {dependencies.length > 0 ? `${dependencies.length} selected` : "Add dependencies"}
+          </button>
+          {showDeps && (
+            <div className="dep-dropdown">
+              <input
+                className="dep-dropdown-search"
+                placeholder="Search tasks…"
+                autoFocus
+                value={depSearch}
+                onChange={(e) => setDepSearch(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+              />
+              {filteredDeps.length === 0 ? (
+                <div className="dep-dropdown-empty">No available tasks</div>
+              ) : (
+                filteredDeps.map((t) => (
+                  <div
+                    key={t.id}
+                    className={`dep-dropdown-item${dependencies.includes(t.id) ? " selected" : ""}`}
+                    onClick={() => {
+                      setDependencies(
+                        dependencies.includes(t.id) ? dependencies.filter((d) => d !== t.id) : [...dependencies, t.id],
+                      );
+                      setShowDeps(false);
+                      setDepSearch("");
+                    }}
+                    onMouseDown={(e) => e.preventDefault()}
+                  >
+                    <span className="dep-dropdown-id">{t.id}</span>
+                    <span className="dep-dropdown-title">{truncate(t.title || t.description || t.id, 30)}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+        {dependencies.length > 0 && (
+          <div className="selected-deps">
+            {dependencies.map((depId) => (
+              <span key={depId} className="dep-chip">
+                {depId}
+                <button
+                  type="button"
+                  className="dep-chip-remove"
+                  onClick={() => setDependencies(dependencies.filter((d) => d !== depId))}
+                  disabled={isSubmitting}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Agent Assignment */}
+      <div className="form-group">
+        <label>Assign Agent</label>
+        <div className="agent-trigger-wrap" ref={agentPickerRef}>
+          <button
+            type="button"
+            className="btn btn-sm dep-trigger"
+            onClick={() => {
+              if (showAgentPicker) {
+                setShowAgentPicker(false);
+              } else {
+                void loadAgents();
+              }
+            }}
+            disabled={isSubmitting}
+            data-testid="new-task-agent-button"
+          >
+            <Bot size={12} style={{ verticalAlign: "middle" }} />
+            {selectedAgentLabel ? ` ${selectedAgentLabel}` : " Assign agent"}
+          </button>
+          {showAgentPicker && (
+            <div className="dep-dropdown agent-picker-dropdown" onMouseDown={(e) => e.preventDefault()}>
+              <div className="dep-dropdown-search-header">Select agent</div>
+              {agentsLoading && <div className="dep-dropdown-empty">Loading agents...</div>}
+              {!agentsLoading && agents.filter((a) => a.state !== "terminated").map((a) => (
+                <div
+                  key={a.id}
+                  className={`dep-dropdown-item${selectedAgentId === a.id ? " selected" : ""}`}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    setSelectedAgentId(a.id === selectedAgentId ? null : a.id);
+                    setShowAgentPicker(false);
+                  }}
+                  data-testid={`agent-option-${a.id}`}
+                >
+                  <Bot size={12} style={{ marginRight: 6 }} />
+                  <span className="dep-dropdown-id">{a.role}</span>
+                  <span className="dep-dropdown-title">{a.name}</span>
+                </div>
+              ))}
+              {!agentsLoading && agents.filter((a) => a.state !== "terminated").length === 0 && (
+                <div className="dep-dropdown-empty">No agents available</div>
+              )}
+              {selectedAgentId && (
+                <div
+                  className="dep-dropdown-item"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    setSelectedAgentId(null);
+                    setShowAgentPicker(false);
+                  }}
+                >
+                  <span className="dep-dropdown-title">Clear selection</span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
   if (!isOpen) return null;
 
   return (
@@ -262,67 +436,10 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
             onPlanningModelChange={setPlanningModel}
             thinkingLevel={thinkingLevel}
             onThinkingLevelChange={setThinkingLevel}
+            renderBelowPrimary={quickFields}
+            hideDependencies={true}
           />
 
-          {/* Agent Assignment */}
-          <div className="form-group" style={{ marginTop: "12px" }}>
-            <label>Assign Agent</label>
-            <div className="agent-trigger-wrap" ref={agentPickerRef}>
-              <button
-                type="button"
-                className="btn btn-sm dep-trigger"
-                onClick={() => {
-                  if (showAgentPicker) {
-                    setShowAgentPicker(false);
-                  } else {
-                    void loadAgents();
-                  }
-                }}
-                disabled={isSubmitting}
-                data-testid="new-task-agent-button"
-              >
-                <Bot size={12} style={{ verticalAlign: "middle" }} />
-                {selectedAgentLabel ? ` ${selectedAgentLabel}` : " Assign agent"}
-              </button>
-              {showAgentPicker && (
-                <div className="dep-dropdown agent-picker-dropdown" onMouseDown={(e) => e.preventDefault()}>
-                  <div className="dep-dropdown-search-header">Select agent</div>
-                  {agentsLoading && <div className="dep-dropdown-empty">Loading agents...</div>}
-                  {!agentsLoading && agents.filter((a) => a.state !== "terminated").map((a) => (
-                    <div
-                      key={a.id}
-                      className={`dep-dropdown-item${selectedAgentId === a.id ? " selected" : ""}`}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        setSelectedAgentId(a.id === selectedAgentId ? null : a.id);
-                        setShowAgentPicker(false);
-                      }}
-                      data-testid={`agent-option-${a.id}`}
-                    >
-                      <Bot size={12} style={{ marginRight: 6 }} />
-                      <span className="dep-dropdown-id">{a.role}</span>
-                      <span className="dep-dropdown-title">{a.name}</span>
-                    </div>
-                  ))}
-                  {!agentsLoading && agents.filter((a) => a.state !== "terminated").length === 0 && (
-                    <div className="dep-dropdown-empty">No agents available</div>
-                  )}
-                  {selectedAgentId && (
-                    <div
-                      className="dep-dropdown-item"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        setSelectedAgentId(null);
-                        setShowAgentPicker(false);
-                      }}
-                    >
-                      <span className="dep-dropdown-title">Clear selection</span>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
         </div>
 
         <div className="modal-actions">

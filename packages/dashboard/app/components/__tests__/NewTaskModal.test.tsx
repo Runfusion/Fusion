@@ -71,7 +71,7 @@ describe("NewTaskModal", () => {
     vi.clearAllMocks();
   });
 
-  it("renders all form fields when open", () => {
+  it("renders all form fields when open", async () => {
     renderNewTaskModal();
 
     expect(screen.getByText("New Task")).toBeTruthy();
@@ -79,38 +79,62 @@ describe("NewTaskModal", () => {
     expect(screen.getByRole("button", { name: "Plan" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Subtask" })).toBeTruthy();
 
+    // Dependencies and agent are in quick-fields — visible by default (no toggle needed)
+    expect(screen.getByTestId("dep-trigger")).toBeInTheDocument();
+    expect(screen.getByTestId("new-task-agent-button")).toBeInTheDocument();
+
     fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
 
-    expect(screen.getByRole("button", { name: "Add dependencies" })).toBeTruthy();
-    expect(screen.getByText(/Model Configuration/i)).toBeTruthy();
-    expect(screen.getByText(/Attachments/i)).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByText(/Model Configuration/i)).toBeTruthy();
+      expect(screen.getByText(/Attachments/i)).toBeTruthy();
+    });
     expect(screen.getByRole("button", { name: "Create Task" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
   });
 
-  it("shows More options toggle and reveals advanced fields when clicked", () => {
+  it("shows More options toggle and reveals advanced fields when clicked", async () => {
     renderNewTaskModal();
 
     const toggle = screen.getByTestId("task-form-more-options-toggle");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByRole("button", { name: "Add dependencies" })).toBeNull();
+    // Dependencies are now in quick-fields (visible by default), so the dep-trigger is present
+    expect(screen.getByTestId("dep-trigger")).toBeInTheDocument();
 
     fireEvent.click(toggle);
 
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("button", { name: "Add dependencies" })).toBeTruthy();
+    await waitFor(() => {
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+    });
+    // Model Configuration, Attachments, and Workflow Steps are revealed
     expect(screen.getByText(/Model Configuration/i)).toBeTruthy();
     expect(screen.getByText(/Attachments/i)).toBeTruthy();
+    expect(screen.getByText(/Workflow Steps/i)).toBeTruthy();
   });
 
-  it("renders attachments before dependencies in form order", () => {
+  it("shows dependencies and agent picker by default without expanding More options", () => {
     renderNewTaskModal();
 
-    const attachmentsLabel = screen.getByText("Attachments");
-    const dependenciesLabel = screen.getByText("Dependencies");
+    // Both dep-trigger and agent button should be visible by default
+    expect(screen.getByTestId("dep-trigger")).toBeInTheDocument();
+    expect(screen.getByTestId("new-task-agent-button")).toBeInTheDocument();
+    // More options should be collapsed
+    expect(screen.getByTestId("task-form-more-options-toggle")).toHaveAttribute("aria-expanded", "false");
+  });
 
+  it("renders dependencies before attachments in form order (quick-fields before More options)", () => {
+    renderNewTaskModal();
+
+    const dependenciesLabel = screen.getByText("Dependencies");
+    // Attachments is inside the collapsed "More options" section, so we need to expand first
+    const toggle = screen.getByTestId("task-form-more-options-toggle");
+    fireEvent.click(toggle);
+
+    const attachmentsLabel = screen.getByText("Attachments");
+
+    // Dependencies (in quick-fields) appears before Attachments (in More options)
     expect(
-      attachmentsLabel.compareDocumentPosition(dependenciesLabel) & Node.DOCUMENT_POSITION_FOLLOWING,
+      dependenciesLabel.compareDocumentPosition(attachmentsLabel) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 

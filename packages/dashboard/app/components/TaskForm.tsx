@@ -64,6 +64,11 @@ export interface TaskFormProps {
   onPlanningMode?: (initialPlan: string) => void;
   onSubtaskBreakdown?: (description: string) => void;
   onClose?: () => void;
+
+  /** Optional content to render between the primary section and the "More options" toggle. */
+  renderBelowPrimary?: React.ReactNode;
+  /** When true, skip rendering the Dependencies form-group inside "More options". Use when the parent renders its own dependency UI via renderBelowPrimary. */
+  hideDependencies?: boolean;
 }
 
 export function TaskForm({
@@ -100,9 +105,11 @@ export function TaskForm({
   onPlanningMode,
   onSubtaskBreakdown,
   onClose,
+  renderBelowPrimary,
+  hideDependencies,
 }: TaskFormProps) {
   const hasInitialMoreOptions =
-    dependencies.length > 0 ||
+    (hideDependencies ? false : dependencies.length > 0) ||
     pendingImages.length > 0 ||
     selectedWorkflowSteps.length > 0 ||
     presetMode !== "default" ||
@@ -162,7 +169,7 @@ export function TaskForm({
   const availablePresets = settings?.modelPresets || [];
   const selectedPreset = availablePresets.find((preset) => preset.id === selectedPresetId);
   const hasMoreOptionSelections =
-    dependencies.length > 0 ||
+    (hideDependencies ? false : dependencies.length > 0) ||
     pendingImages.length > 0 ||
     selectedWorkflowSteps.length > 0 ||
     presetMode !== "default" ||
@@ -678,6 +685,8 @@ export function TaskForm({
       )}
       </div>
 
+      {renderBelowPrimary}
+
       <button
         type="button"
         className="task-form-more-options-toggle"
@@ -745,6 +754,8 @@ export function TaskForm({
         <small>You can also paste images or drag & drop</small>
       </div>
 
+      {!hideDependencies && (
+        <>
       {/* Dependencies */}
       <div className="form-group">
         <label>Dependencies</label>
@@ -803,6 +814,8 @@ export function TaskForm({
           </div>
         )}
       </div>
+        </>
+      )}
 
       {/* Model Selection */}
       <div className="form-group">
