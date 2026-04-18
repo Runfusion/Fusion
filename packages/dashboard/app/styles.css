@@ -1193,7 +1193,7 @@ body {
 }
 
 .btn-secondary {
-  background: transparent;
+  background: var(--surface);
   border: 1px solid var(--border);
   color: var(--text);
 }
@@ -1206,6 +1206,7 @@ body {
 }
 .btn-secondary:focus-visible {
   box-shadow: var(--focus-ring-strong);
+  border-color: var(--todo);
 }
 
 .btn-sm {
@@ -10858,13 +10859,20 @@ html .column.drag-over * {
 }
 
 [data-theme="light"] .btn-secondary {
-  background: transparent;
+  background: var(--surface);
   border: 1px solid var(--border);
   color: var(--text);
 }
 [data-theme="light"] .btn-secondary:hover {
   background: var(--card-hover);
   border-color: var(--text-muted);
+}
+[data-theme="light"] .btn-secondary:active {
+  transform: scale(0.97);
+}
+[data-theme="light"] .btn-secondary:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  border-color: var(--todo);
 }
 
 /* ============================================================
@@ -28257,7 +28265,7 @@ html .column.drag-over * {
   height: 20px;
   padding: 0 6px;
   border-radius: 10px;
-  background: var(--color-error, #ef4444);
+  background: var(--color-error);
   color: var(--fab-text);
   font-size: 0.7rem;
   font-weight: 700;
@@ -28308,7 +28316,7 @@ html .column.drag-over * {
   height: 16px;
   padding: 0 4px;
   border-radius: 8px;
-  background: var(--color-error, #ef4444);
+  background: var(--color-error);
   color: var(--fab-text);
   font-size: 0.65rem;
   font-weight: 700;
@@ -28459,7 +28467,7 @@ html .column.drag-over * {
   font-size: 11px;
   font-weight: 600;
   background: var(--todo);
-  color: #fff;
+  color: var(--fab-text);
   border-radius: 10px;
   flex-shrink: 0;
   margin-top: 6px;
@@ -28822,6 +28830,30 @@ html .column.drag-over * {
   .mailbox-view .mailbox-empty {
     padding: 32px 12px;
   }
+
+  /* Message Composer mobile overrides */
+  .message-composer-textarea {
+    min-height: 80px;
+  }
+
+  .message-composer-footer {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
+  .message-composer-footer .btn {
+    min-height: 36px;
+  }
+
+  .message-composer-field {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .message-composer-label {
+    padding-top: 0;
+    min-width: auto;
+  }
 }
 
 /* ── Message Composer ──────────────────────────────────────────────── */
@@ -28866,12 +28898,25 @@ html .column.drag-over * {
 
 .message-composer-select {
   flex: 1;
-  padding: 8px 12px;
+  padding: 6px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text);
   font-size: 0.85rem;
+  font-family: var(--font-primary);
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.message-composer-select:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.message-composer-select:focus-visible {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring-strong);
 }
 
 .message-composer-recipient-fixed {
@@ -28880,28 +28925,35 @@ html .column.drag-over * {
   gap: 6px;
   padding: 8px 12px;
   background: var(--bg-tertiary);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 0.85rem;
   color: var(--text);
 }
 
 .message-composer-textarea {
   width: 100%;
-  padding: 10px 12px;
+  padding: 6px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text);
   font-size: 0.9rem;
-  font-family: inherit;
+  font-family: var(--font-primary);
   resize: vertical;
   min-height: 100px;
   line-height: 1.5;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .message-composer-textarea:focus {
-  outline: none;
   border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.message-composer-textarea:focus-visible {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring-strong);
 }
 
 .message-composer-charcount {
@@ -28911,7 +28963,7 @@ html .column.drag-over * {
 }
 
 .message-composer-charcount .over-limit {
-  color: var(--color-error, #ef4444);
+  color: var(--color-error);
 }
 
 .message-composer-error {
@@ -28919,9 +28971,9 @@ html .column.drag-over * {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: var(--bg-error, rgba(239, 68, 68, 0.1));
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
   border-radius: 6px;
-  color: var(--color-error, #ef4444);
+  color: var(--color-error);
   font-size: 0.85rem;
 }
 
