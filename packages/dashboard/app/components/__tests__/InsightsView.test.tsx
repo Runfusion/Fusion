@@ -270,6 +270,108 @@ describe("InsightsView", () => {
       expect(screen.getByTestId("insights-empty-architecture")).toBeInTheDocument();
       expect(screen.getByTestId("insights-empty-architecture")).toHaveTextContent("No insights in this category");
     });
+
+    it("should render status badge with correct CSS class for generated status", () => {
+      const sectionsWithInsight = [
+        {
+          category: "features" as const,
+          label: "Features",
+          items: [
+            {
+              id: "INS-1",
+              projectId: "test",
+              title: "Test Insight",
+              content: "Content",
+              category: "features" as const,
+              status: "generated" as const,
+              fingerprint: "fp1",
+              provenance: { trigger: "manual" as const },
+              lastRunId: null,
+              createdAt: "2024-01-01T00:00:00Z",
+              updatedAt: "2024-01-01T00:00:00Z",
+            },
+          ],
+          isLoading: false,
+          error: null,
+        },
+        ...mockSections.slice(1),
+      ];
+
+      mockUseInsights.mockReturnValue({
+        sections: sectionsWithInsight,
+        loading: false,
+        error: null,
+        latestRun: null,
+        isRunInFlight: false,
+        runError: null,
+        refresh: vi.fn(),
+        runInsights: vi.fn(),
+        dismiss: vi.fn(),
+        createTask: vi.fn(),
+        dismissStates: new Map(),
+        createTaskStates: new Map(),
+        totalCount: 1,
+        dismissedCount: 0,
+      });
+
+      render(<InsightsView {...defaultProps} />);
+
+      // Verify the status badge has the correct interpolated CSS class
+      const statusBadge = screen.getByText("generated").closest("span");
+      expect(statusBadge).toHaveClass("insight-item-status");
+      expect(statusBadge).toHaveClass("insight-item-status--generated");
+    });
+
+    it("should render status badge with correct CSS class for confirmed status", () => {
+      const sectionsWithInsight = [
+        {
+          category: "features" as const,
+          label: "Features",
+          items: [
+            {
+              id: "INS-2",
+              projectId: "test",
+              title: "Confirmed Insight",
+              content: "Content",
+              category: "features" as const,
+              status: "confirmed" as const,
+              fingerprint: "fp2",
+              provenance: { trigger: "manual" as const },
+              lastRunId: null,
+              createdAt: "2024-01-01T00:00:00Z",
+              updatedAt: "2024-01-01T00:00:00Z",
+            },
+          ],
+          isLoading: false,
+          error: null,
+        },
+        ...mockSections.slice(1),
+      ];
+
+      mockUseInsights.mockReturnValue({
+        sections: sectionsWithInsight,
+        loading: false,
+        error: null,
+        latestRun: null,
+        isRunInFlight: false,
+        runError: null,
+        refresh: vi.fn(),
+        runInsights: vi.fn(),
+        dismiss: vi.fn(),
+        createTask: vi.fn(),
+        dismissStates: new Map(),
+        createTaskStates: new Map(),
+        totalCount: 1,
+        dismissedCount: 0,
+      });
+
+      render(<InsightsView {...defaultProps} />);
+
+      // Verify the status badge has the correct interpolated CSS class
+      const statusBadge = screen.getByText("confirmed").closest("span");
+      expect(statusBadge).toHaveClass("insight-item-status");
+      expect(statusBadge).toHaveClass("insight-item-status--confirmed");
+    });
   });
 
   describe("actions", () => {

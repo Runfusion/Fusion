@@ -35503,6 +35503,7 @@ html .column.drag-over * {
   .insights-view-actions {
     width: 100%;
     justify-content: flex-end;
+    flex-wrap: wrap;
   }
 
   .insights-sections {
@@ -35522,13 +35523,27 @@ html .column.drag-over * {
     padding: var(--space-sm);
   }
 
+  .insight-item-title {
+    word-break: break-word;
+  }
+
   .insight-item-header {
     flex-direction: column;
     gap: var(--space-sm);
   }
 
+  .insight-item-meta {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
   .insight-item-actions {
     align-self: flex-end;
+  }
+
+  .insight-item-actions .btn-icon {
+    min-width: 36px;
+    min-height: 36px;
   }
 
   .post-onboarding-recommendations {

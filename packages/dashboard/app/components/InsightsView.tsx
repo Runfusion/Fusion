@@ -216,7 +216,7 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
                       <p className="insight-item-content">{insight.content}</p>
                     )}
                     <div className="insight-item-meta">
-                      <span className="insight-item-status insight-item-status--{insight.status}">
+                      <span className={`insight-item-status insight-item-status--${insight.status}`}>
                         {insight.status}
                       </span>
                       {insight.createdAt && (
