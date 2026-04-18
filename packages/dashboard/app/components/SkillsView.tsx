@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import { Wrench, RefreshCw, X, ChevronRight, ChevronDown, AlertCircle, Loader2 } from "lucide-react";
 import {
   fetchDiscoveredSkills,
@@ -134,21 +134,10 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
     }
   }, [projectId, addToast]);
 
-  // Handle click on discovered skill to view content
-  const handleSkillClick = useCallback(async (skillId: string) => {
-    // If clicking the same skill that's already selected, deselect it
-    if (selectedSkillId === skillId) {
-      setSelectedSkillId(null);
-      setSkillContent(null);
-      setContentError(null);
-      return;
-    }
-
-    // Select the new skill and fetch its content
-    setSelectedSkillId(skillId);
-    setSkillContent(null);
-    setContentError(null);
+  const loadSkillContent = useCallback(async (skillId: string) => {
     setIsLoadingContent(true);
+    setContentError(null);
+    setSkillContent(null);
 
     try {
       const content = await fetchSkillContent(skillId, projectId);
@@ -159,17 +148,34 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
     } finally {
       setIsLoadingContent(false);
     }
-  }, [selectedSkillId, projectId]);
+  }, [projectId]);
 
-  // Handle click on skill item, but not on toggle
-  const handleSkillItemClick = useCallback((e: React.MouseEvent, skillId: string) => {
-    // Don't trigger content fetch when clicking the toggle switch
-    const target = e.target as HTMLElement;
-    if (target.closest(".skills-view-item-toggle")) {
+  // Handle click on discovered skill to view content
+  const handleSkillClick = useCallback((skillId: string, event?: MouseEvent<HTMLElement>) => {
+    if (event) {
+      const target = event.target as Element;
+      if (target.closest(".skills-view-item-toggle")) {
+        return;
+      }
+    }
+
+    if (selectedSkillId === skillId) {
+      setSelectedSkillId(null);
+      setSkillContent(null);
+      setContentError(null);
       return;
     }
-    void handleSkillClick(skillId);
-  }, [handleSkillClick]);
+
+    setSelectedSkillId(skillId);
+    void loadSkillContent(skillId);
+  }, [selectedSkillId, loadSkillContent]);
+
+  const handleRetrySkillContent = useCallback((skillId: string) => {
+    if (selectedSkillId !== skillId) {
+      setSelectedSkillId(skillId);
+    }
+    void loadSkillContent(skillId);
+  }, [loadSkillContent, selectedSkillId]);
 
 
   return (
@@ -244,13 +250,13 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
                   <div key={skill.id}>
                     <div
                       className={`skills-view-item${isSelected ? " skills-view-item--selected" : ""}`}
-                      onClick={(e) => handleSkillItemClick(e, skill.id)}
+                      onClick={(event) => handleSkillClick(skill.id, event)}
                       role="button"
                       tabIndex={0}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          void handleSkillClick(skill.id);
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          handleSkillClick(skill.id);
                         }
                       }}
                       aria-expanded={isSelected}
@@ -285,7 +291,7 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
                         <div className="skills-view-detail-header">
                           <span className="skills-view-detail-title">{skill.name}</span>
                           <button
-                            className="btn btn-sm"
+                            className="btn btn-sm skills-view-detail-close"
                             onClick={() => {
                               setSelectedSkillId(null);
                               setSkillContent(null);
@@ -309,18 +315,16 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
                             <span>{contentError}</span>
                             <button
                               className="btn btn-sm"
-                              onClick={() => void handleSkillClick(skill.id)}
+                              onClick={() => handleRetrySkillContent(skill.id)}
                             >
                               Retry
                             </button>
                           </div>
                         ) : skillContent ? (
                           <>
-                            {skillContent.skillMd && (
-                              <div className="skills-view-detail-content">
-                                <pre>{skillContent.skillMd}</pre>
-                              </div>
-                            )}
+                            <pre className="skills-view-detail-content">
+                              {skillContent.skillMd || "(No SKILL.md found)"}
+                            </pre>
                             {skillContent.files.length > 0 && (
                               <div className="skills-view-detail-files">
                                 <span className="skills-view-detail-files-label">Files:</span>
@@ -330,11 +334,6 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
                                     {file.type === "directory" && "/"}
                                   </span>
                                 ))}
-                              </div>
-                            )}
-                            {!skillContent.skillMd && skillContent.files.length === 0 && (
-                              <div className="skills-view-detail-empty">
-                                No content available for this skill.
                               </div>
                             )}
                           </>

@@ -27621,6 +27621,7 @@ html .column.drag-over * {
     flex-wrap: wrap;
     gap: var(--space-sm);
     padding: var(--space-md);
+    min-height: 36px;
   }
 
   .skills-view-item-info {
@@ -27658,6 +27659,26 @@ html .column.drag-over * {
 
   .skills-view-loading {
     padding: var(--space-md);
+  }
+
+  .skills-view-item--selected {
+    border-color: var(--todo);
+  }
+
+  .skills-view-detail {
+    padding: var(--space-md);
+    border-left-width: 2px;
+  }
+
+  .skills-view-detail-content {
+    font-size: 11px;
+    max-height: calc(60dvh - 200px);
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .skills-view-detail-close {
+    min-height: 36px;
+    min-width: 36px;
   }
 
   .agent-tree__indent--1 { padding-left: 16px; }
@@ -29658,6 +29679,7 @@ html .column.drag-over * {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
+  cursor: pointer;
   transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
@@ -29876,12 +29898,19 @@ html .column.drag-over * {
   font-weight: 600;
   font-size: 14px;
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skills-view-detail-close {
+  flex-shrink: 0;
 }
 
 .skills-view-detail-content {
   font-family: var(--font-mono);
   font-size: 12px;
-  line-height: 1.6;
+  line-height: 1.5;
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-word;
@@ -29897,9 +29926,9 @@ html .column.drag-over * {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-sm);
+  gap: var(--space-xs);
   margin-top: var(--space-md);
-  padding-top: var(--space-md);
+  padding-top: var(--space-sm);
   border-top: 1px solid var(--border);
 }
 
@@ -29919,6 +29948,7 @@ html .column.drag-over * {
 
 .skills-view-detail-error {
   display: flex;
+  flex-direction: column;
   align-items: center;
   gap: var(--space-sm);
   padding: var(--space-md);
@@ -29926,10 +29956,7 @@ html .column.drag-over * {
   font-size: 13px;
   background: color-mix(in srgb, var(--color-error) 10%, transparent);
   border-radius: var(--radius-sm);
-}
-
-.skills-view-detail-error .btn {
-  margin-left: auto;
+  text-align: center;
 }
 
 .skills-view-detail-empty {
@@ -36491,24 +36518,6 @@ html .column.drag-over * {
     opacity: 1;
   }
 
-  /* Skill detail panel mobile overrides */
-  .skills-view-detail {
-    padding: var(--space-md);
-  }
-
-  .skills-view-detail-content {
-    font-size: 11px;
-    max-height: 300px;
-  }
-
-  .skills-view-detail-header {
-    flex-wrap: wrap;
-    gap: var(--space-sm);
-  }
-
-  .skills-view-detail-title {
-    font-size: 13px;
-  }
 }
 
 /* === MemoryView === */

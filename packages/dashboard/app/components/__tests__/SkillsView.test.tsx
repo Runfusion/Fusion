@@ -739,7 +739,7 @@ describe("SkillsView", () => {
       });
 
       await waitFor(() => {
-        const preElement = document.querySelector(".skills-view-detail-content pre");
+        const preElement = document.querySelector(".skills-view-detail-content");
         expect(preElement).toBeTruthy();
         expect(preElement!.textContent).toContain("# Test Skill");
         expect(preElement!.textContent).toContain("This is the skill content.");
@@ -822,7 +822,7 @@ describe("SkillsView", () => {
       });
 
       await waitFor(() => {
-        const preElement = document.querySelector(".skills-view-detail-content pre");
+        const preElement = document.querySelector(".skills-view-detail-content");
         expect(preElement).toBeTruthy();
         expect(preElement!.textContent).toContain("# Test Skill");
       });
@@ -847,6 +847,39 @@ describe("SkillsView", () => {
         expect(screen.getByText("Failed to load content")).toBeTruthy();
         expect(screen.getByText("Retry")).toBeTruthy();
       });
+    });
+
+    it("retries skill content fetch when retry button is clicked", async () => {
+      mockFetchSkillContent
+        .mockRejectedValueOnce(new Error("Failed to load content"))
+        .mockResolvedValueOnce(mockSkillContent);
+
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("test-skill")).toBeTruthy();
+      });
+
+      const testSkillItem = screen.getByText("test-skill").closest(".skills-view-item");
+      await act(async () => {
+        fireEvent.click(testSkillItem!);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("Retry")).toBeTruthy();
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByText("Retry"));
+      });
+
+      await waitFor(() => {
+        const preElement = document.querySelector(".skills-view-detail-content");
+        expect(preElement).toBeTruthy();
+        expect(preElement!.textContent).toContain("# Test Skill");
+      });
+
+      expect(mockFetchSkillContent).toHaveBeenCalledTimes(2);
     });
 
     it("collapses detail when close button is clicked", async () => {
@@ -914,7 +947,7 @@ describe("SkillsView", () => {
       });
     });
 
-    it("shows empty state when skill has no content", async () => {
+    it("shows SKILL.md fallback text when skill content is empty", async () => {
       mockFetchSkillContent.mockResolvedValue({
         name: "empty-skill",
         skillMd: "",
@@ -933,7 +966,7 @@ describe("SkillsView", () => {
       });
 
       await waitFor(() => {
-        expect(screen.getByText("No content available for this skill.")).toBeTruthy();
+        expect(screen.getByText("(No SKILL.md found)")).toBeTruthy();
       });
     });
   });

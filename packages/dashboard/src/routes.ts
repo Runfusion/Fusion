@@ -17333,6 +17333,53 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   });
 
   /**
+   * GET /api/skills/:id/content
+   * Read the contents of a skill's SKILL.md file and list supplementary files.
+   * Params: id (URL-encoded skill ID)
+   * Query: projectId (optional) for multi-project context
+   * Response: { content: SkillContent }
+   * Error: 404 { error: string; code: "skill_not_found" | "adapter_not_configured" }
+   */
+  router.get("/skills/:id/content", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const skillsAdapter = options?.skillsAdapter;
+
+      if (!skillsAdapter) {
+        res.status(404).json({ error: "Skills adapter not configured", code: "adapter_not_configured" });
+        return;
+      }
+
+      const encodedSkillId = req.params.id as string;
+      let skillId = encodedSkillId;
+      try {
+        skillId = decodeURIComponent(encodedSkillId);
+      } catch {
+        res.status(400).json({ error: "Invalid skill ID", code: "invalid_skill_id" });
+        return;
+      }
+
+      const rootDir = scopedStore.getRootDir();
+      const content = await skillsAdapter.readSkillContent(rootDir, skillId);
+
+      res.json({ content });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof Error && err.message.includes("Skill not found")) {
+        res.status(404).json({ error: "Skill not found", code: "skill_not_found" });
+        return;
+      }
+      if (err instanceof Error && err.message.includes("Invalid skill ID")) {
+        res.status(400).json({ error: err.message, code: "invalid_skill_id" });
+        return;
+      }
+      rethrowAsApiError(err, "Failed to read skill content");
+    }
+  });
+
+  /**
    * PATCH /api/skills/execution
    * Toggle a skill's enabled/disabled state.
    * Body: { skillId: string; enabled: boolean }
@@ -17428,48 +17475,6 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw err;
       }
       rethrowAsApiError(err, "Failed to fetch skills catalog");
-    }
-  });
-
-  /**
-   * GET /api/skills/:id/content
-   * Read the contents of a skill's SKILL.md file and list supplementary files.
-   * Params: id (URL-encoded skill ID)
-   * Query: projectId (optional) for multi-project context
-   * Response: { content: SkillContent }
-   * Error: 404 { error: string; code: "skill_not_found" | "adapter_not_configured" }
-   */
-  router.get("/skills/:id/content", async (req, res) => {
-    try {
-      const scopedStore = await getScopedStore(req);
-      const skillsAdapter = options?.skillsAdapter;
-
-      if (!skillsAdapter) {
-        res.status(404).json({ error: "Skills adapter not configured", code: "adapter_not_configured" });
-        return;
-      }
-
-      const rootDir = scopedStore.getRootDir();
-      const skillId = req.params.id as string;
-
-      const content = await skillsAdapter.readSkillContent(rootDir, skillId);
-
-      res.json({ content });
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      if (err instanceof Error) {
-        if (err.message.includes("Invalid skill ID")) {
-          res.status(400).json({ error: err.message, code: "invalid_skill_id" });
-          return;
-        }
-        if (err.message.includes("Skill not found")) {
-          res.status(404).json({ error: err.message, code: "skill_not_found" });
-          return;
-        }
-      }
-      rethrowAsApiError(err, "Failed to read skill content");
     }
   });
 

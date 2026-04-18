@@ -130,6 +130,23 @@ function createMockSkillsAdapter(overrides?: Partial<SkillsAdapter>): SkillsAdap
         fallbackUsed: false,
       },
     }),
+    readSkillContent: vi.fn().mockImplementation(async (_rootDir: string, skillId: string) => {
+      if (skillId === "npm::skills/nonexistent") {
+        throw new Error(`Skill not found: ${skillId}`);
+      }
+      if (skillId === "invalid") {
+        throw new Error(`Invalid skill ID format: ${skillId}`);
+      }
+
+      return {
+        name: "example/SKILL.md",
+        skillMd: "# Example Skill\n\nDetails here.",
+        files: [
+          { name: "references", relativePath: "references", type: "directory" as const },
+          { name: "notes.txt", relativePath: "notes.txt", type: "file" as const },
+        ],
+      };
+    }),
     ...overrides,
   };
 }
@@ -197,6 +214,78 @@ describe("Skills routes", () => {
 
       expect(res.status).toBe(200);
       expect(mockAdapter.discoverSkills).toHaveBeenCalledWith("/tmp/other-project");
+    });
+  });
+
+  describe("GET /api/skills/:id/content", () => {
+    it("returns skill content for a valid skill ID", async () => {
+      const mockAdapter = createMockSkillsAdapter();
+      const store = new MockStore();
+      const app = createServer(store as any, { skillsAdapter: mockAdapter as SkillsAdapter });
+
+      const skillId = "npm%253A%2540example%252Fskill%3A%3Askills%2Fexample%2FSKILL.md";
+      const res = await request(app, "GET", `/api/skills/${skillId}/content`);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        content: {
+          name: "example/SKILL.md",
+          skillMd: "# Example Skill\n\nDetails here.",
+          files: [
+            { name: "references", relativePath: "references", type: "directory" },
+            { name: "notes.txt", relativePath: "notes.txt", type: "file" },
+          ],
+        },
+      });
+      expect(mockAdapter.readSkillContent).toHaveBeenCalledWith(
+        "/tmp/fn-skills",
+        "npm:@example/skill::skills/example/SKILL.md",
+      );
+    });
+
+    it("returns 404 when skills adapter is not configured", async () => {
+      const store = new MockStore();
+      const app = createServer(store as any, {});
+
+      const res = await request(app, "GET", "/api/skills/npm%253A%2540example%252Fskill%3A%3Askills%2Fexample%2FSKILL.md/content");
+
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({
+        error: "Skills adapter not configured",
+        code: "adapter_not_configured",
+      });
+    });
+
+    it("returns 404 for non-existent skill", async () => {
+      const mockAdapter = createMockSkillsAdapter({
+        readSkillContent: vi.fn().mockRejectedValue(new Error("Skill not found: npm::skills/nonexistent")),
+      });
+      const store = new MockStore();
+      const app = createServer(store as any, { skillsAdapter: mockAdapter as SkillsAdapter });
+
+      const res = await request(app, "GET", "/api/skills/npm%253A%253Askills%252Fnonexistent/content");
+
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({
+        error: "Skill not found",
+        code: "skill_not_found",
+      });
+    });
+
+    it("returns 400 for invalid skill IDs", async () => {
+      const mockAdapter = createMockSkillsAdapter({
+        readSkillContent: vi.fn().mockRejectedValue(new Error("Invalid skill ID format: invalid")),
+      });
+      const store = new MockStore();
+      const app = createServer(store as any, { skillsAdapter: mockAdapter as SkillsAdapter });
+
+      const res = await request(app, "GET", "/api/skills/invalid/content");
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({
+        error: "Invalid skill ID format: invalid",
+        code: "invalid_skill_id",
+      });
     });
   });
 

@@ -7,11 +7,17 @@ import { resolve } from "path";
 const mockFetchDiscoveredSkills = vi.fn().mockResolvedValue([]);
 const mockFetchSkillsCatalog = vi.fn().mockResolvedValue({ entries: [] });
 const mockToggleExecutionSkill = vi.fn().mockResolvedValue(undefined);
+const mockFetchSkillContent = vi.fn().mockResolvedValue({
+  name: "test-skill",
+  skillMd: "",
+  files: [],
+});
 
-vi.mock("../../../api", () => ({
+vi.mock("../../api", () => ({
   fetchDiscoveredSkills: (...args: unknown[]) => mockFetchDiscoveredSkills(...args),
   fetchSkillsCatalog: (...args: unknown[]) => mockFetchSkillsCatalog(...args),
   toggleExecutionSkill: (...args: unknown[]) => mockToggleExecutionSkill(...args),
+  fetchSkillContent: (...args: unknown[]) => mockFetchSkillContent(...args),
 }));
 
 function extractRuleBlock(css: string, selector: string): string {
@@ -200,22 +206,32 @@ describe("skills-view mobile css", () => {
     expect(block).toContain("padding: var(--space-md)");
   });
 
-  it("defines .skills-view-detail-content with smaller font on mobile", () => {
+  it("defines .skills-view-detail-content viewport max-height on mobile", () => {
     expect(mobileMediaBlock).toContain(".skills-view-detail-content");
     const block = extractRuleBlock(mobileMediaBlock, ".skills-view-detail-content");
     expect(block).toContain("font-size: 11px");
+    expect(block).toContain("max-height: calc(60dvh - 200px)");
   });
 
-  it("defines .skills-view-detail-header with flex-wrap on mobile", () => {
-    expect(mobileMediaBlock).toContain(".skills-view-detail-header");
-    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-detail-header");
-    expect(block).toContain("flex-wrap: wrap");
+  it("defines .skills-view-detail-content momentum scrolling on mobile", () => {
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-detail-content");
+    expect(block).toContain("-webkit-overflow-scrolling: touch");
   });
 
-  it("defines .skills-view-detail-title with smaller font on mobile", () => {
-    expect(mobileMediaBlock).toContain(".skills-view-detail-title");
-    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-detail-title");
-    expect(block).toContain("font-size: 13px");
+  it("defines .skills-view-detail-close with minimum touch target on mobile", () => {
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-detail-close");
+    expect(block).toContain("min-height: 36px");
+    expect(block).toContain("min-width: 36px");
+  });
+
+  it("defines .skills-view-item--selected in mobile media block", () => {
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-item--selected");
+    expect(block).toContain("border-color: var(--todo)");
+  });
+
+  it("defines .skills-view-item with min-height on mobile", () => {
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-item");
+    expect(block).toContain("min-height: 36px");
   });
 
   it("skill detail base styles are defined in styles.css", () => {
