@@ -869,6 +869,17 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                 }}
                 data-testid={`chat-session-${session.id}`}
               >
+                <button
+                  className="chat-session-delete-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setConfirmDelete(session.id);
+                  }}
+                  data-testid="chat-session-delete-btn"
+                  aria-label="Delete conversation"
+                >
+                  <Trash2 size={14} />
+                </button>
                 <div className="chat-session-title">{session.title || "Untitled"}</div>
                 <div className="chat-session-preview">
                   {session.lastMessagePreview || "No messages"}

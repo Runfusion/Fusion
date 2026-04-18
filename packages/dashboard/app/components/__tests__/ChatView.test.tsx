@@ -1169,6 +1169,113 @@ describe("formatModelTag helper function", () => {
   });
 });
 
+describe("Chat Session Delete Button", () => {
+  it("renders delete button on each session item", () => {
+    setupMockChat({
+      sessions: [
+        { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat 1", updatedAt: "2026-04-08T00:00:00.000Z" },
+        { id: "session-002", agentId: "agent-002", status: "active", title: "Test Chat 2", updatedAt: "2026-04-08T00:00:00.000Z" },
+      ],
+      filteredSessions: [
+        { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat 1", updatedAt: "2026-04-08T00:00:00.000Z" },
+        { id: "session-002", agentId: "agent-002", status: "active", title: "Test Chat 2", updatedAt: "2026-04-08T00:00:00.000Z" },
+      ],
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const deleteButtons = screen.getAllByTestId("chat-session-delete-btn");
+    expect(deleteButtons.length).toBe(2);
+  });
+
+  it("clicking delete button shows confirmation dialog", async () => {
+    setupMockChat({
+      sessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" }],
+      filteredSessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" }],
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const deleteButton = screen.getByTestId("chat-session-delete-btn");
+    await userEvent.click(deleteButton);
+
+    // Dialog should be open
+    const dialog = document.querySelector(".chat-new-dialog");
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog!).getByText("Delete Conversation?")).toBeInTheDocument();
+  });
+
+  it("clicking delete button does not select the session", async () => {
+    const selectSession = vi.fn();
+    setupMockChat({
+      sessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" }],
+      filteredSessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" }],
+      selectSession,
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const deleteButton = screen.getByTestId("chat-session-delete-btn");
+    await userEvent.click(deleteButton);
+
+    expect(selectSession).not.toHaveBeenCalled();
+  });
+
+  it("confirming delete calls deleteSession", async () => {
+    const deleteSession = vi.fn();
+    setupMockChat({
+      sessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" }],
+      filteredSessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" }],
+      deleteSession,
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const deleteButton = screen.getByTestId("chat-session-delete-btn");
+    await userEvent.click(deleteButton);
+
+    // Click confirm in dialog
+    const dialog = document.querySelector(".chat-new-dialog");
+    await userEvent.click(within(dialog!).getByText("Delete"));
+
+    expect(deleteSession).toHaveBeenCalledWith("session-001");
+  });
+});
+
+describe("Chat Session Delete Button CSS", () => {
+  const css = fs.readFileSync(stylesPath, "utf-8");
+
+  it(".chat-session-delete-btn exists with opacity: 0", () => {
+    const match = css.match(/\.chat-session-delete-btn\s*\{([^}]*)\}/);
+    expect(match).toBeTruthy();
+    expect(match![1]).toContain("opacity: 0");
+  });
+
+  it(".chat-session-item:hover .chat-session-delete-btn has opacity: 1", () => {
+    const match = css.match(/\.chat-session-item:hover\s*\.chat-session-delete-btn\s*\{([^}]*)\}/);
+    expect(match).toBeTruthy();
+    expect(match![1]).toContain("opacity: 1");
+  });
+
+  it("mobile override makes delete button always visible", () => {
+    // Find all mobile media query blocks and check if any has chat-session-delete-btn with opacity: 1
+    const mobileRegex = /@media\s*\(max-width:\s*768px\)\s*\{([\s\S]*?)\n\}/g;
+    let match;
+    let foundMobileDeleteBtn = false;
+    while ((match = mobileRegex.exec(css)) !== null) {
+      const mediaContent = match[1];
+      if (mediaContent.includes(".chat-session-delete-btn")) {
+        const deleteBtnMatch = mediaContent.match(/\.chat-session-delete-btn\s*\{([^}]*)\}/);
+        if (deleteBtnMatch && deleteBtnMatch[1].includes("opacity: 1")) {
+          foundMobileDeleteBtn = true;
+          break;
+        }
+      }
+    }
+    expect(foundMobileDeleteBtn).toBe(true);
+  });
+});
+
 describe("ChatView CSS — nested flexbox scrolling fix", () => {
   const css = fs.readFileSync(stylesPath, "utf-8");
 

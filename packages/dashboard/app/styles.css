@@ -31104,6 +31104,41 @@ html .column.drag-over * {
   color: var(--text-tertiary);
 }
 
+/* === Chat Session Delete Button === */
+.chat-session-delete-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), color var(--transition-fast);
+}
+
+.chat-session-item:hover .chat-session-delete-btn {
+  opacity: 1;
+}
+
+.chat-session-delete-btn:hover {
+  color: var(--color-error);
+  opacity: 1;
+}
+
+.chat-session-delete-btn:focus {
+  opacity: 1;
+  outline: 2px solid var(--focus-ring-strong);
+  outline-offset: 1px;
+}
+
 /* Context menu for session items */
 .chat-session-context-menu {
   position: fixed;
@@ -35864,5 +35899,10 @@ html .column.drag-over * {
 
   .insights-view-count {
     font-size: 12px;
+  }
+
+  /* Chat session delete button - always visible on mobile */
+  .chat-session-delete-btn {
+    opacity: 1;
   }
 }
