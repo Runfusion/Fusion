@@ -71,13 +71,15 @@ export function useTasks(options?: UseTasksOptions) {
   tasksRef.current = tasks;
   searchQueryRef.current = searchQuery;
 
-  // Detect project changes and invalidate SSE context
+  // Detect project changes and invalidate SSE context.
+  // Keep previous tasks visible while the new project's fetch is in flight
+  // (stale-while-revalidate) to avoid a blank flash and a full empty→populated
+  // re-reconcile of the board. The refreshTasks fetch guard (requestProjectId)
+  // rejects late responses from the previous project, and SSE handlers check
+  // projectContextVersionRef before applying events.
   if (previousProjectIdRef.current !== projectId) {
     previousProjectIdRef.current = projectId;
     projectContextVersionRef.current++;
-    // Clear tasks immediately on project change so prior-project rows are not rendered
-    // during the fetch gap. This is scoped to project-context transitions only.
-    setTasks([]);
   }
 
   const VISIBILITY_REFRESH_DEBOUNCE_MS = 1000;
