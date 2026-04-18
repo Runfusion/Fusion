@@ -185,6 +185,13 @@ vi.mock("../PluginManager", () => ({
   )),
 }));
 
+// Mock PiExtensionsManager to avoid API calls in SettingsModal tests
+vi.mock("../PiExtensionsManager", () => ({
+  PiExtensionsManager: ({ addToast }: { addToast: (msg: string, type?: string) => void }) => (
+    <div data-testid="pi-extensions-manager">PiExtensionsManager</div>
+  ),
+}));
+
 // Mock usePluginUiSlots hook
 const mockUsePluginUiSlots = vi.fn(() => ({
   slots: [],

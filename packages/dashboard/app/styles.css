@@ -33821,6 +33821,132 @@ html .column.drag-over * {
   color: var(--text-muted);
 }
 
+/* ── Pi Extensions Manager ──────────────────────────────────── */
+
+.pi-ext-manager {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.pi-ext-manager-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--border);
+}
+
+.pi-ext-manager-header h3 {
+  margin: 0;
+}
+
+.pi-ext-manager-actions {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.pi-ext-description {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+  margin: 0;
+}
+
+.pi-ext-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.pi-ext-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: border-color var(--transition-fast);
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.pi-ext-item:hover {
+  border-color: var(--text-dim);
+}
+
+.pi-ext-item-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.pi-ext-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.pi-ext-name {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pi-ext-source-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.pi-ext-source-badge--global {
+  color: var(--color-info);
+}
+
+.pi-ext-source-badge--project {
+  color: var(--color-success);
+}
+
+.pi-ext-path {
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.pi-ext-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+/* Pi Extensions Manager empty and loading states */
+.pi-ext-manager .empty-state,
+.pi-ext-manager .loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: 32px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
 /* Mobile responsive overrides */
 @media (max-width: 768px) {
   /* Detail view header */
@@ -33863,6 +33989,15 @@ html .column.drag-over * {
   .plugin-detail-actions button {
     flex: 1 1 auto;
     min-height: 36px;
+  }
+
+  /* Pi Extensions list items */
+  .pi-ext-list {
+    gap: 6px;
+  }
+
+  .pi-ext-item {
+    padding: 10px;
   }
 }
 
