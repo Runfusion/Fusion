@@ -1648,4 +1648,57 @@ describe("Header", () => {
       expect(slot).toBeNull();
     });
   });
+
+  describe("Nodes button visibility", () => {
+    describe("desktop viewport", () => {
+      it("shows nodes button by default when onOpenNodes is provided without showNodesButton", () => {
+        render(<Header onOpenSettings={vi.fn()} onOpenNodes={vi.fn()} />);
+        expect(screen.getByTestId("nodes-btn")).toBeDefined();
+      });
+
+      it("shows nodes button when showNodesButton is true and onOpenNodes is provided", () => {
+        render(<Header onOpenSettings={vi.fn()} onOpenNodes={vi.fn()} showNodesButton={true} />);
+        expect(screen.getByTestId("nodes-btn")).toBeDefined();
+      });
+
+      it("hides nodes button when showNodesButton is false", () => {
+        render(<Header onOpenSettings={vi.fn()} onOpenNodes={vi.fn()} showNodesButton={false} />);
+        expect(screen.queryByTestId("nodes-btn")).toBeNull();
+      });
+
+      it("calls onOpenNodes when nodes button is clicked", () => {
+        const onOpenNodes = vi.fn();
+        render(<Header onOpenSettings={vi.fn()} onOpenNodes={onOpenNodes} />);
+        fireEvent.click(screen.getByTestId("nodes-btn"));
+        expect(onOpenNodes).toHaveBeenCalledOnce();
+      });
+    });
+
+    describe("mobile viewport", () => {
+      beforeEach(() => {
+        mockMatchMedia("mobile");
+      });
+
+      it("hides mobile overflow nodes button when showNodesButton is false", () => {
+        render(<Header onOpenSettings={vi.fn()} onOpenNodes={vi.fn()} showNodesButton={false} />);
+        // Open the overflow menu to check mobile overflow items
+        fireEvent.click(screen.getByTitle("More header actions"));
+        expect(screen.queryByTestId("overflow-nodes-btn")).toBeNull();
+      });
+
+      it("shows mobile overflow nodes button by default when onOpenNodes is provided", () => {
+        render(<Header onOpenSettings={vi.fn()} onOpenNodes={vi.fn()} />);
+        // Open the overflow menu to check mobile overflow items
+        fireEvent.click(screen.getByTitle("More header actions"));
+        expect(screen.getByTestId("overflow-nodes-btn")).toBeDefined();
+      });
+
+      it("shows mobile overflow nodes button when showNodesButton is true", () => {
+        render(<Header onOpenSettings={vi.fn()} onOpenNodes={vi.fn()} showNodesButton={true} />);
+        // Open the overflow menu to check mobile overflow items
+        fireEvent.click(screen.getByTitle("More header actions"));
+        expect(screen.getByTestId("overflow-nodes-btn")).toBeDefined();
+      });
+    });
+  });
 });

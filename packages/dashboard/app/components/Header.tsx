@@ -170,6 +170,8 @@ export interface HeaderProps {
   onOpenSchedules?: () => void;
   onOpenGitManager?: () => void;
   onOpenNodes?: () => void;
+  /** When false, hides the Nodes management button. Defaults to true for backward compat. */
+  showNodesButton?: boolean;
   onOpenWorkflowSteps?: () => void;
   onOpenScripts?: () => void;
   onRunScript?: (name: string, command: string) => void;
@@ -219,6 +221,7 @@ export function Header({
   onOpenSchedules,
   onOpenGitManager,
   onOpenNodes,
+  showNodesButton,
   onOpenWorkflowSteps,
   onOpenScripts,
   onRunScript,
@@ -878,7 +881,7 @@ export function Header({
         )}
 
         {/* Nodes button - desktop only (moved to overflow on mobile/tablet) */}
-        {!isCompact && onOpenNodes && (
+        {!isCompact && onOpenNodes && showNodesButton !== false && (
           <button
             className="btn-icon"
             onClick={onOpenNodes}
@@ -1015,7 +1018,7 @@ export function Header({
               </button>
             )}
             {/* Nodes - in overflow on mobile */}
-            {onOpenNodes && (
+            {onOpenNodes && showNodesButton !== false && (
               <button
                 className="mobile-overflow-item"
                 onClick={() => handleOverflowAction(onOpenNodes)}

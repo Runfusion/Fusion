@@ -197,6 +197,14 @@ function AppInner() {
   } = useAppSettings(currentProject?.id);
 
   const skillsEnabled = experimentalFeatures.skillsView === true;
+  const nodesEnabled = experimentalFeatures.nodesView === true;
+
+  // Auto-close nodes overlay if feature flag is toggled off while overlay is open
+  useEffect(() => {
+    if (nodesOpen && !nodesEnabled) {
+      setNodesOpen(false);
+    }
+  }, [nodesOpen, nodesEnabled]);
   const {
     availableModels,
     favoriteProviders,
@@ -275,8 +283,9 @@ function AppInner() {
   }, [modalManager]);
 
   const handleOpenNodes = useCallback(() => {
+    if (!nodesEnabled) return;
     setNodesOpen((prev) => !prev);
-  }, []);
+  }, [nodesEnabled]);
 
   const handleOpenMissionsView = useCallback(() => {
     setMissionTargetId(undefined);
@@ -547,6 +556,7 @@ function AppInner() {
         onOpenSchedules={modalManager.openSchedules}
         onOpenGitManager={modalManager.openGitManager}
         onOpenNodes={handleOpenNodes}
+        showNodesButton={nodesEnabled}
         onOpenWorkflowSteps={modalManager.openWorkflowSteps}
         onOpenScripts={modalManager.openScripts}
         onRunScript={modalManager.runScript}
