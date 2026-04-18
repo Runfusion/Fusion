@@ -26996,6 +26996,18 @@ html .column.drag-over * {
     font-size: 16px;
   }
 
+  .agents-view-content {
+    padding: var(--space-md);
+  }
+
+  .agents-view-controls {
+    flex-wrap: wrap;
+  }
+
+  .agents-view-title {
+    flex-wrap: wrap;
+  }
+
   /* === DocumentsView === */
   .documents-view {
     display: flex;
@@ -30394,6 +30406,76 @@ html .column.drag-over * {
 
   .connect-node-field input {
     min-height: 44px;
+  }
+
+  /* NodesView mobile alignment */
+  .nodes-view-header {
+    padding: var(--space-sm) var(--space-md);
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
+  .nodes-view-title h2 {
+    font-size: 16px;
+  }
+
+  .nodes-view-title h2 svg {
+    flex-shrink: 0;
+  }
+
+  .nodes-view-count {
+    font-size: 12px;
+  }
+
+  .nodes-view-actions {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .nodes-view-close {
+    min-height: 36px;
+    min-width: 36px;
+  }
+
+  .nodes-view-actions .btn {
+    min-height: 36px;
+  }
+
+  .nodes-view-stats {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-sm);
+  }
+
+  .nodes-view-stat {
+    padding: var(--space-xs) var(--space-sm);
+  }
+
+  .nodes-view-stat span {
+    font-size: 11px;
+  }
+
+  .nodes-view-stat strong {
+    font-size: 14px;
+  }
+
+  .nodes-view-empty {
+    padding: var(--space-xl) var(--space-md);
+    text-align: center;
+  }
+
+  .nodes-view-error {
+    padding: var(--space-md);
+    margin: var(--space-md) 0;
+  }
+
+  .nodes-view-topology {
+    padding: var(--space-sm) 0;
+  }
+
+  .nodes-view-section-title {
+    font-size: 13px;
   }
 }
 
@@ -35391,5 +35473,19 @@ html .column.drag-over * {
     align-self: flex-end;
     min-width: calc(var(--space-lg) * 2 + var(--space-xs));
     min-height: calc(var(--space-lg) * 2 + var(--space-xs));
+  }
+
+  /* InsightsView additional mobile refinements */
+  .insights-view-actions .btn {
+    min-height: 36px;
+  }
+
+  .insights-view-close {
+    min-height: 36px;
+    min-width: 36px;
+  }
+
+  .insights-view-count {
+    font-size: 12px;
   }
 }
