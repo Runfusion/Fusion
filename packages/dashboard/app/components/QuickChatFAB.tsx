@@ -170,7 +170,7 @@ function useDraggable(projectId?: string, externalDidDragRef?: React.MutableRefO
 
     const fabSize = 48; // FAB is 48x48px
     // Mobile uses tighter margin (4px) to maximize screen space on small devices
-    const edgeMargin = window.innerWidth <= 768 ? 4 : 48;
+    const edgeMargin = window.innerWidth <= 768 ? 4 : 8;
     // Account for mobile nav height when clamping bottom
     const mobileNavHeight = window.innerWidth <= 768 ? 44 : 0;
     // Account for executor footer height on desktop

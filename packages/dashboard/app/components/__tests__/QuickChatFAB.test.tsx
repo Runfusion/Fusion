@@ -937,10 +937,10 @@ describe("QuickChatFAB", () => {
         pointerId: 1,
       });
 
-      // Desktop: position should be clamped to at least 48px from edges
+      // Desktop: position should be clamped to at least 8px from edges
       const savedPosition = JSON.parse(localStorageMock.setItem.mock.calls[0]?.[1] || "{}");
-      expect(savedPosition.x).toBeGreaterThanOrEqual(48);
-      expect(savedPosition.y).toBeGreaterThanOrEqual(48);
+      expect(savedPosition.x).toBeGreaterThanOrEqual(8);
+      expect(savedPosition.y).toBeGreaterThanOrEqual(8);
     });
 
     it("on mobile viewport, FAB can be dragged to within 4px of the edge", async () => {
@@ -980,7 +980,7 @@ describe("QuickChatFAB", () => {
       expect(savedPosition.y).toBeGreaterThanOrEqual(4);
     });
 
-    it("on desktop viewport, FAB edge margin remains 48px", async () => {
+    it("on desktop viewport, FAB edge margin is 8px", async () => {
       // Explicitly set desktop viewport (1024px wide, which is > 768px)
       Object.defineProperty(window, "innerWidth", { value: 1024, writable: true });
       Object.defineProperty(window, "innerHeight", { value: 768, writable: true });
@@ -1011,10 +1011,10 @@ describe("QuickChatFAB", () => {
         pointerId: 1,
       });
 
-      // Desktop: position should be clamped to at least 48px from edges
+      // Desktop: position should be clamped to at least 8px from edges
       const savedPosition = JSON.parse(localStorageMock.setItem.mock.calls[0]?.[1] || "{}");
-      expect(savedPosition.x).toBeGreaterThanOrEqual(48);
-      expect(savedPosition.y).toBeGreaterThanOrEqual(48);
+      expect(savedPosition.x).toBeGreaterThanOrEqual(8);
+      expect(savedPosition.y).toBeGreaterThanOrEqual(8);
     });
 
     it("touch events work for dragging", async () => {
