@@ -24,7 +24,7 @@ import { GitHubClient, parseBadgeUrl } from "./github.js";
 import { githubRateLimiter } from "./github-poll.js";
 import { terminalSessionManager } from "./terminal.js";
 import { getTerminalService } from "./terminal-service.js";
-import { listFiles, readFile, writeFile, listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, searchWorkspaceFiles, copyWorkspaceFile, moveWorkspaceFile, deleteWorkspaceFile, renameWorkspaceFile, getWorkspaceFileForDownload, getWorkspaceFolderForZip, FileServiceError } from "./file-service.js";
+import { listFiles, readFile, writeFile, listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, searchWorkspaceFiles, copyWorkspaceFile, moveWorkspaceFile, deleteWorkspaceFile, renameWorkspaceFile, getWorkspaceFileForDownload, getWorkspaceFolderForZip, scanMarkdownFiles, FileServiceError } from "./file-service.js";
 import { clearUsageCache, fetchAllProviderUsage } from "./usage.js";
 import {
   getGitHubAppConfig,
@@ -4830,6 +4830,26 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw err;
       }
       throw new ApiError(500, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  // GET /project-files/md — List Markdown files in the project directory
+  router.get("/project-files/md", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const files = await scanMarkdownFiles(scopedStore);
+      const query = typeof req.query.q === "string" ? req.query.q.trim().toLowerCase() : "";
+
+      const filteredFiles = query.length > 0
+        ? files.filter((file) => file.name.toLowerCase().includes(query) || file.contentPreview.toLowerCase().includes(query))
+        : files;
+
+      res.json(filteredFiles);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Internal server error");
     }
   });
 

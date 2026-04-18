@@ -897,6 +897,122 @@ export interface FileSearchResult {
 }
 
 /**
+ * Markdown file metadata discovered in the project root.
+ */
+export interface MarkdownFileEntry {
+  path: string;
+  name: string;
+  size: number;
+  mtime: string;
+  contentPreview: string;
+}
+
+const MARKDOWN_SCAN_EXCLUDED_DIRS = new Set([
+  ".git",
+  "node_modules",
+  ".fusion",
+  "dist",
+  "build",
+  ".next",
+  "coverage",
+  "__pycache__",
+  ".cache",
+  ".turbo",
+  ".vercel",
+]);
+
+/**
+ * Recursively scan the project directory for Markdown files.
+ */
+export async function scanMarkdownFiles(
+  store: TaskStore,
+  options?: { maxDepth?: number; maxFileSize?: number },
+): Promise<MarkdownFileEntry[]> {
+  const projectBasePath = getProjectBasePath(store);
+  const maxDepth = options?.maxDepth ?? 5;
+  const maxFileSize = options?.maxFileSize ?? MAX_FILE_SIZE;
+  const markdownFiles: MarkdownFileEntry[] = [];
+
+  async function walkDirectory(relativeDir: string, depth: number): Promise<void> {
+    if (depth > maxDepth) {
+      return;
+    }
+
+    const directoryPath = relativeDir
+      ? validatePath(projectBasePath, relativeDir)
+      : projectBasePath;
+
+    let entries: Dirent[];
+    try {
+      entries = await readdir(directoryPath, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      const entryRelativePath = relativeDir
+        ? join(relativeDir, entry.name)
+        : entry.name;
+
+      if (entry.isDirectory()) {
+        if (MARKDOWN_SCAN_EXCLUDED_DIRS.has(entry.name)) {
+          continue;
+        }
+
+        if (depth < maxDepth) {
+          await walkDirectory(entryRelativePath, depth + 1);
+        }
+        continue;
+      }
+
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".md")) {
+        continue;
+      }
+
+      let resolvedPath: string;
+      try {
+        resolvedPath = validatePath(projectBasePath, entryRelativePath);
+      } catch {
+        continue;
+      }
+
+      let entryStats;
+      try {
+        entryStats = await stat(resolvedPath);
+      } catch {
+        continue;
+      }
+
+      if (!entryStats.isFile() || entryStats.size > maxFileSize) {
+        continue;
+      }
+
+      let contentPreview = "";
+      try {
+        const content = await fsReadFile(resolvedPath, "utf-8");
+        contentPreview = content.slice(0, 200);
+      } catch {
+        contentPreview = "";
+      }
+
+      markdownFiles.push({
+        path: entryRelativePath.replace(/\\/g, "/"),
+        name: entry.name,
+        size: entryStats.size,
+        mtime: entryStats.mtime.toISOString(),
+        contentPreview,
+      });
+    }
+  }
+
+  await walkDirectory("", 0);
+
+  markdownFiles.sort((a, b) => a.path.localeCompare(b.path));
+
+  return markdownFiles;
+}
+
+/**
  * Search for files matching a query in a workspace.
  *
  * @param store - The TaskStore instance

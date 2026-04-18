@@ -751,6 +751,14 @@ export interface FetchAllDocumentsOptions {
   offset?: number;
 }
 
+export interface MarkdownFileEntry {
+  path: string;
+  name: string;
+  size: number;
+  mtime: string;
+  contentPreview: string;
+}
+
 export async function fetchAllDocuments(
   options?: FetchAllDocumentsOptions,
   projectId?: string,
@@ -762,6 +770,19 @@ export async function fetchAllDocuments(
   const queryString = params.toString();
   const path = `/documents${queryString ? `?${queryString}` : ""}`;
   return api<TaskDocumentWithTask[]>(withProjectId(path, projectId));
+}
+
+export function fetchProjectMarkdownFiles(
+  options?: { q?: string },
+  projectId?: string,
+): Promise<MarkdownFileEntry[]> {
+  const params = new URLSearchParams();
+  if (options?.q) {
+    params.set("q", options.q);
+  }
+  const queryString = params.toString();
+  const path = `/project-files/md${queryString ? `?${queryString}` : ""}`;
+  return api<MarkdownFileEntry[]>(withProjectId(path, projectId));
 }
 
 export function putTaskDocument(

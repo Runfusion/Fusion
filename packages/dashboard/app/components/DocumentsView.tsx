@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback } from "react";
 import { FileText, ChevronDown, ChevronUp, ChevronRight, RefreshCw, Search, X } from "lucide-react";
 import type { TaskDocumentWithTask, TaskDetail } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
-import { fetchTaskDetail } from "../api";
+import { fetchTaskDetail, fetchWorkspaceFileContent, type MarkdownFileEntry } from "../api";
 import { useDocuments } from "../hooks/useDocuments";
 
 export interface DocumentsViewProps {
@@ -16,9 +16,30 @@ interface DocumentCardProps {
   onOpenTask: (taskId: string) => void;
 }
 
+interface ProjectFileCardProps {
+  file: MarkdownFileEntry;
+  expanded: boolean;
+  loading: boolean;
+  error: string | null;
+  content: string;
+  onOpen: (filePath: string) => Promise<void>;
+}
+
 function formatTimestamp(iso?: string): string {
   if (!iso) return "";
   return new Date(iso).toLocaleString();
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(bytes >= 10 * 1024 ? 0 : 1)} KB`;
+  }
+
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function getContentPreview(content: string, maxLength: number = 200): string {
@@ -66,6 +87,57 @@ function DocumentCard({ document, onOpenTask }: DocumentCardProps) {
           <p className="document-card-preview-truncated">…</p>
         )}
       </div>
+    </div>
+  );
+}
+
+function ProjectFileCard({ file, expanded, loading, error, content, onOpen }: ProjectFileCardProps) {
+  const preview = getContentPreview(file.contentPreview, 200);
+  const isExpanded = expanded;
+
+  return (
+    <div className="documents-project-file">
+      <button
+        className="documents-project-file-card"
+        onClick={() => void onOpen(file.path)}
+        aria-expanded={isExpanded}
+        aria-label={`${isExpanded ? "Collapse" : "Open"} project file ${file.path}`}
+      >
+        <div className="documents-project-file-header">
+          <div className="documents-project-file-title">
+            <FileText size={14} />
+            <span>{file.name}</span>
+          </div>
+          <span className="documents-project-file-toggle">
+            {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          </span>
+        </div>
+
+        <p className="documents-project-file-path">{file.path}</p>
+
+        <div className="documents-project-file-meta">
+          <span>{formatFileSize(file.size)}</span>
+          <span>·</span>
+          <span>{formatTimestamp(file.mtime)}</span>
+        </div>
+
+        <p className="documents-project-file-preview">
+          {preview || "No preview available."}
+          {file.contentPreview.length >= 200 ? "…" : ""}
+        </p>
+      </button>
+
+      {isExpanded && (
+        <div className="documents-project-file-content">
+          {loading ? (
+            <p className="documents-project-file-content-state">Loading file content…</p>
+          ) : error ? (
+            <p className="documents-project-file-content-state documents-project-file-content-state--error">{error}</p>
+          ) : (
+            <pre className="documents-project-file-content-text">{content}</pre>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -122,7 +194,13 @@ function TaskGroup({ taskId, taskTitle, documents, onOpenTask }: TaskGroupProps)
 
 export function DocumentsView({ projectId, addToast, onOpenDetail }: DocumentsViewProps) {
   const [searchQuery, setSearchQuery] = useState("");
-  const { documents, loading, error, refresh } = useDocuments({
+  const [projectFilesExpanded, setProjectFilesExpanded] = useState(true);
+  const [openProjectFilePath, setOpenProjectFilePath] = useState<string | null>(null);
+  const [openProjectFileContent, setOpenProjectFileContent] = useState("");
+  const [openProjectFileLoading, setOpenProjectFileLoading] = useState(false);
+  const [openProjectFileError, setOpenProjectFileError] = useState<string | null>(null);
+
+  const { documents, projectFiles, loading, error, refresh } = useDocuments({
     projectId,
     searchQuery: searchQuery || undefined,
   });
@@ -153,15 +231,45 @@ export function DocumentsView({ projectId, addToast, onOpenDetail }: DocumentsVi
     setSearchQuery("");
   }, []);
 
+  const toggleProjectFilesExpanded = useCallback(() => {
+    setProjectFilesExpanded((current) => !current);
+  }, []);
+
   // Wrapper to open task detail by fetching full task first
   const handleOpenTask = useCallback(async (taskId: string) => {
     try {
       const task = await fetchTaskDetail(taskId, projectId);
       onOpenDetail(task);
-    } catch (err) {
+    } catch {
       addToast(`Failed to open task ${taskId}`, "error");
     }
   }, [projectId, onOpenDetail, addToast]);
+
+  const handleOpenProjectFile = useCallback(async (filePath: string) => {
+    if (openProjectFilePath === filePath) {
+      setOpenProjectFilePath(null);
+      setOpenProjectFileContent("");
+      setOpenProjectFileError(null);
+      setOpenProjectFileLoading(false);
+      return;
+    }
+
+    setOpenProjectFilePath(filePath);
+    setOpenProjectFileLoading(true);
+    setOpenProjectFileError(null);
+    setOpenProjectFileContent("");
+
+    try {
+      const file = await fetchWorkspaceFileContent("project", filePath, projectId);
+      setOpenProjectFileContent(file.content);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : `Failed to open ${filePath}`;
+      setOpenProjectFileError(message);
+      addToast(message, "error");
+    } finally {
+      setOpenProjectFileLoading(false);
+    }
+  }, [openProjectFilePath, projectId, addToast]);
 
   if (error) {
     return (
@@ -186,7 +294,7 @@ export function DocumentsView({ projectId, addToast, onOpenDetail }: DocumentsVi
             Documents
           </h2>
           <span className="documents-view-count">
-            {loading ? "…" : `${documents.length} total`}
+            {loading ? "…" : `${documents.length + projectFiles.length} total`}
           </span>
         </div>
 
@@ -217,31 +325,73 @@ export function DocumentsView({ projectId, addToast, onOpenDetail }: DocumentsVi
           <div className="documents-view-loading">
             <p>Loading documents…</p>
           </div>
-        ) : groupedDocuments.length === 0 ? (
-          <div className="documents-view-empty">
-            {searchQuery ? (
-              <p>No documents match "{searchQuery}".</p>
-            ) : (
-              <>
-                <FileText size={48} className="documents-view-empty-icon" />
-                <p>No documents yet.</p>
-                <p className="documents-view-empty-hint">
-                  Documents are created in task detail tabs.
-                </p>
-              </>
-            )}
-          </div>
         ) : (
-          <div className="documents-view-list">
-            {groupedDocuments.map(({ taskId, taskTitle, documents: taskDocs }) => (
-              <TaskGroup
-                key={taskId}
-                taskId={taskId}
-                taskTitle={taskTitle}
-                documents={taskDocs}
-                onOpenTask={handleOpenTask}
-              />
-            ))}
+          <div className="documents-view-sections">
+            <section className="documents-project-files" aria-label="Project files section">
+              <button
+                className="documents-project-files-header"
+                onClick={toggleProjectFilesExpanded}
+                aria-expanded={projectFilesExpanded}
+              >
+                <span className="documents-project-files-toggle">
+                  {projectFilesExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                </span>
+                <span className="documents-project-files-title">Project Files</span>
+                <span className="documents-project-files-count">
+                  {projectFiles.length} file{projectFiles.length !== 1 ? "s" : ""}
+                </span>
+              </button>
+
+              {projectFilesExpanded && (
+                projectFiles.length === 0 ? (
+                  <p className="documents-project-files-empty">
+                    No Markdown files found in the project directory.
+                  </p>
+                ) : (
+                  <div className="documents-project-files-list">
+                    {projectFiles.map((file) => (
+                      <ProjectFileCard
+                        key={file.path}
+                        file={file}
+                        expanded={openProjectFilePath === file.path}
+                        loading={openProjectFileLoading && openProjectFilePath === file.path}
+                        error={openProjectFilePath === file.path ? openProjectFileError : null}
+                        content={openProjectFilePath === file.path ? openProjectFileContent : ""}
+                        onOpen={handleOpenProjectFile}
+                      />
+                    ))}
+                  </div>
+                )
+              )}
+            </section>
+
+            {groupedDocuments.length === 0 ? (
+              <div className="documents-view-empty">
+                {searchQuery ? (
+                  <p>No task documents match "{searchQuery}".</p>
+                ) : (
+                  <>
+                    <FileText size={48} className="documents-view-empty-icon" />
+                    <p>No task documents yet.</p>
+                    <p className="documents-view-empty-hint">
+                      Documents are created in task detail tabs.
+                    </p>
+                  </>
+                )}
+              </div>
+            ) : (
+              <div className="documents-view-list">
+                {groupedDocuments.map(({ taskId, taskTitle, documents: taskDocs }) => (
+                  <TaskGroup
+                    key={taskId}
+                    taskId={taskId}
+                    taskTitle={taskTitle}
+                    documents={taskDocs}
+                    onOpenTask={handleOpenTask}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

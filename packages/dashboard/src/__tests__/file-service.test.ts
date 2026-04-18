@@ -11,6 +11,7 @@ import {
   readWorkspaceFile,
   writeWorkspaceFile,
   searchWorkspaceFiles,
+  scanMarkdownFiles,
   copyWorkspaceFile,
   moveWorkspaceFile,
   deleteWorkspaceFile,
@@ -1428,5 +1429,237 @@ describe("searchWorkspaceFiles", () => {
 
     const result = await searchWorkspaceFiles(mockStore, "project", "mycomp");
     expect(result.files).toContainEqual({ path: "MyComponent.tsx", name: "MyComponent.tsx" });
+  });
+});
+
+describe("scanMarkdownFiles", () => {
+  const mockGetRootDir = vi.fn();
+  const mockStore = {
+    getRootDir: mockGetRootDir,
+  } as unknown as TaskStore;
+
+  function directoryEntry(name: string) {
+    return { name, isDirectory: () => true, isFile: () => false };
+  }
+
+  function fileEntry(name: string) {
+    return { name, isDirectory: () => false, isFile: () => true };
+  }
+
+  beforeEach(() => {
+    mockGetRootDir.mockReset();
+    mockReaddir.mockReset();
+    mockStat.mockReset();
+    mockReadFile.mockReset();
+  });
+
+  it("finds markdown files in project root and nested directories", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+
+    mockReaddir.mockImplementation(async (targetPath: string) => {
+      if (targetPath === "/project") {
+        return [
+          fileEntry("README.md"),
+          fileEntry("notes.txt"),
+          directoryEntry("docs"),
+        ];
+      }
+
+      if (targetPath === "/project/docs") {
+        return [fileEntry("CONTRIBUTING.md")];
+      }
+
+      return [];
+    });
+
+    mockStat.mockImplementation(async (targetPath: string) => {
+      if (targetPath.endsWith("README.md") || targetPath.endsWith("CONTRIBUTING.md")) {
+        return {
+          isFile: () => true,
+          isDirectory: () => false,
+          size: 128,
+          mtime: new Date("2024-01-01T00:00:00.000Z"),
+        };
+      }
+
+      throw { code: "ENOENT" };
+    });
+
+    mockReadFile.mockImplementation(async (targetPath: string) => {
+      if (targetPath.endsWith("README.md")) {
+        return "Root readme";
+      }
+
+      if (targetPath.endsWith("CONTRIBUTING.md")) {
+        return "Contribution guide";
+      }
+
+      throw { code: "ENOENT" };
+    });
+
+    const result = await scanMarkdownFiles(mockStore);
+
+    expect(result).toEqual([
+      {
+        path: "docs/CONTRIBUTING.md",
+        name: "CONTRIBUTING.md",
+        size: 128,
+        mtime: "2024-01-01T00:00:00.000Z",
+        contentPreview: "Contribution guide",
+      },
+      {
+        path: "README.md",
+        name: "README.md",
+        size: 128,
+        mtime: "2024-01-01T00:00:00.000Z",
+        contentPreview: "Root readme",
+      },
+    ]);
+  });
+
+  it("excludes markdown files in blocked directories", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+
+    mockReaddir.mockImplementation(async (targetPath: string) => {
+      if (targetPath === "/project") {
+        return [
+          directoryEntry(".git"),
+          directoryEntry("node_modules"),
+          directoryEntry(".fusion"),
+          directoryEntry("dist"),
+          directoryEntry("build"),
+          directoryEntry("docs"),
+        ];
+      }
+
+      if (targetPath === "/project/docs") {
+        return [fileEntry("README.md")];
+      }
+
+      throw { code: "ENOENT" };
+    });
+
+    mockStat.mockResolvedValue({
+      isFile: () => true,
+      isDirectory: () => false,
+      size: 32,
+      mtime: new Date("2024-01-02T00:00:00.000Z"),
+    });
+    mockReadFile.mockResolvedValue("Allowed file");
+
+    const result = await scanMarkdownFiles(mockStore);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].path).toBe("docs/README.md");
+    expect(mockReaddir).not.toHaveBeenCalledWith("/project/.git", { withFileTypes: true });
+    expect(mockReaddir).not.toHaveBeenCalledWith("/project/node_modules", { withFileTypes: true });
+    expect(mockReaddir).not.toHaveBeenCalledWith("/project/.fusion", { withFileTypes: true });
+    expect(mockReaddir).not.toHaveBeenCalledWith("/project/dist", { withFileTypes: true });
+    expect(mockReaddir).not.toHaveBeenCalledWith("/project/build", { withFileTypes: true });
+  });
+
+  it("respects maxDepth when scanning nested directories", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+
+    mockReaddir.mockImplementation(async (targetPath: string) => {
+      if (targetPath === "/project") {
+        return [directoryEntry("level-1")];
+      }
+
+      if (targetPath === "/project/level-1") {
+        return [directoryEntry("level-2")];
+      }
+
+      if (targetPath === "/project/level-1/level-2") {
+        return [fileEntry("deep.md")];
+      }
+
+      return [];
+    });
+
+    mockStat.mockResolvedValue({
+      isFile: () => true,
+      isDirectory: () => false,
+      size: 42,
+      mtime: new Date("2024-01-03T00:00:00.000Z"),
+    });
+    mockReadFile.mockResolvedValue("Deep file");
+
+    const shallowResult = await scanMarkdownFiles(mockStore, { maxDepth: 1 });
+    expect(shallowResult).toEqual([]);
+
+    const deepResult = await scanMarkdownFiles(mockStore, { maxDepth: 2 });
+    expect(deepResult).toHaveLength(1);
+    expect(deepResult[0].path).toBe("level-1/level-2/deep.md");
+  });
+
+  it("skips files that exceed max file size", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+
+    mockReaddir.mockResolvedValue([fileEntry("LARGE.md")]);
+    mockStat.mockResolvedValue({
+      isFile: () => true,
+      isDirectory: () => false,
+      size: 2 * 1024 * 1024,
+      mtime: new Date("2024-01-04T00:00:00.000Z"),
+    });
+
+    const result = await scanMarkdownFiles(mockStore, { maxFileSize: 1024 * 1024 });
+    expect(result).toEqual([]);
+    expect(mockReadFile).not.toHaveBeenCalled();
+  });
+
+  it("caps content preview to 200 characters", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+
+    mockReaddir.mockResolvedValue([fileEntry("README.md")]);
+    mockStat.mockResolvedValue({
+      isFile: () => true,
+      isDirectory: () => false,
+      size: 200,
+      mtime: new Date("2024-01-05T00:00:00.000Z"),
+    });
+    mockReadFile.mockResolvedValue("a".repeat(250));
+
+    const result = await scanMarkdownFiles(mockStore);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].contentPreview).toBe("a".repeat(200));
+    expect(result[0].contentPreview.length).toBe(200);
+  });
+
+  it("returns files sorted by relative path", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+
+    mockReaddir.mockImplementation(async (targetPath: string) => {
+      if (targetPath === "/project") {
+        return [
+          fileEntry("z-last.md"),
+          directoryEntry("docs"),
+          fileEntry("a-first.md"),
+        ];
+      }
+
+      if (targetPath === "/project/docs") {
+        return [fileEntry("middle.md")];
+      }
+
+      return [];
+    });
+
+    mockStat.mockResolvedValue({
+      isFile: () => true,
+      isDirectory: () => false,
+      size: 90,
+      mtime: new Date("2024-01-06T00:00:00.000Z"),
+    });
+    mockReadFile.mockResolvedValue("content");
+
+    const result = await scanMarkdownFiles(mockStore);
+    expect(result.map((entry) => entry.path)).toEqual([
+      "a-first.md",
+      "docs/middle.md",
+      "z-last.md",
+    ]);
   });
 });

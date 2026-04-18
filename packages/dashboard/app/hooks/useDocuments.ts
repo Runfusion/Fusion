@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { TaskDocumentWithTask } from "@fusion/core";
-import { fetchAllDocuments } from "../api";
+import { fetchAllDocuments, fetchProjectMarkdownFiles, type MarkdownFileEntry } from "../api";
 
 export interface UseDocumentsResult {
   /** List of all documents across tasks */
   documents: TaskDocumentWithTask[];
+  /** List of markdown files discovered in the project workspace */
+  projectFiles: MarkdownFileEntry[];
   /** Loading state - true only for initial fetch, false during refresh/search */
   loading: boolean;
-  /** Error message if fetch failed */
+  /** Error message if task document fetch failed */
   error: string | null;
   /** Refresh documents from the server */
   refresh: () => Promise<void>;
@@ -29,6 +31,7 @@ export function useDocuments(options?: {
 }): UseDocumentsResult {
   const { projectId, searchQuery } = options ?? {};
   const [documents, setDocuments] = useState<TaskDocumentWithTask[]>([]);
+  const [projectFiles, setProjectFiles] = useState<MarkdownFileEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -46,7 +49,9 @@ export function useDocuments(options?: {
     if (abortRef.current) {
       abortRef.current.abort();
     }
-    abortRef.current = new AbortController();
+
+    const requestController = new AbortController();
+    abortRef.current = requestController;
 
     // Only set loading on initial load
     const isInitial = !initialLoadCompleteRef.current;
@@ -55,23 +60,44 @@ export function useDocuments(options?: {
     }
     setError(null);
 
-    try {
-      const result = await fetchAllDocuments(
-        searchQuery ? { q: searchQuery } : undefined,
-        projectId,
-      );
-      setDocuments(result);
+    const documentFetchPromise = fetchAllDocuments(
+      searchQuery ? { q: searchQuery } : undefined,
+      projectId,
+    );
+
+    const projectFileFetchPromise = fetchProjectMarkdownFiles(
+      searchQuery ? { q: searchQuery } : undefined,
+      projectId,
+    );
+
+    const [documentResult, projectFileResult] = await Promise.allSettled([
+      documentFetchPromise,
+      projectFileFetchPromise,
+    ]);
+
+    if (requestController.signal.aborted) {
+      return;
+    }
+
+    let documentError: string | null = null;
+
+    if (documentResult.status === "fulfilled") {
+      setDocuments(documentResult.value);
       initialLoadCompleteRef.current = true;
+    } else {
+      documentError = documentResult.reason instanceof Error
+        ? documentResult.reason.message
+        : String(documentResult.reason);
+    }
+
+    if (projectFileResult.status === "fulfilled") {
+      setProjectFiles(projectFileResult.value);
+    }
+
+    setError(documentError);
+
+    if (isInitial) {
       setLoading(false);
-    } catch (err) {
-      if (abortRef.current?.signal.aborted) {
-        // Request was cancelled - ignore
-        return;
-      }
-      setError(err instanceof Error ? err.message : String(err));
-      if (isInitial) {
-        setLoading(false);
-      }
     }
   }, [projectId, searchQuery]);
 
@@ -101,11 +127,11 @@ export function useDocuments(options?: {
         abortRef.current.abort();
       }
     };
-    // eslint-disable-next-line @typescript-eslint/no-use-before-define
   }, []);
 
   return {
     documents,
+    projectFiles,
     loading,
     error,
     refresh,
