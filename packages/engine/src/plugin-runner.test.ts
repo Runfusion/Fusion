@@ -9,14 +9,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { PluginRunner, type PluginRunnerOptions } from "./plugin-runner.js";
 import type { PluginLoader, PluginStore, PluginInstallation } from "@fusion/core";
 import type { FusionPlugin, PluginToolDefinition } from "@fusion/core";
+import { createLogger } from "./logger.js";
 
 // Mock the logger to suppress output during tests
 vi.mock("./logger.js", () => ({
-  createLogger: () => ({
+  createLogger: vi.fn(() => ({
     log: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
-  }),
+  })),
   executorLog: {
     log: vi.fn(),
     warn: vi.fn(),
@@ -62,6 +63,18 @@ describe("PluginRunner", () => {
     hooks: {},
     ...overrides,
   });
+
+  const getPluginRunnerLogger = () => {
+    const logger = vi.mocked(createLogger).mock.results.at(-1)?.value as {
+      log: ReturnType<typeof vi.fn>;
+      warn: ReturnType<typeof vi.fn>;
+      error: ReturnType<typeof vi.fn>;
+    } | undefined;
+    if (!logger) {
+      throw new Error("Expected plugin-runner logger to be initialized");
+    }
+    return logger;
+  };
 
   beforeEach(() => {
     // Create fresh mocks for each test
@@ -653,6 +666,37 @@ describe("PluginRunner", () => {
       }
       
       expect(true).toBe(true); // Handler exists and doesn't throw
+    });
+
+    it("logs warning when stopPlugin fails during plugin:unregistered handler", async () => {
+      mockPluginLoader.stopPlugin.mockRejectedValue(new Error("stop failed"));
+      await pluginRunner.init();
+
+      const unregisteredHandler = mockPluginStore.on.mock.calls.find(
+        call => call[0] === "plugin:unregistered"
+      )?.[1];
+      const logger = getPluginRunnerLogger();
+      logger.warn.mockClear();
+      expect(unregisteredHandler).toBeTypeOf("function");
+
+      const plugin = {
+        id: "broken-plugin",
+        name: "Broken Plugin",
+        version: "1.0.0",
+        path: "/test/path",
+        enabled: false,
+        state: "stopped" as const,
+        settings: {},
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      };
+
+      await expect(unregisteredHandler?.(plugin)).resolves.toBeUndefined();
+
+      expect(mockPluginLoader.stopPlugin).toHaveBeenCalledWith("broken-plugin");
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("Failed to stop unregistered plugin broken-plugin: stop failed"),
+      );
     });
 
     it("should handle plugin:stateChanged event", async () => {

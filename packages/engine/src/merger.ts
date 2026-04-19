@@ -2103,9 +2103,11 @@ async function executeMergeAttempt(
       // Reset staged changes to abort the merge
       try {
         execSync("git reset --merge", { cwd: rootDir, stdio: "pipe" });
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        mergerLog.warn(`${taskId}: git reset --merge cleanup failed (build-verification reset): ${msg}`);
+      } catch (resetErr: unknown) {
+        const msg = resetErr instanceof Error ? resetErr.message : String(resetErr);
+        mergerLog.warn(
+          `${taskId}: git reset --merge cleanup failed during build-verification rollback (build-verification reset, build-retry): ${msg}`,
+        );
       }
 
       throw new Error(`Build verification failed for ${taskId}: ${errorMessage}`);

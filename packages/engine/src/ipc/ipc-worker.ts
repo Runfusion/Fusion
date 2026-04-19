@@ -278,8 +278,9 @@ export class IpcWorker extends EventEmitter {
     // Notify parent we're shutting down
     try {
       process.send?.({ type: "SHUTDOWN", id: generateCorrelationId(), payload: {} });
-    } catch {
-      // Ignore errors during shutdown
+    } catch (sendErr: unknown) {
+      const msg = sendErr instanceof Error ? sendErr.message : String(sendErr);
+      ipcLog.warn(`Failed to send SHUTDOWN message to parent: ${msg}`);
     }
   }
 

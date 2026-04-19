@@ -1130,6 +1130,39 @@ describe("StepSessionExecutor", () => {
       );
     });
 
+    it("logs warning when cherry-pick --abort fails after conflict and still throws conflict", async () => {
+      const task = makeTaskDetail({
+        prompt: makeStepPrompt("FN-001", 2),
+      });
+      const executor = new StepSessionExecutor({
+        taskDetail: task,
+        worktreePath: "/project/.worktrees/main",
+        rootDir: "/project",
+        settings: makeSettings({ maxParallelSteps: 2 }),
+      });
+
+      mockedExecSync.mockImplementation((cmd: string) => {
+        if (cmd.includes("git log")) {
+          return "abc123";
+        }
+        if (cmd.includes("git cherry-pick") && cmd.includes("--abort")) {
+          throw new Error("abort failed");
+        }
+        if (cmd.includes("git cherry-pick")) {
+          throw new Error("Merge conflict");
+        }
+        return "";
+      });
+
+      await expect(
+        (executor as any).cherryPickCommits(1, "/project/.worktrees/step-1"),
+      ).rejects.toThrow("Cherry-pick conflict for commit abc123 in step 1: Merge conflict");
+
+      expect(getStepSessionLogger().warn).toHaveBeenCalledWith(
+        "Cherry-pick --abort failed for step 1: abort failed",
+      );
+    });
+
     it("semaphore integration: parallel steps acquire/release", async () => {
       const prompt = `# Task: FN-001
 

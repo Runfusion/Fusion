@@ -2560,6 +2560,60 @@ describe("aiMergeTask — build verification", () => {
     );
   });
 
+  it("logs warning when git reset --merge fails during build-verification rollback", async () => {
+    const store = createMockStore(
+      { id: "FN-099", worktree: "/tmp/root/.worktrees/KB-099" },
+      [{ id: "FN-099", worktree: "/tmp/root/.worktrees/KB-099", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      buildCommand: "pnpm build",
+      verificationFixRetries: 0,
+    });
+
+    const warnSpy = vi.spyOn(mergerLog, "warn");
+    const resetFailureMessage = "reset failed: dirty working tree";
+
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      const reportTool = opts.customTools?.find((t: any) => t.name === "report_build_failure");
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            await reportTool?.execute("tool-call-1", {
+              message: "Type error in src/utils.ts",
+            });
+          }),
+          dispose: vi.fn(),
+        },
+      } as any;
+    });
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed";
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("diff --cached --quiet")) return "1";
+      if (cmdStr.includes("git reset --merge")) throw new Error(resetFailureMessage);
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    await expect(aiMergeTask(store, "/tmp/root", "FN-099")).rejects.toThrow(
+      "Build verification failed for FN-099: Type error in src/utils.ts",
+    );
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("FN-099: git reset --merge cleanup failed during build-verification rollback"),
+    );
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining(resetFailureMessage));
+
+    warnSpy.mockRestore();
+  });
+
   it("merge proceeds normally when no build command is configured", async () => {
     mockedCreateHaiAgent.mockResolvedValue({
       session: {

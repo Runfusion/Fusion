@@ -450,8 +450,9 @@ export class ChildProcessRuntime
         .then((metrics: unknown) => {
           this.lastMetrics = metrics as RuntimeMetrics;
         })
-        .catch(() => {
-          // Ignore errors, use cached value
+        .catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          runtimeLog.warn(`GET_METRICS IPC query failed, using cached value: ${msg}`);
         });
     }
 

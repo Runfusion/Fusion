@@ -6,6 +6,7 @@ import type {
   RuntimeMetrics,
   RuntimeStatus,
 } from "../project-runtime.js";
+import { runtimeLog } from "../logger.js";
 import {
   START_RUNTIME,
   STOP_RUNTIME,
@@ -671,6 +672,36 @@ describe("ChildProcessRuntime", () => {
         activeAgents: 8,
         lastActivityAt: "2026-04-08T03:00:00.000Z",
       });
+    });
+
+    it("logs warning when GET_METRICS IPC query fails", async () => {
+      const warnSpy = vi.spyOn(runtimeLog, "warn").mockImplementation(() => {});
+
+      queueChild({
+        sendCallbackErrors: {
+          [GET_METRICS]: new Error("metrics unavailable"),
+        },
+      });
+      await runtime.start();
+
+      runtimeAny.lastMetrics = {
+        inFlightTasks: 1,
+        activeAgents: 0,
+        lastActivityAt: "2026-04-08T04:00:00.000Z",
+      };
+
+      const metrics = runtime.getMetrics();
+      expect(metrics.inFlightTasks).toBe(1);
+      expect(metrics.activeAgents).toBe(0);
+
+      await vi.waitFor(() => {
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining("GET_METRICS IPC query failed, using cached value"),
+        );
+      });
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("metrics unavailable"));
+
+      warnSpy.mockRestore();
     });
 
     it("getTaskStore() always throws not accessible error", () => {

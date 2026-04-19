@@ -285,8 +285,9 @@ export class PluginRunner {
     try {
       executorLog.log(`Stopping unregistered plugin: ${plugin.id}`);
       await this.options.pluginLoader.stopPlugin(plugin.id);
-    } catch (err) {
-      this.log.warn(`Failed to stop unregistered plugin ${plugin.id}: ${err instanceof Error ? err.message : String(err)}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.warn(`Failed to stop unregistered plugin ${plugin.id}: ${msg} (plugin '${plugin.id}')`);
     }
   }
 

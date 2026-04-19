@@ -15,6 +15,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { PING, PONG, OK, ERROR, TASK_CREATED, ERROR_EVENT } from "./ipc-protocol.js";
+import { ipcLog } from "../logger.js";
 
 // ── Mock logger to suppress console output ──────────────────────────────
 vi.mock("../logger.js", () => ({
@@ -405,6 +406,23 @@ describe("IpcWorker", () => {
       expect(msg.type).toBe("SHUTDOWN");
       expect(typeof msg.id).toBe("string");
       expect(msg.payload).toEqual({});
+      worker.removeAllListeners();
+    });
+
+    it("logs warning when process.send throws during shutdown", () => {
+      const { worker, sendFn } = createWorker();
+      vi.mocked(ipcLog.warn).mockClear();
+
+      sendFn.mockImplementation(() => {
+        throw new Error("channel closed");
+      });
+
+      worker.shutdown();
+
+      expect(vi.mocked(ipcLog.warn)).toHaveBeenCalledWith(
+        expect.stringContaining("Failed to send SHUTDOWN message to parent: channel closed"),
+      );
+      expect(worker.isShuttingDown()).toBe(true);
       worker.removeAllListeners();
     });
 
