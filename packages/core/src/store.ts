@@ -835,6 +835,15 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     }
   }
 
+  private async writeTaskJsonFile(dir: string, task: Task): Promise<void> {
+    const taskJsonPath = join(dir, "task.json");
+    const tmpPath = join(dir, "task.json.tmp");
+    this.suppressWatcher(taskJsonPath);
+    await mkdir(dir, { recursive: true });
+    await writeFile(tmpPath, JSON.stringify(task));
+    await rename(tmpPath, taskJsonPath);
+  }
+
   /**
    * Write a task to SQLite (primary store) and also write task.json to disk
    * for backward compatibility and debugging.
@@ -842,12 +851,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   private async atomicWriteTaskJson(dir: string, task: Task): Promise<void> {
     this.upsertTask(task);
     // Also write to disk for backward compatibility
-    const taskJsonPath = join(dir, "task.json");
-    const tmpPath = join(dir, "task.json.tmp");
-    this.suppressWatcher(taskJsonPath);
-    await mkdir(dir, { recursive: true }); // Ensure directory exists
-    await writeFile(tmpPath, JSON.stringify(task));
-    await rename(tmpPath, taskJsonPath);
+    await this.writeTaskJsonFile(dir, task);
   }
 
   /**
@@ -890,12 +894,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     });
 
     // File writes are not part of the SQLite transaction
-    const taskJsonPath = join(dir, "task.json");
-    const tmpPath = join(dir, "task.json.tmp");
-    this.suppressWatcher(taskJsonPath);
-    await mkdir(dir, { recursive: true });
-    await writeFile(tmpPath, JSON.stringify(task));
-    await rename(tmpPath, taskJsonPath);
+    await this.writeTaskJsonFile(dir, task);
   }
 
   /**
@@ -1690,31 +1689,33 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    * Read a task and its prompt content.
    */
   async getTask(id: string, options?: { activityLogLimit?: number }): Promise<TaskDetail> {
-    const task = this.readTaskFromDb(id, options);
-    if (!task) {
-      const archived = this.archiveDb.get(id);
-      if (!archived) {
-        throw new Error(`Task ${id} not found`);
+    return this.withTaskLock(id, async () => {
+      const task = this.readTaskFromDb(id, options);
+      if (!task) {
+        const archived = this.archiveDb.get(id);
+        if (!archived) {
+          throw new Error(`Task ${id} not found`);
+        }
+        const archivedTask = this.archiveEntryToTask(archived, false);
+        return {
+          ...archivedTask,
+          prompt: archived.prompt ?? this.generatePromptFromArchiveEntry(archived),
+        };
       }
-      const archivedTask = this.archiveEntryToTask(archived, false);
-      return {
-        ...archivedTask,
-        prompt: archived.prompt ?? this.generatePromptFromArchiveEntry(archived),
-      };
-    }
 
-    // Sync steps from PROMPT.md if task.steps is empty
-    if (task.steps.length === 0) {
-      task.steps = await this.parseStepsFromPrompt(id);
-    }
+      // Sync steps from PROMPT.md if task.steps is empty
+      if (task.steps.length === 0) {
+        task.steps = await this.parseStepsFromPrompt(id);
+      }
 
-    let prompt = "";
-    const promptPath = join(this.taskDir(id), "PROMPT.md");
-    if (existsSync(promptPath)) {
-      prompt = await readFile(promptPath, "utf-8");
-    }
+      let prompt = "";
+      const promptPath = join(this.taskDir(id), "PROMPT.md");
+      if (existsSync(promptPath)) {
+        prompt = await readFile(promptPath, "utf-8");
+      }
 
-    return { ...task, prompt };
+      return { ...task, prompt };
+    });
   }
 
   async listTasks(options?: {
@@ -2404,30 +2405,28 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    */
   async logEntry(id: string, action: string, outcome?: string, runContext?: RunMutationContext): Promise<Task> {
     return this.withTaskLock(id, async () => {
-      const dir = this.taskDir(id);
-      const task = await this.readTaskJson(dir);
-
-      // Initialize log array if missing (for legacy tasks)
-      if (!task.log) {
-        task.log = [];
-      }
-
       const entry: TaskLogEntry = {
         timestamp: new Date().toISOString(),
         action,
         outcome: truncateTaskLogOutcome(outcome),
       };
       if (runContext) {
-        entry.runContext = runContext;
-      }
-      task.log.push(entry);
-      if (task.log.length > TASK_ACTIVITY_LOG_ENTRY_LIMIT) {
-        task.log.splice(0, task.log.length - TASK_ACTIVITY_LOG_ENTRY_LIMIT);
-      }
-      task.updatedAt = new Date().toISOString();
+        const dir = this.taskDir(id);
+        const task = await this.readTaskJson(dir);
 
-      // When runContext is provided, record audit event atomically with task mutation
-      if (runContext) {
+        // Initialize log array if missing (for legacy tasks)
+        if (!task.log) {
+          task.log = [];
+        }
+
+        entry.runContext = runContext;
+        task.log.push(entry);
+        if (task.log.length > TASK_ACTIVITY_LOG_ENTRY_LIMIT) {
+          task.log.splice(0, task.log.length - TASK_ACTIVITY_LOG_ENTRY_LIMIT);
+        }
+        task.updatedAt = new Date().toISOString();
+
+        // When runContext is provided, record audit event atomically with task mutation.
         await this.atomicWriteTaskJsonWithAudit(dir, task, {
           taskId: task.id,
           agentId: runContext.agentId,
@@ -2437,13 +2436,42 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           target: task.id,
           metadata: { action, outcome },
         });
-      } else {
-        await this.atomicWriteTaskJson(dir, task);
-      }
-      if (this.isWatching) this.taskCache.set(id, { ...task });
 
-      this.emit("task:updated", task);
-      return task;
+        if (this.isWatching) this.taskCache.set(id, { ...task });
+        this.emit("task:updated", task);
+        return task;
+      }
+
+      // Fast path for high-volume log entries: update only the log + updatedAt fields
+      // instead of reading/writing the entire task payload on every append.
+      const row = this.db.prepare("SELECT log FROM tasks WHERE id = ?").get(id) as { log: string | null } | undefined;
+      if (!row) {
+        throw new Error(`Task ${id} not found`);
+      }
+
+      const log = fromJson<TaskLogEntry[]>(row.log) || [];
+      log.push(entry);
+      if (log.length > TASK_ACTIVITY_LOG_ENTRY_LIMIT) {
+        log.splice(0, log.length - TASK_ACTIVITY_LOG_ENTRY_LIMIT);
+      }
+      const updatedAt = new Date().toISOString();
+
+      this.db.prepare("UPDATE tasks SET log = ?, updatedAt = ? WHERE id = ?").run(toJson(log), updatedAt, id);
+      this.db.bumpLastModified();
+
+      const current = this.readTaskFromDb(id);
+      if (current) {
+        await this.writeTaskJsonFile(this.taskDir(id), current);
+        if (this.isWatching) {
+          this.taskCache.set(id, { ...current });
+        }
+        this.emit("task:updated", current);
+        return current;
+      }
+
+      const emittedTask = ({ id, log, updatedAt } as unknown) as Task;
+      this.emit("task:updated", emittedTask);
+      return emittedTask;
     });
   }
 

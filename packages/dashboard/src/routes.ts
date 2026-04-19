@@ -12941,6 +12941,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         const agentStore = new AgentStoreClass({ rootDir: scopedStore.getFusionDir() });
         await agentStore.init();
 
+        const agent = await agentStore.getAgent(req.params.id);
+        if (!agent) {
+          throw notFound(`Agent ${req.params.id} not found`);
+        }
+
         const activeRun = await agentStore.getActiveHeartbeatRun(req.params.id);
         if (activeRun) {
           throw new ApiError(409, "Agent already has an active run", { runId: activeRun.id });
@@ -12964,6 +12969,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         const { AgentStore } = await import("@fusion/core");
         const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
         await agentStore.init();
+
+        const agent = await agentStore.getAgent(req.params.id);
+        if (!agent) {
+          throw notFound(`Agent ${req.params.id} not found`);
+        }
 
         // Check for existing active run
         const activeRun = await agentStore.getActiveHeartbeatRun(req.params.id);

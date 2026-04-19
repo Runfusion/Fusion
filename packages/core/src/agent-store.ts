@@ -253,7 +253,7 @@ export class AgentStore extends EventEmitter {
             normalizedRun.endedAt,
             normalizedRun.status,
           );
-          imported += result.changes;
+          imported += Number(result.changes);
         } catch {
           // Legacy run files may be partially written or manually edited; ignore them.
         }

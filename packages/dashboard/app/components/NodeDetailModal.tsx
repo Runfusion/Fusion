@@ -147,13 +147,17 @@ export function NodeDetailModal({
     setIsPulling(true);
     try {
       await onPullSettings(node.id);
+      if (!isMountedRef.current) return;
       addToast("Settings pulled successfully", "success");
     } catch (error) {
+      if (!isMountedRef.current) return;
       const message = error instanceof Error ? error.message : "Pull settings failed";
       setSyncError(message);
       addToast(message, "error");
     } finally {
-      setIsPulling(false);
+      if (isMountedRef.current) {
+        setIsPulling(false);
+      }
     }
   }, [addToast, node, onPullSettings]);
 
@@ -163,13 +167,17 @@ export function NodeDetailModal({
     setIsSyncingAuth(true);
     try {
       await onSyncAuth(node.id);
+      if (!isMountedRef.current) return;
       addToast("Auth credentials synced successfully", "success");
     } catch (error) {
+      if (!isMountedRef.current) return;
       const message = error instanceof Error ? error.message : "Auth sync failed";
       setSyncError(message);
       addToast(message, "error");
     } finally {
-      setIsSyncingAuth(false);
+      if (isMountedRef.current) {
+        setIsSyncingAuth(false);
+      }
     }
   }, [addToast, node, onSyncAuth]);
 

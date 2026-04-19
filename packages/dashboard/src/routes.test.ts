@@ -36,6 +36,7 @@ vi.mock("@fusion/core", async () => {
   return {
     ...actual,
     isGhAuthenticated: vi.fn(),
+    isQmdAvailable: vi.fn().mockResolvedValue(false),
     CentralCore: vi.fn().mockImplementation(() => ({
       init: mockCentralInit,
       close: mockCentralClose,
