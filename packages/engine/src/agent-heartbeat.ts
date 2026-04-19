@@ -166,7 +166,7 @@ When sending messages:
  * System prompt for no-task heartbeat agent sessions.
  * Instructs the agent to perform ambient work only with tools that do not require task context.
  */
-export const HEARTBEAT_NO_TASK_SYSTEM_PROMPT = `You are a heartbeat agent running in a short execution window.
+export const HEARTBEAT_SYSTEM_PROMPT_NO_TASK = `You are a heartbeat agent running in a short execution window.
 
 Your job:
 1. Review your context — check messages, memory, and project state.
@@ -200,6 +200,9 @@ When sending messages:
 - Be concise and clear about what you need or what you've done.
 - Include relevant context (task IDs, file paths) in metadata when applicable.
 - Use agent-to-agent for inter-agent communication.`;
+
+// Backward-compatible alias; prefer HEARTBEAT_SYSTEM_PROMPT_NO_TASK.
+export const HEARTBEAT_NO_TASK_SYSTEM_PROMPT = HEARTBEAT_SYSTEM_PROMPT_NO_TASK;
 
 /** Parameter schema for the heartbeat_done tool */
 const heartbeatDoneParams = Type.Object({
@@ -1109,7 +1112,7 @@ export class HeartbeatMonitor {
         const skillContext = buildSessionSkillContextSync(agent, "heartbeat", rootDir);
 
         const baseHeartbeatSystemPrompt = isNoTaskRun
-          ? HEARTBEAT_NO_TASK_SYSTEM_PROMPT
+          ? HEARTBEAT_SYSTEM_PROMPT_NO_TASK
           : HEARTBEAT_SYSTEM_PROMPT;
         let systemPrompt = baseHeartbeatSystemPrompt;
         try {
