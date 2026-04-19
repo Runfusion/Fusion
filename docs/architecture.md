@@ -480,7 +480,7 @@ SQLite schema is initialized in `packages/core/src/db.ts` and uses:
   - `.fusion/memory/MEMORY.md`
   - `.fusion/memory/YYYY-MM-DD.md`
   - `.fusion/memory/DREAMS.md`
-- Legacy `.fusion/memory.md` is compatibility-only (migration seed + mirrored alias path) and is not canonical storage.
+- Legacy `.fusion/memory.md` is a deprecated legacy fallback (migration seed/alias path) and is not canonical storage.
 
 ### File-based side stores
 Some data remains intentionally filesystem-based:

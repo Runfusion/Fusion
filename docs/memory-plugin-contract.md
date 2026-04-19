@@ -115,7 +115,7 @@ Prompt wording is selected by `resolveMemoryInstructionContext(settings?)`:
 | `/api/memory` | GET | Returns `{ content: string }` from project memory (empty string if absent) |
 | `/api/memory` | PUT | Body `{ content: string }`; writes memory content |
 
-Route handlers are still file-service based, but operate on OpenClaw-style canonical long-term memory path (`.fusion/memory/MEMORY.md`) and remain compatible with backend-aware bootstrap/prompt behavior.
+Route handlers are still file-service based, but operate on OpenClaw-style canonical long-term memory path (`.fusion/memory/MEMORY.md`) with migration compatibility for legacy `.fusion/memory.md` seeding/alias handling.
 
 ### 1.6 Dashboard Settings UI
 
@@ -130,7 +130,7 @@ Route handlers are still file-service based, but operate on OpenClaw-style canon
 
 | Test File | Coverage |
 |-----------|----------|
-| `packages/core/src/memory-backend.test.ts` | Backend interface behavior, built-in backends, registry helpers, `DEFAULT_MEMORY_BACKEND = "qmd"`, backend resolution/fallback |
+| `packages/core/src/memory-backend.test.ts` | Backend interface behavior, built-in backends, registry helpers, layered path helpers/bootstrap (`ensureOpenClawMemoryFiles`), `DEFAULT_MEMORY_BACKEND = "qmd"`, backend resolution/fallback |
 | `packages/core/src/project-memory.test.ts` | `MEMORY_FILE_PATH`, bootstrap behavior, backend-aware instruction context and prompt content |
 | `packages/core/src/store.test.ts` | Init/toggle bootstrap behavior for enabled/disabled memory states |
 | `packages/engine/src/triage.test.ts` | `memoryEnabled` and `memoryBackendType` influence on triage prompt injection |
@@ -140,7 +140,7 @@ Route handlers are still file-service based, but operate on OpenClaw-style canon
 ### 1.8 Summary of Non-Negotiable Behaviors
 
 1. **Canonical layout**: OpenClaw-style memory workspace is canonical (`.fusion/memory/` with `MEMORY.md`, daily files, and `DREAMS.md`).
-2. **Legacy compatibility**: Legacy `.fusion/memory.md` remains compatibility-only (migration seed / accepted legacy alias), not canonical storage.
+2. **Legacy compatibility**: Legacy `.fusion/memory.md` is a **deprecated legacy fallback** (migration seed / accepted alias), not canonical storage.
 3. **Backend default**: Memory backend default is `qmd`.
 4. **Backend selector key**: `memoryBackendType` controls backend selection.
 5. **Toggle gate**: `memoryEnabled: false` disables memory prompt injection regardless of backend type.
@@ -152,6 +152,12 @@ Route handlers are still file-service based, but operate on OpenClaw-style canon
 ## 2. OpenClaw Research Findings
 
 > **Provenance:** OpenClaw / pi-style memory patterns were used as design input. This section documents what Fusion adopted versus what remained conceptual.
+>
+> **Update (2026-04-19):** Fusion now uses a layered OpenClaw-style workspace as canonical storage:
+> - `.fusion/memory/MEMORY.md` — curated long-term memory
+> - `.fusion/memory/YYYY-MM-DD.md` — append-only daily notes
+> - `.fusion/memory/DREAMS.md` — synthesized patterns
+> - `.fusion/memory.md` — deprecated legacy fallback (migration compatibility only)
 
 ### 2.1 OpenClaw Memory Concepts
 
@@ -163,7 +169,7 @@ OpenClaw-style memory emphasizes a layered workspace rather than a single flat f
 - Daily notes: `.fusion/memory/YYYY-MM-DD.md`
 - Dream synthesis: `.fusion/memory/DREAMS.md`
 
-Legacy `.fusion/memory.md` is retained only for compatibility/migration paths.
+Legacy `.fusion/memory.md` is retained only as a deprecated legacy fallback for migration compatibility.
 
 #### 2.1.2 Pluggable backend abstraction
 
@@ -194,7 +200,7 @@ OpenClaw literature often discusses flush-style semantics; Fusion currently uses
 | OpenClaw Concept | Fusion Current State | Contract Implication |
 |-----------------|---------------------|----------------------|
 | Layered memory files | Implemented (`MEMORY.md`, daily files, `DREAMS.md`) | Canonical path model is `.fusion/memory/` workspace, not a single flat file |
-| Legacy compatibility | Retained only for migration/alias handling | Keep `.fusion/memory.md` references compatibility-scoped, not canonical |
+| Legacy compatibility | Retained only as a deprecated migration fallback/alias | Keep `.fusion/memory.md` references compatibility-scoped, not canonical |
 | Pluggable backends | Implemented (registry + built-ins) | Contract must document real runtime API (`type`, `capabilities`, `read/write/get/search/exists`) |
 | QMD backend | Implemented and default | Document `qmd` as default backend and describe qmd→local fallback behavior |
 | Search capability | Implemented (`file` + `qmd`) | Contract search section must match real `search(rootDir, options)` signature and result shape |
@@ -338,7 +344,7 @@ Built-ins are registered at module load:
 - Supports: `read`, `write`, `exists`, `get`, `search`
 
 Legacy compatibility behavior tied to file backend ecosystem:
-- Legacy `.fusion/memory.md` is retained as a compatibility constant (`LEGACY_MEMORY_FILE_PATH`)
+- Legacy `.fusion/memory.md` is retained as a deprecated compatibility constant (`LEGACY_MEMORY_FILE_PATH`)
 - OpenClaw bootstrap (`ensureOpenClawMemoryFiles`) can seed `MEMORY.md` from legacy file on first migration
 - `get` path normalization recognizes legacy alias paths, but canonical writes remain under `.fusion/memory/`
 
@@ -403,7 +409,7 @@ Notes:
 
 - Canonical long-term memory path: `.fusion/memory/MEMORY.md`
 - Canonical workspace root: `.fusion/memory/`
-- Legacy `.fusion/memory.md` is compatibility-only (migration/alias context)
+- Legacy `.fusion/memory.md` is a deprecated legacy fallback (migration/alias context)
 - There is no persistent dual-write mirror contract in the current runtime API; migration compatibility is handled via bootstrap seeding and legacy path alias handling.
 
 #### 3.8.2 Return-shape compatibility
@@ -443,10 +449,26 @@ Insights storage remains file-based today:
 #### 3.8.6 Must-not-break invariants
 
 1. Memory remains accessible through OpenClaw canonical long-term path (`.fusion/memory/MEMORY.md`) in file-backed flows, and the built-in `file` backend remains available for explicit fallback/use.
-2. Legacy `.fusion/memory.md` remains compatibility-only and is not reintroduced as canonical storage.
+2. Legacy `.fusion/memory.md` remains a deprecated legacy fallback and is not reintroduced as canonical storage.
 3. Instruction behavior is backend-dependent; file backend can include path hints, qmd/readonly do not require one.
 4. `memoryEnabled: false` suppresses memory prompt injection regardless of backend type.
 5. Read semantics remain stable (`""` for missing working memory, `null` for missing insights memory).
+
+#### 3.8.7 OpenClaw Layered Memory Layout
+
+Canonical project memory uses a directory-based layout under `.fusion/memory/`:
+
+| File | Purpose | Layer |
+|------|---------|-------|
+| `.fusion/memory/MEMORY.md` | Curated long-term memory (durable decisions, conventions, pitfalls) | long-term |
+| `.fusion/memory/YYYY-MM-DD.md` | Append-only daily notes (running observations, open loops) | daily |
+| `.fusion/memory/DREAMS.md` | Synthesized patterns/themes from daily notes | dreams |
+| `.fusion/memory.md` | **Deprecated** legacy fallback (migration compatibility only) | legacy |
+
+Migration behavior (`ensureOpenClawMemoryFiles()`):
+- When `.fusion/memory/MEMORY.md` does not exist but `.fusion/memory.md` does, legacy content is seeded into the new canonical file
+- Once `.fusion/memory/MEMORY.md` exists, canonical writes stay in `.fusion/memory/` (no legacy re-canonicalization)
+- Legacy paths may still appear as accepted aliases during transition, but are not canonical storage
 
 ---
 ## 4. Migration Strategy + Compatibility Guardrails
@@ -482,7 +504,7 @@ The migration work has already progressed beyond the original FN-1418/FN-1419/FN
 | `.fusion/memory/MEMORY.md` | Canonical long-term working memory | Canonical |
 | `.fusion/memory/YYYY-MM-DD.md` | Daily memory | Canonical layered layout |
 | `.fusion/memory/DREAMS.md` | Dream/synthesis memory | Canonical layered layout |
-| `.fusion/memory.md` | Legacy compatibility path | Compatibility-only (migration/alias), not canonical |
+| `.fusion/memory.md` | Deprecated legacy fallback path | Compatibility-only (migration/alias), not canonical |
 | `.fusion/memory-insights.md` | Insight extraction output | Preserved |
 | `.fusion/memory-audit.md` | Extraction audit output | Preserved |
 
@@ -498,7 +520,7 @@ The migration work has already progressed beyond the original FN-1418/FN-1419/FN
 ### 4.3 Must-Not-Break Invariants
 
 1. **Canonical layout invariant:** OpenClaw layered memory workspace (`.fusion/memory/`) remains canonical.
-2. **Legacy-path invariant:** `.fusion/memory.md` remains compatibility-only; it must not be reintroduced as primary storage.
+2. **Legacy-path invariant:** `.fusion/memory.md` remains a deprecated legacy fallback; it must not be reintroduced as primary storage.
 3. **Backend-selection invariant:** Runtime selection uses `memoryBackendType`, with default `qmd`.
 4. **Prompt-context invariant:** Memory instructions vary by backend type; only `file` backend emits an explicit file path hint.
 5. **Read-shape invariant:** Missing working memory resolves to `""`; missing insights memory resolves to `null`.
