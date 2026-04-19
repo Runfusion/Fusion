@@ -52,6 +52,10 @@ export const TRANSIENT_ERROR_PATTERNS: RegExp[] = [
   // AI provider abort errors — temporary request cancellations (e.g., Anthropic streaming aborts)
   // These occur when the provider's infrastructure drops an in-flight request.
   /request was aborted/i,
+  // DOMException-style AbortError ("This operation was aborted"), emitted by fetch/
+  // AbortController when a provider drops an in-flight operation. Excludes user-
+  // initiated cancellations like "operation was aborted by user" — those are not transient.
+  /operation was aborted(?!\s+by\b)/i,
 ];
 
 /**
@@ -91,6 +95,7 @@ export function isTransientError(errorMessage: string): boolean {
  */
 const SILENT_TRANSIENT_PATTERNS: RegExp[] = [
   /request was aborted/i,
+  /operation was aborted(?!\s+by\b)/i,
 ];
 
 /**

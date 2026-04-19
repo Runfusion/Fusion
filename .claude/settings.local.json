@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(sqlite3:*)"
+      "Bash(sqlite3:*)",
+      "Bash(pnpm --filter @fusion/engine exec vitest run src/transient-error-detector.test.ts)",
+      "Bash(pnpm test *)"
     ]
   }
 }

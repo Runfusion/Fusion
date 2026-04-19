@@ -86,6 +86,17 @@ describe("Transient Error Detector", () => {
       expect(isTransientError("Error: request was aborted")).toBe(true);
     });
 
+    it("matches 'operation was aborted' (DOMException-style abort errors)", () => {
+      expect(isTransientError("operation was aborted")).toBe(true);
+      expect(isTransientError("This operation was aborted")).toBe(true);
+      expect(isTransientError("OPERATION WAS ABORTED")).toBe(true);
+    });
+
+    it("does NOT match user-initiated 'operation was aborted by user'", () => {
+      expect(isTransientError("The operation was aborted by user")).toBe(false);
+      expect(isTransientError("operation was aborted by the signal")).toBe(false);
+    });
+
     // Edge cases
     it("returns false for empty string", () => {
       expect(isTransientError("")).toBe(false);
