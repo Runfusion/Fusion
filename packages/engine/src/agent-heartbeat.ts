@@ -1567,14 +1567,14 @@ export class HeartbeatMonitor {
       tracked.session.dispose();
     } catch (err) {
       // Log but don't stop termination
-      console.error(`[HeartbeatMonitor] Error disposing session for ${tracked.agentId}:`, err);
+      heartbeatLog.warn(`Error disposing session for ${tracked.agentId}: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     // Update agent state to terminated
     try {
       await this.store.updateAgentState(tracked.agentId, "terminated");
     } catch (err) {
-      console.error(`[HeartbeatMonitor] Error terminating agent ${tracked.agentId}:`, err);
+      heartbeatLog.warn(`Error terminating agent ${tracked.agentId}: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     // Remove from tracking

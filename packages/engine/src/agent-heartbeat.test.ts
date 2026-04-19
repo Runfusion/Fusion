@@ -34,6 +34,7 @@ vi.mock("./pi.js", () => ({
 
 // Import the mocked functions for test control
 import { createKbAgent } from "./pi.js";
+import { heartbeatLog } from "./logger.js";
 const mockedCreateKbAgent = vi.mocked(createKbAgent);
 
 // Mock store factory
@@ -717,6 +718,109 @@ describe("HeartbeatMonitor", () => {
       await vi.advanceTimersByTimeAsync(100);
 
       expect(customMonitor.getTrackedAgents()).not.toContain("agent-001");
+
+      customMonitor.stop();
+      vi.useRealTimers();
+    });
+
+    it("logs warning when session dispose throws during termination", async () => {
+      const warnSpy = vi.mocked(heartbeatLog.warn);
+      warnSpy.mockClear();
+      const session: AgentSession = {
+        dispose: vi.fn(() => {
+          throw new Error("dispose exploded");
+        }),
+      };
+      const updateAgentState = vi.fn().mockResolvedValue(undefined);
+      const localStore = createMockStore({ updateAgentState });
+      const onTerminated = vi.fn();
+      const customMonitor = new HeartbeatMonitor({
+        store: localStore,
+        heartbeatTimeoutMs: 5000,
+        pollIntervalMs: 1000,
+        onTerminated,
+      });
+
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      customMonitor.start();
+      customMonitor.trackAgent("agent-001", session, "run-001");
+
+      vi.advanceTimersByTime(10100);
+      await vi.advanceTimersByTimeAsync(100);
+
+      const warnMessages = warnSpy.mock.calls.map(([message]) => String(message));
+      expect(warnMessages.some((message) => message.includes("Error disposing session for agent-001") && message.includes("dispose exploded"))).toBe(true);
+      expect(updateAgentState).toHaveBeenCalledWith("agent-001", "terminated");
+      expect(onTerminated).toHaveBeenCalledWith("agent-001");
+      expect(customMonitor.getTrackedAgents()).toHaveLength(0);
+
+      customMonitor.stop();
+      vi.useRealTimers();
+    });
+
+    it("logs warning when updateAgentState throws during termination", async () => {
+      const warnSpy = vi.mocked(heartbeatLog.warn);
+      warnSpy.mockClear();
+      const session = createMockSession();
+      const localStore = createMockStore({
+        updateAgentState: vi.fn().mockRejectedValue(new Error("db connection lost")),
+      });
+      const onTerminated = vi.fn();
+      const customMonitor = new HeartbeatMonitor({
+        store: localStore,
+        heartbeatTimeoutMs: 5000,
+        pollIntervalMs: 1000,
+        onTerminated,
+      });
+
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      customMonitor.start();
+      customMonitor.trackAgent("agent-001", session, "run-001");
+
+      vi.advanceTimersByTime(10100);
+      await vi.advanceTimersByTimeAsync(100);
+
+      const warnMessages = warnSpy.mock.calls.map(([message]) => String(message));
+      expect(warnMessages.some((message) => message.includes("Error terminating agent agent-001") && message.includes("db connection lost"))).toBe(true);
+      expect(onTerminated).toHaveBeenCalledWith("agent-001");
+      expect(customMonitor.getTrackedAgents()).toHaveLength(0);
+
+      customMonitor.stop();
+      vi.useRealTimers();
+    });
+
+    it("logs warnings from both dispose and state update when both fail", async () => {
+      const warnSpy = vi.mocked(heartbeatLog.warn);
+      warnSpy.mockClear();
+      const session: AgentSession = {
+        dispose: vi.fn(() => {
+          throw new Error("dispose exploded");
+        }),
+      };
+      const localStore = createMockStore({
+        updateAgentState: vi.fn().mockRejectedValue(new Error("db connection lost")),
+      });
+      const onTerminated = vi.fn();
+      const customMonitor = new HeartbeatMonitor({
+        store: localStore,
+        heartbeatTimeoutMs: 5000,
+        pollIntervalMs: 1000,
+        onTerminated,
+      });
+
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      customMonitor.start();
+      customMonitor.trackAgent("agent-001", session, "run-001");
+
+      vi.advanceTimersByTime(10100);
+      await vi.advanceTimersByTimeAsync(100);
+
+      const warnMessages = warnSpy.mock.calls.map(([message]) => String(message));
+      expect(warnMessages).toHaveLength(2);
+      expect(warnMessages.some((message) => message.includes("Error disposing session for agent-001") && message.includes("dispose exploded"))).toBe(true);
+      expect(warnMessages.some((message) => message.includes("Error terminating agent agent-001") && message.includes("db connection lost"))).toBe(true);
+      expect(onTerminated).toHaveBeenCalledWith("agent-001");
+      expect(customMonitor.getTrackedAgents()).toHaveLength(0);
 
       customMonitor.stop();
       vi.useRealTimers();
