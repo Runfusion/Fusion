@@ -3594,6 +3594,53 @@ describe("streamChatResponse", () => {
     expect(callbacks.done).toEqual([]);
     expect(callbacks.error).toEqual([]);
   });
+
+  it("fires onError when fetch aborts unexpectedly", async () => {
+    const callbacks = {
+      error: [] as string[],
+    };
+
+    globalThis.fetch = vi.fn().mockRejectedValue(new DOMException("The operation was aborted", "AbortError"));
+
+    const stream = streamChatResponse("chat-1", "hello", {
+      onError: (data) => callbacks.error.push(data),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    stream.close();
+
+    expect(callbacks.error).toEqual(["Connection aborted"]);
+  });
+
+  it("does not fire onError when abort is initiated by close", async () => {
+    const callbacks = {
+      error: [] as string[],
+    };
+
+    globalThis.fetch = vi.fn().mockImplementation((_, init?: RequestInit) => {
+      const signal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        if (!signal) {
+          return;
+        }
+        const rejectAbort = () => reject(new DOMException("The operation was aborted", "AbortError"));
+        if (signal.aborted) {
+          rejectAbort();
+          return;
+        }
+        signal.addEventListener("abort", rejectAbort, { once: true });
+      });
+    });
+
+    const stream = streamChatResponse("chat-1", "hello", {
+      onError: (data) => callbacks.error.push(data),
+    });
+
+    stream.close();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(callbacks.error).toEqual([]);
+  });
 });
 
 describe("fetchMemoryBackendStatus", () => {

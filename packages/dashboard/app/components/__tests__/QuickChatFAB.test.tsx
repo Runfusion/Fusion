@@ -1007,7 +1007,7 @@ describe("QuickChatFAB", () => {
 
     // Wait for error toast
     await waitFor(() => {
-      expect(addToast).toHaveBeenCalledWith("Failed to send message", "error");
+      expect(addToast).toHaveBeenCalledWith("Failed to get response", "error");
     });
   });
 

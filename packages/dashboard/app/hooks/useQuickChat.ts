@@ -305,20 +305,19 @@ export function useQuickChat(
           streamRef.current = null;
         },
         onError: (data: string) => {
-          // Remove the optimistic user message on error
-          setMessages((prev) => prev.filter((m) => m.id !== tempId));
           setStreamingText("");
           setStreamingThinking("");
           setIsStreaming(false);
           streamRef.current = null;
           console.error("[useQuickChat] Stream error:", data);
-          addToast?.("Failed to send message", "error");
+          addToast?.("Failed to get response", "error");
+          void reloadMessages();
         },
       };
 
       streamRef.current = streamChatResponse(activeSession.id, content, textHandlers, projectId);
     },
-    [activeSession, projectId, addToast],
+    [activeSession, projectId, addToast, reloadMessages],
   );
 
   // Cleanup on unmount

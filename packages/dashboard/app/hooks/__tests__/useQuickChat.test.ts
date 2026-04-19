@@ -199,4 +199,155 @@ describe("useQuickChat", () => {
       expect(mockFetchChatMessages).toHaveBeenCalledWith("session-existing", { limit: 50 }, "proj-123");
     });
   });
+
+  it("onError does not remove user message from local state", async () => {
+    const existingSession = makeSession({ id: "session-existing", agentId: "agent-001" });
+    let onErrorHandler: ((data: string) => void) | undefined;
+
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [existingSession] });
+    mockFetchChatMessages
+      .mockResolvedValueOnce({ messages: [] })
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            id: "msg-user-1",
+            sessionId: existingSession.id,
+            role: "user",
+            content: "Hello",
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      });
+
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      onErrorHandler = handlers.onError;
+      return { close: vi.fn(), isConnected: () => true };
+    });
+
+    const { result } = renderHook(() => useQuickChat("proj-123"));
+
+    await act(async () => {
+      await result.current.switchSession("agent-001");
+    });
+
+    act(() => {
+      result.current.sendMessage("Hello");
+    });
+
+    expect(result.current.messages.some((message) => message.role === "user" && message.content === "Hello")).toBe(true);
+
+    act(() => {
+      onErrorHandler?.("Connection aborted");
+    });
+
+    await waitFor(() => {
+      expect(result.current.messages.some((message) => message.role === "user" && message.content === "Hello")).toBe(true);
+    });
+  });
+
+  it("onError reloads messages from server", async () => {
+    const existingSession = makeSession({ id: "session-existing", agentId: "agent-001" });
+    let onErrorHandler: ((data: string) => void) | undefined;
+
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [existingSession] });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      onErrorHandler = handlers.onError;
+      return { close: vi.fn(), isConnected: () => true };
+    });
+
+    const { result } = renderHook(() => useQuickChat("proj-123"));
+
+    await act(async () => {
+      await result.current.switchSession("agent-001");
+    });
+
+    act(() => {
+      result.current.sendMessage("Hello");
+    });
+
+    act(() => {
+      onErrorHandler?.("Connection aborted");
+    });
+
+    await waitFor(() => {
+      expect(mockFetchChatMessages).toHaveBeenCalledTimes(2);
+      expect(mockFetchChatMessages).toHaveBeenLastCalledWith("session-existing", { limit: 50 }, "proj-123");
+    });
+  });
+
+  it("onError resets streaming state", async () => {
+    const existingSession = makeSession({ id: "session-existing", agentId: "agent-001" });
+    let onErrorHandler: ((data: string) => void) | undefined;
+    let onTextHandler: ((data: string) => void) | undefined;
+    let onThinkingHandler: ((data: string) => void) | undefined;
+
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [existingSession] });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      onErrorHandler = handlers.onError;
+      onTextHandler = handlers.onText;
+      onThinkingHandler = handlers.onThinking;
+      return { close: vi.fn(), isConnected: () => true };
+    });
+
+    const { result } = renderHook(() => useQuickChat("proj-123"));
+
+    await act(async () => {
+      await result.current.switchSession("agent-001");
+    });
+
+    act(() => {
+      result.current.sendMessage("Hello");
+      onTextHandler?.("Partial answer");
+      onThinkingHandler?.("Thinking...");
+    });
+
+    await waitFor(() => {
+      expect(result.current.isStreaming).toBe(true);
+      expect(result.current.streamingText).toBe("Partial answer");
+      expect(result.current.streamingThinking).toBe("Thinking...");
+    });
+
+    act(() => {
+      onErrorHandler?.("Connection aborted");
+    });
+
+    await waitFor(() => {
+      expect(result.current.isStreaming).toBe(false);
+      expect(result.current.streamingText).toBe("");
+      expect(result.current.streamingThinking).toBe("");
+    });
+  });
+
+  it("onError shows toast with failed response message", async () => {
+    const existingSession = makeSession({ id: "session-existing", agentId: "agent-001" });
+    const addToast = vi.fn();
+    let onErrorHandler: ((data: string) => void) | undefined;
+
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [existingSession] });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      onErrorHandler = handlers.onError;
+      return { close: vi.fn(), isConnected: () => true };
+    });
+
+    const { result } = renderHook(() => useQuickChat("proj-123", addToast));
+
+    await act(async () => {
+      await result.current.switchSession("agent-001");
+    });
+
+    act(() => {
+      result.current.sendMessage("Hello");
+      onErrorHandler?.("Connection aborted");
+    });
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith("Failed to get response", "error");
+    });
+  });
 });

@@ -709,6 +709,20 @@ export class ChatManager {
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "AI processing failed";
       console.error(`[chat] Error in sendMessage for session ${sessionId}:`, err);
+
+      if (accumulatedText || accumulatedThinking) {
+        try {
+          this.chatStore.addMessage(sessionId, {
+            role: "assistant",
+            content: accumulatedText || "(response interrupted before text generation)",
+            thinkingOutput: accumulatedThinking || undefined,
+            metadata: { interrupted: true },
+          });
+        } catch (persistErr) {
+          console.error(`[chat] Failed to persist partial response for session ${sessionId}:`, persistErr);
+        }
+      }
+
       chatStreamManager.broadcast(sessionId, {
         type: "error",
         data: errorMessage,

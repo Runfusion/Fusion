@@ -4,7 +4,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ChatManager, __setBuildAgentChatPrompt, __setCreateKbAgent, __resetChatState } from "../chat.js";
+import {
+  ChatManager,
+  __setBuildAgentChatPrompt,
+  __setCreateKbAgent,
+  __resetChatState,
+  chatStreamManager,
+} from "../chat.js";
 
 // ── Mock Setup ──────────────────────────────────────────────────────────────
 
@@ -353,6 +359,92 @@ describe("ChatManager.sendMessage", () => {
       (call) => call[1].role === "assistant"
     );
     expect(assistantCall?.[1].thinkingOutput).toBe("Thinking...");
+  });
+
+  it("persists partial assistant response when AI processing fails after streaming text", async () => {
+    const events: Array<{ type: string; data: unknown }> = [];
+    const unsubscribe = chatStreamManager.subscribe("chat-001", (event) => {
+      events.push(event);
+    });
+
+    __setCreateKbAgent(async (options: any) => {
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            options.onThinking?.("Thinking...");
+            options.onText?.("Partial answer");
+            throw new Error("Tool execution failed");
+          }),
+          dispose: vi.fn(),
+          state: { messages: [] },
+        },
+      };
+    });
+
+    const chatManager = createChatManager();
+    await chatManager.sendMessage("chat-001", "Hello");
+    unsubscribe();
+
+    const assistantCalls = mockChatStore.addMessage.mock.calls.filter((call) => call[1].role === "assistant");
+    expect(assistantCalls).toHaveLength(1);
+    expect(assistantCalls[0]).toEqual([
+      "chat-001",
+      expect.objectContaining({
+        role: "assistant",
+        content: "Partial answer",
+        thinkingOutput: "Thinking...",
+        metadata: { interrupted: true },
+      }),
+    ]);
+    expect(events).toContainEqual({ type: "error", data: "Tool execution failed" });
+  });
+
+  it("does not persist empty assistant response on immediate failure", async () => {
+    __setCreateKbAgent(async () => {
+      return {
+        session: {
+          prompt: vi.fn().mockRejectedValue(new Error("Immediate failure")),
+          dispose: vi.fn(),
+          state: { messages: [] },
+        },
+      };
+    });
+
+    const chatManager = createChatManager();
+    await chatManager.sendMessage("chat-001", "Hello");
+
+    const assistantCalls = mockChatStore.addMessage.mock.calls.filter((call) => call[1].role === "assistant");
+    expect(assistantCalls).toHaveLength(0);
+  });
+
+  it("persists thinking output even when no text was generated", async () => {
+    __setCreateKbAgent(async (options: any) => {
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            options.onThinking?.("Working through tools");
+            throw new Error("Interrupted during tool call");
+          }),
+          dispose: vi.fn(),
+          state: { messages: [] },
+        },
+      };
+    });
+
+    const chatManager = createChatManager();
+    await chatManager.sendMessage("chat-001", "Hello");
+
+    const assistantCalls = mockChatStore.addMessage.mock.calls.filter((call) => call[1].role === "assistant");
+    expect(assistantCalls).toHaveLength(1);
+    expect(assistantCalls[0]).toEqual([
+      "chat-001",
+      expect.objectContaining({
+        role: "assistant",
+        content: "(response interrupted before text generation)",
+        thinkingOutput: "Working through tools",
+        metadata: { interrupted: true },
+      }),
+    ]);
   });
 
   it("uses accumulated text as primary source over state.messages extraction", async () => {

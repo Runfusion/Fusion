@@ -5722,8 +5722,13 @@ export function streamChatResponse(
         processLines(decoder.decode(value, { stream: true }));
       }
     } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        if (!closedByUser) {
+          handlers.onError?.("Connection aborted");
+        }
+        return;
+      }
       if (closedByUser) return;
-      if (err instanceof DOMException && err.name === "AbortError") return;
       handlers.onError?.(err instanceof Error ? err.message : "Connection error");
     }
   })();
