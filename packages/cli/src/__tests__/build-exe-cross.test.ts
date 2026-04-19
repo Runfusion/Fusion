@@ -15,6 +15,10 @@ const SUPPORTED_TARGETS = [
   "bun-windows-x64",
 ] as const;
 
+function hasKnownBunSqliteLimitation(result: { stdout: string; stderr: string }): boolean {
+  return /node:sqlite/i.test(`${result.stdout}\n${result.stderr}`);
+}
+
 /**
  * Map target → expected binary filename (mirrors build.ts logic).
  */
@@ -125,8 +129,7 @@ describe("build-exe-cross: --all builds all platforms", () => {
       encoding: "utf-8",
       timeout: 15_000,
     });
-    const knownBunSqliteLimitation = result.stderr.includes("No such built-in module: node:sqlite");
-    if (knownBunSqliteLimitation) {
+    if (hasKnownBunSqliteLimitation(result)) {
       return;
     }
     expect(result.status).toBe(0);

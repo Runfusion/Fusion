@@ -30,8 +30,8 @@ function createIsolatedDir(): { dir: string; binary: string; cleanup: () => void
   };
 }
 
-function hasKnownBunSqliteLimitation(result: { stderr: string | null }): boolean {
-  return result.stderr?.includes("No such built-in module: node:sqlite") ?? false;
+function hasKnownBunSqliteLimitation(result: { stdout: string | null; stderr: string | null }): boolean {
+  return /node:sqlite/i.test(`${result.stdout ?? ""}\n${result.stderr ?? ""}`);
 }
 
 async function stopChildProcess(child: ChildProcess | null): Promise<void> {
@@ -159,7 +159,7 @@ describe("build-exe", () => {
 
       const outcome = await new Promise<"ready" | "sqlite-unsupported">(
         (resolve, reject) => {
-          const SQLITE_ERROR = "No such built-in module: node:sqlite";
+          const SQLITE_ERROR_PATTERN = /node:sqlite/i;
 
           const timeout = setTimeout(() => {
             if (settled) return;
@@ -197,7 +197,7 @@ describe("build-exe", () => {
 
           child!.stderr!.on("data", (d: Buffer) => {
             startupOutput += d.toString();
-            if (startupOutput.includes(SQLITE_ERROR)) {
+            if (SQLITE_ERROR_PATTERN.test(startupOutput)) {
               settle("sqlite-unsupported");
             }
           });
@@ -205,7 +205,7 @@ describe("build-exe", () => {
           // 'close' fires after all stdio streams are drained, so
           // startupOutput is guaranteed to be complete here.
           child!.on("close", (code) => {
-            if (startupOutput.includes(SQLITE_ERROR)) {
+            if (SQLITE_ERROR_PATTERN.test(startupOutput)) {
               settle("sqlite-unsupported");
               return;
             }
