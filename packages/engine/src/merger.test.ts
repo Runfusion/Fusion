@@ -91,6 +91,7 @@ vi.mock("./context-limit-detector.js", () => ({
 
 import {
   aiMergeTask,
+  pushToRemoteAfterMerge,
   findWorktreeUser,
   detectResolvableConflicts,
   autoResolveFile,
@@ -436,6 +437,369 @@ describe("aiMergeTask — empty squash merge (branch already merged via dep)", (
     );
     expect(worktreeRemoveCall).toBeDefined();
     expect(result.worktreeRemoved).toBe(true);
+  });
+});
+
+describe("push-after-merge", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+  });
+
+  function setupAiMergeExecSyncWithPush(pushBehavior?: (attempt: number) => void) {
+    let pushAttempts = 0;
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+
+      if (cmdStr.includes("rev-parse --verify REBASE_HEAD")) {
+        const err = new Error("fatal: Needed a single revision") as Error & { status?: number };
+        err.status = 128;
+        throw err;
+      }
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git symbolic-ref --short HEAD")) return "main" as any;
+      if (cmdStr.includes("git rev-parse --abbrev-ref origin/HEAD")) return "origin/main" as any;
+      if (cmdStr === "git rev-parse HEAD" || cmdStr.startsWith("git rev-parse HEAD ")) return "mergedcommit123" as any;
+      if (cmdStr.includes("git log HEAD..")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
+      if (cmdStr.includes("git merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("git diff --name-only --diff-filter=U")) return "" as any;
+      if (cmdStr.includes("git diff --cached --quiet")) {
+        // First call: squash-empty check, second call: post-agent commit verification.
+        return "1" as any;
+      }
+      if (cmdStr.startsWith("git commit ")) return Buffer.from("");
+      if (cmdStr.includes("git show --shortstat")) return "3 files changed, 10 insertions(+), 2 deletions(-)" as any;
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      if (cmdStr.startsWith("git pull --rebase")) return Buffer.from("");
+      if (cmdStr.startsWith("git push ")) {
+        pushAttempts += 1;
+        pushBehavior?.(pushAttempts);
+        return Buffer.from("");
+      }
+
+      return Buffer.from("");
+    });
+
+  }
+
+  it("pushes merged result when pushAfterMerge is enabled", async () => {
+    setupAiMergeExecSyncWithPush();
+
+    const store = createMockStore();
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      pushAfterMerge: true,
+      pushRemote: "origin",
+      mergeStrategy: "direct",
+    });
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(result.pushedToRemote).toBe(true);
+    expect(
+      mockedExecSync.mock.calls.some((call) => String(call[0]).includes('git pull --rebase "origin" "main"')),
+    ).toBe(true);
+    expect(
+      mockedExecSync.mock.calls.some((call) => String(call[0]).includes('git push "origin" "main"')),
+    ).toBe(true);
+  });
+
+  it("does not push when pushAfterMerge is disabled (default)", async () => {
+    setupAiMergeExecSyncWithPush();
+
+    const store = createMockStore();
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(result.pushedToRemote).toBeUndefined();
+    expect(
+      mockedExecSync.mock.calls.some((call) => String(call[0]).startsWith("git pull --rebase")),
+    ).toBe(false);
+    expect(
+      mockedExecSync.mock.calls.some((call) => String(call[0]).startsWith("git push ")),
+    ).toBe(false);
+  });
+
+  it("does not push for pull-request merge strategy", async () => {
+    setupAiMergeExecSyncWithPush();
+
+    const store = createMockStore();
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      mergeStrategy: "pull-request",
+      pushAfterMerge: true,
+      pushRemote: "origin",
+    });
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(result.pushedToRemote).toBeUndefined();
+    expect(
+      mockedExecSync.mock.calls.some((call) => String(call[0]).startsWith("git pull --rebase")),
+    ).toBe(false);
+    expect(
+      mockedExecSync.mock.calls.some((call) => String(call[0]).startsWith("git push ")),
+    ).toBe(false);
+  });
+
+  it("records push error but still completes merge when push fails", async () => {
+    setupAiMergeExecSyncWithPush((attempt) => {
+      if (attempt === 1) {
+        const err = new Error("failed to push some refs");
+        (err as Error & { stderr?: string }).stderr = "remote: permission denied";
+        throw err;
+      }
+    });
+
+    const store = createMockStore();
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      pushAfterMerge: true,
+      pushRemote: "origin",
+      mergeStrategy: "direct",
+    });
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(result.merged).toBe(true);
+    expect(result.pushedToRemote).toBe(false);
+    expect(result.pushError).toContain("permission denied");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+  });
+
+  it("uses custom remote and branch when configured", async () => {
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.startsWith("git pull --rebase \"upstream\" \"main\"")) return Buffer.from("");
+      if (cmdStr.startsWith("git push \"upstream\" \"main\"")) return Buffer.from("");
+      if (cmdStr.includes("rev-parse --verify REBASE_HEAD")) {
+        const err = new Error("fatal: Needed a single revision");
+        throw err;
+      }
+      return Buffer.from("");
+    });
+
+    const store = createMockStore();
+    const result = await pushToRemoteAfterMerge(store, "/tmp/root", "FN-050", {
+      ...DEFAULT_SETTINGS,
+      pushAfterMerge: true,
+      pushRemote: "upstream main",
+    });
+
+    expect(result.pushed).toBe(true);
+    expect(
+      mockedExecSync.mock.calls.some((call) => String(call[0]).startsWith('git pull --rebase "upstream" "main"')),
+    ).toBe(true);
+    expect(
+      mockedExecSync.mock.calls.some((call) => String(call[0]).startsWith('git push "upstream" "main"')),
+    ).toBe(true);
+  });
+
+  it("auto-resolves lock-file rebase conflicts and continues", async () => {
+    let rebaseInProgress = false;
+    let hasConflicts = false;
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+
+      if (cmdStr.startsWith('git pull --rebase "origin" "main"')) {
+        hasConflicts = true;
+        rebaseInProgress = true;
+        const err = new Error("rebase conflict") as Error & { stderr?: string };
+        err.stderr = "CONFLICT (content): Merge conflict in pnpm-lock.yaml";
+        throw err;
+      }
+      if (cmdStr.includes("git diff --name-only --diff-filter=U")) {
+        return hasConflicts ? "pnpm-lock.yaml" as any : "" as any;
+      }
+      if (cmdStr.startsWith('git checkout --ours "pnpm-lock.yaml"')) return Buffer.from("");
+      if (cmdStr.startsWith('git add "pnpm-lock.yaml"')) {
+        hasConflicts = false;
+        return Buffer.from("");
+      }
+      if (cmdStr.includes("git rev-parse --verify REBASE_HEAD")) {
+        if (rebaseInProgress) return "rebasehead" as any;
+        const err = new Error("fatal: Needed a single revision") as Error & { status?: number };
+        err.status = 128;
+        throw err;
+      }
+      if (cmdStr.startsWith("GIT_EDITOR=true git rebase --continue")) {
+        rebaseInProgress = false;
+        return Buffer.from("");
+      }
+      if (cmdStr.startsWith('git push "origin" "main"')) return Buffer.from("");
+      if (cmdStr.includes("git symbolic-ref --short HEAD")) return "main" as any;
+
+      return Buffer.from("");
+    });
+
+    const store = createMockStore();
+    const result = await pushToRemoteAfterMerge(store, "/tmp/root", "FN-050", {
+      ...DEFAULT_SETTINGS,
+      pushAfterMerge: true,
+      pushRemote: "origin",
+    });
+
+    expect(result.pushed).toBe(true);
+    expect(
+      mockedExecSync.mock.calls.some((call) => String(call[0]).startsWith('git checkout --ours "pnpm-lock.yaml"')),
+    ).toBe(true);
+    expect(
+      mockedExecSync.mock.calls.some((call) => String(call[0]).startsWith("GIT_EDITOR=true git rebase --continue")),
+    ).toBe(true);
+  });
+
+  it("uses AI to resolve complex rebase conflicts", async () => {
+    let rebaseInProgress = false;
+    let hasConflicts = false;
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn(async () => {
+          hasConflicts = false;
+        }),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+
+      if (cmdStr.startsWith('git pull --rebase "origin" "main"')) {
+        hasConflicts = true;
+        rebaseInProgress = true;
+        const err = new Error("rebase conflict") as Error & { stderr?: string };
+        err.stderr = "CONFLICT (content): Merge conflict in src/app.ts";
+        throw err;
+      }
+      if (cmdStr.includes("git diff --name-only --diff-filter=U")) {
+        return hasConflicts ? "src/app.ts" as any : "" as any;
+      }
+      if (cmdStr.startsWith("git diff-tree -p -w")) return "@@\n-foo\n+bar" as any;
+      if (cmdStr.includes("git rev-parse --verify REBASE_HEAD")) {
+        if (rebaseInProgress) return "rebasehead" as any;
+        const err = new Error("fatal: Needed a single revision") as Error & { status?: number };
+        err.status = 128;
+        throw err;
+      }
+      if (cmdStr.startsWith("GIT_EDITOR=true git rebase --continue")) {
+        rebaseInProgress = false;
+        return Buffer.from("");
+      }
+      if (cmdStr.startsWith('git push "origin" "main"')) return Buffer.from("");
+      if (cmdStr.includes("git symbolic-ref --short HEAD")) return "main" as any;
+
+      return Buffer.from("");
+    });
+
+    const store = createMockStore();
+    const result = await pushToRemoteAfterMerge(store, "/tmp/root", "FN-050", {
+      ...DEFAULT_SETTINGS,
+      pushAfterMerge: true,
+      pushRemote: "origin",
+    });
+
+    expect(result.pushed).toBe(true);
+    expect(mockedCreateHaiAgent).toHaveBeenCalled();
+  });
+
+  it("retries push once after non-fast-forward rejection", async () => {
+    let pushAttempts = 0;
+    let pullAttempts = 0;
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.startsWith('git pull --rebase "origin" "main"')) {
+        pullAttempts += 1;
+        return Buffer.from("");
+      }
+      if (cmdStr.startsWith('git push "origin" "main"')) {
+        pushAttempts += 1;
+        if (pushAttempts === 1) {
+          const err = new Error("non-fast-forward") as Error & { stderr?: string };
+          err.stderr = "[rejected] main -> main (non-fast-forward)";
+          throw err;
+        }
+        return Buffer.from("");
+      }
+      if (cmdStr.includes("git symbolic-ref --short HEAD")) return "main" as any;
+      if (cmdStr.includes("git rev-parse --verify REBASE_HEAD")) {
+        const err = new Error("fatal: Needed a single revision") as Error & { status?: number };
+        err.status = 128;
+        throw err;
+      }
+      return Buffer.from("");
+    });
+
+    const store = createMockStore();
+    const result = await pushToRemoteAfterMerge(store, "/tmp/root", "FN-050", {
+      ...DEFAULT_SETTINGS,
+      pushAfterMerge: true,
+      pushRemote: "origin",
+    });
+
+    expect(result.pushed).toBe(true);
+    expect(pullAttempts).toBe(2);
+    expect(pushAttempts).toBe(2);
+  });
+
+  it("aborts rebase when conflicts remain unresolved", async () => {
+    let rebaseInProgress = false;
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+
+      if (cmdStr.startsWith('git pull --rebase "origin" "main"')) {
+        rebaseInProgress = true;
+        const err = new Error("rebase conflict") as Error & { stderr?: string };
+        err.stderr = "CONFLICT (content): Merge conflict in src/app.ts";
+        throw err;
+      }
+      if (cmdStr.includes("git diff --name-only --diff-filter=U")) return "src/app.ts" as any;
+      if (cmdStr.startsWith("git diff-tree -p -w")) return "@@\n-foo\n+bar" as any;
+      if (cmdStr.includes("git rev-parse --verify REBASE_HEAD")) {
+        if (rebaseInProgress) return "rebasehead" as any;
+        const err = new Error("fatal: Needed a single revision") as Error & { status?: number };
+        err.status = 128;
+        throw err;
+      }
+      if (cmdStr.startsWith("git rebase --abort")) {
+        rebaseInProgress = false;
+        return Buffer.from("");
+      }
+      if (cmdStr.includes("git symbolic-ref --short HEAD")) return "main" as any;
+
+      return Buffer.from("");
+    });
+
+    const store = createMockStore();
+    const result = await pushToRemoteAfterMerge(store, "/tmp/root", "FN-050", {
+      ...DEFAULT_SETTINGS,
+      pushAfterMerge: true,
+      pushRemote: "origin",
+    });
+
+    expect(result.pushed).toBe(false);
+    expect(result.error).toContain("unable to resolve rebase conflicts");
+    expect(
+      mockedExecSync.mock.calls.some((call) => String(call[0]).startsWith("git rebase --abort")),
+    ).toBe(true);
   });
 });
 

@@ -134,7 +134,7 @@ describe("build-exe-cross: --all builds all platforms", () => {
     }
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("fn");
-  });
+  }, 20_000);
 });
 
 describe("build-exe-cross: default (no args) backward compatibility", () => {

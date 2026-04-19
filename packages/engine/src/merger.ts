@@ -71,6 +71,8 @@ const DEPENDENCY_SYNC_TRIGGER_PATTERNS = [
 const VERIFICATION_COMMAND_MAX_BUFFER = 50 * 1024 * 1024;
 const VERIFICATION_LOG_MAX_CHARS = 20_000;
 const WORKFLOW_SCRIPT_OUTPUT_MAX_CHARS = 4_000;
+const PULL_REBASE_TIMEOUT_MS = 120_000;
+const PUSH_TIMEOUT_MS = 60_000;
 
 /** Maximum characters for commit log in merge prompt — prevents context overflow on large branches */
 const MERGE_COMMIT_LOG_MAX_CHARS = 5000;
@@ -1307,6 +1309,327 @@ export interface MergerOptions {
   agentStore?: import("@fusion/core").AgentStore;
 }
 
+function quoteArg(value: string): string {
+  return `"${value.replace(/(["\\$`])/g, "\\$1")}"`;
+}
+
+function getCommandErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    const stderr = (error as Error & { stderr?: string | Buffer }).stderr;
+    if (typeof stderr === "string" && stderr.trim()) return stderr.trim();
+    if (Buffer.isBuffer(stderr) && stderr.toString().trim()) return stderr.toString().trim();
+    return error.message;
+  }
+  return String(error);
+}
+
+function isNonFastForwardPushError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return normalized.includes("non-fast-forward")
+    || normalized.includes("[rejected]")
+    || normalized.includes("fetch first")
+    || normalized.includes("failed to push some refs");
+}
+
+function isRebaseInProgress(rootDir: string): boolean {
+  try {
+    execSync("git rev-parse --verify REBASE_HEAD", {
+      cwd: rootDir,
+      stdio: "pipe",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function parsePushRemoteTarget(rootDir: string, pushRemote?: string): { remote: string; branch: string } {
+  const rawTarget = pushRemote?.trim() || "origin";
+  const [remoteToken, ...branchTokens] = rawTarget.split(/\s+/).filter(Boolean);
+  const remote = remoteToken || "origin";
+
+  let branch = branchTokens.join(" ").trim();
+  if (!branch) {
+    branch = execSync("git symbolic-ref --short HEAD", {
+      cwd: rootDir,
+      encoding: "utf-8",
+      stdio: "pipe",
+    }).trim();
+  }
+
+  if (!branch) {
+    throw new Error(`Unable to determine branch for push target "${rawTarget}"`);
+  }
+
+  return { remote, branch };
+}
+
+async function resolveComplexRebaseConflictsWithAi(
+  store: TaskStore,
+  rootDir: string,
+  taskId: string,
+  settings: Settings,
+  conflictedFiles: string[],
+  options?: { onAgentText?: (delta: string) => void },
+): Promise<void> {
+  mergerLog.log(`${taskId}: resolving ${conflictedFiles.length} complex rebase conflict(s) with AI`);
+
+  const includeTaskId = settings.includeTaskIdInCommit !== false;
+  const authorArg = getCommitAuthorArg(settings);
+  const basePrompt = buildMergeSystemPrompt(includeTaskId, settings.agentPrompts, authorArg);
+  const systemPrompt = `${basePrompt}
+
+## Rebase conflict-only mode
+You are assisting with a paused \`git pull --rebase\`.
+- Resolve conflicted files and stage them with \`git add\`.
+- Do NOT run \`git commit\`, \`git merge\`, or \`git rebase --continue\`.
+- Do NOT perform unrelated edits outside conflicted files.
+- Finish when all conflicts are resolved and staged.`;
+
+  const agentLogger = new AgentLogger({
+    store,
+    taskId,
+    agent: "merger",
+    onAgentText: options?.onAgentText
+      ? (_id, delta) => options.onAgentText?.(delta)
+      : undefined,
+  });
+
+  const { session } = await createKbAgent({
+    cwd: rootDir,
+    systemPrompt,
+    tools: "coding",
+    onText: agentLogger.onText,
+    onThinking: agentLogger.onThinking,
+    onToolStart: agentLogger.onToolStart,
+    onToolEnd: agentLogger.onToolEnd,
+    defaultProvider: settings.defaultProvider,
+    defaultModelId: settings.defaultModelId,
+    defaultThinkingLevel: settings.defaultThinkingLevel,
+  });
+
+  const prompt = [
+    `Resolve rebase conflicts for task ${taskId}.`,
+    "",
+    "Conflicted files:",
+    ...conflictedFiles.map((file) => `- ${file}`),
+    "",
+    "After resolving each file, stage it with `git add <file>`. Do not create a commit.",
+  ].join("\n");
+
+  try {
+    await withRateLimitRetry(async () => {
+      await promptWithFallback(session, prompt);
+      checkSessionError(session);
+    }, {
+      onRetry: (attempt, delayMs, error) => {
+        mergerLog.warn(
+          `${taskId}: rate limited while resolving rebase conflicts — retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
+        );
+      },
+    });
+  } finally {
+    session.dispose();
+  }
+}
+
+async function resolveRebaseConflictSet(
+  store: TaskStore,
+  rootDir: string,
+  taskId: string,
+  settings: Settings,
+  options?: { onAgentText?: (delta: string) => void },
+): Promise<void> {
+  const conflictedFiles = await getConflictedFiles(rootDir);
+  if (conflictedFiles.length === 0) return;
+
+  mergerLog.log(`${taskId}: found ${conflictedFiles.length} rebase conflict(s)`);
+
+  const complexFiles: string[] = [];
+
+  for (const file of conflictedFiles) {
+    const conflictType = await classifyConflict(file, rootDir);
+    if (conflictType === "lockfile-ours") {
+      await resolveWithOurs(file, rootDir);
+      continue;
+    }
+    if (conflictType === "generated-theirs") {
+      await resolveWithTheirs(file, rootDir);
+      continue;
+    }
+    if (conflictType === "trivial-whitespace") {
+      await resolveTrivialWhitespace(file, rootDir);
+      continue;
+    }
+    complexFiles.push(file);
+  }
+
+  if (complexFiles.length > 0) {
+    await resolveComplexRebaseConflictsWithAi(store, rootDir, taskId, settings, complexFiles, options);
+  }
+
+  const remaining = await getConflictedFiles(rootDir);
+  if (remaining.length > 0) {
+    throw new Error(`Unresolved rebase conflicts remain: ${remaining.join(", ")}`);
+  }
+}
+
+async function pullWithRebaseAndResolveConflicts(
+  store: TaskStore,
+  rootDir: string,
+  taskId: string,
+  settings: Settings,
+  remote: string,
+  branch: string,
+  options?: { onAgentText?: (delta: string) => void },
+): Promise<void> {
+  const pullCommand = `git pull --rebase ${quoteArg(remote)} ${quoteArg(branch)}`;
+  try {
+    await execAsync(pullCommand, {
+      cwd: rootDir,
+      timeout: PULL_REBASE_TIMEOUT_MS,
+      maxBuffer: VERIFICATION_COMMAND_MAX_BUFFER,
+      encoding: "utf-8",
+    });
+    mergerLog.log(`${taskId}: git pull --rebase succeeded for ${remote}/${branch}`);
+    return;
+  } catch (pullError: unknown) {
+    const conflictedFiles = await getConflictedFiles(rootDir);
+    if (conflictedFiles.length === 0) {
+      throw new Error(`git pull --rebase failed: ${getCommandErrorMessage(pullError)}`);
+    }
+
+    mergerLog.warn(
+      `${taskId}: git pull --rebase produced ${conflictedFiles.length} conflict(s); attempting resolution`,
+    );
+
+    try {
+      await resolveRebaseConflictSet(store, rootDir, taskId, settings, options);
+
+      for (let attempt = 1; attempt <= 10; attempt++) {
+        if (!isRebaseInProgress(rootDir)) {
+          mergerLog.log(`${taskId}: rebase conflicts resolved`);
+          return;
+        }
+
+        try {
+          await execAsync("GIT_EDITOR=true git rebase --continue", {
+            cwd: rootDir,
+            timeout: PULL_REBASE_TIMEOUT_MS,
+            maxBuffer: VERIFICATION_COMMAND_MAX_BUFFER,
+            encoding: "utf-8",
+          });
+          mergerLog.log(`${taskId}: git rebase --continue succeeded (attempt ${attempt})`);
+        } catch (continueError: unknown) {
+          const currentConflicts = await getConflictedFiles(rootDir);
+          if (currentConflicts.length === 0) {
+            throw new Error(`git rebase --continue failed: ${getCommandErrorMessage(continueError)}`);
+          }
+          mergerLog.warn(`${taskId}: rebase continue hit additional conflicts; retrying resolution`);
+          await resolveRebaseConflictSet(store, rootDir, taskId, settings, options);
+          continue;
+        }
+
+        const remainingConflicts = await getConflictedFiles(rootDir);
+        if (remainingConflicts.length > 0) {
+          mergerLog.warn(`${taskId}: rebase continue left conflicts; retrying resolution`);
+          await resolveRebaseConflictSet(store, rootDir, taskId, settings, options);
+          continue;
+        }
+      }
+
+      throw new Error("Exceeded maximum rebase conflict resolution attempts");
+    } catch (resolutionError: unknown) {
+      if (isRebaseInProgress(rootDir)) {
+        try {
+          await execAsync("git rebase --abort", {
+            cwd: rootDir,
+            timeout: PUSH_TIMEOUT_MS,
+            maxBuffer: VERIFICATION_COMMAND_MAX_BUFFER,
+            encoding: "utf-8",
+          });
+          mergerLog.warn(`${taskId}: aborted rebase after unresolved conflicts`);
+        } catch (abortError: unknown) {
+          mergerLog.warn(`${taskId}: failed to abort rebase: ${getCommandErrorMessage(abortError)}`);
+        }
+      }
+
+      throw new Error(`unable to resolve rebase conflicts: ${getCommandErrorMessage(resolutionError)}`);
+    }
+  }
+}
+
+/**
+ * Push the merged result to the configured remote after a successful direct merge.
+ * Failures are non-fatal because the merge commit already exists locally.
+ */
+export async function pushToRemoteAfterMerge(
+  store: TaskStore,
+  rootDir: string,
+  taskId: string,
+  settings: Settings,
+  options?: { onAgentText?: (delta: string) => void },
+): Promise<{ pushed: boolean; error?: string }> {
+  let target: { remote: string; branch: string };
+
+  try {
+    target = parsePushRemoteTarget(rootDir, settings.pushRemote);
+  } catch (error: unknown) {
+    const message = getCommandErrorMessage(error);
+    mergerLog.error(`${taskId}: invalid push remote configuration: ${message}`);
+    return { pushed: false, error: message };
+  }
+
+  const { remote, branch } = target;
+  mergerLog.log(`${taskId}: push-after-merge enabled; syncing ${remote}/${branch}`);
+
+  try {
+    await pullWithRebaseAndResolveConflicts(store, rootDir, taskId, settings, remote, branch, options);
+  } catch (error: unknown) {
+    const message = getCommandErrorMessage(error);
+    mergerLog.error(`${taskId}: pull --rebase before push failed: ${message}`);
+    return { pushed: false, error: message };
+  }
+
+  const pushCommand = `git push ${quoteArg(remote)} ${quoteArg(branch)}`;
+
+  try {
+    await execAsync(pushCommand, {
+      cwd: rootDir,
+      timeout: PUSH_TIMEOUT_MS,
+      maxBuffer: VERIFICATION_COMMAND_MAX_BUFFER,
+      encoding: "utf-8",
+    });
+    mergerLog.log(`${taskId}: pushed merged result to ${remote}/${branch}`);
+    return { pushed: true };
+  } catch (firstPushError: unknown) {
+    const firstMessage = getCommandErrorMessage(firstPushError);
+    mergerLog.warn(`${taskId}: initial push failed: ${firstMessage}`);
+
+    if (!isNonFastForwardPushError(firstMessage)) {
+      return { pushed: false, error: firstMessage };
+    }
+
+    mergerLog.log(`${taskId}: push rejected as non-fast-forward; retrying pull --rebase and push once`);
+
+    try {
+      await pullWithRebaseAndResolveConflicts(store, rootDir, taskId, settings, remote, branch, options);
+      await execAsync(pushCommand, {
+        cwd: rootDir,
+        timeout: PUSH_TIMEOUT_MS,
+        maxBuffer: VERIFICATION_COMMAND_MAX_BUFFER,
+        encoding: "utf-8",
+      });
+      mergerLog.log(`${taskId}: push succeeded after non-fast-forward retry`);
+      return { pushed: true };
+    } catch (retryError: unknown) {
+      const retryMessage = getCommandErrorMessage(retryError);
+      mergerLog.error(`${taskId}: push retry failed: ${retryMessage}`);
+      return { pushed: false, error: retryMessage };
+    }
+  }
+}
+
 /**
  * AI-powered merge with 3-attempt retry logic when autoResolveConflicts is enabled.
  *
@@ -1802,6 +2125,26 @@ export async function aiMergeTask(
         await audit.git({ type: "worktree:remove", target: worktreePath });
         result.worktreeRemoved = true;
       } catch { /* non-fatal */ }
+    }
+  }
+
+  // 7b. Push to remote if configured
+  if (settings.pushAfterMerge && settings.mergeStrategy !== "pull-request") {
+    try {
+      const pushResult = await pushToRemoteAfterMerge(store, rootDir, taskId, settings, options);
+      if (pushResult.pushed) {
+        mergerLog.log(`${taskId}: pushed merged result to remote`);
+      } else {
+        mergerLog.warn(`${taskId}: push to remote failed: ${pushResult.error}`);
+      }
+      result.pushedToRemote = pushResult.pushed;
+      if (pushResult.error) {
+        result.pushError = pushResult.error;
+      }
+    } catch (err: any) {
+      mergerLog.error(`${taskId}: push to remote error: ${err.message}`);
+      result.pushedToRemote = false;
+      result.pushError = err.message;
     }
   }
 

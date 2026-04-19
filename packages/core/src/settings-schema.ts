@@ -63,6 +63,8 @@ export const DEFAULT_PROJECT_SETTINGS = {
   groupOverlappingFiles: true,
   autoMerge: true,
   mergeStrategy: "direct",
+  pushAfterMerge: false,
+  pushRemote: "origin",
   worktreeInitCommand: undefined,
   testCommand: undefined,
   buildCommand: undefined,

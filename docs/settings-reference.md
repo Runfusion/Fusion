@@ -84,6 +84,8 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `groupOverlappingFiles` | `boolean` | `true` | Serialize execution when file scopes overlap. |
 | `autoMerge` | `boolean` | `true` | Auto-finalize tasks from `in-review`. |
 | `mergeStrategy` | `"direct" \| "pull-request"` | `"direct"` | Completion mode (local direct merge vs PR-first). |
+| `pushAfterMerge` | `boolean` | `false` | Auto-push to remote after successful direct merge. Includes pulling latest and AI conflict resolution. |
+| `pushRemote` | `string` | `"origin"` | Git remote (and optional branch) to push to after merge. |
 | `worktreeInitCommand` | `string` | `undefined` | Shell command run after worktree creation. |
 | `testCommand` | `string` | `undefined` | Merge-time test command (hard gate). When unset, Fusion auto-detects from lockfile. |
 | `buildCommand` | `string` | `undefined` | Merge-time build command (hard gate). |

@@ -2215,6 +2215,36 @@ export function SettingsModal({
               </label>
               <small>When enabled, lock files (package-lock.json, pnpm-lock.yaml, etc.) are resolved using 'ours' strategy, generated files (dist/*, *.gen.ts) using 'theirs' strategy, and trivial whitespace conflicts are auto-resolved without spawning an AI agent. Complex code conflicts still require AI review.</small>
             </div>
+            <div className="form-group">
+              <label htmlFor="pushAfterMerge" className="checkbox-label">
+                <input
+                  id="pushAfterMerge"
+                  type="checkbox"
+                  checked={form.pushAfterMerge === true}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, pushAfterMerge: e.target.checked }))
+                  }
+                />
+                Push to remote after merge
+              </label>
+              <small>When enabled, the merged result is automatically pushed to the configured git remote. This includes pulling the latest from the remote first (rebase) and resolving any conflicts with AI if needed.</small>
+            </div>
+
+            {form.pushAfterMerge && (
+              <div className="form-group">
+                <label htmlFor="pushRemote">Push Remote</label>
+                <input
+                  id="pushRemote"
+                  type="text"
+                  placeholder="origin"
+                  value={form.pushRemote || ""}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, pushRemote: e.target.value || undefined }))
+                  }
+                />
+                <small>Git remote to push to (e.g. "origin"). Can include branch name (e.g. "origin main"). Default: "origin".</small>
+              </div>
+            )}
           </>
         );
       case "memory": {

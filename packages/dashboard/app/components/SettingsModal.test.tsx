@@ -68,6 +68,8 @@ const defaultSettings = {
   groupOverlappingFiles: true,
   autoMerge: true,
   mergeStrategy: "direct",
+  pushAfterMerge: false,
+  pushRemote: "origin",
   recycleWorktrees: false,
   worktreeNaming: "random",
   includeTaskIdInCommit: true,
@@ -630,6 +632,67 @@ describe("SettingsModal", () => {
 
       const editor = await screen.findByLabelText("Editor for .fusion/memory/DREAMS.md") as HTMLTextAreaElement;
       expect(editor.value).toContain("Dreams");
+    });
+  });
+
+  describe("Merge section", () => {
+    it("shows push-after-merge toggle and keeps Push Remote hidden by default", async () => {
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      await userEvent.click(screen.getAllByText("Merge")[0]);
+
+      const pushAfterMergeToggle = screen.getByRole("checkbox", {
+        name: /push to remote after merge/i,
+      });
+      expect(pushAfterMergeToggle).not.toBeChecked();
+      expect(screen.queryByLabelText("Push Remote")).not.toBeInTheDocument();
+    });
+
+    it("shows Push Remote input when push-after-merge is enabled", async () => {
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      await userEvent.click(screen.getAllByText("Merge")[0]);
+      await userEvent.click(
+        screen.getByRole("checkbox", { name: /push to remote after merge/i }),
+      );
+
+      expect(screen.getByLabelText("Push Remote")).toBeInTheDocument();
+      expect(screen.getByPlaceholderText("origin")).toBeInTheDocument();
+    });
+
+    it("includes pushAfterMerge and pushRemote in the save payload", async () => {
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      await userEvent.click(screen.getAllByText("Merge")[0]);
+      await userEvent.click(
+        screen.getByRole("checkbox", { name: /push to remote after merge/i }),
+      );
+
+      const pushRemoteInput = screen.getByLabelText("Push Remote");
+      await userEvent.clear(pushRemoteInput);
+      await userEvent.type(pushRemoteInput, "upstream main");
+
+      await userEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+      });
+
+      const payload = mockUpdateSettings.mock.calls[0][0];
+      expect(payload.pushAfterMerge).toBe(true);
+      expect(payload.pushRemote).toBe("upstream main");
     });
   });
 

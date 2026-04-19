@@ -1045,6 +1045,16 @@ export interface ProjectSettings {
    *    before merging through GitHub
    *  Default: "direct" for backward compatibility. */
   mergeStrategy?: MergeStrategy;
+  /** When true, automatically push to the configured remote after a successful direct merge.
+   *  The push process includes pulling the latest from the remote (rebase) first.
+   *  If conflicts arise during the pull, they are resolved using the AI conflict resolution pipeline.
+   *  Only applies when mergeStrategy is "direct". Default: false. */
+  pushAfterMerge?: boolean;
+  /** The git remote and branch to push to after merging (e.g. "origin", "origin main").
+   *  When set to just a remote name (e.g. "origin"), the current branch is pushed.
+   *  When set to "remote branch" format, both the remote and branch are specified.
+   *  Only used when pushAfterMerge is true. Default: "origin". */
+  pushRemote?: string;
   /** Shell command to run inside each new worktree immediately after creation.
    *  Useful for project-specific setup (e.g. `pnpm install`, `cp .env.local .env`). */
   worktreeInitCommand?: string;
@@ -1426,6 +1436,10 @@ export interface MergeResult extends MergeDetails {
   worktreeRemoved: boolean;
   branchDeleted: boolean;
   error?: string;
+  /** Whether the merged result was pushed to the remote. Only set when pushAfterMerge is enabled. */
+  pushedToRemote?: boolean;
+  /** Error message if push to remote failed. Non-fatal — merge is already committed locally. */
+  pushError?: string;
   /** Internal flag to track if a build retry has been attempted. Not persisted. */
   _buildRetried?: boolean;
 }
