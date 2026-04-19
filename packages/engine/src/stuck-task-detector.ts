@@ -432,7 +432,8 @@ export class StuckTaskDetector {
     let settings: Settings;
     try {
       settings = await this.store.getSettings();
-    } catch {
+    } catch (err) {
+      stuckLog.error("Failed to read settings — skipping stuck task detection cycle:", err);
       return; // Can't read settings — skip this cycle
     }
 

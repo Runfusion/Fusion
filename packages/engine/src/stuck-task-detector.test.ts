@@ -688,6 +688,7 @@ describe("StuckTaskDetector", () => {
     });
 
     it("skips check when settings cannot be read", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       store = createMockStore({
         getSettings: vi.fn().mockRejectedValue(new Error("Settings error")),
       });
@@ -703,7 +704,74 @@ describe("StuckTaskDetector", () => {
 
       // Should not throw, just skip
       expect(store.moveTask).not.toHaveBeenCalled();
+      // Should log the settings-read failure
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Failed to read settings"),
+        expect.any(Error),
+      );
 
+      errorSpy.mockRestore();
+      vi.useRealTimers();
+    });
+
+    it("keeps task tracked after settings-read failure", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      store = createMockStore({
+        getSettings: vi.fn().mockRejectedValue(new Error("DB locked")),
+      });
+      const customDetector = new StuckTaskDetector(store);
+      const session = createMockSession();
+
+      customDetector.trackTask("FN-001", session);
+      expect(customDetector.trackedCount).toBe(1);
+
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      vi.advanceTimersByTime(61000);
+
+      await customDetector.checkNow();
+
+      // Task should still be tracked — not untracked or disposed
+      expect(customDetector.trackedCount).toBe(1);
+      expect(session.dispose).not.toHaveBeenCalled();
+
+      errorSpy.mockRestore();
+      vi.useRealTimers();
+    });
+
+    it("recovers on next cycle after transient settings-read failure", async () => {
+      let callCount = 0;
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      store = createMockStore({
+        getSettings: vi.fn().mockImplementation(() => {
+          callCount++;
+          if (callCount === 1) return Promise.reject(new Error("transient"));
+          return Promise.resolve({ taskStuckTimeoutMs: 60000 });
+        }),
+      });
+      const onStuck = vi.fn();
+      const customDetector = new StuckTaskDetector(store, { onStuck });
+      const session = createMockSession();
+
+      customDetector.trackTask("FN-001", session);
+
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      vi.advanceTimersByTime(61000);
+
+      // First check: settings read fails — logged but skipped
+      await customDetector.checkNow();
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Failed to read settings"),
+        expect.any(Error),
+      );
+      expect(onStuck).not.toHaveBeenCalled();
+
+      // Second check: settings read succeeds — stuck detected normally
+      await customDetector.checkNow();
+      expect(onStuck).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId: "FN-001", reason: "inactivity" }),
+      );
+
+      errorSpy.mockRestore();
       vi.useRealTimers();
     });
   });
