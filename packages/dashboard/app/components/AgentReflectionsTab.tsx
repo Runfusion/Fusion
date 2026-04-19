@@ -72,6 +72,13 @@ function getTriggerLabel(trigger: string): string {
   }
 }
 
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error && err.message) {
+    return err.message;
+  }
+  return String(err);
+}
+
 export function AgentReflectionsTab({ agentId, projectId, addToast }: AgentReflectionsTabProps) {
   const [reflections, setReflections] = useState<AgentReflection[]>([]);
   const [performance, setPerformance] = useState<AgentPerformanceSummary | null>(null);
@@ -103,12 +110,26 @@ export function AgentReflectionsTab({ agentId, projectId, addToast }: AgentRefle
   const handleReflectNow = async () => {
     setIsReflecting(true);
     try {
-      await triggerAgentReflection(agentId, projectId);
+      const reflection = await triggerAgentReflection(agentId, projectId);
+      if (!reflection) {
+        addToast("Not enough history to generate a reflection yet", "error");
+        return;
+      }
+
       addToast("Reflection generated successfully", "success");
       setIsLoading(true);
       await loadData();
-    } catch (err: any) {
-      addToast(`Failed to generate reflection: ${err.message}`, "error");
+    } catch (err: unknown) {
+      const message = getErrorMessage(err);
+      const normalizedMessage = message.toLowerCase();
+
+      if (normalizedMessage.includes("agent not found") || normalizedMessage.includes("not found")) {
+        addToast("This agent is no longer available. It may have been deleted.", "error");
+      } else if (normalizedMessage.includes("insufficient history")) {
+        addToast("Not enough history to generate a reflection yet", "error");
+      } else {
+        addToast(`Failed to generate reflection: ${message}`, "error");
+      }
     } finally {
       setIsReflecting(false);
     }

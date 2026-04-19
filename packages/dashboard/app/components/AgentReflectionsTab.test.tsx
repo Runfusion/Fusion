@@ -206,6 +206,62 @@ describe("AgentReflectionsTab", () => {
     expect(mockedFetchAgentPerformance).toHaveBeenCalledTimes(2); // Initial + refresh
   });
 
+  it("shows not-enough-history toast when Reflect Now returns null", async () => {
+    mockedTriggerAgentReflection.mockResolvedValue(null);
+
+    render(
+      <AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Reflect Now")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("Reflect Now"));
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith("Not enough history to generate a reflection yet", "error");
+    });
+  });
+
+  it("shows agent-deleted toast when Reflect Now returns agent-not-found", async () => {
+    mockedTriggerAgentReflection.mockRejectedValue(new Error("Agent not found"));
+
+    render(
+      <AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Reflect Now")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("Reflect Now"));
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith("This agent is no longer available. It may have been deleted.", "error");
+    });
+  });
+
+  it("shows not-enough-history toast when Reflect Now fails with insufficient-history error", async () => {
+    mockedTriggerAgentReflection.mockRejectedValue(
+      new Error("Unable to generate reflection — insufficient history or AI unavailable")
+    );
+
+    render(
+      <AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Reflect Now")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("Reflect Now"));
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith("Not enough history to generate a reflection yet", "error");
+    });
+  });
+
   it("shows error toast when Reflect Now fails", async () => {
     mockedTriggerAgentReflection.mockRejectedValue(new Error("Service unavailable"));
 

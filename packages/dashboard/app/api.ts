@@ -5320,8 +5320,8 @@ export function fetchAgentReflection(agentId: string, projectId?: string): Promi
 }
 
 /** Trigger a manual reflection for an agent. */
-export function triggerAgentReflection(agentId: string, projectId?: string): Promise<AgentReflection> {
-  return api<AgentReflection>(withProjectId(`/agents/${encodeURIComponent(agentId)}/reflections`, projectId), {
+export function triggerAgentReflection(agentId: string, projectId?: string): Promise<AgentReflection | null> {
+  return api<AgentReflection | null>(withProjectId(`/agents/${encodeURIComponent(agentId)}/reflections`, projectId), {
     method: "POST",
   });
 }

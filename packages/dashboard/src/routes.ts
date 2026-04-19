@@ -13743,6 +13743,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
 
       const reflection = await reflectionService.generateReflection(agentId, "manual");
+      if (!reflection) {
+        throw internalError("Unable to generate reflection — insufficient history or AI unavailable");
+      }
 
       res.status(201).json(reflection);
     } catch (err: unknown) {
