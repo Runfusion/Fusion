@@ -3241,7 +3241,7 @@ describe("TaskExecutor pause behavior", () => {
   });
 });
 
-describe("session tracking failure diagnostics", () => {
+describe("swallowed async store failure observability", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedWithRateLimitRetry.mockImplementation((fn: () => Promise<unknown>) => fn());
@@ -3309,7 +3309,7 @@ describe("session tracking failure diagnostics", () => {
 
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("FN-001: failed to log rate-limit retry 2: step-session retry log failure"),
+      expect.stringContaining("FN-001 failed to log rate-limit retry: step-session retry log failure"),
     );
 
     warnSpy.mockRestore();
@@ -3371,7 +3371,7 @@ describe("session tracking failure diagnostics", () => {
 
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("FN-001: failed to log rate-limit retry 1: main-agent retry log failure"),
+      expect.stringContaining("FN-001 failed to log rate-limit retry: main-agent retry log failure"),
     );
 
     warnSpy.mockRestore();
@@ -3421,7 +3421,7 @@ describe("session tracking failure diagnostics", () => {
 
     expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(2);
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("FN-001: failed to persist retry session file: retry sessionFile write failed"),
+      expect.stringContaining("FN-001 failed to persist retry sessionFile: retry sessionFile write failed"),
     );
 
     warnSpy.mockRestore();
@@ -3462,7 +3462,7 @@ describe("session tracking failure diagnostics", () => {
 
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("FN-001: failed to clear session file on exit: session clear failed"),
+      expect.stringContaining("FN-001 failed to clear sessionFile: session clear failed"),
     );
 
     warnSpy.mockRestore();
@@ -3492,7 +3492,7 @@ describe("session tracking failure diagnostics", () => {
       await Promise.resolve();
 
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Failed to delete spawned child agent child-007"),
+        expect.stringContaining("Failed to delete spawned agent child-007: delete failed"),
       );
     } finally {
       warnSpy.mockRestore();

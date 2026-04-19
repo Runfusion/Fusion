@@ -1434,7 +1434,7 @@ export class TaskExecutor {
             executorLog.warn(`⏳ ${task.id} rate limited — retry ${attempt} in ${delaySec}s: ${error.message}`);
             this.store.logEntry(task.id, `Rate limited — retry ${attempt} in ${delaySec}s`, undefined, this.currentRunContext).catch((err: unknown) => {
               const msg = err instanceof Error ? err.message : String(err);
-              executorLog.warn(`${task.id}: failed to log rate-limit retry ${attempt}: ${msg}`);
+              executorLog.warn(`${task.id} failed to log rate-limit retry: ${msg}`);
             });
           },
         });
@@ -1917,7 +1917,7 @@ export class TaskExecutor {
             if (retrySessionFile) {
               this.store.updateTask(task.id, { sessionFile: retrySessionFile }).catch((err: unknown) => {
                 const msg = err instanceof Error ? err.message : String(err);
-                executorLog.warn(`${task.id}: failed to persist retry session file: ${msg}`);
+                executorLog.warn(`${task.id} failed to persist retry sessionFile: ${msg}`);
               });
             }
 
@@ -2006,7 +2006,7 @@ export class TaskExecutor {
           if (!wasPaused && !this.pausedAborted.has(task.id)) {
             this.store.updateTask(task.id, { sessionFile: null }).catch((err: unknown) => {
               const msg = err instanceof Error ? err.message : String(err);
-              executorLog.warn(`${task.id}: failed to clear session file on exit: ${msg}`);
+              executorLog.warn(`${task.id} failed to clear sessionFile: ${msg}`);
             });
           }
           // Invoke plugin onAgentRunEnd hook (fire-and-forget)
@@ -2021,7 +2021,7 @@ export class TaskExecutor {
           executorLog.warn(`⏳ ${task.id} rate limited — retry ${attempt} in ${delaySec}s: ${error.message}`);
           this.store.logEntry(task.id, `Rate limited — retry ${attempt} in ${delaySec}s`, undefined, this.currentRunContext).catch((err: unknown) => {
             const msg = err instanceof Error ? err.message : String(err);
-            executorLog.warn(`${task.id}: failed to log rate-limit retry ${attempt}: ${msg}`);
+            executorLog.warn(`${task.id} failed to log rate-limit retry: ${msg}`);
           });
         },
       });
@@ -4187,7 +4187,7 @@ and show an appropriate message to the user.\`
     void setTimeout(() => {
       this.options.agentStore?.deleteAgent(childId).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
-        executorLog.warn(`Failed to delete spawned child agent ${childId}: ${msg}`);
+        executorLog.warn(`Failed to delete spawned agent ${childId}: ${msg}`);
       });
     }, 5000);
 
