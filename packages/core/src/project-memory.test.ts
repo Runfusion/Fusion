@@ -103,6 +103,19 @@ describe("project-memory", () => {
       expect(content).toBe(getDefaultMemoryScaffold());
     });
 
+    it("preserves migration-seeded legacy content when long-term memory is created", async () => {
+      await mkdir(join(testDir, ".fusion"), { recursive: true });
+      const legacyContent = "# Legacy Memory\n\nPreserve me";
+      await writeFile(join(testDir, LEGACY_MEMORY_FILE_PATH), legacyContent, "utf-8");
+
+      const created = await ensureMemoryFile(testDir);
+
+      expect(created).toBe(true);
+      expect(existsSync(memoryFilePath(testDir))).toBe(true);
+      const content = await readProjectMemory(testDir);
+      expect(content).toBe(legacyContent);
+    });
+
     it("creates the .fusion directory if missing", async () => {
       expect(existsSync(join(testDir, ".fusion"))).toBe(false);
       await ensureMemoryFile(testDir);

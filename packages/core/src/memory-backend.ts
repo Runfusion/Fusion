@@ -654,7 +654,7 @@ function normalizeMemoryRequestPath(rawPath: string): string {
   }
   throw new MemoryBackendError(
     "UNSUPPORTED",
-    `Memory path '${rawPath}' is outside allowed files: MEMORY.md, DREAMS.md, memory/YYYY-MM-DD.md`,
+    `Memory path '${rawPath}' is outside allowed files: .fusion/memory/MEMORY.md, .fusion/memory/DREAMS.md, .fusion/memory/YYYY-MM-DD.md`,
     "memory",
   );
 }
@@ -789,12 +789,14 @@ function normalizeQmdSearchResultPath(rootDir: string, rawPath: unknown): string
   }
 
   const lowerCandidate = candidate.toLowerCase();
-  const legacyLower = LEGACY_MEMORY_FILE_PATH.toLowerCase();
-  if (lowerCandidate === legacyLower || lowerCandidate.endsWith(`/${legacyLower}`)) {
-    return LEGACY_MEMORY_FILE_PATH;
-  }
-
   const normalizedBaseName = basename(candidate).toLowerCase();
+  const normalizedDirName = dirname(lowerCandidate).replace(/\\/g, "/");
+
+  // Map legacy top-level memory paths from stale qmd indexes to the canonical
+  // layered long-term path without exposing legacy paths to callers.
+  if (normalizedBaseName === "memory.md" && (normalizedDirName === ".fusion" || normalizedDirName.endsWith("/.fusion"))) {
+    return `${MEMORY_WORKSPACE_PATH}/${MEMORY_LONG_TERM_FILENAME}`;
+  }
   if (normalizedBaseName === MEMORY_LONG_TERM_FILENAME.toLowerCase()) {
     return `${MEMORY_WORKSPACE_PATH}/${MEMORY_LONG_TERM_FILENAME}`;
   }

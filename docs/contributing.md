@@ -109,7 +109,7 @@ When enabled, Fusion uses OpenClaw-style memory files:
 - `.fusion/memory/MEMORY.md` — long-term project memory
 - `.fusion/memory/YYYY-MM-DD.md` — daily running notes
 - `.fusion/memory/DREAMS.md` — dream-processing memory file
-- Legacy `.fusion/memory.md` is a deprecated legacy fallback (migration seed/alias) and should not be treated as canonical
+- The legacy top-level memory file is a deprecated migration fallback (seed/alias behavior) and should not be treated as canonical
 
 Use project memory for reusable patterns, constraints, and pitfalls that should persist across tasks.
 

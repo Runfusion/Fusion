@@ -24,6 +24,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
   ensureOpenClawMemoryFiles,
+  getDefaultLongTermMemoryScaffold,
   memoryLongTermPath,
   type MemorySearchOptions,
   type MemorySearchResult,
@@ -88,12 +89,15 @@ export function getDefaultMemoryScaffold(): string {
  */
 export async function ensureMemoryFile(rootDir: string): Promise<boolean> {
   const filePath = memoryFilePath(rootDir);
-  const legacyPath = join(rootDir, ".fusion", "memory.md");
-  const hasLegacySeed = existsSync(legacyPath);
-
   const { longTermCreated } = await ensureOpenClawMemoryFiles(rootDir);
-  if (longTermCreated && !hasLegacySeed) {
-    await writeFile(filePath, getDefaultMemoryScaffold(), "utf-8");
+
+  // Ensure direct bootstrap uses the historical scaffold expected by this module.
+  // If migration seeded from an older legacy file, preserve that seeded content.
+  if (longTermCreated) {
+    const createdContent = await readFile(filePath, "utf-8");
+    if (createdContent === getDefaultLongTermMemoryScaffold()) {
+      await writeFile(filePath, getDefaultMemoryScaffold(), "utf-8");
+    }
   }
 
   return longTermCreated;
@@ -272,15 +276,6 @@ export async function ensureMemoryFileWithBackend(
   if (backend.exists) {
     const exists = await backend.exists(rootDir);
     if (exists) {
-      if (backend.capabilities.writable) {
-        await ensureOpenClawMemoryFiles(rootDir);
-        if (!existsSync(memoryFilePath(rootDir))) {
-          const existingContent = await readProjectMemory(rootDir);
-          if (existingContent) {
-            await backend.write(rootDir, existingContent);
-          }
-        }
-      }
       refreshQmdIfNeeded();
       return false; // Memory already exists, don't overwrite
     }
@@ -288,15 +283,6 @@ export async function ensureMemoryFileWithBackend(
     // Fall back to direct file check
     const filePath = memoryFilePath(rootDir);
     if (existsSync(filePath)) {
-      if (backend.capabilities.writable) {
-        await ensureOpenClawMemoryFiles(rootDir);
-        if (!existsSync(memoryFilePath(rootDir))) {
-          const existingContent = await readProjectMemory(rootDir);
-          if (existingContent) {
-            await backend.write(rootDir, existingContent);
-          }
-        }
-      }
       refreshQmdIfNeeded();
       return false; // Memory already exists, don't overwrite
     }
@@ -309,8 +295,8 @@ export async function ensureMemoryFileWithBackend(
   }
 
   // OpenClaw-style memory layers are always bootstrapped for writable memory
-  // backends. The legacy `.fusion/memory.md` file remains as a compatibility
-  // source, but new writes go to `.fusion/memory/MEMORY.md`.
+  // backends. `ensureOpenClawMemoryFiles()` handles one-way migration seeding
+  // from the legacy top-level memory file when upgrading older projects.
   if (backend.capabilities.writable) {
     await ensureOpenClawMemoryFiles(rootDir);
   }

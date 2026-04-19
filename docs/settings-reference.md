@@ -412,7 +412,7 @@ Fusion can automatically extract insights from project memory and prune transien
 | File | Description |
 |------|-------------|
 | `.fusion/memory/MEMORY.md` | Long-term memory (updated when pruning is applied and validated) |
-| `.fusion/memory.md` | Deprecated legacy fallback (migration compatibility only; not canonical storage) |
+| Legacy top-level memory file | Deprecated migration fallback (compatibility only; not canonical storage) |
 | `.fusion/memory-insights.md` | Long-term insights distilled from working memory |
 | `.fusion/memory-audit.md` | Human-readable audit report after each extraction |
 
