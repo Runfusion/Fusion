@@ -272,17 +272,25 @@ export async function ensureMemoryFileWithBackend(
     }
   };
 
-  // Check if memory already exists using the backend
+  // OpenClaw-style memory layers are always bootstrapped for writable memory
+  // backends. `ensureOpenClawMemoryFiles()` handles one-way migration seeding
+  // from the legacy top-level memory file when upgrading older projects.
+  // This runs before existence checks so migrated legacy content is preserved.
+  let createdFromDefaultLongTermScaffold = false;
+  if (backend.capabilities.writable) {
+    const { longTermCreated } = await ensureOpenClawMemoryFiles(rootDir);
+    if (longTermCreated) {
+      const createdContent = await readFile(memoryLongTermPath(rootDir), "utf-8");
+      createdFromDefaultLongTermScaffold =
+        createdContent === getDefaultLongTermMemoryScaffold();
+    }
+  }
+
+  // Check if memory already exists using the backend.
+  // This catches both pre-existing canonical files and newly migrated files.
   if (backend.exists) {
     const exists = await backend.exists(rootDir);
-    if (exists) {
-      refreshQmdIfNeeded();
-      return false; // Memory already exists, don't overwrite
-    }
-  } else {
-    // Fall back to direct file check
-    const filePath = memoryFilePath(rootDir);
-    if (existsSync(filePath)) {
+    if (exists && !createdFromDefaultLongTermScaffold) {
       refreshQmdIfNeeded();
       return false; // Memory already exists, don't overwrite
     }
@@ -292,13 +300,6 @@ export async function ensureMemoryFileWithBackend(
   const dir = join(rootDir, ".fusion");
   if (!existsSync(dir)) {
     await mkdir(dir, { recursive: true });
-  }
-
-  // OpenClaw-style memory layers are always bootstrapped for writable memory
-  // backends. `ensureOpenClawMemoryFiles()` handles one-way migration seeding
-  // from the legacy top-level memory file when upgrading older projects.
-  if (backend.capabilities.writable) {
-    await ensureOpenClawMemoryFiles(rootDir);
   }
 
   // Try to write using the backend

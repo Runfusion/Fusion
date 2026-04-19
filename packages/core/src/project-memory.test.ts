@@ -176,6 +176,19 @@ describe("project-memory", () => {
       const content = await readProjectMemory(testDir);
       expect(content).toBe("");
     });
+
+    it("reads only from .fusion/memory/MEMORY.md, ignoring legacy path", async () => {
+      await mkdir(join(testDir, ".fusion"), { recursive: true });
+      const legacyContent = "# Legacy Content\n\nOld stuff";
+      await writeFile(join(testDir, LEGACY_MEMORY_FILE_PATH), legacyContent, "utf-8");
+
+      await mkdir(join(testDir, ".fusion", "memory"), { recursive: true });
+      const newContent = "# New Content\n\nNew stuff";
+      await writeFile(memoryPath, newContent, "utf-8");
+
+      const content = await readProjectMemory(testDir);
+      expect(content).toBe(newContent);
+    });
   });
 
   // ── buildTriageMemoryInstructions ─────────────────────────────────
@@ -285,6 +298,19 @@ describe("project-memory", () => {
       expect(content).toBe(customContent);
     });
 
+    it("preserves legacy content during upgrade when only legacy exists", async () => {
+      await mkdir(join(testDir, ".fusion"), { recursive: true });
+      const userContent = "# Legacy\n\nUser content that must be preserved";
+      await writeFile(join(testDir, LEGACY_MEMORY_FILE_PATH), userContent, "utf-8");
+
+      const created = await ensureMemoryFileWithBackend(testDir);
+
+      expect(created).toBe(false);
+      expect(existsSync(memoryPath)).toBe(true);
+      const content = readFileSync(memoryPath, "utf-8");
+      expect(content).toBe(userContent);
+    });
+
     it("returns false when file already exists", async () => {
       await ensureMemoryFile(testDir);
       const created = await ensureMemoryFileWithBackend(testDir);
@@ -301,6 +327,7 @@ describe("project-memory", () => {
 
       expect(created).toBe(true);
       expect(existsSync(memoryPath)).toBe(true);
+      expect(readFileSync(memoryPath, "utf-8")).toBe(getDefaultMemoryScaffold());
     });
 
     it("does not throw for readonly backend (non-fatal bootstrap)", async () => {
@@ -452,7 +479,6 @@ describe("project-memory", () => {
       const created = await ensureMemoryFileWithBackend(testDir, { memoryBackendType: "file" });
       expect(created).toBe(true);
       
-      // File should exist and have default scaffold content
       const content = readFileSync(memoryPath, "utf-8");
       expect(content).toBe(getDefaultMemoryScaffold());
     });

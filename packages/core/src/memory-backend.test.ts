@@ -141,6 +141,18 @@ describe("memory-backend", () => {
         expect(result.exists).toBe(false);
       });
 
+      it("reads only from long-term path when both long-term and legacy files exist", async () => {
+        await mkdir(join(tempDir, ".fusion", "memory"), { recursive: true });
+        writeFileSync(legacyMemoryPath(tempDir), "Legacy content", "utf-8");
+        writeFileSync(longTermMemoryPath(tempDir), "New content", "utf-8");
+
+        const backend = new FileMemoryBackend();
+        const result = await backend.read(tempDir);
+
+        expect(result.content).toBe("New content");
+        expect(result.exists).toBe(true);
+      });
+
       it("should throw MemoryBackendError on read failure", async () => {
         // Make the long-term memory path a directory so readFile throws EISDIR (not ENOENT)
         const longTermDir = join(tempDir, ".fusion", "memory", "MEMORY.md");
@@ -410,6 +422,19 @@ describe("memory-backend", () => {
 
         expect(result.content).toBe("");
         expect(result.exists).toBe(false);
+      });
+
+      it("reads only from long-term path when both long-term and legacy files exist", async () => {
+        await mkdir(join(tempDir, ".fusion", "memory"), { recursive: true });
+        writeFileSync(legacyMemoryPath(tempDir), "Legacy content", "utf-8");
+        writeFileSync(longTermMemoryPath(tempDir), "New content", "utf-8");
+
+        const backend = new QmdMemoryBackend();
+        const result = await backend.read(tempDir);
+
+        expect(result.content).toBe("New content");
+        expect(result.exists).toBe(true);
+        expect(result.backend).toBe("qmd");
       });
     });
 
