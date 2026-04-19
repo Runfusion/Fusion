@@ -2,6 +2,7 @@ import { execSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import zlib from "node:zlib";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -36,13 +37,81 @@ function writeTextFile(path: string, content: string): void {
   writeFileSync(path, content, "utf-8");
 }
 
-function hasCommand(command: string): boolean {
-  try {
-    execSync(`command -v ${command}`, { stdio: "pipe" });
-    return true;
-  } catch {
-    return false;
+// Keep ZIP fixtures fully deterministic and self-contained without relying on
+// external `zip` binaries that may be unavailable in CI/worktree environments.
+function createZipFromEntries(
+  archivePath: string,
+  entries: Array<{ path: string; content: string }>,
+): void {
+  const localRecords: Buffer[] = [];
+  const centralDirectoryRecords: Buffer[] = [];
+  let localOffset = 0;
+
+  for (const entry of entries) {
+    const fileNameBytes = Buffer.from(entry.path, "utf-8");
+    const contentBytes = Buffer.from(entry.content, "utf-8");
+    const compressedBytes = zlib.deflateRawSync(contentBytes);
+    const crc32 = zlib.crc32(contentBytes) >>> 0;
+
+    const localHeader = Buffer.alloc(30 + fileNameBytes.length);
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(0, 6);
+    localHeader.writeUInt16LE(8, 8);
+    localHeader.writeUInt16LE(0, 10);
+    localHeader.writeUInt16LE(0x5000, 12);
+    localHeader.writeUInt32LE(crc32, 14);
+    localHeader.writeUInt32LE(compressedBytes.length, 18);
+    localHeader.writeUInt32LE(contentBytes.length, 22);
+    localHeader.writeUInt16LE(fileNameBytes.length, 26);
+    localHeader.writeUInt16LE(0, 28);
+    fileNameBytes.copy(localHeader, 30);
+
+    localRecords.push(localHeader, compressedBytes);
+
+    const centralRecord = Buffer.alloc(46 + fileNameBytes.length);
+    centralRecord.writeUInt32LE(0x02014b50, 0);
+    centralRecord.writeUInt16LE(20, 4);
+    centralRecord.writeUInt16LE(20, 6);
+    centralRecord.writeUInt16LE(0, 8);
+    centralRecord.writeUInt16LE(8, 10);
+    centralRecord.writeUInt16LE(0, 12);
+    centralRecord.writeUInt16LE(0x5000, 14);
+    centralRecord.writeUInt32LE(crc32, 16);
+    centralRecord.writeUInt32LE(compressedBytes.length, 20);
+    centralRecord.writeUInt32LE(contentBytes.length, 24);
+    centralRecord.writeUInt16LE(fileNameBytes.length, 28);
+    centralRecord.writeUInt16LE(0, 30);
+    centralRecord.writeUInt16LE(0, 32);
+    centralRecord.writeUInt16LE(0, 34);
+    centralRecord.writeUInt16LE(0, 36);
+    centralRecord.writeUInt32LE(0, 38);
+    centralRecord.writeUInt32LE(localOffset, 42);
+    fileNameBytes.copy(centralRecord, 46);
+    centralDirectoryRecords.push(centralRecord);
+
+    localOffset += localHeader.length + compressedBytes.length;
   }
+
+  const centralDirectoryOffset = localOffset;
+  const centralDirectoryBuffer = Buffer.concat(centralDirectoryRecords);
+  const endOfCentralDirectory = Buffer.alloc(22);
+  endOfCentralDirectory.writeUInt32LE(0x06054b50, 0);
+  endOfCentralDirectory.writeUInt16LE(0, 4);
+  endOfCentralDirectory.writeUInt16LE(0, 6);
+  endOfCentralDirectory.writeUInt16LE(entries.length, 8);
+  endOfCentralDirectory.writeUInt16LE(entries.length, 10);
+  endOfCentralDirectory.writeUInt32LE(centralDirectoryBuffer.length, 12);
+  endOfCentralDirectory.writeUInt32LE(centralDirectoryOffset, 16);
+  endOfCentralDirectory.writeUInt16LE(0, 20);
+
+  const archiveBuffer = Buffer.concat([
+    ...localRecords,
+    centralDirectoryBuffer,
+    endOfCentralDirectory,
+  ]);
+
+  writeFileSync(archivePath, archiveBuffer);
 }
 
 afterEach(() => {
@@ -384,24 +453,30 @@ name: Archive CEO
       await expect(parseCompanyArchive(archivePath)).rejects.toBeInstanceOf(AgentCompaniesParseError);
     });
 
-    const zipIt = hasCommand("zip") ? it : it.skip;
-    zipIt("parses a .zip archive", async () => {
+    it("parses a .zip archive", async () => {
       const root = createTempDir();
-      const packageDir = join(root, "zip-company");
-      writeTextFile(join(packageDir, "COMPANY.md"), `---
-name: Zip Company
-schema: agentcompanies/v1
----`);
-      writeTextFile(join(packageDir, "agents", "ceo", "AGENTS.md"), `---
-name: Zip CEO
----`);
-
       const archivePath = join(root, "company.zip");
-      execSync(`zip -qr ${JSON.stringify(archivePath)} zip-company`, { cwd: root });
+
+      createZipFromEntries(archivePath, [
+        { path: "zip-company/COMPANY.md", content: `---\nname: Zip Company\nschema: agentcompanies/v1\n---` },
+        { path: "zip-company/agents/ceo/AGENTS.md", content: `---\nname: Zip CEO\n---` },
+      ]);
 
       const pkg = await parseCompanyArchive(archivePath);
       expect(pkg.company?.name).toBe("Zip Company");
       expect(pkg.agents).toHaveLength(1);
+    });
+
+    it("parses a .zip archive with COMPANY.md at root", async () => {
+      const root = createTempDir();
+      const archivePath = join(root, "flat.zip");
+
+      createZipFromEntries(archivePath, [
+        { path: "COMPANY.md", content: `---\nname: Flat Zip Co\n---` },
+      ]);
+
+      const pkg = await parseCompanyArchive(archivePath);
+      expect(pkg.company?.name).toBe("Flat Zip Co");
     });
 
     it("throws for unsupported archive extension", async () => {
