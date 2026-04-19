@@ -141,10 +141,24 @@ describe("memory-backend", () => {
         expect(result.exists).toBe(false);
       });
 
-      // Note: Testing read failure is complex in ESM because we can't easily mock
-      // the fs/promises module. The error handling is tested through integration tests
-      // and the MemoryBackendError class tests above.
-      it.todo("should throw MemoryBackendError on read failure");
+      it("should throw MemoryBackendError on read failure", async () => {
+        // Make the long-term memory path a directory so readFile throws EISDIR (not ENOENT)
+        const longTermDir = join(tempDir, ".fusion", "memory", "MEMORY.md");
+        await mkdir(longTermDir, { recursive: true });
+
+        const backend = new FileMemoryBackend();
+
+        await expect(backend.read(tempDir)).rejects.toThrow(MemoryBackendError);
+
+        try {
+          await backend.read(tempDir);
+        } catch (err) {
+          expect(err).toBeInstanceOf(MemoryBackendError);
+          expect((err as MemoryBackendError).code).toBe("READ_FAILED");
+          expect((err as MemoryBackendError).backend).toBe("file");
+          expect((err as MemoryBackendError).message).toContain("Failed to read memory file");
+        }
+      });
     });
 
     describe("write", () => {
