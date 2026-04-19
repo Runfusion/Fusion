@@ -3454,19 +3454,6 @@ export function fetchProjectsAcrossNodes(): Promise<ProjectInfoWithSource[]> {
   return api<ProjectInfoWithSource[]>("/projects/across-nodes");
 }
 
-/**
- * Append a client-side perf measurement to the shared dashboard-perf log on disk.
- * Used when browser devtools aren't available (e.g. mobile). Best-effort.
- */
-export function reportDashboardPerf(source: string, message: string): void {
-  void api("/_perf/dashboard-load", {
-    method: "POST",
-    body: JSON.stringify({ source, message }),
-  }).catch(() => {
-    // best-effort only
-  });
-}
-
 /** Fetch all registered nodes */
 export function fetchNodes(): Promise<NodeInfo[]> {
   return api<NodeInfo[]>("/nodes");

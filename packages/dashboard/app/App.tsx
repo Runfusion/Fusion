@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import type { Task, TaskDetail } from "@fusion/core";
 import { Header, useViewportMode } from "./components/Header";
 import { Board } from "./components/Board";
@@ -49,7 +49,7 @@ import { useRemoteNodeData } from "./hooks/useRemoteNodeData";
 import { useRemoteNodeEvents } from "./hooks/useRemoteNodeEvents";
 import { NodeProvider, useNodeContext } from "./context/NodeContext";
 import type { AiSessionSummary } from "./api";
-import { fetchAiSession, fetchUnreadCount, reportDashboardPerf } from "./api";
+import { fetchAiSession, fetchUnreadCount } from "./api";
 
 function AppInner() {
   const { toasts, addToast, removeToast } = useToast();
@@ -133,29 +133,11 @@ function AppInner() {
   );
 
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
-  const mountTimeRef = useRef(performance.now());
-  const projectsReadyLoggedRef = useRef(false);
-  const projectReadyLoggedRef = useRef(false);
 
   const loadingStage = useMemo<DashboardLoaderStage>(() => {
     if (projectsLoading) return "projects";
     if (currentProjectLoading) return "project";
     return "tasks";
-  }, [projectsLoading, currentProjectLoading]);
-
-  useEffect(() => {
-    if (!projectsLoading && !projectsReadyLoggedRef.current) {
-      projectsReadyLoggedRef.current = true;
-      const msg = `projects loaded at ${Math.round(performance.now() - mountTimeRef.current)}ms from mount`;
-      console.log(`[App] ${msg}`);
-      reportDashboardPerf("[App]", msg);
-    }
-    if (!currentProjectLoading && !projectReadyLoggedRef.current) {
-      projectReadyLoggedRef.current = true;
-      const msg = `current-project resolved at ${Math.round(performance.now() - mountTimeRef.current)}ms from mount`;
-      console.log(`[App] ${msg}`);
-      reportDashboardPerf("[App]", msg);
-    }
   }, [projectsLoading, currentProjectLoading]);
 
   useEffect(() => {
@@ -167,11 +149,7 @@ function AppInner() {
       return;
     }
 
-    const settleStart = performance.now();
     const settleTimer = window.setTimeout(() => {
-      const msg = `dashboard ready at ${Math.round(performance.now() - mountTimeRef.current)}ms from mount (settle delay=${Math.round(performance.now() - settleStart)}ms)`;
-      console.log(`[App] ${msg}`);
-      reportDashboardPerf("[App]", msg);
       setInitialLoadComplete(true);
     }, 200);
 
