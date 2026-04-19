@@ -14,7 +14,10 @@ export default defineConfig({
   },
   test: {
     include: ["src/**/*.test.ts"],
-    setupFiles: [resolve(__dirname, "../core/src/__test-utils__/vitest-setup.ts")],
+    setupFiles: [
+      "./src/__tests__/setup-test-isolation.ts",
+      resolve(__dirname, "../core/src/__test-utils__/vitest-setup.ts"),
+    ],
     globalSetup: [resolve(__dirname, "../core/src/__test-utils__/vitest-teardown.ts")],
     maxWorkers,
     poolOptions: { threads: { minThreads: 1, maxThreads: maxWorkers }, forks: { minForks: 1, maxForks: maxWorkers } },

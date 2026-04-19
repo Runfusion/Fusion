@@ -55,6 +55,10 @@ function splitSettings(settings?: Partial<Settings>): {
 }
 
 /**
+ * NOTE: Global test isolation overrides HOME in vitest setupFiles,
+ * so homedir()/resolveGlobalDir() always resolve to temp directories.
+ * This file provides per-fixture isolation on top of that safety net.
+ *
  * Create an isolated temporary test project with a real TaskStore + SQLite DB.
  */
 export async function createTestProject(
