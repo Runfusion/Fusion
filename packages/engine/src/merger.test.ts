@@ -1651,7 +1651,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
       .map(([message]) => String(message))
       .filter((message) => message.includes("git reset --merge cleanup failed"));
 
-    expect(cleanupWarnMessages.some((message) => message.includes("during attempt 1"))).toBe(true);
+    expect(cleanupWarnMessages.some((message) => message.includes("merge-cleanup, attempt 1"))).toBe(true);
     expect(cleanupWarnMessages.some((message) => message.includes(resetFailureMessage))).toBe(true);
 
     warnSpy.mockRestore();
@@ -1804,7 +1804,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
       .map(([message]) => String(message))
       .filter((message) => message.includes("git reset --merge cleanup failed"));
 
-    expect(cleanupWarnMessages.some((message) => message.includes("retry cleanup (attempt 2)"))).toBe(true);
+    expect(cleanupWarnMessages.some((message) => message.includes("merge-retry, attempt 2"))).toBe(true);
     expect(cleanupWarnMessages.some((message) => message.includes(resetFailureMessage))).toBe(true);
 
     warnSpy.mockRestore();
@@ -1837,6 +1837,239 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
     expect(result.merged).toBe(true);
     expect(result.resolutionStrategy).toBe("ai");
     expect(result.attemptsMade).toBe(1);
+  });
+});
+
+describe("aiMergeTask — reset cleanup failure diagnostics", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+  });
+
+  it("retry-cleanup reset failure after failed attempt is logged", async () => {
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+
+    const warnSpy = vi.spyOn(mergerLog, "warn");
+    const resetFailureMessage = "dirty worktree";
+    let resetCalls = 0;
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed";
+      if (cmdStr.includes("show --shortstat")) return "1 file changed, 1 insertion(+), 0 deletions(-)";
+
+      if (cmdStr.includes("merge --squash") && !cmdStr.includes("-X")) {
+        throw new Error("Merge conflict");
+      }
+
+      if (cmdStr.includes("merge -X theirs --squash")) {
+        throw new Error("Merge conflict");
+      }
+
+      if (cmdStr.includes("diff --name-only --diff-filter=U")) {
+        return "src/always-conflicts.ts\n";
+      }
+
+      if (cmdStr.includes("diff-tree")) {
+        const error = new Error("exit code 1") as any;
+        error.stdout = "+const x = 2;\n-const x = 1;";
+        throw error;
+      }
+
+      if (cmdStr.includes("git add")) {
+        const err = new Error("git add failed");
+        err.name = "ExecSyncError";
+        throw err;
+      }
+
+      if (cmdStr.includes("reset --merge")) {
+        resetCalls++;
+        if (resetCalls === 1) {
+          throw new Error(resetFailureMessage);
+        }
+        return Buffer.from("");
+      }
+
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockRejectedValue(new Error("Agent failed")),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    let thrown: unknown;
+    try {
+      await aiMergeTask(store, "/tmp/root", "FN-050");
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toContain("all 3 attempts exhausted");
+    expect((thrown as Error).message).not.toContain(resetFailureMessage);
+
+    const cleanupWarnMessages = warnSpy.mock.calls
+      .map(([message]) => String(message))
+      .filter((message) => message.includes("git reset --merge cleanup failed"));
+
+    expect(cleanupWarnMessages.some((message) => message.includes("merge-cleanup"))).toBe(true);
+    expect(cleanupWarnMessages.some((message) => message.includes(resetFailureMessage))).toBe(true);
+
+    warnSpy.mockRestore();
+  });
+
+  it("error-path retry cleanup reset failure is logged", async () => {
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+
+    const warnSpy = vi.spyOn(mergerLog, "warn");
+    const resetFailureMessage = "retry cleanup reset failed";
+    let mergeSquashCalls = 0;
+    let resetCalls = 0;
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed";
+
+      if (cmdStr.includes("merge --squash") && !cmdStr.includes("-X")) {
+        mergeSquashCalls++;
+        if (mergeSquashCalls === 1) {
+          throw new Error("git merge failed: exit code 128");
+        }
+        return Buffer.from("");
+      }
+
+      if (cmdStr.includes("merge -X theirs --squash")) {
+        throw new Error("Merge conflict");
+      }
+
+      if (cmdStr.includes("diff --name-only --diff-filter=U")) return "";
+      if (cmdStr.includes("diff --cached --quiet")) return "1";
+
+      if (cmdStr.includes("reset --merge")) {
+        resetCalls++;
+        if (resetCalls === 2) {
+          throw new Error(resetFailureMessage);
+        }
+        return Buffer.from("");
+      }
+
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockRejectedValue(new Error("git merge failed: exit code 128")),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    let thrown: unknown;
+    try {
+      await aiMergeTask(store, "/tmp/root", "FN-050");
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toContain("all 3 attempts exhausted");
+    expect((thrown as Error).message).not.toContain(resetFailureMessage);
+
+    const cleanupWarnMessages = warnSpy.mock.calls
+      .map(([message]) => String(message))
+      .filter((message) => message.includes("git reset --merge cleanup failed"));
+
+    expect(cleanupWarnMessages.some((message) => message.includes("merge-retry"))).toBe(true);
+    expect(cleanupWarnMessages.some((message) => message.includes(resetFailureMessage))).toBe(true);
+
+    warnSpy.mockRestore();
+  });
+
+  it("build-verification reset failure is logged in executeMergeAttempt", async () => {
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      buildCommand: "pnpm build",
+      buildRetryCount: 0,
+      verificationFixRetries: 0,
+    });
+
+    const warnSpy = vi.spyOn(mergerLog, "warn");
+    const resetFailureMessage = "lock file busy";
+
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      const reportTool = opts.customTools?.find((t: any) => t.name === "report_build_failure");
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            if (reportTool) {
+              await reportTool.execute("tool-call-1", { message: "build failed" });
+            }
+          }),
+          dispose: vi.fn(),
+        },
+      } as any;
+    });
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed";
+      if (cmdStr.includes("merge --squash") && !cmdStr.includes("-X")) return Buffer.from("");
+      if (cmdStr.includes("diff --name-only --diff-filter=U")) return "";
+      if (cmdStr.includes("diff --cached --quiet")) return "1";
+
+      if (cmdStr.includes("reset --merge")) {
+        throw new Error(resetFailureMessage);
+      }
+
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    let thrown: unknown;
+    try {
+      await aiMergeTask(store, "/tmp/root", "FN-050");
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toContain("Build verification failed");
+    expect((thrown as Error).message).not.toContain(resetFailureMessage);
+
+    const cleanupWarnMessages = warnSpy.mock.calls
+      .map(([message]) => String(message))
+      .filter((message) => message.includes("git reset --merge cleanup failed"));
+
+    expect(cleanupWarnMessages.some((message) => message.includes("build-verification reset"))).toBe(true);
+    expect(cleanupWarnMessages.some((message) => message.includes(resetFailureMessage))).toBe(true);
+
+    warnSpy.mockRestore();
   });
 });
 

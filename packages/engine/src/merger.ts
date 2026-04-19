@@ -1548,7 +1548,7 @@ export async function aiMergeTask(
           await audit.git({ type: "reset:hard", target: branch, metadata: { purpose: "merge-cleanup", attempt: attemptNum } });
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
-          mergerLog.warn(`${taskId}: git reset --merge cleanup failed during attempt ${attemptNum}: ${msg}`);
+          mergerLog.warn(`${taskId}: git reset --merge cleanup failed (merge-cleanup, attempt ${attemptNum}): ${msg}`);
         }
       }
 
@@ -1668,7 +1668,7 @@ export async function aiMergeTask(
             await audit.git({ type: "reset:hard", target: branch, metadata: { purpose: "build-retry" } });
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
-            mergerLog.warn(`${taskId}: git reset --merge cleanup failed during build-retry: ${msg}`);
+            mergerLog.warn(`${taskId}: git reset --merge cleanup failed (build-retry): ${msg}`);
           }
           return false; // Retry
         }
@@ -1684,7 +1684,7 @@ export async function aiMergeTask(
           await audit.git({ type: "reset:hard", target: branch, metadata: { purpose: "merge-retry", attempt: attemptNum } });
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
-          mergerLog.warn(`${taskId}: git reset --merge cleanup failed during retry cleanup (attempt ${attemptNum}): ${msg}`);
+          mergerLog.warn(`${taskId}: git reset --merge cleanup failed (merge-retry, attempt ${attemptNum}): ${msg}`);
         }
         return false; // Allow retry
       }
@@ -2103,10 +2103,11 @@ async function executeMergeAttempt(
       // Reset staged changes to abort the merge
       try {
         execSync("git reset --merge", { cwd: rootDir, stdio: "pipe" });
-      } catch {
-        // Ignore reset errors
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        mergerLog.warn(`${taskId}: git reset --merge cleanup failed (build-verification reset): ${msg}`);
       }
-      
+
       throw new Error(`Build verification failed for ${taskId}: ${errorMessage}`);
     }
 
