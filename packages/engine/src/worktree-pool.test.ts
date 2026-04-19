@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ExecException } from "node:child_process";
 
 // Route async `exec` (via promisify) through the `execSync` mock so existing
@@ -44,7 +44,13 @@ vi.mock("node:fs", () => ({
   rmSync: vi.fn(),
 }));
 
-import { WorktreePool, scanIdleWorktrees, cleanupOrphanedWorktrees, scanOrphanedBranches } from "./worktree-pool.js";
+import {
+  WorktreePool,
+  getRegisteredWorktreePaths,
+  scanIdleWorktrees,
+  cleanupOrphanedWorktrees,
+  scanOrphanedBranches,
+} from "./worktree-pool.js";
 import { execSync } from "node:child_process";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import type { Task, Column } from "@fusion/core";
@@ -53,6 +59,19 @@ const mockedExecSync = vi.mocked(execSync);
 const mockedExistsSync = vi.mocked(existsSync);
 const mockedReaddirSync = vi.mocked(readdirSync);
 const mockedRmSync = vi.mocked(rmSync);
+
+let errorSpy: ReturnType<typeof vi.spyOn>;
+let warnSpy: ReturnType<typeof vi.spyOn>;
+
+beforeEach(() => {
+  errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  errorSpy.mockRestore();
+  warnSpy.mockRestore();
+});
 
 describe("WorktreePool", () => {
   let pool: WorktreePool;
@@ -210,11 +229,31 @@ describe("WorktreePool", () => {
       const result = await pool.prepareForTask("/tmp/wt", "fusion/fn-001");
       expect(result).toBe("fusion/fn-001");
 
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("[worktree-pool] git checkout -- . failed (may be clean): nothing to checkout"),
+      );
+
       // Should still run clean and branch creation
       const calls = mockedExecSync.mock.calls.map((c) => c[0]);
       expect(calls).toContain("git clean -fd");
       expect(calls).toContain("git checkout --detach main");
       expect(calls).toContain('git checkout -B "fusion/fn-001" main');
+    });
+
+    it("logs checkout -- failure at debug level", async () => {
+      mockedExecSync.mockImplementation((cmd: any) => {
+        if (cmd === "git checkout -- .") {
+          throw new Error("working tree already clean");
+        }
+        return Buffer.from("");
+      });
+
+      const result = await pool.prepareForTask("/tmp/wt", "fusion/fn-042");
+
+      expect(result).toBe("fusion/fn-042");
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("[worktree-pool] git checkout -- . failed (may be clean): working tree already clean"),
+      );
     });
 
     it("uses suffixed branch name when original is in use by an active worktree", async () => {
@@ -366,6 +405,28 @@ describe("WorktreePool", () => {
   });
 });
 
+describe("getRegisteredWorktreePaths", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("logs warning and returns empty set when git worktree list fails", async () => {
+    mockedExecSync.mockImplementation((cmd: any) => {
+      if (String(cmd) === "git worktree list --porcelain") {
+        throw new Error("git unavailable");
+      }
+      return Buffer.from("");
+    });
+
+    const registered = await getRegisteredWorktreePaths("/root");
+
+    expect(registered).toEqual(new Set());
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[worktree-pool] Failed to list registered worktrees: git unavailable"),
+    );
+  });
+});
+
 // ── Helper for mock store ─────────────────────────────────────────────
 
 function makeTask(id: string, column: Column, worktree?: string): Task {
@@ -496,6 +557,9 @@ describe("scanIdleWorktrees", () => {
 
     const idle = await scanIdleWorktrees("/root", store);
     expect(idle).toEqual([]);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[worktree-pool] Failed to read .worktrees/ directory: Permission denied"),
+    );
   });
 
   it("does not return unregistered directories for pool rehydration", async () => {
@@ -612,6 +676,26 @@ describe("cleanupOrphanedWorktrees", () => {
       (c) => typeof c[0] === "string" && (c[0] as string).includes("worktree remove"),
     );
     expect(removeCalls).toHaveLength(0);
+  });
+
+  it("logs warning when readdirSync fails for cleanup scan", async () => {
+    let readdirCalls = 0;
+    mockedReaddirSync.mockImplementation(() => {
+      readdirCalls += 1;
+      if (readdirCalls === 1) {
+        return [] as any;
+      }
+      throw new Error("cleanup permission denied");
+    });
+
+    const store = createMockStore([]);
+
+    const cleaned = await cleanupOrphanedWorktrees("/root", store);
+
+    expect(cleaned).toBe(0);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[worktree-pool] Failed to read .worktrees/ directory for cleanup: cleanup permission denied"),
+    );
   });
 
   it("returns 0 when all worktrees are assigned to active tasks", async () => {
@@ -757,6 +841,9 @@ describe("scanOrphanedBranches", () => {
 
     const orphaned = await scanOrphanedBranches("/root", store);
     expect(orphaned).toEqual([]);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[worktree-pool] Failed to list fusion/* branches: not a git repo"),
+    );
   });
 
   it("returns empty array when no fusion/* branches exist", async () => {

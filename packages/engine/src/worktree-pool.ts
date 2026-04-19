@@ -22,7 +22,9 @@ export async function getRegisteredWorktreePaths(rootDir: string): Promise<Set<s
       }
     }
     return paths;
-  } catch {
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    worktreePoolLog.warn(`Failed to list registered worktrees: ${errorMessage}`);
     return new Set();
   }
 }
@@ -167,7 +169,9 @@ export class WorktreePool {
     // Clean tracked modifications
     try {
       await execAsync("git checkout -- .", { cwd: worktreePath });
-    } catch {
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      worktreePoolLog.log(`git checkout -- . failed (may be clean): ${errorMessage}`);
       // May fail if worktree is already clean — that's fine
     }
 
@@ -260,7 +264,9 @@ export async function scanIdleWorktrees(rootDir: string, store: TaskStore): Prom
     dirs = entries
       .filter((e) => e.isDirectory())
       .map((e) => join(worktreesDir, e.name));
-  } catch {
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    worktreePoolLog.warn(`Failed to read .worktrees/ directory: ${errorMessage}`);
     return [];
   }
 
@@ -316,7 +322,9 @@ export async function cleanupOrphanedWorktrees(rootDir: string, store: TaskStore
       dirs = readdirSync(worktreesDir, { withFileTypes: true })
         .filter((e) => e.isDirectory())
         .map((e) => join(worktreesDir, e.name));
-    } catch {
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      worktreePoolLog.warn(`Failed to read .worktrees/ directory for cleanup: ${errorMessage}`);
       dirs = [];
     }
   }
@@ -377,7 +385,9 @@ export async function scanOrphanedBranches(rootDir: string, store: TaskStore): P
       .split("\n")
       .map((line) => line.trim().replace(/^\*?\s*/, ""))
       .filter((line) => line.startsWith("fusion/"));
-  } catch {
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    worktreePoolLog.warn(`Failed to list fusion/* branches: ${errorMessage}`);
     return [];
   }
 
