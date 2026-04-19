@@ -683,8 +683,10 @@ export class ProjectEngine {
                 // Max retries exceeded or auto-resolve disabled
                 try {
                   await store.updateTask(taskId, { status: null });
-                } catch {
-                  /* best-effort */
+                } catch (recoveryErr) {
+                  runtimeLog.error(
+                    `Auto-merge: failed to clear status on ${taskId} after max retries exceeded: ${recoveryErr instanceof Error ? recoveryErr.message : String(recoveryErr)}`,
+                  );
                 }
               }
             } else {
@@ -695,8 +697,10 @@ export class ProjectEngine {
                   mergeRetries: ProjectEngine.MAX_AUTO_MERGE_RETRIES,
                   error: errorMsg,
                 });
-              } catch {
-                /* best-effort */
+              } catch (recoveryErr) {
+                runtimeLog.error(
+                  `Auto-merge: failed to update ${taskId} after non-conflict error: ${recoveryErr instanceof Error ? recoveryErr.message : String(recoveryErr)}`,
+                );
               }
             }
           } else {
@@ -706,8 +710,10 @@ export class ProjectEngine {
                 mergeRetries: ProjectEngine.MAX_AUTO_MERGE_RETRIES,
                 error: errorMsg,
               });
-            } catch {
-              /* best-effort */
+            } catch (recoveryErr) {
+              runtimeLog.error(
+                `Auto-merge: failed to update ${taskId} after merge strategy error: ${recoveryErr instanceof Error ? recoveryErr.message : String(recoveryErr)}`,
+              );
             }
           }
         } finally {
