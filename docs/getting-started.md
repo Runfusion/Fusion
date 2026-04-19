@@ -65,13 +65,22 @@ Common startup options:
 
 ```bash
 fn dashboard                       # default port 4040
-fn dashboard --port 5050          # custom port
-fn dashboard --interactive        # choose port interactively
-fn dashboard --paused             # start with automation paused
-fn dashboard --dev                # run UI only (no engine)
+fn dashboard --port 5050           # custom port
+fn dashboard -p 5050               # short form for --port
+fn dashboard --interactive         # choose port interactively
+fn dashboard --paused              # start with automation paused
+fn dashboard --dev                 # run UI only (no engine)
 ```
 
-Open: `http://localhost:4040`
+Open: `http://localhost:4040` (or your custom port).
+
+Other launch modes:
+
+```bash
+fn serve --port 5050 --host 0.0.0.0   # headless node (API + engine, no web UI)
+fn daemon --port 5050                  # daemon mode with token auth support
+fn desktop                             # launch Electron desktop app
+```
 
 ## Create Your First Task
 

@@ -32,40 +32,37 @@ Defaults from `DEFAULT_GLOBAL_SETTINGS`; key scope from `GLOBAL_SETTINGS_KEYS`.
 | Setting | Type | Default | Description |
 |---|---|---:|---|
 | `themeMode` | `"dark" \| "light" \| "system"` | `"dark"` | Dashboard theme mode. |
-| `colorTheme` | `string` | `"default"` | Dashboard color theme name. |
+| `colorTheme` | `ColorTheme` | `"default"` | Dashboard color theme preset. |
 | `defaultProvider` | `string` | `undefined` | Default AI provider. |
 | `defaultModelId` | `string` | `undefined` | Default AI model ID. |
-| `fallbackProvider` | `string` | `undefined` | Fallback provider when primary model is unavailable/rate-limited. |
+| `fallbackProvider` | `string` | `undefined` | Fallback provider when the primary default model hits transient provider failures. |
 | `fallbackModelId` | `string` | `undefined` | Fallback model ID (must pair with `fallbackProvider`). |
-| `defaultThinkingLevel` | `"off" \| "minimal" \| "low" \| "medium" \| "high"` | `undefined` | Default reasoning effort level. |
+| `defaultThinkingLevel` | `"off" \| "minimal" \| "low" \| "medium" \| "high"` | `undefined` | Default reasoning effort for AI sessions. |
 | `ntfyEnabled` | `boolean` | `false` | Enable ntfy push notifications. |
 | `ntfyTopic` | `string` | `undefined` | ntfy topic name. |
 | `ntfyEvents` | `("in-review" \| "merged" \| "failed" \| "awaiting-approval" \| "awaiting-user-review")[]` | `["in-review","merged","failed","awaiting-approval","awaiting-user-review"]` | Event types that trigger ntfy notifications. |
-| `ntfyDashboardHost` | `string` | `undefined` | Dashboard host used for deep-link URLs in notifications. |
-| `defaultProjectId` | `string` | `undefined` | Default project for multi-project commands. |
-| `openrouterModelSync` | `boolean` | `true` | Sync OpenRouter model catalog into pickers. |
-| `modelOnboardingComplete` | `boolean` | `undefined` | Whether model onboarding has been completed/dismissed. |
-| `executionGlobalProvider` | `string` | `undefined` | Global baseline AI provider for task execution. Project `executionProvider` overrides this. |
-| `executionGlobalModelId` | `string` | `undefined` | Global baseline AI model ID for task execution. |
-| `planningGlobalProvider` | `string` | `undefined` | Global baseline AI provider for planning/triage. Project `planningProvider` overrides this. |
-| `planningGlobalModelId` | `string` | `undefined` | Global baseline AI model ID for planning/triage. |
-| `validatorGlobalProvider` | `string` | `undefined` | Global baseline AI provider for validator/reviewer. Project `validatorProvider` overrides this. |
-| `validatorGlobalModelId` | `string` | `undefined` | Global baseline AI model ID for validator/reviewer. |
-| `titleSummarizerGlobalProvider` | `string` | `undefined` | Global baseline AI provider for title summarization. Project `titleSummarizerProvider` overrides this. |
-| `titleSummarizerGlobalModelId` | `string` | `undefined` | Global baseline AI model ID for title summarization. |
-| `daemonToken` | `string` | `undefined` | The daemon authentication token (format: `fn_<32 hex chars>`). Used for authenticating CLI clients to the daemon server. |
-| `daemonPort` | `number` | `4040` | Port for daemon mode server binding. |
-| `daemonHost` | `string` | `"0.0.0.0"` | Host for daemon mode server binding (all interfaces by default). |
-
-### Additional GlobalSettings fields
-
-These exist in the `GlobalSettings` interface but are not listed in `GLOBAL_SETTINGS_KEYS`.
-
-| Setting | Type | Default | Description |
-|---|---|---:|---|
-| `setupComplete` | `boolean` | `undefined` | Marks completion of first-run setup wizard state. |
-| `favoriteProviders` | `string[]` | `undefined` | Pinned provider names shown first in model selectors. |
+| `ntfyDashboardHost` | `string` | `undefined` | Dashboard host used to build deep links in notifications. |
+| `defaultProjectId` | `string` | `undefined` | Default project for multi-project CLI operations when `--project` is omitted. |
+| `setupComplete` | `boolean` | `undefined` | Tracks completion of first-run setup. |
+| `favoriteProviders` | `string[]` | `undefined` | Pinned providers shown first in model selectors. |
 | `favoriteModels` | `string[]` | `undefined` | Pinned models in `{provider}/{modelId}` format. |
+| `openrouterModelSync` | `boolean` | `true` | Sync OpenRouter model catalog into model pickers at startup. |
+| `modelOnboardingComplete` | `boolean` | `undefined` | Whether AI onboarding has been completed or dismissed. |
+| `executionGlobalProvider` | `string` | `undefined` | Global baseline provider for task execution. Project `executionProvider` overrides this. |
+| `executionGlobalModelId` | `string` | `undefined` | Global baseline model ID for task execution. |
+| `planningGlobalProvider` | `string` | `undefined` | Global baseline provider for planning/triage. Project `planningProvider` overrides this. |
+| `planningGlobalModelId` | `string` | `undefined` | Global baseline model ID for planning/triage. |
+| `validatorGlobalProvider` | `string` | `undefined` | Global baseline provider for validator/reviewer runs. Project `validatorProvider` overrides this. |
+| `validatorGlobalModelId` | `string` | `undefined` | Global baseline model ID for validator/reviewer runs. |
+| `titleSummarizerGlobalProvider` | `string` | `undefined` | Global baseline provider for title summarization. Project `titleSummarizerProvider` overrides this. |
+| `titleSummarizerGlobalModelId` | `string` | `undefined` | Global baseline model ID for title summarization. |
+| `daemonToken` | `string` | `undefined` | Daemon authentication token (`fn_<32 hex chars>`) used by CLI clients. |
+| `daemonPort` | `number` | `4040` | Port for daemon/serve mode binding. |
+| `daemonHost` | `string` | `"0.0.0.0"` | Host for daemon/serve mode binding. |
+| `settingsSyncEnabled` | `boolean` | `false` | Enable automatic settings synchronization between nodes. |
+| `settingsSyncAuth` | `boolean` | `false` | Include model auth credentials in settings sync operations. |
+| `settingsSyncInterval` | `number` | `900000` | Automatic sync interval in ms. Valid values: `300000`, `900000`, `1800000`, `3600000`. |
+| `settingsSyncConflictResolution` | `"last-write-wins" \| "always-ask" \| "keep-local" \| "keep-remote"` | `"last-write-wins"` | Conflict strategy for divergent synced settings. |
 
 ---
 
@@ -75,104 +72,103 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 
 | Setting | Type | Default | Description |
 |---|---|---:|---|
-| `globalPause` | `boolean` | `false` | Hard stop: terminate active engine sessions and pause scheduling. |
-| `enginePaused` | `boolean` | `false` | Soft pause: stop dispatching new work but allow active sessions to finish. |
-| `maxConcurrent` | `number` | `2` | Max concurrent task-lane AI agents (triage, executor, merge). Utility AI workflows run on a separate control-plane lane and are not gated by this limit. |
-| `maxTriageConcurrent` | `number` | `2` | Max concurrent triage/specification agents. When undefined, falls back to `maxConcurrent`. |
-| `globalMaxConcurrent` | `number` | `4` | System-wide maximum concurrent agents across ALL projects. When multiple projects are active, the sum of their in-flight agents will not exceed this limit. |
+| `globalPause` | `boolean` | `false` | Hard stop: terminate active engine sessions and pause scheduling immediately. |
+| `enginePaused` | `boolean` | `false` | Soft pause: stop dispatching new work while letting active sessions finish. |
+| `maxConcurrent` | `number` | `2` | Max concurrent task-lane AI agents (triage, executor, merge). |
+| `maxTriageConcurrent` | `number` | `2` | Max concurrent triage/specification agents. |
+| `globalMaxConcurrent` | `number` | `4` | System-wide max concurrent agents across all projects. |
 | `maxWorktrees` | `number` | `4` | Max git worktrees. |
 | `pollIntervalMs` | `number` | `15000` | Scheduler poll interval (ms). |
 | `groupOverlappingFiles` | `boolean` | `true` | Serialize execution when file scopes overlap. |
 | `autoMerge` | `boolean` | `true` | Auto-finalize tasks from `in-review`. |
-| `mergeStrategy` | `"direct" \| "pull-request"` | `"direct"` | Completion mode (local direct merge or PR-first). |
+| `mergeStrategy` | `"direct" \| "pull-request"` | `"direct"` | Completion mode (local direct merge vs PR-first). |
 | `worktreeInitCommand` | `string` | `undefined` | Shell command run after worktree creation. |
-| `testCommand` | `string` | `undefined` | Test command run at merge time (before `buildCommand`). When set, runs as a hard gate — non-zero exit blocks the merge. When not set, Fusion automatically infers a default command from the package manager lock file (`pnpm test`, `yarn test`, `bun test`, or `npm test`). |
-| `buildCommand` | `string` | `undefined` | Build command run at merge time (after `testCommand`). When set, runs as a hard gate — non-zero exit blocks the merge. |
+| `testCommand` | `string` | `undefined` | Merge-time test command (hard gate). When unset, Fusion auto-detects from lockfile. |
+| `buildCommand` | `string` | `undefined` | Merge-time build command (hard gate). |
 | `recycleWorktrees` | `boolean` | `false` | Reuse worktrees from a pool for faster startup. |
-| `worktreeNaming` | `"random" \| "task-id" \| "task-title"` | `"random"` | Naming mode for fresh worktree directories. |
-| `taskPrefix` | `string` | `"FN"` | Prefix for generated task IDs. |
-| `includeTaskIdInCommit` | `boolean` | `true` | Include task ID in commit message scope. |
-| `commitAuthorEnabled` | `boolean` | `true` | When true, Fusion adds `--author` attribution to all commits it creates. |
-| `commitAuthorName` | `string` | `"Fusion"` | Name used in the git `--author` flag for Fusion commits. Only used when `commitAuthorEnabled` is true. |
-| `commitAuthorEmail` | `string` | `"noreply@runfusion.ai"` | Email used in the git `--author` flag for Fusion commits. Only used when `commitAuthorEnabled` is true. |
-| `defaultProviderOverride` | `string` | `undefined` | Project-level override for base default provider. Overrides global `defaultProvider`. |
-| `defaultModelIdOverride` | `string` | `undefined` | Project-level override for base default model ID. |
-| `executionProvider` | `string` | `undefined` | AI provider for task execution. Overrides `executionGlobalProvider`. |
-| `executionModelId` | `string` | `undefined` | AI model ID for task execution. |
-| `planningProvider` | `string` | `undefined` | AI provider for triage/spec generation. Overrides `planningGlobalProvider`. |
-| `planningModelId` | `string` | `undefined` | Model ID for triage/spec generation. |
-| `planningFallbackProvider` | `string` | `undefined` | Fallback provider for planning. |
-| `planningFallbackModelId` | `string` | `undefined` | Fallback model ID for planning. |
-| `validatorProvider` | `string` | `undefined` | AI provider for plan/code review. |
-| `validatorModelId` | `string` | `undefined` | Model ID for plan/code review. |
-| `validatorFallbackProvider` | `string` | `undefined` | Fallback provider for review. |
-| `validatorFallbackModelId` | `string` | `undefined` | Fallback model ID for review. |
-| `modelPresets` | `array` | `[]` | Reusable executor/validator model presets. |
+| `worktreeNaming` | `"random" \| "task-id" \| "task-title"` | `"random"` | Naming mode for new worktree directories. |
+| `taskPrefix` | `string` | `"FN"` | Prefix used for newly generated task IDs. |
+| `includeTaskIdInCommit` | `boolean` | `true` | Include task ID as commit scope in generated commits. |
+| `commitAuthorEnabled` | `boolean` | `true` | Apply explicit `--author` attribution on Fusion commits. |
+| `commitAuthorName` | `string` | `"Fusion"` | Commit author name when `commitAuthorEnabled` is true. |
+| `commitAuthorEmail` | `string` | `"noreply@runfusion.ai"` | Commit author email when `commitAuthorEnabled` is true. |
+| `planningProvider` | `string` | `undefined` | Provider for planning/triage agents. |
+| `planningModelId` | `string` | `undefined` | Model ID for planning/triage agents. |
+| `planningFallbackProvider` | `string` | `undefined` | Fallback provider for planning/triage. |
+| `planningFallbackModelId` | `string` | `undefined` | Fallback model ID for planning/triage. |
+| `defaultProviderOverride` | `string` | `undefined` | Project-level override for global default provider baseline. |
+| `defaultModelIdOverride` | `string` | `undefined` | Project-level override for global default model baseline. |
+| `executionProvider` | `string` | `undefined` | Provider for task execution agents. |
+| `executionModelId` | `string` | `undefined` | Model ID for task execution agents. |
+| `validatorProvider` | `string` | `undefined` | Provider for plan/code reviewers. |
+| `validatorModelId` | `string` | `undefined` | Model ID for plan/code reviewers. |
+| `validatorFallbackProvider` | `string` | `undefined` | Fallback provider for reviewers. |
+| `validatorFallbackModelId` | `string` | `undefined` | Fallback model ID for reviewers. |
+| `modelPresets` | `ModelPreset[]` | `[]` | Reusable executor/validator model presets. |
 | `autoSelectModelPreset` | `boolean` | `false` | Auto-select presets by task size. |
-| `defaultPresetBySize` | `object` | `{}` | Mapping for `S`/`M`/`L` → preset ID. |
-| `autoResolveConflicts` | `boolean` | `true` | Enable automatic merge conflict pattern resolution. |
-| `smartConflictResolution` | `boolean` | `true` | Alias/preferred flag for smart merge conflict handling. |
+| `defaultPresetBySize` | `{ S?: string; M?: string; L?: string }` | `{}` | Mapping for `S`/`M`/`L` → preset ID. |
+| `autoResolveConflicts` | `boolean` | `true` | Enable automatic merge conflict resolution. |
+| `smartConflictResolution` | `boolean` | `true` | Alias/preferred flag for smart conflict handling. |
 | `strictScopeEnforcement` | `boolean` | `false` | Block merges on out-of-scope file changes. |
 | `buildRetryCount` | `number` | `0` | Build retry attempts during merge. |
-| `verificationFixRetries` | `number` | `1` | Number of automatic retry attempts when deterministic verification fails during merge. |
-| `buildTimeoutMs` | `number` | `300000` | Build timeout in ms (5 minutes). |
+| `verificationFixRetries` | `number` | `1` | Auto-fix retry attempts when verification fails during merge. |
+| `buildTimeoutMs` | `number` | `300000` | Build timeout in milliseconds (5 minutes). |
 | `requirePlanApproval` | `boolean` | `false` | Require manual approval before triage → todo. |
-| `reviewHandoffPolicy` | `"disabled" \| "comment-triggered" \| "always"` | `"disabled"` | Policy for agent-to-user review handoff. |
-| `showQuickChatFAB` | `boolean` | `false` | Show floating quick-chat button. Chat accessible from More menu when hidden. |
-| `experimentalFeatures` | `Record<string, boolean>` | `{}` | Project-scoped experimental feature toggles. Each key is a feature flag name, and the value indicates whether it is enabled. Features not present in this map are considered disabled. This allows teams to explicitly mark capabilities as experimental and toggle them on/off from the Settings dashboard. |
+| `specStalenessEnabled` | `boolean` | `false` | Enforce automatic re-triage for stale specs. |
+| `specStalenessMaxAgeMs` | `number` | `21600000` | Spec staleness threshold in ms (6 hours). |
 | `taskStuckTimeoutMs` | `number` | `undefined` | Inactivity timeout for stuck-task recovery. |
-| `specStalenessEnabled` | `boolean` | `false` | Enable automatic re-triaging of tasks with stale specifications. |
-| `specStalenessMaxAgeMs` | `number` | `21600000` | Maximum age in ms before a specification (PROMPT.md) is considered stale and requires re-specification. Default: 6 hours. |
+| `aiSessionTtlMs` | `number` | `604800000` | TTL in ms for persisted planning/subtask/mission sessions (7 days). |
+| `aiSessionCleanupIntervalMs` | `number` | `3600000` | Interval in ms for AI session cleanup sweeps (1 hour). |
 | `autoUnpauseEnabled` | `boolean` | `true` | Auto-unpause after rate-limit-triggered pauses. |
-| `autoUnpauseBaseDelayMs` | `number` | `300000` | Base unpause retry delay in ms (5 min). |
-| `autoUnpauseMaxDelayMs` | `number` | `3600000` | Max unpause delay cap in ms (1 hour). |
+| `autoUnpauseBaseDelayMs` | `number` | `300000` | Base unpause delay in ms (5 min). |
+| `autoUnpauseMaxDelayMs` | `number` | `3600000` | Max auto-unpause delay in ms (1 hour). |
 | `maxStuckKills` | `number` | `6` | Max stuck-task terminations before permanent failure. |
-| `maxSpawnedAgentsPerParent` | `number` | `5` | Max child agents per parent. |
-| `maxSpawnedAgentsGlobal` | `number` | `20` | Max total spawned agents in an executor instance. |
-| `missionStaleThresholdMs` | `number` | `600000` | Time in ms after which a mission in `activating` state is considered stale and eligible for self-healing recovery. |
-| `missionMaxTaskRetries` | `number` | `3` | Maximum automatic retry attempts for a failed mission-linked task before its feature is marked as blocked for manual intervention. |
-| `missionHealthCheckIntervalMs` | `number` | `300000` | Interval in ms between mission feature/task consistency checks. Set to 0 to disable periodic health checks. |
-| `maintenanceIntervalMs` | `number` | `900000` | Maintenance interval in ms (15 min). |
+| `maxPostReviewFixes` | `number` | `1` | Max auto-revival attempts for in-review tasks failing pre-merge workflow steps. |
+| `maxSpawnedAgentsPerParent` | `number` | `5` | Max child agents per parent task. |
+| `maxSpawnedAgentsGlobal` | `number` | `20` | Max spawned agents across one executor instance. |
+| `maintenanceIntervalMs` | `number` | `900000` | Periodic maintenance interval in ms (15 min). |
+| `autoArchiveDoneTasksEnabled` | `boolean` | `true` | Enable periodic auto-archiving of done tasks. |
+| `autoArchiveDoneAfterMs` | `number` | `172800000` | Age in ms after entering done before auto-archive (48h). |
+| `archiveAgentLogMode` | `"none" \| "compact" \| "full"` | `"compact"` | Agent log retention strategy for cold archive snapshots. |
 | `autoUpdatePrStatus` | `boolean` | `false` | Auto-refresh PR status badges. |
 | `autoCreatePr` | `boolean` | `false` | Auto-create PRs for completed tasks. |
 | `autoBackupEnabled` | `boolean` | `false` | Enable scheduled DB backups. |
 | `autoBackupSchedule` | `string` | `"0 2 * * *"` | Backup cron schedule. |
-| `autoBackupRetention` | `number` | `7` | Number of backups to keep. |
+| `autoBackupRetention` | `number` | `7` | Number of backups to retain. |
 | `autoBackupDir` | `string` | `".fusion/backups"` | Relative backup directory path. |
-| `autoSummarizeTitles` | `boolean` | `false` | Auto-generate titles for long untitled task descriptions. |
-| `titleSummarizerProvider` | `string` | `undefined` | AI provider for title summarization. |
-| `titleSummarizerModelId` | `string` | `undefined` | AI model ID for title summarization. |
+| `autoSummarizeTitles` | `boolean` | `false` | Auto-generate titles for long untitled descriptions. |
+| `titleSummarizerProvider` | `string` | `undefined` | Provider for title summarization. |
+| `titleSummarizerModelId` | `string` | `undefined` | Model ID for title summarization. |
 | `titleSummarizerFallbackProvider` | `string` | `undefined` | Fallback provider for title summarization. |
 | `titleSummarizerFallbackModelId` | `string` | `undefined` | Fallback model ID for title summarization. |
-| `tokenCap` | `number` | `undefined` | Proactive token threshold for context compaction. |
+| `scripts` | `Record<string, string>` | `undefined` | Named script map used by script-mode workflow steps and setup hooks. |
+| `setupScript` | `string` | `undefined` | Script key from `scripts` to run before task execution. |
 | `insightExtractionEnabled` | `boolean` | `false` | Enable scheduled memory insight extraction. |
 | `insightExtractionSchedule` | `string` | `"0 2 * * *"` | Insight extraction cron schedule. |
-| `insightExtractionMinIntervalMs` | `number` | `86400000` | Minimum interval between insight extraction runs (24h). |
+| `insightExtractionMinIntervalMs` | `number` | `86400000` | Minimum interval between extractions (24h). |
 | `memoryEnabled` | `boolean` | `true` | Enable project memory integration. |
-| `memoryBackendType` | `string` | `"file"` | Memory backend type: `file`, `readonly`, `qmd`, or custom backend. Unknown types are accepted and persisted verbatim; the system falls back to `file` at runtime. |
-| `memoryAutoSummarizeEnabled` | `boolean` | `false` | Enable automatic AI-powered memory summarization when memory exceeds threshold. |
-| `memoryAutoSummarizeThresholdChars` | `number` | `50000` | Character count threshold for triggering auto-summarization. |
-| `memoryAutoSummarizeSchedule` | `string` | `"0 3 * * *"` | Cron schedule for auto-summarize checks (daily at 3 AM by default). |
+| `memoryBackendType` | `string` | `"qmd"` | Memory backend type. Built-ins include `qmd` (Quantized Memory Distillation, default), `file`, and `readonly`; custom backends can also be registered. |
+| `memoryAutoSummarizeEnabled` | `boolean` | `false` | Enable automatic memory summarization when memory exceeds threshold. |
+| `memoryAutoSummarizeThresholdChars` | `number` | `50000` | Character threshold for auto-summarization. |
+| `memoryAutoSummarizeSchedule` | `string` | `"0 3 * * *"` | Cron schedule for auto-summarize checks. |
+| `memoryDreamsEnabled` | `boolean` | `false` | Enable dream processing that synthesizes daily notes and promotes durable lessons. |
+| `memoryDreamsSchedule` | `string` | `"0 4 * * *"` | Cron schedule for dream processing. |
+| `tokenCap` | `number` | `undefined` | Proactive token threshold for context compaction. |
 | `runStepsInNewSessions` | `boolean` | `false` | Run each task step in a fresh agent session. |
-| `maxParallelSteps` | `number` | `2` | Max concurrent step sessions (1–4). |
-| `aiSessionTtlMs` | `number` | `604800000` | TTL in ms for persisted AI planning, subtask breakdown, and mission interview sessions. Valid range: 600000 (10 min) to 2592000000 (30 days). |
-| `aiSessionCleanupIntervalMs` | `number` | `3600000` | Interval in ms for scheduled AI session cleanup sweeps. Valid range: 60000 (1 min) to 86400000 (24 hours). |
+| `maxParallelSteps` | `number` | `2` | Max concurrent step sessions when per-step sessions are enabled. |
+| `missionStaleThresholdMs` | `number` | `600000` | Mission stale threshold in ms while `activating` (10 min). |
+| `missionMaxTaskRetries` | `number` | `3` | Max automatic retries for failed mission-linked tasks. |
+| `missionHealthCheckIntervalMs` | `number` | `300000` | Mission health-check interval in ms (5 min). |
+| `agentPrompts` | `AgentPromptsConfig` | `undefined` | Custom role prompt templates and assignments. |
+| `promptOverrides` | `Record<string, string \| null>` | `undefined` | Segment-level prompt overrides (set a key to `null` to clear it). |
 | `reflectionEnabled` | `boolean` | `false` | Enable/disable agent self-reflection workflows. |
-| `reflectionIntervalMs` | `number` | `3600000` | How often periodic reflections occur in milliseconds. |
-| `reflectionAfterTask` | `boolean` | `true` | When true, automatically trigger reflection after task completion. |
-| `agentPrompts` | `object` | `undefined` | Custom agent prompt templates + role assignments. |
-| `promptOverrides` | `Record<string, string>` | `undefined` | Fine-grained prompt segment overrides (e.g., `{"executor-welcome": "..."}`). |
+| `reflectionIntervalMs` | `number` | `3600000` | Periodic reflection interval in ms. |
+| `reflectionAfterTask` | `boolean` | `true` | Trigger reflection after task completion. |
+| `reviewHandoffPolicy` | `"disabled" \| "comment-triggered" \| "always"` | `"disabled"` | Policy for agent-to-user review handoff detection. |
+| `showQuickChatFAB` | `boolean` | `false` | Show floating quick-chat button (chat remains available via More menu). |
+| `experimentalFeatures` | `Record<string, boolean>` | `{}` | Project-scoped experimental feature flags. |
 
 > **Note:** Agent `metadata.skills` is not a top-level project setting, but it is the primary mechanism for controlling execution-time skill selection. The engine's `buildSessionSkillContext` function reads this metadata from the assigned agent and uses it to resolve which skills are available in the agent session. If `metadata.skills` is absent or empty, the engine falls back to role-based skills (`executor`, `reviewer`, `merger`, `triage`).
-
-### Additional ProjectSettings fields
-
-These exist in `ProjectSettings` but are not part of `PROJECT_SETTINGS_KEYS`.
-
-| Setting | Type | Default | Description |
-|---|---|---:|---|
-| `scripts` | `Record<string, string>` | `undefined` | Named script map used by script-mode workflow steps and setup hooks. |
-| `setupScript` | `string` | `undefined` | Named script key to run before task execution. |
 
 ---
 

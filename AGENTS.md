@@ -306,21 +306,31 @@ See [docs/settings-reference.md](./docs/settings-reference.md) for the complete 
 
 **For Task Specification (Triage):**
 1. Per-task `planningModelProvider`/`planningModelId`
-2. Global `planningProvider`/`planningModelId`
-3. Global `defaultProvider`/`defaultModelId`
+2. Project `planningProvider`/`planningModelId`
+3. Global `planningGlobalProvider`/`planningGlobalModelId`
+4. Project `defaultProviderOverride`/`defaultModelIdOverride`
+5. Global `defaultProvider`/`defaultModelId`
+6. Automatic provider/model resolution
 
 **For Task Execution (Executor):**
 1. Per-task `modelProvider`/`modelId`
-2. Global `defaultProvider`/`defaultModelId`
+2. Project `executionProvider`/`executionModelId`
+3. Global `executionGlobalProvider`/`executionGlobalModelId`
+4. Project `defaultProviderOverride`/`defaultModelIdOverride`
+5. Global `defaultProvider`/`defaultModelId`
+6. Automatic provider/model resolution
 
 **For Code/Spec Review (Reviewer):**
 1. Per-task `validatorModelProvider`/`validatorModelId`
-2. Global `validatorProvider`/`validatorModelId`
-3. Global `defaultProvider`/`defaultModelId`
+2. Project `validatorProvider`/`validatorModelId`
+3. Global `validatorGlobalProvider`/`validatorGlobalModelId`
+4. Project `defaultProviderOverride`/`defaultModelIdOverride`
+5. Global `defaultProvider`/`defaultModelId`
+6. Automatic provider/model resolution
 
 ## Per-Task Model Overrides
 
-Tasks can override global AI model settings on a per-task basis:
+Tasks can override project/global AI model settings on a per-task basis:
 - **Executor Model** — The model used to implement the task
 - **Validator Model** — The model used for code and plan review
 - **Planning Model** — The model used for task specification

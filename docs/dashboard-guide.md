@@ -24,10 +24,10 @@ List view is optimized for dense task management.
 
 Features:
 
-- Grouping modes (for example by column/size)
-- Inline title editing
-- Duplicate task actions
-- Quick scanning of metadata without card expansion
+- Sectioned task table grouped by lifecycle column
+- Sortable columns (ID/title/status/column)
+- Column visibility toggles and optional hide-done filtering
+- Bulk selection + batch model updates
 
 ![List view](./screenshots/list-view.png)
 
@@ -36,6 +36,14 @@ Features:
 Chat view provides project-scoped conversations with agents.
 
 ![Chat view](./screenshots/chat-view.png)
+
+## Quick Chat
+
+Quick Chat is an optional floating panel for fast, project-scoped assistant conversations without leaving your current view.
+
+- Controlled by the project setting `showQuickChatFAB`
+- Supports agent mentions (`@agent`) and file mentions
+- Uses the same model/provider infrastructure as full Chat view
 
 ## Mailbox View
 
@@ -68,17 +76,22 @@ Features:
 
 ![Git manager](./screenshots/git-manager.png)
 
-## File Browser and Editor
+## Documents View
 
-Built-in file tools allow quick inspection and edits.
+Documents view aggregates task documents and project markdown files.
 
 Features:
 
-- Browse project root and task worktrees
-- Open files in an editor with syntax highlighting
-- Navigate artifacts generated during task execution
+- Group task documents by task ID (with revision history metadata)
+- Search documents across tasks
+- Open project markdown files with inline preview
+- Jump directly from a document group to the owning task detail modal
 
 ![Documents view](./screenshots/documents-view.png)
+
+### File Browser and Editor Tools
+
+Fusion also includes file browsing/editing tools (for project root and task worktrees) in file/terminal workflows, so you can inspect generated artifacts and make targeted edits without leaving the dashboard.
 
 ## Activity Log
 
@@ -88,7 +101,14 @@ Features:
 
 - Event type filtering
 - Auto-refresh updates
-- Operational traceability for task moves, merges, settings updates, and errors
+- Operational traceability for the current `ActivityEventType` set:
+  - `task:created`
+  - `task:moved`
+  - `task:updated`
+  - `task:deleted`
+  - `task:merged`
+  - `task:failed`
+  - `settings:updated`
 
 ## Theme System
 
@@ -172,7 +192,7 @@ Inspect agents, runtime status, run history, and configuration.
 
 ### Agent Skill Assignment
 
-Agents can be assigned skills that determine which capabilities are injected into their sessions at execution time. Skills are configured via the agent's `metadata.skills` field—an array of skill names such as `["review", "executor"]`.
+Agents can be assigned skills that determine which capabilities are injected into their sessions at execution time. Skills are configured via the agent's `metadata.skills` field (an array of requested skill names).
 
 You can set `metadata.skills` in two ways:
 - **Dashboard**: Edit an agent and add or update the `skills` key in its metadata JSON.
@@ -189,6 +209,8 @@ Manage mission hierarchy and progression state.
 ## Roadmaps View
 
 Roadmaps provide a dedicated planning surface for organizing product development with hierarchical milestones and features.
+
+> Available when the `experimentalFeatures.roadmap` toggle is enabled.
 
 ![Roadmaps view](./screenshots/roadmaps-view.png)
 
@@ -344,11 +366,13 @@ Roadmaps can be exported as structured data for use in mission and task planning
 
 Memory view provides a multi-file editor for project and daily memory files.
 
+> Available when the `experimentalFeatures.memoryView` toggle is enabled.
+
 ![Memory view](./screenshots/memory-view.png)
 
 ## Task Detail Modal
 
-Inspect logs, step progress, workflow outcomes, and model overrides.
+Inspect task definition, logs, comments, documents, workflow outcomes, and model overrides from a single modal.
 
 ![Task detail modal](./screenshots/task-detail.png)
 
@@ -438,6 +462,36 @@ List all discovered skills with their enabled state.
   "code": "adapter_not_configured"
 }
 ```
+
+### GET /api/skills/:id/content
+
+Fetch a skill's `SKILL.md` content and supplementary file metadata.
+
+**Response:** `200 OK`
+```json
+{
+  "content": {
+    "name": "foo/SKILL.md",
+    "skillMd": "# Foo Skill\n...",
+    "files": [
+      {
+        "name": "examples",
+        "relativePath": "skills/foo/examples",
+        "type": "directory"
+      },
+      {
+        "name": "example.ts",
+        "relativePath": "skills/foo/examples/example.ts",
+        "type": "file"
+      }
+    ]
+  }
+}
+```
+
+**Error Responses:**
+- `400 Bad Request` — invalid encoded skill ID (`code: "invalid_skill_id"`)
+- `404 Not Found` — skill not found (`code: "skill_not_found"`) or adapter missing (`code: "adapter_not_configured"`)
 
 ### PATCH /api/skills/execution
 
