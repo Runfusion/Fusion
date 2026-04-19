@@ -115,7 +115,7 @@ function extractSSEPayload(sseChunk: string): unknown {
 const mockInit = vi.fn().mockResolvedValue(undefined);
 
 // Create mock functions before vi.mock
-const { mockCreateKbAgent, mockChatStreamManager, mockSendMessage } = vi.hoisted(() => {
+const { mockCreateKbAgent, mockChatStreamManager, mockSendMessage, mockCancelGeneration } = vi.hoisted(() => {
   // Store subscribers per session for broadcast simulation
   const subscribers = new Map<string, Set<(event: any, eventId?: number) => void>>();
 
@@ -173,6 +173,7 @@ const { mockCreateKbAgent, mockChatStreamManager, mockSendMessage } = vi.hoisted
   return {
     mockCreateKbAgent: vi.fn(),
     mockSendMessage: vi.fn(),
+    mockCancelGeneration: vi.fn(),
     mockChatStreamManager: chatStreamManager,
   };
 });
@@ -226,6 +227,7 @@ vi.mock("../chat.js", () => {
   return {
     ChatManager: class MockChatManager {
       sendMessage = mockSendMessage;
+      cancelGeneration = mockCancelGeneration;
     },
     chatStreamManager: mockChatStreamManager,
     checkRateLimit: vi.fn().mockReturnValue(true),
@@ -324,7 +326,10 @@ const mockChatStoreInstance = {
 };
 
 function createMockChatManager() {
-  return { sendMessage: mockSendMessage };
+  return {
+    sendMessage: mockSendMessage,
+    cancelGeneration: mockCancelGeneration,
+  };
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -371,6 +376,7 @@ describe("Chat API Routes", () => {
     mockGetLastMessageForSessions.mockReset();
     mockDeleteMessage.mockReset();
     mockSendMessage.mockReset();
+    mockCancelGeneration.mockReset();
     mockAgentStoreInit.mockResolvedValue(undefined);
     mockAgentStoreGetAgent.mockReset();
     mockGetOrCreateProjectStore.mockReset();
@@ -379,6 +385,7 @@ describe("Chat API Routes", () => {
     mockListSessions.mockReturnValue([]);
     mockGetMessages.mockReturnValue([]);
     mockGetLastMessageForSessions.mockReturnValue(new Map());
+    mockCancelGeneration.mockReturnValue(false);
 
     // Default agent mock - agent with model config
     mockAgentStoreGetAgent.mockResolvedValue({
@@ -884,6 +891,45 @@ describe("Chat API Routes", () => {
       const response = await request(app, "GET", "/api/chat/sessions/nonexistent/messages");
 
       expect(response.status).toBe(404);
+    });
+  });
+
+  describe("POST /api/chat/sessions/:id/cancel", () => {
+    it("returns success true when generation is cancelled", async () => {
+      mockCancelGeneration.mockReturnValue(true);
+
+      const response = await request(app, "POST", "/api/chat/sessions/chat-abc123/cancel");
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ success: true });
+      expect(mockCancelGeneration).toHaveBeenCalledWith("chat-abc123");
+    });
+
+    it("returns success false when no active generation exists", async () => {
+      mockCancelGeneration.mockReturnValue(false);
+
+      const response = await request(app, "POST", "/api/chat/sessions/chat-abc123/cancel");
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ success: false });
+      expect(mockCancelGeneration).toHaveBeenCalledWith("chat-abc123");
+    });
+
+    it("returns 503 when chat manager is unavailable", async () => {
+      const express = await import("express");
+      const { createApiRoutes } = await import("../routes.js");
+
+      const appWithoutManager = express.default();
+      appWithoutManager.use(express.json());
+      appWithoutManager.use("/api", createApiRoutes(store as any, {
+        chatStore: mockChatStore as any,
+        chatManager: undefined,
+      }));
+
+      const response = await request(appWithoutManager as any, "POST", "/api/chat/sessions/chat-abc123/cancel");
+
+      expect(response.status).toBe(503);
+      expect((response.body as any).error).toContain("Chat manager not available");
     });
   });
 

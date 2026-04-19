@@ -5,6 +5,7 @@ import {
   createChatSession,
   fetchChatMessages,
   streamChatResponse,
+  cancelChatResponse,
 } from "../api";
 
 export const KB_AGENT_ID = "__kb_agent__";
@@ -40,9 +41,12 @@ export interface UseQuickChatReturn {
   isStreaming: boolean;
   streamingText: string;
   streamingThinking: string;
+  pendingMessage: string;
 
   // Operations
   sendMessage: (content: string) => void;
+  stopStreaming: () => void;
+  clearPendingMessage: () => void;
   switchSession: (agentId: string, modelProvider?: string, modelId?: string) => Promise<void>;
   startModelChat: (modelProvider: string, modelId: string) => Promise<void>;
   loadMessages: () => Promise<void>;
@@ -118,12 +122,19 @@ export function useQuickChat(
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState("");
   const [streamingThinking, setStreamingThinking] = useState("");
+  const [pendingMessage, setPendingMessage] = useState("");
 
   // Stream connection ref for cleanup
   const streamRef = useRef<{ close: () => void } | null>(null);
+  const cancelledByUserRef = useRef(false);
+  const pendingMessageRef = useRef("");
 
   // Track the current selected chat target for session management
   const currentSessionKeyRef = useRef<string>("");
+
+  useEffect(() => {
+    pendingMessageRef.current = pendingMessage;
+  }, [pendingMessage]);
 
   // Fetch existing sessions and find/create one for the given target
   const initializeSession = useCallback(
@@ -246,10 +257,39 @@ export function useQuickChat(
     [switchSession],
   );
 
+  const stopStreaming = useCallback(() => {
+    if (!activeSession) return;
+
+    cancelledByUserRef.current = true;
+    streamRef.current?.close();
+    streamRef.current = null;
+
+    void cancelChatResponse(activeSession.id, projectId).catch(() => {
+      // Best-effort cancellation; ignore backend errors.
+    });
+
+    setIsStreaming(false);
+    setStreamingText("");
+    setStreamingThinking("");
+  }, [activeSession, projectId]);
+
+  const clearPendingMessage = useCallback(() => {
+    pendingMessageRef.current = "";
+    setPendingMessage("");
+  }, []);
+
   // Send a message using SSE streaming
   const sendMessage = useCallback(
     (content: string) => {
       if (!activeSession || !content.trim()) return;
+
+      if (isStreaming) {
+        pendingMessageRef.current = content;
+        setPendingMessage(content);
+        return;
+      }
+
+      cancelledByUserRef.current = false;
 
       // Close any existing stream
       if (streamRef.current) {
@@ -303,6 +343,13 @@ export function useQuickChat(
           setStreamingThinking("");
           setIsStreaming(false);
           streamRef.current = null;
+
+          const queuedMessage = pendingMessageRef.current.trim();
+          if (queuedMessage) {
+            pendingMessageRef.current = "";
+            setPendingMessage("");
+            sendMessage(queuedMessage);
+          }
         },
         onError: (data: string) => {
           setStreamingText("");
@@ -311,13 +358,23 @@ export function useQuickChat(
           streamRef.current = null;
           console.error("[useQuickChat] Stream error:", data);
           addToast?.("Failed to get response", "error");
+
+          if (!cancelledByUserRef.current) {
+            const queuedMessage = pendingMessageRef.current.trim();
+            if (queuedMessage) {
+              pendingMessageRef.current = "";
+              setPendingMessage("");
+              sendMessage(queuedMessage);
+            }
+          }
+
           void reloadMessages();
         },
       };
 
       streamRef.current = streamChatResponse(activeSession.id, content, textHandlers, projectId);
     },
-    [activeSession, projectId, addToast, reloadMessages],
+    [activeSession, isStreaming, projectId, addToast, reloadMessages],
   );
 
   // Cleanup on unmount
@@ -338,7 +395,10 @@ export function useQuickChat(
     isStreaming,
     streamingText,
     streamingThinking,
+    pendingMessage,
     sendMessage,
+    stopStreaming,
+    clearPendingMessage,
     switchSession,
     startModelChat,
     loadMessages,
@@ -351,7 +411,10 @@ export function useQuickChat(
     isStreaming,
     streamingText,
     streamingThinking,
+    pendingMessage,
     sendMessage,
+    stopStreaming,
+    clearPendingMessage,
     switchSession,
     startModelChat,
     loadMessages,

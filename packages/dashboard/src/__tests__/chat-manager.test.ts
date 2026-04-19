@@ -779,4 +779,125 @@ describe("ChatManager.sendMessage", () => {
     // Assert - updateSession was NOT called
     expect(mockChatStore.updateSession).not.toHaveBeenCalled();
   });
+
+  it("cancelGeneration returns false when no active generation exists", () => {
+    const chatManager = createChatManager();
+
+    expect(chatManager.cancelGeneration("chat-001")).toBe(false);
+  });
+
+  it("cancelGeneration returns true and aborts an active generation", () => {
+    const chatManager = createChatManager();
+    const abortController = new AbortController();
+    const dispose = vi.fn();
+
+    (chatManager as any).activeGenerations.set("chat-001", {
+      abortController,
+      agentResult: { session: { dispose } },
+    });
+
+    const events: Array<{ type: string; data: unknown }> = [];
+    const unsubscribe = chatStreamManager.subscribe("chat-001", (event) => {
+      events.push(event);
+    });
+
+    const result = chatManager.cancelGeneration("chat-001");
+    unsubscribe();
+
+    expect(result).toBe(true);
+    expect(abortController.signal.aborted).toBe(true);
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(events).toContainEqual({ type: "error", data: "Generation cancelled" });
+  });
+
+  it("cancelled generation does not persist assistant message", async () => {
+    let rejectPrompt: ((reason?: unknown) => void) | undefined;
+
+    __setCreateKbAgent(async () => {
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(() => {
+            return new Promise<void>((_resolve, reject) => {
+              rejectPrompt = reject;
+            });
+          }),
+          dispose: vi.fn().mockImplementation(() => {
+            rejectPrompt?.(new Error("Disposed"));
+          }),
+          state: {
+            messages: [{ role: "assistant", content: "Should not persist" }],
+          },
+        },
+      };
+    });
+
+    const chatManager = createChatManager();
+    const sendPromise = chatManager.sendMessage("chat-001", "Hello");
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(chatManager.cancelGeneration("chat-001")).toBe(true);
+    await sendPromise;
+
+    const assistantCalls = mockChatStore.addMessage.mock.calls.filter((call) => call[1].role === "assistant");
+    expect(assistantCalls).toHaveLength(0);
+  });
+
+  it("cancelled generation broadcasts error event with cancellation message", async () => {
+    let rejectPrompt: ((reason?: unknown) => void) | undefined;
+
+    __setCreateKbAgent(async () => {
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(() => {
+            return new Promise<void>((_resolve, reject) => {
+              rejectPrompt = reject;
+            });
+          }),
+          dispose: vi.fn().mockImplementation(() => {
+            rejectPrompt?.(new Error("Disposed"));
+          }),
+          state: { messages: [] },
+        },
+      };
+    });
+
+    const events: Array<{ type: string; data: unknown }> = [];
+    const unsubscribe = chatStreamManager.subscribe("chat-001", (event) => {
+      events.push(event);
+    });
+
+    const chatManager = createChatManager();
+    const sendPromise = chatManager.sendMessage("chat-001", "Hello");
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    chatManager.cancelGeneration("chat-001");
+    await sendPromise;
+    unsubscribe();
+
+    expect(events.some((event) => event.type === "error" && event.data === "Generation cancelled")).toBe(true);
+  });
+
+  it("cleans active generation state even when dispose fails", async () => {
+    const disposeSpy = vi.fn().mockImplementation(() => {
+      throw new Error("dispose failed");
+    });
+
+    __setCreateKbAgent(async () => {
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: disposeSpy,
+          state: {
+            messages: [{ role: "assistant", content: "Done" }],
+          },
+        },
+      };
+    });
+
+    const chatManager = createChatManager();
+    await chatManager.sendMessage("chat-001", "Hello");
+
+    expect((chatManager as any).activeGenerations.has("chat-001")).toBe(false);
+  });
 });

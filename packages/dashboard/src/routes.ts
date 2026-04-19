@@ -9605,6 +9605,28 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   });
 
   /**
+   * POST /api/chat/sessions/:id/cancel
+   * Cancel an in-flight chat generation.
+   */
+  router.post("/chat/sessions/:id/cancel", rateLimit(RATE_LIMITS.mutation), async (req, res) => {
+    try {
+      const chatManager = options?.chatManager;
+      if (!chatManager) {
+        throw new ApiError(503, "Chat manager not available");
+      }
+
+      const sessionId = String(req.params.id);
+      const success = chatManager.cancelGeneration(sessionId);
+      res.json({ success });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to cancel chat generation");
+    }
+  });
+
+  /**
    * DELETE /api/chat/sessions/:id/messages/:messageId
    * Delete a specific message from a chat session.
    */
@@ -9653,6 +9675,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       "DELETE /chat/sessions/:id",
       "GET /chat/sessions/:id/messages",
       "POST /chat/sessions/:id/messages",
+      "POST /chat/sessions/:id/cancel",
       "DELETE /chat/sessions/:id/messages/:messageId",
     ];
     console.debug("[chat:routes:registered]", chatRoutes);

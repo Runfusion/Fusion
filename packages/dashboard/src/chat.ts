@@ -371,6 +371,10 @@ export function getRateLimitResetTime(ip: string): Date | null {
  */
 export class ChatManager {
   private agentStoreReady?: Promise<void>;
+  private activeGenerations = new Map<string, {
+    abortController: AbortController;
+    agentResult?: AgentResult;
+  }>();
 
   constructor(
     private chatStore: ChatStore,
@@ -507,72 +511,73 @@ export class ChatManager {
     modelProvider?: string,
     modelId?: string,
   ): Promise<void> {
-    // Validate session exists
+    const abortController = new AbortController();
+    this.activeGenerations.set(sessionId, { abortController });
+
     const session = this.chatStore.getSession(sessionId);
-    if (!session) {
-      chatStreamManager.broadcast(sessionId, {
-        type: "error",
-        data: `Chat session ${sessionId} not found`,
-      });
-      return;
-    }
-
-    const hasMentionCandidates = /@[\w-]+/.test(content);
-    const mentionAgents = hasMentionCandidates ? await this.listAgentsForMentions() : [];
-    const mentions = hasMentionCandidates ? await this.parseMentions(content, mentionAgents) : [];
-
-    // Persist user message
-    let _userMessageId: string;
-    try {
-      const userMessage = this.chatStore.addMessage(sessionId, {
-        role: "user",
-        content,
-        metadata: mentions.length > 0 ? { mentions } : undefined,
-      });
-      _userMessageId = userMessage.id;
-    } catch (err) {
-      chatStreamManager.broadcast(sessionId, {
-        type: "error",
-        data: `Failed to save message: ${err instanceof Error ? err.message : "Unknown error"}`,
-      });
-      return;
-    }
-
-    // Use model from session if not overridden (needed for both AI response and title generation)
-    const effectiveModelProvider = modelProvider ?? session.modelProvider ?? undefined;
-    const effectiveModelId = modelId ?? session.modelId ?? undefined;
-
-    // Auto-generate chat title on first message if session has no title
-    const needsTitle = session.title === null || session.title === undefined || session.title.trim() === "";
-    if (needsTitle) {
-      // Fire-and-forget title generation (non-blocking)
-      (async () => {
-        try {
-          const generated = await summarizeTitle(
-            content.trim(),
-            this.rootDir,
-            effectiveModelProvider,
-            effectiveModelId,
-          );
-          const title = generated ?? content.trim().slice(0, 60).trim();
-          if (title) {
-            this.chatStore.updateSession(sessionId, { title });
-          }
-        } catch {
-          // Fallback on any error
-          const fallback = content.trim().slice(0, 60).trim();
-          if (fallback) {
-            this.chatStore.updateSession(sessionId, { title: fallback });
-          }
-        }
-      })();
-    }
-
     let agentResult: AgentResult | undefined;
     let accumulatedThinking = "";
     let accumulatedText = "";
 
     try {
+      // Validate session exists
+      if (!session) {
+        chatStreamManager.broadcast(sessionId, {
+          type: "error",
+          data: `Chat session ${sessionId} not found`,
+        });
+        return;
+      }
+
+      const hasMentionCandidates = /@[\w-]+/.test(content);
+      const mentionAgents = hasMentionCandidates ? await this.listAgentsForMentions() : [];
+      const mentions = hasMentionCandidates ? await this.parseMentions(content, mentionAgents) : [];
+
+      // Persist user message
+      try {
+        this.chatStore.addMessage(sessionId, {
+          role: "user",
+          content,
+          metadata: mentions.length > 0 ? { mentions } : undefined,
+        });
+      } catch (err) {
+        chatStreamManager.broadcast(sessionId, {
+          type: "error",
+          data: `Failed to save message: ${err instanceof Error ? err.message : "Unknown error"}`,
+        });
+        return;
+      }
+
+      // Use model from session if not overridden (needed for both AI response and title generation)
+      const effectiveModelProvider = modelProvider ?? session.modelProvider ?? undefined;
+      const effectiveModelId = modelId ?? session.modelId ?? undefined;
+
+      // Auto-generate chat title on first message if session has no title
+      const needsTitle = session.title === null || session.title === undefined || session.title.trim() === "";
+      if (needsTitle) {
+        // Fire-and-forget title generation (non-blocking)
+        (async () => {
+          try {
+            const generated = await summarizeTitle(
+              content.trim(),
+              this.rootDir,
+              effectiveModelProvider,
+              effectiveModelId,
+            );
+            const title = generated ?? content.trim().slice(0, 60).trim();
+            if (title) {
+              this.chatStore.updateSession(sessionId, { title });
+            }
+          } catch {
+            // Fallback on any error
+            const fallback = content.trim().slice(0, 60).trim();
+            if (fallback) {
+              this.chatStore.updateSession(sessionId, { title: fallback });
+            }
+          }
+        })();
+      }
+
       // Ensure engine is loaded
       await ensureEngineReady();
 
@@ -666,9 +671,19 @@ export class ChatManager {
           });
         },
       });
+      this.activeGenerations.set(sessionId, { abortController, agentResult });
+
+      if (abortController.signal.aborted) {
+        agentResult.session.dispose?.();
+        return;
+      }
 
       // Send user message and get response
       await agentResult.session.prompt(promptContent);
+
+      if (abortController.signal.aborted) {
+        return;
+      }
 
       // Extract response text from agent state
       let responseText = "";
@@ -707,6 +722,14 @@ export class ChatManager {
         data: { messageId: assistantMessage.id },
       });
     } catch (err) {
+      if (abortController.signal.aborted) {
+        chatStreamManager.broadcast(sessionId, {
+          type: "error",
+          data: "Generation cancelled",
+        });
+        return;
+      }
+
       const errorMessage = err instanceof Error ? err.message : "AI processing failed";
       console.error(`[chat] Error in sendMessage for session ${sessionId}:`, err);
 
@@ -728,6 +751,8 @@ export class ChatManager {
         data: errorMessage,
       });
     } finally {
+      this.activeGenerations.delete(sessionId);
+
       // Always dispose agent session
       if (agentResult) {
         try {
@@ -737,6 +762,30 @@ export class ChatManager {
         }
       }
     }
+  }
+
+  cancelGeneration(sessionId: string): boolean {
+    const entry = this.activeGenerations.get(sessionId);
+    if (!entry) {
+      return false;
+    }
+
+    entry.abortController.abort();
+
+    if (entry.agentResult) {
+      try {
+        entry.agentResult.session.dispose?.();
+      } catch (err) {
+        console.error(`[chat] Error disposing agent session during cancellation:`, err);
+      }
+    }
+
+    chatStreamManager.broadcast(sessionId, {
+      type: "error",
+      data: "Generation cancelled",
+    });
+
+    return true;
   }
 }
 

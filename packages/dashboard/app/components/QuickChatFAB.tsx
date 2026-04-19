@@ -7,7 +7,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
-import { MessageSquare, Send, X } from "lucide-react";
+import { MessageSquare, Send, Square, X } from "lucide-react";
 import { fetchModels, type Agent, type ModelInfo } from "../api";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { AgentMentionPopup } from "./AgentMentionPopup";
@@ -377,6 +377,9 @@ export function QuickChatFAB({
     sessionsLoading,
     messagesLoading,
     sendMessage,
+    stopStreaming,
+    pendingMessage,
+    clearPendingMessage,
     switchSession,
     startModelChat,
   } = useQuickChat(projectId, addToast);
@@ -587,6 +590,10 @@ export function QuickChatFAB({
   }, [chatMode, selectedAgent, selectedModelTag]);
 
   const inputDisabled = !hasChatTarget || !activeSession || sessionsLoading;
+
+  const pendingPreview = pendingMessage.length > 50
+    ? `${pendingMessage.slice(0, 50)}…`
+    : pendingMessage;
 
   const handleSendMessage = useCallback(() => {
     const trimmed = messageInput.trim();
@@ -1032,15 +1039,41 @@ export function QuickChatFAB({
                 }}
                 loading={fileMention.loading}
               />
+              {pendingMessage && (
+                <div className="chat-pending-message" data-testid="chat-pending-indicator">
+                  <span>{`Queued: ${pendingPreview}`}</span>
+                  <button
+                    type="button"
+                    className="chat-pending-message-dismiss"
+                    aria-label="Dismiss queued message"
+                    data-testid="chat-pending-dismiss"
+                    onClick={clearPendingMessage}
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
             </div>
-            <button
-              type="button"
-              onClick={() => void handleSendMessage()}
-              disabled={inputDisabled || isStreaming || messageInput.trim().length === 0}
-              data-testid="quick-chat-send"
-            >
-              <Send size={16} />
-            </button>
+            {isStreaming ? (
+              <button
+                type="button"
+                className="chat-input-stop"
+                onClick={stopStreaming}
+                aria-label="Stop generation"
+                data-testid="quick-chat-stop"
+              >
+                <Square size={14} />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void handleSendMessage()}
+                disabled={inputDisabled || messageInput.trim().length === 0}
+                data-testid="quick-chat-send"
+              >
+                <Send size={16} />
+              </button>
+            )}
           </div>
         </div>
       )}

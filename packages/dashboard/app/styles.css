@@ -31866,12 +31866,80 @@ html .column.drag-over * {
   cursor: not-allowed;
 }
 
+.chat-input-stop {
+  width: calc(var(--space-xl) * 2);
+  height: calc(var(--space-xl) * 2);
+  border-radius: var(--radius-md);
+  border: none;
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  color: var(--color-error);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background var(--transition-fast), transform var(--transition-fast), color var(--transition-fast);
+}
+
+.chat-input-stop:hover {
+  background: color-mix(in srgb, var(--color-error) 25%, transparent);
+}
+
+.chat-input-stop:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.chat-input-stop:active {
+  transform: scale(0.97);
+}
+
+/* === Chat Pending Message === */
+.chat-pending-message {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--todo) 10%, transparent);
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.chat-pending-message span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-pending-message-dismiss {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: var(--space-xs);
+  line-height: 1;
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.chat-pending-message-dismiss:hover {
+  color: var(--text-muted);
+}
+
 /* === AgentMentionPopup === */
 .chat-input-wrapper,
 .quick-chat-input-wrapper {
   position: relative;
   display: flex;
   flex: 1;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-xs);
   min-width: 0;
 }
 

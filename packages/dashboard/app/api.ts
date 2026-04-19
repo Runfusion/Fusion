@@ -5571,6 +5571,19 @@ export function deleteChatMessage(
   );
 }
 
+/** Cancel an in-flight chat generation. */
+export function cancelChatResponse(
+  sessionId: string,
+  projectId?: string,
+): Promise<{ success: boolean }> {
+  return api<{ success: boolean }>(
+    withProjectId(`/chat/sessions/${encodeURIComponent(sessionId)}/cancel`, projectId),
+    {
+      method: "POST",
+    },
+  );
+}
+
 /** Send a chat message and receive the AI response via SSE streaming.
  *
  *  The backend exposes `POST /api/chat/sessions/:id/messages` which returns an SSE

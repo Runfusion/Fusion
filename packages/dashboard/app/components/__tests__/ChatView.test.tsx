@@ -39,6 +39,7 @@ vi.mock("lucide-react", async (importOriginal) => {
     Archive: ({ "data-testid": testId, ...props }: any) => <svg data-testid={testId || "icon-archive"} {...props} />,
     ChevronLeft: ({ "data-testid": testId, ...props }: any) => <svg data-testid={testId || "icon-chevron-left"} {...props} />,
     Bot: ({ "data-testid": testId, ...props }: any) => <svg data-testid={testId || "icon-bot"} {...props} />,
+    Square: ({ "data-testid": testId, ...props }: any) => <svg data-testid={testId || "icon-square"} {...props} />,
   };
 });
 
@@ -98,6 +99,9 @@ const defaultChatState = {
   archiveSession: vi.fn(),
   deleteSession: vi.fn(),
   sendMessage: vi.fn(),
+  stopStreaming: vi.fn(),
+  pendingMessage: "",
+  clearPendingMessage: vi.fn(),
   loadMoreMessages: vi.fn(),
   hasMoreMessages: false,
   searchQuery: "",
@@ -730,7 +734,7 @@ describe("ChatView", () => {
     expect(sendButton).toBeDisabled();
   });
 
-  it("disables send button when streaming", () => {
+  it("renders stop button when streaming", () => {
     setupMockChat({
       activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
       messages: [],
@@ -739,8 +743,52 @@ describe("ChatView", () => {
 
     render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-    const sendButton = screen.getByTestId("chat-send-btn");
-    expect(sendButton).toBeDisabled();
+    expect(screen.getByTestId("chat-stop-btn")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-send-btn")).not.toBeInTheDocument();
+  });
+
+  it("clicking stop button calls stopStreaming", async () => {
+    const stopStreaming = vi.fn();
+    setupMockChat({
+      activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
+      messages: [],
+      isStreaming: true,
+      stopStreaming,
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    await userEvent.click(screen.getByTestId("chat-stop-btn"));
+    expect(stopStreaming).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders send button when not streaming", () => {
+    setupMockChat({
+      activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
+      messages: [],
+      isStreaming: false,
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    expect(screen.getByTestId("chat-send-btn")).toBeInTheDocument();
+  });
+
+  it("renders pending message indicator and dismisses it", async () => {
+    const clearPendingMessage = vi.fn();
+    setupMockChat({
+      activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
+      messages: [],
+      pendingMessage: "Queued while streaming",
+      clearPendingMessage,
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    expect(screen.getByTestId("chat-pending-indicator")).toHaveTextContent("Queued: Queued while streaming");
+
+    await userEvent.click(screen.getByTestId("chat-pending-dismiss"));
+    expect(clearPendingMessage).toHaveBeenCalledTimes(1);
   });
 
   it("textarea is enabled during streaming", () => {

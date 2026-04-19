@@ -6,6 +6,7 @@ import {
   updateChatSession,
   deleteChatSession,
   streamChatResponse,
+  cancelChatResponse,
   fetchAgents,
   type ChatSessionListResponse,
 } from "../api";
@@ -49,6 +50,7 @@ export interface UseChatReturn {
   isStreaming: boolean;
   streamingText: string;
   streamingThinking: string;
+  pendingMessage: string;
 
   // Session operations
   selectSession: (id: string) => void;
@@ -60,6 +62,8 @@ export interface UseChatReturn {
 
   // Message operations
   sendMessage: (content: string) => void;
+  stopStreaming: () => void;
+  clearPendingMessage: () => void;
   loadMoreMessages: () => Promise<void>;
   hasMoreMessages: boolean;
 
@@ -87,6 +91,7 @@ export function useChat(projectId?: string): UseChatReturn {
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState("");
   const [streamingThinking, setStreamingThinking] = useState("");
+  const [pendingMessage, setPendingMessage] = useState("");
 
   // Search/filter
   const [searchQuery, setSearchQuery] = useState("");
@@ -99,6 +104,8 @@ export function useChat(projectId?: string): UseChatReturn {
 
   // Stream connection ref for cleanup
   const streamRef = useRef<{ close: () => void } | null>(null);
+  const cancelledByUserRef = useRef(false);
+  const pendingMessageRef = useRef("");
 
   // Refs for SSE event handlers to access current state
   const sessionsRef = useRef(sessions);
@@ -107,6 +114,10 @@ export function useChat(projectId?: string): UseChatReturn {
   sessionsRef.current = sessions;
   activeSessionRef.current = activeSession;
   isStreamingRef.current = isStreaming;
+
+  useEffect(() => {
+    pendingMessageRef.current = pendingMessage;
+  }, [pendingMessage]);
 
   // Tracks message IDs that were added via streaming completion.
   // Used to prevent duplicate messages when SSE event arrives before streaming state clears.
@@ -314,10 +325,39 @@ export function useChat(projectId?: string): UseChatReturn {
     await loadMessages(activeSession.id, { offset: messages.length });
   }, [activeSession, hasMoreMessages, loadMessages, messages.length]);
 
+  const stopStreaming = useCallback(() => {
+    if (!activeSession) return;
+
+    cancelledByUserRef.current = true;
+    streamRef.current?.close();
+    streamRef.current = null;
+
+    void cancelChatResponse(activeSession.id, projectId).catch(() => {
+      // Best-effort cancellation; ignore backend errors.
+    });
+
+    setIsStreaming(false);
+    setStreamingText("");
+    setStreamingThinking("");
+  }, [activeSession, projectId]);
+
+  const clearPendingMessage = useCallback(() => {
+    pendingMessageRef.current = "";
+    setPendingMessage("");
+  }, []);
+
   // Send a message
   const sendMessage = useCallback(
     (content: string) => {
       if (!activeSession) return;
+
+      if (isStreaming) {
+        pendingMessageRef.current = content;
+        setPendingMessage(content);
+        return;
+      }
+
+      cancelledByUserRef.current = false;
 
       // Close any existing stream
       if (streamRef.current) {
@@ -381,6 +421,13 @@ export function useChat(projectId?: string): UseChatReturn {
           }, 1000);
 
           refreshSessions();
+
+          const queuedMessage = pendingMessageRef.current.trim();
+          if (queuedMessage) {
+            pendingMessageRef.current = "";
+            setPendingMessage("");
+            sendMessage(queuedMessage);
+          }
         },
         onError: (data: string) => {
           setMessages((prev) => prev.filter((m) => m.id !== tempId));
@@ -389,12 +436,21 @@ export function useChat(projectId?: string): UseChatReturn {
           setIsStreaming(false);
           streamRef.current = null;
           console.error("[useChat] Stream error:", data);
+
+          if (!cancelledByUserRef.current) {
+            const queuedMessage = pendingMessageRef.current.trim();
+            if (queuedMessage) {
+              pendingMessageRef.current = "";
+              setPendingMessage("");
+              sendMessage(queuedMessage);
+            }
+          }
         },
       };
 
       streamRef.current = streamChatResponse(activeSession.id, content, textHandlers, projectId);
     },
-    [activeSession, projectId, refreshSessions],
+    [activeSession, isStreaming, projectId, refreshSessions],
   );
 
   // Filter sessions based on search query
@@ -508,11 +564,14 @@ export function useChat(projectId?: string): UseChatReturn {
     isStreaming,
     streamingText,
     streamingThinking,
+    pendingMessage,
     selectSession,
     createSession,
     archiveSession,
     deleteSession,
     sendMessage,
+    stopStreaming,
+    clearPendingMessage,
     loadMoreMessages,
     hasMoreMessages,
     searchQuery,

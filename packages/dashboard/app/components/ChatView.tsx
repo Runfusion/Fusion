@@ -8,6 +8,7 @@ import {
   Archive,
   ChevronLeft,
   Bot,
+  Square,
 } from "lucide-react";
 import { useChat } from "../hooks/useChat";
 import { useViewportMode } from "./Header";
@@ -320,6 +321,9 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
     archiveSession,
     deleteSession,
     sendMessage,
+    stopStreaming,
+    pendingMessage,
+    clearPendingMessage,
     searchQuery,
     setSearchQuery,
     filteredSessions,
@@ -870,6 +874,10 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
       ? "Fusion"
       : (activeSession?.agentId?.slice(0, 30) ?? "Fusion"));
 
+  const pendingPreview = pendingMessage.length > 50
+    ? `${pendingMessage.slice(0, 50)}…`
+    : pendingMessage;
+
   return (
     <div className="chat-view">
       {/* Sidebar */}
@@ -1156,15 +1164,40 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                 }}
                 loading={fileMention.loading}
               />
+              {pendingMessage && (
+                <div className="chat-pending-message" data-testid="chat-pending-indicator">
+                  <span>{`Queued: ${pendingPreview}`}</span>
+                  <button
+                    type="button"
+                    className="chat-pending-message-dismiss"
+                    aria-label="Dismiss queued message"
+                    data-testid="chat-pending-dismiss"
+                    onClick={clearPendingMessage}
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
             </div>
-            <button
-              className="chat-input-send"
-              onClick={() => void handleSend()}
-              disabled={!messageInput.trim() || isStreaming}
-              data-testid="chat-send-btn"
-            >
-              <Send size={16} />
-            </button>
+            {isStreaming ? (
+              <button
+                className="chat-input-stop"
+                onClick={stopStreaming}
+                aria-label="Stop generation"
+                data-testid="chat-stop-btn"
+              >
+                <Square size={14} />
+              </button>
+            ) : (
+              <button
+                className="chat-input-send"
+                onClick={() => void handleSend()}
+                disabled={!messageInput.trim()}
+                data-testid="chat-send-btn"
+              >
+                <Send size={16} />
+              </button>
+            )}
           </div>
         )}
       </div>

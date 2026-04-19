@@ -10,6 +10,7 @@ vi.mock("../../api", () => ({
   createChatSession: vi.fn(),
   fetchChatMessages: vi.fn(),
   streamChatResponse: vi.fn(),
+  cancelChatResponse: vi.fn(),
   fetchModels: vi.fn(),
   searchFiles: vi.fn().mockResolvedValue({ files: [] }),
 }));
@@ -22,6 +23,7 @@ const mockFetchChatSessions = vi.mocked(apiModule.fetchChatSessions);
 const mockCreateChatSession = vi.mocked(apiModule.createChatSession);
 const mockFetchChatMessages = vi.mocked(apiModule.fetchChatMessages);
 const mockStreamChatResponse = vi.mocked(apiModule.streamChatResponse);
+const mockCancelChatResponse = vi.mocked(apiModule.cancelChatResponse);
 const mockFetchModels = vi.mocked(apiModule.fetchModels);
 const mockUseAgents = vi.mocked(useAgents);
 
@@ -147,6 +149,7 @@ describe("QuickChatFAB", () => {
     mockFetchChatSessions.mockResolvedValue({ sessions: [] });
     mockCreateChatSession.mockResolvedValue({ session: mockSession });
     mockFetchChatMessages.mockResolvedValue({ messages: [] });
+    mockCancelChatResponse.mockResolvedValue({ success: true });
     mockFetchModels.mockResolvedValue({
       models: mockModels,
       favoriteProviders: [],
@@ -464,12 +467,20 @@ describe("QuickChatFAB", () => {
     });
   });
 
-  it("streaming state shows streaming message and keeps input enabled", async () => {
+  it("shows stop button during streaming and keeps input enabled", async () => {
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      handlers.onConnectionStateChange?.("connected");
+      handlers.onText?.("Streaming...");
+      return {
+        close: vi.fn(),
+        isConnected: vi.fn(() => true),
+      };
+    });
+
     render(<QuickChatFAB addToast={addToast} projectId="proj-123" />);
 
     fireEvent.click(screen.getByTestId("quick-chat-fab"));
 
-    // Wait for session initialization
     await waitFor(() => {
       expect(mockFetchChatSessions).toHaveBeenCalled();
     });
@@ -478,14 +489,77 @@ describe("QuickChatFAB", () => {
     fireEvent.change(input, { target: { value: "Hello" } });
     fireEvent.click(screen.getByTestId("quick-chat-send"));
 
-    // Input should be cleared but NOT disabled during streaming
     await waitFor(() => {
-      expect((screen.getByTestId("quick-chat-input") as HTMLInputElement).value).toBe("");
+      expect(screen.getByTestId("quick-chat-stop")).toBeInTheDocument();
     });
     expect(screen.getByTestId("quick-chat-input")).not.toBeDisabled();
+  });
 
-    // Send button should be disabled during streaming
-    expect(screen.getByTestId("quick-chat-send")).toBeDisabled();
+  it("clicking stop button cancels streaming", async () => {
+    const closeFn = vi.fn();
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      handlers.onConnectionStateChange?.("connected");
+      handlers.onText?.("Streaming...");
+      return {
+        close: closeFn,
+        isConnected: vi.fn(() => true),
+      };
+    });
+
+    render(<QuickChatFAB addToast={addToast} projectId="proj-123" />);
+
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+    await waitFor(() => {
+      expect(mockFetchChatSessions).toHaveBeenCalled();
+    });
+
+    const input = await screen.findByTestId("quick-chat-input");
+    fireEvent.change(input, { target: { value: "Hello" } });
+    fireEvent.click(screen.getByTestId("quick-chat-send"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-stop")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("quick-chat-stop"));
+
+    await waitFor(() => {
+      expect(closeFn).toHaveBeenCalled();
+      expect(mockCancelChatResponse).toHaveBeenCalledWith("session-001", "proj-123");
+    });
+  });
+
+  it("renders pending message indicator when a message is queued", async () => {
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      handlers.onConnectionStateChange?.("connected");
+      handlers.onText?.("Streaming...");
+      return {
+        close: vi.fn(),
+        isConnected: vi.fn(() => true),
+      };
+    });
+
+    render(<QuickChatFAB addToast={addToast} projectId="proj-123" />);
+
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+    await waitFor(() => {
+      expect(mockFetchChatSessions).toHaveBeenCalled();
+    });
+
+    const input = await screen.findByTestId("quick-chat-input");
+    fireEvent.change(input, { target: { value: "Hello" } });
+    fireEvent.click(screen.getByTestId("quick-chat-send"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-stop")).toBeInTheDocument();
+    });
+
+    fireEvent.change(input, { target: { value: "Queued follow-up" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-pending-indicator")).toHaveTextContent("Queued: Queued follow-up");
+    });
   });
 
   it("user can type while streaming", async () => {
