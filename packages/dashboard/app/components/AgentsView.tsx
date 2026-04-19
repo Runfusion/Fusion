@@ -257,23 +257,17 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
 
   const hierarchy = useAgentHierarchy(agents, projectId);
 
-  // Filter agents for display: hide terminated agents in default "All States" view
-  // but show them when the user explicitly filters to "terminated"
-  // Always filter out ephemeral agents (task-workers and spawned children)
+  // Filter agents for display. "All States" means all non-ephemeral agents,
+  // including disabled/terminated agents that still carry configuration.
   const displayAgents = useMemo(() => {
-    let filtered = agents.filter(a => !isEphemeralAgent(a));
-    if (filterState === "all") {
-      filtered = filtered.filter(a => a.state !== "terminated");
-    }
-    return filtered;
-  }, [agents, filterState]);
+    return agents.filter(a => !isEphemeralAgent(a));
+  }, [agents]);
 
-  // Filter org tree to exclude terminated and ephemeral agents in default view
+  // Filter org tree to exclude ephemeral agents in default view.
   const displayOrgTree = useMemo(() => {
-    // Recursively filter out terminated and ephemeral agents from the org tree
+    // Recursively filter out ephemeral agents from the org tree.
     const filterNode = (node: OrgTreeNode): OrgTreeNode | null => {
       if (isEphemeralAgent(node.agent)) return null;
-      if (filterState === "all" && node.agent.state === "terminated") return null;
       return {
         ...node,
         children: node.children
@@ -284,7 +278,7 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
     return orgTree
       .map(filterNode)
       .filter((n): n is OrgTreeNode => n !== null);
-  }, [orgTree, filterState]);
+  }, [orgTree]);
 
   const loadAgents = useCallback(async () => {
     setIsLoading(true);

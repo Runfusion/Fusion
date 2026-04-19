@@ -1,8 +1,8 @@
 import { defineConfig } from "vitest/config";
-import { availableParallelism } from "node:os";
 
-const defaultMaxWorkers = Math.max(1, Math.min(2, Math.ceil(availableParallelism() / 8)));
-const maxWorkers = Number.parseInt(process.env.VITEST_MAX_WORKERS ?? String(defaultMaxWorkers), 10);
+const defaultMaxWorkers = 1;
+const requestedMaxWorkers = Number.parseInt(process.env.VITEST_MAX_WORKERS ?? String(defaultMaxWorkers), 10);
+const maxWorkers = Math.max(1, Math.min(1, Number.isFinite(requestedMaxWorkers) ? requestedMaxWorkers : defaultMaxWorkers));
 
 export default defineConfig({
   test: {

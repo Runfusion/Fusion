@@ -140,8 +140,7 @@ describe("AgentsView", () => {
         expect(screen.getAllByText("idle").length).toBeGreaterThanOrEqual(1);
         expect(screen.getAllByText("active").length).toBeGreaterThanOrEqual(1);
         expect(screen.getAllByText("paused").length).toBeGreaterThanOrEqual(1);
-        // Terminated agents are hidden in default "All States" view
-        expect(screen.queryAllByText("terminated").length).toBe(0);
+        expect(screen.getAllByText("terminated").length).toBeGreaterThanOrEqual(1);
       });
     });
 
@@ -212,8 +211,7 @@ describe("AgentsView", () => {
 
       await waitFor(() => {
         const boardCards = document.querySelectorAll(".agent-board-card");
-        // 4 agents total, but terminated (agent-004) is filtered out in default view
-        expect(boardCards.length).toBe(3);
+        expect(boardCards.length).toBe(4);
       });
     });
 
@@ -782,18 +780,15 @@ describe("AgentsView", () => {
   });
 
   describe("delete agent", () => {
-    it("shows Delete button for idle agents in default view (terminated filtered out)", async () => {
+    it("shows Delete button for idle and terminated agents in default view", async () => {
       render(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
-        // In default "All States" view, only idle agent (agent-001) should show Delete button
-        // Terminated agents (agent-004) are filtered out
         const deleteButtons = screen.getAllByTitle("Delete");
-        expect(deleteButtons.length).toBeGreaterThanOrEqual(1);
+        expect(deleteButtons.length).toBeGreaterThanOrEqual(2);
       });
 
-      // Verify terminated agent is not visible
-      expect(screen.queryByText("Test Agent 4")).toBeNull();
+      expect(screen.getByText("Test Agent 4")).toBeTruthy();
     });
 
     it("shows Delete button for terminated agents when explicitly filtered", async () => {
@@ -909,8 +904,6 @@ describe("AgentsView", () => {
       render(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
-        // Only idle agent (agent-001) should have delete button in default view
-        // Terminated agent (agent-004) is filtered out
         const deleteButtons = screen.getAllByTitle("Delete");
         expect(deleteButtons.length).toBeGreaterThanOrEqual(1);
       });
