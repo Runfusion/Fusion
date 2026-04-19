@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { AutomationStore } from "./automation-store.js";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { mkdtempSync, existsSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import type { ScheduledTask, AutomationRunResult, AutomationStep } from "./automation.js";
 import { randomUUID } from "node:crypto";
@@ -39,16 +39,13 @@ describe("AutomationStore", () => {
   // ── init ──────────────────────────────────────────────────────────
 
   describe("init", () => {
-    it("creates the automations directory", async () => {
-      const dir = join(rootDir, ".fusion", "automations");
-      expect(existsSync(dir)).toBe(true);
+    it("initializes database-backed store", async () => {
+      await expect(store.init()).resolves.toBeUndefined();
     });
 
     it("is idempotent", async () => {
-      await store.init();
-      await store.init();
-      const dir = join(rootDir, ".fusion", "automations");
-      expect(existsSync(dir)).toBe(true);
+      await expect(store.init()).resolves.toBeUndefined();
+      await expect(store.init()).resolves.toBeUndefined();
     });
   });
 
@@ -175,15 +172,20 @@ describe("AutomationStore", () => {
       ).rejects.toThrow("Invalid cron expression");
     });
 
-    it("persists schedule to disk", async () => {
+    it("persists schedule to database", async () => {
       const schedule = await store.createSchedule({
         name: "Persist test",
         command: "echo persist",
         scheduleType: "weekly",
       });
 
-      const filePath = join(rootDir, ".fusion", "automations", `${schedule.id}.json`);
-      expect(existsSync(filePath)).toBe(true);
+      const secondStore = new AutomationStore(rootDir);
+      await secondStore.init();
+      const reloaded = await secondStore.getSchedule(schedule.id);
+
+      expect(reloaded.id).toBe(schedule.id);
+      expect(reloaded.name).toBe("Persist test");
+      expect(reloaded.cronExpression).toBe("0 0 * * 1");
     });
 
     it("emits schedule:created event", async () => {
@@ -364,8 +366,7 @@ describe("AutomationStore", () => {
       const deleted = await store.deleteSchedule(schedule.id);
       expect(deleted.id).toBe(schedule.id);
 
-      const filePath = join(rootDir, ".fusion", "automations", `${schedule.id}.json`);
-      expect(existsSync(filePath)).toBe(false);
+      await expect(store.getSchedule(schedule.id)).rejects.toThrow("not found");
     });
 
     it("throws for missing schedule", async () => {

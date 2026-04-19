@@ -1,7 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { CronExpressionParser } from "cron-parser";
 import type {
@@ -22,7 +20,6 @@ export interface AutomationStoreEvents {
 }
 
 export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
-  private automationsDir: string;
   /** Per-schedule promise chain for serializing writes. */
   private scheduleLocks: Map<string, Promise<void>> = new Map();
   /** SQLite database instance */
@@ -30,7 +27,6 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
 
   constructor(private rootDir: string) {
     super();
-    this.automationsDir = join(rootDir, ".fusion", "automations");
   }
 
   /**
@@ -49,8 +45,6 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
   async init(): Promise<void> {
     // Ensure DB is initialized
     const _ = this.db;
-    // Keep automations dir for backward compat
-    await mkdir(this.automationsDir, { recursive: true });
   }
 
   // ── Row Conversion ─────────────────────────────────────────────────
@@ -103,13 +97,12 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
       schedule.createdAt,
       schedule.updatedAt,
     );
-    this.db.bumpLastModified();
   }
 
   // ── Locking ────────────────────────────────────────────────────────
 
   /**
-   * Serialize all mutations to a given schedule's JSON file by chaining promises.
+   * Serialize all mutations to a given schedule by chaining promises.
    * Concurrent callers for the same ID will queue behind each other.
    */
   private withScheduleLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
@@ -130,43 +123,19 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
     });
   }
 
-  // ── File I/O ───────────────────────────────────────────────────────
-
-  private schedulePath(id: string): string {
-    return join(this.automationsDir, `${id}.json`);
-  }
+  // ── Persistence ────────────────────────────────────────────────────
 
   private async readScheduleJson(id: string): Promise<ScheduledTask> {
-    // Read from SQLite first
     const row = this.db.prepare('SELECT * FROM automations WHERE id = ?').get(id);
-    if (row) return this.rowToSchedule(row);
-    
-    // Fallback to file
-    const filePath = this.schedulePath(id);
-    const raw = await readFile(filePath, "utf-8");
-    try {
-      return JSON.parse(raw) as ScheduledTask;
-    } catch (err) {
-      throw new Error(
-        `Failed to parse schedule JSON at ${filePath}: ${(err as Error).message}`,
-      );
+    if (!row) {
+      throw Object.assign(new Error(`Schedule '${id}' not found`), { code: "ENOENT" });
     }
+    return this.rowToSchedule(row);
   }
 
-  /**
-   * Write a schedule to SQLite and also to disk for backward compat.
-   */
-  private async atomicWriteScheduleJson(id: string, schedule: ScheduledTask): Promise<void> {
+  private async persistSchedule(schedule: ScheduledTask): Promise<void> {
     this.upsertSchedule(schedule);
-    // Also write to disk for backward compatibility
-    try {
-      const filePath = this.schedulePath(id);
-      const tmpPath = filePath + ".tmp";
-      await writeFile(tmpPath, JSON.stringify(schedule, null, 2));
-      await rename(tmpPath, filePath);
-    } catch {
-      // Non-fatal
-    }
+    this.db.bumpLastModified();
   }
 
   // ── Cron Computation ───────────────────────────────────────────────
@@ -244,17 +213,13 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
       updatedAt: now,
     };
 
-    await this.atomicWriteScheduleJson(id, schedule);
+    await this.persistSchedule(schedule);
     this.emit("schedule:created", schedule);
     return schedule;
   }
 
   async getSchedule(id: string): Promise<ScheduledTask> {
-    const row = this.db.prepare('SELECT * FROM automations WHERE id = ?').get(id);
-    if (!row) {
-      throw Object.assign(new Error(`Schedule '${id}' not found`), { code: "ENOENT" });
-    }
-    return this.rowToSchedule(row);
+    return this.readScheduleJson(id);
   }
 
   async listSchedules(): Promise<ScheduledTask[]> {
@@ -318,7 +283,7 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
       }
 
       schedule.updatedAt = new Date().toISOString();
-      await this.atomicWriteScheduleJson(id, schedule);
+      await this.persistSchedule(schedule);
       this.emit("schedule:updated", schedule);
       return schedule;
     });
@@ -352,7 +317,7 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
 
       schedule.steps = reordered;
       schedule.updatedAt = new Date().toISOString();
-      await this.atomicWriteScheduleJson(scheduleId, schedule);
+      await this.persistSchedule(schedule);
       this.emit("schedule:updated", schedule);
       return schedule;
     });
@@ -364,14 +329,6 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
       // Delete from SQLite
       this.db.prepare('DELETE FROM automations WHERE id = ?').run(id);
       this.db.bumpLastModified();
-      // Also remove file for backward compat
-      try {
-        const filePath = this.schedulePath(id);
-        const { unlink } = await import("node:fs/promises");
-        await unlink(filePath);
-      } catch {
-        // Non-fatal
-      }
       this.emit("schedule:deleted", schedule);
       return schedule;
     });
@@ -401,7 +358,7 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
       }
 
       schedule.updatedAt = new Date().toISOString();
-      await this.atomicWriteScheduleJson(id, schedule);
+      await this.persistSchedule(schedule);
       this.emit("schedule:run", { schedule, result });
       return schedule;
     });
