@@ -31555,24 +31555,6 @@ html .column.drag-over * {
   font-size: 13px;
 }
 
-.chat-new-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border: none;
-  border-radius: 8px;
-  background: var(--accent);
-  color: var(--accent-text, #fff);
-  font-size: 13px;
-  cursor: pointer;
-  transition: opacity 0.15s;
-}
-
-.chat-new-btn:hover {
-  opacity: 0.9;
-}
-
 .chat-session-list {
   flex: 1;
   min-height: 0;

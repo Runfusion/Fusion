@@ -884,7 +884,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
       <div className={`chat-sidebar${!sidebarVisible ? " chat-sidebar--hidden" : ""}`}>
         <div className="chat-sidebar-header">
           <button
-            className="btn btn-sm chat-new-btn"
+            className="btn btn-sm btn-primary"
             onClick={() => setShowNewDialog(true)}
             data-testid="chat-new-btn"
           >
