@@ -27,6 +27,9 @@ export default defineConfig({
   format: ["esm"],
   platform: "node",
   target: "node22",
+  esbuildOptions(options) {
+    options.conditions = [...(options.conditions || []), "source"];
+  },
   noExternal: [/^@fusion\//],
   splitting: false,
   clean: true,

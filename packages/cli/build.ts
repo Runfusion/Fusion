@@ -243,6 +243,7 @@ function compileBinary(outFile: string, target: string, isCrossCompile: boolean)
       "--target",
       target,
       "--minify",
+      "--conditions=source",
     ],
     cwd: workspaceRoot,
     stdout: "inherit",

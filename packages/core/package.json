@@ -5,10 +5,12 @@
   "exports": {
     ".": {
       "types": "./src/index.ts",
+      "source": "./src/index.ts",
       "import": "./dist/index.js"
     },
     "./gh-cli": {
       "types": "./src/gh-cli.ts",
+      "source": "./src/gh-cli.ts",
       "import": "./dist/gh-cli.js"
     }
   },
