@@ -104,18 +104,22 @@ Use task-ID-scoped conventional commits:
 
 ## Project Memory
 
-When enabled, agents can read/write durable project memory:
+When enabled, Fusion supports both the OpenClaw-style memory workspace and legacy compatibility paths:
 
-- `.fusion/memory.md`
+- `.fusion/memory/MEMORY.md` — OpenClaw long-term memory file
+- `.fusion/memory/YYYY-MM-DD.md` — OpenClaw daily running notes
+- `.fusion/memory/DREAMS.md` — OpenClaw dream-processing memory file
+- `.fusion/memory.md` — Legacy compatibility path (still used by parts of the memory summarization pipeline)
 
-Use it for reusable patterns, constraints, and pitfalls that should persist across tasks.
+Use project memory for reusable patterns, constraints, and pitfalls that should persist across tasks.
 
 ### Background Memory Summarization
 
 Fusion can automatically extract insights from working memory and prune transient content. Enable via `insightExtractionEnabled` setting:
 
-- `.fusion/memory.md` — Working memory (automatically pruned to durable items)
-- `.fusion/memory-insights.md` — Long-term distilled insights
+- `.fusion/memory.md` — Working memory source currently compacted/pruned by extraction jobs
+- `.fusion/memory/MEMORY.md` — OpenClaw long-term memory workspace file used by memory tooling/search
+- `.fusion/memory-insights.md` — Distilled insights output
 - `.fusion/memory-audit.md` — Audit report after each extraction (includes pruning outcome)
 
 See [Settings Reference](./settings-reference.md#background-memory-summarization--audit) for configuration details.

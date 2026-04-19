@@ -74,37 +74,30 @@ At a high level, Fusion is split into:
 
 ### Workspace dependency graph
 
-```text
-                         ┌────────────────────┐
-                         │   @fusion/core     │
-                         └─────────┬──────────┘
-                                   │
-                    ┌──────────────▼──────────────┐
-                    │       @fusion/engine        │
-                    └──────────────┬──────────────┘
-                                   │
-                    ┌──────────────▼──────────────┐
-                    │     @fusion/dashboard       │
-                    └──────────────┬──────────────┘
-                                   │
-                  ┌────────────────▼────────────────┐
-                  │      @gsxdsm/fusion (CLI)       │
-                  │  (workspace composition + build)│
-                  └────────────────┬────────────────┘
-                                   │
-                    ┌──────────────▼──────────────┐
-                    │      @fusion/desktop        │
-                    │ (embeds dashboard client)   │
-                    └──────────────────────────────┘
+`A ──▶ B` means **A depends on B**.
 
-        @fusion/tui provides keyboard-navigable screen routing.
+```text
+@fusion/engine ───────────────▶ @fusion/core
+@fusion/dashboard ────────────▶ @fusion/core
+@fusion/dashboard ────────────▶ @fusion/engine
+@gsxdsm/fusion (CLI) ─────────▶ @fusion/core
+@gsxdsm/fusion (CLI) ─────────▶ @fusion/engine
+@gsxdsm/fusion (CLI) ─────────▶ @fusion/dashboard
+@fusion/tui ──────────────────▶ @fusion/core
+@fusion/plugin-sdk (peerDep) ─▶ @fusion/core
+
+@fusion/desktop: no workspace package dependencies
+@fusion/mobile:  no workspace package dependencies
 ```
 
 Concrete references:
-- `@fusion/engine` depends on `@fusion/core` (`packages/engine/package.json`)
-- `@fusion/dashboard` depends on both `@fusion/core` and `@fusion/engine`
-- CLI command entrypoint (`packages/cli/src/bin.ts`) dynamically imports command modules that use core/engine/dashboard capabilities
-- Desktop build script copies dashboard client output (`packages/desktop/scripts/build.ts`)
+- `@fusion/engine` has a workspace dependency on `@fusion/core` (`packages/engine/package.json`)
+- `@fusion/dashboard` has workspace dependencies on `@fusion/core` and `@fusion/engine` (`packages/dashboard/package.json`)
+- `@gsxdsm/fusion` has workspace development dependencies on `@fusion/core`, `@fusion/engine`, and `@fusion/dashboard` for composition/build packaging (`packages/cli/package.json`)
+- `@fusion/tui` depends on `@fusion/core` (`packages/tui/package.json`)
+- `@fusion/plugin-sdk` declares a peer dependency on `@fusion/core` (`packages/plugin-sdk/package.json`)
+- `@fusion/desktop` embeds dashboard assets at build time via script (`packages/desktop/scripts/build.ts`) but does not declare workspace deps in `package.json`
+- `@fusion/mobile` triggers dashboard build/sync via scripts (`packages/mobile/package.json`) but does not declare workspace deps in `package.json`
 
 ---
 
@@ -126,7 +119,8 @@ Concrete references:
 - **Database adapter**: `packages/core/src/db.ts`
   - SQLite (`node:sqlite`) with WAL mode + foreign keys
   - JSON helpers: `toJson`, `toJsonNullable`, `fromJson`
-  - Tables: `tasks`, `config`, `activityLog`, `archivedTasks`, `automations`, `agents`, `agentHeartbeats`, `agentRatings`, `ai_sessions`, `workflow_steps`, `messages`, `plugins`, `routines`, `runAuditEvents`, mission hierarchy tables (`missions`, `milestones`, `slices`, `mission_features`, `mission_events`), roadmap tables (`roadmaps`, `roadmap_milestones`, `roadmap_features`), `__meta`
+  - Core schema tables include: `tasks`, `config`, `workflow_steps`, `activityLog`, `archivedTasks`, `automations`, `agents`, `agentHeartbeats`, `task_documents`, `task_document_revisions`, mission hierarchy tables (`missions`, `milestones`, `slices`, `mission_features`, `mission_events`), plugin/routine tables (`plugins`, `routines`), roadmap tables (`roadmaps`, `roadmap_milestones`, `roadmap_features`), insight tables (`project_insights`, `project_insight_runs`), `__meta`
+  - Migration-created tables include: `ai_sessions`, `messages`, `agentRatings`, `chat_sessions`, `chat_messages`, `runAuditEvents`, `mission_contract_assertions`, `mission_feature_assertions`, `mission_validator_runs`, `mission_validator_failures`, `mission_fix_feature_lineage`
 - **Standalone roadmap model**: `packages/core/src/roadmap-types.ts`, `roadmap-ordering.ts`, `roadmap-store.ts`
   - Roadmap-first entity types (`Roadmap`, `RoadmapMilestone`, `RoadmapFeature`)
   - Pure ordering helpers for contiguous 0-based milestone/feature order and deterministic cross-milestone feature moves
@@ -141,7 +135,46 @@ Concrete references:
   - `MissionStore` (`mission-store.ts`) — mission/milestone/slice/feature hierarchy
   - `AutomationStore` (`automation-store.ts`) — scheduled jobs with global/project scope isolation
   - `MessageStore` (`message-store.ts`) — mailbox/inbox/outbox messaging
+  - `ChatStore` (`chat-store.ts`) — session/message persistence for agent chat
+  - `InsightStore` (`insight-store.ts`) — project insight persistence + dedupe/run tracking
+  - `ReflectionStore` (`reflection-store.ts`) — agent reflection records and performance snapshots
+  - `PluginStore` (`plugin-store.ts`) — plugin registry/state/settings persistence
+  - `RoutineStore` (`routine-store.ts`) — recurring routine definitions and run history
   - `RoadmapStore` (`roadmap-store.ts`) — standalone roadmap CRUD with deterministic ordering and atomic reorder/move operations
+
+### Chat System
+
+- `ChatStore` (`packages/core/src/chat-store.ts`) and `chat-types.ts` provide session-oriented chat state (`chat_sessions`, `chat_messages` tables)
+- Dashboard chat UX lives in `packages/dashboard/app/components/ChatView.tsx` and hooks `useChat.ts` / `useQuickChat.ts`
+- Chat message submission uses SSE streaming responses from dashboard chat routes
+
+### Agent Companies
+
+- Import/export utilities: `agent-companies-parser.ts`, `agent-companies-exporter.ts`, `agent-companies-types.ts`
+- Supports YAML-frontmatter manifests for company/team/agent/project/task/skill definitions
+- Includes conversion helpers from parsed manifests to `AgentCreateInput` and export helpers for directory bundles
+
+### Project Insights
+
+- `InsightStore` (`insight-store.ts`, `insight-types.ts`) persists extracted project learnings
+- Uses fingerprint-based deduplication and run tracking
+- Backed by `project_insights` and `project_insight_runs`
+
+### Plugin System
+
+- `PluginStore` (`plugin-store.ts`) stores plugin installation state and settings (`plugins` table)
+- `PluginLoader` (`plugin-loader.ts`) loads/unloads plugin modules and emits lifecycle events
+- Dashboard management routes are implemented in `packages/dashboard/src/plugin-routes.ts`
+
+### Prompt Overrides
+
+- `prompt-overrides.ts` defines prompt key catalogs and per-role override validation
+- Provides override resolution/validation helpers (`resolvePrompt`, `resolveRolePrompts`, `assertValidPromptOverrideMap`)
+
+### Agent Permissions
+
+- `agent-permissions.ts` normalizes permissions and computes effective access state
+- Core helpers: `normalizePermissions`, `computeAccessState`, `ROLE_DEFAULT_PERMISSIONS`
 
 ### Standalone roadmap model
 
@@ -192,21 +225,30 @@ Key roadmap invariants:
 - `idxRoadmapFeaturesMilestoneOrder` — covering index for deterministic feature ordering
 
 ### Shared utilities
-From `packages/core/src/index.ts` exports:
-- GitHub CLI wrappers: `gh-cli.ts`
-- Backups: `backup.ts`
-- Settings import/export: `settings-export.ts`
-- AI title summarization: `ai-summarize.ts`
-- Project memory helpers: `project-memory.ts`, `memory-insights.ts`
-- Migration and compatibility helpers: `db-migrate.ts`, `migration.ts`
+From `packages/core/src/index.ts` exports (selected high-impact modules):
+- **Memory + knowledge**: `memory-backend.ts`, `memory-compaction.ts`, `memory-dreams.ts`, `project-memory.ts`, `memory-insights.ts`, `insight-store.ts`, `insight-types.ts`
+- **Stores and plugin/routine helpers**: `chat-store.ts`, `routine-store.ts`, `plugin-store.ts`, `plugin-loader.ts`, `reflection-store.ts`
+- **Execution/runtime helpers**: `run-command.ts`, `board.ts`, `task-merge.ts`, `archive-db.ts`
+- **Settings + prompts + permissions**: `settings-schema.ts`, `prompt-overrides.ts`, `agent-permissions.ts`, `agent-prompts.ts`
+- **Node/system infrastructure**: `node-connection.ts`, `node-discovery.ts`, `system-metrics.ts`, `migration-orchestrator.ts`
+- **Identity/version/extensions**: `daemon-token.ts`, `app-version.ts`, `pi-extensions.ts`
+- **Agent companies import/export**: `agent-companies-parser.ts`, `agent-companies-exporter.ts`, `agent-companies-types.ts`
 
 ### Memory System
 
-Fusion includes a pluggable memory backend system for storing durable project learnings:
+Fusion supports OpenClaw-style project memory with legacy fallback support:
 
-**Two-stage memory:**
-- Working memory (`memory.md`) accumulates agent learnings during task execution
-- Distilled insights (`memory-insights.md`) preserve patterns, principles, pitfalls
+**Primary memory files:**
+- Long-term: `.fusion/memory/MEMORY.md`
+- Daily notes: `.fusion/memory/YYYY-MM-DD.md`
+- Dream processing: `.fusion/memory/DREAMS.md`
+- Legacy fallback (still supported): `.fusion/memory.md`
+
+**Memory subsystems:**
+- `memory-backend.ts` — backend contracts + file/readonly/qmd implementations
+- `memory-compaction.ts` — summarization/compaction automation
+- `memory-dreams.ts` — background dream processing for agent and project memory
+- `memory-insights.ts` + `InsightStore` — extracted insight synthesis and persistent insight/run storage
 
 **Pluggable backends (`memory-backend.ts`):**
 
@@ -256,27 +298,43 @@ See [Memory Plugin Contract](./memory-plugin-contract.md) for the full specifica
 - **Merger**: `aiMergeTask()` (`merger.ts`) merges approved work
 
 ### Scheduling and execution
-- `Scheduler` (`scheduler.ts`)
-  - Polls and event-triggers scheduling
-  - Respects dependencies and concurrency/worktree limits
-  - Integrates mission progression hooks
-- `TaskExecutor` (`executor.ts`)
-  - Creates/reuses worktrees
-  - Runs model sessions via `createKbAgent()` (`pi.ts`)
-  - Supports tool-calling workflow (`task_update`, `task_log`, `task_create`, `review_step`, `spawn_agent`, ...)
-- `StepSessionExecutor` (`step-session-executor.ts`)
-  - Optional per-step sessions (`runStepsInNewSessions`)
-  - File-scope conflict analysis + parallel wave execution
+- `Scheduler` (`scheduler.ts`) — dependency-aware task scheduling
+- `StepSessionExecutor` (`step-session-executor.ts`) — per-step sessions + parallel wave execution
+- `TaskCompletion` (`task-completion.ts`) — completion gate helpers
+- `SpecStaleness` (`spec-staleness.ts`) — stale spec detection utilities
+- `MissionExecutionLoop` (`mission-execution-loop.ts`) — validator/fix loop orchestration
+- `MissionFeatureSync` (`mission-feature-sync.ts`) — feature↔task status synchronization
+- `MissionAutopilot` (`mission-autopilot.ts`) — mission slice auto-progression
 
-### Concurrency and resiliency
-- `AgentSemaphore` (`concurrency.ts`) controls slot acquisition
-- `StuckTaskDetector` (`stuck-task-detector.ts`) handles inactivity/loop stalls
-- `SelfHealingManager` (`self-healing.ts`) handles auto-unpause, maintenance, stuck kill budgets
-- `UsageLimitPauser` (`usage-limit-detector.ts`) and retry helpers (`rate-limit-retry.ts`)
+### Routine + cron automation
+- `RoutineRunner` (`routine-runner.ts`) — executes routine steps
+- `RoutineScheduler` (`routine-scheduler.ts`) — schedules due routines
+- `CronRunner` (`cron-runner.ts`) — cron-based AI/script jobs
 
-### Worktree management
-- `WorktreePool` (`worktree-pool.ts`) recycles idle worktrees when enabled
-- Branch naming convention in executor: `fusion/{task-id-lower}`
+### Execution context + skills
+- `SkillResolver` (`skill-resolver.ts`) — resolves active skill sets for sessions
+- `SessionSkillContext` (`session-skill-context.ts`) — skill context materialization per run
+- `ContextLimitDetector` (`context-limit-detector.ts`) — context-window pressure checks
+- `TokenCapDetector` (`token-cap-detector.ts`) — token-cap enforcement checks
+- `PluginRunner` (`plugin-runner.ts`) — runtime plugin callback execution
+
+### Concurrency, recovery, and resiliency
+- `AgentSemaphore` (`concurrency.ts`) — slot acquisition
+- `RecoveryPolicy` (`recovery-policy.ts`) — retry/recovery decision policy
+- `StuckTaskDetector` (`stuck-task-detector.ts`) — inactivity/loop stall detection
+- `TransientErrorDetector` (`transient-error-detector.ts`) — retriable error classification
+- `SelfHealingManager` (`self-healing.ts`) — auto-unpause/maintenance recovery actions
+- `UsageLimitPauser` (`usage-limit-detector.ts`) and `withRateLimitRetry` (`rate-limit-retry.ts`)
+
+### Worktree and naming helpers
+- `WorktreePool` (`worktree-pool.ts`) — idle worktree reuse
+- `WorktreeNames` (`worktree-names.ts`) — deterministic worktree/branch naming
+
+### Observability and reflection
+- `AgentLogger` (`agent-logger.ts`) — structured per-agent run logging
+- `RunAudit` (`run-audit.ts`) — mutation audit tracking (DB/git/filesystem)
+- `Notifier` (`notifier.ts`) — notification delivery (`NtfyNotifier`)
+- `AgentReflection` (`agent-reflection.ts`) — reflection extraction and persistence
 
 ### Heartbeat execution
 Implemented in `agent-heartbeat.ts`:
@@ -284,8 +342,9 @@ Implemented in `agent-heartbeat.ts`:
 - `HeartbeatTriggerScheduler` (timer, assignment, on-demand triggers)
 - `WakeContext` / per-agent runtime config support
 
-### Mission automation
-- `MissionAutopilot` (`mission-autopilot.ts`) watches mission progress and auto-activates slices
+### Node/mesh runtime services
+- `NodeHealthMonitor` (`node-health-monitor.ts`) — remote node liveness/metrics checks
+- `PeerExchangeService` (`peer-exchange-service.ts`) — peer sync orchestration
 
 ### Multi-runtime support + IPC
 - Runtime contracts: `project-runtime.ts`
@@ -307,10 +366,14 @@ Implemented in `agent-heartbeat.ts`:
 ### Server layer
 - Entry exports: `packages/dashboard/src/index.ts`
 - Main server factory: `createServer()` in `packages/dashboard/src/server.ts`
-- API routes: `createApiRoutes()` in `packages/dashboard/src/routes.ts`
+- Primary API router: `createApiRoutes()` in `packages/dashboard/src/routes.ts`
 
 Key server capabilities:
-- REST APIs for tasks, git, GitHub, agents, missions, planning, scoped automations/routines, settings
+- REST APIs for tasks, git, GitHub, agents, missions, planning, automations/routines, settings
+- Chat APIs (`/api/chat/*`) with streaming response support (`routes.ts`, `chat.ts`)
+- Plugin management routes (`plugin-routes.ts`)
+- Insights routes (`insights-routes.ts`)
+- Roadmap routes (`roadmap-routes.ts`)
 - Project-scoped store reuse via `project-store-resolver.ts`
 - Rate limiting (`rate-limit.ts`)
 - Static SPA hosting (Vite build output)
@@ -319,42 +382,33 @@ Key server capabilities:
 - **SSE**: `/api/events` (`sse.ts`)
   - Emits `task:*`, mission events, AI session updates
   - Project-scoped: resolves project context from query param or engine manager
+- **Chat streaming**: `/api/chat/sessions/:id/messages` (`routes.ts` + `chat.ts`)
+  - Streams assistant responses as SSE events for chat sessions
 - **Task log stream**: `/api/tasks/:id/logs/stream` (`server.ts`)
-  - Server-Sent Events endpoint for live task log streaming
-  - **Project-scoped**: when `projectId` is provided, resolves scoped task store via `getScopedTaskStore()` (prefers `engineManager.getEngine(projectId)?.getTaskStore()`, falls back to `getOrCreateProjectStore(projectId)`, then defaults)
-  - Listeners are attached to the resolved scoped store and properly detached on connection close
-  - Unscoped requests fall back to the default store (backward compatible)
-- **Badge WebSocket**: `/api/ws` (`setupBadgeWebSocket` in `server.ts`, manager in `websocket.ts`)
-  - WebSocket endpoint for lightweight badge snapshot fan-out
-  - **Project-scoped channels**: each connection is bound to a scope key derived from `projectId` (defaults to `"default"` when omitted)
-  - **Channel keying**: `badge:{scopeKey}:{taskId}` instead of task-only `badge:{taskId}` to prevent collisions across projects with identical task IDs
-  - **Badge cache**: snapshot cache keys include project scope; broadcasts only reach subscribers in matching scope
-  - **Cross-instance delivery**: badge messages include `projectId` metadata and are rebroadcast across instances via `BadgePubSub`
-  - **Backward compatibility**: unscoped clients receive the default scope; unscoped messages default to `"default"` project
+  - SSE endpoint for live task log streaming with project scope resolution
+- **Badge WebSocket**: `/api/ws` (`server.ts`, `websocket.ts`)
+  - Scope-keyed channels (`badge:{scopeKey}:{taskId}`) prevent cross-project collisions
 - **Terminal WebSocket**: `/api/terminal/ws` (`server.ts`, `terminal-service.ts`)
-  - WebSocket endpoint for terminal sessions
-  - **Project-scoped service resolution**: when `projectId` is provided in URL query, resolves terminal service via `getTerminalService(scopedRootDir)` instead of unscoped fallback
-  - **Scope validation**: websocket attach validates session ownership against resolved project scope; wrong-scope sessions are rejected
-  - **Backward compatibility**: requests without `projectId` use safe fallback that does not reintroduce cross-project leakage
+  - Project-scoped terminal session validation + safe unscoped fallback
 
 ### Frontend SPA layer
 - App entry: `packages/dashboard/app/main.tsx`
 - Root composition: `packages/dashboard/app/App.tsx`
-- Core board components: `components/Board.tsx`, `Column.tsx`, `TaskCard.tsx`, `TaskDetailModal.tsx`
-- List/creation UX: `ListView.tsx`, `QuickEntryBox.tsx`, `InlineCreateCard.tsx`
+- Core board components: `Board.tsx`, `Column.tsx`, `TaskCard.tsx`, `TaskDetailModal.tsx`
+- Chat system UI: `ChatView.tsx`, `QuickChatFAB.tsx`
+- Planning/roadmap/insight UI: `MissionManager.tsx`, `RoadmapsView.tsx`, `InsightsView.tsx`, `DocumentsView.tsx`
 
 ### Key hooks
-- `useTasks.ts` — SSE-driven task sync with reconnect + timestamp conflict handling
-- `useBadgeWebSocket.ts` — shared singleton badge socket/subscriptions
-- `useAgents.ts`, `useProjects.ts`, `useCurrentProject.ts`, `useTerminal.ts`
+- Task + realtime: `useTasks.ts`, `useBadgeWebSocket.ts`, `useAiSessionSync.ts`
+- Chat: `useChat.ts`, `useQuickChat.ts`
+- Documents/insights/memory: `useDocuments.ts`, `useInsights.ts`, `useMemoryBackendStatus.ts`, `useMemoryData.ts`
+- Planning/roadmaps: `useRoadmaps.ts`
+- Project/agents/setup: `useProjects.ts`, `useCurrentProject.ts`, `useAgents.ts`, `useSetupReadiness.ts`
+- UX/platform helpers: `useFavorites.ts`, `useAuthOnboarding.ts`, `useDeepLink.ts`, `useTerminal.ts`
 
 ### Planning and decomposition features
-- Backend planners:
-  - `planning.ts`
-  - `subtask-breakdown.ts`
-- UI modals:
-  - `PlanningModeModal.tsx`
-  - `SubtaskBreakdownModal.tsx`
+- Backend planners: `planning.ts`, `subtask-breakdown.ts`, `roadmap-suggestions.ts`
+- UI modals: `PlanningModeModal.tsx`, `SubtaskBreakdownModal.tsx`, milestone interview flows
 - Multi-task creation endpoints are wired under planning/subtask routes in `routes.ts`
 
 ### Health and monitoring endpoints
@@ -424,7 +478,14 @@ SQLite schema is initialized in `packages/core/src/db.ts` and uses:
 ### Central storage (multi-project)
 - **Central DB**: `~/.fusion/fusion-central.db`
 - Schema in `packages/core/src/central-db.ts`
-  - `projects`, `projectHealth`, `centralActivityLog`, `globalConcurrency`, `nodes`, `__meta`
+  - `projects`, `projectHealth`, `centralActivityLog`, `globalConcurrency`, `nodes`, `peerNodes`, `settingsSyncState`, `__meta`
+
+### Memory files
+- OpenClaw-style memory workspace:
+  - `.fusion/memory/MEMORY.md`
+  - `.fusion/memory/YYYY-MM-DD.md`
+  - `.fusion/memory/DREAMS.md`
+- Legacy fallback still supported: `.fusion/memory.md`
 
 ### File-based side stores
 Some data remains intentionally filesystem-based:

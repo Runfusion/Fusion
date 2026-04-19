@@ -6,7 +6,7 @@
 - **Backend settings keys defined in `@fusion/core`:** **78** total
   - **Global settings:** 17 (`GlobalSettings`)
   - **Project settings:** 61 (`ProjectSettings`)
-- **SQLite tables in project DB schema (`packages/core/src/db.ts`):** **13** (including migration-created tables)
+- **SQLite tables in project DB schema (`packages/core/src/db.ts`):** **34** (including migration-created tables)
 - **Issues identified:** **9**
   - High: 2
   - Medium: 5
@@ -167,20 +167,40 @@ Additional backend notes:
 
 | Table | Purpose |
 |---|---|
-| `tasks` | Core task metadata and JSON-backed nested fields (deps, steps, logs, attachments, comments, model overrides, workflow step results, etc.) |
-| `config` | Single-row project configuration (`nextId`, `settings`, workflow step definitions/counters) |
-| `activityLog` | Per-project activity/event log with timestamp/type/task indexes |
-| `archivedTasks` | Archived task snapshots (compact JSON payload + archive timestamp) |
-| `automations` | Scheduled automation definitions and run metadata |
-| `agents` | Agent registry/state/heartbeat pointers and metadata |
-| `agentHeartbeats` | Heartbeat run events linked to agents (FK cascade) |
-| `missions` | Mission-level planning hierarchy root |
-| `milestones` | Milestones under missions |
-| `slices` | Slices under milestones |
-| `mission_features` | Features under slices; optional task linkage |
-| `ai_sessions` *(migration-created)* | Persisted AI planning/subtask/mission interview sessions |
-| `messages` *(migration-created)* | Inter-agent/user message mailbox storage |
-| `__meta` | Schema version + monotonic `lastModified` change detector |
+| `tasks` | Core task metadata and JSON-backed nested fields (dependencies, steps, log, attachments, comments, model overrides, workflow results, merge details, assignment, mission linkage). |
+| `config` | Single-row project configuration (`nextId`, settings payload, workflow step counters). |
+| `workflow_steps` | Workflow step definitions (`prompt`/`script`) with phase, template metadata, and model overrides. |
+| `activityLog` | Per-project activity/event log with timestamp/type/task indexes. |
+| `archivedTasks` | Archived task snapshots (compact JSON payload + archive timestamp). |
+| `automations` | Scheduled automation definitions, run state, and run history. |
+| `agents` | Agent registry/state/task assignment metadata. |
+| `agentHeartbeats` | Heartbeat run events linked to agents (`agentId` FK cascade). |
+| `task_documents` | Task-scoped document metadata/content keyed by `(taskId, key)` with current revision pointer. |
+| `task_document_revisions` | Immutable revision history for task documents (content snapshots by revision). |
+| `__meta` | Schema version + monotonic `lastModified` change detector. |
+| `missions` | Mission-level planning hierarchy root. |
+| `milestones` | Milestones under missions, including dependency lists and validation state. |
+| `slices` | Slices under milestones with plan-state/activation metadata. |
+| `mission_features` | Features under slices with optional task linkage and execution-loop counters/state. |
+| `mission_events` | Mission event log with ordered sequence numbers and metadata payloads. |
+| `plugins` | Plugin registry, lifecycle state, dependency metadata, and settings blobs. |
+| `routines` | Routine definitions (trigger config, steps/command, catch-up policy, run history). |
+| `roadmaps` | Standalone roadmap metadata. |
+| `roadmap_milestones` | Milestones within roadmaps (`roadmapId` FK). |
+| `roadmap_features` | Features within roadmap milestones (`milestoneId` FK). |
+| `project_insights` | Extracted project insights with fingerprint-based deduplication and provenance metadata. |
+| `project_insight_runs` | Insight extraction run history and run-level metrics/status. |
+| `ai_sessions` *(migration-created)* | Persisted AI interactive sessions (planning/interview/subtask) with status and conversation history. |
+| `messages` *(migration-created)* | Inter-agent/user message mailbox storage. |
+| `agentRatings` *(migration-created)* | Agent performance ratings (1-5), optional reviewer metadata, and run/task attribution. |
+| `chat_sessions` *(migration-created)* | Chat session metadata (agent/project/model/status/title timestamps). |
+| `chat_messages` *(migration-created)* | Chat message history per session (`role`, `content`, thinking output, metadata). |
+| `runAuditEvents` *(migration-created)* | Run audit trail events across database/git/filesystem mutation domains. |
+| `mission_contract_assertions` *(migration-created)* | Milestone contract assertions used by mission validator workflows. |
+| `mission_feature_assertions` *(migration-created)* | Many-to-many links between mission features and contract assertions. |
+| `mission_validator_runs` *(migration-created)* | Validator run records for mission feature loop execution. |
+| `mission_validator_failures` *(migration-created)* | Assertion failure records captured during validator runs. |
+| `mission_fix_feature_lineage` *(migration-created)* | Source↔fix feature lineage for auto-generated mission fix features. |
 
 ---
 

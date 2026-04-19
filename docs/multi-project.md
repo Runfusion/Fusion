@@ -24,8 +24,16 @@ Core tables:
 - `projectHealth`
 - `centralActivityLog`
 - `globalConcurrency`
+- `nodes`
+- `peerNodes`
+- `settingsSyncState`
+- `__meta`
 
 Per-project task data remains in each repo’s `.fusion/fusion.db`.
+
+Peer/mesh coordination spans core + engine:
+- `NodeDiscovery` and `NodeConnection` in `@fusion/core` handle discovery and remote node connectivity/auth.
+- `PeerExchangeService` in `@fusion/engine` coordinates node-to-node sync/exchange workflows.
 
 ## Registering and Managing Projects
 
@@ -109,6 +117,8 @@ Host → worker commands include:
 - `STOP_RUNTIME`
 - `GET_STATUS`
 - `GET_METRICS`
+- `GET_TASK_STORE`
+- `GET_SCHEDULER`
 - `PING`
 
 Worker → host events include:
