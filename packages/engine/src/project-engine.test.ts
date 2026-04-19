@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectEngine } from "./project-engine.js";
+import { runtimeLog } from "./logger.js";
 
 const mocks = vi.hoisted(() => ({
   syncInsightExtractionAutomation: vi.fn(),
@@ -191,6 +192,227 @@ describe("ProjectEngine auto-summarize wiring", () => {
 
     await mockStore.emitSettingsUpdated(disabled, unrelatedChange);
     expect(mocks.syncAutoSummarizeAutomation).toHaveBeenCalledTimes(2);
+
+    await engine.stop();
+  });
+});
+
+describe("ProjectEngine swallowed error hardening", () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    const mockStore = createMockStore(baseSettings);
+    mocks.currentStore = mockStore.store;
+    warnSpy = vi.spyOn(runtimeLog, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it("warns when settings read fails during task:moved auto-merge check", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mocks.currentStore = mockStore.store;
+
+    const engine = createEngine();
+    await engine.start();
+
+    mockStore.store.getSettings.mockRejectedValueOnce(new Error("db locked"));
+
+    const handler = mockStore.store.on.mock.calls.find((c: unknown[]) => c[0] === "task:moved")?.[1] as
+      | ((payload: { task: { id: string; column: string }; to: string }) => Promise<void>)
+      | undefined;
+    expect(handler).toBeTypeOf("function");
+    if (!handler) throw new Error("task:moved handler was not registered");
+
+    await handler({
+      task: { id: "FN-001", column: "in-review" },
+      to: "in-review",
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Auto-merge: failed to read settings for task:moved on FN-001"),
+    );
+
+    await engine.stop();
+  });
+
+  it("warns when startup merge sweep fails", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mocks.currentStore = mockStore.store;
+    mockStore.store.listTasks.mockRejectedValueOnce(new Error("connection lost"));
+
+    const engine = createEngine();
+    await engine.start();
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Auto-merge startup sweep failed"));
+
+    await engine.stop();
+  });
+
+  it("warns when periodic merge sweep fails", async () => {
+    vi.useFakeTimers();
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mocks.currentStore = mockStore.store;
+    const engine = createEngine();
+    await engine.start();
+    warnSpy.mockClear();
+
+    mockStore.store.listTasks.mockRejectedValueOnce(new Error("sweep db error"));
+
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Auto-merge periodic sweep failed"));
+
+    await engine.stop();
+  });
+
+  it("warns and uses 15s fallback when pollIntervalMs read fails during retry scheduling", async () => {
+    vi.useFakeTimers();
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mocks.currentStore = mockStore.store;
+    const engine = createEngine();
+    await engine.start();
+    warnSpy.mockClear();
+
+    mockStore.store.getSettings
+      .mockResolvedValueOnce({ ...baseSettings, autoMerge: true })
+      .mockRejectedValueOnce(new Error("settings read failed"));
+
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Auto-merge retry: failed to read pollIntervalMs"),
+    );
+
+    await engine.stop();
+  });
+
+  it("warns when resumeOrphaned dispatch fails during global unpause", async () => {
+    const mockStore = createMockStore(baseSettings);
+    mocks.currentStore = mockStore.store;
+    const engine = createEngine();
+    await engine.start();
+    warnSpy.mockClear();
+
+    const runtime = engine.getRuntime() as unknown as object;
+    Object.defineProperty(runtime, "executor", {
+      get() {
+        throw new Error("executor broken");
+      },
+      configurable: true,
+    });
+
+    await mockStore.emitSettingsUpdated(
+      { ...baseSettings, globalPause: false },
+      { ...baseSettings, globalPause: true },
+    );
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Global unpause: failed to dispatch resumeOrphaned"),
+    );
+
+    await engine.stop();
+  });
+
+  it("warns when in-review task listing fails during global unpause", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mocks.currentStore = mockStore.store;
+    const engine = createEngine();
+    await engine.start();
+    warnSpy.mockClear();
+
+    mockStore.store.listTasks.mockRejectedValueOnce(new Error("list failed"));
+
+    await mockStore.emitSettingsUpdated(
+      { ...baseSettings, autoMerge: true, globalPause: false },
+      { ...baseSettings, autoMerge: true, globalPause: true },
+    );
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Global unpause: failed to scan in-review tasks"),
+    );
+
+    await engine.stop();
+  });
+
+  it("warns when resumeOrphaned dispatch fails during engine unpause", async () => {
+    const mockStore = createMockStore(baseSettings);
+    mocks.currentStore = mockStore.store;
+    const engine = createEngine();
+    await engine.start();
+    warnSpy.mockClear();
+
+    const runtime = engine.getRuntime() as unknown as object;
+    Object.defineProperty(runtime, "executor", {
+      get() {
+        throw new Error("executor broken");
+      },
+      configurable: true,
+    });
+
+    await mockStore.emitSettingsUpdated(
+      { ...baseSettings, enginePaused: false },
+      { ...baseSettings, enginePaused: true },
+    );
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Engine unpause: failed to dispatch resumeOrphaned"),
+    );
+
+    await engine.stop();
+  });
+
+  it("warns when in-review task listing fails during engine unpause", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mocks.currentStore = mockStore.store;
+    const engine = createEngine();
+    await engine.start();
+    warnSpy.mockClear();
+
+    mockStore.store.listTasks.mockRejectedValueOnce(new Error("list failed"));
+
+    await mockStore.emitSettingsUpdated(
+      { ...baseSettings, autoMerge: true, enginePaused: false },
+      { ...baseSettings, autoMerge: true, enginePaused: true },
+    );
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Engine unpause: failed to scan in-review tasks"),
+    );
+
+    await engine.stop();
+  });
+
+  it("warns when stuck-detector checkNow fails on timeout change", async () => {
+    const mockStore = createMockStore(baseSettings);
+    mocks.currentStore = mockStore.store;
+    const engine = createEngine();
+    await engine.start();
+    warnSpy.mockClear();
+
+    const runtime = engine.getRuntime() as unknown as object;
+    Object.defineProperty(runtime, "stuckTaskDetector", {
+      get() {
+        return {
+          checkNow: async () => {
+            throw new Error("detector stuck");
+          },
+        };
+      },
+      configurable: true,
+    });
+
+    await mockStore.emitSettingsUpdated(
+      { ...baseSettings, taskStuckTimeoutMs: 600_000 },
+      { ...baseSettings, taskStuckTimeoutMs: 300_000 },
+    );
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Stuck-timeout change: detector.checkNow() failed"),
+    );
 
     await engine.stop();
   });

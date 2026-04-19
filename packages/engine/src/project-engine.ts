@@ -748,8 +748,10 @@ export class ProjectEngine {
         if (settings.globalPause || settings.enginePaused) return;
         if (!settings.autoMerge) return;
         this.internalEnqueueMerge(task.id);
-      } catch {
-        // ignore settings read errors
+      } catch (err: unknown) {
+        runtimeLog.warn(
+          `Auto-merge: failed to read settings for task:moved on ${task.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     };
     store.on("task:moved", this.taskMovedHandler);
@@ -786,8 +788,10 @@ export class ProjectEngine {
           this.internalEnqueueMerge(t.id);
         }
       }
-    } catch {
-      // ignore startup sweep errors
+    } catch (err: unknown) {
+      runtimeLog.warn(
+        `Auto-merge startup sweep failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
@@ -808,15 +812,22 @@ export class ProjectEngine {
             }
           }
         }
-      } catch {
-        // ignore sweep errors
+      } catch (err: unknown) {
+        runtimeLog.warn(
+          `Auto-merge periodic sweep failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
 
       if (!this.shuttingDown) {
         const interval = await store
           .getSettings()
           .then((s) => s.pollIntervalMs ?? 15_000)
-          .catch(() => 15_000);
+          .catch((err: unknown) => {
+            runtimeLog.warn(
+              `Auto-merge retry: failed to read pollIntervalMs, using default 15s: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            return 15_000;
+          });
         this.mergeRetryTimer = setTimeout(() => void schedule(), interval);
       }
     };
@@ -858,8 +869,10 @@ export class ProjectEngine {
           executor?.resumeOrphaned?.().catch((err: Error) =>
             runtimeLog.error("Failed to resume orphaned tasks on unpause:", err),
           );
-        } catch {
-          /* ignore */
+        } catch (err: unknown) {
+          runtimeLog.warn(
+            `Global unpause: failed to dispatch resumeOrphaned: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
 
         if (s.autoMerge) {
@@ -871,8 +884,10 @@ export class ProjectEngine {
                 this.internalEnqueueMerge(t.id);
               }
             }
-          } catch {
-            /* ignore */
+          } catch (err: unknown) {
+            runtimeLog.warn(
+              `Global unpause: failed to scan in-review tasks for auto-merge: ${err instanceof Error ? err.message : String(err)}`,
+            );
           }
         }
       }
@@ -897,8 +912,10 @@ export class ProjectEngine {
           executor?.resumeOrphaned?.().catch((err: Error) =>
             runtimeLog.error("Failed to resume orphaned tasks on engine unpause:", err),
           );
-        } catch {
-          /* ignore */
+        } catch (err: unknown) {
+          runtimeLog.warn(
+            `Engine unpause: failed to dispatch resumeOrphaned: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
 
         if (s.autoMerge) {
@@ -910,8 +927,10 @@ export class ProjectEngine {
                 this.internalEnqueueMerge(t.id);
               }
             }
-          } catch {
-            /* ignore */
+          } catch (err: unknown) {
+            runtimeLog.warn(
+              `Engine unpause: failed to scan in-review tasks for auto-merge: ${err instanceof Error ? err.message : String(err)}`,
+            );
           }
         }
       }
@@ -935,8 +954,10 @@ export class ProjectEngine {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const detector = (this.runtime as any).stuckTaskDetector;
           await detector?.checkNow?.();
-        } catch {
-          /* ignore */
+        } catch (err: unknown) {
+          runtimeLog.warn(
+            `Stuck-timeout change: detector.checkNow() failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
       }
     };
