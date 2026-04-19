@@ -1,8 +1,32 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { CronRunner } from "./cron-runner.js";
+import { CronRunner, createAiPromptExecutor } from "./cron-runner.js";
 import type { AiPromptExecutor } from "./cron-runner.js";
 import type { TaskStore, AutomationStore, ScheduledTask, AutomationRunResult, AutomationStep, Settings } from "@fusion/core";
 import { randomUUID } from "node:crypto";
+
+const cronLoggerSpies = vi.hoisted(() => ({
+  log: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+
+const piModuleMocks = vi.hoisted(() => ({
+  createKbAgent: vi.fn(),
+  promptWithFallback: vi.fn(),
+}));
+
+vi.mock("./logger.js", () => ({
+  createLogger: () => ({
+    log: cronLoggerSpies.log,
+    warn: cronLoggerSpies.warn,
+    error: cronLoggerSpies.error,
+  }),
+}));
+
+vi.mock("./pi.js", () => ({
+  createKbAgent: piModuleMocks.createKbAgent,
+  promptWithFallback: piModuleMocks.promptWithFallback,
+}));
 
 // Default settings inline to avoid @fusion/core build dependency during tests
 const DEFAULT_SETTINGS: Settings = {
@@ -72,6 +96,16 @@ function createMockAutomationStore(schedules: ScheduledTask[] = []): AutomationS
 describe("CronRunner", () => {
   let runner: CronRunner;
 
+  beforeEach(() => {
+    vi.clearAllMocks();
+    piModuleMocks.promptWithFallback.mockResolvedValue(undefined);
+    piModuleMocks.createKbAgent.mockResolvedValue({
+      session: {
+        dispose: vi.fn(),
+      },
+    });
+  });
+
   afterEach(() => {
     if (runner) runner.stop();
   });
@@ -106,6 +140,31 @@ describe("CronRunner", () => {
 
       // Should not throw
       expect(() => runner.stop()).not.toThrow();
+    });
+  });
+
+  describe("createAiPromptExecutor", () => {
+    it("returns response text even when session disposal throws", async () => {
+      piModuleMocks.createKbAgent.mockImplementation(async (options: { onText?: (delta: string) => void }) => {
+        options.onText?.("hello ");
+        options.onText?.("world");
+        return {
+          session: {
+            dispose: () => {
+              throw new Error("dispose failed");
+            },
+          },
+        };
+      });
+
+      const executor = await createAiPromptExecutor("/test/project");
+      const result = await executor("Summarize this");
+
+      expect(result).toBe("hello world");
+      expect(piModuleMocks.promptWithFallback).toHaveBeenCalledTimes(1);
+      expect(cronLoggerSpies.warn).toHaveBeenCalledWith(
+        expect.stringContaining("Session disposal failed: dispose failed"),
+      );
     });
   });
 

@@ -16,6 +16,7 @@ import { dailyMemoryPath, ensureOpenClawMemoryFiles, getMemoryBackendCapabilitie
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import type { AgentReflectionService } from "./agent-reflection.js";
+import { createLogger } from "./logger.js";
 
 // ── Tool parameter schemas (canonical definitions) ────────────────────────
 
@@ -132,6 +133,8 @@ type MemorySearchHit = {
   backend: string;
 };
 
+const log = createLogger("agent-tools");
+
 const AGENT_MEMORY_ROOT = ".fusion/agent-memory";
 const AGENT_MEMORY_FILENAME = "MEMORY.md";
 const AGENT_DREAMS_FILENAME = "DREAMS.md";
@@ -234,7 +237,15 @@ async function listAgentMemoryFiles(rootDir: string, agentMemory: AgentMemoryCon
     { absPath: agentMemoryFilePath(rootDir, agentMemory.agentId), displayPath: agentMemoryDisplayPath(agentMemory.agentId) },
     { absPath: agentDreamsFilePath(rootDir, agentMemory.agentId), displayPath: agentDreamsDisplayPath(agentMemory.agentId) },
   ];
-  for (const entry of await readdir(dir).catch(() => [] as string[])) {
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch (err) {
+    log.warn(`Failed to read agent memory directory ${dir}: ${err instanceof Error ? err.message : String(err)}`);
+    entries = [];
+  }
+
+  for (const entry of entries) {
     if (!DAILY_AGENT_MEMORY_RE.test(entry)) continue;
     const absPath = join(dir, entry);
     const fileStat = await stat(absPath);
@@ -356,7 +367,10 @@ async function searchAgentMemoryWithQmd(rootDir: string, agentMemory: AgentMemor
       score: Number(result.score ?? 1) + 1000,
       backend: "qmd-agent-memory",
     })).filter((result: MemorySearchHit) => result.snippet.trim().length > 0);
-  } catch {
+  } catch (err) {
+    log.warn(
+      `QMD agent memory search failed for agent ${agentMemory.agentId}, falling back to file search: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return searchAgentMemoryFile(rootDir, agentMemory, query, limit);
   }
 }
@@ -694,13 +708,18 @@ export function createMemoryAppendTool(rootDir: string, settings?: MemoryToolSet
         if (!options?.agentMemory) {
           return { content: [{ type: "text" as const, text: "ERROR: agent memory is not available in this session" }], details: {} };
         }
-        await syncAgentMemoryFile(rootDir, options.agentMemory);
+        const agentMemory = options.agentMemory;
+        await syncAgentMemoryFile(rootDir, agentMemory);
         const targetPath = params.layer === "long-term"
-          ? agentMemoryFilePath(rootDir, options.agentMemory.agentId)
-          : agentDailyFilePath(rootDir, options.agentMemory.agentId);
+          ? agentMemoryFilePath(rootDir, agentMemory.agentId)
+          : agentDailyFilePath(rootDir, agentMemory.agentId);
         await appendFile(targetPath, `\n${content}\n`, "utf-8");
         if (resolveMemoryBackend(settings).type === "qmd") {
-          void refreshAgentMemoryQmdIndex(rootDir, options.agentMemory).catch(() => {});
+          void refreshAgentMemoryQmdIndex(rootDir, agentMemory).catch((err) => {
+            log.warn(
+              `Agent memory QMD index refresh failed for ${agentMemory.agentId}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
         }
         return {
           content: [{ type: "text" as const, text: `Appended to agent ${params.layer} memory.` }],

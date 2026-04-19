@@ -7,17 +7,26 @@ import { PluginRunner, type PluginRunnerOptions } from "../plugin-runner.js";
 import type { PluginLoader, PluginStore } from "@fusion/core";
 import type { FusionPlugin, PluginToolDefinition, PluginRouteDefinition } from "@fusion/core";
 
+const loggerSpies = vi.hoisted(() => ({
+  log: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  executorLog: vi.fn(),
+  executorWarn: vi.fn(),
+  executorError: vi.fn(),
+}));
+
 // Mock the logger to suppress output during tests
 vi.mock("../logger.js", () => ({
   createLogger: () => ({
-    log: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
+    log: loggerSpies.log,
+    warn: loggerSpies.warn,
+    error: loggerSpies.error,
   }),
   executorLog: {
-    log: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
+    log: loggerSpies.executorLog,
+    warn: loggerSpies.executorWarn,
+    error: loggerSpies.executorError,
   },
 }));
 
@@ -253,6 +262,52 @@ describe("PluginRunner", () => {
       });
     });
 
+    it("should fall back to empty settings when plugin store lookup fails", async () => {
+      const executeFn = vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: "ok" }],
+        isError: false,
+      });
+
+      const pluginTool: PluginToolDefinition = {
+        name: "testTool",
+        description: "A test tool",
+        parameters: { type: "object", properties: {} },
+        execute: executeFn,
+      };
+
+      const plugin = createMockPlugin({
+        manifest: { id: "test-plugin", name: "Test Plugin", version: "1.0.0" },
+        tools: [pluginTool],
+      });
+
+      mockPluginStore.getPlugin.mockRejectedValue(new Error("Plugin lookup failed"));
+      mockPluginLoader.getLoadedPlugins.mockReturnValue([plugin]);
+      mockPluginLoader.getPluginTools.mockReturnValue([pluginTool]);
+      mockPluginLoader.getPlugin.mockReturnValue(plugin);
+
+      await pluginRunner.init();
+      const tools = pluginRunner.getPluginTools();
+
+      await expect(
+        tools[0].execute("tool-call-1", { input: "test" }, undefined, undefined, {} as any),
+      ).resolves.toEqual({
+        content: [{ type: "text", text: "ok" }],
+        isError: false,
+        details: {},
+      });
+
+      expect(executeFn).toHaveBeenCalledWith(
+        { input: "test" },
+        expect.objectContaining({
+          pluginId: "test-plugin",
+          settings: {},
+        }),
+      );
+      expect(loggerSpies.warn).toHaveBeenCalledWith(
+        expect.stringContaining("Failed to get settings for plugin test-plugin: Plugin lookup failed"),
+      );
+    });
+
     it("should invalidate cache when plugin state changes", async () => {
       const pluginTool: PluginToolDefinition = {
         name: "testTool",
@@ -403,6 +458,36 @@ describe("PluginRunner", () => {
       // The invokeHook should complete (the slow plugin's error is logged but not thrown)
       await expect(runner.invokeHook("onTaskCreated", {})).resolves.not.toThrow();
     });
+
+    it("should warn when invokeHookSafe times out", async () => {
+      const slowMockLoader = {
+        ...mockPluginLoader,
+        invokeHook: vi.fn().mockImplementation(async () => {
+          await new Promise((r) => setTimeout(r, 100));
+        }),
+      };
+
+      const runner = new PluginRunner({
+        pluginLoader: slowMockLoader as unknown as PluginLoader,
+        pluginStore: mockPluginStore as unknown as PluginStore,
+        taskStore: mockTaskStore as any,
+        rootDir: "/test/project",
+        hookTimeoutMs: 50,
+      });
+
+      await runner.init();
+
+      const createdHandler = mockTaskStore.on.mock.calls.find(
+        (call) => call[0] === "task:created",
+      )?.[1] as (task: any) => void;
+
+      expect(() => createdHandler?.({ id: "FN-001" })).not.toThrow();
+      await new Promise((resolve) => setTimeout(resolve, 80));
+
+      expect(loggerSpies.warn).toHaveBeenCalledWith(
+        expect.stringContaining("Hook onTaskCreated failed: Hook onTaskCreated timed out"),
+      );
+    });
   });
 
   describe("Hot-load via store events", () => {
@@ -449,6 +534,23 @@ describe("PluginRunner", () => {
 
       // Should have called stopPlugin
       expect(mockPluginLoader.stopPlugin).toHaveBeenCalledWith("test-plugin");
+    });
+
+    it("should warn and isolate errors when unregistered plugin stop fails", async () => {
+      await pluginRunner.init();
+      mockPluginLoader.stopPlugin.mockRejectedValue(new Error("Plugin already stopped"));
+
+      const unregisteredHandler = mockPluginStore.on.mock.calls.find(
+        (call) => call[0] === "plugin:unregistered",
+      )?.[1] as (plugin: any) => void;
+
+      await expect(
+        unregisteredHandler?.({ id: "test-plugin", name: "Test Plugin", version: "1.0.0" }),
+      ).resolves.not.toThrow();
+
+      expect(loggerSpies.warn).toHaveBeenCalledWith(
+        expect.stringContaining("Failed to stop unregistered plugin test-plugin: Plugin already stopped"),
+      );
     });
 
     it("should isolate errors in auto-load", async () => {

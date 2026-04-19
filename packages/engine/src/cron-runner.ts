@@ -630,6 +630,7 @@ export async function createAiPromptExecutor(cwd: string): Promise<AiPromptExecu
   // We import lazily to keep the factory self-contained and to avoid
   // pulling pi.ts into the module graph when AI execution isn't used.
   const { createKbAgent, promptWithFallback } = await import("./pi.js");
+  const disposeLog = createLogger("cron-runner");
 
   return async (prompt: string, modelProvider?: string, modelId?: string): Promise<string> => {
     let responseText = "";
@@ -651,8 +652,8 @@ export async function createAiPromptExecutor(cwd: string): Promise<AiPromptExecu
     } finally {
       try {
         session.dispose();
-      } catch {
-        // Best-effort disposal — don't mask the original error
+      } catch (err) {
+        disposeLog.warn(`Session disposal failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   };

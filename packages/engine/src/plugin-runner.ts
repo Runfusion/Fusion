@@ -285,8 +285,8 @@ export class PluginRunner {
     try {
       executorLog.log(`Stopping unregistered plugin: ${plugin.id}`);
       await this.options.pluginLoader.stopPlugin(plugin.id);
-    } catch {
-      // Ignore - plugin might not be loaded
+    } catch (err) {
+      this.log.warn(`Failed to stop unregistered plugin ${plugin.id}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -452,7 +452,8 @@ export class PluginRunner {
     try {
       const plugin = await this.options.pluginStore.getPlugin(pluginId);
       return plugin.settings;
-    } catch {
+    } catch (err) {
+      this.log.warn(`Failed to get settings for plugin ${pluginId}: ${err instanceof Error ? err.message : String(err)}`);
       return {};
     }
   }
@@ -551,8 +552,8 @@ export class PluginRunner {
         this.hookTimeoutMs,
         `Hook ${hookName} timed out`,
       );
-    } catch {
-      // Error already logged by invokeHook
+    } catch (err) {
+      this.log.warn(`Hook ${hookName} failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

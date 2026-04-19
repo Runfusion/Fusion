@@ -14,16 +14,43 @@ import {
 } from "./agent-tools.js";
 import type { MessageStore, Message } from "@fusion/core";
 
-// Mock logger
-vi.mock("./logger.js", () => {
-  const createMockLogger = () => ({
-    log: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  });
+const loggerSpies = vi.hoisted(() => ({
+  log: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+
+const execFileMock = vi.hoisted(() => vi.fn());
+const readdirMock = vi.hoisted(() => vi.fn());
+
+vi.mock("node:fs/promises", async () => {
+  const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  readdirMock.mockImplementation(((...args: Parameters<typeof actual.readdir>) => actual.readdir(...args)) as typeof actual.readdir);
   return {
-    createLogger: vi.fn(() => createMockLogger()),
-    heartbeatLog: createMockLogger(),
+    ...actual,
+    readdir: readdirMock,
+  };
+});
+
+// Mock logger
+vi.mock("./logger.js", () => ({
+  createLogger: vi.fn(() => ({
+    log: loggerSpies.log,
+    warn: loggerSpies.warn,
+    error: loggerSpies.error,
+  })),
+  heartbeatLog: {
+    log: loggerSpies.log,
+    warn: loggerSpies.warn,
+    error: loggerSpies.error,
+  },
+}));
+
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+  return {
+    ...actual,
+    execFile: execFileMock,
   };
 });
 
@@ -31,10 +58,20 @@ describe("createMemoryTools", () => {
   let tempDir: string;
 
   beforeEach(async () => {
+    vi.clearAllMocks();
+    delete process.env.FUSION_ENABLE_QMD_REFRESH_IN_TESTS;
+    execFileMock.mockImplementation((...args: unknown[]) => {
+      const callback = args[args.length - 1];
+      if (typeof callback === "function") {
+        callback(null, "", "");
+      }
+      return undefined;
+    });
     tempDir = await mkdtemp(join(tmpdir(), "agent-memory-tools-"));
   });
 
   afterEach(async () => {
+    delete process.env.FUSION_ENABLE_QMD_REFRESH_IN_TESTS;
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -171,6 +208,93 @@ describe("createMemoryTools", () => {
       "-n",
       "7",
     ]);
+  });
+
+
+  it("logs a warning and continues when agent memory directory read fails", async () => {
+    readdirMock.mockRejectedValueOnce(new Error("EACCES"));
+
+    const [searchTool] = createMemoryTools(tempDir, { memoryBackendType: "file" }, {
+      agentMemory: {
+        agentId: "ceo-agent",
+        agentName: "CEO",
+        memory: "Roadmap delegation priorities are tracked here.",
+      },
+    });
+
+    const result = await (searchTool as any).execute("call-1", {
+      query: "delegation",
+      limit: 5,
+    }, undefined, undefined, undefined);
+
+    expect(result.content[0]!.text).toContain(".fusion/agent-memory/ceo-agent/MEMORY.md");
+    expect(loggerSpies.warn).toHaveBeenCalledWith(expect.stringContaining("Failed to read agent memory directory"));
+    expect(loggerSpies.warn).toHaveBeenCalledWith(expect.stringContaining("EACCES"));
+  });
+
+  it("logs a warning and falls back to file search when qmd search fails", async () => {
+    process.env.FUSION_ENABLE_QMD_REFRESH_IN_TESTS = "1";
+    execFileMock.mockImplementation((...args: unknown[]) => {
+      const callback = args[args.length - 1];
+      const commandArgs = args[1] as string[];
+      if (typeof callback === "function") {
+        if (Array.isArray(commandArgs) && commandArgs[0] === "search") {
+          callback(new Error("qmd search failed"), "", "");
+          return undefined;
+        }
+        callback(null, "", "");
+      }
+      return undefined;
+    });
+
+    const [searchTool] = createMemoryTools(tempDir, { memoryBackendType: "qmd" }, {
+      agentMemory: {
+        agentId: "ceo-agent",
+        agentName: "CEO",
+        memory: "Roadmap delegation priorities are tracked here.",
+      },
+    });
+
+    const result = await (searchTool as any).execute("call-1", {
+      query: "delegation",
+      limit: 5,
+    }, undefined, undefined, undefined);
+
+    expect(result.details.results[0].backend).toBe("agent-memory");
+    expect(loggerSpies.warn).toHaveBeenCalledWith(expect.stringContaining("QMD agent memory search failed for agent ceo-agent"));
+    expect(loggerSpies.warn).toHaveBeenCalledWith(expect.stringContaining("qmd search failed"));
+  });
+
+  it("logs a warning when background qmd refresh fails after memory append", async () => {
+    process.env.FUSION_ENABLE_QMD_REFRESH_IN_TESTS = "1";
+    execFileMock.mockImplementation((...args: unknown[]) => {
+      const callback = args[args.length - 1];
+      if (typeof callback === "function") {
+        callback(new Error("qmd refresh failed"), "", "");
+      }
+      return undefined;
+    });
+
+    const tools = createMemoryTools(tempDir, { memoryBackendType: "qmd" }, {
+      agentMemory: {
+        agentId: "ceo-agent",
+        agentName: "CEO",
+        memory: "Roadmap delegation priorities are tracked here.",
+      },
+    });
+    const appendTool = tools.find((tool) => tool.name === "memory_append")!;
+
+    const result = await (appendTool as any).execute("call-1", {
+      scope: "agent",
+      layer: "daily",
+      content: "- Follow up on delegated roadmap work.",
+    }, undefined, undefined, undefined);
+
+    expect(result.content[0]!.text).toContain("Appended to agent daily memory.");
+    await vi.waitFor(() => {
+      expect(loggerSpies.warn).toHaveBeenCalledWith(expect.stringContaining("Agent memory QMD index refresh failed for ceo-agent"));
+    });
+    expect(loggerSpies.warn).toHaveBeenCalledWith(expect.stringContaining("qmd refresh failed"));
   });
 });
 
