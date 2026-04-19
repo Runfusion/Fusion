@@ -4,8 +4,8 @@
  * @module agent-companies-parser
  */
 
-import { execSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -23,6 +23,16 @@ import type {
   TeamManifest,
 } from "./agent-companies-types.js";
 import type { AgentCapability, AgentCreateInput } from "./types.js";
+
+type TarExtractOptions = {
+  file: string;
+  cwd: string;
+};
+
+const require = createRequire(import.meta.url);
+const { x: tarExtract } = require("tar") as {
+  x: (options: TarExtractOptions) => Promise<void>;
+};
 
 export class AgentCompaniesParseError extends Error {
   constructor(message: string) {
@@ -486,10 +496,7 @@ export async function parseCompanyArchive(archivePath: string): Promise<AgentCom
 
   try {
     if (resolvedArchivePath.endsWith(".tar.gz") || resolvedArchivePath.endsWith(".tgz")) {
-      execSync(
-        `tar xzf ${JSON.stringify(resolvedArchivePath)} -C ${JSON.stringify(tempDir)}`,
-        { stdio: "pipe" },
-      );
+      await tarExtract({ file: resolvedArchivePath, cwd: tempDir });
     } else if (resolvedArchivePath.endsWith(".zip")) {
       await extractZip(resolvedArchivePath, { dir: tempDir });
     } else {

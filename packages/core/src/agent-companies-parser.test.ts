@@ -367,6 +367,23 @@ name: Archive CEO
       expect(pkg.agents[0]?.name).toBe("Archive CEO");
     });
 
+    it("throws AgentCompaniesParseError for a corrupt .tar.gz file", async () => {
+      const root = createTempDir();
+      const archivePath = join(root, "corrupt.tgz");
+      writeTextFile(archivePath, "not a real gzip archive");
+
+      await expect(parseCompanyArchive(archivePath)).rejects.toBeInstanceOf(AgentCompaniesParseError);
+      await expect(parseCompanyArchive(archivePath)).rejects.toThrow(
+        "Failed to parse Agent Companies archive",
+      );
+    });
+
+    it("throws AgentCompaniesParseError for a non-existent .tar.gz file", async () => {
+      const archivePath = join(createTempDir(), "missing.tgz");
+
+      await expect(parseCompanyArchive(archivePath)).rejects.toBeInstanceOf(AgentCompaniesParseError);
+    });
+
     const zipIt = hasCommand("zip") ? it : it.skip;
     zipIt("parses a .zip archive", async () => {
       const root = createTempDir();
