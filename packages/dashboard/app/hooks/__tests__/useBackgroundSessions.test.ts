@@ -287,6 +287,37 @@ describe("useBackgroundSessions", () => {
     });
   });
 
+  it("logs a warning when refresh fetch fails and preserves existing sessions", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const refreshError = new Error("Server error");
+
+    mockFetchAiSessions
+      .mockResolvedValueOnce([makeSession({ id: "existing-session", status: "generating" })])
+      .mockRejectedValueOnce(refreshError);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["existing-session"]);
+    });
+
+    act(() => {
+      result.current.refresh();
+    });
+
+    await waitFor(() => {
+      expect(mockFetchAiSessions).toHaveBeenCalledTimes(2);
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[useBackgroundSessions] Failed to fetch AI sessions:",
+      refreshError,
+    );
+    expect(result.current.sessions.map((session) => session.id)).toEqual(["existing-session"]);
+
+    warnSpy.mockRestore();
+  });
+
   it("passes projectId to API fetch and uses project-scoped SSE URL", async () => {
     const projectId = "proj-123";
     renderHook(() => useBackgroundSessions(projectId));
