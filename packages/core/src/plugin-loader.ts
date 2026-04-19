@@ -24,9 +24,11 @@ import type {
   PluginInstallation,
 } from "./plugin-types.js";
 import { validatePluginManifest } from "./plugin-types.js";
+import { createLogger } from "./logger.js";
 
 // Minimum Fusion version for plugin compatibility checks (can be expanded later)
 const MINIMUM_FUSION_VERSION = "0.1.0";
+const log = createLogger("plugin-loader");
 
 export interface PluginLoaderOptions {
   /** Plugin store for persistence */
@@ -102,20 +104,20 @@ export class PluginLoader extends EventEmitter<{
       emitEvent: (event: string, data: unknown) => {
         this.emit("plugin:error", { pluginId: plugin.manifest.id, error: new Error(`Custom event: ${event}`) });
         // Custom events are logged but not surfaced as errors
-        console.log(`[plugin:${plugin.manifest.id}] Custom event: ${event}`, data);
+        log.log(`[plugin:${plugin.manifest.id}] Custom event: ${event}`, data);
       },
     };
   }
 
   private createLogger(pluginId: string): PluginLogger {
-    const prefix = `[plugin:${pluginId}]`;
+    const pluginLog = createLogger(`plugin:${pluginId}`);
     return {
-      info: (...args: unknown[]) => console.log(prefix, ...args),
-      warn: (...args: unknown[]) => console.warn(prefix, ...args),
-      error: (...args: unknown[]) => console.error(prefix, ...args),
-      debug: (...args: unknown[]) => {
+      info: (message: string, ...args: unknown[]) => pluginLog.log(message, ...args),
+      warn: (message: string, ...args: unknown[]) => pluginLog.warn(message, ...args),
+      error: (message: string, ...args: unknown[]) => pluginLog.error(message, ...args),
+      debug: (message: string, ...args: unknown[]) => {
         if (process.env.DEBUG?.includes("plugins")) {
-          console.log(prefix, ...args);
+          pluginLog.log(message, ...args);
         }
       },
     };
@@ -146,7 +148,7 @@ export class PluginLoader extends EventEmitter<{
 
     // Skip disabled plugins
     if (!installation.enabled) {
-      console.log(`[plugin-loader] Skipping disabled plugin: ${pluginId}`);
+      log.log(`Skipping disabled plugin: ${pluginId}`);
       throw Object.assign(new Error(`Plugin "${pluginId}" is disabled`), {
         code: "PLUGIN_DISABLED",
       });
@@ -154,7 +156,7 @@ export class PluginLoader extends EventEmitter<{
 
     // Skip already loaded plugins
     if (this.plugins.has(pluginId)) {
-      console.log(`[plugin-loader] Plugin already loaded: ${pluginId}`);
+      log.log(`Plugin already loaded: ${pluginId}`);
       return this.plugins.get(pluginId)!;
     }
 
@@ -181,8 +183,8 @@ export class PluginLoader extends EventEmitter<{
           plugin.manifest.fusionVersion,
         );
         if (!compatible) {
-          console.warn(
-            `[plugin-loader] Plugin ${pluginId} requires Fusion ${plugin.manifest.fusionVersion}, minimum is ${MINIMUM_FUSION_VERSION}`,
+          log.warn(
+            `Plugin ${pluginId} requires Fusion ${plugin.manifest.fusionVersion}, minimum is ${MINIMUM_FUSION_VERSION}`,
           );
         }
       }
@@ -284,7 +286,7 @@ export class PluginLoader extends EventEmitter<{
    */
   private invalidateModuleCache(path: string): void {
     this.loadedModules.delete(path);
-    console.log(`[plugin-loader] Module cache invalidated for: ${path}`);
+    log.log(`Module cache invalidated for: ${path}`);
   }
 
   /**
@@ -312,7 +314,7 @@ export class PluginLoader extends EventEmitter<{
     const installation = await this.options.pluginStore.getPlugin(pluginId);
     const pluginPath = this.resolvePluginPath(installation.path);
 
-    console.log(`[plugin-loader] Reloading plugin: ${pluginId}`);
+    log.log(`Reloading plugin: ${pluginId}`);
 
     // Call onUnload with timeout
     try {
@@ -322,7 +324,7 @@ export class PluginLoader extends EventEmitter<{
         `onUnload timeout for ${pluginId}`,
       );
     } catch (err) {
-      console.warn(`[plugin-loader] onUnload for ${pluginId} timed out or failed:`, err);
+      log.warn(`onUnload for ${pluginId} timed out or failed:`, err);
       // Continue with reload despite onUnload issues
     }
 
@@ -362,13 +364,13 @@ export class PluginLoader extends EventEmitter<{
       // State is already "started", no need to update store
       // (avoiding started -> started transition which is disallowed)
 
-      console.log(`[plugin-loader] Plugin ${pluginId} reloaded successfully`);
+      log.log(`Plugin ${pluginId} reloaded successfully`);
 
       this.emit("plugin:reloaded", { pluginId, plugin: newPlugin });
       return newPlugin;
     } catch (err) {
       // Rollback: restore old plugin
-      console.error(`[plugin-loader] Reload failed for ${pluginId}, rolling back:`, err);
+      log.error(`Reload failed for ${pluginId}, rolling back:`, err);
 
       try {
         // Restore old plugin
@@ -385,12 +387,12 @@ export class PluginLoader extends EventEmitter<{
         // Update store state back to started
         await this.options.pluginStore.updatePluginState(pluginId, "started");
 
-        console.warn(`[plugin-loader] Rollback successful for ${pluginId}`);
+        log.warn(`Rollback successful for ${pluginId}`);
         throw err; // Still throw the original error
       } catch (rollbackErr) {
         // Rollback also failed - remove plugin and set error state
-        console.error(
-          `[plugin-loader] Rollback failed for ${pluginId}, removing plugin:`,
+        log.error(
+          `Rollback failed for ${pluginId}, removing plugin:`,
           rollbackErr,
         );
 
@@ -520,8 +522,8 @@ export class PluginLoader extends EventEmitter<{
       } catch (err) {
         if ((err as any).code !== "PLUGIN_DISABLED") {
           errors++;
-          console.error(
-            `[plugin-loader] Failed to load plugin ${installation.id}:`,
+          log.error(
+            `Failed to load plugin ${installation.id}:`,
             err,
           );
         }
@@ -576,7 +578,7 @@ export class PluginLoader extends EventEmitter<{
   async stopPlugin(pluginId: string): Promise<void> {
     const plugin = this.plugins.get(pluginId);
     if (!plugin) {
-      console.log(`[plugin-loader] Plugin not loaded: ${pluginId}`);
+      log.log(`Plugin not loaded: ${pluginId}`);
       return;
     }
 
@@ -588,7 +590,7 @@ export class PluginLoader extends EventEmitter<{
       // Call onUnload hook
       await this.safeCallHook(plugin, "onUnload", []);
     } catch (err) {
-      console.error(`[plugin-loader] Error in onUnload for ${pluginId}:`, err);
+      log.error(`Error in onUnload for ${pluginId}:`, err);
     }
 
     // Update state
@@ -633,7 +635,7 @@ export class PluginLoader extends EventEmitter<{
       try {
         await this.stopPlugin(plugin.id);
       } catch (err) {
-        console.error(`[plugin-loader] Error stopping plugin ${plugin.id}:`, err);
+        log.error(`Error stopping plugin ${plugin.id}:`, err);
       }
     }
   }
@@ -655,8 +657,8 @@ export class PluginLoader extends EventEmitter<{
       try {
         await this.safeCallHook(plugin, hookName, args);
       } catch (err) {
-        console.error(
-          `[plugin-loader] Error in ${hookName} hook for ${pluginId}:`,
+        log.error(
+          `Error in ${hookName} hook for ${pluginId}:`,
           err,
         );
 

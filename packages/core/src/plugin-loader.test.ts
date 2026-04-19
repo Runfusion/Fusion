@@ -109,6 +109,36 @@ const mockTaskStore = {
   logActivity: vi.fn(),
 } as any;
 
+type MockStructuredLogger = {
+  log: ReturnType<typeof vi.fn>;
+  warn: ReturnType<typeof vi.fn>;
+  error: ReturnType<typeof vi.fn>;
+};
+
+async function loadPluginLoaderWithMockedLogger() {
+  vi.resetModules();
+  const loggerMap = new Map<string, MockStructuredLogger>();
+  const createLoggerMock = vi.fn((prefix: string): MockStructuredLogger => {
+    const existing = loggerMap.get(prefix);
+    if (existing) return existing;
+
+    const logger: MockStructuredLogger = {
+      log: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    loggerMap.set(prefix, logger);
+    return logger;
+  });
+
+  vi.doMock("./logger.js", () => ({
+    createLogger: createLoggerMock,
+  }));
+
+  const { PluginLoader: MockedPluginLoader } = await import("./plugin-loader.js");
+  return { MockedPluginLoader, createLoggerMock, loggerMap };
+}
+
 describe("PluginLoader", () => {
   let rootDir: string;
   let pluginStore: PluginStore;
@@ -688,6 +718,275 @@ describe("PluginLoader", () => {
 
       // Should not throw even though plugin has no hooks
       await loader.invokeHook("onTaskCreated", { id: "FN-001" } as any);
+    });
+  });
+
+  // ── structured logging ──────────────────────────────────────────────
+
+  describe("structured logging", () => {
+    afterEach(() => {
+      vi.doUnmock("./logger.js");
+    });
+
+    it("logs when skipping a disabled plugin", async () => {
+      await pluginStore.init();
+
+      const plugin = makePlugin(makeManifest({ id: "disabled-log-test" }));
+      const pluginDir = join(rootDir, "plugins");
+      const pluginPath = await writePluginModule(pluginDir, "disabled-log.js", plugin);
+
+      await pluginStore.registerPlugin({
+        manifest: plugin.manifest,
+        path: pluginPath,
+      });
+      await pluginStore.disablePlugin("disabled-log-test");
+
+      const { MockedPluginLoader, loggerMap } = await loadPluginLoaderWithMockedLogger();
+      const loader = new MockedPluginLoader({ pluginStore, taskStore: mockTaskStore });
+
+      await expect(loader.loadPlugin("disabled-log-test")).rejects.toThrow("disabled");
+      expect(loggerMap.get("plugin-loader")?.log).toHaveBeenCalledWith(
+        "Skipping disabled plugin: disabled-log-test",
+      );
+    });
+
+    it("logs when plugin is already loaded", async () => {
+      await pluginStore.init();
+
+      const plugin = makePlugin(makeManifest({ id: "already-loaded-log" }));
+      const pluginDir = join(rootDir, "plugins");
+      const pluginPath = await writePluginModule(pluginDir, "already-loaded.js", plugin);
+
+      await pluginStore.registerPlugin({
+        manifest: plugin.manifest,
+        path: pluginPath,
+      });
+
+      const { MockedPluginLoader, loggerMap } = await loadPluginLoaderWithMockedLogger();
+      const loader = new MockedPluginLoader({ pluginStore, taskStore: mockTaskStore });
+
+      await loader.loadPlugin("already-loaded-log");
+      await loader.loadPlugin("already-loaded-log");
+
+      expect(loggerMap.get("plugin-loader")?.log).toHaveBeenCalledWith(
+        "Plugin already loaded: already-loaded-log",
+      );
+    });
+
+    it("logs when reloading a plugin", async () => {
+      await pluginStore.init();
+
+      const plugin = makePlugin(makeManifest({ id: "reload-log-test" }));
+      const pluginDir = join(rootDir, "plugins");
+      const pluginPath = await writePluginModule(pluginDir, "reload-log.js", plugin);
+
+      await pluginStore.registerPlugin({
+        manifest: plugin.manifest,
+        path: pluginPath,
+      });
+
+      const { MockedPluginLoader, loggerMap } = await loadPluginLoaderWithMockedLogger();
+      const loader = new MockedPluginLoader({ pluginStore, taskStore: mockTaskStore });
+
+      await loader.loadPlugin("reload-log-test");
+      await loader.reloadPlugin("reload-log-test");
+
+      expect(loggerMap.get("plugin-loader")?.log).toHaveBeenCalledWith(
+        "Reloading plugin: reload-log-test",
+      );
+    });
+
+    it("logs reload failures", async () => {
+      await pluginStore.init();
+
+      const pluginId = "reload-failure-log";
+      const pluginDir = join(rootDir, "plugins");
+      const pluginPath = join(pluginDir, "reload-failure.js");
+
+      await writePluginModule(pluginDir, "reload-failure.js", makePlugin(makeManifest({ id: pluginId })));
+      await pluginStore.registerPlugin({
+        manifest: makeManifest({ id: pluginId }),
+        path: pluginPath,
+      });
+
+      const { MockedPluginLoader, loggerMap } = await loadPluginLoaderWithMockedLogger();
+      const loader = new MockedPluginLoader({ pluginStore, taskStore: mockTaskStore });
+
+      await loader.loadPlugin(pluginId);
+      await writePluginWithHooks(
+        pluginDir,
+        "reload-failure.js",
+        {
+          onLoad: "(async () => { throw new Error('reload failed'); })",
+        },
+        makeManifest({ id: pluginId }),
+      );
+
+      await expect(loader.reloadPlugin(pluginId)).rejects.toThrow("reload failed");
+      expect(loggerMap.get("plugin-loader")?.error).toHaveBeenCalledWith(
+        `Reload failed for ${pluginId}, rolling back:`,
+        expect.any(Error),
+      );
+    });
+
+    it("logs rollback failures", async () => {
+      await pluginStore.init();
+
+      const pluginId = "rollback-failure-log";
+      const pluginDir = join(rootDir, "plugins");
+      const pluginPath = join(pluginDir, "rollback-failure.js");
+
+      await writePluginWithHooks(
+        pluginDir,
+        "rollback-failure.js",
+        {
+          onLoad: "((() => { let count = 0; return async () => { count += 1; if (count > 1) throw new Error('old onLoad failed on retry'); }; })())",
+        },
+        makeManifest({ id: pluginId }),
+      );
+
+      await pluginStore.registerPlugin({
+        manifest: makeManifest({ id: pluginId }),
+        path: pluginPath,
+      });
+
+      const { MockedPluginLoader, loggerMap } = await loadPluginLoaderWithMockedLogger();
+      const loader = new MockedPluginLoader({ pluginStore, taskStore: mockTaskStore });
+
+      await loader.loadPlugin(pluginId);
+      await writePluginWithHooks(
+        pluginDir,
+        "rollback-failure.js",
+        {
+          onLoad: "(async () => { throw new Error('new onLoad failed'); })",
+        },
+        makeManifest({ id: pluginId }),
+      );
+
+      await expect(loader.reloadPlugin(pluginId)).rejects.toThrow("new onLoad failed");
+      expect(loggerMap.get("plugin-loader")?.error).toHaveBeenCalledWith(
+        `Rollback failed for ${pluginId}, removing plugin:`,
+        expect.any(Error),
+      );
+    });
+
+    it("logs onUnload hook errors when stopping", async () => {
+      await pluginStore.init();
+
+      const pluginId = "stop-hook-log";
+      const pluginDir = join(rootDir, "plugins");
+      const pluginPath = await writePluginWithHooks(
+        pluginDir,
+        "stop-hook.js",
+        {
+          onUnload: "(() => { throw new Error('stop failed'); })",
+        },
+        makeManifest({ id: pluginId }),
+      );
+
+      await pluginStore.registerPlugin({
+        manifest: makeManifest({ id: pluginId }),
+        path: pluginPath,
+      });
+
+      const { MockedPluginLoader, loggerMap } = await loadPluginLoaderWithMockedLogger();
+      const loader = new MockedPluginLoader({ pluginStore, taskStore: mockTaskStore });
+
+      await loader.loadPlugin(pluginId);
+      await loader.stopPlugin(pluginId);
+
+      expect(loggerMap.get("plugin-loader")?.error).toHaveBeenCalledWith(
+        `Error in onUnload for ${pluginId}:`,
+        expect.any(Error),
+      );
+    });
+
+    it("logs loadAllPlugins failures", async () => {
+      await pluginStore.init();
+
+      const pluginDir = join(rootDir, "plugins");
+      const goodPlugin = makePlugin(makeManifest({ id: "good-load-all-log" }));
+      const goodPath = await writePluginModule(pluginDir, "good-load-all.js", goodPlugin);
+      const badPath = await writePluginWithHooks(
+        pluginDir,
+        "bad-load-all.js",
+        {
+          onLoad: "(async () => { throw new Error('load all failure'); })",
+        },
+        makeManifest({ id: "bad-load-all-log" }),
+      );
+
+      await pluginStore.registerPlugin({ manifest: goodPlugin.manifest, path: goodPath });
+      await pluginStore.registerPlugin({
+        manifest: makeManifest({ id: "bad-load-all-log" }),
+        path: badPath,
+      });
+
+      const { MockedPluginLoader, loggerMap } = await loadPluginLoaderWithMockedLogger();
+      const loader = new MockedPluginLoader({ pluginStore, taskStore: mockTaskStore });
+
+      await loader.loadAllPlugins();
+
+      expect(loggerMap.get("plugin-loader")?.error).toHaveBeenCalledWith(
+        "Failed to load plugin bad-load-all-log:",
+        expect.any(Error),
+      );
+    });
+
+    it("logs invokeHook failures", async () => {
+      await pluginStore.init();
+
+      const { MockedPluginLoader, loggerMap } = await loadPluginLoaderWithMockedLogger();
+      const loader = new MockedPluginLoader({ pluginStore, taskStore: mockTaskStore });
+
+      (loader as any).plugins.set("hook-error-log", {
+        manifest: makeManifest({ id: "hook-error-log" }),
+        state: "started",
+        hooks: {
+          onTaskCreated: () => {
+            throw new Error("hook failure");
+          },
+        },
+        tools: [],
+        routes: [],
+      } as FusionPlugin);
+
+      await loader.invokeHook("onTaskCreated", { id: "FN-123" } as any);
+
+      expect(loggerMap.get("plugin-loader")?.error).toHaveBeenCalledWith(
+        "Error in onTaskCreated hook for hook-error-log:",
+        expect.any(Error),
+      );
+    });
+
+    it("logs custom events from createContext through structured logger", async () => {
+      await pluginStore.init();
+
+      const pluginId = "custom-event-log";
+      const pluginDir = join(rootDir, "plugins");
+      const pluginPath = await writePluginWithHooks(
+        pluginDir,
+        "custom-event.js",
+        {
+          onLoad: "(async (ctx) => { ctx.emitEvent('custom-event', { payload: 'ok' }); })",
+        },
+        makeManifest({ id: pluginId }),
+      );
+
+      await pluginStore.registerPlugin({
+        manifest: makeManifest({ id: pluginId }),
+        path: pluginPath,
+      });
+
+      const { MockedPluginLoader, loggerMap } = await loadPluginLoaderWithMockedLogger();
+      const loader = new MockedPluginLoader({ pluginStore, taskStore: mockTaskStore });
+
+      await loader.loadPlugin(pluginId);
+
+      expect(loggerMap.get("plugin-loader")?.log).toHaveBeenCalledWith(
+        `[plugin:${pluginId}] Custom event: custom-event`,
+        { payload: "ok" },
+      );
     });
   });
 
