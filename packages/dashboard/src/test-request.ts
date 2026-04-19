@@ -42,6 +42,7 @@ export async function request(
   path: string,
   body?: Buffer | string,
   headers: Record<string, string> = {},
+  rawBody: Buffer | undefined = undefined,
 ): Promise<TestResponse> {
   const normalizedBody = normalizeBody(body);
   const socket = new MockSocket();
@@ -96,6 +97,10 @@ export async function request(
 
     res.on("error", reject);
   });
+
+  if (rawBody) {
+    (req as http.IncomingMessage & { rawBody?: Buffer }).rawBody = rawBody;
+  }
 
   app(req, res);
 

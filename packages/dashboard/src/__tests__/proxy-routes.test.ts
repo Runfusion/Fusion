@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
-import type { IncomingMessage, ServerResponse } from "node:http";
 import { request, get } from "../test-request.js";
 
 // ── Mock @fusion/core for proxy routes ──────────────────────────────
@@ -68,6 +67,29 @@ function createMockRemoteNode(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function createMockResponse(status: number, headers: Record<string, string>, bodyData?: unknown) {
+  const body = bodyData !== undefined
+    ? JSON.stringify(bodyData)
+    : undefined;
+  const stream = body
+    ? new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(body));
+          controller.close();
+        },
+      })
+    : null;
+
+  const mockHeaders = new Headers(headers);
+
+  return {
+    status,
+    headers: mockHeaders,
+    body: stream,
+    ok: status >= 200 && status < 300,
+  };
+}
+
 // ── Tests ───────────────────────────────────────────────────────────
 
 describe("Proxy routes", () => {
@@ -90,30 +112,6 @@ describe("Proxy routes", () => {
   });
 
   describe("GET /api/proxy/:nodeId/*", () => {
-    // Helper to create a mock Response with a web ReadableStream body
-    function createMockResponse(status: number, headers: Record<string, string>, bodyData?: unknown) {
-      const body = bodyData !== undefined
-        ? JSON.stringify(bodyData)
-        : undefined;
-      const stream = body
-        ? new ReadableStream({
-            start(controller) {
-              controller.enqueue(new TextEncoder().encode(body));
-              controller.close();
-            },
-          })
-        : null;
-
-      const mockHeaders = new Headers(headers);
-
-      return {
-        status,
-        headers: mockHeaders,
-        body: stream,
-        ok: status >= 200 && status < 300,
-      };
-    }
-
     it("proxies GET request to remote node successfully", async () => {
       const node = createMockRemoteNode();
       mockGetNode.mockResolvedValue(node);
@@ -225,52 +223,6 @@ describe("Proxy routes", () => {
       }
     });
 
-    it("forwards body for POST requests with Content-Type", async () => {
-      const node = createMockRemoteNode();
-      mockGetNode.mockResolvedValue(node);
-
-      const requestBody = JSON.stringify({ settings: { theme: "dark" } });
-      const mockResponse = createMockResponse(200, { "content-type": "application/json" }, { ok: true });
-      const mockFetch = vi.fn().mockResolvedValue(mockResponse);
-
-      const originalFetch = globalThis.fetch;
-      globalThis.fetch = mockFetch;
-
-      try {
-        const appWithRawBody = (req: IncomingMessage, res: ServerResponse) => {
-          (req as IncomingMessage & { rawBody?: Buffer }).rawBody = Buffer.from(requestBody);
-          app(req, res);
-        };
-
-        const res = await request(
-          appWithRawBody,
-          "POST",
-          "/api/proxy/remote-node/api/settings/sync-receive",
-          requestBody,
-          { "content-type": "application/json" },
-        );
-
-        expect(mockFetch).toHaveBeenCalledWith(
-          "http://remote:4040/api/settings/sync-receive",
-          expect.objectContaining({
-            method: "POST",
-            headers: expect.objectContaining({
-              "Content-Type": "application/json",
-            }),
-          }),
-        );
-
-        const fetchOptions = mockFetch.mock.calls[0]?.[1] as { body?: Buffer };
-        expect(fetchOptions.body).toBeDefined();
-        expect(Buffer.isBuffer(fetchOptions.body)).toBe(true);
-        expect(fetchOptions.body?.toString()).toBe(requestBody);
-
-        expect(res.status).toBe(200);
-      } finally {
-        globalThis.fetch = originalFetch;
-      }
-    });
-
     it("filters hop-by-hop headers from response", async () => {
       const node = createMockRemoteNode();
       mockGetNode.mockResolvedValue(node);
@@ -296,6 +248,213 @@ describe("Proxy routes", () => {
         expect(res.headers).not.toHaveProperty("transfer-encoding");
         // Custom headers should be forwarded
         expect(res.headers).toHaveProperty("x-custom-header");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
+
+  describe("POST /api/proxy/:nodeId/* body forwarding", () => {
+    it("forwards POST body with JSON Content-Type", async () => {
+      const node = createMockRemoteNode();
+      mockGetNode.mockResolvedValue(node);
+
+      const requestBody = JSON.stringify({ key: "value" });
+      const rawBody = Buffer.from(requestBody);
+      const mockResponse = createMockResponse(200, { "content-type": "application/json" }, { ok: true });
+      const mockFetch = vi.fn().mockResolvedValue(mockResponse);
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = mockFetch;
+
+      try {
+        const res = await request(
+          app,
+          "POST",
+          "/api/proxy/remote-node/settings/sync",
+          requestBody,
+          { "Content-Type": "application/json" },
+          rawBody,
+        );
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining("http://remote:4040/settings/sync"),
+          expect.objectContaining({
+            method: "POST",
+            headers: expect.objectContaining({
+              "Content-Type": "application/json",
+            }),
+            body: rawBody,
+          }),
+        );
+        expect(res.status).toBe(200);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("forwards POST body with binary Content-Type", async () => {
+      const node = createMockRemoteNode();
+      mockGetNode.mockResolvedValue(node);
+
+      const requestBody = Buffer.from([0x00, 0x01, 0x02, 0x03]);
+      const mockResponse = createMockResponse(200, { "content-type": "application/json" }, { ok: true });
+      const mockFetch = vi.fn().mockResolvedValue(mockResponse);
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = mockFetch;
+
+      try {
+        const res = await request(
+          app,
+          "POST",
+          "/api/proxy/remote-node/settings/sync",
+          requestBody,
+          { "Content-Type": "application/octet-stream" },
+          requestBody,
+        );
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining("http://remote:4040/settings/sync"),
+          expect.objectContaining({
+            method: "POST",
+            headers: expect.objectContaining({
+              "Content-Type": "application/octet-stream",
+            }),
+            body: requestBody,
+          }),
+        );
+        expect(res.status).toBe(200);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("forwards PUT body with Content-Type", async () => {
+      const node = createMockRemoteNode();
+      mockGetNode.mockResolvedValue(node);
+
+      const requestBody = JSON.stringify({ key: "value" });
+      const rawBody = Buffer.from(requestBody);
+      const mockResponse = createMockResponse(200, { "content-type": "application/json" }, { ok: true });
+      const mockFetch = vi.fn().mockResolvedValue(mockResponse);
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = mockFetch;
+
+      try {
+        const res = await request(
+          app,
+          "PUT",
+          "/api/proxy/remote-node/settings/sync",
+          requestBody,
+          { "Content-Type": "application/json" },
+          rawBody,
+        );
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining("http://remote:4040/settings/sync"),
+          expect.objectContaining({
+            method: "PUT",
+            headers: expect.objectContaining({
+              "Content-Type": "application/json",
+            }),
+            body: rawBody,
+          }),
+        );
+        expect(res.status).toBe(200);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("does not set body for GET requests", async () => {
+      const node = createMockRemoteNode();
+      mockGetNode.mockResolvedValue(node);
+
+      const mockResponse = createMockResponse(200, { "content-type": "application/json" }, { ok: true });
+      const mockFetch = vi.fn().mockResolvedValue(mockResponse);
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = mockFetch;
+
+      try {
+        const res = await request(app, "GET", "/api/proxy/remote-node/some/path");
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining("http://remote:4040/some/path"),
+          expect.objectContaining({ method: "GET" }),
+        );
+        const fetchOptions = mockFetch.mock.calls[0]?.[1] as { body?: Buffer };
+        expect(fetchOptions.body).toBeUndefined();
+        expect(res.status).toBe(200);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("forwards POST body with Authorization header when node has apiKey", async () => {
+      const node = createMockRemoteNode({ apiKey: "test-key" });
+      mockGetNode.mockResolvedValue(node);
+
+      const requestBody = JSON.stringify({ key: "value" });
+      const rawBody = Buffer.from(requestBody);
+      const mockResponse = createMockResponse(200, { "content-type": "application/json" }, { ok: true });
+      const mockFetch = vi.fn().mockResolvedValue(mockResponse);
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = mockFetch;
+
+      try {
+        const res = await request(
+          app,
+          "POST",
+          "/api/proxy/remote-node/settings/sync",
+          requestBody,
+          { "Content-Type": "application/json" },
+          rawBody,
+        );
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining("http://remote:4040/settings/sync"),
+          expect.objectContaining({
+            method: "POST",
+            headers: expect.objectContaining({
+              "Content-Type": "application/json",
+              Authorization: "Bearer test-key",
+            }),
+            body: rawBody,
+          }),
+        );
+        expect(res.status).toBe(200);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("returns 502 on upstream error during POST", async () => {
+      const node = createMockRemoteNode();
+      mockGetNode.mockResolvedValue(node);
+
+      const requestBody = JSON.stringify({ key: "value" });
+      const rawBody = Buffer.from(requestBody);
+      const mockFetch = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = mockFetch;
+
+      try {
+        const res = await request(
+          app,
+          "POST",
+          "/api/proxy/remote-node/settings/sync",
+          requestBody,
+          { "Content-Type": "application/json" },
+          rawBody,
+        );
+
+        expect(res.status).toBe(502);
+        expect(res.body).toEqual({ error: "Bad Gateway" });
       } finally {
         globalThis.fetch = originalFetch;
       }
