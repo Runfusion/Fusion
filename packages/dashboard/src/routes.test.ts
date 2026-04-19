@@ -15332,6 +15332,7 @@ describe("Agent Reflection routes", () => {
 
   function buildApp() {
     const store = createMockStore({
+      getRootDir: vi.fn().mockReturnValue(tempDir),
       getFusionDir: vi.fn().mockReturnValue(fusionDir),
     } as any);
     const app = express();
@@ -15437,6 +15438,31 @@ describe("Agent Reflection routes", () => {
       // The route either returns 404 (agent not found) or 500 (reflection service error)
       expect([404, 500]).toContain(res.status);
     });
+  });
+
+  it("does not create fusion.db or agents directory in project root for reflection endpoints", async () => {
+    const app = buildApp();
+
+    const rootDbPath = join(tempDir, "fusion.db");
+    const rootDbWalPath = join(tempDir, "fusion.db-wal");
+    const rootDbShmPath = join(tempDir, "fusion.db-shm");
+    const rootAgentsDir = join(tempDir, "agents");
+
+    expect(existsSync(rootDbPath)).toBe(false);
+    expect(existsSync(rootDbWalPath)).toBe(false);
+    expect(existsSync(rootDbShmPath)).toBe(false);
+    expect(existsSync(rootAgentsDir)).toBe(false);
+
+    const postRes = await REQUEST(app, "POST", `/api/agents/${agentId}/reflections`);
+    expect([500, 503]).toContain(postRes.status);
+
+    const contextRes = await GET(app, `/api/agents/${agentId}/reflection-context`);
+    expect([500, 503]).toContain(contextRes.status);
+
+    expect(existsSync(rootDbPath)).toBe(false);
+    expect(existsSync(rootDbWalPath)).toBe(false);
+    expect(existsSync(rootDbShmPath)).toBe(false);
+    expect(existsSync(rootAgentsDir)).toBe(false);
   });
 });
 

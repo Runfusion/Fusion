@@ -13609,8 +13609,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { store: taskStore } = await getProjectContext(req);
       const { AgentStore, ReflectionStore } = await import("@fusion/core");
       const { AgentReflectionService } = await import("@fusion/engine");
-      const agentStore = new AgentStore({ rootDir: taskStore.getRootDir() });
-      const reflectionStore = new ReflectionStore({ rootDir: taskStore.getRootDir() });
+      const agentStore = new AgentStore({ rootDir: taskStore.getFusionDir() });
+      const reflectionStore = new ReflectionStore({ rootDir: taskStore.getFusionDir() });
       await agentStore.init();
       await reflectionStore.init();
 
@@ -13696,8 +13696,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const { store: taskStore } = await getProjectContext(req);
       const { AgentStore, ReflectionStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: taskStore.getRootDir() });
-      const reflectionStore = new ReflectionStore({ rootDir: taskStore.getRootDir() });
+      const agentStore = new AgentStore({ rootDir: taskStore.getFusionDir() });
+      const reflectionStore = new ReflectionStore({ rootDir: taskStore.getFusionDir() });
       await agentStore.init();
       await reflectionStore.init();
 
