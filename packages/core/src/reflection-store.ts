@@ -63,6 +63,13 @@ export class ReflectionStore extends EventEmitter {
 
   constructor(options: ReflectionStoreOptions = {}) {
     super();
+
+    if (!options.rootDir && process.env.VITEST === "true") {
+      throw new Error(
+        "ReflectionStore requires an explicit rootDir during test execution. Pass an absolute path to avoid writing to unintended locations.",
+      );
+    }
+
     this.rootDir = options.rootDir ?? resolve(".fusion");
     this.agentsDir = join(this.rootDir, "agents");
   }

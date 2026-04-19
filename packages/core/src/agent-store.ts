@@ -134,6 +134,13 @@ export class AgentStore extends EventEmitter {
 
   constructor(options: AgentStoreOptions = {}) {
     super();
+
+    if (!options.rootDir && process.env.VITEST === "true") {
+      throw new Error(
+        "AgentStore requires an explicit rootDir during test execution. Pass an absolute path to avoid writing to unintended locations.",
+      );
+    }
+
     this.rootDir = options.rootDir ?? resolve(".fusion");
     this.agentsDir = join(this.rootDir, "agents");
     this.taskStore = options.taskStore;
