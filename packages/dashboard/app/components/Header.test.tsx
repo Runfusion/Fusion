@@ -133,6 +133,30 @@ describe("Header", () => {
       expect(boardBtn.getAttribute("aria-pressed")).toBe("true");
       expect(listBtn.getAttribute("aria-pressed")).toBe("false");
     });
+
+    it("does not render view overflow trigger when no overflow items are enabled", () => {
+      renderHeader({ onChangeView: noop });
+      expect(screen.queryByTestId("view-toggle-overflow-trigger")).toBeNull();
+    });
+
+    it("renders view overflow trigger when an experimental overflow feature is enabled", () => {
+      renderHeader({ onChangeView: noop, experimentalFeatures: { insights: true } });
+      expect(screen.getByTestId("view-toggle-overflow-trigger")).toBeDefined();
+    });
+
+    it("renders view overflow trigger when skills tab is enabled", () => {
+      renderHeader({ onChangeView: noop, showSkillsTab: true });
+      expect(screen.getByTestId("view-toggle-overflow-trigger")).toBeDefined();
+    });
+
+    it("does not render view overflow trigger when overflow feature flags are explicitly false", () => {
+      renderHeader({
+        onChangeView: noop,
+        showSkillsTab: false,
+        experimentalFeatures: { insights: false, roadmap: false, memoryView: false },
+      });
+      expect(screen.queryByTestId("view-toggle-overflow-trigger")).toBeNull();
+    });
   });
 
   describe("terminal button", () => {

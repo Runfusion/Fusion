@@ -361,9 +361,9 @@ describe("Header", () => {
   // ── View Toggle Overflow ─────────────────────────────────────────
 
   describe("View Toggle Overflow", () => {
-    it("renders overflow trigger button when onChangeView is provided", () => {
+    it("renders overflow trigger button when an overflow item is available", () => {
       const onChangeView = vi.fn();
-      render(<Header view="board" onChangeView={onChangeView} />);
+      render(<Header view="board" onChangeView={onChangeView} experimentalFeatures={{ insights: true }} />);
       expect(screen.getByTestId("view-toggle-overflow-trigger")).toBeDefined();
     });
 
@@ -436,13 +436,13 @@ describe("Header", () => {
 
     it("overflow trigger is not active when view is 'board'", () => {
       const onChangeView = vi.fn();
-      render(<Header view="board" onChangeView={onChangeView} />);
+      render(<Header view="board" onChangeView={onChangeView} showSkillsTab />);
       expect(screen.getByTestId("view-toggle-overflow-trigger").className).not.toContain("active");
     });
 
     it("overflow trigger is not active when view is 'list'", () => {
       const onChangeView = vi.fn();
-      render(<Header view="list" onChangeView={onChangeView} />);
+      render(<Header view="list" onChangeView={onChangeView} showSkillsTab />);
       expect(screen.getByTestId("view-toggle-overflow-trigger").className).not.toContain("active");
     });
 
@@ -477,28 +477,47 @@ describe("Header", () => {
 
     it("does not render Insights overflow item when experimentalFeatures.insights is false", () => {
       const onChangeView = vi.fn();
-      render(<Header view="board" onChangeView={onChangeView} experimentalFeatures={{ insights: false }} />);
+      render(
+        <Header
+          view="board"
+          onChangeView={onChangeView}
+          experimentalFeatures={{ insights: false, roadmap: true }}
+        />
+      );
       fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
       expect(screen.queryByTestId("view-overflow-insights")).toBeNull();
     });
 
     it("does not render Roadmaps overflow item when experimentalFeatures.roadmap is false", () => {
       const onChangeView = vi.fn();
-      render(<Header view="board" onChangeView={onChangeView} experimentalFeatures={{ roadmap: false }} />);
+      render(
+        <Header
+          view="board"
+          onChangeView={onChangeView}
+          experimentalFeatures={{ insights: true, roadmap: false }}
+        />
+      );
       fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
       expect(screen.queryByTestId("view-overflow-roadmaps")).toBeNull();
     });
 
     it("does not render Skills overflow item when showSkillsTab is false", () => {
       const onChangeView = vi.fn();
-      render(<Header view="board" onChangeView={onChangeView} showSkillsTab={false} />);
+      render(
+        <Header
+          view="board"
+          onChangeView={onChangeView}
+          showSkillsTab={false}
+          experimentalFeatures={{ insights: true }}
+        />
+      );
       fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
       expect(screen.queryByTestId("view-overflow-skills")).toBeNull();
     });
 
     it("does not render memory overflow item when memoryView is not enabled", () => {
       const onChangeView = vi.fn();
-      render(<Header view="board" onChangeView={onChangeView} experimentalFeatures={{}} />);
+      render(<Header view="board" onChangeView={onChangeView} experimentalFeatures={{ insights: true }} />);
       fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
       expect(screen.queryByTestId("view-toggle-memory")).toBeNull();
     });

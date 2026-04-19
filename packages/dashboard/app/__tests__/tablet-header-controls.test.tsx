@@ -104,8 +104,8 @@ describe("tablet header controls", () => {
     expect(screen.queryByTitle("Insights view")).toBeNull();
   });
 
-  it("renders view toggle overflow trigger on tablet", () => {
-    renderTabletHeader({ onChangeView: noop });
+  it("renders view toggle overflow trigger on tablet when overflow items are available", () => {
+    renderTabletHeader({ onChangeView: noop, experimentalFeatures: { insights: true } });
     expect(screen.getByTestId("view-toggle-overflow-trigger")).toBeDefined();
   });
 

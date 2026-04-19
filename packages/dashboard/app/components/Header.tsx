@@ -296,6 +296,15 @@ export function Header({
     return Object.entries(overflowScripts).sort(([a], [b]) => a.localeCompare(b));
   }, [overflowScripts]);
 
+  const hasViewOverflowItems = useMemo(() => {
+    return !!(
+      experimentalFeatures?.insights ||
+      experimentalFeatures?.roadmap ||
+      showSkillsTab ||
+      experimentalFeatures?.memoryView
+    );
+  }, [experimentalFeatures, showSkillsTab]);
+
   // Keep ref in sync with state
   useEffect(() => {
     terminalSubmenuOpenRef.current = isTerminalSubmenuOpen;
@@ -790,82 +799,86 @@ export function Header({
             >
               <Mail size={16} />
             </button>
-            <button
-              ref={viewOverflowTriggerRef}
-              className={`view-toggle-btn${["skills", "roadmaps", "insights"].includes(view) ? " active" : ""}`}
-              onClick={() => setIsViewOverflowOpen((prev) => !prev)}
-              title="More views"
-              aria-label="More views"
-              aria-haspopup="menu"
-              aria-expanded={isViewOverflowOpen}
-              data-testid="view-toggle-overflow-trigger"
-            >
-              <ChevronDown size={12} />
-            </button>
-            {isViewOverflowOpen && (
-              <div
-                ref={viewOverflowRef}
-                className="view-toggle-overflow-menu"
-                role="menu"
-                aria-label="More views"
-              >
-                {experimentalFeatures?.insights && (
-                  <button
-                    className={`view-toggle-overflow-item${view === "insights" ? " active" : ""}`}
-                    onClick={() => {
-                      onChangeView("insights");
-                      setIsViewOverflowOpen(false);
-                    }}
-                    role="menuitem"
-                    data-testid="view-overflow-insights"
+            {hasViewOverflowItems && (
+              <>
+                <button
+                  ref={viewOverflowTriggerRef}
+                  className={`view-toggle-btn${["skills", "roadmaps", "insights"].includes(view) ? " active" : ""}`}
+                  onClick={() => setIsViewOverflowOpen((prev) => !prev)}
+                  title="More views"
+                  aria-label="More views"
+                  aria-haspopup="menu"
+                  aria-expanded={isViewOverflowOpen}
+                  data-testid="view-toggle-overflow-trigger"
+                >
+                  <ChevronDown size={12} />
+                </button>
+                {isViewOverflowOpen && (
+                  <div
+                    ref={viewOverflowRef}
+                    className="view-toggle-overflow-menu"
+                    role="menu"
+                    aria-label="More views"
                   >
-                    <Sparkles size={14} />
-                    <span>Insights</span>
-                  </button>
+                    {experimentalFeatures?.insights && (
+                      <button
+                        className={`view-toggle-overflow-item${view === "insights" ? " active" : ""}`}
+                        onClick={() => {
+                          onChangeView("insights");
+                          setIsViewOverflowOpen(false);
+                        }}
+                        role="menuitem"
+                        data-testid="view-overflow-insights"
+                      >
+                        <Sparkles size={14} />
+                        <span>Insights</span>
+                      </button>
+                    )}
+                    {experimentalFeatures?.roadmap && (
+                      <button
+                        className={`view-toggle-overflow-item${view === "roadmaps" ? " active" : ""}`}
+                        onClick={() => {
+                          onChangeView("roadmaps");
+                          setIsViewOverflowOpen(false);
+                        }}
+                        role="menuitem"
+                        data-testid="view-overflow-roadmaps"
+                      >
+                        <Map size={14} />
+                        <span>Roadmaps</span>
+                      </button>
+                    )}
+                    {showSkillsTab && (
+                      <button
+                        className={`view-toggle-overflow-item${view === "skills" ? " active" : ""}`}
+                        onClick={() => {
+                          onChangeView("skills");
+                          setIsViewOverflowOpen(false);
+                        }}
+                        role="menuitem"
+                        data-testid="view-overflow-skills"
+                      >
+                        <Zap size={14} />
+                        <span>Skills</span>
+                      </button>
+                    )}
+                    {experimentalFeatures?.memoryView && (
+                      <button
+                        className={`view-toggle-overflow-item${view === "memory" ? " active" : ""}`}
+                        onClick={() => {
+                          onChangeView("memory");
+                          setIsViewOverflowOpen(false);
+                        }}
+                        role="menuitem"
+                        data-testid="view-toggle-memory"
+                      >
+                        <Brain size={14} />
+                        <span>Memory</span>
+                      </button>
+                    )}
+                  </div>
                 )}
-                {experimentalFeatures?.roadmap && (
-                  <button
-                    className={`view-toggle-overflow-item${view === "roadmaps" ? " active" : ""}`}
-                    onClick={() => {
-                      onChangeView("roadmaps");
-                      setIsViewOverflowOpen(false);
-                    }}
-                    role="menuitem"
-                    data-testid="view-overflow-roadmaps"
-                  >
-                    <Map size={14} />
-                    <span>Roadmaps</span>
-                  </button>
-                )}
-                {showSkillsTab && (
-                  <button
-                    className={`view-toggle-overflow-item${view === "skills" ? " active" : ""}`}
-                    onClick={() => {
-                      onChangeView("skills");
-                      setIsViewOverflowOpen(false);
-                    }}
-                    role="menuitem"
-                    data-testid="view-overflow-skills"
-                  >
-                    <Zap size={14} />
-                    <span>Skills</span>
-                  </button>
-                )}
-                {experimentalFeatures?.memoryView && (
-                  <button
-                    className={`view-toggle-overflow-item${view === "memory" ? " active" : ""}`}
-                    onClick={() => {
-                      onChangeView("memory");
-                      setIsViewOverflowOpen(false);
-                    }}
-                    role="menuitem"
-                    data-testid="view-toggle-memory"
-                  >
-                    <Brain size={14} />
-                    <span>Memory</span>
-                  </button>
-                )}
-              </div>
+              </>
             )}
           </div>
         )}

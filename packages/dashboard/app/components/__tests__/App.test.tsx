@@ -1354,10 +1354,10 @@ describe("App view switching", () => {
   });
 
   it("does not render insights view button when insights experimental feature is disabled", async () => {
-    // Override fetchSettings to return insights as disabled
+    // Keep at least one overflow item enabled so the overflow trigger still renders.
     (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ...defaultSettings,
-      experimentalFeatures: { insights: false },
+      experimentalFeatures: { insights: false, roadmap: true },
     });
 
     render(<App />);
@@ -1373,10 +1373,10 @@ describe("App view switching", () => {
   });
 
   it("does not render memory view button when memoryView experimental feature is disabled", async () => {
-    // Override fetchSettings to return memoryView as disabled
+    // Keep another overflow item enabled so the overflow trigger still renders.
     (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ...defaultSettings,
-      experimentalFeatures: { memoryView: false },
+      experimentalFeatures: { memoryView: false, insights: true },
     });
 
     render(<App />);
