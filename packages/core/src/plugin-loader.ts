@@ -269,9 +269,9 @@ export class PluginLoader extends EventEmitter<{
     // Dynamic import - use cache-busting for reload scenarios
     let mod: unknown;
     if (bypassCache) {
-      // Use cache-busting with timestamp for ESM modules
-      // This ensures Node.js re-imports the module even if it has it cached
-      const bustedPath = `${path}?reload=${Date.now()}`;
+      // Use a hash fragment for cache differentiation without affecting path resolution
+      // Node treats each distinct URL as a fresh import while resolving the same file path
+      const bustedPath = `${path}#${Date.now()}`;
       mod = await import(bustedPath);
     } else {
       mod = await import(path);

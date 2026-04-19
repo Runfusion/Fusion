@@ -1508,6 +1508,7 @@ describe("AgentStore", () => {
     });
 
     afterEach(() => {
+      store.close();
       taskStore.close();
     });
 
