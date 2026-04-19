@@ -3118,6 +3118,54 @@ describe("HeartbeatMonitor", () => {
 
       const responseText = result.content[0] && "text" in result.content[0] ? result.content[0].text : "";
       expect(responseText).toContain("Created FN-100");
+      expect(result.details).toEqual({ taskId: "FN-100" });
+    });
+
+    it("task_create tracking uses details.taskId instead of regex", async () => {
+      const store = createMockStore();
+      const prefixedTaskStore = createMockTaskStoreForTools({
+        createTask: vi.fn().mockResolvedValue({
+          id: "ABC-999",
+          description: "Follow-up task",
+          dependencies: [],
+          column: "triage",
+        }),
+      });
+      const monitor = new HeartbeatMonitor({ store, taskStore: prefixedTaskStore, rootDir: "/tmp" });
+
+      const tools = monitor.createHeartbeatTools("agent-001", prefixedTaskStore, "FN-001");
+      await tools[0]!.execute("call-1", { description: "Follow-up task" }, undefined as any, undefined as any, undefined as any);
+
+      expect(prefixedTaskStore.logEntry).toHaveBeenCalledWith(
+        "ABC-999",
+        "Created by agent agent-001 during heartbeat run",
+        undefined,
+        undefined,
+      );
+    });
+
+    it("task_create tracking handles missing details gracefully", async () => {
+      const store = createMockStore();
+      const missingDetailsTaskStore = createMockTaskStoreForTools({
+        createTask: vi.fn().mockResolvedValue({
+          id: undefined,
+          description: "Follow-up task",
+          dependencies: [],
+          column: "triage",
+        }),
+      });
+      const monitor = new HeartbeatMonitor({ store, taskStore: missingDetailsTaskStore, rootDir: "/tmp" });
+
+      const tools = monitor.createHeartbeatTools("agent-001", missingDetailsTaskStore, "FN-001");
+      const result = await tools[0]!.execute("call-1", { description: "Follow-up task" }, undefined as any, undefined as any, undefined as any);
+
+      expect(result).toBeDefined();
+      expect(missingDetailsTaskStore.logEntry).toHaveBeenCalledWith(
+        "unknown",
+        "Created by agent agent-001 during heartbeat run",
+        undefined,
+        undefined,
+      );
     });
 
     it("logs agent link on created task", async () => {

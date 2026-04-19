@@ -443,7 +443,7 @@ export function createTaskCreateTool(store: TaskStore): ToolDefinition {
           type: "text" as const,
           text: `Created ${task.id}: ${params.description}${deps}`,
         }],
-        details: {},
+        details: { taskId: task.id },
       };
     },
   };

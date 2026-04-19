@@ -1421,11 +1421,7 @@ export class HeartbeatMonitor {
       execute: async (id: string, params: Static<typeof taskCreateParams>, signal, onUpdate, ctx) => {
         const result = await baseCreateTool.execute(id, params, signal, onUpdate, ctx);
 
-        // Extract created task ID from the response text ("Created FN-XXX: ...")
-        const firstContent = result.content[0];
-        const responseText = firstContent && "text" in firstContent ? firstContent.text : "";
-        const taskIdMatch = responseText.match(/Created (FN-\d+|KB-\d+|\w+-\d+):/);
-        const createdTaskId = taskIdMatch?.[1] ?? "unknown";
+        const createdTaskId = (result.details as { taskId?: string })?.taskId ?? "unknown";
 
         // Log agent link on the created task with run context for correlation
         try {
