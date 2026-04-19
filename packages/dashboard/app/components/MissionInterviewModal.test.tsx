@@ -234,4 +234,62 @@ describe("MissionInterviewModal", () => {
     });
     expect(mockConnectMissionInterviewStream).toHaveBeenCalledTimes(2);
   });
+
+  it("recovers retry from connection-loss when interview session is still generating", async () => {
+    let attempt = 0;
+    mockConnectMissionInterviewStream.mockImplementation((_sessionId, _projectId, handlers) => {
+      streamHandlers = handlers;
+      attempt += 1;
+      if (attempt === 1) {
+        setTimeout(() => handlers.onError?.("Connection lost"), 10);
+      }
+      return {
+        close: vi.fn(),
+        isConnected: vi.fn().mockReturnValue(true),
+      };
+    });
+
+    mockRetryMissionInterviewSession.mockRejectedValueOnce(
+      new Error("Mission interview session mission-session-1 is not in an error state"),
+    );
+    mockFetchAiSession.mockResolvedValueOnce({
+      id: "mission-session-1",
+      type: "mission_interview",
+      status: "generating",
+      title: "Build a mission planning workflow",
+      inputPayload: JSON.stringify({ goal: "Build a mission planning workflow" }),
+      conversationHistory: "[]",
+      currentQuestion: null,
+      result: null,
+      thinkingOutput: "Continuing...",
+      error: null,
+      projectId: null,
+      lockedByTab: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      lockedAt: null,
+    });
+
+    renderModal();
+
+    fireEvent.change(screen.getByLabelText("What do you want to build?"), {
+      target: { value: "Build a mission planning workflow" },
+    });
+    fireEvent.click(screen.getByText("Start Interview"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Connection lost")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => {
+      expect(mockRetryMissionInterviewSession).toHaveBeenCalledWith("mission-session-1", undefined, expect.any(String));
+      expect(mockFetchAiSession).toHaveBeenCalledWith("mission-session-1");
+    });
+
+    expect(await screen.findByText("AI is thinking...")).toBeInTheDocument();
+    expect(screen.getByText("Continuing...")).toBeInTheDocument();
+    expect(mockConnectMissionInterviewStream).toHaveBeenCalledTimes(2);
+  });
 });

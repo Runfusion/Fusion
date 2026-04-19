@@ -499,12 +499,54 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     try {
       await retrySubtaskSession(retrySessionId, projectId, sessionTabId);
     } catch (err: any) {
+      let retryError = err;
+      const retryErrorMessage = err?.message || "";
+
+      if (retryErrorMessage.includes("not in an error state")) {
+        try {
+          const session = await fetchAiSession(retrySessionId);
+          if (!session) {
+            throw new Error("Failed to refresh subtask session.");
+          }
+
+          setConversationHistory(parseConversationHistory(session.conversationHistory));
+
+          if (session.status === "generating" || session.status === "awaiting_input") {
+            setThinkingOutput(session.thinkingOutput ?? "");
+            setView({ type: "generating", sessionId: session.id });
+            if (!streamRef.current?.isConnected()) {
+              connectToSubtaskStream(session.id);
+            }
+          } else if (session.status === "complete") {
+            if (!session.result) {
+              throw new Error("Subtask session is complete but has no result.");
+            }
+            clearSubtaskDescription(projectId);
+            const items = JSON.parse(session.result) as SubtaskItem[];
+            setSubtasks(items);
+            setView({ type: "editing", sessionId: session.id });
+            setDirty(false);
+          } else if (session.status === "error") {
+            setView({
+              type: "error",
+              sessionId: session.id,
+              errorMessage: session.error ?? "Retry failed. Please try again.",
+            });
+          }
+
+          setIsReconnecting(false);
+          return;
+        } catch (sessionRefreshError: any) {
+          retryError = sessionRefreshError;
+        }
+      }
+
       streamRef.current?.close();
       streamRef.current = null;
       setView({
         type: "error",
         sessionId: retrySessionId,
-        errorMessage: err?.message || "Retry failed. Please try again.",
+        errorMessage: retryError?.message || "Retry failed. Please try again.",
       });
       setIsReconnecting(false);
     } finally {

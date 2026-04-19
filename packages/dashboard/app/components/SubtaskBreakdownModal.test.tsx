@@ -7,6 +7,8 @@ const mockRetrySubtaskSession = vi.fn();
 const mockConnectSubtaskStream = vi.fn();
 const mockCreateTasksFromBreakdown = vi.fn();
 const mockCancelSubtaskBreakdown = vi.fn();
+const mockFetchAiSession = vi.fn();
+const mockParseConversationHistory = vi.fn();
 const mockAcquireSessionLock = vi.fn();
 const mockReleaseSessionLock = vi.fn();
 const mockForceAcquireSessionLock = vi.fn();
@@ -17,6 +19,8 @@ vi.mock("../api", () => ({
   connectSubtaskStream: (...args: any[]) => mockConnectSubtaskStream(...args),
   createTasksFromBreakdown: (...args: any[]) => mockCreateTasksFromBreakdown(...args),
   cancelSubtaskBreakdown: (...args: any[]) => mockCancelSubtaskBreakdown(...args),
+  fetchAiSession: (...args: any[]) => mockFetchAiSession(...args),
+  parseConversationHistory: (...args: any[]) => mockParseConversationHistory(...args),
   acquireSessionLock: (...args: any[]) => mockAcquireSessionLock(...args),
   releaseSessionLock: (...args: any[]) => mockReleaseSessionLock(...args),
   forceAcquireSessionLock: (...args: any[]) => mockForceAcquireSessionLock(...args),
@@ -55,6 +59,16 @@ describe("SubtaskBreakdownModal", () => {
     });
     mockCreateTasksFromBreakdown.mockResolvedValue({ tasks: [{ id: "FN-101" }, { id: "FN-102" }] });
     mockCancelSubtaskBreakdown.mockResolvedValue(undefined);
+    mockFetchAiSession.mockResolvedValue(null);
+    mockParseConversationHistory.mockImplementation((raw: string) => {
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    });
     mockAcquireSessionLock.mockResolvedValue({ acquired: true, currentHolder: null });
     mockReleaseSessionLock.mockResolvedValue(undefined);
     mockForceAcquireSessionLock.mockResolvedValue({ acquired: true, currentHolder: null });
@@ -558,6 +572,54 @@ describe("SubtaskBreakdownModal", () => {
       await waitFor(() => {
         expect(mockRetrySubtaskSession).toHaveBeenCalledWith("session-123", undefined, expect.any(String));
       });
+      expect(mockConnectSubtaskStream).toHaveBeenCalledTimes(2);
+    });
+
+    it("recovers retry from connection-loss when session is still generating", async () => {
+      let streamAttempt = 0;
+      mockConnectSubtaskStream.mockImplementation((_sessionId, _projectId, handlers) => {
+        streamHandlers = handlers;
+        streamAttempt += 1;
+        if (streamAttempt === 1) {
+          setTimeout(() => handlers.onError?.("Connection lost"), 10);
+        }
+        return { close: vi.fn(), isConnected: vi.fn().mockReturnValue(true) };
+      });
+
+      mockRetrySubtaskSession.mockRejectedValueOnce(new Error("Subtask session session-123 is not in an error state"));
+      mockFetchAiSession.mockResolvedValueOnce({
+        id: "session-123",
+        type: "subtask",
+        status: "generating",
+        title: "Build a complex feature",
+        inputPayload: JSON.stringify({ description: "Build a complex feature" }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: null,
+        thinkingOutput: "Still generating...",
+        error: null,
+        projectId: null,
+        lockedByTab: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        lockedAt: null,
+      });
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(screen.getByText("Connection lost")).toBeInTheDocument();
+      });
+
+      const retryButton = await screen.findByRole("button", { name: "Retry" });
+      fireEvent.click(retryButton);
+
+      await waitFor(() => {
+        expect(mockRetrySubtaskSession).toHaveBeenCalledWith("session-123", undefined, expect.any(String));
+        expect(mockFetchAiSession).toHaveBeenCalledWith("session-123");
+      });
+      expect(await screen.findByText("AI is generating subtasks...")).toBeInTheDocument();
+      expect(screen.getByText("Still generating...")).toBeInTheDocument();
       expect(mockConnectSubtaskStream).toHaveBeenCalledTimes(2);
     });
 

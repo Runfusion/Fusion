@@ -609,6 +609,131 @@ describe("PlanningModeModal", () => {
       });
       expect(mockConnectPlanningStream).toHaveBeenCalledTimes(2);
     });
+
+    it("recovers retry from connection-loss when server session is still generating", async () => {
+      let streamAttempt = 0;
+      mockConnectPlanningStream.mockImplementation((_sessionId: string, _projectId: string | undefined, handlers: any) => {
+        streamAttempt += 1;
+        if (streamAttempt === 1) {
+          setTimeout(() => handlers.onError?.("Connection lost"), 10);
+        }
+
+        return {
+          close: vi.fn(),
+          isConnected: vi.fn().mockReturnValue(true),
+        };
+      });
+
+      mockRetryPlanningSession.mockRejectedValueOnce(new Error("Planning session session-123 is not in an error state"));
+      mockFetchAiSession.mockResolvedValueOnce({
+        id: "session-123",
+        type: "planning",
+        status: "generating",
+        title: "Build auth system",
+        inputPayload: JSON.stringify({ initialPlan: "Build auth system" }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: null,
+        thinkingOutput: "Still thinking...",
+        error: null,
+        projectId: null,
+        lockedByTab: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        lockedAt: null,
+      });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+        />,
+      );
+
+      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+        target: { value: "Build auth system" },
+      });
+      fireEvent.click(screen.getByText("Start Planning"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Connection lost")).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+      await waitFor(() => {
+        expect(mockRetryPlanningSession).toHaveBeenCalledWith("session-123", undefined, expect.any(String));
+        expect(mockFetchAiSession).toHaveBeenCalledWith("session-123");
+      });
+      expect(await screen.findByText("AI is thinking...")).toBeDefined();
+      expect(screen.getByText("Still thinking...")).toBeDefined();
+      expect(mockConnectPlanningStream).toHaveBeenCalledTimes(2);
+    });
+
+    it("recovers retry from connection-loss when server session is awaiting input", async () => {
+      let streamAttempt = 0;
+      mockConnectPlanningStream.mockImplementation((_sessionId: string, _projectId: string | undefined, handlers: any) => {
+        streamAttempt += 1;
+        if (streamAttempt === 1) {
+          setTimeout(() => handlers.onError?.("Connection lost"), 10);
+        }
+
+        return {
+          close: vi.fn(),
+          isConnected: vi.fn().mockReturnValue(true),
+        };
+      });
+
+      mockRetryPlanningSession.mockRejectedValueOnce(new Error("Planning session session-123 is not in an error state"));
+      mockFetchAiSession.mockResolvedValueOnce({
+        id: "session-123",
+        type: "planning",
+        status: "awaiting_input",
+        title: "Build auth system",
+        inputPayload: JSON.stringify({ initialPlan: "Build auth system" }),
+        conversationHistory: "[]",
+        currentQuestion: JSON.stringify(mockQuestion),
+        result: null,
+        thinkingOutput: "",
+        error: null,
+        projectId: null,
+        lockedByTab: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        lockedAt: null,
+      });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+        />,
+      );
+
+      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+        target: { value: "Build auth system" },
+      });
+      fireEvent.click(screen.getByText("Start Planning"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Connection lost")).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+      await waitFor(() => {
+        expect(mockRetryPlanningSession).toHaveBeenCalledWith("session-123", undefined, expect.any(String));
+        expect(mockFetchAiSession).toHaveBeenCalledWith("session-123");
+      });
+      expect(await screen.findByText("What is the scope?")).toBeDefined();
+      expect(mockConnectPlanningStream).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe("Resuming complete sessions", () => {

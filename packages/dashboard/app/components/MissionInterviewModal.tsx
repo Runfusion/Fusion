@@ -620,12 +620,75 @@ export function MissionInterviewModal({
       setLockSessionId(retrySessionId);
       await retryMissionInterviewSession(retrySessionId, projectId, sessionTabId);
     } catch (err: any) {
+      let retryError = err;
+      const retryErrorMessage = err?.message || "";
+
+      if (retryErrorMessage.includes("not in an error state")) {
+        try {
+          const session = await fetchAiSession(retrySessionId);
+          if (!session) {
+            throw new Error("Failed to refresh interview session.");
+          }
+
+          const parsedHistory = parseConversationHistory(session.conversationHistory);
+          setConversationHistory(parsedHistory);
+          setResponseHistory(
+            parsedHistory
+              .map((entry) => entry.response)
+              .filter((response): response is QuestionResponse =>
+                Boolean(response && typeof response === "object" && !Array.isArray(response)),
+              ),
+          );
+
+          currentSessionIdRef.current = session.id;
+          setLockSessionId(session.id);
+          setHasProgress(true);
+
+          if (session.status === "generating") {
+            setStreamingOutput(session.thinkingOutput ?? "");
+            setView({ type: "loading" });
+            if (!streamConnectionRef.current?.isConnected()) {
+              connectToMissionInterviewStream(session.id);
+            }
+          } else if (session.status === "awaiting_input") {
+            if (!session.currentQuestion) {
+              throw new Error("Interview session is awaiting input but has no current question.");
+            }
+            clearMissionGoal(projectId);
+            const question = JSON.parse(session.currentQuestion) as PlanningQuestion;
+            setView({ type: "question", sessionId: session.id, question });
+            if (!streamConnectionRef.current?.isConnected()) {
+              connectToMissionInterviewStream(session.id);
+            }
+          } else if (session.status === "complete") {
+            if (!session.result) {
+              throw new Error("Interview session is complete but has no result.");
+            }
+            clearMissionGoal(projectId);
+            const summary = JSON.parse(session.result) as MissionPlanSummary;
+            setEditedSummary(summary);
+            setView({ type: "summary", sessionId: session.id, summary });
+          } else if (session.status === "error") {
+            setView({
+              type: "error",
+              sessionId: session.id,
+              errorMessage: session.error ?? "Retry failed. Please try again.",
+            });
+          }
+
+          setIsReconnecting(false);
+          return;
+        } catch (sessionRefreshError: any) {
+          retryError = sessionRefreshError;
+        }
+      }
+
       streamConnectionRef.current?.close();
       streamConnectionRef.current = null;
       setView({
         type: "error",
         sessionId: retrySessionId,
-        errorMessage: err?.message || "Retry failed. Please try again.",
+        errorMessage: retryError?.message || "Retry failed. Please try again.",
       });
       setIsReconnecting(false);
     } finally {

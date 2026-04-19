@@ -610,12 +610,68 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setLockSessionId(retryTarget.sessionId);
       await retryPlanningSession(retryTarget.sessionId, projectId, sessionTabId);
     } catch (err: any) {
+      let retryError = err;
+      const retryErrorMessage = err?.message || "";
+
+      if (retryErrorMessage.includes("not in an error state")) {
+        try {
+          const session = await fetchAiSession(retryTarget.sessionId);
+          if (!session) {
+            throw new Error("Failed to refresh planning session.");
+          }
+
+          currentSessionIdRef.current = session.id;
+          setLockSessionId(session.id);
+
+          if (session.status === "generating") {
+            setStreamingOutput(session.thinkingOutput ?? "");
+            setView({ type: "loading" });
+          } else if (session.status === "awaiting_input") {
+            if (!session.currentQuestion) {
+              throw new Error("Planning session is awaiting input but has no current question.");
+            }
+            const question = JSON.parse(session.currentQuestion) as PlanningQuestion;
+            clearPlanningDescription(projectId);
+            setView({
+              type: "question",
+              session: { sessionId: session.id, currentQuestion: question, summary: null },
+            });
+            if (!streamConnectionRef.current?.isConnected()) {
+              connectToPlanningStream(session.id);
+            }
+          } else if (session.status === "complete") {
+            if (!session.result) {
+              throw new Error("Planning session is complete but has no result.");
+            }
+            const summary = JSON.parse(session.result) as PlanningSummary;
+            clearPlanningDescription(projectId);
+            setView({
+              type: "summary",
+              session: { sessionId: session.id, currentQuestion: null, summary },
+              summary,
+            });
+            setEditedSummary(summary);
+          } else if (session.status === "error") {
+            setView({
+              type: "error",
+              session: { sessionId: session.id, currentQuestion: null, summary: null },
+              errorMessage: session.error || "Retry failed. Please try again.",
+            });
+          }
+
+          setIsReconnecting(false);
+          return;
+        } catch (sessionRefreshError: any) {
+          retryError = sessionRefreshError;
+        }
+      }
+
       streamConnectionRef.current?.close();
       streamConnectionRef.current = null;
       setView({
         type: "error",
         session: retryTarget,
-        errorMessage: err?.message || "Retry failed. Please try again.",
+        errorMessage: retryError?.message || "Retry failed. Please try again.",
       });
       setIsReconnecting(false);
     } finally {
