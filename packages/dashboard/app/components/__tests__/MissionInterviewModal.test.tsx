@@ -447,53 +447,38 @@ describe("MissionInterviewModal", () => {
       mockFetchModels.mockResolvedValue(mockModelsWithFavorites);
     });
 
-    it("calls updateGlobalSettings when toggling provider favorite", async () => {
-      const user = userEvent.setup();
-      renderModal();
-
-      // Wait for models to load
-      await waitFor(() => {
-        expect(mockFetchModels).toHaveBeenCalled();
+    it("persists provider favorite toggle via updateGlobalSettings", async () => {
+      mockFetchModels.mockResolvedValue({
+        models: mockModelsWithFavorites.models,
+        favoriteProviders: [],
+        favoriteModels: [],
       });
+      mockUpdateGlobalSettings.mockResolvedValue({});
 
-      // The component has a provider favorite toggle - we need to find and click it
-      // For this test, we verify the mock was set up correctly
-      expect(mockUpdateGlobalSettings).toBeDefined();
-    });
-
-    it("persists provider favorite toggle to global settings", async () => {
-      const user = userEvent.setup();
       renderModal();
 
       await waitFor(() => {
         expect(mockFetchModels).toHaveBeenCalled();
       });
 
-      // Simulate the toggle by directly calling updateGlobalSettings
-      await mockUpdateGlobalSettings({ favoriteProviders: ["openai"], favoriteModels: ["anthropic/claude-sonnet-4-5"] });
-
-      expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({
-        favoriteProviders: ["openai"],
-        favoriteModels: ["anthropic/claude-sonnet-4-5"],
-      });
-    });
-
-    it("persists model favorite toggle to global settings", async () => {
-      renderModal();
+      fireEvent.click(screen.getByRole("button", { name: "Planning Model" }));
 
       await waitFor(() => {
-        expect(mockFetchModels).toHaveBeenCalled();
+        expect(document.body.querySelector('[data-testid="model-combobox-portal"]')).not.toBeNull();
       });
 
-      await mockUpdateGlobalSettings({ favoriteProviders: ["anthropic"], favoriteModels: ["openai/gpt-4o"] });
+      const portal = document.body.querySelector('[data-testid="model-combobox-portal"]')!;
+      const addButton = within(portal).getByRole("button", { name: "Add anthropic to favorites" });
+      fireEvent.click(addButton);
 
       expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({
         favoriteProviders: ["anthropic"],
-        favoriteModels: ["openai/gpt-4o"],
+        favoriteModels: [],
       });
     });
 
     it("rolls back local favorite state when updateGlobalSettings fails", async () => {
+      mockFetchModels.mockResolvedValue(mockModelsWithFavorites);
       vi.mocked(api.updateGlobalSettings).mockRejectedValueOnce(new Error("Network error"));
 
       renderModal();
@@ -509,10 +494,11 @@ describe("MissionInterviewModal", () => {
       });
 
       const portal = document.body.querySelector('[data-testid="model-combobox-portal"]')!;
-      fireEvent.click(within(portal).getByRole("button", { name: "Remove anthropic from favorites" }));
+      const removeButton = within(portal).getByRole("button", { name: "Remove anthropic from favorites" });
+      fireEvent.click(removeButton);
 
       await waitFor(() => {
-        expect(api.updateGlobalSettings).toHaveBeenCalled();
+        expect(mockUpdateGlobalSettings).toHaveBeenCalled();
       });
 
       const portalAfterRollback = document.body.querySelector('[data-testid="model-combobox-portal"]')!;

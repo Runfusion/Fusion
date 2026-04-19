@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NewAgentDialog } from "../NewAgentDialog";
 import * as apiModule from "../../api";
@@ -21,69 +21,6 @@ vi.mock("../SkillMultiselect", () => ({
       <button data-testid="add-skill-2" onClick={() => onChange([...value, "skill-2"])}>Add Skill 2</button>
       <button data-testid="remove-skill-1" onClick={() => onChange(value.filter(s => s !== "skill-1"))}>Remove Skill 1</button>
     </div>
-  ),
-}));
-
-// Mock CustomModelDropdown to simplify interaction testing
-vi.mock("../CustomModelDropdown", () => ({
-  CustomModelDropdown: ({
-    value,
-    onChange,
-    label,
-    favoriteProviders = [],
-    favoriteModels = [],
-    onToggleFavorite,
-    onToggleModelFavorite,
-  }: {
-    value: string;
-    onChange: (v: string) => void;
-    label: string;
-    favoriteProviders?: string[];
-    favoriteModels?: string[];
-    onToggleFavorite?: (provider: string) => void;
-    onToggleModelFavorite?: (modelId: string) => void;
-  }) => (
-    <div data-testid="custom-model-dropdown">
-      <span data-testid="dropdown-label">{label}</span>
-      <span data-testid="dropdown-value">{value}</span>
-      <button
-        data-testid="dropdown-select-anthropic"
-        onClick={() => onChange("anthropic/claude-sonnet-4-5")}
-      >
-        Select Claude
-      </button>
-      <button
-        data-testid="dropdown-select-default"
-        onClick={() => onChange("")}
-      >
-        Use default
-      </button>
-      {favoriteProviders.map((provider) => (
-        <button
-          key={`fav-provider-${provider}`}
-          aria-label={`Remove ${provider} from favorites`}
-          onClick={() => onToggleFavorite?.(provider)}
-        >
-          ★ {provider}
-        </button>
-      ))}
-      {favoriteModels.map((model) => (
-        <button
-          key={`fav-model-${model}`}
-          aria-label={`Remove ${model} from favorites`}
-          onClick={() => onToggleModelFavorite?.(model)}
-        >
-          ★ {model}
-        </button>
-      ))}
-    </div>
-  ),
-}));
-
-// Mock ProviderIcon
-vi.mock("../ProviderIcon", () => ({
-  ProviderIcon: ({ provider }: { provider: string }) => (
-    <span data-testid={`provider-icon-${provider}`} />
   ),
 }));
 
@@ -156,6 +93,24 @@ const MOCK_SKILLS_RESPONSE = [
   { id: "skill-2", name: "Skill Two", path: "/path/skill-2", relativePath: "skills/skill-2", enabled: true, metadata: { source: "*", scope: "user" as const, origin: "top-level" as const } },
 ];
 
+async function openModelDropdown(label = "Model") {
+  fireEvent.click(screen.getByRole("button", { name: label }));
+
+  await waitFor(() => {
+    expect(document.body.querySelector('[data-testid="model-combobox-portal"]')).not.toBeNull();
+  });
+
+  return document.body.querySelector('[data-testid="model-combobox-portal"]') as HTMLElement;
+}
+
+function clickModelOption(portal: HTMLElement, optionText: RegExp) {
+  const option = within(portal)
+    .getAllByRole("option")
+    .find((candidate) => optionText.test(candidate.textContent ?? ""));
+  expect(option).toBeTruthy();
+  fireEvent.click(option!);
+}
+
 describe("NewAgentDialog", () => {
   const mockOnClose = vi.fn();
   const mockOnCreated = vi.fn();
@@ -212,7 +167,7 @@ describe("NewAgentDialog", () => {
       // Resolve models
       resolveModels!(MOCK_MODELS_RESPONSE);
       await waitFor(() => {
-        expect(screen.getByTestId("custom-model-dropdown")).toBeTruthy();
+        expect(screen.getByRole("button", { name: "Model" })).toBeTruthy();
       });
     });
 
@@ -232,9 +187,9 @@ describe("NewAgentDialog", () => {
       await user.type(nameInput, "Test Agent");
       await user.click(screen.getByText("Next"));
 
-      expect(screen.getByTestId("custom-model-dropdown")).toBeTruthy();
-      expect(screen.getByTestId("dropdown-label").textContent).toBe("Model");
-      expect(screen.getByTestId("dropdown-value").textContent).toBe("");
+      const modelTrigger = screen.getByRole("button", { name: "Model" });
+      expect(modelTrigger).toBeTruthy();
+      expect(modelTrigger.textContent).toContain("Use default");
     });
 
     it("selecting a model from dropdown updates state", async () => {
@@ -253,10 +208,10 @@ describe("NewAgentDialog", () => {
       await user.type(nameInput, "Test Agent");
       await user.click(screen.getByText("Next"));
 
-      // Select a model from the mocked dropdown
-      await user.click(screen.getByTestId("dropdown-select-anthropic"));
+      const portal = await openModelDropdown();
+      clickModelOption(portal, /Claude Sonnet 4.5/i);
 
-      expect(screen.getByTestId("dropdown-value").textContent).toBe("anthropic/claude-sonnet-4-5");
+      expect(screen.getByRole("button", { name: "Model" }).textContent).toContain("Claude Sonnet 4.5");
     });
 
     it("deselecting model sets value back to default", async () => {
@@ -273,12 +228,14 @@ describe("NewAgentDialog", () => {
       await user.click(screen.getByText("Next"));
 
       // Select a model
-      await user.click(screen.getByTestId("dropdown-select-anthropic"));
-      expect(screen.getByTestId("dropdown-value").textContent).toBe("anthropic/claude-sonnet-4-5");
+      const selectPortal = await openModelDropdown();
+      clickModelOption(selectPortal, /Claude Sonnet 4.5/i);
+      expect(screen.getByRole("button", { name: "Model" }).textContent).toContain("Claude Sonnet 4.5");
 
       // Deselect (use default)
-      await user.click(screen.getByTestId("dropdown-select-default"));
-      expect(screen.getByTestId("dropdown-value").textContent).toBe("");
+      const defaultPortal = await openModelDropdown();
+      fireEvent.click(within(defaultPortal).getByRole("option", { name: "Use default" }));
+      expect(screen.getByRole("button", { name: "Model" }).textContent).toContain("Use default");
     });
   });
 
@@ -317,13 +274,14 @@ describe("NewAgentDialog", () => {
       await user.click(screen.getByText("Next"));
 
       // Select a model
-      await user.click(screen.getByTestId("dropdown-select-anthropic"));
+      const portal = await openModelDropdown();
+      clickModelOption(portal, /Claude Sonnet 4.5/i);
 
       // Navigate to step 2
       await user.click(screen.getByText("Next"));
 
       // Summary should show model name
-      expect(screen.getByTestId("provider-icon-anthropic")).toBeTruthy();
+      expect(screen.getByTestId("anthropic-icon")).toBeTruthy();
       expect(screen.getByText("Claude Sonnet 4.5")).toBeTruthy();
     });
   });
@@ -343,7 +301,8 @@ describe("NewAgentDialog", () => {
 
       // Step 1: Navigate and select model
       await user.click(screen.getByText("Next"));
-      await user.click(screen.getByTestId("dropdown-select-anthropic"));
+      const portal = await openModelDropdown();
+      clickModelOption(portal, /Claude Sonnet 4.5/i);
 
       // Step 2: Navigate to summary and create
       await user.click(screen.getByText("Next"));
@@ -403,7 +362,8 @@ describe("NewAgentDialog", () => {
 
       // Step 1: Select model and thinking level
       await user.click(screen.getByText("Next"));
-      await user.click(screen.getByTestId("dropdown-select-anthropic"));
+      const portal = await openModelDropdown();
+      clickModelOption(portal, /Claude Sonnet 4.5/i);
 
       const thinkingSelect = screen.getByLabelText(/Thinking Level/);
       await user.selectOptions(thinkingSelect, "high");
@@ -441,7 +401,7 @@ describe("NewAgentDialog", () => {
       await user.click(screen.getByText("Next"));
 
       // Dropdown should still render (just with empty models)
-      expect(screen.getByTestId("custom-model-dropdown")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Model" })).toBeTruthy();
     });
   });
 
@@ -460,7 +420,8 @@ describe("NewAgentDialog", () => {
 
       // Navigate to step 1 and select model
       await user.click(screen.getByText("Next"));
-      await user.click(screen.getByTestId("dropdown-select-anthropic"));
+      const portal = await openModelDropdown();
+      clickModelOption(portal, /Claude Sonnet 4.5/i);
 
       // Close the dialog
       await user.click(screen.getByLabelText("Close"));
@@ -516,7 +477,7 @@ describe("NewAgentDialog", () => {
       await user.click(screen.getByTestId("generation-modal-apply"));
 
       // Should advance to step 1 (model config)
-      expect(screen.getByTestId("custom-model-dropdown")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Model" })).toBeTruthy();
 
       // Navigate to step 2 to verify the summary
       await user.click(screen.getByText("Next"));
@@ -700,7 +661,7 @@ describe("NewAgentDialog", () => {
       await user.click(screen.getByTestId("preset-cto"));
 
       // Should be on step 1 — model dropdown visible
-      expect(screen.getByTestId("custom-model-dropdown")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Model" })).toBeTruthy();
     });
 
     it("selected preset card has .selected CSS class", async () => {
@@ -1117,82 +1078,112 @@ describe("NewAgentDialog", () => {
 
   describe("model favorites persistence", () => {
     it("calls updateGlobalSettings when toggling provider favorite", async () => {
+      mockFetchModels.mockResolvedValue({
+        models: MOCK_MODELS_RESPONSE.models,
+        favoriteProviders: [],
+        favoriteModels: [],
+      });
+
       render(
         <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
       );
 
       await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
 
-      // Navigate to step 1 where the model selector is visible
       const user = userEvent.setup();
       const nameInput = screen.getByLabelText(/Name/);
       await user.type(nameInput, "Test Agent");
       await user.click(screen.getByText("Next"));
 
-      // The updateGlobalSettings should be called when favorite toggle happens
-      // Since we can't easily interact with the favorite toggle in tests,
-      // we verify the mock is set up correctly
-      expect(mockUpdateGlobalSettings).toBeDefined();
+      const portal = await openModelDropdown();
+      fireEvent.click(within(portal).getByRole("button", { name: "Add anthropic to favorites" }));
+
+      await waitFor(() => {
+        expect(mockUpdateGlobalSettings).toHaveBeenCalled();
+      });
     });
 
     it("persists provider favorite toggle to global settings", async () => {
+      mockFetchModels.mockResolvedValue({
+        models: MOCK_MODELS_RESPONSE.models,
+        favoriteProviders: [],
+        favoriteModels: [],
+      });
+
       render(
         <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
       );
 
       await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
 
-      // Simulate the toggle by directly calling updateGlobalSettings
-      await mockUpdateGlobalSettings({
-        favoriteProviders: ["openai"],
-        favoriteModels: ["anthropic/claude-sonnet-4-5"],
-      });
+      const user = userEvent.setup();
+      const nameInput = screen.getByLabelText(/Name/);
+      await user.type(nameInput, "Test Agent");
+      await user.click(screen.getByText("Next"));
+
+      const portal = await openModelDropdown();
+      fireEvent.click(within(portal).getByRole("button", { name: "Add anthropic to favorites" }));
 
       expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({
-        favoriteProviders: ["openai"],
-        favoriteModels: ["anthropic/claude-sonnet-4-5"],
+        favoriteProviders: ["anthropic"],
+        favoriteModels: [],
       });
     });
 
     it("persists model favorite toggle to global settings", async () => {
+      mockFetchModels.mockResolvedValue({
+        models: MOCK_MODELS_RESPONSE.models,
+        favoriteProviders: [],
+        favoriteModels: [],
+      });
+
       render(
         <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
       );
 
       await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
 
-      await mockUpdateGlobalSettings({
-        favoriteProviders: ["anthropic"],
-        favoriteModels: ["openai/gpt-4o"],
-      });
+      const user = userEvent.setup();
+      const nameInput = screen.getByLabelText(/Name/);
+      await user.type(nameInput, "Test Agent");
+      await user.click(screen.getByText("Next"));
+
+      const portal = await openModelDropdown();
+      fireEvent.click(within(portal).getByRole("button", { name: "Add Claude Sonnet 4.5 to favorites" }));
 
       expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({
-        favoriteProviders: ["anthropic"],
-        favoriteModels: ["openai/gpt-4o"],
+        favoriteProviders: [],
+        favoriteModels: ["anthropic/claude-sonnet-4-5"],
       });
     });
 
     it("rolls back local favorite state when updateGlobalSettings fails", async () => {
+      mockFetchModels.mockResolvedValue(MOCK_MODELS_RESPONSE);
       vi.mocked(apiModule.updateGlobalSettings).mockRejectedValueOnce(new Error("Network error"));
 
       render(
         <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
       );
 
-      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
+      await waitFor(() => {
+        expect(mockFetchModels).toHaveBeenCalledOnce();
+      });
 
       const user = userEvent.setup();
       const nameInput = screen.getByLabelText(/Name/);
       await user.type(nameInput, "Test Agent");
       await user.click(screen.getByText("Next"));
 
-      fireEvent.click(screen.getByRole("button", { name: "Remove anthropic from favorites" }));
+      const portal = await openModelDropdown();
+      const removeButton = within(portal).getByRole("button", { name: "Remove anthropic from favorites" });
+      fireEvent.click(removeButton);
 
       await waitFor(() => {
         expect(apiModule.updateGlobalSettings).toHaveBeenCalled();
       });
 
-      expect(screen.getByRole("button", { name: "Remove anthropic from favorites" })).toBeTruthy();
+      const portalAfterRollback = document.body.querySelector('[data-testid="model-combobox-portal"]') as HTMLElement;
+      expect(within(portalAfterRollback).getByRole("button", { name: "Remove anthropic from favorites" })).toBeTruthy();
     });
   });
 
