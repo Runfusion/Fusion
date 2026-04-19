@@ -1,20 +1,13 @@
 /**
- * AgentStore - Filesystem-based persistence for agent lifecycle management
- * 
- * Agents are stored at `.fusion/agents/{agentId}.json` with their metadata.
- * Heartbeat events are appended to `.fusion/agents/{agentId}-heartbeats.jsonl`.
- * API keys are stored in `.fusion/agents/{agentId}-keys.jsonl` (hash-only).
- * Config revisions are stored in `.fusion/agents/{agentId}-revisions.jsonl` (append-only snapshots).
- * 
- * File Structure:
- * - agents/{agentId}.json: Agent metadata (id, name, role, state, taskId, timestamps, metadata)
- * - agents/{agentId}-heartbeats.jsonl: Append-only heartbeat events
- * - agents/{agentId}-keys.jsonl: API key records with SHA-256 token hashes
- * - agents/{agentId}-revisions.jsonl: Config revision history
+ * AgentStore - SQLite-backed persistence for agent lifecycle management.
+ *
+ * Agent records, heartbeat events, runs, task sessions, API keys, config
+ * revisions, and blocked-state snapshots are stored in `.fusion/fusion.db`.
+ * Managed instruction bundle markdown files remain on disk because they are
+ * edited as normal project files.
  */
 
 import { mkdir, readFile, writeFile, readdir, unlink, rename } from "node:fs/promises";
-import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -86,7 +79,7 @@ export interface AgentStoreOptions {
   taskStore?: TaskStore;
 }
 
-/** Agent data as stored on disk */
+/** Agent data as stored in SQLite JSON columns */
 interface AgentData {
   id: string;
   name: string;
@@ -112,12 +105,24 @@ interface AgentData {
   memory?: string;
   bundleConfig?: InstructionsBundleConfig;
 }
+interface AgentRow {
+  id: string;
+  name: string;
+  role: AgentCapability;
+  state: AgentState;
+  taskId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastHeartbeatAt: string | null;
+  metadata: string | null;
+  data: string | null;
+}
 interface AgentLock {
   promise: Promise<unknown>;
 }
 
 /**
- * AgentStore manages agent lifecycle with filesystem-based persistence.
+ * AgentStore manages agent lifecycle with SQLite-backed persistence.
  * Follows the same patterns as TaskStore for consistency.
  */
 export class AgentStore extends EventEmitter {
@@ -149,6 +154,42 @@ export class AgentStore extends EventEmitter {
   async init(): Promise<void> {
     const _ = this.db;
     await mkdir(this.agentsDir, { recursive: true });
+  }
+
+  /**
+   * One-way migration helper for projects that still have legacy agent JSON
+   * files. Runtime code does not read these files after startup migration.
+   */
+  async importLegacyFileAgents(): Promise<number> {
+    const files = await readdir(this.agentsDir).catch(() => [] as string[]);
+    const agentFiles = files.filter((file) =>
+      file.endsWith(".json") &&
+      !file.includes("-heartbeats") &&
+      !file.includes("-sessions") &&
+      !file.includes("-runs") &&
+      !file.includes("-revisions") &&
+      !file.includes("-last-blocked")
+    );
+
+    let imported = 0;
+    for (const file of agentFiles) {
+      const agentId = file.replace(/\.json$/, "");
+      const existing = await this.getAgent(agentId);
+      if (existing) {
+        continue;
+      }
+
+      try {
+        const content = await readFile(join(this.agentsDir, file), "utf-8");
+        const agent = this.parseAgent(JSON.parse(content) as AgentData);
+        await this.writeAgent(agent);
+        imported += 1;
+      } catch {
+        // Legacy files may be partially written or manually edited; ignore them.
+      }
+    }
+
+    return imported;
   }
 
   /**
@@ -200,15 +241,7 @@ export class AgentStore extends EventEmitter {
    * @returns The agent, or null if not found
    */
   async getAgent(agentId: string): Promise<Agent | null> {
-    try {
-      const data = await this.readAgentFile(agentId);
-      return this.parseAgent(data);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        return null;
-      }
-      throw err;
-    }
+    return this.readAgent(agentId);
   }
 
   /**
@@ -991,30 +1024,26 @@ export class AgentStore extends EventEmitter {
    * @returns Array of agents
    */
   async listAgents(filter?: { state?: AgentState; role?: AgentCapability; includeEphemeral?: boolean }): Promise<Agent[]> {
-    const files = await readdir(this.agentsDir).catch(() => [] as string[]);
-    const agentFiles = files.filter((f) => f.endsWith(".json") && !f.includes("-heartbeats") && !f.includes("-sessions") && !f.includes("-runs") && !f.includes("-revisions"));
+    const clauses: string[] = [];
+    const params: string[] = [];
 
-    const agents: Agent[] = [];
-    for (const file of agentFiles) {
-      try {
-        const data = await this.readAgentFile(file.replace(".json", ""));
-        const agent = this.parseAgent(data);
-
-        // Apply filters
-        if (filter?.state && agent.state !== filter.state) continue;
-        if (filter?.role && agent.role !== filter.role) continue;
-
-        // When includeEphemeral is not true, filter out ephemeral agents
-        if (filter?.includeEphemeral !== true && isEphemeralAgent(agent)) continue;
-
-        agents.push(agent);
-      } catch {
-        // Skip corrupted files
-      }
+    if (filter?.state) {
+      clauses.push("state = ?");
+      params.push(filter.state);
+    }
+    if (filter?.role) {
+      clauses.push("role = ?");
+      params.push(filter.role);
     }
 
-    // Sort by createdAt desc
-    return agents.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = this.db
+      .prepare(`SELECT * FROM agents ${where} ORDER BY createdAt DESC`)
+      .all(...params) as unknown as AgentRow[];
+
+    return rows
+      .map((row) => this.mapAgentRow(row))
+      .filter((agent) => filter?.includeEphemeral === true || !isEphemeralAgent(agent));
   }
 
   /**
@@ -1041,8 +1070,11 @@ export class AgentStore extends EventEmitter {
         ...(label ? { label } : {}),
       };
 
-      const keyPath = this.getApiKeysPath(agentId);
-      await writeFile(keyPath, `${JSON.stringify(key)}\n`, { flag: "a" });
+      this.db.prepare(`
+        INSERT INTO agentApiKeys (id, agentId, data, createdAt, revokedAt)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(key.id, key.agentId, JSON.stringify(key), key.createdAt, key.revokedAt ?? null);
+      this.db.bumpLastModified();
 
       return { key, token };
     });
@@ -1087,8 +1119,10 @@ export class AgentStore extends EventEmitter {
         revokedAt: new Date().toISOString(),
       };
 
-      keys[keyIndex] = revoked;
-      await this.writeApiKeys(agentId, keys);
+      this.db.prepare(`
+        UPDATE agentApiKeys SET data = ?, revokedAt = ? WHERE id = ? AND agentId = ?
+      `).run(JSON.stringify(revoked), revoked.revokedAt ?? null, keyId, agentId);
+      this.db.bumpLastModified();
 
       return revoked;
     });
@@ -1101,29 +1135,13 @@ export class AgentStore extends EventEmitter {
    */
   async deleteAgent(agentId: string): Promise<void> {
     await this.withLock(agentId, async () => {
-      const agentPath = join(this.agentsDir, `${agentId}.json`);
-      const heartbeatPath = join(this.agentsDir, `${agentId}-heartbeats.jsonl`);
-      const revisionsPath = this.getConfigRevisionsPath(agentId);
-      const blockedStatePath = this.getLastBlockedStatePath(agentId);
-
-      // Verify agent exists
       const agent = await this.getAgent(agentId);
       if (!agent) {
         throw new Error(`Agent ${agentId} not found`);
       }
 
-      // Delete files
-      await unlink(agentPath).catch(() => {});
-      await unlink(heartbeatPath).catch(() => {});
-      await unlink(revisionsPath).catch(() => {});
-      await unlink(blockedStatePath).catch(() => {});
-
-      // Clean up sessions and runs directories
-      const { rm } = await import("node:fs/promises");
-      const sessionsDir = join(this.agentsDir, `${agentId}-sessions`);
-      const runsDir = join(this.agentsDir, `${agentId}-runs`);
-      await rm(sessionsDir, { recursive: true, force: true }).catch(() => {});
-      await rm(runsDir, { recursive: true, force: true }).catch(() => {});
+      this.db.prepare("DELETE FROM agents WHERE id = ?").run(agentId);
+      this.db.bumpLastModified();
 
       this.emit("agent:deleted", agentId);
     });
@@ -1161,10 +1179,10 @@ export class AgentStore extends EventEmitter {
         runId: effectiveRunId,
       };
 
-      // Append to heartbeat log
-      const heartbeatPath = join(this.agentsDir, `${agentId}-heartbeats.jsonl`);
-      const line = JSON.stringify(event) + "\n";
-      await writeFile(heartbeatPath, line, { flag: "a" });
+      this.db.prepare(`
+        INSERT INTO agentHeartbeats (agentId, timestamp, status, runId)
+        VALUES (?, ?, ?, ?)
+      `).run(agentId, event.timestamp, event.status, event.runId);
 
       // Update agent's lastHeartbeatAt if status is ok
       if (status === "ok") {
@@ -1174,6 +1192,8 @@ export class AgentStore extends EventEmitter {
           updatedAt: event.timestamp,
         };
         await this.writeAgent(updated);
+      } else {
+        this.db.bumpLastModified();
       }
 
       this.emit("agent:heartbeat", agentId, event);
@@ -1189,26 +1209,19 @@ export class AgentStore extends EventEmitter {
    * @returns Array of heartbeat events (newest first)
    */
   async getHeartbeatHistory(agentId: string, limit = 50): Promise<AgentHeartbeatEvent[]> {
-    const heartbeatPath = join(this.agentsDir, `${agentId}-heartbeats.jsonl`);
+    const rows = this.db.prepare(`
+      SELECT timestamp, status, runId
+      FROM agentHeartbeats
+      WHERE agentId = ?
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `).all(agentId, limit) as Array<{ timestamp: string; status: AgentHeartbeatEvent["status"]; runId: string }>;
 
-    if (!existsSync(heartbeatPath)) {
-      return [];
-    }
-
-    try {
-      const content = await readFile(heartbeatPath, "utf-8");
-      const lines = content.trim().split("\n").filter(Boolean);
-
-      // Parse events and reverse (newest first)
-      const events: AgentHeartbeatEvent[] = lines
-        .map((line) => JSON.parse(line) as AgentHeartbeatEvent)
-        .reverse()
-        .slice(0, limit);
-
-      return events;
-    } catch {
-      return [];
-    }
+    return rows.map((row) => ({
+      timestamp: row.timestamp,
+      status: row.status,
+      runId: row.runId,
+    }));
   }
 
   /**
@@ -1231,7 +1244,6 @@ export class AgentStore extends EventEmitter {
     // Persist to structured storage as source of truth
     await this.saveRun(run);
 
-    // Also record as heartbeat event for legacy compatibility
     await this.recordHeartbeat(agentId, "ok", runId);
 
     return run;
@@ -1240,41 +1252,34 @@ export class AgentStore extends EventEmitter {
   /**
    * End a heartbeat run.
    * Updates the persisted run's terminal state in structured storage.
-   * Also records a heartbeat event for legacy compatibility.
+   * Also records a heartbeat event for history views.
    * @param runId - The run ID
    * @param status - End status (completed or terminated)
    */
   async endHeartbeatRun(runId: string, status: "completed" | "terminated"): Promise<void> {
     const now = new Date().toISOString();
+    const row = this.db.prepare("SELECT agentId, data FROM agentRuns WHERE id = ?").get(runId) as
+      | { agentId: string; data: string }
+      | undefined;
 
-    // Find the agent for this run by scanning heartbeat files
-    const files = await readdir(this.agentsDir).catch(() => [] as string[]);
-    const heartbeatFiles = files.filter((f) => f.endsWith("-heartbeats.jsonl"));
-
-    for (const file of heartbeatFiles) {
-      const agentId = file.replace("-heartbeats.jsonl", "");
-      const history = await this.getHeartbeatHistory(agentId, 1000);
-
-      // Check if this run exists in the history
-      const hasRun = history.some((h) => h.runId === runId);
-      if (hasRun) {
-        // Try to update the persisted run with terminal state
-        const existingRun = await this.getRunDetail(agentId, runId);
-        if (existingRun) {
-          // Update the persisted run in structured storage
-          const updatedRun: AgentHeartbeatRun = {
-            ...existingRun,
-            endedAt: now,
-            status,
-          };
-          await this.saveRun(updatedRun);
-        }
-
-        // Also record heartbeat event for legacy compatibility
-        await this.recordHeartbeat(agentId, status === "terminated" ? "missed" : "ok", runId);
-        return;
-      }
+    if (!row) {
+      return;
     }
+
+    const existingRun = this.parseJson<AgentHeartbeatRun>(row.data, {
+      id: runId,
+      agentId: row.agentId,
+      startedAt: now,
+      endedAt: null,
+      status: "active",
+    });
+    const updatedRun: AgentHeartbeatRun = {
+      ...existingRun,
+      endedAt: now,
+      status,
+    };
+    await this.saveRun(updatedRun);
+    await this.recordHeartbeat(row.agentId, status === "terminated" ? "missed" : "ok", runId);
   }
 
   /**
@@ -1285,55 +1290,8 @@ export class AgentStore extends EventEmitter {
    * @returns The active run, or null if none
    */
   async getActiveHeartbeatRun(agentId: string): Promise<AgentHeartbeatRun | null> {
-    // First check structured run storage (source of truth)
     const recentRuns = await this.getRecentRuns(agentId, 50);
-
-    // If we have structured run data, use it exclusively
-    if (recentRuns.length > 0) {
-      for (const run of recentRuns) {
-        if (run.status === "active") {
-          return run;
-        }
-      }
-      // We have structured data but no active runs - don't fall back
-      return null;
-    }
-
-    // Fallback: reconstruct from heartbeat events for legacy data
-    // This handles runs created before structured storage was used
-    const history = await this.getHeartbeatHistory(agentId, 100);
-
-    // Find the most recent run that started but hasn't ended
-    // A run is considered ended if there's a terminal state transition
-    const runs = new Map<string, AgentHeartbeatRun>();
-
-    for (const event of history) {
-      if (!runs.has(event.runId)) {
-        runs.set(event.runId, {
-          id: event.runId,
-          agentId,
-          startedAt: event.timestamp,
-          endedAt: null,
-          status: "active",
-        });
-      }
-
-      // Update based on event status
-      const run = runs.get(event.runId)!;
-      if (event.status === "missed") {
-        run.endedAt = event.timestamp;
-        run.status = "terminated";
-      }
-    }
-
-    // Return the most recent active run
-    for (const run of runs.values()) {
-      if (run.status === "active") {
-        return run;
-      }
-    }
-
-    return null;
+    return recentRuns.find((run) => run.status === "active") ?? null;
   }
 
   /**
@@ -1345,40 +1303,9 @@ export class AgentStore extends EventEmitter {
    * @returns Array of completed runs
    */
   async getCompletedHeartbeatRuns(agentId: string): Promise<AgentHeartbeatRun[]> {
-    // First check structured run storage (source of truth)
     const recentRuns = await this.getRecentRuns(agentId, 50);
-
-    // If we have structured run data, use it exclusively
-    if (recentRuns.length > 0) {
-      return recentRuns
-        .filter((run) => run.status !== "active")
-        .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
-    }
-
-    // Fallback: reconstruct from heartbeat events for legacy data
-    const history = await this.getHeartbeatHistory(agentId, 1000);
-    const runs = new Map<string, AgentHeartbeatRun>();
-
-    for (const event of history) {
-      if (!runs.has(event.runId)) {
-        runs.set(event.runId, {
-          id: event.runId,
-          agentId,
-          startedAt: event.timestamp,
-          endedAt: null,
-          status: "active",
-        });
-      }
-
-      const run = runs.get(event.runId)!;
-      if (event.status === "missed") {
-        run.endedAt = event.timestamp;
-        run.status = "terminated";
-      }
-    }
-
-    return Array.from(runs.values())
-      .filter((r) => r.status !== "active")
+    return recentRuns
+      .filter((run) => run.status !== "active")
       .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
   }
 
@@ -1393,18 +1320,10 @@ export class AgentStore extends EventEmitter {
    * @returns The session, or null if not found
    */
   async getTaskSession(agentId: string, taskId: string): Promise<AgentTaskSession | null> {
-    const sessionsDir = join(this.agentsDir, `${agentId}-sessions`);
-    const sessionPath = join(sessionsDir, `${taskId}.json`);
-
-    try {
-      const content = await readFile(sessionPath, "utf-8");
-      return JSON.parse(content) as AgentTaskSession;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        return null;
-      }
-      throw err;
-    }
+    const row = this.db.prepare(`
+      SELECT data FROM agentTaskSessions WHERE agentId = ? AND taskId = ?
+    `).get(agentId, taskId) as { data: string } | undefined;
+    return row ? this.parseJson<AgentTaskSession | null>(row.data, null) : null;
   }
 
   /**
@@ -1413,9 +1332,6 @@ export class AgentStore extends EventEmitter {
    * @returns The saved session
    */
   async upsertTaskSession(session: AgentTaskSession): Promise<AgentTaskSession> {
-    const sessionsDir = join(this.agentsDir, `${session.agentId}-sessions`);
-    await mkdir(sessionsDir, { recursive: true });
-
     const now = new Date().toISOString();
     const existing = await this.getTaskSession(session.agentId, session.taskId);
 
@@ -1425,8 +1341,14 @@ export class AgentStore extends EventEmitter {
       updatedAt: now,
     };
 
-    const sessionPath = join(sessionsDir, `${session.taskId}.json`);
-    await writeFile(sessionPath, JSON.stringify(saved, null, 2));
+    this.db.prepare(`
+      INSERT INTO agentTaskSessions (agentId, taskId, data, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(agentId, taskId) DO UPDATE SET
+        data = excluded.data,
+        updatedAt = excluded.updatedAt
+    `).run(session.agentId, session.taskId, JSON.stringify(saved), saved.createdAt, saved.updatedAt);
+    this.db.bumpLastModified();
 
     return saved;
   }
@@ -1437,8 +1359,8 @@ export class AgentStore extends EventEmitter {
    * @param taskId - The task ID
    */
   async deleteTaskSession(agentId: string, taskId: string): Promise<void> {
-    const sessionPath = join(this.agentsDir, `${agentId}-sessions`, `${taskId}.json`);
-    await unlink(sessionPath).catch(() => {});
+    this.db.prepare("DELETE FROM agentTaskSessions WHERE agentId = ? AND taskId = ?").run(agentId, taskId);
+    this.db.bumpLastModified();
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1562,10 +1484,17 @@ export class AgentStore extends EventEmitter {
    * @param run - The heartbeat run data
    */
   async saveRun(run: AgentHeartbeatRun): Promise<void> {
-    const runsDir = join(this.agentsDir, `${run.agentId}-runs`);
-    await mkdir(runsDir, { recursive: true });
-    const runPath = join(runsDir, `${run.id}.json`);
-    await writeFile(runPath, JSON.stringify(run, null, 2));
+    this.db.prepare(`
+      INSERT INTO agentRuns (id, agentId, data, startedAt, endedAt, status)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        agentId = excluded.agentId,
+        data = excluded.data,
+        startedAt = excluded.startedAt,
+        endedAt = excluded.endedAt,
+        status = excluded.status
+    `).run(run.id, run.agentId, JSON.stringify(run), run.startedAt, run.endedAt, run.status);
+    this.db.bumpLastModified();
   }
 
   /**
@@ -1575,16 +1504,10 @@ export class AgentStore extends EventEmitter {
    * @returns The run detail, or null if not found
    */
   async getRunDetail(agentId: string, runId: string): Promise<AgentHeartbeatRun | null> {
-    const runPath = join(this.agentsDir, `${agentId}-runs`, `${runId}.json`);
-    try {
-      const content = await readFile(runPath, "utf-8");
-      return JSON.parse(content) as AgentHeartbeatRun;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        return null;
-      }
-      throw err;
-    }
+    const row = this.db.prepare(`
+      SELECT data FROM agentRuns WHERE agentId = ? AND id = ?
+    `).get(agentId, runId) as { data: string } | undefined;
+    return row ? this.parseJson<AgentHeartbeatRun | null>(row.data, null) : null;
   }
 
   /**
@@ -1594,46 +1517,25 @@ export class AgentStore extends EventEmitter {
    * @returns Array of runs (newest first)
    */
   async getRecentRuns(agentId: string, limit = 20): Promise<AgentHeartbeatRun[]> {
-    const runsDir = join(this.agentsDir, `${agentId}-runs`);
-    let files: string[];
-    try {
-      files = await readdir(runsDir);
-    } catch {
-      return [];
-    }
-
-    const runFiles = files.filter((f) => f.endsWith(".json"));
-    const runs: AgentHeartbeatRun[] = [];
-
-    for (const file of runFiles) {
-      try {
-        const content = await readFile(join(runsDir, file), "utf-8");
-        runs.push(JSON.parse(content) as AgentHeartbeatRun);
-      } catch {
-        // Skip corrupted files
-      }
-    }
-
-    // Sort by startedAt desc and limit
-    return runs
-      .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
-      .slice(0, limit);
+    const rows = this.db.prepare(`
+      SELECT data FROM agentRuns
+      WHERE agentId = ?
+      ORDER BY startedAt DESC
+      LIMIT ?
+    `).all(agentId, limit) as Array<{ data: string }>;
+    return rows
+      .map((row) => this.parseJson<AgentHeartbeatRun | null>(row.data, null))
+      .filter((run): run is AgentHeartbeatRun => run !== null);
   }
 
   /**
    * Get the most recently persisted blocked-task dedup state for an agent.
    */
   async getLastBlockedState(agentId: string): Promise<BlockedStateSnapshot | null> {
-    const blockedStatePath = this.getLastBlockedStatePath(agentId);
-    try {
-      const content = await readFile(blockedStatePath, "utf-8");
-      return JSON.parse(content) as BlockedStateSnapshot;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        return null;
-      }
-      throw err;
-    }
+    const row = this.db.prepare("SELECT data FROM agentBlockedStates WHERE agentId = ?").get(agentId) as
+      | { data: string }
+      | undefined;
+    return row ? this.parseJson<BlockedStateSnapshot | null>(row.data, null) : null;
   }
 
   /**
@@ -1641,8 +1543,15 @@ export class AgentStore extends EventEmitter {
    */
   async setLastBlockedState(agentId: string, state: BlockedStateSnapshot): Promise<void> {
     await this.withLock(agentId, async () => {
-      const blockedStatePath = this.getLastBlockedStatePath(agentId);
-      await writeFile(blockedStatePath, JSON.stringify(state, null, 2));
+      const updatedAt = new Date().toISOString();
+      this.db.prepare(`
+        INSERT INTO agentBlockedStates (agentId, data, updatedAt)
+        VALUES (?, ?, ?)
+        ON CONFLICT(agentId) DO UPDATE SET
+          data = excluded.data,
+          updatedAt = excluded.updatedAt
+      `).run(agentId, JSON.stringify(state), updatedAt);
+      this.db.bumpLastModified();
     });
   }
 
@@ -1651,7 +1560,8 @@ export class AgentStore extends EventEmitter {
    */
   async clearLastBlockedState(agentId: string): Promise<void> {
     await this.withLock(agentId, async () => {
-      await unlink(this.getLastBlockedStatePath(agentId)).catch(() => {});
+      this.db.prepare("DELETE FROM agentBlockedStates WHERE agentId = ?").run(agentId);
+      this.db.bumpLastModified();
     });
   }
 
@@ -1664,39 +1574,22 @@ export class AgentStore extends EventEmitter {
   }
 
   private async appendConfigRevision(revision: AgentConfigRevision): Promise<void> {
-    const revisionsPath = this.getConfigRevisionsPath(revision.agentId);
-    await writeFile(revisionsPath, `${JSON.stringify(revision)}\n`, { flag: "a" });
+    this.db.prepare(`
+      INSERT INTO agentConfigRevisions (id, agentId, data, createdAt)
+      VALUES (?, ?, ?, ?)
+    `).run(revision.id, revision.agentId, JSON.stringify(revision), revision.createdAt);
+    this.db.bumpLastModified();
   }
 
   private async readConfigRevisions(agentId: string): Promise<AgentConfigRevision[]> {
-    const revisionsPath = this.getConfigRevisionsPath(agentId);
-    if (!existsSync(revisionsPath)) {
-      return [];
-    }
-
-    try {
-      const content = await readFile(revisionsPath, "utf-8");
-      if (!content.trim()) {
-        return [];
-      }
-
-      const revisions: AgentConfigRevision[] = [];
-      const lines = content.split("\n").filter(Boolean);
-      for (const line of lines) {
-        try {
-          const revision = JSON.parse(line) as AgentConfigRevision;
-          if (revision.agentId === agentId) {
-            revisions.push(revision);
-          }
-        } catch {
-          // Skip malformed lines
-        }
-      }
-
-      return revisions;
-    } catch {
-      return [];
-    }
+    const rows = this.db.prepare(`
+      SELECT data FROM agentConfigRevisions
+      WHERE agentId = ?
+      ORDER BY createdAt ASC
+    `).all(agentId) as Array<{ data: string }>;
+    return rows
+      .map((row) => this.parseJson<AgentConfigRevision | null>(row.data, null))
+      .filter((revision): revision is AgentConfigRevision => revision !== null);
   }
 
   private createConfigRevision(params: {
@@ -1774,19 +1667,10 @@ export class AgentStore extends EventEmitter {
   }
 
   private async findConfigRevisionAcrossAgents(revisionId: string): Promise<AgentConfigRevision | null> {
-    const files = await readdir(this.agentsDir).catch(() => [] as string[]);
-    const revisionFiles = files.filter((file) => file.endsWith("-revisions.jsonl"));
-
-    for (const file of revisionFiles) {
-      const agentId = file.replace(/-revisions\.jsonl$/, "");
-      const revisions = await this.readConfigRevisions(agentId);
-      const match = revisions.find((revision) => revision.id === revisionId);
-      if (match) {
-        return match;
-      }
-    }
-
-    return null;
+    const row = this.db.prepare("SELECT data FROM agentConfigRevisions WHERE id = ?").get(revisionId) as
+      | { data: string }
+      | undefined;
+    return row ? this.parseJson<AgentConfigRevision | null>(row.data, null) : null;
   }
 
   private computeNextResetAt(period: AgentBudgetConfig["budgetPeriod"], resetDay?: number): string | null {
@@ -1882,66 +1766,55 @@ export class AgentStore extends EventEmitter {
     }
   }
 
-  private getApiKeysPath(agentId: string): string {
-    return join(this.agentsDir, `${agentId}-keys.jsonl`);
-  }
-
-  private getLastBlockedStatePath(agentId: string): string {
-    return join(this.agentsDir, `${agentId}-last-blocked.json`);
-  }
-
   private async readApiKeys(agentId: string): Promise<AgentApiKey[]> {
-    const keyPath = this.getApiKeysPath(agentId);
-    if (!existsSync(keyPath)) {
-      return [];
-    }
-
-    const content = await readFile(keyPath, "utf-8");
-    if (!content.trim()) {
-      return [];
-    }
-
-    const keys: AgentApiKey[] = [];
-    const lines = content.split("\n").filter(Boolean);
-    for (const line of lines) {
-      try {
-        const key = JSON.parse(line) as AgentApiKey;
-        if (key.agentId === agentId) {
-          keys.push(key);
-        }
-      } catch {
-        // Skip malformed lines
-      }
-    }
-
-    return keys;
+    const rows = this.db.prepare(`
+      SELECT data FROM agentApiKeys WHERE agentId = ? ORDER BY createdAt ASC
+    `).all(agentId) as Array<{ data: string }>;
+    return rows
+      .map((row) => this.parseJson<AgentApiKey | null>(row.data, null))
+      .filter((key): key is AgentApiKey => key !== null);
   }
 
-  private async writeApiKeys(agentId: string, keys: AgentApiKey[]): Promise<void> {
-    const keyPath = this.getApiKeysPath(agentId);
-    const content = keys.map((key) => JSON.stringify(key)).join("\n");
-    await writeFile(keyPath, content ? `${content}\n` : "");
+  private readAgent(agentId: string): Agent | null {
+    const row = this.db.prepare("SELECT * FROM agents WHERE id = ?").get(agentId) as AgentRow | undefined;
+    return row ? this.mapAgentRow(row) : null;
   }
 
-  private async readAgentFile(agentId: string): Promise<AgentData> {
-    const path = join(this.agentsDir, `${agentId}.json`);
-    const content = await readFile(path, "utf-8");
-    return JSON.parse(content) as AgentData;
+  private mapAgentRow(row: AgentRow): Agent {
+    const data = this.parseJson<Partial<AgentData>>(row.data, {});
+    const metadata = this.parseJson<Record<string, unknown>>(row.metadata, {});
+    return this.parseAgent({
+      ...data,
+      id: row.id,
+      name: row.name,
+      role: row.role,
+      state: row.state,
+      taskId: row.taskId ?? undefined,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      lastHeartbeatAt: row.lastHeartbeatAt ?? undefined,
+      metadata,
+    } as AgentData);
+  }
+
+  private parseJson<T>(value: string | null | undefined, fallback: T): T {
+    if (!value) {
+      return fallback;
+    }
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return fallback;
+    }
   }
 
   /**
-   * Synchronously read an agent from disk (for use in synchronous hot paths).
-   * Returns null if the agent file does not exist or cannot be parsed.
+   * Synchronously read an agent from SQLite (for use in synchronous hot paths).
+   * Returns null if the agent does not exist or cannot be parsed.
    * @param agentId - The agent ID
    */
   getCachedAgent(agentId: string): Agent | null {
-    try {
-      const path = join(this.agentsDir, `${agentId}.json`);
-      const content = readFileSync(path, "utf-8");
-      return this.parseAgent(JSON.parse(content) as AgentData);
-    } catch {
-      return null;
-    }
+    return this.readAgent(agentId);
   }
 
   private parseAgent(data: AgentData): Agent {
@@ -1973,7 +1846,6 @@ export class AgentStore extends EventEmitter {
   }
 
   private async writeAgent(agent: Agent): Promise<void> {
-    const path = join(this.agentsDir, `${agent.id}.json`);
     const data: AgentData = {
       id: agent.id,
       name: agent.name,
@@ -2000,12 +1872,33 @@ export class AgentStore extends EventEmitter {
       bundleConfig: agent.bundleConfig,
     };
 
-    // Write atomically using temp file
-    const tempPath = `${path}.tmp.${Date.now()}`;
-    await writeFile(tempPath, JSON.stringify(data, null, 2));
-
-    // Rename temp file to final path (atomic on most filesystems)
-    await rename(tempPath, path);
+    this.db.prepare(`
+      INSERT INTO agents (
+        id, name, role, state, taskId, createdAt, updatedAt, lastHeartbeatAt, metadata, data
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        role = excluded.role,
+        state = excluded.state,
+        taskId = excluded.taskId,
+        updatedAt = excluded.updatedAt,
+        lastHeartbeatAt = excluded.lastHeartbeatAt,
+        metadata = excluded.metadata,
+        data = excluded.data
+    `).run(
+      agent.id,
+      agent.name,
+      agent.role,
+      agent.state,
+      agent.taskId ?? null,
+      agent.createdAt,
+      agent.updatedAt,
+      agent.lastHeartbeatAt ?? null,
+      JSON.stringify(agent.metadata ?? {}),
+      JSON.stringify(data),
+    );
+    this.db.bumpLastModified();
   }
 
   private async withLock<T>(agentId: string, fn: () => Promise<T>): Promise<T> {

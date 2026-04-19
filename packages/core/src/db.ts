@@ -59,7 +59,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 38;
+const SCHEMA_VERSION = 39;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -255,7 +255,8 @@ CREATE TABLE IF NOT EXISTS agents (
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL,
   lastHeartbeatAt TEXT,
-  metadata TEXT DEFAULT '{}'
+  metadata TEXT DEFAULT '{}',
+  data TEXT DEFAULT '{}'
 );
 
 -- Agent heartbeat events
@@ -269,6 +270,54 @@ CREATE TABLE IF NOT EXISTS agentHeartbeats (
 );
 CREATE INDEX IF NOT EXISTS idxAgentHeartbeatsAgentId ON agentHeartbeats(agentId);
 CREATE INDEX IF NOT EXISTS idxAgentHeartbeatsRunId ON agentHeartbeats(runId);
+
+CREATE TABLE IF NOT EXISTS agentRuns (
+  id TEXT PRIMARY KEY,
+  agentId TEXT NOT NULL,
+  data TEXT NOT NULL,
+  startedAt TEXT NOT NULL,
+  endedAt TEXT,
+  status TEXT NOT NULL,
+  FOREIGN KEY (agentId) REFERENCES agents(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idxAgentRunsAgentIdStartedAt ON agentRuns(agentId, startedAt);
+CREATE INDEX IF NOT EXISTS idxAgentRunsStatus ON agentRuns(status);
+
+CREATE TABLE IF NOT EXISTS agentTaskSessions (
+  agentId TEXT NOT NULL,
+  taskId TEXT NOT NULL,
+  data TEXT NOT NULL,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  PRIMARY KEY (agentId, taskId),
+  FOREIGN KEY (agentId) REFERENCES agents(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS agentApiKeys (
+  id TEXT PRIMARY KEY,
+  agentId TEXT NOT NULL,
+  data TEXT NOT NULL,
+  createdAt TEXT NOT NULL,
+  revokedAt TEXT,
+  FOREIGN KEY (agentId) REFERENCES agents(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idxAgentApiKeysAgentId ON agentApiKeys(agentId);
+
+CREATE TABLE IF NOT EXISTS agentConfigRevisions (
+  id TEXT PRIMARY KEY,
+  agentId TEXT NOT NULL,
+  data TEXT NOT NULL,
+  createdAt TEXT NOT NULL,
+  FOREIGN KEY (agentId) REFERENCES agents(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idxAgentConfigRevisionsAgentIdCreatedAt ON agentConfigRevisions(agentId, createdAt);
+
+CREATE TABLE IF NOT EXISTS agentBlockedStates (
+  agentId TEXT PRIMARY KEY,
+  data TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  FOREIGN KEY (agentId) REFERENCES agents(id) ON DELETE CASCADE
+);
 
 -- Task documents (key-value store per task with revision tracking)
 CREATE TABLE IF NOT EXISTS task_documents (
@@ -1476,6 +1525,65 @@ export class Database {
       // persistently-failing verifier cannot ping-pong a task forever.
       this.applyMigration(38, () => {
         this.addColumnIfMissing("tasks", "postReviewFixCount", "INTEGER DEFAULT 0");
+      });
+    }
+
+    if (version < 39) {
+      this.applyMigration(39, () => {
+        this.addColumnIfMissing("agents", "data", "TEXT DEFAULT '{}'");
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS agentRuns (
+            id TEXT PRIMARY KEY,
+            agentId TEXT NOT NULL,
+            data TEXT NOT NULL,
+            startedAt TEXT NOT NULL,
+            endedAt TEXT,
+            status TEXT NOT NULL,
+            FOREIGN KEY (agentId) REFERENCES agents(id) ON DELETE CASCADE
+          )
+        `);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxAgentRunsAgentIdStartedAt ON agentRuns(agentId, startedAt)`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxAgentRunsStatus ON agentRuns(status)`);
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS agentTaskSessions (
+            agentId TEXT NOT NULL,
+            taskId TEXT NOT NULL,
+            data TEXT NOT NULL,
+            createdAt TEXT NOT NULL,
+            updatedAt TEXT NOT NULL,
+            PRIMARY KEY (agentId, taskId),
+            FOREIGN KEY (agentId) REFERENCES agents(id) ON DELETE CASCADE
+          )
+        `);
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS agentApiKeys (
+            id TEXT PRIMARY KEY,
+            agentId TEXT NOT NULL,
+            data TEXT NOT NULL,
+            createdAt TEXT NOT NULL,
+            revokedAt TEXT,
+            FOREIGN KEY (agentId) REFERENCES agents(id) ON DELETE CASCADE
+          )
+        `);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxAgentApiKeysAgentId ON agentApiKeys(agentId)`);
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS agentConfigRevisions (
+            id TEXT PRIMARY KEY,
+            agentId TEXT NOT NULL,
+            data TEXT NOT NULL,
+            createdAt TEXT NOT NULL,
+            FOREIGN KEY (agentId) REFERENCES agents(id) ON DELETE CASCADE
+          )
+        `);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxAgentConfigRevisionsAgentIdCreatedAt ON agentConfigRevisions(agentId, createdAt)`);
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS agentBlockedStates (
+            agentId TEXT PRIMARY KEY,
+            data TEXT NOT NULL,
+            updatedAt TEXT NOT NULL,
+            FOREIGN KEY (agentId) REFERENCES agents(id) ON DELETE CASCADE
+          )
+        `);
       });
     }
 

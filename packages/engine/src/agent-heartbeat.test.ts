@@ -3500,6 +3500,15 @@ describe("HeartbeatTriggerScheduler", () => {
   beforeEach(() => {
     callback = vi.fn().mockResolvedValue(undefined);
     store = {
+      getAgent: vi.fn().mockResolvedValue({
+        id: "agent-001",
+        name: "Agent 001",
+        role: "executor",
+        state: "active",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+      }),
       getActiveHeartbeatRun: vi.fn().mockResolvedValue(null),
       getBudgetStatus: vi.fn().mockResolvedValue(createBudgetStatus()),
       on: vi.fn(),

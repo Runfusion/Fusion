@@ -1604,6 +1604,8 @@ export class HeartbeatTriggerScheduler {
   private timers: Map<string, AgentTimer> = new Map();
   private running = false;
   private assignedListener: ((agent: import("@fusion/core").Agent, taskId: string) => void) | null = null;
+  private updatedListener: ((agent: import("@fusion/core").Agent) => void) | null = null;
+  private deletedListener: ((agentId: string) => void) | null = null;
 
   constructor(store: AgentStore, callback: TriggerCallback, taskStore?: TaskStore) {
     this.store = store;
@@ -1619,6 +1621,7 @@ export class HeartbeatTriggerScheduler {
     if (this.running) return;
     this.running = true;
     this.watchAssignments();
+    this.watchAgentLifecycle();
     heartbeatLog.log("HeartbeatTriggerScheduler started");
   }
 
@@ -1631,6 +1634,7 @@ export class HeartbeatTriggerScheduler {
 
     // Unwatch assignments
     this.unwatchAssignments();
+    this.unwatchAgentLifecycle();
 
     // Clear all timers
     for (const [agentId, timer] of this.timers) {
@@ -1803,6 +1807,33 @@ export class HeartbeatTriggerScheduler {
     }
   }
 
+  private watchAgentLifecycle(): void {
+    if (this.updatedListener || this.deletedListener) return;
+
+    this.updatedListener = (agent) => {
+      if (agent.state === "terminated" || agent.runtimeConfig?.enabled === false) {
+        this.unregisterAgent(agent.id);
+      }
+    };
+    this.deletedListener = (agentId) => {
+      this.unregisterAgent(agentId);
+    };
+
+    this.store.on("agent:updated", this.updatedListener);
+    this.store.on("agent:deleted", this.deletedListener);
+  }
+
+  private unwatchAgentLifecycle(): void {
+    if (this.updatedListener) {
+      this.store.off("agent:updated", this.updatedListener);
+      this.updatedListener = null;
+    }
+    if (this.deletedListener) {
+      this.store.off("agent:deleted", this.deletedListener);
+      this.deletedListener = null;
+    }
+  }
+
   /**
    * Handle a timer tick for an agent.
    * Checks for active runs before invoking the callback.
@@ -1811,6 +1842,18 @@ export class HeartbeatTriggerScheduler {
     if (!this.running) return;
 
     try {
+      const agent = await this.store.getAgent(agentId);
+      if (!agent) {
+        heartbeatLog.log(`Timer tick skipped for ${agentId} (agent missing)`);
+        this.unregisterAgent(agentId);
+        return;
+      }
+      if (agent.state === "terminated" || agent.runtimeConfig?.enabled === false) {
+        heartbeatLog.log(`Timer tick skipped for ${agentId} (disabled or terminated)`);
+        this.unregisterAgent(agentId);
+        return;
+      }
+
       // Check for active runs
       const activeRun = await this.store.getActiveHeartbeatRun(agentId);
       if (activeRun) {

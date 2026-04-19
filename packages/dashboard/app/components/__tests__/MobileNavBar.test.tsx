@@ -56,11 +56,11 @@ describe("MobileNavBar", () => {
     mockViewport("mobile");
   });
 
-  it("renders six tab buttons (tasks + missions + chat + mailbox + skills + more) when showSkillsTab is true", () => {
+  it("renders seven tab buttons (tasks + agents + missions + chat + mailbox + skills + more) when showSkillsTab is true", () => {
     render(<MobileNavBar {...createDefaultProps()} showSkillsTab={true} />);
 
     expect(screen.getByTestId("mobile-nav-tab-tasks")).toBeDefined();
-    expect(screen.queryByTestId("mobile-nav-tab-agents")).toBeNull();
+    expect(screen.getByTestId("mobile-nav-tab-agents")).toBeDefined();
     expect(screen.getByTestId("mobile-nav-tab-missions")).toBeDefined();
     expect(screen.getByTestId("mobile-nav-tab-chat")).toBeDefined();
     expect(screen.getByTestId("mobile-nav-tab-mailbox")).toBeDefined();
@@ -94,6 +94,18 @@ describe("MobileNavBar", () => {
     render(<MobileNavBar {...props} view="board" />);
     fireEvent.click(screen.getByTestId("mobile-nav-tab-mailbox"));
     expect(props.onChangeView).toHaveBeenCalledWith("mailbox");
+  });
+
+  it("agents tab calls onChangeView with 'agents'", () => {
+    const props = createDefaultProps();
+    render(<MobileNavBar {...props} view="board" />);
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-agents"));
+    expect(props.onChangeView).toHaveBeenCalledWith("agents");
+  });
+
+  it("agents tab is active when view is 'agents'", () => {
+    render(<MobileNavBar {...createDefaultProps()} view="agents" />);
+    expect(screen.getByTestId("mobile-nav-tab-agents").className).toContain("mobile-nav-tab--active");
   });
 
   it("shows mailbox unread badge when mailboxUnreadCount > 0", () => {

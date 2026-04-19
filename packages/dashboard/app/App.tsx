@@ -202,9 +202,9 @@ function AppInner() {
 
   const skillsEnabled = experimentalFeatures.skillsView === true;
   const nodesEnabled = experimentalFeatures.nodesView === true;
-  const agentsEnabled = experimentalFeatures.agentsView === true;
+  const agentsEnabled = true;
 
-  // Redirect to board if insights/roadmaps view is disabled
+  // Redirect to board if feature-gated views are disabled.
   // Only run after settings have been loaded (experimentalFeatures is non-empty)
   useEffect(() => {
     if (Object.keys(experimentalFeatures).length === 0) return;

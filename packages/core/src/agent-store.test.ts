@@ -1,5 +1,5 @@
 /**
- * Tests for AgentStore — filesystem-based agent lifecycle management.
+ * Tests for AgentStore — SQLite-backed agent lifecycle management.
  *
  * Covers every public method: init, createAgent, getAgent, getAgentDetail,
  * updateAgent, updateAgentState, assignTask, listAgents, deleteAgent,
@@ -8,14 +8,14 @@
  *
  * Also tests event emissions (agent:created, agent:updated, agent:deleted,
  * agent:heartbeat, agent:stateChanged), error paths, state transition
- * validation, concurrency locking, and filesystem persistence.
+ * validation, concurrency locking, and SQLite persistence.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { AgentStore } from "./agent-store.js";
 import { TaskStore } from "./store.js";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { mkdtempSync, existsSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { CheckoutConflictError, type AgentCapability, type AgentState } from "./types.js";
@@ -838,29 +838,20 @@ describe("AgentStore", () => {
       );
     });
 
-    it("persists revisions to an append-only JSONL file without affecting heartbeat files", async () => {
+    it("persists revisions separately from heartbeat history", async () => {
       const created = await store.createAgent({ name: "Persisted", role: "executor" });
 
       await store.updateAgent(created.id, { name: "Persisted v2" });
       await store.updateAgent(created.id, { name: "Persisted v3" });
       await store.recordHeartbeat(created.id, "ok");
 
-      const revisionsPath = join(rootDir, "agents", `${created.id}-revisions.jsonl`);
-      const heartbeatsPath = join(rootDir, "agents", `${created.id}-heartbeats.jsonl`);
+      const revisions = await store.getConfigRevisions(created.id);
+      expect(revisions).toHaveLength(2);
+      expect(revisions.every((revision) => revision.agentId === created.id)).toBe(true);
 
-      expect(existsSync(revisionsPath)).toBe(true);
-      expect(existsSync(heartbeatsPath)).toBe(true);
-
-      const revisionLines = readFileSync(revisionsPath, "utf-8").trim().split("\n").filter(Boolean);
-      expect(revisionLines).toHaveLength(2);
-
-      const parsedRevisions = revisionLines.map((line) => JSON.parse(line) as { agentId: string });
-      expect(parsedRevisions.every((line) => line.agentId === created.id)).toBe(true);
-
-      const heartbeatLines = readFileSync(heartbeatsPath, "utf-8").trim().split("\n").filter(Boolean);
-      expect(heartbeatLines.length).toBeGreaterThan(0);
-      const parsedHeartbeat = JSON.parse(heartbeatLines[0]) as { status: string };
-      expect(parsedHeartbeat.status).toBe("ok");
+      const heartbeats = await store.getHeartbeatHistory(created.id);
+      expect(heartbeats).toHaveLength(1);
+      expect(heartbeats[0].status).toBe("ok");
     });
   });
 
@@ -878,20 +869,17 @@ describe("AgentStore", () => {
       expect(found).toBeNull();
     });
 
-    it("also removes heartbeat file if present", async () => {
+    it("also removes heartbeat history", async () => {
       const created = await store.createAgent({
         name: "With HB",
         role: "executor",
       });
 
-      // Record a heartbeat to create the file
       await store.recordHeartbeat(created.id, "ok");
-
-      const hbPath = join(rootDir, "agents", `${created.id}-heartbeats.jsonl`);
-      expect(existsSync(hbPath)).toBe(true);
+      expect(await store.getHeartbeatHistory(created.id)).toHaveLength(1);
 
       await store.deleteAgent(created.id);
-      expect(existsSync(hbPath)).toBe(false);
+      expect(await store.getHeartbeatHistory(created.id)).toHaveLength(0);
     });
 
     it("throws for non-existent agent ID", async () => {
@@ -987,10 +975,9 @@ describe("AgentStore", () => {
       expect(result[0].name).toBe("ActiveExec");
     });
 
-    it("skips corrupted JSON files without throwing", async () => {
+    it("ignores deprecated JSON agent files when listing SQLite agents", async () => {
       await store.createAgent({ name: "Valid", role: "executor" });
 
-      // Write a corrupted file
       const corruptPath = join(rootDir, "agents", "agent-corrupt.json");
       writeFileSync(corruptPath, "not-valid-json{{{");
 
@@ -1642,7 +1629,7 @@ describe("AgentStore", () => {
   // ── recordHeartbeat ───────────────────────────────────────────────
 
   describe("recordHeartbeat", () => {
-    it("appends to the heartbeats JSONL file", async () => {
+    it("appends heartbeat history", async () => {
       const agent = await store.createAgent({ name: "HB Agent", role: "executor" });
       await store.recordHeartbeat(agent.id, "ok");
       await store.recordHeartbeat(agent.id, "ok");
@@ -1896,15 +1883,12 @@ describe("AgentStore", () => {
       }
     });
 
-    it("handles mixed structured and legacy run data", async () => {
+    it("reads completed runs from SQLite run storage", async () => {
       const agent = await store.createAgent({ name: "MixedRuns", role: "executor" });
 
-      // Structured run (new behavior)
       const structuredRun = await store.startHeartbeatRun(agent.id);
       await store.endHeartbeatRun(structuredRun.id, "completed");
 
-      // Legacy completed run (simulated by checking legacy fallback)
-      // The fallback still reconstructs runs from heartbeat events
       const completed = await store.getCompletedHeartbeatRuns(agent.id);
       expect(completed.some((r) => r.id === structuredRun.id)).toBe(true);
     });
@@ -1929,7 +1913,7 @@ describe("AgentStore", () => {
       expect(loaded).toEqual(snapshot);
     });
 
-    it("returns null when no blocked-state file exists", async () => {
+    it("returns null when no blocked-state snapshot exists", async () => {
       const agent = await store.createAgent({ name: "NoBlockedState", role: "executor" });
 
       const loaded = await store.getLastBlockedState(agent.id);
@@ -1950,7 +1934,6 @@ describe("AgentStore", () => {
       const loaded = await store.getLastBlockedState(agent.id);
 
       expect(loaded).toBeNull();
-      expect(existsSync(join(rootDir, "agents", `${agent.id}-last-blocked.json`))).toBe(false);
     });
   });
 
@@ -2243,10 +2226,9 @@ describe("AgentStore", () => {
       const expectedHash = createHash("sha256").update(result.token).digest("hex");
       expect(result.key.tokenHash).toBe(expectedHash);
 
-      const keyPath = join(rootDir, "agents", `${agent.id}-keys.jsonl`);
-      expect(existsSync(keyPath)).toBe(true);
-      const persisted = readFileSync(keyPath, "utf-8");
-      expect(persisted).not.toContain(result.token);
+      const keys = await store.listApiKeys(agent.id);
+      expect(keys).toHaveLength(1);
+      expect(keys[0].tokenHash).toBe(expectedHash);
     });
 
     it("createApiKey with label persists the label", async () => {
@@ -2389,7 +2371,7 @@ describe("AgentStore", () => {
       expect(r3.name).toBe("Name-3");
     });
 
-    it("concurrent recordHeartbeat calls don't corrupt the JSONL file", async () => {
+    it("concurrent recordHeartbeat calls don't corrupt heartbeat history", async () => {
       const agent = await store.createAgent({ name: "ConcHB", role: "executor" });
 
       // Fire 10 heartbeats concurrently
@@ -2408,7 +2390,7 @@ describe("AgentStore", () => {
       }
     });
 
-    it("concurrent createApiKey calls don't corrupt the JSONL file", async () => {
+    it("concurrent createApiKey calls don't corrupt API key storage", async () => {
       const agent = await store.createAgent({ name: "ConcKeys", role: "executor" });
 
       const results = await Promise.all(
@@ -2423,9 +2405,9 @@ describe("AgentStore", () => {
     });
   });
 
-  // ── filesystem persistence ────────────────────────────────────────
+  // ── SQLite persistence ────────────────────────────────────────────
 
-  describe("filesystem persistence", () => {
+  describe("SQLite persistence", () => {
     it("agent data survives store reinitialization", async () => {
       const agent = await store.createAgent({
         name: "Persistent",

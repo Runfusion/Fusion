@@ -11,7 +11,7 @@
  * Protected features:
  * - List view toggle
  * - Board view toggle
- * - Agents view toggle (via header fallback on mobile when mobile nav is disabled)
+ * - Agents view toggle
  * - Project overview / "All Projects" navigation
  * - Secondary features via "More" sheet (settings, git, terminal, etc.)
  */
@@ -111,10 +111,12 @@ describe("Mobile Feature Access Regression Guard", () => {
     expect(props.onChangeView).toHaveBeenCalledWith("list");
   });
 
-  it("agents tab is not rendered in the mobile nav bar", () => {
-    render(<MobileNavBar {...createDefaultMobileNavProps()} />);
+  it("agents view is accessible via mobile nav bar", () => {
+    const props = createDefaultMobileNavProps();
+    render(<MobileNavBar {...props} />);
 
-    expect(screen.queryByTestId("mobile-nav-tab-agents")).toBeNull();
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-agents"));
+    expect(props.onChangeView).toHaveBeenCalledWith("agents");
   });
 
   it("project list is accessible via header overflow menu on mobile", () => {
@@ -214,7 +216,8 @@ describe("Mobile Feature Access Regression Guard", () => {
     fireEvent.click(screen.getByTestId("mobile-nav-tab-tasks"));
 
     expect(mobileNavOnChangeView).toHaveBeenCalledWith("board");
-    expect(screen.queryByTestId("mobile-nav-tab-agents")).toBeNull();
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-agents"));
+    expect(mobileNavOnChangeView).toHaveBeenCalledWith("agents");
 
     mobileNav.unmount();
 

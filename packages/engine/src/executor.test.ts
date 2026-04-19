@@ -2865,6 +2865,48 @@ describe("TaskExecutor pause behavior", () => {
     expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Resuming execution after unpause", undefined, undefined);
   });
 
+  it("does not recursively resume when resume logging emits task updated", async () => {
+    const store = createMockStore();
+    const task = {
+      id: "FN-001",
+      paused: undefined,
+      column: "in-progress",
+      description: "Test task",
+      title: "Resumed task",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    mockedCreateHaiAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    }) as any);
+
+    let emittedUpdateFromLog = false;
+    store.logEntry.mockImplementation(async (_id: string, action: string) => {
+      if (action === "Resuming execution after unpause" && !emittedUpdateFromLog) {
+        emittedUpdateFromLog = true;
+        store._trigger("task:updated", { ...task, updatedAt: new Date().toISOString() });
+      }
+    });
+
+    new TaskExecutor(store, "/tmp/test");
+    store._trigger("task:updated", task);
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    const resumeLogCalls = store.logEntry.mock.calls.filter(
+      ([id, action]: [string, string]) => id === "FN-001" && action === "Resuming execution after unpause",
+    );
+    expect(resumeLogCalls).toHaveLength(1);
+  });
+
   it("clears stale failed state before resuming unpaused in-progress task", async () => {
     const store = createMockStore();
 

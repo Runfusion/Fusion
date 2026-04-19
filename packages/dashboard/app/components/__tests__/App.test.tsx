@@ -1228,7 +1228,7 @@ describe("App view switching", () => {
     localStorage.removeItem(taskViewStorageKey());
   });
 
-  it("does not render agents view button when agentsView experimental feature is disabled", async () => {
+  it("renders agents view button when agentsView experimental feature is disabled", async () => {
     // Override the default mock to exclude agentsView
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
@@ -1241,7 +1241,7 @@ describe("App view switching", () => {
       expect(screen.getByTitle("Board view")).toBeTruthy();
     });
 
-    expect(screen.queryByTitle("Agents view")).toBeNull();
+    expect(screen.getByTitle("Agents view")).toBeTruthy();
 
     // Cleanup: restore default mock
     vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings });

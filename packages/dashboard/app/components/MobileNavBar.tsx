@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
+  Bot,
   Brain,
   ChevronRight,
   Clock,
@@ -194,6 +195,18 @@ export function MobileNavBar({
         >
           <LayoutGrid />
           <span className="mobile-nav-tab-label">Tasks</span>
+        </button>
+
+        <button
+          type="button"
+          className={`mobile-nav-tab${view === "agents" ? " mobile-nav-tab--active" : ""}`}
+          data-testid="mobile-nav-tab-agents"
+          role="tab"
+          aria-selected={view === "agents"}
+          onClick={() => onChangeView("agents")}
+        >
+          <Bot />
+          <span className="mobile-nav-tab-label">Agents</span>
         </button>
 
         <button

@@ -398,6 +398,8 @@ export interface TaskExecutorOptions {
 export class TaskExecutor {
   private activeWorktrees = new Map<string, string>();
   private executing = new Set<string>();
+  /** Tasks currently being prepared for unpause resume, before execute() has registered them. */
+  private resumingUnpaused = new Set<string>();
   /** Completed orphan recovery tasks currently running during startup. */
   private recoveringCompleted = new Set<string>();
   /** Active agent sessions per task, used to terminate on pause and inject steering. */
@@ -564,9 +566,15 @@ export class TaskExecutor {
         // Handle unpause of an in-progress task with no active session.
         // This covers orphaned states (e.g., engine restarted while task was
         // paused in-progress) where the task needs to resume execution.
-        // The executing/executing guards prevent duplicate runs.
-        if (!task.paused && task.column === "in-progress" && !this.activeSessions.has(task.id)) {
-          if (!this.executing.has(task.id)) {
+        // The executing/resuming guards prevent duplicate runs.
+        if (
+          !task.paused
+          && task.column === "in-progress"
+          && !this.activeSessions.has(task.id)
+          && !this.activeStepExecutors.has(task.id)
+        ) {
+          if (!this.executing.has(task.id) && !this.resumingUnpaused.has(task.id)) {
+            this.resumingUnpaused.add(task.id);
             executorLog.log(`Unpaused ${task.id} in-progress with no session — resuming execution`);
             try {
               await this.clearResumeFailureState(task);
@@ -574,9 +582,13 @@ export class TaskExecutor {
             } catch (clearErr) {
               executorLog.warn(`${task.id} clearResumeFailureState failed during unpause: ${clearErr instanceof Error ? clearErr.message : String(clearErr)}`);
             }
-            this.execute(task).catch((err) =>
-              executorLog.error(`Failed to resume unpaused ${task.id}:`, err),
-            );
+            this.execute(task)
+              .catch((err) =>
+                executorLog.error(`Failed to resume unpaused ${task.id}:`, err),
+              )
+              .finally(() => {
+                this.resumingUnpaused.delete(task.id);
+              });
           }
           return;
         }
