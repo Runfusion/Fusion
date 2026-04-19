@@ -17,7 +17,6 @@ import { createHash } from "node:crypto";
 export const MEMORY_WORKSPACE_PATH = ".fusion/memory";
 export const MEMORY_LONG_TERM_FILENAME = "MEMORY.md";
 export const MEMORY_DREAMS_FILENAME = "DREAMS.md";
-export const LEGACY_MEMORY_FILE_PATH = ".fusion/memory.md";
 export const QMD_INSTALL_COMMAND = "bun install -g @tobilu/qmd";
 export const QMD_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -211,11 +210,10 @@ const backendRegistry = new Map<string, MemoryBackend>();
  * File-based memory backend.
  *
  * Stores project memory in `.fusion/memory/MEMORY.md` at the project root.
- * Legacy `.fusion/memory.md` is only used by migration bootstrap when upgrading.
  */
 export class FileMemoryBackend implements MemoryBackend {
   readonly type = "file";
-  readonly name = "File (.fusion/memory/)";
+  readonly name = "File (.fusion/memory/MEMORY.md)";
   readonly capabilities: MemoryBackendCapabilities = {
     readable: true,
     writable: true,
@@ -535,11 +533,7 @@ export async function ensureOpenClawMemoryFiles(rootDir: string, date = new Date
   const longTermPath = memoryLongTermPath(rootDir);
   let longTermCreated = false;
   if (!existsSync(longTermPath)) {
-    const legacyPath = join(rootDir, LEGACY_MEMORY_FILE_PATH);
-    const content = existsSync(legacyPath)
-      ? await readFile(legacyPath, "utf-8")
-      : getDefaultLongTermMemoryScaffold();
-    await writeFile(longTermPath, content, "utf-8");
+    await writeFile(longTermPath, getDefaultLongTermMemoryScaffold(), "utf-8");
     longTermCreated = true;
   }
 
@@ -792,8 +786,9 @@ function normalizeQmdSearchResultPath(rootDir: string, rawPath: unknown): string
   const normalizedBaseName = basename(candidate).toLowerCase();
   const normalizedDirName = dirname(lowerCandidate).replace(/\\/g, "/");
 
-  // Map legacy top-level memory paths from stale qmd indexes to the canonical
-  // layered long-term path without exposing legacy paths to callers.
+  // Map stale indexed top-level memory paths to the canonical layered path so
+  // qmd search results stay readable. This does not re-enable legacy read/write
+  // requests in runtime APIs.
   if (normalizedBaseName === "memory.md" && (normalizedDirName === ".fusion" || normalizedDirName.endsWith("/.fusion"))) {
     return `${MEMORY_WORKSPACE_PATH}/${MEMORY_LONG_TERM_FILENAME}`;
   }

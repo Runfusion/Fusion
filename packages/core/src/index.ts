@@ -415,8 +415,6 @@ export type {
 } from "./memory-insights.js";
 
 export {
-  MEMORY_FILE_PATH,
-  memoryFilePath,
   getDefaultMemoryScaffold,
   ensureMemoryFile,
   ensureMemoryFileWithBackend,
@@ -440,7 +438,6 @@ export {
   MEMORY_WORKSPACE_PATH,
   MEMORY_LONG_TERM_FILENAME,
   MEMORY_DREAMS_FILENAME,
-  LEGACY_MEMORY_FILE_PATH,
   QMD_INSTALL_COMMAND,
   QMD_REFRESH_INTERVAL_MS,
   memoryWorkspacePath,

@@ -16,7 +16,7 @@ import { InsightStore } from "./insight-store.js";
 import { BackwardCompat, ProjectRequiredError } from "./migration.js";
 import { CentralCore } from "./central-core.js";
 import { getTaskMergeBlocker } from "./task-merge.js";
-import { ensureMemoryFile, ensureMemoryFileWithBackend } from "./project-memory.js";
+import { ensureMemoryFileWithBackend } from "./project-memory.js";
 import { runCommandAsync } from "./run-command.js";
 
 /**

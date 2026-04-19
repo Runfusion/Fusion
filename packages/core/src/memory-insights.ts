@@ -225,13 +225,13 @@ export interface ProcessRunInput {
 // ── File I/O ─────────────────────────────────────────────────────────
 
 /**
- * Read the working memory file (`MEMORY.md`).
+ * Read the long-term project memory file.
  *
  * Returns an empty string if the file does not exist, enabling graceful
- * handling when FN-810's memory system is not yet in place.
+ * handling when the memory system has not been initialized yet.
  *
  * @param rootDir - Absolute path to the project root directory.
- * @returns The working memory content, or empty string if not found.
+ * @returns The long-term memory content, or empty string if not found.
  */
 export async function readWorkingMemory(rootDir: string): Promise<string> {
   const filePath = join(rootDir, MEMORY_WORKING_PATH);
@@ -277,9 +277,9 @@ export async function writeInsightsMemory(rootDir: string, content: string): Pro
 }
 
 /**
- * Write the working memory file (`MEMORY.md`).
+ * Write the long-term project memory file.
  *
- * Creates the `.fusion` directory if it does not exist.
+ * Creates the `.fusion/memory/` directory if it does not exist.
  *
  * @param rootDir - Absolute path to the project root directory.
  * @param content - The markdown content to write.

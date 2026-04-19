@@ -4,8 +4,6 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
-  MEMORY_FILE_PATH,
-  memoryFilePath,
   getDefaultMemoryScaffold,
   ensureMemoryFile,
   ensureMemoryFileWithBackend,
@@ -17,15 +15,16 @@ import {
   searchProjectMemory,
   resolveMemoryInstructionContext,
 } from "./project-memory.js";
-import { LEGACY_MEMORY_FILE_PATH } from "./memory-backend.js";
 
 describe("project-memory", () => {
   let testDir: string;
   let memoryPath: string;
+  let legacyMemoryPath: string;
 
   beforeEach(async () => {
     testDir = join(tmpdir(), `kb-memory-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     memoryPath = join(testDir, ".fusion", "memory", "MEMORY.md");
+    legacyMemoryPath = join(testDir, ".fusion", "memory.md");
     // Create the test directory but not the .fusion subdirectory
     // Individual tests can create .fusion as needed
     await mkdir(testDir, { recursive: true });
@@ -34,20 +33,6 @@ describe("project-memory", () => {
   afterEach(async () => {
     // Clean up entire test directory
     rmSync(testDir, { recursive: true, force: true });
-  });
-
-  // ── Constants ────────────────────────────────────────────────────
-
-  describe("MEMORY_FILE_PATH", () => {
-    it("is a relative path under .fusion", () => {
-      expect(MEMORY_FILE_PATH).toBe(".fusion/memory/MEMORY.md");
-    });
-  });
-
-  describe("memoryFilePath", () => {
-    it("returns absolute path joining root and relative path", () => {
-      expect(memoryFilePath("/project")).toBe("/project/.fusion/memory/MEMORY.md");
-    });
   });
 
   // ── Default Scaffold ──────────────────────────────────────────────
@@ -94,26 +79,28 @@ describe("project-memory", () => {
     it("creates the memory file when it does not exist", async () => {
       const created = await ensureMemoryFile(testDir);
       expect(created).toBe(true);
-      expect(existsSync(memoryFilePath(testDir))).toBe(true);
+      expect(existsSync(memoryPath)).toBe(true);
     });
 
-    it("writes the default scaffold content", async () => {
+    it("writes the long-term scaffold content", async () => {
       await ensureMemoryFile(testDir);
       const content = await readProjectMemory(testDir);
-      expect(content).toBe(getDefaultMemoryScaffold());
+      expect(content).toContain("# Project Memory");
+      expect(content).toContain("## Decisions");
+      expect(content).toContain("## Conventions");
     });
 
-    it("preserves migration-seeded legacy content when long-term memory is created", async () => {
+    it("creates long-term memory scaffold even when legacy memory.md exists", async () => {
       await mkdir(join(testDir, ".fusion"), { recursive: true });
-      const legacyContent = "# Legacy Memory\n\nPreserve me";
-      await writeFile(join(testDir, LEGACY_MEMORY_FILE_PATH), legacyContent, "utf-8");
+      await writeFile(legacyMemoryPath, "# Legacy Memory\n\nPreserve me", "utf-8");
 
       const created = await ensureMemoryFile(testDir);
 
       expect(created).toBe(true);
-      expect(existsSync(memoryFilePath(testDir))).toBe(true);
+      expect(existsSync(memoryPath)).toBe(true);
       const content = await readProjectMemory(testDir);
-      expect(content).toBe(legacyContent);
+      expect(content).toContain("# Project Memory");
+      expect(content).toContain("## Decisions");
     });
 
     it("creates the .fusion directory if missing", async () => {
@@ -151,7 +138,8 @@ describe("project-memory", () => {
       await ensureMemoryFile(testDir);
 
       const content = await readProjectMemory(testDir);
-      expect(content).toBe(getDefaultMemoryScaffold());
+      expect(content).toContain("# Project Memory");
+      expect(content).toContain("## Decisions");
     });
   });
 
@@ -171,7 +159,7 @@ describe("project-memory", () => {
 
     it("returns empty content when only the legacy memory file exists", async () => {
       await mkdir(join(testDir, ".fusion"), { recursive: true });
-      await writeFile(join(testDir, LEGACY_MEMORY_FILE_PATH), "legacy content", "utf-8");
+      await writeFile(legacyMemoryPath, "legacy content", "utf-8");
 
       const content = await readProjectMemory(testDir);
       expect(content).toBe("");
@@ -180,7 +168,7 @@ describe("project-memory", () => {
     it("reads only from .fusion/memory/MEMORY.md, ignoring legacy path", async () => {
       await mkdir(join(testDir, ".fusion"), { recursive: true });
       const legacyContent = "# Legacy Content\n\nOld stuff";
-      await writeFile(join(testDir, LEGACY_MEMORY_FILE_PATH), legacyContent, "utf-8");
+      await writeFile(legacyMemoryPath, legacyContent, "utf-8");
 
       await mkdir(join(testDir, ".fusion", "memory"), { recursive: true });
       const newContent = "# New Content\n\nNew stuff";
@@ -298,17 +286,16 @@ describe("project-memory", () => {
       expect(content).toBe(customContent);
     });
 
-    it("preserves legacy content during upgrade when only legacy exists", async () => {
+    it("initializes canonical long-term memory when only legacy file exists", async () => {
       await mkdir(join(testDir, ".fusion"), { recursive: true });
-      const userContent = "# Legacy\n\nUser content that must be preserved";
-      await writeFile(join(testDir, LEGACY_MEMORY_FILE_PATH), userContent, "utf-8");
+      await writeFile(legacyMemoryPath, "# Legacy\n\nUser content", "utf-8");
 
       const created = await ensureMemoryFileWithBackend(testDir);
 
-      expect(created).toBe(false);
+      expect(created).toBe(true);
       expect(existsSync(memoryPath)).toBe(true);
       const content = readFileSync(memoryPath, "utf-8");
-      expect(content).toBe(userContent);
+      expect(content).toBe(getDefaultMemoryScaffold());
     });
 
     it("returns false when file already exists", async () => {

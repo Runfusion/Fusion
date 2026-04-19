@@ -18,7 +18,6 @@ import {
   memoryExists,
   MEMORY_BACKEND_SETTINGS_KEYS,
   DEFAULT_MEMORY_BACKEND,
-  LEGACY_MEMORY_FILE_PATH,
   QMD_INSTALL_COMMAND,
   buildQmdSearchArgs,
   buildQmdCollectionAddArgs,
@@ -39,7 +38,9 @@ describe("memory-backend", () => {
   let tempDir: string;
 
   const longTermMemoryPath = (rootDir: string) => join(rootDir, ".fusion", "memory", "MEMORY.md");
-  const legacyMemoryPath = (rootDir: string) => join(rootDir, ".fusion", "memory.md");
+  const legacyMemoryFile = "memory.md";
+  const legacyRequestPath = [".fusion", legacyMemoryFile].join("/");
+  const legacyMemoryPath = (rootDir: string) => join(rootDir, ".fusion", legacyMemoryFile);
 
   beforeEach(async () => {
     tempDir = mkdtempSync(join(tmpdir(), "kb-memory-backend-test-"));
@@ -85,7 +86,7 @@ describe("memory-backend", () => {
 
       it("should have human-readable name", () => {
         const backend = new FileMemoryBackend();
-        expect(backend.name).toBe("File (.fusion/memory/)");
+        expect(backend.name).toBe("File (.fusion/memory/MEMORY.md)");
       });
     });
 
@@ -260,7 +261,7 @@ describe("memory-backend", () => {
       });
 
       it("readProjectMemoryFile rejects legacy memory.md paths", async () => {
-        await expect(readProjectMemoryFile(tempDir, { path: LEGACY_MEMORY_FILE_PATH })).rejects.toThrow(MemoryBackendError);
+        await expect(readProjectMemoryFile(tempDir, { path: legacyRequestPath })).rejects.toThrow(MemoryBackendError);
       });
 
       it("listProjectMemoryFiles excludes legacy memory.md entries", async () => {
@@ -269,7 +270,7 @@ describe("memory-backend", () => {
         writeFileSync(legacyMemoryPath(tempDir), "# Memory\n\nLegacy", "utf-8");
 
         const files = await listProjectMemoryFiles(tempDir);
-        expect(files.some((file) => file.path === LEGACY_MEMORY_FILE_PATH)).toBe(false);
+        expect(files.some((file) => file.path === legacyRequestPath)).toBe(false);
       });
 
       it("search ignores legacy memory.md content", async () => {

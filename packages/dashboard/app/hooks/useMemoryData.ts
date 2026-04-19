@@ -23,7 +23,7 @@ import {
 } from "../api";
 import { useMemoryBackendStatus } from "./useMemoryBackendStatus";
 
-const DEFAULT_MEMORY_FILE_PATH = ".fusion/memory/MEMORY.md";
+const DEFAULT_LONG_TERM_MEMORY_PATH = ".fusion/memory/MEMORY.md";
 const DEFAULT_AUTO_SUMMARIZE_THRESHOLD = 50_000;
 const DEFAULT_AUTO_SUMMARIZE_SCHEDULE = "0 3 * * *";
 const DEFAULT_DREAMS_SCHEDULE = "0 4 * * *";
@@ -126,9 +126,9 @@ function pickDefaultMemoryPath(files: MemoryFileInfo[], currentPath: string): st
     return currentPath;
   }
 
-  return files.find((file) => file.path === DEFAULT_MEMORY_FILE_PATH)?.path
+  return files.find((file) => file.path === DEFAULT_LONG_TERM_MEMORY_PATH)?.path
     ?? files[0]?.path
-    ?? DEFAULT_MEMORY_FILE_PATH;
+    ?? DEFAULT_LONG_TERM_MEMORY_PATH;
 }
 
 export function useMemoryData(options: UseMemoryDataOptions = {}): UseMemoryDataResult {
@@ -153,7 +153,7 @@ export function useMemoryData(options: UseMemoryDataOptions = {}): UseMemoryData
   // Multi-file state
   const [memoryFiles, setMemoryFiles] = useState<MemoryFileInfo[]>([]);
   const [memoryFilesLoading, setMemoryFilesLoading] = useState(true);
-  const [selectedFilePath, setSelectedFilePath] = useState(DEFAULT_MEMORY_FILE_PATH);
+  const [selectedFilePath, setSelectedFilePath] = useState(DEFAULT_LONG_TERM_MEMORY_PATH);
   const [selectedFileContent, setSelectedFileContentRaw] = useState("");
   const [selectedFileLoading, setSelectedFileLoading] = useState(false);
   const [selectedFileDirty, setSelectedFileDirty] = useState(false);
@@ -206,7 +206,7 @@ export function useMemoryData(options: UseMemoryDataOptions = {}): UseMemoryData
       setMemoryFiles(files);
 
       if (files.length === 0) {
-        setSelectedFilePath(DEFAULT_MEMORY_FILE_PATH);
+        setSelectedFilePath(DEFAULT_LONG_TERM_MEMORY_PATH);
         setSelectedFileContentRaw("");
         setSelectedFileDirty(false);
         return;
@@ -319,7 +319,7 @@ export function useMemoryData(options: UseMemoryDataOptions = {}): UseMemoryData
         setMemoryFiles(files);
 
         if (files.length === 0) {
-          setSelectedFilePath(DEFAULT_MEMORY_FILE_PATH);
+          setSelectedFilePath(DEFAULT_LONG_TERM_MEMORY_PATH);
           setSelectedFileContentRaw("");
           setSelectedFileDirty(false);
           return;
@@ -337,7 +337,7 @@ export function useMemoryData(options: UseMemoryDataOptions = {}): UseMemoryData
       } catch {
         if (!cancelled) {
           setMemoryFiles([]);
-          setSelectedFilePath(DEFAULT_MEMORY_FILE_PATH);
+          setSelectedFilePath(DEFAULT_LONG_TERM_MEMORY_PATH);
           setSelectedFileContentRaw("");
           setSelectedFileDirty(false);
         }

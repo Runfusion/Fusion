@@ -38,14 +38,10 @@ Fusion currently has two related but distinct memory systems:
 | `MEMORY_WORKSPACE_PATH` | `.fusion/memory` | `memory-backend.ts` |
 | `MEMORY_LONG_TERM_FILENAME` | `MEMORY.md` | `memory-backend.ts` |
 | `MEMORY_DREAMS_FILENAME` | `DREAMS.md` | `memory-backend.ts` |
-| `LEGACY_MEMORY_FILE_PATH` | legacy top-level memory file | `memory-backend.ts` |
 | `DEFAULT_MEMORY_BACKEND` | `qmd` | `memory-backend.ts` |
-| `MEMORY_FILE_PATH` | `.fusion/memory/MEMORY.md` | `project-memory.ts` |
 | `MEMORY_WORKING_PATH` | `.fusion/memory/MEMORY.md` | `memory-insights.ts` |
 | `MEMORY_INSIGHTS_PATH` | `.fusion/memory-insights.md` | `memory-insights.ts` |
 | `MEMORY_AUDIT_PATH` | `.fusion/memory-audit.md` | `memory-insights.ts` |
-
-`MEMORY_FILE_PATH` and `MEMORY_WORKING_PATH` currently resolve to the same canonical long-term file (`.fusion/memory/MEMORY.md`) but are owned by different modules for different concerns (backend/prompt plumbing vs insight extraction workflow).
 
 ### 1.3 Exported Surface (Post-Migration)
 
@@ -53,7 +49,6 @@ Fusion currently has two related but distinct memory systems:
 
 | Export | Purpose |
 |---|---|
-| `MEMORY_FILE_PATH`, `memoryFilePath()` | Canonical long-term path helpers |
 | `getDefaultMemoryScaffold()` | Default long-term scaffold content |
 | `ensureMemoryFile()` | Filesystem bootstrap for canonical memory |
 | `ensureMemoryFileWithBackend()` | Backend-aware bootstrap |
@@ -75,7 +70,7 @@ Fusion currently has two related but distinct memory systems:
 | `registerMemoryBackend()`, `getMemoryBackend()`, `listMemoryBackendTypes()` | Function-based registry API |
 | `resolveMemoryBackend()` | Backend resolution from settings |
 | `memoryWorkspacePath()`, `memoryLongTermPath()`, `dailyMemoryPath()`, `memoryDreamsPath()` | Canonical layered path helpers |
-| `ensureOpenClawMemoryFiles()` | Layered file bootstrap + legacy seeding |
+| `ensureOpenClawMemoryFiles()` | Layered file bootstrap |
 | `listProjectMemoryFiles()`, `readProjectMemoryFile()`, `writeProjectMemoryFile()` | Validated layered file operations |
 
 ### 1.4 Settings Baseline
@@ -93,7 +88,7 @@ Runtime backend resolution uses an internal `MemorySettings` shape with `memoryB
 ### 1.5 Key Invariants
 
 1. Canonical layered long-term memory file is **`.fusion/memory/MEMORY.md`**.
-2. The legacy top-level memory file is compatibility-only (migration seed/legacy alias), not canonical storage.
+2. Runtime memory APIs only read/write canonical layered files under `.fusion/memory/`.
 3. Default backend is **`qmd`** (`DEFAULT_MEMORY_BACKEND`).
 4. Backend selection key is **`memoryBackendType`**.
 5. Prompt instruction context is backend-aware (`file` path hint vs `qmd`/`readonly` behavior).
@@ -110,7 +105,7 @@ Fusion adopted OpenClaw-style layered memory while keeping a concrete TypeScript
 - Layered workspace (`MEMORY.md`, daily files, `DREAMS.md`)
 - Backend abstraction with explicit capability declarations
 - Search over layered files with bounded snippets
-- Migration safety via compatibility seeding from legacy file
+- Migration safety via strict canonical path validation for layered files
 
 ### 2.2 Implications Table
 
@@ -121,7 +116,7 @@ Fusion adopted OpenClaw-style layered memory while keeping a concrete TypeScript
 | Pluggable backends | Implemented (`file`, `qmd`, `readonly`, custom) | Contract must document `MemoryBackend` exactly as shipped |
 | Capability negotiation | Implemented via boolean-struct `capabilities` | No enum or lifecycle-based capability API |
 | Search | Implemented through optional `search(rootDir, options)` hooks | Results are bounded snippets, not full-document dumps |
-| Migration compatibility | Implemented via `ensureOpenClawMemoryFiles()` and legacy constants | Legacy top-level memory file remains compatibility-only |
+| Path migration completion | Legacy top-level path support removed from runtime APIs | Canonical source-of-truth is `.fusion/memory/` only |
 
 ---
 
@@ -242,17 +237,11 @@ Allowed workspace files are constrained to:
 
 - Canonical layered workspace: `.fusion/memory/`
 - Canonical long-term file: `.fusion/memory/MEMORY.md`
-- Legacy top-level memory file: compatibility-only for migration/legacy alias handling
+- Runtime path validation rejects non-layered legacy requests
 
-#### 3.8.2 Legacy compatibility scope
+#### 3.8.2 QMD stale-index normalization scope
 
-Legacy path preservation is limited to compatibility behavior:
-
-- `LEGACY_MEMORY_FILE_PATH` constant
-- Migration seeding in `ensureOpenClawMemoryFiles()` when legacy exists and canonical long-term file is missing
-- Transition/alias handling in layered-path validation
-
-No legacy dual-write mirror is part of the current contract.
+QMD search result normalization may remap stale indexed paths to canonical layered paths so search results remain consumable. This normalization does not re-enable legacy read/write APIs.
 
 #### 3.8.3 Dashboard and API path constraints
 
@@ -297,7 +286,7 @@ It is related to, but not equivalent to, backend selection and prompt instructio
 ### 4.2 Must-Not-Break Invariants
 
 1. Canonical long-term layered memory remains `.fusion/memory/MEMORY.md`.
-2. Legacy top-level memory file remains compatibility-only and must not become canonical again.
+2. Legacy top-level memory requests are not part of the runtime API contract.
 3. Runtime backend selection remains keyed by `memoryBackendType`.
 4. `DEFAULT_MEMORY_BACKEND` remains `"qmd"` unless explicitly changed in code + docs.
 5. Prompt instruction behavior remains backend-dependent via `resolveMemoryInstructionContext()`.
@@ -315,7 +304,7 @@ It is related to, but not equivalent to, backend selection and prompt instructio
 |---|---|
 | Settings persistence | Unknown `memoryBackendType` may be persisted, but runtime still falls back safely |
 | Read-only backend | Writes fail with typed `READ_ONLY` error |
-| Legacy upgrades | Existing legacy top-level memory file can seed canonical `.fusion/memory/MEMORY.md` once during migration |
+| Legacy upgrades | Runtime memory APIs ignore legacy top-level paths and operate on layered files only |
 | Memory file APIs | Must enforce workspace-relative path validation and project root boundaries |
 | Prompt generation | Must honor `memoryEnabled` toggle and backend-aware instruction context |
 
@@ -328,7 +317,7 @@ Contract-critical behavior is covered by:
   - registry helpers and `resolveMemoryBackend()` default/fallback behavior
   - layered workspace helpers (`ensureOpenClawMemoryFiles`, list/get/write, path validation)
 - `packages/core/src/project-memory.test.ts`
-  - canonical `MEMORY_FILE_PATH`
+  - canonical long-term path bootstrap/read behavior
   - `resolveMemoryInstructionContext()` branching
   - triage/execution/reviewer instruction generation per backend
 - `packages/core/src/store.test.ts`
