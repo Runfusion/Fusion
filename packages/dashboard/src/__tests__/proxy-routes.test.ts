@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { request, get } from "../test-request.js";
 
 // ── Mock @fusion/core for proxy routes ──────────────────────────────
@@ -224,12 +225,50 @@ describe("Proxy routes", () => {
       }
     });
 
-    // Note: POST body forwarding test is skipped due to test harness limitations
-    // The route correctly forwards POST body - this would work in integration tests
-    it.skip("forwards body for POST requests with Content-Type", async () => {
-      // This test would require a more sophisticated test harness that properly
-      // emits request body data events. For now, we verify the route structure
-      // and header forwarding are correct.
+    it("forwards body for POST requests with Content-Type", async () => {
+      const node = createMockRemoteNode();
+      mockGetNode.mockResolvedValue(node);
+
+      const requestBody = JSON.stringify({ settings: { theme: "dark" } });
+      const mockResponse = createMockResponse(200, { "content-type": "application/json" }, { ok: true });
+      const mockFetch = vi.fn().mockResolvedValue(mockResponse);
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = mockFetch;
+
+      try {
+        const appWithRawBody = (req: IncomingMessage, res: ServerResponse) => {
+          (req as IncomingMessage & { rawBody?: Buffer }).rawBody = Buffer.from(requestBody);
+          app(req, res);
+        };
+
+        const res = await request(
+          appWithRawBody,
+          "POST",
+          "/api/proxy/remote-node/api/settings/sync-receive",
+          requestBody,
+          { "content-type": "application/json" },
+        );
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          "http://remote:4040/api/settings/sync-receive",
+          expect.objectContaining({
+            method: "POST",
+            headers: expect.objectContaining({
+              "Content-Type": "application/json",
+            }),
+          }),
+        );
+
+        const fetchOptions = mockFetch.mock.calls[0]?.[1] as { body?: Buffer };
+        expect(fetchOptions.body).toBeDefined();
+        expect(Buffer.isBuffer(fetchOptions.body)).toBe(true);
+        expect(fetchOptions.body?.toString()).toBe(requestBody);
+
+        expect(res.status).toBe(200);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
 
     it("filters hop-by-hop headers from response", async () => {
