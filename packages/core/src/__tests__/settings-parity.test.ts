@@ -49,7 +49,12 @@ describe("settings key parity", () => {
     expect(isGlobalSettingsKey("themeMode")).toBe(true);
     expect(isGlobalSettingsKey("maxConcurrent")).toBe(false);
     expect(isProjectSettingsKey("maxConcurrent")).toBe(true);
+    expect(isProjectSettingsKey("heartbeatMultiplier")).toBe(true);
     expect(isProjectSettingsKey("themeMode")).toBe(false);
+  });
+
+  it("includes heartbeatMultiplier in project defaults", () => {
+    expect(DEFAULT_PROJECT_SETTINGS.heartbeatMultiplier).toBe(1);
   });
 
   it("No key appears in both GLOBAL_SETTINGS_KEYS and PROJECT_SETTINGS_KEYS", () => {

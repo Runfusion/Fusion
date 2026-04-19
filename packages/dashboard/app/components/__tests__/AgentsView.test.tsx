@@ -25,6 +25,7 @@ vi.mock("../AgentDetailView", () => ({
 
 const mockFetchAgents = vi.mocked(apiModule.fetchAgents);
 const mockCreateAgent = vi.mocked(apiModule.createAgent);
+const mockUpdateAgent = vi.mocked(apiModule.updateAgent);
 const mockUpdateAgentState = vi.mocked(apiModule.updateAgentState);
 const mockDeleteAgent = vi.mocked(apiModule.deleteAgent);
 const mockStartAgentRun = vi.mocked(apiModule.startAgentRun);
@@ -52,6 +53,7 @@ describe("AgentsView", () => {
       state: "active" as AgentState,
       taskId: "FN-001",
       lastHeartbeatAt: new Date().toISOString(),
+      runtimeConfig: { heartbeatIntervalMs: 30000 },
       createdAt: new Date(Date.now() - 86400000).toISOString(),
       updatedAt: new Date().toISOString(),
       metadata: {},
@@ -82,6 +84,7 @@ describe("AgentsView", () => {
     mockFetchAgents.mockResolvedValue(mockAgents);
     mockFetchAgentStats.mockResolvedValue({ total: 4, byState: {}, byRole: {} });
     mockCreateAgent.mockResolvedValue(mockAgents[0]);
+    mockUpdateAgent.mockResolvedValue(mockAgents[0]);
     mockUpdateAgentState.mockResolvedValue({ ...mockAgents[0], state: "active" });
     mockDeleteAgent.mockResolvedValue(undefined);
     mockStartAgentRun.mockResolvedValue({
@@ -165,6 +168,57 @@ describe("AgentsView", () => {
       await waitFor(() => {
         expect(screen.getAllByText("FN-001").length).toBeGreaterThanOrEqual(1);
       });
+    });
+
+    it("shows heartbeat interval control on agent cards", async () => {
+      render(<AgentsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Set heartbeat interval for Test Agent 2")).toBeTruthy();
+      });
+
+      expect(screen.getAllByText("30s").length).toBeGreaterThan(0);
+      expect(screen.getByDisplayValue("30s")).toBeTruthy();
+    });
+
+    it("updates agent heartbeat interval from preset dropdown", async () => {
+      render(<AgentsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Set heartbeat interval for Test Agent 2")).toBeTruthy();
+      });
+
+      const intervalSelect = screen.getByLabelText("Set heartbeat interval for Test Agent 2");
+      fireEvent.change(intervalSelect, { target: { value: "60000" } });
+
+      await waitFor(() => {
+        expect(mockUpdateAgent).toHaveBeenCalledWith(
+          "agent-002",
+          expect.objectContaining({
+            runtimeConfig: expect.objectContaining({ heartbeatIntervalMs: 60000 }),
+          }),
+          undefined,
+        );
+      });
+    });
+
+    it("maps non-preset heartbeat interval to closest preset", async () => {
+      mockFetchAgents.mockResolvedValue([
+        {
+          ...mockAgents[1],
+          runtimeConfig: { heartbeatIntervalMs: 65_000 },
+        },
+      ]);
+
+      render(<AgentsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Set heartbeat interval for Test Agent 2")).toBeTruthy();
+      });
+
+      const intervalSelect = screen.getByLabelText("Set heartbeat interval for Test Agent 2") as HTMLSelectElement;
+      expect(intervalSelect.value).toBe("60000");
+      expect(screen.getAllByText("1m").length).toBeGreaterThan(0);
     });
 
     it("shows refresh button", async () => {

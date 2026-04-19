@@ -31,6 +31,35 @@ const AGENT_ROLES: { value: AgentCapability; label: string; icon: string }[] = [
   { value: "custom", label: "Custom", icon: "✦" },
 ];
 
+const HEARTBEAT_INTERVAL_PRESETS = [
+  { value: 1000, label: "1s" },
+  { value: 5000, label: "5s" },
+  { value: 10000, label: "10s" },
+  { value: 30000, label: "30s" },
+  { value: 60000, label: "1m" },
+  { value: 300000, label: "5m" },
+  { value: 900000, label: "15m" },
+  { value: 1800000, label: "30m" },
+  { value: 3600000, label: "1h" },
+  { value: 10800000, label: "3h" },
+  { value: 21600000, label: "6h" },
+  { value: 43200000, label: "12h" },
+  { value: 86400000, label: "24h" },
+] as const;
+
+function formatInterval(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
+  return `${Math.round(ms / 3_600_000)}h`;
+}
+
+function getClosestHeartbeatPreset(ms: number): number {
+  return HEARTBEAT_INTERVAL_PRESETS.reduce<number>((closest, preset) => {
+    return Math.abs(preset.value - ms) < Math.abs(closest - ms) ? preset.value : closest;
+  }, HEARTBEAT_INTERVAL_PRESETS[0].value);
+}
+
 const STATE_COLORS: Record<AgentState, { bg: string; text: string; border: string }> = {
   idle: { bg: "var(--state-idle-bg)", text: "var(--state-idle-text)", border: "var(--state-idle-border)" },
   active: { bg: "var(--state-active-bg)", text: "var(--state-active-text)", border: "var(--state-active-border)" },
@@ -254,6 +283,7 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
   const [editingRoleForAgent, setEditingRoleForAgent] = useState<string | null>(null);
   const roleSelectRef = useRef<HTMLSelectElement>(null);
   const [showSystemAgents, setShowSystemAgents] = useState(false);
+  const [updatingHeartbeatAgentId, setUpdatingHeartbeatAgentId] = useState<string | null>(null);
 
   const hierarchy = useAgentHierarchy(agents, projectId);
 
@@ -408,6 +438,28 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
   const handleRoleKeyDown = (e: React.KeyboardEvent, _agentId: string) => {
     if (e.key === "Escape") {
       setEditingRoleForAgent(null);
+    }
+  };
+
+  const handleHeartbeatIntervalChange = async (agent: Agent, newIntervalMs: number) => {
+    setUpdatingHeartbeatAgentId(agent.id);
+    try {
+      await updateAgent(
+        agent.id,
+        {
+          runtimeConfig: {
+            ...(agent.runtimeConfig ?? {}),
+            heartbeatIntervalMs: newIntervalMs,
+          },
+        },
+        projectId,
+      );
+      addToast(`Heartbeat interval updated to ${formatInterval(newIntervalMs)} for ${agent.name}`, "success");
+      void loadAgents();
+    } catch (err: any) {
+      addToast(`Failed to update heartbeat interval: ${err.message}`, "error");
+    } finally {
+      setUpdatingHeartbeatAgentId(null);
     }
   };
 
@@ -818,6 +870,12 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
             displayAgents.map(agent => {
               const health = getHealthStatus(agent);
               const stateStyle = STATE_COLORS[agent.state];
+              const configuredIntervalMs =
+                typeof agent.runtimeConfig?.heartbeatIntervalMs === "number"
+                  ? Math.max(1000, Math.round(agent.runtimeConfig.heartbeatIntervalMs))
+                  : 3_600_000;
+              const selectedIntervalMs = getClosestHeartbeatPreset(configuredIntervalMs);
+              const isUpdatingHeartbeat = updatingHeartbeatAgentId === agent.id;
               return (
                 <div key={agent.id} className="agent-card" style={{ borderLeftColor: stateStyle.border }}>
                   <div className="agent-card-header">
@@ -912,12 +970,29 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
                         <span className="badge">{agent.taskId}</span>
                       </div>
                     )}
-                    {agent.lastHeartbeatAt && (
-                      <div className="agent-heartbeat">
-                        <span className="text-secondary">Last heartbeat:</span>
-                        <span>{new Date(agent.lastHeartbeatAt).toLocaleString()}</span>
-                      </div>
-                    )}
+                    <div className="agent-heartbeat-control">
+                      <span className="text-secondary">Heartbeat:</span>
+                      <span className="badge text-secondary">{formatInterval(configuredIntervalMs)}</span>
+                      <select
+                        className="select agent-heartbeat-select"
+                        value={selectedIntervalMs}
+                        onChange={(e) => void handleHeartbeatIntervalChange(agent, Number(e.target.value))}
+                        disabled={isUpdatingHeartbeat}
+                        aria-label={`Set heartbeat interval for ${agent.name}`}
+                      >
+                        {HEARTBEAT_INTERVAL_PRESETS.map((preset) => (
+                          <option key={preset.value} value={preset.value}>
+                            {preset.label}
+                          </option>
+                        ))}
+                      </select>
+                      {isUpdatingHeartbeat && <span className="agent-heartbeat-saving text-secondary">Saving…</span>}
+                      {agent.lastHeartbeatAt && (
+                        <span className="agent-heartbeat-last text-secondary" title={new Date(agent.lastHeartbeatAt).toLocaleString()}>
+                          Last: {new Date(agent.lastHeartbeatAt).toLocaleTimeString()}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <div className="agent-card-actions">

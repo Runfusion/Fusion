@@ -644,7 +644,7 @@ export class HeartbeatMonitor {
     const tracked = this.trackedAgents.get(agentId);
     if (!tracked) return false;
 
-    const config = this.getAgentConfig(agentId);
+    const config = this.resolveAgentConfig(agentId);
     const elapsed = Date.now() - tracked.lastSeen;
     return elapsed < config.heartbeatTimeoutMs;
   }
@@ -1495,14 +1495,14 @@ export class HeartbeatMonitor {
    * @param agentId - The agent ID
    * @returns Resolved config with validated values
    */
-  getAgentHeartbeatConfig(agentId: string): ResolvedHeartbeatConfig {
+  async getAgentHeartbeatConfig(agentId: string): Promise<ResolvedHeartbeatConfig> {
     return this.getAgentConfig(agentId);
   }
 
   /**
    * Resolve per-agent heartbeat config from runtimeConfig with validation and fallbacks.
    */
-  private getAgentConfig(agentId: string): ResolvedHeartbeatConfig {
+  private resolveAgentConfig(agentId: string): ResolvedHeartbeatConfig {
     // Defaults from monitor-level construction
     const result: ResolvedHeartbeatConfig = {
       pollIntervalMs: this.pollIntervalMs,
@@ -1532,11 +1532,34 @@ export class HeartbeatMonitor {
     return result;
   }
 
+  private async getAgentConfig(agentId: string): Promise<ResolvedHeartbeatConfig> {
+    const result = this.resolveAgentConfig(agentId);
+
+    if (!this.taskStore) {
+      return result;
+    }
+
+    try {
+      const settings = await getHeartbeatMemorySettings(this.taskStore);
+      const rawMultiplier = settings?.heartbeatMultiplier;
+      const multiplier =
+        typeof rawMultiplier === "number" && Number.isFinite(rawMultiplier) && rawMultiplier > 0
+          ? rawMultiplier
+          : 1;
+
+      result.pollIntervalMs = Math.max(1000, Math.round(result.pollIntervalMs * multiplier));
+    } catch (settingsErr) {
+      heartbeatLog.warn(`getAgentConfig(${agentId}) settings lookup failed: ${settingsErr instanceof Error ? settingsErr.message : String(settingsErr)} — using base interval`);
+    }
+
+    return result;
+  }
+
   private async checkMissedHeartbeats(): Promise<void> {
     const now = Date.now();
 
     for (const tracked of this.trackedAgents.values()) {
-      const config = this.getAgentConfig(tracked.agentId);
+      const config = await this.getAgentConfig(tracked.agentId);
       const elapsed = now - tracked.lastSeen;
 
       if (elapsed >= config.heartbeatTimeoutMs) {
@@ -1648,6 +1671,7 @@ export class HeartbeatTriggerScheduler {
   private callback: TriggerCallback;
   private taskStore?: TaskStore;
   private timers: Map<string, AgentTimer> = new Map();
+  private registrationEpochs: Map<string, number> = new Map();
   private running = false;
   private assignedListener: ((agent: import("@fusion/core").Agent, taskId: string) => void) | null = null;
   private updatedListener: ((agent: import("@fusion/core").Agent) => void) | null = null;
@@ -1725,20 +1749,88 @@ export class HeartbeatTriggerScheduler {
     }
 
     const intervalMs = Math.max(1000, Math.round(rawIntervalMs));
+    const registrationEpoch = (this.registrationEpochs.get(agentId) ?? 0) + 1;
+    this.registrationEpochs.set(agentId, registrationEpoch);
 
-    // Clear existing timer if re-registering
-    this.unregisterAgent(agentId);
+    // Register immediately with multiplier=1 so agents don't wait for async settings I/O.
+    this.applyTimerRegistration(agentId, intervalMs, 1, usingDefaultInterval);
+
+    // If project settings are available, refresh registration with the current multiplier.
+    if (this.taskStore && typeof (this.taskStore as { getSettings?: () => Promise<Settings> }).getSettings === "function") {
+      void this.applyProjectMultiplierRegistration(agentId, intervalMs, usingDefaultInterval, registrationEpoch);
+    }
+  }
+
+  private async applyProjectMultiplierRegistration(
+    agentId: string,
+    baseIntervalMs: number,
+    usingDefaultInterval: boolean,
+    expectedEpoch: number,
+  ): Promise<void> {
+    let multiplier = 1;
+
+    try {
+      const settings = await getHeartbeatMemorySettings(this.taskStore!);
+      multiplier = HeartbeatTriggerScheduler.resolveHeartbeatMultiplier(settings?.heartbeatMultiplier);
+    } catch (settingsErr) {
+      heartbeatLog.warn(
+        `Failed to read heartbeatMultiplier for ${agentId}: ${settingsErr instanceof Error ? settingsErr.message : String(settingsErr)} — using 1x`,
+      );
+      multiplier = 1;
+    }
+
+    // Guard against stale async completions after subsequent register/unregister calls.
+    if (this.registrationEpochs.get(agentId) !== expectedEpoch) {
+      return;
+    }
+
+    this.applyTimerRegistration(agentId, baseIntervalMs, multiplier, usingDefaultInterval);
+  }
+
+  private applyTimerRegistration(
+    agentId: string,
+    baseIntervalMs: number,
+    multiplier: number,
+    usingDefaultInterval: boolean,
+  ): void {
+    const effectiveIntervalMs = Math.max(1000, Math.round(baseIntervalMs * multiplier));
+
+    this.clearAgentTimer(agentId);
 
     const handle = setInterval(() => {
-      void this.onTimerTick(agentId, intervalMs);
-    }, intervalMs);
+      void this.onTimerTick(agentId, effectiveIntervalMs);
+    }, effectiveIntervalMs);
 
-    this.timers.set(agentId, { intervalMs, handle });
+    this.timers.set(agentId, { intervalMs: effectiveIntervalMs, handle });
+
+    if (multiplier !== 1) {
+      heartbeatLog.log(
+        `Registered timer for ${agentId} (every ${baseIntervalMs}ms, multiplier ${multiplier} → ${effectiveIntervalMs}ms effective)`,
+      );
+      return;
+    }
+
     heartbeatLog.log(
       usingDefaultInterval
-        ? `Registered timer for ${agentId} (every ${intervalMs}ms, default interval)`
-        : `Registered timer for ${agentId} (every ${intervalMs}ms)`,
+        ? `Registered timer for ${agentId} (every ${effectiveIntervalMs}ms, default interval)`
+        : `Registered timer for ${agentId} (every ${effectiveIntervalMs}ms)`,
     );
+  }
+
+  private clearAgentTimer(agentId: string): void {
+    const timer = this.timers.get(agentId);
+    if (!timer) {
+      return;
+    }
+    clearInterval(timer.handle);
+    this.timers.delete(agentId);
+  }
+
+  private static resolveHeartbeatMultiplier(rawMultiplier: unknown): number {
+    if (typeof rawMultiplier !== "number" || !Number.isFinite(rawMultiplier) || rawMultiplier <= 0) {
+      return 1;
+    }
+    return rawMultiplier;
   }
 
   /**
@@ -1746,10 +1838,9 @@ export class HeartbeatTriggerScheduler {
    * @param agentId - The agent ID
    */
   unregisterAgent(agentId: string): void {
-    const timer = this.timers.get(agentId);
-    if (timer) {
-      clearInterval(timer.handle);
-      this.timers.delete(agentId);
+    this.registrationEpochs.set(agentId, (this.registrationEpochs.get(agentId) ?? 0) + 1);
+    if (this.timers.has(agentId)) {
+      this.clearAgentTimer(agentId);
       heartbeatLog.log(`Unregistered timer for ${agentId}`);
     }
   }

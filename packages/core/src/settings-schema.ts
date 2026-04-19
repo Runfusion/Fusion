@@ -59,6 +59,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   globalMaxConcurrent: 4,
   maxWorktrees: 4,
   pollIntervalMs: 15000,
+  heartbeatMultiplier: 1,
   groupOverlappingFiles: true,
   autoMerge: true,
   mergeStrategy: "direct",

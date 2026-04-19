@@ -857,7 +857,7 @@ describe("HeartbeatMonitor", () => {
     }
 
     describe("getAgentHeartbeatConfig", () => {
-      it("returns monitor defaults when agentStore is not provided", () => {
+      it("returns monitor defaults when agentStore is not provided", async () => {
         const monitor = new HeartbeatMonitor({
           store,
           pollIntervalMs: 5000,
@@ -865,13 +865,13 @@ describe("HeartbeatMonitor", () => {
           maxConcurrentRuns: 2,
         });
 
-        const config = monitor.getAgentHeartbeatConfig("agent-001");
+        const config = await monitor.getAgentHeartbeatConfig("agent-001");
         expect(config.pollIntervalMs).toBe(5000);
         expect(config.heartbeatTimeoutMs).toBe(10000);
         expect(config.maxConcurrentRuns).toBe(2);
       });
 
-      it("returns monitor defaults when agent has no runtimeConfig", () => {
+      it("returns monitor defaults when agent has no runtimeConfig", async () => {
         const agentStore = createStoreWithAgent({ id: "agent-001" });
         const monitor = new HeartbeatMonitor({
           store,
@@ -880,12 +880,12 @@ describe("HeartbeatMonitor", () => {
           heartbeatTimeoutMs: 10000,
         });
 
-        const config = monitor.getAgentHeartbeatConfig("agent-001");
+        const config = await monitor.getAgentHeartbeatConfig("agent-001");
         expect(config.pollIntervalMs).toBe(5000);
         expect(config.heartbeatTimeoutMs).toBe(10000);
       });
 
-      it("returns per-agent values when runtimeConfig is set", () => {
+      it("returns per-agent values when runtimeConfig is set", async () => {
         const agentStore = createStoreWithAgent({
           id: "agent-001",
           runtimeConfig: {
@@ -902,13 +902,13 @@ describe("HeartbeatMonitor", () => {
           maxConcurrentRuns: 1,
         });
 
-        const config = monitor.getAgentHeartbeatConfig("agent-001");
+        const config = await monitor.getAgentHeartbeatConfig("agent-001");
         expect(config.pollIntervalMs).toBe(2000);
         expect(config.heartbeatTimeoutMs).toBe(30000);
         expect(config.maxConcurrentRuns).toBe(3);
       });
 
-      it("clamps heartbeatIntervalMs to minimum of 1000", () => {
+      it("clamps heartbeatIntervalMs to minimum of 1000", async () => {
         const agentStore = createStoreWithAgent({
           id: "agent-001",
           runtimeConfig: { heartbeatIntervalMs: 100 },
@@ -919,11 +919,11 @@ describe("HeartbeatMonitor", () => {
           pollIntervalMs: 5000,
         });
 
-        const config = monitor.getAgentHeartbeatConfig("agent-001");
+        const config = await monitor.getAgentHeartbeatConfig("agent-001");
         expect(config.pollIntervalMs).toBe(1000);
       });
 
-      it("clamps heartbeatTimeoutMs to minimum of 5000", () => {
+      it("clamps heartbeatTimeoutMs to minimum of 5000", async () => {
         const agentStore = createStoreWithAgent({
           id: "agent-001",
           runtimeConfig: { heartbeatTimeoutMs: 1000 },
@@ -934,11 +934,11 @@ describe("HeartbeatMonitor", () => {
           heartbeatTimeoutMs: 60000,
         });
 
-        const config = monitor.getAgentHeartbeatConfig("agent-001");
+        const config = await monitor.getAgentHeartbeatConfig("agent-001");
         expect(config.heartbeatTimeoutMs).toBe(5000);
       });
 
-      it("clamps maxConcurrentRuns to minimum of 1", () => {
+      it("clamps maxConcurrentRuns to minimum of 1", async () => {
         const agentStore = createStoreWithAgent({
           id: "agent-001",
           runtimeConfig: { maxConcurrentRuns: 0 },
@@ -949,11 +949,11 @@ describe("HeartbeatMonitor", () => {
           maxConcurrentRuns: 1,
         });
 
-        const config = monitor.getAgentHeartbeatConfig("agent-001");
+        const config = await monitor.getAgentHeartbeatConfig("agent-001");
         expect(config.maxConcurrentRuns).toBe(1);
       });
 
-      it("falls back to monitor defaults when runtimeConfig values are NaN", () => {
+      it("falls back to monitor defaults when runtimeConfig values are NaN", async () => {
         const agentStore = createStoreWithAgent({
           id: "agent-001",
           runtimeConfig: {
@@ -968,12 +968,12 @@ describe("HeartbeatMonitor", () => {
           heartbeatTimeoutMs: 10000,
         });
 
-        const config = monitor.getAgentHeartbeatConfig("agent-001");
+        const config = await monitor.getAgentHeartbeatConfig("agent-001");
         expect(config.pollIntervalMs).toBe(5000);
         expect(config.heartbeatTimeoutMs).toBe(10000);
       });
 
-      it("falls back to monitor defaults when agent is not found", () => {
+      it("falls back to monitor defaults when agent is not found", async () => {
         const agentStore = createStoreWithAgent({ id: "agent-001" });
         (agentStore.getCachedAgent as ReturnType<typeof vi.fn>).mockReturnValue(null);
 
@@ -984,12 +984,12 @@ describe("HeartbeatMonitor", () => {
           heartbeatTimeoutMs: 10000,
         });
 
-        const config = monitor.getAgentHeartbeatConfig("agent-999");
+        const config = await monitor.getAgentHeartbeatConfig("agent-999");
         expect(config.pollIntervalMs).toBe(5000);
         expect(config.heartbeatTimeoutMs).toBe(10000);
       });
 
-      it("returns monitor defaults when getCachedAgent throws", () => {
+      it("returns monitor defaults when getCachedAgent throws", async () => {
         const agentStore = createStoreWithAgent({ id: "agent-001" });
         (agentStore.getCachedAgent as ReturnType<typeof vi.fn>).mockImplementation(() => {
           throw new Error("Read error");
@@ -1002,12 +1002,12 @@ describe("HeartbeatMonitor", () => {
           heartbeatTimeoutMs: 10000,
         });
 
-        const config = monitor.getAgentHeartbeatConfig("agent-001");
+        const config = await monitor.getAgentHeartbeatConfig("agent-001");
         expect(config.pollIntervalMs).toBe(5000);
         expect(config.heartbeatTimeoutMs).toBe(10000);
       });
 
-      it("returns partial overrides when only some runtimeConfig keys are set", () => {
+      it("returns partial overrides when only some runtimeConfig keys are set", async () => {
         const agentStore = createStoreWithAgent({
           id: "agent-001",
           runtimeConfig: { heartbeatTimeoutMs: 120000 },
@@ -1020,10 +1020,44 @@ describe("HeartbeatMonitor", () => {
           maxConcurrentRuns: 1,
         });
 
-        const config = monitor.getAgentHeartbeatConfig("agent-001");
+        const config = await monitor.getAgentHeartbeatConfig("agent-001");
         expect(config.pollIntervalMs).toBe(5000); // fallback
         expect(config.heartbeatTimeoutMs).toBe(120000); // overridden
         expect(config.maxConcurrentRuns).toBe(1); // fallback
+      });
+
+      it("applies project heartbeatMultiplier to pollIntervalMs", async () => {
+        const agentStore = createStoreWithAgent({
+          id: "agent-001",
+          runtimeConfig: { heartbeatIntervalMs: 60_000 },
+        });
+        const monitor = new HeartbeatMonitor({
+          store,
+          agentStore,
+          taskStore: {
+            getSettings: vi.fn().mockResolvedValue({ heartbeatMultiplier: 0.5 }),
+          } as unknown as TaskStore,
+        });
+
+        const config = await monitor.getAgentHeartbeatConfig("agent-001");
+        expect(config.pollIntervalMs).toBe(30_000);
+      });
+
+      it("clamps multiplied pollIntervalMs to minimum 1000ms", async () => {
+        const agentStore = createStoreWithAgent({
+          id: "agent-001",
+          runtimeConfig: { heartbeatIntervalMs: 2000 },
+        });
+        const monitor = new HeartbeatMonitor({
+          store,
+          agentStore,
+          taskStore: {
+            getSettings: vi.fn().mockResolvedValue({ heartbeatMultiplier: 0.1 }),
+          } as unknown as TaskStore,
+        });
+
+        const config = await monitor.getAgentHeartbeatConfig("agent-001");
+        expect(config.pollIntervalMs).toBe(1000);
       });
     });
 
@@ -1124,13 +1158,13 @@ describe("HeartbeatMonitor", () => {
     });
 
     describe("backward compatibility", () => {
-      it("works without agentStore (no per-agent config)", () => {
+      it("works without agentStore (no per-agent config)", async () => {
         const monitor = new HeartbeatMonitor({
           store,
           heartbeatTimeoutMs: 5000,
         });
 
-        const config = monitor.getAgentHeartbeatConfig("agent-001");
+        const config = await monitor.getAgentHeartbeatConfig("agent-001");
         expect(config.heartbeatTimeoutMs).toBe(5000);
         expect(config.pollIntervalMs).toBe(3_600_000); // default
         expect(config.maxConcurrentRuns).toBe(1); // default
@@ -3912,6 +3946,72 @@ describe("HeartbeatTriggerScheduler", () => {
         triggerDetail: "scheduled",
         intervalMs: 15_000,
       });
+      vi.useRealTimers();
+    });
+
+    it("applies heartbeatMultiplier to timer interval", async () => {
+      scheduler.stop();
+      const taskStore = {
+        getSettings: vi.fn().mockResolvedValue({ heartbeatMultiplier: 0.5 }),
+      } as unknown as TaskStore;
+      scheduler = new HeartbeatTriggerScheduler(store, callback, taskStore);
+      scheduler.start();
+
+      vi.useFakeTimers();
+      scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 60_000, enabled: true });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(taskStore.getSettings).toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(callback).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(callback).toHaveBeenCalledWith("agent-001", "timer", expect.objectContaining({ intervalMs: 30_000 }));
+      vi.useRealTimers();
+    });
+
+    it("defaults multiplier to 1 when setting is missing", async () => {
+      scheduler.stop();
+      const taskStore = {
+        getSettings: vi.fn().mockResolvedValue({}),
+      } as unknown as TaskStore;
+      scheduler = new HeartbeatTriggerScheduler(store, callback, taskStore);
+      scheduler.start();
+
+      vi.useFakeTimers();
+      scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 20_000, enabled: true });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(taskStore.getSettings).toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(19_999);
+      expect(callback).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(callback).toHaveBeenCalledWith("agent-001", "timer", expect.objectContaining({ intervalMs: 20_000 }));
+      vi.useRealTimers();
+    });
+
+    it("clamps multiplied interval to 1000ms minimum", async () => {
+      scheduler.stop();
+      const taskStore = {
+        getSettings: vi.fn().mockResolvedValue({ heartbeatMultiplier: 0.1 }),
+      } as unknown as TaskStore;
+      scheduler = new HeartbeatTriggerScheduler(store, callback, taskStore);
+      scheduler.start();
+
+      vi.useFakeTimers();
+      scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 2_000, enabled: true });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(taskStore.getSettings).toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(999);
+      expect(callback).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(callback).toHaveBeenCalledWith("agent-001", "timer", expect.objectContaining({ intervalMs: 1_000 }));
       vi.useRealTimers();
     });
 

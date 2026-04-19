@@ -1033,6 +1033,10 @@ export interface ProjectSettings {
   globalMaxConcurrent?: number;
   maxWorktrees: number;
   pollIntervalMs: number;
+  /** Global multiplier applied to all agent heartbeat intervals.
+   *  For example, 0.5 halves the interval (faster checks), 2.0 doubles it (slower checks).
+   *  Must be > 0. Default: 1 (no change). */
+  heartbeatMultiplier?: number;
   groupOverlappingFiles: boolean;
   autoMerge: boolean;
   /** How completed in-review tasks should be finalized when autoMerge is enabled.

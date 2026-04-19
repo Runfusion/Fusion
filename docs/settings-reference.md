@@ -80,6 +80,7 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `globalMaxConcurrent` | `number` | `4` | System-wide max concurrent agents across all projects. |
 | `maxWorktrees` | `number` | `4` | Max git worktrees. |
 | `pollIntervalMs` | `number` | `15000` | Scheduler poll interval (ms). |
+| `heartbeatMultiplier` | `number` | `1` | Global multiplier applied to all agent heartbeat intervals. |
 | `groupOverlappingFiles` | `boolean` | `true` | Serialize execution when file scopes overlap. |
 | `autoMerge` | `boolean` | `true` | Auto-finalize tasks from `in-review`. |
 | `mergeStrategy` | `"direct" \| "pull-request"` | `"direct"` | Completion mode (local direct merge vs PR-first). |

@@ -3408,6 +3408,70 @@ body {
   font-weight: 500;
 }
 
+/* === Heartbeat Multiplier === */
+.heartbeat-multiplier-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.heartbeat-multiplier-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.heartbeat-multiplier-slider {
+  flex: 1;
+  min-height: calc(var(--space-2xl) + var(--space-md));
+}
+
+.heartbeat-multiplier-value {
+  min-width: calc(var(--space-2xl) + var(--space-xl));
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--space-md);
+  text-align: right;
+}
+
+.heartbeat-multiplier-preset {
+  max-width: calc(var(--space-2xl) * 4);
+}
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: calc(var(--space-sm) - var(--space-xs) / 2);
+  border-radius: var(--radius-sm);
+  background: var(--border);
+  outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: calc(var(--space-lg) + var(--space-xs) / 2);
+  height: calc(var(--space-lg) + var(--space-xs) / 2);
+  border-radius: var(--radius-pill);
+  background: var(--todo);
+  border: var(--btn-border-width) solid var(--surface);
+  cursor: pointer;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: calc(var(--space-lg) + var(--space-xs) / 2);
+  height: calc(var(--space-lg) + var(--space-xs) / 2);
+  border-radius: var(--radius-pill);
+  background: var(--todo);
+  border: var(--btn-border-width) solid var(--surface);
+  cursor: pointer;
+}
+
+input[type="range"]:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+}
+
 /* === Settings Layout === */
 .settings-layout {
   display: flex;
@@ -25974,6 +26038,25 @@ html .column.drag-over * {
   gap: var(--space-sm);
 }
 
+.agent-heartbeat-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.agent-heartbeat-select {
+  width: auto;
+  min-width: calc(var(--space-2xl) + var(--space-xl));
+  padding: var(--space-xs) var(--space-md);
+  font-size: var(--space-md);
+}
+
+.agent-heartbeat-last,
+.agent-heartbeat-saving {
+  font-size: var(--space-md);
+}
+
 .agent-card-actions {
   display: flex;
   gap: var(--space-sm);
@@ -27766,6 +27849,23 @@ html .column.drag-over * {
 
   .agent-state-filter-select {
     width: 100%;
+  }
+
+  .agent-heartbeat-control {
+    align-items: flex-start;
+  }
+
+  .agent-heartbeat-select {
+    min-height: calc(var(--space-2xl) + var(--space-xs));
+  }
+
+  .heartbeat-multiplier-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .heartbeat-multiplier-value {
+    text-align: left;
   }
 
   .agents-view-header {
