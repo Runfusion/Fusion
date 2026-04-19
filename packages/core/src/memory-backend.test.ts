@@ -31,6 +31,9 @@ import {
   listProjectMemoryFiles,
   readProjectMemoryFile,
   writeProjectMemoryFile,
+  listAgentMemoryFiles,
+  readAgentMemoryFile,
+  writeAgentMemoryFile,
 } from "./memory-backend.js";
 import type { MemoryBackend } from "./memory-backend.js";
 
@@ -41,6 +44,7 @@ describe("memory-backend", () => {
   const legacyMemoryFile = "memory.md";
   const legacyRequestPath = [".fusion", legacyMemoryFile].join("/");
   const legacyMemoryPath = (rootDir: string) => join(rootDir, ".fusion", legacyMemoryFile);
+  const agentWorkspacePath = (rootDir: string, agentId: string) => join(rootDir, ".fusion", "agent-memory", agentId);
 
   beforeEach(async () => {
     tempDir = mkdtempSync(join(tmpdir(), "kb-memory-backend-test-"));
@@ -281,6 +285,117 @@ describe("memory-backend", () => {
         const backend = new FileMemoryBackend();
         const results = await backend.search(tempDir, { query: "legacy-only-token" });
         expect(results).toHaveLength(0);
+      });
+    });
+  });
+
+  // ── Agent Memory File Functions ───────────────────────────────────
+
+  describe("agent memory file functions", () => {
+    const agentId = "agent-001";
+    const fixedDate = new Date("2026-04-19T12:00:00.000Z");
+    const workspaceDisplay = `.fusion/agent-memory/${agentId}`;
+
+    it("listAgentMemoryFiles seeds missing workspaces and returns default files", async () => {
+      const files = await listAgentMemoryFiles(tempDir, agentId, fixedDate);
+
+      expect(files).toHaveLength(3);
+      expect(files.map((file) => file.path)).toEqual([
+        `${workspaceDisplay}/MEMORY.md`,
+        `${workspaceDisplay}/2026-04-19.md`,
+        `${workspaceDisplay}/DREAMS.md`,
+      ]);
+    });
+
+    it("listAgentMemoryFiles returns correct layers and labels", async () => {
+      const files = await listAgentMemoryFiles(tempDir, agentId, fixedDate);
+      const byPath = new Map(files.map((file) => [file.path, file]));
+
+      expect(byPath.get(`${workspaceDisplay}/MEMORY.md`)).toMatchObject({
+        layer: "long-term",
+        label: "Long-term memory",
+      });
+      expect(byPath.get(`${workspaceDisplay}/DREAMS.md`)).toMatchObject({
+        layer: "dreams",
+        label: "Dreams",
+      });
+      expect(byPath.get(`${workspaceDisplay}/2026-04-19.md`)).toMatchObject({
+        layer: "daily",
+        label: "Daily notes 2026-04-19",
+      });
+    });
+
+    it("readAgentMemoryFile reads existing file content", async () => {
+      const path = `${workspaceDisplay}/MEMORY.md`;
+      await writeAgentMemoryFile(tempDir, agentId, path, "# Agent Memory\n\nReadable content");
+
+      await expect(readAgentMemoryFile(tempDir, agentId, path)).resolves.toEqual({
+        path,
+        content: "# Agent Memory\n\nReadable content",
+      });
+    });
+
+    it("readAgentMemoryFile throws NOT_FOUND for valid missing files", async () => {
+      const path = `${workspaceDisplay}/2025-01-01.md`;
+
+      await expect(readAgentMemoryFile(tempDir, agentId, path)).rejects.toMatchObject({
+        code: "NOT_FOUND",
+      });
+    });
+
+    it("readAgentMemoryFile rejects path traversal attempts", async () => {
+      await expect(readAgentMemoryFile(tempDir, agentId, "../../etc/passwd")).rejects.toMatchObject({
+        code: "UNSUPPORTED",
+      });
+    });
+
+    it("readAgentMemoryFile rejects absolute paths", async () => {
+      await expect(readAgentMemoryFile(tempDir, agentId, "/etc/passwd")).rejects.toMatchObject({
+        code: "UNSUPPORTED",
+      });
+    });
+
+    it("readAgentMemoryFile rejects unsupported filenames", async () => {
+      await expect(readAgentMemoryFile(tempDir, agentId, `${workspaceDisplay}/notes.txt`)).rejects.toMatchObject({
+        code: "UNSUPPORTED",
+      });
+    });
+
+    it("writeAgentMemoryFile writes content to a new daily file", async () => {
+      const path = `${workspaceDisplay}/2026-04-20.md`;
+      const content = "# Agent Daily Memory 2026-04-20\n\nFresh notes";
+
+      await expect(writeAgentMemoryFile(tempDir, agentId, path, content)).resolves.toEqual({ success: true });
+      expect(readFileSync(join(agentWorkspacePath(tempDir, agentId), "2026-04-20.md"), "utf-8")).toBe(content);
+    });
+
+    it("writeAgentMemoryFile overwrites existing content", async () => {
+      const path = `${workspaceDisplay}/DREAMS.md`;
+      await writeAgentMemoryFile(tempDir, agentId, path, "Original dreams");
+
+      await writeAgentMemoryFile(tempDir, agentId, path, "Updated dreams");
+
+      await expect(readAgentMemoryFile(tempDir, agentId, path)).resolves.toEqual({
+        path,
+        content: "Updated dreams",
+      });
+    });
+
+    it("writeAgentMemoryFile rejects path traversal attempts", async () => {
+      await expect(writeAgentMemoryFile(tempDir, agentId, "../../etc/passwd", "oops")).rejects.toMatchObject({
+        code: "UNSUPPORTED",
+      });
+    });
+
+    it("writeAgentMemoryFile rejects absolute paths", async () => {
+      await expect(writeAgentMemoryFile(tempDir, agentId, "/etc/passwd", "oops")).rejects.toMatchObject({
+        code: "UNSUPPORTED",
+      });
+    });
+
+    it("writeAgentMemoryFile rejects unsupported filenames", async () => {
+      await expect(writeAgentMemoryFile(tempDir, agentId, `${workspaceDisplay}/notes.txt`, "oops")).rejects.toMatchObject({
+        code: "UNSUPPORTED",
       });
     });
   });

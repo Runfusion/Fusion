@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { request } from "../test-request.js";
 
 type AgentRecord = {
@@ -22,8 +26,11 @@ const mockGetAgentsByReportsTo = vi.fn();
 const mockListAgents = vi.fn().mockResolvedValue([]);
 const mockChatStoreInit = vi.fn().mockResolvedValue(undefined);
 
-vi.mock("@fusion/core", () => {
+vi.mock("@fusion/core", async () => {
+  const actual = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
+
   return {
+    ...actual,
     AgentStore: class MockAgentStore {
       init = mockInit;
       getAgent = mockGetAgent;
@@ -38,12 +45,16 @@ vi.mock("@fusion/core", () => {
 });
 
 class MockStore extends EventEmitter {
+  constructor(private readonly rootDir: string) {
+    super();
+  }
+
   getRootDir(): string {
-    return "/tmp/fn-1171-test";
+    return this.rootDir;
   }
 
   getFusionDir(): string {
-    return "/tmp/fn-1171-test/.fusion";
+    return join(this.rootDir, ".fusion");
   }
 
   getDatabase() {
@@ -75,6 +86,7 @@ describe("Agent soul/memory routes", () => {
   let store: MockStore;
   let app: ReturnType<typeof import("../server.js").createServer>;
   let agents: Map<string, AgentRecord>;
+  let tempDir: string;
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -107,14 +119,23 @@ describe("Agent soul/memory routes", () => {
       return Array.from(agents.values()).filter((agent) => agent.reportsTo === agentId);
     });
 
-    store = new MockStore();
+    tempDir = mkdtempSync(join(tmpdir(), "fn-2150-agent-memory-routes-"));
+    await mkdir(join(tempDir, ".fusion"), { recursive: true });
+
+    store = new MockStore(tempDir);
     const { createServer } = await import("../server.js");
     app = createServer(store as any);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.restoreAllMocks();
+    if (tempDir) {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
+
+  const agentMemoryPath = (agentId: string, fileName: string) => join(tempDir, ".fusion", "agent-memory", agentId, fileName);
+  const agentMemoryDisplayPath = (agentId: string, fileName: string) => `.fusion/agent-memory/${agentId}/${fileName}`;
 
   it("GET /api/agents/:id/soul returns null when not set", async () => {
     agents.set("agent-001", createAgent());
@@ -233,6 +254,131 @@ describe("Agent soul/memory routes", () => {
     expect(missingPatchSoul.status).toBe(404);
     expect(missingGetMemory.status).toBe(404);
     expect(missingPatchMemory.status).toBe(404);
+  });
+
+  it("GET /api/agents/:id/memory/files returns file list for existing agent", async () => {
+    agents.set("agent-001", createAgent());
+
+    const response = await request(app, "GET", "/api/agents/agent-001/memory/files");
+
+    expect(response.status).toBe(200);
+    expect((response.body as any).files).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: agentMemoryDisplayPath("agent-001", "MEMORY.md"),
+        layer: "long-term",
+        label: "Long-term memory",
+      }),
+      expect.objectContaining({
+        path: agentMemoryDisplayPath("agent-001", "DREAMS.md"),
+        layer: "dreams",
+        label: "Dreams",
+      }),
+      expect.objectContaining({
+        path: expect.stringMatching(/^\.fusion\/agent-memory\/agent-001\/\d{4}-\d{2}-\d{2}\.md$/),
+        layer: "daily",
+      }),
+    ]));
+  });
+
+  it("GET /api/agents/:id/memory/files returns 404 for nonexistent agent", async () => {
+    const response = await request(app, "GET", "/api/agents/agent-missing/memory/files");
+    expect(response.status).toBe(404);
+  });
+
+  it("GET /api/agents/:id/memory/file?path=... returns file content", async () => {
+    agents.set("agent-001", createAgent());
+
+    const filePath = agentMemoryDisplayPath("agent-001", "MEMORY.md");
+    await mkdir(join(tempDir, ".fusion", "agent-memory", "agent-001"), { recursive: true });
+    await writeFile(agentMemoryPath("agent-001", "MEMORY.md"), "# Agent Memory\n\nRoute read test", "utf-8");
+
+    const response = await request(
+      app,
+      "GET",
+      `/api/agents/agent-001/memory/file?path=${encodeURIComponent(filePath)}`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      path: filePath,
+      content: "# Agent Memory\n\nRoute read test",
+    });
+  });
+
+  it("GET /api/agents/:id/memory/file returns 400 without path param", async () => {
+    agents.set("agent-001", createAgent());
+
+    const response = await request(app, "GET", "/api/agents/agent-001/memory/file");
+
+    expect(response.status).toBe(400);
+    expect((response.body as any).error).toBe("path is required");
+  });
+
+  it("PUT /api/agents/:id/memory/file writes content successfully", async () => {
+    agents.set("agent-001", createAgent());
+
+    const path = agentMemoryDisplayPath("agent-001", "2026-04-19.md");
+    const content = "# Agent Daily Memory 2026-04-19\n\nSaved via route";
+
+    const response = await request(
+      app,
+      "PUT",
+      "/api/agents/agent-001/memory/file",
+      JSON.stringify({ path, content }),
+      { "content-type": "application/json" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ success: true });
+    expect(readFileSync(agentMemoryPath("agent-001", "2026-04-19.md"), "utf-8")).toBe(content);
+  });
+
+  it("PUT /api/agents/:id/memory/file returns 400 without path or content", async () => {
+    agents.set("agent-001", createAgent());
+
+    const missingPath = await request(
+      app,
+      "PUT",
+      "/api/agents/agent-001/memory/file",
+      JSON.stringify({ content: "x" }),
+      { "content-type": "application/json" },
+    );
+
+    const missingContent = await request(
+      app,
+      "PUT",
+      "/api/agents/agent-001/memory/file",
+      JSON.stringify({ path: agentMemoryDisplayPath("agent-001", "MEMORY.md") }),
+      { "content-type": "application/json" },
+    );
+
+    expect(missingPath.status).toBe(400);
+    expect((missingPath.body as any).error).toBe("path must be a string");
+    expect(missingContent.status).toBe(400);
+    expect((missingContent.body as any).error).toBe("content must be a string");
+  });
+
+  it("all agent memory file endpoints return 404 for nonexistent agent", async () => {
+    const listResponse = await request(app, "GET", "/api/agents/agent-missing/memory/files");
+    const getResponse = await request(
+      app,
+      "GET",
+      `/api/agents/agent-missing/memory/file?path=${encodeURIComponent(agentMemoryDisplayPath("agent-missing", "MEMORY.md"))}`,
+    );
+    const putResponse = await request(
+      app,
+      "PUT",
+      "/api/agents/agent-missing/memory/file",
+      JSON.stringify({
+        path: agentMemoryDisplayPath("agent-missing", "MEMORY.md"),
+        content: "missing",
+      }),
+      { "content-type": "application/json" },
+    );
+
+    expect(listResponse.status).toBe(404);
+    expect(getResponse.status).toBe(404);
+    expect(putResponse.status).toBe(404);
   });
 
   it("GET /api/agents/:id/employees returns same payload as /children", async () => {

@@ -463,6 +463,9 @@ export {
   readProjectMemoryFile,
   readProjectMemoryFileContent,
   writeProjectMemoryFile,
+  listAgentMemoryFiles,
+  readAgentMemoryFile,
+  writeAgentMemoryFile,
 } from "./memory-backend.js";
 
 export {

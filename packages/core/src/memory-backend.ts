@@ -21,6 +21,7 @@ export const QMD_INSTALL_COMMAND = "bun install -g @tobilu/qmd";
 export const QMD_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
 const DAILY_MEMORY_RE = /^\d{4}-\d{2}-\d{2}\.md$/;
+const AGENT_MEMORY_WORKSPACE_PATH = ".fusion/agent-memory";
 const MAX_MEMORY_SNIPPET_CHARS = 700;
 const DEFAULT_MEMORY_GET_LINES = 120;
 const MAX_MEMORY_GET_LINES = 400;
@@ -565,6 +566,19 @@ function getMemoryFileLabel(displayPath: string): string {
   return `Daily notes ${basename(displayPath, ".md")}`;
 }
 
+function getAgentMemoryFileLayer(fileName: string): MemoryFileInfo["layer"] {
+  if (fileName === MEMORY_LONG_TERM_FILENAME) return "long-term";
+  if (fileName === MEMORY_DREAMS_FILENAME) return "dreams";
+  return "daily";
+}
+
+function getAgentMemoryFileLabel(fileName: string): string {
+  const layer = getAgentMemoryFileLayer(fileName);
+  if (layer === "long-term") return "Long-term memory";
+  if (layer === "dreams") return "Dreams";
+  return `Daily notes ${basename(fileName, ".md")}`;
+}
+
 export async function listProjectMemoryFiles(rootDir: string, date = new Date()): Promise<MemoryFileInfo[]> {
   await ensureOpenClawMemoryFiles(rootDir, date);
   const files = await listMemoryFiles(rootDir);
@@ -614,6 +628,156 @@ export async function writeProjectMemoryFile(rootDir: string, path: string, cont
   await rename(tmpPath, absPath);
 
   return { success: true, backend: "file" };
+}
+
+export async function listAgentMemoryFiles(rootDir: string, agentId: string, date = new Date()): Promise<MemoryFileInfo[]> {
+  const { agentMemoryWorkspacePath, ensureAgentMemoryFiles } = await import("./memory-dreams.js");
+
+  await ensureAgentMemoryFiles(rootDir, { id: agentId, name: "", memory: "" }, date);
+
+  const workspacePath = agentMemoryWorkspacePath(rootDir, agentId);
+  const workspaceDisplayPath = relative(rootDir, workspacePath).replace(/\\/g, "/");
+  const files: Array<{ absPath: string; displayPath: string; fileName: string }> = [];
+
+  const longTermPath = join(workspacePath, MEMORY_LONG_TERM_FILENAME);
+  if (existsSync(longTermPath)) {
+    files.push({
+      absPath: longTermPath,
+      displayPath: `${workspaceDisplayPath}/${MEMORY_LONG_TERM_FILENAME}`,
+      fileName: MEMORY_LONG_TERM_FILENAME,
+    });
+  }
+
+  const dreamsPath = join(workspacePath, MEMORY_DREAMS_FILENAME);
+  if (existsSync(dreamsPath)) {
+    files.push({
+      absPath: dreamsPath,
+      displayPath: `${workspaceDisplayPath}/${MEMORY_DREAMS_FILENAME}`,
+      fileName: MEMORY_DREAMS_FILENAME,
+    });
+  }
+
+  if (existsSync(workspacePath)) {
+    for (const entry of await readdir(workspacePath)) {
+      if (!DAILY_MEMORY_RE.test(entry)) continue;
+      const absPath = join(workspacePath, entry);
+      const fileStat = await stat(absPath);
+      if (fileStat.isFile()) {
+        files.push({
+          absPath,
+          displayPath: `${workspaceDisplayPath}/${entry}`,
+          fileName: entry,
+        });
+      }
+    }
+  }
+
+  const uniqueFiles = Array.from(new Map(files.map((file) => [file.displayPath, file])).values());
+  const infos = await Promise.all(uniqueFiles.map(async (file) => {
+    const fileStat = await stat(file.absPath);
+    return {
+      path: file.displayPath,
+      label: getAgentMemoryFileLabel(file.fileName),
+      layer: getAgentMemoryFileLayer(file.fileName),
+      size: fileStat.size,
+      updatedAt: fileStat.mtime.toISOString(),
+    } satisfies MemoryFileInfo;
+  }));
+
+  const order: Record<MemoryFileInfo["layer"], number> = {
+    "long-term": 0,
+    daily: 1,
+    dreams: 2,
+  };
+
+  return infos.sort((a, b) => order[a.layer] - order[b.layer] || b.path.localeCompare(a.path));
+}
+
+async function resolveAgentMemoryFilePath(
+  rootDir: string,
+  agentId: string,
+  requestedPath: string,
+): Promise<{ absPath: string; displayPath: string }> {
+  const { agentMemoryWorkspacePath } = await import("./memory-dreams.js");
+  const workspacePath = agentMemoryWorkspacePath(rootDir, agentId);
+  const workspaceDisplayPath = relative(rootDir, workspacePath).replace(/\\/g, "/");
+  const workspacePrefix = `${workspaceDisplayPath}/`;
+
+  const trimmed = requestedPath.trim();
+  if (!trimmed) {
+    throw new MemoryBackendError("NOT_FOUND", "Memory path is required", "file");
+  }
+  if (isAbsolute(trimmed) || isPathTraversal(trimmed)) {
+    throw new MemoryBackendError("UNSUPPORTED", "Memory paths must be workspace-relative", "file");
+  }
+
+  const normalized = normalize(trimmed).replace(/\\/g, "/");
+  const fileName = basename(normalized);
+  if (
+    fileName !== MEMORY_LONG_TERM_FILENAME
+    && fileName !== MEMORY_DREAMS_FILENAME
+    && !DAILY_MEMORY_RE.test(fileName)
+  ) {
+    throw new MemoryBackendError(
+      "UNSUPPORTED",
+      `Memory path '${requestedPath}' is outside allowed files: ${AGENT_MEMORY_WORKSPACE_PATH}/{agentId}/MEMORY.md, ${AGENT_MEMORY_WORKSPACE_PATH}/{agentId}/DREAMS.md, ${AGENT_MEMORY_WORKSPACE_PATH}/{agentId}/YYYY-MM-DD.md`,
+      "file",
+    );
+  }
+
+  const displayPath = normalized === fileName
+    ? `${workspaceDisplayPath}/${fileName}`
+    : normalized;
+
+  if (!displayPath.startsWith(workspacePrefix)) {
+    throw new MemoryBackendError(
+      "UNSUPPORTED",
+      `Memory path '${requestedPath}' must be within ${workspaceDisplayPath}/`,
+      "file",
+    );
+  }
+
+  const absPath = resolve(rootDir, displayPath);
+  const rel = relative(rootDir, absPath);
+  if (!rel || rel.startsWith(`..${sep}`) || rel === ".." || isAbsolute(rel)) {
+    throw new MemoryBackendError("UNSUPPORTED", "Memory path escapes project root", "file");
+  }
+
+  const relToWorkspace = relative(workspacePath, absPath);
+  if (!relToWorkspace || relToWorkspace.startsWith(`..${sep}`) || relToWorkspace === ".." || isAbsolute(relToWorkspace)) {
+    throw new MemoryBackendError("UNSUPPORTED", "Memory path escapes agent memory workspace", "file");
+  }
+  const relToWorkspaceNormalized = relToWorkspace.replace(/\\/g, "/");
+  if (relToWorkspaceNormalized.includes("/")) {
+    throw new MemoryBackendError("UNSUPPORTED", "Agent memory paths must not include subdirectories", "file");
+  }
+
+  return { absPath, displayPath };
+}
+
+export async function readAgentMemoryFile(rootDir: string, agentId: string, path: string): Promise<{ path: string; content: string }> {
+  const { absPath, displayPath } = await resolveAgentMemoryFilePath(rootDir, agentId, path);
+
+  try {
+    const content = await readFile(absPath, "utf-8");
+    return { path: displayPath, content };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new MemoryBackendError("NOT_FOUND", `Memory path '${path}' not found`, "file");
+    }
+    throw new MemoryBackendError("READ_FAILED", `Failed to read memory path '${path}': ${(err as Error).message}`, "file");
+  }
+}
+
+export async function writeAgentMemoryFile(rootDir: string, agentId: string, path: string, content: string): Promise<{ success: boolean }> {
+  const { absPath } = await resolveAgentMemoryFilePath(rootDir, agentId, path);
+  await mkdir(dirname(absPath), { recursive: true });
+  const tmpPath = `${absPath}.tmp`;
+  await writeFile(tmpPath, content, "utf-8");
+  const { rename } = await import("node:fs/promises");
+  await rename(tmpPath, absPath);
+
+  return { success: true };
 }
 
 function isPathTraversal(path: string): boolean {

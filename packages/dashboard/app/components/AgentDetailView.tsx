@@ -7,8 +7,8 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { AgentDetail, AgentState, AgentHeartbeatRun, AgentBudgetStatus, ModelInfo } from "../api";
-import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels } from "../api";
+import type { AgentDetail, AgentState, AgentHeartbeatRun, AgentBudgetStatus, ModelInfo, MemoryFileInfo } from "../api";
+import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels } from "../api";
 import type { Agent } from "../api";
 import type { AgentLogEntry, Task } from "@fusion/core";
 import { AgentLogViewer } from "./AgentLogViewer";
@@ -88,6 +88,28 @@ const RUN_STATUS_ICONS: Record<string, { icon: typeof CheckCircle; color: string
   active: { icon: Loader2, color: "var(--in-progress, #bc8cff)" },
   terminated: { icon: Square, color: "var(--text-muted, #8b949e)" },
 };
+
+const MEMORY_LAYER_NAMES: Record<MemoryFileInfo["layer"], string> = {
+  "long-term": "Long-term",
+  daily: "Daily",
+  dreams: "Dreams",
+};
+
+const MEMORY_LAYER_DESCRIPTIONS: Record<MemoryFileInfo["layer"], string> = {
+  "long-term": "Curated durable decisions, conventions, constraints, and pitfalls for this specific agent.",
+  daily: "Raw daily observations and open loops recorded by this agent.",
+  dreams: "Synthesized patterns and emerging themes distilled from this agent's daily memory.",
+};
+
+function pickDefaultAgentMemoryPath(files: MemoryFileInfo[], currentPath: string): string {
+  if (files.some((file) => file.path === currentPath)) {
+    return currentPath;
+  }
+
+  return files.find((file) => file.layer === "long-term")?.path
+    ?? files[0]?.path
+    ?? "";
+}
 
 export function AgentDetailView({ agentId, projectId, onClose, addToast, onChildClick }: AgentDetailViewProps) {
   const [agent, setAgent] = useState<AgentDetail | null>(null);
@@ -1704,16 +1726,79 @@ function MemoryTab({
   const [justSaved, setJustSaved] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
 
+  const [memoryFiles, setMemoryFiles] = useState<MemoryFileInfo[]>([]);
+  const [memoryFilesLoading, setMemoryFilesLoading] = useState(false);
+  const [selectedFilePath, setSelectedFilePath] = useState("");
+  const [selectedFileContent, setSelectedFileContent] = useState("");
+  const [selectedFileDirty, setSelectedFileDirty] = useState(false);
+  const [selectedFileLoading, setSelectedFileLoading] = useState(false);
+  const [savingSelectedFile, setSavingSelectedFile] = useState(false);
+  const [selectedFileJustSaved, setSelectedFileJustSaved] = useState(false);
+  const [fileSwitchHint, setFileSwitchHint] = useState("");
+
+  const isReadOnly = agent.state === "running";
+  const hasInlineChanges = memory !== (agent.memory ?? "");
+
+  const selectedMemoryFile = useMemo(
+    () => memoryFiles.find((file) => file.path === selectedFilePath),
+    [memoryFiles, selectedFilePath],
+  );
+
+  const selectedLayerDescription = selectedMemoryFile
+    ? MEMORY_LAYER_DESCRIPTIONS[selectedMemoryFile.layer]
+    : "Select a memory file to view or edit.";
+
+  const loadSelectedMemoryFile = useCallback(async (path: string) => {
+    setSelectedFileLoading(true);
+    try {
+      const result = await fetchAgentMemoryFile(agent.id, path, projectId);
+      setSelectedFilePath(result.path);
+      setSelectedFileContent(result.content);
+      setSelectedFileDirty(false);
+      setSelectedFileJustSaved(false);
+    } catch (err: any) {
+      addToast(`Failed to load agent memory file: ${err.message}`, "error");
+    } finally {
+      setSelectedFileLoading(false);
+    }
+  }, [agent.id, projectId, addToast]);
+
+  const loadMemoryFiles = useCallback(async (preferredPath = "") => {
+    setMemoryFilesLoading(true);
+    try {
+      const { files } = await fetchAgentMemoryFiles(agent.id, projectId);
+      setMemoryFiles(files);
+
+      if (files.length === 0) {
+        setSelectedFilePath("");
+        setSelectedFileContent("");
+        setSelectedFileDirty(false);
+        return;
+      }
+
+      const nextPath = pickDefaultAgentMemoryPath(files, preferredPath);
+      await loadSelectedMemoryFile(nextPath);
+    } catch (err: any) {
+      addToast(`Failed to load memory files: ${err.message}`, "error");
+      setMemoryFiles([]);
+      setSelectedFilePath("");
+      setSelectedFileContent("");
+      setSelectedFileDirty(false);
+    } finally {
+      setMemoryFilesLoading(false);
+    }
+  }, [agent.id, projectId, addToast, loadSelectedMemoryFile]);
+
   useEffect(() => {
     setMemory(agent.memory ?? "");
     setJustSaved(false);
     setShowPreview(false);
-  }, [agent.id, agent.memory]);
+    setFileSwitchHint("");
+    setSelectedFileJustSaved(false);
+    void loadMemoryFiles();
+  }, [agent.id, agent.memory, loadMemoryFiles]);
 
-  const isReadOnly = agent.state === "running";
-  const hasChanges = memory !== (agent.memory ?? "");
-
-  const handleSave = async () => {
+  const handleSaveInlineMemory = async () => {
     if (memory.length > 50000) {
       addToast("Memory must be at most 50,000 characters", "error");
       return;
@@ -1733,6 +1818,40 @@ function MemoryTab({
     }
   };
 
+  const handleSelectMemoryFile = async (path: string) => {
+    if (!path || path === selectedFilePath) {
+      return;
+    }
+    if (selectedFileDirty) {
+      setFileSwitchHint("Save the current file before switching to another file.");
+      return;
+    }
+
+    setFileSwitchHint("");
+    await loadSelectedMemoryFile(path);
+  };
+
+  const handleSaveSelectedMemoryFile = async () => {
+    if (!selectedFilePath) {
+      return;
+    }
+
+    setSavingSelectedFile(true);
+    try {
+      await saveAgentMemoryFile(agent.id, selectedFilePath, selectedFileContent, projectId);
+      setSelectedFileDirty(false);
+      setSelectedFileJustSaved(true);
+      setTimeout(() => setSelectedFileJustSaved(false), 3000);
+      setFileSwitchHint("");
+      await loadMemoryFiles(selectedFilePath);
+      addToast("Agent memory file saved", "success");
+    } catch (err: any) {
+      addToast(`Failed to save agent memory file: ${err.message}`, "error");
+    } finally {
+      setSavingSelectedFile(false);
+    }
+  };
+
   return (
     <div className="config-tab">
       <div className="config-section">
@@ -1748,7 +1867,10 @@ function MemoryTab({
 
         <div className="config-fields">
           <div className="config-field">
-            <label htmlFor="agent-memory">Agent Memory</label>
+            <label htmlFor="agent-memory">Inline Memory</label>
+            <span className="config-hint" style={{ display: "block", marginBottom: 8 }}>
+              Short-form memory stored directly on the agent record and injected into prompts.
+            </span>
             <div className="agent-content-toolbar">
               <div className="agent-content-mode-toggle">
                 {!isReadOnly && (
@@ -1788,8 +1910,9 @@ function MemoryTab({
             ) : (
               <textarea
                 id="agent-memory"
+                aria-label="Agent Memory"
                 className="input"
-                rows={15}
+                rows={10}
                 placeholder="Durable preferences, operating habits, and context this agent should carry across tasks..."
                 value={memory}
                 readOnly={isReadOnly}
@@ -1801,17 +1924,87 @@ function MemoryTab({
               />
             )}
             {!showPreview && (
-              <span className="config-hint">This is injected as Agent Memory in the prompt and kept separate from workspace Project Memory. Max 50,000 characters.</span>
+              <span className="config-hint">This is the inline memory field on the agent JSON record. Max 50,000 characters.</span>
+            )}
+          </div>
+
+          <div className="config-field">
+            <label htmlFor="agent-memory-file-select">Memory Files</label>
+            <span className="config-hint" style={{ display: "block", marginBottom: 8 }}>
+              Full OpenClaw memory files at <code>.fusion/agent-memory/{agent.id}/</code> (MEMORY.md, DREAMS.md, and daily notes).
+            </span>
+
+            <select
+              id="agent-memory-file-select"
+              className="select"
+              value={selectedFilePath}
+              disabled={memoryFilesLoading || selectedFileLoading || savingSelectedFile || memoryFiles.length === 0}
+              onChange={(e) => {
+                void handleSelectMemoryFile(e.target.value);
+              }}
+            >
+              {memoryFiles.length === 0 ? (
+                <option value="">No memory files found</option>
+              ) : (
+                memoryFiles.map((file) => (
+                  <option key={file.path} value={file.path}>
+                    {MEMORY_LAYER_NAMES[file.layer]} • {file.label}
+                  </option>
+                ))
+              )}
+            </select>
+
+            {memoryFilesLoading && (
+              <span className="config-hint" style={{ display: "inline-flex", gap: 6, marginTop: 8 }}>
+                <Loader2 size={14} className="animate-spin" />
+                Loading memory files…
+              </span>
+            )}
+
+            {selectedMemoryFile && (
+              <div className="config-hint" style={{ marginTop: 8 }}>
+                <strong>{MEMORY_LAYER_NAMES[selectedMemoryFile.layer]}</strong> · {selectedLayerDescription}
+                <br />
+                {selectedMemoryFile.size.toLocaleString()} bytes · Updated {relativeTime(selectedMemoryFile.updatedAt)}
+              </div>
+            )}
+
+            <textarea
+              className="input"
+              rows={14}
+              placeholder="Select a memory file to view and edit its content..."
+              value={selectedFileContent}
+              readOnly={isReadOnly || !selectedFilePath || selectedFileLoading}
+              onChange={(e) => {
+                setSelectedFileContent(e.target.value);
+                setSelectedFileDirty(true);
+                setSelectedFileJustSaved(false);
+                setFileSwitchHint("");
+              }}
+              style={{ fontFamily: "monospace", fontSize: "0.875rem", resize: "vertical", marginTop: 8 }}
+            />
+
+            {selectedFileLoading && (
+              <span className="config-hint" style={{ display: "inline-flex", gap: 6, marginTop: 8 }}>
+                <Loader2 size={14} className="animate-spin" />
+                Loading file content…
+              </span>
+            )}
+
+            {fileSwitchHint && (
+              <span className="config-hint" style={{ display: "block", marginTop: 8 }}>
+                {fileSwitchHint}
+              </span>
             )}
           </div>
         </div>
 
-        {!showPreview && (
-          <div className="config-actions">
+        <div className="config-actions">
+          {!showPreview && (
             <button
               className="btn btn--primary"
-              disabled={!hasChanges || isSaving || isReadOnly}
-              onClick={() => void handleSave()}
+              disabled={!hasInlineChanges || isSaving || isReadOnly}
+              onClick={() => void handleSaveInlineMemory()}
             >
               {isSaving ? (
                 <>
@@ -1825,14 +2018,37 @@ function MemoryTab({
                 </>
               )}
             </button>
-            {!hasChanges && justSaved && (
-              <span className="config-saved-indicator">
-                <CheckCircle size={14} />
-                Memory saved
-              </span>
+          )}
+          <button
+            className="btn"
+            disabled={!selectedFileDirty || savingSelectedFile || !selectedFilePath || isReadOnly}
+            onClick={() => void handleSaveSelectedMemoryFile()}
+          >
+            {savingSelectedFile ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                Saving file…
+              </>
+            ) : (
+              <>
+                <CheckCircle size={16} />
+                Save Memory File
+              </>
             )}
-          </div>
-        )}
+          </button>
+          {!hasInlineChanges && justSaved && (
+            <span className="config-saved-indicator">
+              <CheckCircle size={14} />
+              Memory saved
+            </span>
+          )}
+          {!selectedFileDirty && selectedFileJustSaved && (
+            <span className="config-saved-indicator">
+              <CheckCircle size={14} />
+              Memory file saved
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );

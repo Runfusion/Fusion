@@ -2659,6 +2659,25 @@ export function updateAgentMemory(agentId: string, memory: string, projectId?: s
   });
 }
 
+/** List file-based memory entries for a specific agent */
+export function fetchAgentMemoryFiles(agentId: string, projectId?: string): Promise<{ files: MemoryFileInfo[] }> {
+  return api<{ files: MemoryFileInfo[] }>(withProjectId(`/agents/${encodeURIComponent(agentId)}/memory/files`, projectId));
+}
+
+/** Read one file-based memory entry for a specific agent */
+export function fetchAgentMemoryFile(agentId: string, path: string, projectId?: string): Promise<{ path: string; content: string }> {
+  const query = `path=${encodeURIComponent(path)}`;
+  return api<{ path: string; content: string }>(withProjectId(`/agents/${encodeURIComponent(agentId)}/memory/file?${query}`, projectId));
+}
+
+/** Save one file-based memory entry for a specific agent */
+export function saveAgentMemoryFile(agentId: string, path: string, content: string, projectId?: string): Promise<{ success: boolean }> {
+  return api<{ success: boolean }>(withProjectId(`/agents/${encodeURIComponent(agentId)}/memory/file`, projectId), {
+    method: "PUT",
+    body: JSON.stringify({ path, content }),
+  });
+}
+
 /** Update an agent's state */
 export function updateAgentState(agentId: string, state: AgentState, projectId?: string): Promise<Agent> {
   return api<Agent>(withProjectId(`/agents/${encodeURIComponent(agentId)}/state`, projectId), {

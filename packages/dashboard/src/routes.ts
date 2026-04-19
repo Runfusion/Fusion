@@ -18,7 +18,7 @@ import * as nodeFs from "node:fs";
 
 import { promisify } from "node:util";
 import type { TaskStore, Column, ScheduleType, ActivityEventType, ModelPreset, MessageType, ParticipantType, RoutineTriggerType, ProjectSettings, EnrichedChatSession } from "@fusion/core";
-import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, type PiExtensionEntry, type PiExtensionSettings, getCurrentRepo, isGhAuthenticated, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupRoutine, exportSettings, importSettings, validateImportData, MessageStore, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes, listProjectMemoryFiles, readProjectMemoryFile, readProjectMemoryFileContent, writeProjectMemoryFile, readMemory, writeMemory, searchProjectMemory, isQmdAvailable, installQmd, refreshQmdProjectMemoryIndex, QMD_INSTALL_COMMAND, MemoryBackendError, scheduleQmdProjectMemoryRefresh, discoverPiExtensions, updatePiExtensionDisabledIds, getFusionAgentDir, getLegacyPiAgentDir, ensureMemoryFileWithBackend, readInsightsMemory, writeInsightsMemory, generateMemoryAudit, buildInsightExtractionPrompt, parseInsightExtractionResponse, processAndAuditInsightExtraction } from "@fusion/core";
+import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, type PiExtensionEntry, type PiExtensionSettings, getCurrentRepo, isGhAuthenticated, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupRoutine, exportSettings, importSettings, validateImportData, MessageStore, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes, listProjectMemoryFiles, readProjectMemoryFile, readProjectMemoryFileContent, writeProjectMemoryFile, listAgentMemoryFiles, readAgentMemoryFile, writeAgentMemoryFile, readMemory, writeMemory, searchProjectMemory, isQmdAvailable, installQmd, refreshQmdProjectMemoryIndex, QMD_INSTALL_COMMAND, MemoryBackendError, scheduleQmdProjectMemoryRefresh, discoverPiExtensions, updatePiExtensionDisabledIds, getFusionAgentDir, getLegacyPiAgentDir, ensureMemoryFileWithBackend, readInsightsMemory, writeInsightsMemory, generateMemoryAudit, buildInsightExtractionPrompt, parseInsightExtractionResponse, processAndAuditInsightExtraction } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
 import { GitHubClient, parseBadgeUrl } from "./github.js";
 import { githubRateLimiter } from "./github-poll.js";
@@ -12443,6 +12443,115 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw notFound(err instanceof Error ? err.message : String(err));
       }
       rethrowAsApiError(err);
+    }
+  });
+
+  /**
+   * GET /api/agents/:id/memory/files
+   * Lists OpenClaw memory files for one agent.
+   */
+  router.get("/agents/:id/memory/files", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const agentId = req.params.id;
+      const agent = await agentStore.getAgent(agentId);
+      if (!agent) {
+        throw notFound("Agent not found");
+      }
+
+      const rootDir = scopedStore.getRootDir();
+      const files = await listAgentMemoryFiles(rootDir, agentId);
+      res.json({ files });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof MemoryBackendError) {
+        const status = err.code === "NOT_FOUND" ? 404 : err.code === "UNSUPPORTED" ? 400 : 500;
+        throw new ApiError(status, `Memory operation failed: ${err.message}`, { code: err.code, backend: err.backend });
+      }
+      rethrowAsApiError(err, "Failed to list agent memory files");
+    }
+  });
+
+  /**
+   * GET /api/agents/:id/memory/file?path=.fusion/agent-memory/:id/MEMORY.md
+   * Reads a validated agent memory file.
+   */
+  router.get("/agents/:id/memory/file", async (req, res) => {
+    try {
+      const path = typeof req.query.path === "string" ? req.query.path : "";
+      if (!path) {
+        throw badRequest("path is required");
+      }
+
+      const { store: scopedStore } = await getProjectContext(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const agentId = req.params.id;
+      const agent = await agentStore.getAgent(agentId);
+      if (!agent) {
+        throw notFound("Agent not found");
+      }
+
+      const rootDir = scopedStore.getRootDir();
+      const result = await readAgentMemoryFile(rootDir, agentId, path);
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof MemoryBackendError) {
+        const status = err.code === "NOT_FOUND" ? 404 : err.code === "UNSUPPORTED" ? 400 : 500;
+        throw new ApiError(status, `Memory operation failed: ${err.message}`, { code: err.code, backend: err.backend });
+      }
+      rethrowAsApiError(err, "Failed to read agent memory file");
+    }
+  });
+
+  /**
+   * PUT /api/agents/:id/memory/file
+   * Writes one validated agent memory file.
+   */
+  router.put("/agents/:id/memory/file", async (req, res) => {
+    try {
+      const { path, content } = req.body ?? {};
+      if (typeof path !== "string" || !path.trim()) {
+        throw badRequest("path must be a string");
+      }
+      if (typeof content !== "string") {
+        throw badRequest("content must be a string");
+      }
+
+      const { store: scopedStore } = await getProjectContext(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const agentId = req.params.id;
+      const agent = await agentStore.getAgent(agentId);
+      if (!agent) {
+        throw notFound("Agent not found");
+      }
+
+      const rootDir = scopedStore.getRootDir();
+      const result = await writeAgentMemoryFile(rootDir, agentId, path, content);
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof MemoryBackendError) {
+        const status = err.code === "NOT_FOUND" ? 404 : err.code === "UNSUPPORTED" ? 400 : 500;
+        throw new ApiError(status, `Memory operation failed: ${err.message}`, { code: err.code, backend: err.backend });
+      }
+      rethrowAsApiError(err, "Failed to save agent memory file");
     }
   });
 
