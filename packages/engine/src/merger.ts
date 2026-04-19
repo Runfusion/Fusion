@@ -1546,7 +1546,10 @@ export async function aiMergeTask(
           execSync("git reset --merge", { cwd: rootDir, stdio: "pipe" });
           // Audit trail: record git reset for merge cleanup (FN-1404)
           await audit.git({ type: "reset:hard", target: branch, metadata: { purpose: "merge-cleanup", attempt: attemptNum } });
-        } catch { /* ignore cleanup errors */ }
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          mergerLog.warn(`${taskId}: git reset --merge cleanup failed during attempt ${attemptNum}: ${msg}`);
+        }
       }
 
       return false;
@@ -1663,7 +1666,10 @@ export async function aiMergeTask(
             execSync("git reset --merge", { cwd: rootDir, stdio: "pipe" });
             // Audit trail: record git reset for build retry (FN-1404)
             await audit.git({ type: "reset:hard", target: branch, metadata: { purpose: "build-retry" } });
-          } catch { /* ignore cleanup errors */ }
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            mergerLog.warn(`${taskId}: git reset --merge cleanup failed during build-retry: ${msg}`);
+          }
           return false; // Retry
         }
         throw error; // No retries left — fatal
@@ -1676,7 +1682,10 @@ export async function aiMergeTask(
           execSync("git reset --merge", { cwd: rootDir, stdio: "pipe" });
           // Audit trail: record git reset for retry (FN-1404)
           await audit.git({ type: "reset:hard", target: branch, metadata: { purpose: "merge-retry", attempt: attemptNum } });
-        } catch { /* ignore cleanup errors */ }
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          mergerLog.warn(`${taskId}: git reset --merge cleanup failed during retry cleanup (attempt ${attemptNum}): ${msg}`);
+        }
         return false; // Allow retry
       }
       throw error; // Last attempt or auto-resolve disabled - propagate error

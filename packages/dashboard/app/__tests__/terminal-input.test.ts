@@ -23,18 +23,19 @@ describe("terminal helper textarea CSS contract", () => {
     expect(ruleBody).toMatch(/height:\s*1px\b/);
   });
 
-  it("does not disable pointer events on the helper textarea", () => {
+  it("anchors the helper textarea inside the terminal bounds", () => {
     const ruleBody = findHelperTextareaRule();
-    expect(ruleBody).not.toMatch(/pointer-events\s*:\s*none\b/);
+    expect(ruleBody).toMatch(/top:\s*0\b/);
+    expect(ruleBody).toMatch(/left:\s*0\b/);
   });
 
-  it("positions the helper textarea off-screen", () => {
+  it("prevents direct pointer interaction with the helper textarea", () => {
     const ruleBody = findHelperTextareaRule();
-    expect(ruleBody).toMatch(/top:\s*-9999px\b/);
+    expect(ruleBody).toMatch(/pointer-events\s*:\s*none\b/);
   });
 
-  it("keeps the helper textarea invisible", () => {
+  it("keeps the helper textarea effectively invisible", () => {
     const ruleBody = findHelperTextareaRule();
-    expect(ruleBody).toMatch(/opacity:\s*0\b/);
+    expect(ruleBody).toMatch(/opacity:\s*0\.01\b/);
   });
 });

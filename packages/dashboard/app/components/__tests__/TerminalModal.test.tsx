@@ -3602,6 +3602,45 @@ describe("TerminalModal — xterm focus initialization (FN-1602)", () => {
       expect(screen.getByTestId("terminal-modal")).toBeTruthy();
     });
   });
+
+  it("focuses xterm helper textarea on user pointer gesture", async () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      expect(mockTerminalInstance.open).toHaveBeenCalled();
+    });
+
+    const terminalDiv = screen.getByTestId("terminal-xterm");
+    const helperTextarea = document.createElement("textarea");
+    helperTextarea.className = "xterm-helper-textarea";
+    const focusSpy = vi.spyOn(helperTextarea, "focus");
+    const setSelectionRangeSpy = vi.spyOn(helperTextarea, "setSelectionRange");
+    terminalDiv.appendChild(helperTextarea);
+
+    fireEvent.pointerDown(terminalDiv);
+
+    expect(mockTerminalInstance.focus).toHaveBeenCalled();
+    expect(focusSpy).toHaveBeenCalled();
+    expect(setSelectionRangeSpy).toHaveBeenCalledWith(0, 0);
+  });
+
+  it("focuses xterm helper textarea on touch gesture", async () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      expect(mockTerminalInstance.open).toHaveBeenCalled();
+    });
+
+    const terminalDiv = screen.getByTestId("terminal-xterm");
+    const helperTextarea = document.createElement("textarea");
+    helperTextarea.className = "xterm-helper-textarea";
+    const focusSpy = vi.spyOn(helperTextarea, "focus");
+    terminalDiv.appendChild(helperTextarea);
+
+    fireEvent.touchStart(terminalDiv);
+
+    expect(focusSpy).toHaveBeenCalled();
+  });
 });
 
 // --- FN-1765: Project-context propagation ---

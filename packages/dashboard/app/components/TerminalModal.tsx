@@ -680,6 +680,34 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
   }, [connectionStatus]);
 
   /**
+   * On mobile browsers, opening the soft keyboard requires focus to happen
+   * within a real user gesture. Programmatic focus in async effects is often
+   * ignored even though xterm stays connected and receives output.
+   */
+  const handleTerminalGestureFocus = useCallback(() => {
+    if (!terminalRef.current) return;
+
+    // Ensure xterm updates its own focus state first.
+    xtermRef.current?.focus();
+
+    const helperTextarea = terminalRef.current.querySelector(
+      ".xterm-helper-textarea",
+    ) as HTMLTextAreaElement | undefined;
+
+    if (!helperTextarea) return;
+
+    try {
+      helperTextarea.focus({ preventScroll: true });
+    } catch {
+      helperTextarea.focus();
+    }
+
+    // Keep caret at end so subsequent key presses append naturally.
+    const caretPos = helperTextarea.value.length;
+    helperTextarea.setSelectionRange(caretPos, caretPos);
+  }, []);
+
+  /**
    * Auto-recover when the server reports the session is invalid (code 4004).
    *
    * Without this handler the user sees "Disconnected" with a reconnect button
@@ -953,6 +981,8 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
             ref={terminalRef}
             className="terminal-xterm"
             data-testid="terminal-xterm"
+            onPointerDown={handleTerminalGestureFocus}
+            onTouchStart={handleTerminalGestureFocus}
           />
         </div>
 
