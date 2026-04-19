@@ -1078,7 +1078,11 @@ describe("NewAgentDialog", () => {
 
   describe("model favorites persistence", () => {
     it("persists provider favorite toggle via updateGlobalSettings", async () => {
-      mockFetchModels.mockResolvedValue(MOCK_MODELS_RESPONSE);
+      mockFetchModels.mockResolvedValue({
+        models: MOCK_MODELS_RESPONSE.models,
+        favoriteProviders: ["anthropic"],
+        favoriteModels: [],
+      });
 
       render(
         <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
@@ -1101,7 +1105,13 @@ describe("NewAgentDialog", () => {
     });
 
     it("rolls back local favorite state when updateGlobalSettings fails", async () => {
-      mockFetchModels.mockResolvedValue(MOCK_MODELS_RESPONSE);
+      // Provider rollback should use provider favorites only; if all models are favorited,
+      // provider rows may be hidden in the dropdown.
+      mockFetchModels.mockResolvedValue({
+        models: MOCK_MODELS_RESPONSE.models,
+        favoriteProviders: ["anthropic"],
+        favoriteModels: [],
+      });
       mockUpdateGlobalSettings.mockRejectedValueOnce(new Error("Network error"));
 
       render(

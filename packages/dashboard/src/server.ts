@@ -42,7 +42,7 @@ import {
   rehydrateFromStore as rehydrateMilestoneSliceSessions,
 } from "./milestone-slice-interview.js";
 import { ChatManager } from "./chat.js";
-import { loadDevServerManager, shutdownAllDevServerManagers } from "./dev-server-manager.js";
+import { stopAllDevServers } from "./dev-server-routes.js";
 import type { SkillsAdapter } from "./skills-adapter.js";
 import { createAuthMiddleware } from "./auth-middleware.js";
 
@@ -821,15 +821,10 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       server = originalListen(...normalizedArgs);
     }
 
-    void loadDevServerManager(store.getRootDir()).catch((error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn(`[server] Failed to initialize dev-server manager: ${message}`);
-    });
-
     server.once("close", () => {
       clearAiSessionCleanupInterval();
       aiSessionStore.stopScheduledCleanup();
-      void shutdownAllDevServerManagers().catch((error) => {
+      void stopAllDevServers().catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         console.warn(`[server] Failed to shutdown dev-server managers: ${message}`);
       });

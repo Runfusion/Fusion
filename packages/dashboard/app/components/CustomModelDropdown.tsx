@@ -531,6 +531,15 @@ export function CustomModelDropdown({
         {sortedProviderEntries.map(([provider, providerModels]) => {
           const groupStartIndex = optionsList.findIndex((opt) => opt.value === `__group_${provider}`);
           const isFavorite = favoriteProviders.includes(provider);
+          
+          // Filter out favorited models - they already appear in the favorites section
+          const nonFavoritedModels = providerModels.filter((m) => {
+            const optionValue = `${m.provider}/${m.id}`;
+            return !favoriteModels.includes(optionValue);
+          });
+          
+          // Skip provider group if all models are favorited
+          if (nonFavoritedModels.length === 0) return null;
 
           return (
             <div key={provider} className="model-combobox-group">
@@ -552,7 +561,7 @@ export function CustomModelDropdown({
                   </button>
                 )}
               </div>
-              {providerModels.map((m) => {
+              {nonFavoritedModels.map((m) => {
                 const optionValue = `${m.provider}/${m.id}`;
                 const optionIndex = optionsList.findIndex((opt) => opt.value === optionValue);
                 const isHighlighted = highlightedIndex === optionIndex;

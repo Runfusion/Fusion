@@ -9,38 +9,11 @@ import {
   resetDevServerManager,
   type DevServerStartOptions,
 } from "../dev-server-manager.js";
-import {
-  DevServerStore,
-  projectDevServerLogFile,
-  projectDevServerStateFile,
-  type DevServerPersistedState,
-} from "../dev-server-store.js";
-
-function createState(overrides: Partial<DevServerPersistedState> = {}): DevServerPersistedState {
-  return {
-    serverKey: "default",
-    status: "stopped",
-    command: null,
-    scriptName: null,
-    cwd: null,
-    pid: null,
-    startedAt: null,
-    updatedAt: new Date().toISOString(),
-    previewUrl: null,
-    previewProtocol: null,
-    previewHost: null,
-    previewPort: null,
-    previewPath: null,
-    exitCode: 0,
-    exitSignal: null,
-    exitedAt: new Date().toISOString(),
-    failureReason: null,
-    ...overrides,
-  };
-}
+import { DevServerStore } from "../dev-server-store.js";
 
 async function createManager(rootDir: string): Promise<{ manager: DevServerManager; store: DevServerStore }> {
-  const store = new DevServerStore(projectDevServerStateFile(rootDir), projectDevServerLogFile(rootDir));
+  const store = new DevServerStore(rootDir);
+  await store.load();
   const manager = new DevServerManager(rootDir, store, { logLimit: 50 });
   await manager.initialize();
   return { manager, store };
@@ -80,16 +53,15 @@ describe("DevServerManager persistence", () => {
 
   it("rehydrates persisted state and reconciles stale PIDs", async () => {
     const root = await mkdtemp(join(tmpdir(), "dev-server-manager-"));
-    const store = new DevServerStore(projectDevServerStateFile(root), projectDevServerLogFile(root));
-
-    await store.saveState(createState({
+    const store = new DevServerStore(root);
+    await store.load();
+    await store.updateState({
       status: "running",
       pid: 999_999,
       command: "pnpm dev",
+      cwd: root,
       startedAt: new Date().toISOString(),
-      exitCode: null,
-      exitedAt: null,
-    }));
+    });
 
     const manager = new DevServerManager(root, store);
     runningManagers.push(manager);
@@ -98,7 +70,7 @@ describe("DevServerManager persistence", () => {
     const state = manager.getState();
     expect(state.status).toBe("stopped");
     expect(state.pid).toBeNull();
-    expect(state.failureReason).toContain("Recovered process is no longer running");
+    expect(manager.getRecentLogs().some((entry) => entry.message.includes("Recovered stale persisted PID"))).toBe(true);
   });
 
   it("persists lifecycle transitions and stdout logs while running", async () => {
@@ -112,15 +84,14 @@ describe("DevServerManager persistence", () => {
 
     const state = manager.getState();
     expect(state.status).toBe("running");
-    expect(state.previewUrl).toContain("http://127.0.0.1:4173/preview");
+    expect(state.previewUrl).toContain("http://127.0.0.1:4173");
     expect(typeof state.pid).toBe("number");
 
-    const persistedState = await store.loadState();
-    expect(persistedState?.status).toBe("running");
-    expect(persistedState?.previewHost).toBe("127.0.0.1");
-
-    const logs = await store.readLogTail(20);
-    expect(logs.some((entry) => entry.message.includes("ready http://127.0.0.1:4173/preview"))).toBe(true);
+    await store.load();
+    const persistedState = store.getState();
+    expect(persistedState.status).toBe("running");
+    expect(persistedState.detectedUrl).toContain("127.0.0.1:4173");
+    expect(persistedState.logHistory.some((line) => line.includes("ready http://127.0.0.1:4173/preview"))).toBe(true);
 
     await manager.stop();
     expect(manager.getState().status).toBe("stopped");
@@ -128,21 +99,10 @@ describe("DevServerManager persistence", () => {
 
   it("restores persisted logs into in-memory snapshot on startup", async () => {
     const root = await mkdtemp(join(tmpdir(), "dev-server-manager-"));
-    const store = new DevServerStore(projectDevServerStateFile(root), projectDevServerLogFile(root));
-    await store.appendLogs([
-      {
-        serverKey: "default",
-        source: "system",
-        message: "first",
-        timestamp: "2026-04-19T12:00:00.000Z",
-      },
-      {
-        serverKey: "default",
-        source: "stdout",
-        message: "second",
-        timestamp: "2026-04-19T12:00:01.000Z",
-      },
-    ]);
+    const store = new DevServerStore(root);
+    await store.load();
+    await store.appendLog("first");
+    await store.appendLog("second");
 
     const manager = new DevServerManager(root, store, { logLimit: 10 });
     runningManagers.push(manager);

@@ -1,148 +1,211 @@
 // @vitest-environment node
 
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  DEV_SERVER_DEFAULT_STATE,
+  DEV_SERVER_LOG_MAX_LINES,
   DevServerStore,
   loadDevServerStore,
-  projectDevServerLogFile,
-  projectDevServerStateFile,
   resetDevServerStore,
-  type DevServerPersistedState,
 } from "../dev-server-store.js";
 
-function createState(overrides: Partial<DevServerPersistedState> = {}): DevServerPersistedState {
-  return {
-    serverKey: "default",
-    status: "running",
-    command: "pnpm dev",
-    scriptName: "dev",
-    cwd: "/repo",
-    pid: 12345,
-    startedAt: "2026-04-19T12:00:00.000Z",
-    updatedAt: "2026-04-19T12:01:00.000Z",
-    previewUrl: "http://localhost:5173",
-    previewProtocol: "http",
-    previewHost: "localhost",
-    previewPort: 5173,
-    previewPath: "/",
-    exitCode: null,
-    exitSignal: null,
-    exitedAt: null,
-    failureReason: null,
-    ...overrides,
-  };
+function createTempProject(): string {
+  return mkdtempSync(join(os.tmpdir(), "fn-dev-server-store-"));
+}
+
+function readPersistedState(projectDir: string): Record<string, unknown> {
+  const filePath = join(projectDir, ".fusion", "dev-server.json");
+  return JSON.parse(readFileSync(filePath, "utf-8")) as Record<string, unknown>;
 }
 
 describe("DevServerStore", () => {
+  const tempDirs: string[] = [];
+
   afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
     resetDevServerStore();
   });
 
-  it("persists state atomically and loads it back", async () => {
-    const root = await mkdtemp(join(tmpdir(), "dev-server-store-"));
-    const store = new DevServerStore(projectDevServerStateFile(root), projectDevServerLogFile(root));
+  it("loading from missing file initializes with default state", async () => {
+    const projectDir = createTempProject();
+    tempDirs.push(projectDir);
 
-    const input = createState();
-    await store.saveState(input);
+    const store = new DevServerStore(projectDir);
+    await store.load();
 
-    const loaded = await store.loadState();
-    expect(loaded).toEqual(input);
-
-    const stateFileText = await readFile(projectDevServerStateFile(root), "utf-8");
-    expect(stateFileText).toContain('"version": 1');
-    expect(stateFileText).toContain('"status": "running"');
+    expect(store.getState()).toEqual(DEV_SERVER_DEFAULT_STATE());
   });
 
-  it("returns null for missing or corrupt state file", async () => {
-    const root = await mkdtemp(join(tmpdir(), "dev-server-store-"));
-    const store = new DevServerStore(projectDevServerStateFile(root), projectDevServerLogFile(root));
+  it("loading from valid JSON populates state correctly", async () => {
+    const projectDir = createTempProject();
+    tempDirs.push(projectDir);
 
-    expect(await store.loadState()).toBeNull();
-
-    await mkdir(join(root, ".fusion"), { recursive: true });
-    await writeFile(projectDevServerStateFile(root), "{invalid-json", "utf-8");
-    expect(await store.loadState()).toBeNull();
-  });
-
-  it("normalizes invalid persisted fields instead of throwing", async () => {
-    const root = await mkdtemp(join(tmpdir(), "dev-server-store-"));
-    const store = new DevServerStore(projectDevServerStateFile(root), projectDevServerLogFile(root));
-
-    await mkdir(join(root, ".fusion"), { recursive: true });
-    await writeFile(
-      projectDevServerStateFile(root),
-      JSON.stringify({
-        version: 1,
-        state: {
-          serverKey: "",
-          status: "running",
-          command: "pnpm dev",
-          pid: "9876",
-          startedAt: "not-a-date",
-          updatedAt: "2026-04-19T12:01:00.000Z",
+    mkdirSync(join(projectDir, ".fusion"), { recursive: true });
+    writeFileSync(
+      join(projectDir, ".fusion", "dev-server.json"),
+      JSON.stringify(
+        {
+          state: {
+            id: "server-1",
+            name: "default",
+            status: "running",
+            command: "pnpm dev",
+            cwd: projectDir,
+            logHistory: ["ready"],
+            detectedUrl: "http://localhost:5173",
+            detectedPort: 5173,
+          },
         },
-      }),
+        null,
+        2,
+      ),
       "utf-8",
     );
 
-    const loaded = await store.loadState();
-    expect(loaded?.serverKey).toBe("default");
-    expect(loaded?.pid).toBe(9876);
-    expect(loaded?.startedAt).toBeNull();
-  });
+    const store = new DevServerStore(projectDir);
+    await store.load();
 
-  it("appends logs and returns tolerant tail", async () => {
-    const root = await mkdtemp(join(tmpdir(), "dev-server-store-"));
-    const store = new DevServerStore(projectDevServerStateFile(root), projectDevServerLogFile(root));
-
-    await store.appendLog({
-      serverKey: "default",
-      source: "system",
-      message: "booting",
-      timestamp: "2026-04-19T12:00:00.000Z",
+    expect(store.getState()).toMatchObject({
+      id: "server-1",
+      status: "running",
+      command: "pnpm dev",
+      cwd: projectDir,
+      detectedUrl: "http://localhost:5173",
+      detectedPort: 5173,
+      logHistory: ["ready"],
     });
-    await store.appendLogs([
-      {
-        serverKey: "default",
-        source: "stdout",
-        message: "ready in 150ms",
-        timestamp: "2026-04-19T12:00:01.000Z",
-      },
-      {
-        serverKey: "default",
-        source: "stderr",
-        message: "warning",
-        timestamp: "2026-04-19T12:00:02.000Z",
-      },
-    ]);
-
-    await writeFile(projectDevServerLogFile(root), "{bad-line}\n", { flag: "a" });
-
-    const tailTwo = await store.readLogTail(2);
-    expect(tailTwo).toHaveLength(1);
-    expect(tailTwo[0]?.message).toBe("warning");
-
-    const all = await store.readLogTail(20);
-    expect(all.map((entry) => entry.message)).toEqual(["booting", "ready in 150ms", "warning"]);
   });
 
-  it("reuses singleton instances per project root", async () => {
-    const rootA = await mkdtemp(join(tmpdir(), "dev-server-store-a-"));
-    const rootB = await mkdtemp(join(tmpdir(), "dev-server-store-b-"));
+  it("loading from invalid JSON falls back to default state", async () => {
+    const projectDir = createTempProject();
+    tempDirs.push(projectDir);
 
-    const a1 = await loadDevServerStore(rootA);
-    const a2 = await loadDevServerStore(rootA);
-    const b1 = await loadDevServerStore(rootB);
+    mkdirSync(join(projectDir, ".fusion"), { recursive: true });
+    writeFileSync(join(projectDir, ".fusion", "dev-server.json"), "{invalid", "utf-8");
 
-    expect(a1).toBe(a2);
-    expect(a1).not.toBe(b1);
+    const store = new DevServerStore(projectDir);
+    await store.load();
 
+    expect(store.getState()).toEqual(DEV_SERVER_DEFAULT_STATE());
+  });
+
+  it("updateState merges partial updates and persists to disk", async () => {
+    const projectDir = createTempProject();
+    tempDirs.push(projectDir);
+
+    const store = new DevServerStore(projectDir);
+    await store.load();
+
+    const updated = await store.updateState({
+      id: "abc",
+      command: "pnpm dev",
+      cwd: projectDir,
+      status: "starting",
+    });
+
+    expect(updated).toMatchObject({
+      id: "abc",
+      command: "pnpm dev",
+      cwd: projectDir,
+      status: "starting",
+      name: "default",
+    });
+
+    const persisted = readPersistedState(projectDir) as { state: Record<string, unknown> };
+    expect(persisted.state).toMatchObject({
+      id: "abc",
+      command: "pnpm dev",
+      status: "starting",
+    });
+  });
+
+  it("updateState overwrites previous values", async () => {
+    const projectDir = createTempProject();
+    tempDirs.push(projectDir);
+
+    const store = new DevServerStore(projectDir);
+    await store.load();
+
+    await store.updateState({ command: "pnpm dev", status: "running" });
+    const updated = await store.updateState({ command: "npm run start", status: "failed", exitCode: 1 });
+
+    expect(updated.command).toBe("npm run start");
+    expect(updated.status).toBe("failed");
+    expect(updated.exitCode).toBe(1);
+  });
+
+  it("appendLog adds lines to logHistory", async () => {
+    const projectDir = createTempProject();
+    tempDirs.push(projectDir);
+
+    const store = new DevServerStore(projectDir);
+    await store.load();
+
+    await store.appendLog("line one");
+    await store.appendLog("line two");
+
+    expect(store.getState().logHistory).toEqual(["line one", "line two"]);
+
+    const persisted = readPersistedState(projectDir) as { state: { logHistory: string[] } };
+    expect(persisted.state.logHistory).toEqual(["line one", "line two"]);
+  });
+
+  it("appendLog trims ring buffer at max 500 lines", async () => {
+    const projectDir = createTempProject();
+    tempDirs.push(projectDir);
+
+    const store = new DevServerStore(projectDir);
+    await store.load();
+
+    for (let i = 0; i < DEV_SERVER_LOG_MAX_LINES + 2; i += 1) {
+      await store.appendLog(`line-${i}`);
+    }
+
+    const logHistory = store.getState().logHistory;
+    expect(logHistory).toHaveLength(DEV_SERVER_LOG_MAX_LINES);
+    expect(logHistory[0]).toBe("line-2");
+    expect(logHistory[DEV_SERVER_LOG_MAX_LINES - 1]).toBe(`line-${DEV_SERVER_LOG_MAX_LINES + 1}`);
+  });
+
+  it("clearLogs empties logHistory and persists", async () => {
+    const projectDir = createTempProject();
+    tempDirs.push(projectDir);
+
+    const store = new DevServerStore(projectDir);
+    await store.load();
+
+    await store.appendLog("before clear");
+    await store.clearLogs();
+
+    expect(store.getState().logHistory).toEqual([]);
+
+    const persisted = readPersistedState(projectDir) as { state: { logHistory: string[] } };
+    expect(persisted.state.logHistory).toEqual([]);
+  });
+
+  it("singleton cache returns same instance for same path", async () => {
+    const projectDir = createTempProject();
+    tempDirs.push(projectDir);
+
+    const first = await loadDevServerStore(projectDir);
+    const second = await loadDevServerStore(projectDir);
+
+    expect(first).toBe(second);
+  });
+
+  it("resetDevServerStore clears singleton cache", async () => {
+    const projectDir = createTempProject();
+    tempDirs.push(projectDir);
+
+    const first = await loadDevServerStore(projectDir);
     resetDevServerStore();
+    const second = await loadDevServerStore(projectDir);
 
-    const a3 = await loadDevServerStore(rootA);
-    expect(a3).not.toBe(a1);
+    expect(first).not.toBe(second);
   });
 });

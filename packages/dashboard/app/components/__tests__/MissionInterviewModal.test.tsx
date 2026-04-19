@@ -506,7 +506,13 @@ describe("MissionInterviewModal", () => {
     });
 
     it("rolls back local favorite state when updateGlobalSettings fails", async () => {
-      mockFetchModels.mockResolvedValue(mockModelsWithFavorites);
+      // Provider rollback should be exercised with provider favorites only.
+      // When all models in a provider are favorited, the provider group can be hidden.
+      mockFetchModels.mockResolvedValue({
+        models: mockModelsWithFavorites.models,
+        favoriteProviders: ["anthropic"],
+        favoriteModels: [],
+      });
       mockUpdateGlobalSettings.mockRejectedValueOnce(new Error("Network error"));
 
       renderModal();

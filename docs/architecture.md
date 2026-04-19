@@ -374,9 +374,10 @@ Key server capabilities:
 - REST APIs for tasks, git, GitHub, agents, missions, planning, automations/routines, settings
 - Chat APIs (`/api/chat/*`) with streaming response support (`routes.ts`, `chat.ts`)
 - Dev-server lifecycle + persistence APIs (`/api/dev-server/*`) backed by:
-  - `dev-server-manager.ts` (single process manager per project root)
-  - `dev-server-store.ts` (durable `.fusion/dev-server-state.json` + `.fusion/dev-server.log`)
-  - startup PID reconciliation (`process.kill(pid, 0)` liveness check)
+  - `dev-server-routes.ts` (router factory + per-project runtime registry)
+  - `dev-server-process.ts` (`DevServerProcessManager` for spawn/stop/restart/url-detection)
+  - `dev-server-store.ts` (durable `.fusion/dev-server.json` state + log ring buffer)
+  - `dev-server-detect.ts` (project/workspace script auto-detection + confidence scoring)
 - Plugin management routes (`plugin-routes.ts`)
 - Insights routes (`insights-routes.ts`)
 - Roadmap routes (`roadmap-routes.ts`)
@@ -392,10 +393,10 @@ Key server capabilities:
   - Streams assistant responses as SSE events for chat sessions
 - **Task log stream**: `/api/tasks/:id/logs/stream` (`server.ts`)
   - SSE endpoint for live task log streaming with project scope resolution
-- **Dev-server stream**: `/api/dev-server/stream` (`routes.ts`, `dev-server-manager.ts`)
-  - SSE stream emits `state` + `log` events with monotonic `id` fields
-  - supports replay from buffered history using `Last-Event-ID`/`lastEventId`
-  - frontend hydrates from `/api/dev-server/status` + `/api/dev-server/history` before attaching stream
+- **Dev-server stream**: `/api/dev-server/logs/stream` (`dev-server-routes.ts`)
+  - SSE stream emits `history`, `log`, `stopped`, and `failed` events
+  - initial connection replays persisted `logHistory` and then follows live process output
+  - companion endpoints: `/api/dev-server/detect`, `/status`, `/start`, `/stop`, `/restart`, `/preview-url`
 - **Badge WebSocket**: `/api/ws` (`server.ts`, `websocket.ts`)
   - Scope-keyed channels (`badge:{scopeKey}:{taskId}`) prevent cross-project collisions
 - **Terminal WebSocket**: `/api/terminal/ws` (`server.ts`, `terminal-service.ts`)
@@ -414,7 +415,7 @@ Key server capabilities:
 - Chat: `useChat.ts`, `useQuickChat.ts`
 - Documents/insights/memory: `useDocuments.ts`, `useInsights.ts`, `useMemoryBackendStatus.ts`, `useMemoryData.ts`
 - Planning/roadmaps: `useRoadmaps.ts`
-- Dev server: `useDevServer.ts` (status/history hydration, reconnect stream merge, project-scope reset)
+- Dev server: `useDevServer.ts` (status hydration, command controls, reconnect stream handling, project-scope reset)
 - Project/agents/setup: `useProjects.ts`, `useCurrentProject.ts`, `useAgents.ts`, `useSetupReadiness.ts`
 - UX/platform helpers: `useFavorites.ts`, `useAuthOnboarding.ts`, `useDeepLink.ts`, `useTerminal.ts`
 

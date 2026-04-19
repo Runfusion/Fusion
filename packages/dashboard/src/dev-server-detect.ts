@@ -1,253 +1,184 @@
-import { glob, readFile, stat } from "node:fs/promises";
-import path from "node:path";
+import { glob, readFile } from "node:fs/promises";
+import { dirname, join, relative, resolve } from "node:path";
 
-export interface DetectedCandidate {
-  name: string;
-  command: string;
-  scriptName: string;
-  cwd: string;
-  label: string;
-}
+/** Script names in priority order (most likely first) */
+export const DEV_SCRIPT_NAMES = ["dev", "start", "web", "frontend", "serve", "storybook", "preview"] as const;
 
-export const PREFERRED_SCRIPT_NAMES: readonly string[] = [
-  "dev",
-  "start",
-  "serve",
-  "web",
-  "frontend",
-  "storybook",
-  "preview",
+/** Framework indicators in devDependencies/dependencies */
+export const FRAMEWORK_INDICATORS = [
+  "vite", "next", "nuxt", "@angular/cli", "react-scripts",
+  "webpack-dev-server", "@storybook/react", "parcel",
+  "astro", "svelte", "remix", "@remix-run/dev",
+  "@sveltejs/kit", "gatsby", "haul",
 ];
 
-export const EXCLUDED_SCRIPT_NAMES: ReadonlySet<string> = new Set([
-  "lint",
-  "test",
-  "build",
-  "typecheck",
-  "check",
-  "clean",
-  "format",
-  "validate",
-  "compile",
-  "bundle",
-]);
+export interface DetectedScript {
+  /** Script name (e.g., "dev") */
+  name: string;
+  /** Full command string (e.g., "vite") */
+  command: string;
+  /** Source path: "root" for project root, relative path for workspace packages */
+  source: string;
+  /** Package name from package.json "name" field */
+  packageName?: string;
+  /** Confidence score 0-1 based on script name priority and framework detection */
+  confidence: number;
+}
 
-const cache: Map<string, { candidates: DetectedCandidate[]; mtime: number }> = new Map();
+export interface DetectionResult {
+  candidates: DetectedScript[];
+}
 
 interface PackageJsonShape {
+  name?: string;
+  main?: string;
+  private?: boolean;
   scripts?: Record<string, string>;
-  workspaces?: string[] | { packages?: string[] };
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
 }
 
-function parseScripts(value: unknown): Record<string, string> {
-  if (!value || typeof value !== "object") {
-    return {};
-  }
-
-  const scripts = (value as { scripts?: unknown }).scripts;
-  if (!scripts || typeof scripts !== "object") {
-    return {};
-  }
-
-  const entries = Object.entries(scripts as Record<string, unknown>).filter(
-    (entry): entry is [string, string] => typeof entry[0] === "string" && typeof entry[1] === "string",
-  );
-
-  return Object.fromEntries(entries);
-}
-
-function shouldIncludeScript(scriptName: string): boolean {
-  if (PREFERRED_SCRIPT_NAMES.includes(scriptName)) {
-    return true;
-  }
-  return !EXCLUDED_SCRIPT_NAMES.has(scriptName);
-}
-
-function preferredIndex(scriptName: string): number {
-  const index = PREFERRED_SCRIPT_NAMES.indexOf(scriptName);
-  return index >= 0 ? index : Number.POSITIVE_INFINITY;
-}
-
-function buildCandidatesForScripts(
-  scripts: Record<string, string>,
-  cwd: string,
-  labelPrefix: string,
-): DetectedCandidate[] {
-  return Object.entries(scripts)
-    .filter(([scriptName]) => shouldIncludeScript(scriptName))
-    .map(([scriptName, command]) => {
-      const label = `${labelPrefix} > ${scriptName}`;
-      const isRoot = labelPrefix === "Root";
-      return {
-        name: isRoot ? scriptName : label,
-        command,
-        scriptName,
-        cwd,
-        label,
-      } satisfies DetectedCandidate;
-    });
-}
-
-async function readJsonFile<T>(filePath: string): Promise<T | null> {
+async function readPackageJson(filePath: string): Promise<PackageJsonShape | null> {
   try {
-    const content = await readFile(filePath, "utf-8");
-    return JSON.parse(content) as T;
+    const raw = await readFile(filePath, "utf-8");
+    return JSON.parse(raw) as PackageJsonShape;
   } catch {
     return null;
   }
 }
 
-function collectWorkspacePatterns(rootPackage: PackageJsonShape | null, pnpmWorkspaceRaw: string | null, lernaPackage: unknown): string[] {
-  const patterns = new Set<string>();
-
-  if (pnpmWorkspaceRaw) {
-    const matches = pnpmWorkspaceRaw.matchAll(/^\s*-\s*['"]?(.+?)['"]?\s*$/gm);
-    for (const match of matches) {
-      const pattern = match[1]?.trim();
-      if (pattern) {
-        patterns.add(pattern);
-      }
-    }
+function getScriptPriorityScore(scriptName: string): number {
+  const index = DEV_SCRIPT_NAMES.indexOf(scriptName as (typeof DEV_SCRIPT_NAMES)[number]);
+  if (index === -1) {
+    return 0;
   }
 
-  if (rootPackage?.workspaces) {
-    if (Array.isArray(rootPackage.workspaces)) {
-      for (const pattern of rootPackage.workspaces) {
-        if (typeof pattern === "string" && pattern.trim().length > 0) {
-          patterns.add(pattern.trim());
-        }
-      }
-    } else if (Array.isArray(rootPackage.workspaces.packages)) {
-      for (const pattern of rootPackage.workspaces.packages) {
-        if (typeof pattern === "string" && pattern.trim().length > 0) {
-          patterns.add(pattern.trim());
-        }
-      }
-    }
+  if (DEV_SCRIPT_NAMES.length <= 1) {
+    return 0.5;
   }
 
-  if (Array.isArray((lernaPackage as { packages?: unknown })?.packages)) {
-    for (const pattern of (lernaPackage as { packages: unknown[] }).packages) {
-      if (typeof pattern === "string" && pattern.trim().length > 0) {
-        patterns.add(pattern.trim());
-      }
-    }
-  }
-
-  return [...patterns];
+  const maxBoost = 0.5;
+  const minBoost = 0.2;
+  const delta = maxBoost - minBoost;
+  const ratio = index / (DEV_SCRIPT_NAMES.length - 1);
+  return maxBoost - (ratio * delta);
 }
 
-function toPackageJsonPattern(pattern: string): string {
-  const normalized = pattern.replace(/\\/g, "/").replace(/\/+$|^\/+/, "");
-  if (!normalized) {
-    return "package.json";
-  }
-  if (normalized.endsWith("package.json")) {
-    return normalized;
-  }
-  return `${normalized}/package.json`;
+function hasFrameworkIndicator(pkg: PackageJsonShape): boolean {
+  const deps = {
+    ...(pkg.dependencies ?? {}),
+    ...(pkg.devDependencies ?? {}),
+  };
+
+  return FRAMEWORK_INDICATORS.some((indicator) => indicator in deps);
 }
 
-async function expandWorkspacePackageJsons(projectRoot: string, patterns: string[]): Promise<string[]> {
-  const packageJsonPaths: string[] = [];
+function scoreCandidate(scriptName: string, pkg: PackageJsonShape): number {
+  let score = getScriptPriorityScore(scriptName);
 
-  for (const pattern of patterns) {
-    const packageJsonPattern = toPackageJsonPattern(pattern);
+  if (hasFrameworkIndicator(pkg)) {
+    score += 0.3;
+  }
+
+  if (pkg.private === true || !pkg.main) {
+    score += 0.2;
+  }
+
+  return Math.min(1, score);
+}
+
+async function collectWorkspacePackageJsons(projectRoot: string): Promise<string[]> {
+  const discovered = new Set<string>();
+
+  try {
+    await readFile(join(projectRoot, "pnpm-workspace.yaml"), "utf-8");
+  } catch {
+    // Missing pnpm workspace file is okay.
+  }
+
+  for (const pattern of ["packages/*/package.json", "apps/*/package.json"]) {
     try {
-      for await (const matchedPath of glob(packageJsonPattern, { cwd: projectRoot })) {
-        if (typeof matchedPath !== "string") {
-          continue;
+      for await (const match of glob(pattern, { cwd: projectRoot })) {
+        if (typeof match === "string") {
+          discovered.add(resolve(projectRoot, match));
         }
-        packageJsonPaths.push(path.resolve(projectRoot, matchedPath));
       }
     } catch {
-      // Ignore invalid glob patterns and continue.
+      // Invalid glob or inaccessible directory; skip.
     }
   }
 
-  return [...new Set(packageJsonPaths)];
+  return [...discovered];
 }
 
-async function detect(projectRoot: string): Promise<DetectedCandidate[]> {
-  const candidates: DetectedCandidate[] = [];
+function extractScripts(pkg: PackageJsonShape): Array<{ name: string; command: string }> {
+  const scripts = pkg.scripts ?? {};
+  const output: Array<{ name: string; command: string }> = [];
 
-  const rootPackagePath = path.join(projectRoot, "package.json");
-  const rootPackageJson = await readJsonFile<PackageJsonShape>(rootPackagePath);
-  const rootScripts = parseScripts(rootPackageJson);
-  candidates.push(...buildCandidatesForScripts(rootScripts, projectRoot, "Root"));
+  for (const scriptName of DEV_SCRIPT_NAMES) {
+    const command = scripts[scriptName];
+    if (typeof command === "string" && command.trim().length > 0) {
+      output.push({ name: scriptName, command: command.trim() });
+    }
+  }
 
-  const [pnpmWorkspaceRaw, lernaJson] = await Promise.all([
-    readFile(path.join(projectRoot, "pnpm-workspace.yaml"), "utf-8").catch(() => null),
-    readJsonFile<Record<string, unknown>>(path.join(projectRoot, "lerna.json")),
-  ]);
+  return output;
+}
 
-  const workspacePatterns = collectWorkspacePatterns(rootPackageJson, pnpmWorkspaceRaw, lernaJson);
-  const workspacePackageJsons = await expandWorkspacePackageJsons(projectRoot, workspacePatterns);
+function toSource(projectRoot: string, packageJsonPath: string): string {
+  const packageDir = dirname(packageJsonPath);
+  const rel = relative(projectRoot, packageDir).replace(/\\/g, "/");
+  return rel.length > 0 ? rel : "root";
+}
 
+export async function detectDevServerScripts(projectRoot: string): Promise<DetectionResult> {
+  const root = resolve(projectRoot);
+  const candidates: DetectedScript[] = [];
+
+  const rootPackagePath = join(root, "package.json");
+  const rootPackage = await readPackageJson(rootPackagePath);
+
+  if (rootPackage) {
+    for (const script of extractScripts(rootPackage)) {
+      candidates.push({
+        name: script.name,
+        command: script.command,
+        source: "root",
+        packageName: rootPackage.name,
+        confidence: scoreCandidate(script.name, rootPackage),
+      });
+    }
+  }
+
+  const workspacePackageJsons = await collectWorkspacePackageJsons(root);
   for (const packageJsonPath of workspacePackageJsons) {
-    const workspacePackage = await readJsonFile<PackageJsonShape>(packageJsonPath);
-    if (!workspacePackage) {
+    const pkg = await readPackageJson(packageJsonPath);
+    if (!pkg) {
       continue;
     }
 
-    const scripts = parseScripts(workspacePackage);
-    const workspaceDir = path.dirname(packageJsonPath);
-    const relativePath = path.relative(projectRoot, workspaceDir).replace(/\\/g, "/") || ".";
-    candidates.push(...buildCandidatesForScripts(scripts, workspaceDir, relativePath));
+    for (const script of extractScripts(pkg)) {
+      candidates.push({
+        name: script.name,
+        command: script.command,
+        source: toSource(root, packageJsonPath),
+        packageName: pkg.name,
+        confidence: scoreCandidate(script.name, pkg),
+      });
+    }
   }
 
-  return candidates.sort((a, b) => {
-    const aIndex = preferredIndex(a.scriptName);
-    const bIndex = preferredIndex(b.scriptName);
-
-    if (aIndex !== bIndex) {
-      return aIndex - bIndex;
+  candidates.sort((a, b) => {
+    if (b.confidence !== a.confidence) {
+      return b.confidence - a.confidence;
     }
 
-    if (a.label !== b.label) {
-      return a.label.localeCompare(b.label);
+    if (a.source !== b.source) {
+      return a.source.localeCompare(b.source);
     }
 
-    return a.command.localeCompare(b.command);
+    return a.name.localeCompare(b.name);
   });
-}
 
-async function getRootPackageMtime(projectRoot: string): Promise<number> {
-  try {
-    const stats = await stat(path.join(projectRoot, "package.json"));
-    return stats.mtimeMs;
-  } catch {
-    return 0;
-  }
-}
-
-export async function detectDevServerCandidates(projectRoot: string): Promise<DetectedCandidate[]> {
-  const resolvedRoot = path.resolve(projectRoot);
-
-  try {
-    const mtime = await getRootPackageMtime(resolvedRoot);
-    const cached = cache.get(resolvedRoot);
-    if (cached && cached.mtime === mtime) {
-      return cached.candidates.map((candidate) => ({ ...candidate }));
-    }
-
-    const candidates = await detect(resolvedRoot);
-    cache.set(resolvedRoot, {
-      candidates: candidates.map((candidate) => ({ ...candidate })),
-      mtime,
-    });
-
-    return candidates;
-  } catch {
-    return [];
-  }
-}
-
-export function invalidateDetectionCache(projectRoot?: string): void {
-  if (!projectRoot) {
-    cache.clear();
-    return;
-  }
-
-  cache.delete(path.resolve(projectRoot));
+  return { candidates };
 }

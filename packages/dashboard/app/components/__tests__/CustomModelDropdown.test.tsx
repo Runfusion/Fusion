@@ -251,9 +251,10 @@ describe("CustomModelDropdown", () => {
       await user.click(screen.getByRole("button", { name: "Executor Model" }));
       const portal = await screen.findByTestId("model-combobox-portal");
 
-      // Star buttons should exist
+      // Star buttons should exist - favorited model appears only in favorites section
+      // not duplicated in provider group, so we have: clear filter + remove from favorites
       const buttons = within(portal).queryAllByRole("button");
-      expect(buttons.length).toBeGreaterThanOrEqual(3); // At least: clear, Remove, Add
+      expect(buttons.length).toBeGreaterThanOrEqual(2); // At least: clear, Remove from favorites
     });
 
     it("shows favorited models in the correct order when multiple are favorited", async () => {

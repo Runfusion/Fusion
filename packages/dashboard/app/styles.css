@@ -20541,11 +20541,14 @@ html .column.drag-over * {
 }
 
 /* Colored dot indicator */
+/* Colored dot indicator */
 .executor-status-bar__indicator {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
+  /* Force GPU compositing to keep indicator in sync with parent during scroll */
+  transform: translateZ(0);
 }
 
 .executor-status-bar__indicator--running {

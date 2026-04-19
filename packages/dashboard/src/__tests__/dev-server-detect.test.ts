@@ -1,189 +1,187 @@
 // @vitest-environment node
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, utimesSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  detectDevServerCandidates,
-  EXCLUDED_SCRIPT_NAMES,
-  invalidateDetectionCache,
-  PREFERRED_SCRIPT_NAMES,
-} from "../dev-server-detect.js";
-import { FALLBACK_PORTS } from "../dev-server-manager.js";
+import { detectDevServerScripts } from "../dev-server-detect.js";
 
 function writeJson(filePath: string, value: unknown): void {
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
 }
 
-describe("detectDevServerCandidates", () => {
+describe("detectDevServerScripts", () => {
   let tempDir: string;
 
   beforeEach(() => {
     tempDir = mkdtempSync(path.join(os.tmpdir(), "fn-dev-detect-"));
-    invalidateDetectionCache();
   });
 
   afterEach(() => {
-    invalidateDetectionCache();
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("detects preferred scripts from root package.json and excludes lint scripts", async () => {
+  it("detects dev script in root package.json", async () => {
+    writeJson(path.join(tempDir, "package.json"), {
+      scripts: { dev: "vite" },
+      devDependencies: { vite: "^6.0.0" },
+      private: true,
+    });
+
+    const result = await detectDevServerScripts(tempDir);
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]).toMatchObject({
+      name: "dev",
+      command: "vite",
+      source: "root",
+    });
+  });
+
+  it("detects multiple matching scripts", async () => {
     writeJson(path.join(tempDir, "package.json"), {
       scripts: {
         dev: "vite",
         start: "next dev",
-        lint: "eslint .",
+        preview: "vite preview",
       },
+      devDependencies: { vite: "^6.0.0" },
+      private: true,
     });
 
-    const candidates = await detectDevServerCandidates(tempDir);
+    const result = await detectDevServerScripts(tempDir);
+    expect(result.candidates.map((candidate) => candidate.name).sort()).toEqual(["dev", "preview", "start"]);
+  });
 
-    expect(candidates.map((candidate) => candidate.scriptName)).toEqual(["dev", "start"]);
-    expect(candidates[0]).toMatchObject({
-      scriptName: "dev",
-      label: "Root > dev",
-      cwd: tempDir,
+  it("returns empty candidates when no matching scripts", async () => {
+    writeJson(path.join(tempDir, "package.json"), {
+      scripts: { test: "vitest", build: "vite build" },
     });
-    expect(candidates[1]).toMatchObject({
-      scriptName: "start",
-      label: "Root > start",
-      cwd: tempDir,
-    });
+
+    const result = await detectDevServerScripts(tempDir);
+    expect(result.candidates).toEqual([]);
   });
 
-  it("returns empty array when package.json is missing", async () => {
-    await expect(detectDevServerCandidates(tempDir)).resolves.toEqual([]);
+  it("returns empty candidates when package.json does not exist", async () => {
+    const result = await detectDevServerScripts(tempDir);
+    expect(result.candidates).toEqual([]);
   });
 
-  it("returns empty array when package.json has invalid json", async () => {
-    writeFileSync(path.join(tempDir, "package.json"), "{ invalid json", "utf-8");
-    await expect(detectDevServerCandidates(tempDir)).resolves.toEqual([]);
-  });
-
-  it("returns empty array when scripts field is absent", async () => {
+  it("returns empty candidates when package.json has no scripts field", async () => {
     writeJson(path.join(tempDir, "package.json"), { name: "demo" });
-    await expect(detectDevServerCandidates(tempDir)).resolves.toEqual([]);
+
+    const result = await detectDevServerScripts(tempDir);
+    expect(result.candidates).toEqual([]);
   });
 
-  it("detects workspace candidates from pnpm-workspace.yaml", async () => {
-    writeJson(path.join(tempDir, "package.json"), { name: "repo" });
-    writeFileSync(path.join(tempDir, "pnpm-workspace.yaml"), "packages:\n  - 'packages/*'\n", "utf-8");
-
-    const workspaceDir = path.join(tempDir, "packages", "web");
-    mkdirSync(workspaceDir, { recursive: true });
-    writeJson(path.join(workspaceDir, "package.json"), {
-      scripts: {
-        dev: "vite",
-      },
+  it("monorepo detection scans packages/*/package.json", async () => {
+    writeJson(path.join(tempDir, "package.json"), { name: "root" });
+    const pkgDir = path.join(tempDir, "packages", "web");
+    mkdirSync(pkgDir, { recursive: true });
+    writeJson(path.join(pkgDir, "package.json"), {
+      name: "@demo/web",
+      scripts: { dev: "vite" },
+      devDependencies: { vite: "^6.0.0" },
+      private: true,
     });
 
-    const candidates = await detectDevServerCandidates(tempDir);
-    expect(candidates).toContainEqual(
+    const result = await detectDevServerScripts(tempDir);
+    expect(result.candidates).toContainEqual(
       expect.objectContaining({
-        scriptName: "dev",
-        label: "packages/web > dev",
-        cwd: workspaceDir,
+        name: "dev",
+        source: "packages/web",
       }),
     );
   });
 
-  it("detects workspace candidates from npm workspaces array", async () => {
+  it("monorepo detection scans apps/*/package.json", async () => {
+    writeJson(path.join(tempDir, "package.json"), { name: "root" });
+    const appDir = path.join(tempDir, "apps", "client");
+    mkdirSync(appDir, { recursive: true });
+    writeJson(path.join(appDir, "package.json"), {
+      name: "client",
+      scripts: { dev: "vite" },
+      devDependencies: { vite: "^6.0.0" },
+      private: true,
+    });
+
+    const result = await detectDevServerScripts(tempDir);
+    expect(result.candidates).toContainEqual(
+      expect.objectContaining({
+        name: "dev",
+        source: "apps/client",
+      }),
+    );
+  });
+
+  it("confidence scoring gives dev higher score than serve", async () => {
     writeJson(path.join(tempDir, "package.json"), {
-      workspaces: ["apps/*"],
+      scripts: { dev: "vite", serve: "vite preview" },
+      devDependencies: { vite: "^6.0.0" },
+      private: true,
     });
 
-    const clientDir = path.join(tempDir, "apps", "client");
-    mkdirSync(clientDir, { recursive: true });
-    writeJson(path.join(clientDir, "package.json"), {
-      scripts: {
-        dev: "vite",
-      },
-    });
+    const result = await detectDevServerScripts(tempDir);
+    const dev = result.candidates.find((candidate) => candidate.name === "dev");
+    const serve = result.candidates.find((candidate) => candidate.name === "serve");
 
-    const candidates = await detectDevServerCandidates(tempDir);
-    expect(candidates).toContainEqual(
-      expect.objectContaining({
-        scriptName: "dev",
-        label: "apps/client > dev",
-        cwd: clientDir,
-      }),
-    );
+    expect(dev).toBeDefined();
+    expect(serve).toBeDefined();
+    expect((dev?.confidence ?? 0)).toBeGreaterThan(serve?.confidence ?? 0);
   });
 
-  it("detects workspace candidates from npm workspaces object", async () => {
-    writeJson(path.join(tempDir, "package.json"), {
-      workspaces: {
-        packages: ["apps/*"],
-      },
+  it("framework indicators boost confidence", async () => {
+    writeJson(path.join(tempDir, "package.json"), { name: "root" });
+
+    const withFrameworkDir = path.join(tempDir, "apps", "with-framework");
+    mkdirSync(withFrameworkDir, { recursive: true });
+    writeJson(path.join(withFrameworkDir, "package.json"), {
+      scripts: { serve: "vite" },
+      devDependencies: { vite: "^6.0.0" },
+      private: true,
     });
 
-    const clientDir = path.join(tempDir, "apps", "client");
-    mkdirSync(clientDir, { recursive: true });
-    writeJson(path.join(clientDir, "package.json"), {
-      scripts: {
-        dev: "vite",
-      },
+    const withoutFrameworkDir = path.join(tempDir, "apps", "without-framework");
+    mkdirSync(withoutFrameworkDir, { recursive: true });
+    writeJson(path.join(withoutFrameworkDir, "package.json"), {
+      scripts: { serve: "custom-server" },
+      private: true,
     });
 
-    const candidates = await detectDevServerCandidates(tempDir);
-    expect(candidates).toContainEqual(
-      expect.objectContaining({
-        scriptName: "dev",
-        label: "apps/client > dev",
-        cwd: clientDir,
-      }),
-    );
+    const result = await detectDevServerScripts(tempDir);
+
+    const withFramework = result.candidates.find((candidate) => candidate.source === "apps/with-framework");
+    const withoutFramework = result.candidates.find((candidate) => candidate.source === "apps/without-framework");
+
+    expect(withFramework).toBeDefined();
+    expect(withoutFramework).toBeDefined();
+    expect((withFramework?.confidence ?? 0)).toBeGreaterThan(withoutFramework?.confidence ?? 0);
   });
 
-  it("orders candidates by preferred script priority", async () => {
+  it("results are sorted by confidence descending", async () => {
     writeJson(path.join(tempDir, "package.json"), {
       scripts: {
         preview: "vite preview",
-        storybook: "storybook dev -p 6006",
-        frontend: "vite",
-        web: "vite",
+        dev: "vite",
         serve: "vite serve",
-        start: "next start",
-        dev: "vite dev",
       },
+      devDependencies: { vite: "^6.0.0" },
+      private: true,
     });
 
-    const candidates = await detectDevServerCandidates(tempDir);
-    expect(candidates.map((candidate) => candidate.scriptName)).toEqual([...PREFERRED_SCRIPT_NAMES]);
+    const result = await detectDevServerScripts(tempDir);
+    const confidences = result.candidates.map((candidate) => candidate.confidence);
+
+    expect(confidences).toEqual([...confidences].sort((a, b) => b - a));
   });
 
-  it("invalidates cache when package.json mtime changes", async () => {
-    const packageJsonPath = path.join(tempDir, "package.json");
-    writeJson(packageJsonPath, { scripts: { dev: "vite" } });
+  it("handles malformed package.json gracefully", async () => {
+    writeFileSync(path.join(tempDir, "package.json"), "{invalid", "utf-8");
 
-    const firstRun = await detectDevServerCandidates(tempDir);
-    expect(firstRun.map((candidate) => candidate.scriptName)).toEqual(["dev"]);
+    const pkgDir = path.join(tempDir, "packages", "web");
+    mkdirSync(pkgDir, { recursive: true });
+    writeFileSync(path.join(pkgDir, "package.json"), "{broken", "utf-8");
 
-    writeJson(packageJsonPath, { scripts: { start: "next dev" } });
-    const now = new Date();
-    utimesSync(packageJsonPath, now, new Date(now.getTime() + 5_000));
-
-    const secondRun = await detectDevServerCandidates(tempDir);
-    expect(secondRun.map((candidate) => candidate.scriptName)).toEqual(["start"]);
-  });
-
-  it("supports explicit cache invalidation", async () => {
-    const packageJsonPath = path.join(tempDir, "package.json");
-    writeJson(packageJsonPath, { scripts: { dev: "vite" } });
-
-    await detectDevServerCandidates(tempDir);
-
-    writeJson(packageJsonPath, { scripts: { serve: "vite" } });
-    invalidateDetectionCache(tempDir);
-
-    const refreshed = await detectDevServerCandidates(tempDir);
-    expect(refreshed.map((candidate) => candidate.scriptName)).toEqual(["serve"]);
-  });
-
-  it("never includes reserved dashboard port 4040 in fallback ports", () => {
-    expect(EXCLUDED_SCRIPT_NAMES.has("lint")).toBe(true);
-    expect(FALLBACK_PORTS.includes(4040 as never)).toBe(false);
+    const result = await detectDevServerScripts(tempDir);
+    expect(result.candidates).toEqual([]);
   });
 });

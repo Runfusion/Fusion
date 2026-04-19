@@ -1,293 +1,159 @@
-import { access, appendFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-export type DevServerStatus = "idle" | "starting" | "running" | "stopped" | "failed";
+export type DevServerStatus = "starting" | "running" | "stopped" | "failed";
 
-export interface DevServerPersistedState {
-  serverKey: string;
+export interface DevServerState {
+  /** Unique identifier for this server entry */
+  id: string;
+  /** Display name (for future multi-server support, default "default") */
+  name: string;
+  /** Current process status */
   status: DevServerStatus;
-  command: string | null;
-  scriptName: string | null;
-  cwd: string | null;
-  pid: number | null;
-  startedAt: string | null;
-  updatedAt: string;
-  previewUrl: string | null;
-  previewProtocol: string | null;
-  previewHost: string | null;
-  previewPort: number | null;
-  previewPath: string | null;
-  exitCode: number | null;
-  exitSignal: string | null;
-  exitedAt: string | null;
-  failureReason: string | null;
+  /** Command to execute (e.g., "pnpm run dev") */
+  command: string;
+  /** Working directory for command execution */
+  cwd: string;
+  /** Package.json script name (e.g., "dev") if started via script */
+  scriptId?: string;
+  /** Path to the package.json containing the script */
+  packagePath?: string;
+  /** OS process ID when running */
+  pid?: number;
+  /** ISO timestamp when the process was started */
+  startedAt?: string;
+  /** ISO timestamp when the process stopped */
+  stoppedAt?: string;
+  /** Process exit code */
+  exitCode?: number;
+  /** URL auto-detected from process output */
+  detectedUrl?: string;
+  /** Manual preview URL override set by user */
+  manualUrl?: string;
+  /** Port auto-detected from process output or probing */
+  detectedPort?: number;
+  /** Ring buffer of recent stdout/stderr lines */
+  logHistory: string[];
 }
 
-export type DevServerLogSource = "stdout" | "stderr" | "system";
+export const DEV_SERVER_LOG_MAX_LINES = 500;
 
-export interface DevServerPersistedLogEntry {
-  serverKey: string;
-  source: DevServerLogSource;
-  message: string;
-  timestamp: string;
+export const DEV_SERVER_DEFAULT_STATE = (): DevServerState => ({
+  id: "",
+  name: "default",
+  status: "stopped",
+  command: "",
+  cwd: "",
+  logHistory: [],
+});
+
+interface DevServerStoreFile {
+  state: DevServerState;
 }
 
-interface DevServerStateFile {
-  version: 1;
-  state: DevServerPersistedState;
+function devServerFilePath(projectDir: string): string {
+  return join(resolve(projectDir), ".fusion", "dev-server.json");
 }
 
-function devServerFusionDir(rootDir: string): string {
-  return join(resolve(rootDir), ".fusion");
-}
+function normalizeState(candidate: Partial<DevServerState> | null | undefined): DevServerState {
+  const defaults = DEV_SERVER_DEFAULT_STATE();
+  const state: DevServerState = {
+    ...defaults,
+    ...(candidate ?? {}),
+    logHistory: Array.isArray(candidate?.logHistory)
+      ? candidate.logHistory.filter((line): line is string => typeof line === "string")
+      : [],
+  };
 
-export function projectDevServerStateFile(rootDir: string): string {
-  return join(devServerFusionDir(rootDir), "dev-server-state.json");
-}
+  if (
+    state.status !== "starting"
+    && state.status !== "running"
+    && state.status !== "stopped"
+    && state.status !== "failed"
+  ) {
+    state.status = defaults.status;
+  }
 
-export function projectDevServerLogFile(rootDir: string): string {
-  return join(devServerFusionDir(rootDir), "dev-server.log");
+  if (state.logHistory.length > DEV_SERVER_LOG_MAX_LINES) {
+    state.logHistory = state.logHistory.slice(-DEV_SERVER_LOG_MAX_LINES);
+  }
+
+  return state;
 }
 
 export class DevServerStore {
-  private state: DevServerPersistedState | null = null;
+  private readonly filePath: string;
+  private state: DevServerState = DEV_SERVER_DEFAULT_STATE();
 
-  constructor(
-    readonly stateFilePath: string,
-    readonly logFilePath: string,
-  ) {}
+  constructor(projectDir: string) {
+    this.filePath = devServerFilePath(projectDir);
+  }
 
-  async loadState(): Promise<DevServerPersistedState | null> {
+  async load(): Promise<void> {
     try {
-      const raw = await readFile(this.stateFilePath, "utf-8");
-      const parsed = JSON.parse(raw) as Partial<DevServerStateFile>;
-      const state = parsed?.state;
-      if (!state || typeof state !== "object") {
-        this.state = null;
-        return null;
-      }
-
-      const normalized = normalizePersistedState(state as Partial<DevServerPersistedState>);
-      if (!normalized) {
-        this.state = null;
-        return null;
-      }
-
-      this.state = normalized;
-      return structuredClone(normalized);
+      const content = await readFile(this.filePath, "utf-8");
+      const parsed = JSON.parse(content) as Partial<DevServerStoreFile>;
+      this.state = normalizeState(parsed?.state);
     } catch {
-      this.state = null;
-      return null;
+      this.state = DEV_SERVER_DEFAULT_STATE();
     }
   }
 
-  getState(): DevServerPersistedState | null {
-    return this.state ? structuredClone(this.state) : null;
-  }
-
-  async saveState(state: DevServerPersistedState): Promise<void> {
-    const normalized = normalizePersistedState(state);
-    if (!normalized) {
-      throw new Error("Invalid dev-server persisted state");
+  async save(): Promise<void> {
+    const dir = this.filePath.substring(0, this.filePath.lastIndexOf("/"));
+    try {
+      await access(dir);
+    } catch {
+      await mkdir(dir, { recursive: true });
     }
 
-    const payload: DevServerStateFile = {
-      version: 1,
-      state: normalized,
+    const payload: DevServerStoreFile = { state: this.state };
+    await writeFile(this.filePath, JSON.stringify(payload, null, 2), "utf-8");
+  }
+
+  getState(): DevServerState {
+    return {
+      ...this.state,
+      logHistory: [...this.state.logHistory],
     };
-
-    await mkdirDirForFile(this.stateFilePath);
-
-    const tempPath = `${this.stateFilePath}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, "utf-8");
-    await rename(tempPath, this.stateFilePath);
-
-    this.state = normalized;
   }
 
-  async appendLog(entry: DevServerPersistedLogEntry): Promise<void> {
-    const normalized = normalizeLogEntry(entry);
-    if (!normalized) {
-      return;
-    }
+  async updateState(partial: Partial<DevServerState>): Promise<DevServerState> {
+    this.state = normalizeState({
+      ...this.state,
+      ...partial,
+      logHistory: partial.logHistory ?? this.state.logHistory,
+    });
 
-    await mkdirDirForFile(this.logFilePath);
-    await appendFile(this.logFilePath, `${JSON.stringify(normalized)}\n`, "utf-8");
+    await this.save();
+    return this.getState();
   }
 
-  async appendLogs(entries: DevServerPersistedLogEntry[]): Promise<void> {
-    const normalized = entries
-      .map((entry) => normalizeLogEntry(entry))
-      .filter((entry): entry is DevServerPersistedLogEntry => entry !== null);
-
-    if (normalized.length === 0) {
-      return;
+  async appendLog(line: string): Promise<void> {
+    this.state.logHistory.push(line);
+    if (this.state.logHistory.length > DEV_SERVER_LOG_MAX_LINES) {
+      this.state.logHistory.splice(0, this.state.logHistory.length - DEV_SERVER_LOG_MAX_LINES);
     }
-
-    await mkdirDirForFile(this.logFilePath);
-    const payload = normalized.map((entry) => JSON.stringify(entry)).join("\n");
-    await appendFile(this.logFilePath, `${payload}\n`, "utf-8");
-  }
-
-  async readLogTail(limit = 200): Promise<DevServerPersistedLogEntry[]> {
-    if (!Number.isFinite(limit) || limit <= 0) {
-      return [];
-    }
-
-    try {
-      const raw = await readFile(this.logFilePath, "utf-8");
-      const lines = raw.split("\n").filter((line) => line.trim().length > 0);
-      const tail = lines.slice(-Math.floor(limit));
-      const parsed: DevServerPersistedLogEntry[] = [];
-      for (const line of tail) {
-        try {
-          const maybeEntry = JSON.parse(line) as Partial<DevServerPersistedLogEntry>;
-          const normalized = normalizeLogEntry(maybeEntry);
-          if (normalized) {
-            parsed.push(normalized);
-          }
-        } catch {
-          // Ignore malformed lines to keep reads tolerant.
-        }
-      }
-      return parsed;
-    } catch {
-      return [];
-    }
-  }
-
-  async clearState(): Promise<void> {
-    this.state = null;
-    await rm(this.stateFilePath, { force: true });
+    await this.save();
   }
 
   async clearLogs(): Promise<void> {
-    await rm(this.logFilePath, { force: true });
+    this.state.logHistory = [];
+    await this.save();
   }
-}
-
-async function mkdirDirForFile(filePath: string): Promise<void> {
-  const lastSlash = filePath.lastIndexOf("/");
-  const dir = lastSlash >= 0 ? filePath.slice(0, lastSlash) : filePath;
-
-  try {
-    await access(dir);
-  } catch {
-    await mkdir(dir, { recursive: true });
-  }
-}
-
-function normalizePersistedState(state: Partial<DevServerPersistedState>): DevServerPersistedState | null {
-  const status = normalizeStatus(state.status);
-  const serverKey = typeof state.serverKey === "string" && state.serverKey.trim().length > 0
-    ? state.serverKey.trim()
-    : "default";
-
-  const updatedAt = normalizeDateString(state.updatedAt) ?? new Date().toISOString();
-
-  if (!status) {
-    return null;
-  }
-
-  return {
-    serverKey,
-    status,
-    command: normalizeNullableString(state.command),
-    scriptName: normalizeNullableString(state.scriptName),
-    cwd: normalizeNullableString(state.cwd),
-    pid: normalizeNullableNumber(state.pid),
-    startedAt: normalizeDateString(state.startedAt),
-    updatedAt,
-    previewUrl: normalizeNullableString(state.previewUrl),
-    previewProtocol: normalizeNullableString(state.previewProtocol),
-    previewHost: normalizeNullableString(state.previewHost),
-    previewPort: normalizeNullableNumber(state.previewPort),
-    previewPath: normalizeNullableString(state.previewPath),
-    exitCode: normalizeNullableNumber(state.exitCode),
-    exitSignal: normalizeNullableString(state.exitSignal),
-    exitedAt: normalizeDateString(state.exitedAt),
-    failureReason: normalizeNullableString(state.failureReason),
-  };
-}
-
-function normalizeLogEntry(entry: Partial<DevServerPersistedLogEntry>): DevServerPersistedLogEntry | null {
-  const message = normalizeNullableString(entry.message);
-  if (!message) {
-    return null;
-  }
-
-  const source = normalizeSource(entry.source);
-  if (!source) {
-    return null;
-  }
-
-  const timestamp = normalizeDateString(entry.timestamp) ?? new Date().toISOString();
-  const serverKey = typeof entry.serverKey === "string" && entry.serverKey.trim().length > 0
-    ? entry.serverKey.trim()
-    : "default";
-
-  return {
-    serverKey,
-    source,
-    message,
-    timestamp,
-  };
-}
-
-function normalizeStatus(value: unknown): DevServerStatus | null {
-  if (value === "idle" || value === "starting" || value === "running" || value === "stopped" || value === "failed") {
-    return value;
-  }
-  return null;
-}
-
-function normalizeSource(value: unknown): DevServerLogSource | null {
-  if (value === "stdout" || value === "stderr" || value === "system") {
-    return value;
-  }
-  return null;
-}
-
-function normalizeNullableString(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function normalizeNullableNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === "string" && value.trim().length > 0) {
-    const parsed = Number.parseInt(value, 10);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
-function normalizeDateString(value: unknown): string | null {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    return null;
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return null;
-  }
-  return parsed.toISOString();
 }
 
 const storeInstances = new Map<string, DevServerStore>();
 
-export async function loadDevServerStore(rootDir: string): Promise<DevServerStore> {
-  const stateFile = projectDevServerStateFile(rootDir);
-  let store = storeInstances.get(stateFile);
+export async function loadDevServerStore(projectDir: string): Promise<DevServerStore> {
+  const storeKey = resolve(projectDir);
+  let store = storeInstances.get(storeKey);
   if (!store) {
-    store = new DevServerStore(stateFile, projectDevServerLogFile(rootDir));
-    storeInstances.set(stateFile, store);
-    await store.loadState();
+    store = new DevServerStore(projectDir);
+    storeInstances.set(storeKey, store);
+    await store.load();
   }
+
   return store;
 }
 
