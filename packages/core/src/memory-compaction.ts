@@ -15,30 +15,7 @@
 
 import type { ProjectSettings } from "./types.js";
 import type { ScheduledTaskCreateInput } from "./automation.js";
-
-// Dynamic import for @fusion/engine to avoid resolution issues in test environment
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AgentResult = any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let createKbAgent: any;
-
-// Initialize the import (this runs in actual server, mocked in tests)
-async function initEngine() {
-  if (!createKbAgent) {
-    try {
-      // Use dynamic import with variable to prevent static analysis
-      const engineModule = "@fusion/engine";
-      const engine = await import(/* @vite-ignore */ engineModule);
-      createKbAgent = engine.createKbAgent;
-    } catch {
-      // Allow failure in test environments - agent functionality will be stubbed
-      createKbAgent = undefined;
-    }
-  }
-}
-
-// Initialize on module load (will be awaited in actual usage)
-const engineReady = initEngine();
+import { getKbAgent, type AgentMessage } from "./ai-engine-loader.js";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -102,9 +79,7 @@ export async function compactMemoryWithAi(
   provider?: string,
   modelId?: string
 ): Promise<string> {
-  // Ensure engine is loaded before using createKbAgent
-  await engineReady;
-
+  const createKbAgent = await getKbAgent();
   if (!createKbAgent) {
     if (DEBUG) console.log("[memory-compaction] AI engine not available");
     throw new AiServiceError("AI engine not available");
@@ -150,12 +125,6 @@ export async function compactMemoryWithAi(
     }
 
     if (DEBUG) console.log("[memory-compaction] Prompt sent, extracting response from messages...");
-
-    // Get the response text from the agent's state
-    interface AgentMessage {
-      role: string;
-      content?: string | Array<{ type: string; text: string }>;
-    }
 
     const messages: AgentMessage[] = agentResult.session.state?.messages ?? [];
     const assistantMessages = messages.filter((m: AgentMessage) => m.role === "assistant");

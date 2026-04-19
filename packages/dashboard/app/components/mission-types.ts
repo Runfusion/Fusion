@@ -255,8 +255,8 @@ export interface MissionWithHierarchy extends Mission {
 export type MissionEventType = CoreMissionEventType;
 
 /** Mission lifecycle event persisted in the mission event log. */
-export interface MissionEvent extends CoreMissionEvent {}
+export type MissionEvent = CoreMissionEvent
 
 /** Computed mission health snapshot returned by observability APIs. */
-export interface MissionHealth extends CoreMissionHealth {}
+export type MissionHealth = CoreMissionHealth
 

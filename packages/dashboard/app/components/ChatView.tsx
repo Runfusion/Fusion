@@ -89,7 +89,7 @@ function formatModelTag(provider?: string | null, modelId?: string | null): stri
 
   // Gemini models: "gemini-2.5-pro" -> "Gemini 2.5 Pro"
   if (normalizedModel.includes("gemini")) {
-    let formatted = modelId
+    const formatted = modelId
       .replace(/^gemini[- ]/i, "Gemini ")
       .replace(/pro[- ](\d+)[- ](\d+)/i, "Pro $1.$2")
       .replace(/pro[- ](\d+)/i, "Pro $1")
@@ -100,7 +100,7 @@ function formatModelTag(provider?: string | null, modelId?: string | null): stri
   }
 
   // Generic fallback: capitalize first letter, replace hyphens with spaces
-  let formatted = modelId
+  const formatted = modelId
     .replace(/-/g, " ")
     .replace(/^\w/, (c) => c.toUpperCase())
     .replace(/\s+/g, " ")

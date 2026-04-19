@@ -17,6 +17,26 @@ import { isAbsolute, join, resolve, basename, dirname } from "node:path";
 import type { CentralCore } from "./central-core.js";
 import { CentralCore as CentralCoreClass } from "./central-core.js";
 
+/**
+ * Check whether `<dir>/<folderName>/<dbName>` exists as a non-empty regular file.
+ * Used to decide if a directory contains either a legacy (.kb/kb.db) or
+ * current (.fusion/fusion.db) project database.
+ */
+function hasProjectDbFile(dir: string, folderName: string, dbName: string): boolean {
+  const projectDir = join(dir, folderName);
+  const dbPath = join(projectDir, dbName);
+
+  if (!existsSync(projectDir)) return false;
+  if (!existsSync(dbPath)) return false;
+
+  try {
+    const stat = statSync(dbPath);
+    return stat.isFile() && stat.size > 0;
+  } catch {
+    return false;
+  }
+}
+
 // ── Types ────────────────────────────────────────────────────────────
 
 /** First-run state detection results */
@@ -274,23 +294,8 @@ export class FirstRunDetector {
    */
   private hasKbProject(dir: string): boolean {
     // Check for current .fusion/fusion.db or legacy .kb/kb.db
-    return this.hasProjectDbFile(dir, ".fusion", "fusion.db") ||
-           this.hasProjectDbFile(dir, ".kb", "kb.db");
-  }
-
-  private hasProjectDbFile(dir: string, folderName: string, dbName: string): boolean {
-    const projectDir = join(dir, folderName);
-    const dbPath = join(projectDir, dbName);
-
-    if (!existsSync(projectDir)) return false;
-    if (!existsSync(dbPath)) return false;
-
-    try {
-      const stat = statSync(dbPath);
-      return stat.isFile() && stat.size > 0;
-    } catch {
-      return false;
-    }
+    return hasProjectDbFile(dir, ".fusion", "fusion.db") ||
+           hasProjectDbFile(dir, ".kb", "kb.db");
   }
 
   private getDefaultGlobalDir(): string {
@@ -532,21 +537,8 @@ export class MigrationCoordinator {
    * Check if a directory is a valid kb project (has .fusion/fusion.db or .kb/kb.db).
    */
   private isValidKbProject(dir: string): boolean {
-    return this.hasProjectDbInDir(dir, ".fusion", "fusion.db") ||
-           this.hasProjectDbInDir(dir, ".kb", "kb.db");
-  }
-
-  private hasProjectDbInDir(dir: string, folderName: string, dbName: string): boolean {
-    const projectDir = join(dir, folderName);
-    const dbPath = join(projectDir, dbName);
-    if (!existsSync(projectDir)) return false;
-    if (!existsSync(dbPath)) return false;
-    try {
-      const stat = statSync(dbPath);
-      return stat.isFile() && stat.size > 0;
-    } catch {
-      return false;
-    }
+    return hasProjectDbFile(dir, ".fusion", "fusion.db") ||
+           hasProjectDbFile(dir, ".kb", "kb.db");
   }
 }
 
@@ -674,22 +666,7 @@ export class BackwardCompat {
    * Check if a directory contains a current .fusion project or legacy .kb project.
    */
   private hasProjectData(dir: string): boolean {
-    return this.hasProjectDb(dir, ".fusion") || this.hasProjectDb(dir, ".kb");
-  }
-
-  private hasProjectDb(dir: string, folderName: ".fusion" | ".kb"): boolean {
-    const projectDir = join(dir, folderName);
-    const dbName = folderName === ".fusion" ? "fusion.db" : "kb.db";
-    const dbPath = join(projectDir, dbName);
-
-    if (!existsSync(projectDir)) return false;
-    if (!existsSync(dbPath)) return false;
-
-    try {
-      const stat = statSync(dbPath);
-      return stat.isFile() && stat.size > 0;
-    } catch {
-      return false;
-    }
+    return hasProjectDbFile(dir, ".fusion", "fusion.db") ||
+           hasProjectDbFile(dir, ".kb", "kb.db");
   }
 }

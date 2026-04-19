@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, readdirSync, rmSync } from "node:fs";

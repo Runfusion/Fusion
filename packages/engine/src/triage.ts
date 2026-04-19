@@ -1364,7 +1364,7 @@ export class TriageProcessor {
           // Re-read task detail to get latest user comments for the reviewer
           const currentDetail = await store.getTask(taskId);
           const currentUserComments = (currentDetail.comments || []).filter(
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
             (c: any) => c.author === "user",
           );
 
@@ -1510,7 +1510,7 @@ export class TriageProcessor {
     }
 
     const parsedDeps = await this.store.parseDependenciesFromPrompt(task.id);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     const taskUpdates: Record<string, any> = { status: null, error: null };
 
     if (parsedDeps.length > 0) {

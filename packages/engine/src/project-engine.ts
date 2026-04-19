@@ -466,7 +466,7 @@ export class ProjectEngine {
             }
 
             // Intentional cast to access Task properties needed by merge validation
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
             if (!this.canMergeTask(task as any)) {
               continue;
             }
@@ -488,7 +488,7 @@ export class ProjectEngine {
             }
 
             // Auto-heal verification buffer failures by resetting retry counter
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
             if (this.hasAutoHealableVerificationBufferFailure(task as any)) {
               await store.logEntry(
                 taskId,
@@ -497,7 +497,7 @@ export class ProjectEngine {
               await store.updateTask(taskId, { mergeRetries: 0, error: null, status: null });
             } else if (
               (task.mergeRetries ?? 0) >= ProjectEngine.MAX_AUTO_MERGE_RETRIES &&
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
               this.isRetryCooldownElapsed(task as any)
             ) {
               await store.logEntry(
@@ -565,13 +565,13 @@ export class ProjectEngine {
           } else {
             // Direct merge via AI agent, gated by semaphore
             runtimeLog.log(`${manualResolver ? "Manual" : "Auto"}-merge merging ${taskId}...`);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
             const semaphore = (this.runtime as any).globalSemaphore;
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
             const pool = (this.runtime as any).worktreePool;
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
             const agentStore = (this.runtime as any).agentStore;
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
             const usageLimitPauser = (this.runtime as any).usageLimitPauser;
 
             const rawMerge = () =>
@@ -772,7 +772,7 @@ export class ProjectEngine {
           runtimeLog.log(`Startup sweep: clearing stale '${t.status}' status on ${t.id}`);
           await store.updateTask(t.id, { status: null });
           // Update in-memory object so canMergeTask sees the cleared status
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
           (t as any).status = null;
         }
       }
@@ -780,7 +780,7 @@ export class ProjectEngine {
       const settings = await store.getSettings();
       if (!settings.autoMerge) return;
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       const eligible = tasks.filter((t) => this.canMergeTask(t as any));
       if (eligible.length > 0) {
         runtimeLog.log(`Auto-merge startup sweep: enqueueing ${eligible.length} task(s)`);
@@ -806,7 +806,7 @@ export class ProjectEngine {
         if (!settings.globalPause && !settings.enginePaused && settings.autoMerge) {
           const tasks = await store.listTasks({ column: "in-review" });
           for (const t of tasks) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
             if (this.canMergeTask(t as any)) {
               this.internalEnqueueMerge(t.id);
             }
@@ -864,7 +864,7 @@ export class ProjectEngine {
         runtimeLog.log("Global unpause — resuming agentic activity");
 
         try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
           const executor = (this.runtime as any).executor;
           executor?.resumeOrphaned?.().catch((err: Error) =>
             runtimeLog.error("Failed to resume orphaned tasks on unpause:", err),
@@ -879,7 +879,7 @@ export class ProjectEngine {
           try {
             const tasks = await store.listTasks({ column: "in-review" });
             for (const t of tasks) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
               if (this.canMergeTask(t as any)) {
                 this.internalEnqueueMerge(t.id);
               }
@@ -907,7 +907,7 @@ export class ProjectEngine {
         runtimeLog.log("Engine unpaused — resuming agentic activity");
 
         try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
           const executor = (this.runtime as any).executor;
           executor?.resumeOrphaned?.().catch((err: Error) =>
             runtimeLog.error("Failed to resume orphaned tasks on engine unpause:", err),
@@ -922,7 +922,7 @@ export class ProjectEngine {
           try {
             const tasks = await store.listTasks({ column: "in-review" });
             for (const t of tasks) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
               if (this.canMergeTask(t as any)) {
                 this.internalEnqueueMerge(t.id);
               }
@@ -951,7 +951,7 @@ export class ProjectEngine {
           `Stuck task timeout changed to ${s.taskStuckTimeoutMs}ms — running immediate check`,
         );
         try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
           const detector = (this.runtime as any).stuckTaskDetector;
           await detector?.checkNow?.();
         } catch (err: unknown) {
@@ -982,9 +982,9 @@ export class ProjectEngine {
         "memoryDreamsSchedule",
       ] as const;
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       const changed = insightKeys.some((key) => (s as any)[key] !== (prev as any)[key]);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       const dreamsChanged = dreamKeys.some((key) => (s as any)[key] !== (prev as any)[key]);
       if ((!changed && !dreamsChanged) || !this.automationStore) return;
 
@@ -1022,7 +1022,7 @@ export class ProjectEngine {
         "memoryAutoSummarizeSchedule",
       ] as const;
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       const changed = autoSummarizeKeys.some((key) => (s as any)[key] !== (prev as any)[key]);
       if (!changed || !this.automationStore) return;
 

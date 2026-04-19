@@ -1672,7 +1672,9 @@ export class Database {
    * Safe to call periodically. Returns checkpoint stats.
    */
   walCheckpoint(): { busy: number; log: number; checkpointed: number } {
-    const row = this.db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as any;
+    const row = this.db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as
+      | { busy?: number; log?: number; checkpointed?: number }
+      | undefined;
     return { busy: row?.busy ?? 0, log: row?.log ?? 0, checkpointed: row?.checkpointed ?? 0 };
   }
 

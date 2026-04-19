@@ -204,24 +204,27 @@ export async function buildSessionSkillContext(
     }
   }
 
-  // Rule 2: Use role fallback skills
+  return resolveRoleFallback(sessionPurpose, projectRootDir);
+}
+
+function resolveRoleFallback(
+  sessionPurpose: SessionPurpose,
+  projectRootDir: string,
+): SessionSkillContextResult {
   const roleFallbackSkills = getRoleFallbackSkills(sessionPurpose);
 
   if (roleFallbackSkills && roleFallbackSkills.length > 0) {
-    const skillSelectionContext: SkillSelectionContext = {
-      projectRootDir,
-      requestedSkillNames: roleFallbackSkills,
-      sessionPurpose,
-    };
-
     return {
-      skillSelectionContext,
+      skillSelectionContext: {
+        projectRootDir,
+        requestedSkillNames: roleFallbackSkills,
+        sessionPurpose,
+      },
       resolvedSkillNames: roleFallbackSkills,
       skillSource: "role-fallback",
     };
   }
 
-  // Rule 3: No skills available
   return {
     skillSelectionContext: undefined,
     resolvedSkillNames: [],
@@ -263,27 +266,5 @@ export function buildSessionSkillContextSync(
     }
   }
 
-  // Rule 2: Use role fallback skills
-  const roleFallbackSkills = getRoleFallbackSkills(sessionPurpose);
-
-  if (roleFallbackSkills && roleFallbackSkills.length > 0) {
-    const skillSelectionContext: SkillSelectionContext = {
-      projectRootDir,
-      requestedSkillNames: roleFallbackSkills,
-      sessionPurpose,
-    };
-
-    return {
-      skillSelectionContext,
-      resolvedSkillNames: roleFallbackSkills,
-      skillSource: "role-fallback",
-    };
-  }
-
-  // Rule 3: No skills available
-  return {
-    skillSelectionContext: undefined,
-    resolvedSkillNames: [],
-    skillSource: "none",
-  };
+  return resolveRoleFallback(sessionPurpose, projectRootDir);
 }

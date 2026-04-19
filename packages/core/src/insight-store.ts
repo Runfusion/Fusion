@@ -185,27 +185,7 @@ export class InsightStore extends EventEmitter<InsightStoreEvents> {
    * @returns Matching insights, ordered ascending by createdAt then id
    */
   listInsights(options: InsightListOptions = {}): Insight[] {
-    const conditions: string[] = [];
-    const params: (string | number)[] = [];
-
-    if (options.projectId !== undefined) {
-      conditions.push("projectId = ?");
-      params.push(options.projectId);
-    }
-    if (options.category !== undefined) {
-      conditions.push("category = ?");
-      params.push(options.category);
-    }
-    if (options.status !== undefined) {
-      conditions.push("status = ?");
-      params.push(options.status);
-    }
-    if (options.runId !== undefined) {
-      conditions.push("lastRunId = ?");
-      params.push(options.runId);
-    }
-
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const { whereClause, params } = this.buildInsightFilter(options);
     const limitClause = options.limit !== undefined ? `LIMIT ${options.limit}` : "";
     const offsetClause = options.offset !== undefined ? `OFFSET ${options.offset}` : "";
 
@@ -349,8 +329,19 @@ export class InsightStore extends EventEmitter<InsightStoreEvents> {
    * Get the count of insights matching the given filter.
    */
   countInsights(options: Omit<InsightListOptions, "limit" | "offset"> = {}): number {
+    const { whereClause, params } = this.buildInsightFilter(options);
+    const row = this.db.prepare(`
+      SELECT COUNT(*) as count FROM project_insights ${whereClause}
+    `).get(...params) as { count: number } | undefined;
+
+    return row?.count ?? 0;
+  }
+
+  private buildInsightFilter(
+    options: Pick<InsightListOptions, "projectId" | "category" | "status" | "runId">,
+  ): { whereClause: string; params: (string | number)[] } {
     const conditions: string[] = [];
-    const params: string[] = [];
+    const params: (string | number)[] = [];
 
     if (options.projectId !== undefined) {
       conditions.push("projectId = ?");
@@ -369,12 +360,35 @@ export class InsightStore extends EventEmitter<InsightStoreEvents> {
       params.push(options.runId);
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-    const row = this.db.prepare(`
-      SELECT COUNT(*) as count FROM project_insights ${whereClause}
-    `).get(...params) as { count: number } | undefined;
+    return {
+      whereClause: conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "",
+      params,
+    };
+  }
 
-    return row?.count ?? 0;
+  private buildRunFilter(
+    options: Pick<InsightRunListOptions, "projectId" | "status" | "trigger">,
+  ): { whereClause: string; params: (string | number)[] } {
+    const conditions: string[] = [];
+    const params: (string | number)[] = [];
+
+    if (options.projectId !== undefined) {
+      conditions.push("projectId = ?");
+      params.push(options.projectId);
+    }
+    if (options.status !== undefined) {
+      conditions.push("status = ?");
+      params.push(options.status);
+    }
+    if (options.trigger !== undefined) {
+      conditions.push("trigger = ?");
+      params.push(options.trigger);
+    }
+
+    return {
+      whereClause: conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "",
+      params,
+    };
   }
 
   // ── Insight Run CRUD ────────────────────────────────────────────────
@@ -456,23 +470,7 @@ export class InsightStore extends EventEmitter<InsightStoreEvents> {
    * @returns Matching runs
    */
   listRuns(options: InsightRunListOptions = {}): InsightRun[] {
-    const conditions: string[] = [];
-    const params: (string | number)[] = [];
-
-    if (options.projectId !== undefined) {
-      conditions.push("projectId = ?");
-      params.push(options.projectId);
-    }
-    if (options.status !== undefined) {
-      conditions.push("status = ?");
-      params.push(options.status);
-    }
-    if (options.trigger !== undefined) {
-      conditions.push("trigger = ?");
-      params.push(options.trigger);
-    }
-
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const { whereClause, params } = this.buildRunFilter(options);
     const limitClause = options.limit !== undefined ? `LIMIT ${options.limit}` : "";
     const offsetClause = options.offset !== undefined ? `OFFSET ${options.offset}` : "";
 
@@ -595,23 +593,7 @@ export class InsightStore extends EventEmitter<InsightStoreEvents> {
    * Get the count of runs matching the given filter.
    */
   countRuns(options: Omit<InsightRunListOptions, "limit" | "offset"> = {}): number {
-    const conditions: string[] = [];
-    const params: string[] = [];
-
-    if (options.projectId !== undefined) {
-      conditions.push("projectId = ?");
-      params.push(options.projectId);
-    }
-    if (options.status !== undefined) {
-      conditions.push("status = ?");
-      params.push(options.status);
-    }
-    if (options.trigger !== undefined) {
-      conditions.push("trigger = ?");
-      params.push(options.trigger);
-    }
-
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const { whereClause, params } = this.buildRunFilter(options);
     const row = this.db.prepare(`
       SELECT COUNT(*) as count FROM project_insight_runs ${whereClause}
     `).get(...params) as { count: number } | undefined;

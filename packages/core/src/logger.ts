@@ -42,6 +42,3 @@ export function createLogger(prefix: string): Logger {
     },
   };
 }
-
-/** Logger for the plugin loader subsystem. */
-export const pluginLoaderLog = createLogger("plugin-loader");

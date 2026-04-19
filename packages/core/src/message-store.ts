@@ -194,31 +194,7 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
     ownerType: ParticipantType,
     filter?: MessageFilter,
   ): Message[] {
-    const whereClauses: string[] = ["toId = ?", "toType = ?"];
-    const params: (string | number)[] = [ownerId, ownerType];
-
-    if (filter?.type) {
-      whereClauses.push("type = ?");
-      params.push(filter.type);
-    }
-
-    if (filter?.read !== undefined) {
-      whereClauses.push("read = ?");
-      params.push(filter.read ? 1 : 0);
-    }
-
-    const whereSql = whereClauses.join(" AND ");
-    const limit = filter?.limit ?? 100;
-    const offset = filter?.offset ?? 0;
-
-    const rows = this.db.prepare(`
-      SELECT * FROM messages
-      WHERE ${whereSql}
-      ORDER BY createdAt DESC, rowid DESC
-      LIMIT ? OFFSET ?
-    `).all(...params, limit, offset);
-
-    return (rows as any[]).map((row) => this.rowToMessage(row));
+    return this.queryMessagesByParticipant("to", ownerId, ownerType, filter);
   }
 
   /**
@@ -233,7 +209,18 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
     ownerType: ParticipantType,
     filter?: MessageFilter,
   ): Message[] {
-    const whereClauses: string[] = ["fromId = ?", "fromType = ?"];
+    return this.queryMessagesByParticipant("from", ownerId, ownerType, filter);
+  }
+
+  private queryMessagesByParticipant(
+    direction: "to" | "from",
+    ownerId: string,
+    ownerType: ParticipantType,
+    filter?: MessageFilter,
+  ): Message[] {
+    const idCol = direction === "to" ? "toId" : "fromId";
+    const typeCol = direction === "to" ? "toType" : "fromType";
+    const whereClauses: string[] = [`${idCol} = ?`, `${typeCol} = ?`];
     const params: (string | number)[] = [ownerId, ownerType];
 
     if (filter?.type) {

@@ -520,7 +520,7 @@ export class PluginLoader extends EventEmitter<{
         await this.loadPlugin(installation.id);
         loaded++;
       } catch (err) {
-        if ((err as any).code !== "PLUGIN_DISABLED") {
+        if ((err as { code?: string }).code !== "PLUGIN_DISABLED") {
           errors++;
           log.error(
             `Failed to load plugin ${installation.id}:`,

@@ -144,7 +144,7 @@ export function saveOnboardingState(
 
     // Determine completed and dismissed flags
     // completed takes precedence over dismissed
-    let completed = options.completed ?? DEFAULT_COMPLETED;
+    const completed = options.completed ?? DEFAULT_COMPLETED;
     let dismissed = options.dismissed ?? DEFAULT_DISMISSED;
 
     // If completed is true, dismissed should be false

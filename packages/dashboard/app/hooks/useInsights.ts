@@ -299,7 +299,7 @@ export function useInsights(projectId?: string): UseInsightsResult {
   }, [sections]);
 
   // Initial load - intentionally runs once on mount
-  // eslint-disable-next-line
+   
   useMemo(() => {
     void refresh();
   }, []);
