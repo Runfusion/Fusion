@@ -945,7 +945,13 @@ export async function scanMarkdownFiles(
     let entries: Dirent[];
     try {
       entries = await readdir(directoryPath, { withFileTypes: true });
-    } catch {
+    } catch (err: unknown) {
+      const error = err as NodeJS.ErrnoException;
+      if (error.code !== "ENOENT") {
+        console.warn(
+          `[scanMarkdownFiles] failed to read directory ${directoryPath}: ${error.message ?? String(err)}`,
+        );
+      }
       return;
     }
 
@@ -954,7 +960,25 @@ export async function scanMarkdownFiles(
         ? join(relativeDir, entry.name)
         : entry.name;
 
-      if (entry.isDirectory()) {
+      let shouldRecurse = entry.isDirectory();
+
+      if (!shouldRecurse && typeof entry.isSymbolicLink === "function" && entry.isSymbolicLink()) {
+        let symlinkPath: string;
+        try {
+          symlinkPath = validatePath(projectBasePath, entryRelativePath);
+        } catch {
+          continue;
+        }
+
+        try {
+          const symlinkStats = await stat(symlinkPath);
+          shouldRecurse = symlinkStats.isDirectory();
+        } catch {
+          continue;
+        }
+      }
+
+      if (shouldRecurse) {
         if (MARKDOWN_SCAN_EXCLUDED_DIRS.has(entry.name)) {
           continue;
         }

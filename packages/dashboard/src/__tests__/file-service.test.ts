@@ -1439,11 +1439,30 @@ describe("scanMarkdownFiles", () => {
   } as unknown as TaskStore;
 
   function directoryEntry(name: string) {
-    return { name, isDirectory: () => true, isFile: () => false };
+    return {
+      name,
+      isDirectory: () => true,
+      isFile: () => false,
+      isSymbolicLink: () => false,
+    };
   }
 
   function fileEntry(name: string) {
-    return { name, isDirectory: () => false, isFile: () => true };
+    return {
+      name,
+      isDirectory: () => false,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+  }
+
+  function symlinkEntry(name: string) {
+    return {
+      name,
+      isDirectory: () => false,
+      isFile: () => false,
+      isSymbolicLink: () => true,
+    };
   }
 
   beforeEach(() => {
@@ -1626,6 +1645,145 @@ describe("scanMarkdownFiles", () => {
     expect(result).toHaveLength(1);
     expect(result[0].contentPreview).toBe("a".repeat(200));
     expect(result[0].contentPreview.length).toBe(200);
+  });
+
+  it("follows symlinked directories when they point to markdown files", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+
+    mockReaddir.mockImplementation(async (targetPath: string) => {
+      if (targetPath === "/project") {
+        return [symlinkEntry("docs-link")];
+      }
+
+      if (targetPath === "/project/docs-link") {
+        return [fileEntry("linked.md")];
+      }
+
+      return [];
+    });
+
+    mockStat.mockImplementation(async (targetPath: string) => {
+      if (targetPath === "/project/docs-link") {
+        return {
+          isDirectory: () => true,
+          isFile: () => false,
+          size: 0,
+          mtime: new Date("2024-01-06T00:00:00.000Z"),
+        };
+      }
+
+      if (targetPath === "/project/docs-link/linked.md") {
+        return {
+          isDirectory: () => false,
+          isFile: () => true,
+          size: 77,
+          mtime: new Date("2024-01-06T00:00:00.000Z"),
+        };
+      }
+
+      throw { code: "ENOENT" };
+    });
+
+    mockReadFile.mockResolvedValue("Linked markdown content");
+
+    const result = await scanMarkdownFiles(mockStore);
+
+    expect(result).toEqual([
+      {
+        path: "docs-link/linked.md",
+        name: "linked.md",
+        size: 77,
+        mtime: "2024-01-06T00:00:00.000Z",
+        contentPreview: "Linked markdown content",
+      },
+    ]);
+    expect(mockReaddir).toHaveBeenCalledWith("/project/docs-link", { withFileTypes: true });
+  });
+
+  it("returns an empty list when root directory has no entries", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    mockReaddir.mockResolvedValue([]);
+
+    const result = await scanMarkdownFiles(mockStore);
+
+    expect(result).toEqual([]);
+    expect(mockStat).not.toHaveBeenCalled();
+    expect(mockReadFile).not.toHaveBeenCalled();
+  });
+
+  it("finds markdown files at depth 4 and deeper within maxDepth", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+
+    mockReaddir.mockImplementation(async (targetPath: string) => {
+      if (targetPath === "/project") return [directoryEntry("level-1")];
+      if (targetPath === "/project/level-1") return [directoryEntry("level-2")];
+      if (targetPath === "/project/level-1/level-2") return [directoryEntry("level-3")];
+      if (targetPath === "/project/level-1/level-2/level-3") return [directoryEntry("level-4")];
+      if (targetPath === "/project/level-1/level-2/level-3/level-4") return [fileEntry("deep.md")];
+      return [];
+    });
+
+    mockStat.mockResolvedValue({
+      isFile: () => true,
+      isDirectory: () => false,
+      size: 55,
+      mtime: new Date("2024-01-07T00:00:00.000Z"),
+    });
+    mockReadFile.mockResolvedValue("deep markdown");
+
+    const result = await scanMarkdownFiles(mockStore);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].path).toBe("level-1/level-2/level-3/level-4/deep.md");
+  });
+
+  it("does not treat directories with .md in the name as markdown files", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+
+    mockReaddir.mockImplementation(async (targetPath: string) => {
+      if (targetPath === "/project") {
+        return [
+          directoryEntry("readme.md-backup"),
+          fileEntry("actual.md"),
+        ];
+      }
+
+      if (targetPath === "/project/readme.md-backup") {
+        return [fileEntry("notes.txt")];
+      }
+
+      return [];
+    });
+
+    mockStat.mockImplementation(async (targetPath: string) => {
+      if (targetPath === "/project/actual.md") {
+        return {
+          isFile: () => true,
+          isDirectory: () => false,
+          size: 18,
+          mtime: new Date("2024-01-08T00:00:00.000Z"),
+        };
+      }
+
+      if (targetPath === "/project/readme.md-backup/notes.txt") {
+        return {
+          isFile: () => true,
+          isDirectory: () => false,
+          size: 18,
+          mtime: new Date("2024-01-08T00:00:00.000Z"),
+        };
+      }
+
+      throw { code: "ENOENT" };
+    });
+
+    mockReadFile.mockResolvedValue("Actual markdown file");
+
+    const result = await scanMarkdownFiles(mockStore);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].path).toBe("actual.md");
+    expect(result[0].name).toBe("actual.md");
   });
 
   it("returns files sorted by relative path", async () => {

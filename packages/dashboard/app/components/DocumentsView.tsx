@@ -345,7 +345,7 @@ export function DocumentsView({ projectId, addToast, onOpenDetail }: DocumentsVi
               {projectFilesExpanded && (
                 projectFiles.length === 0 ? (
                   <p className="documents-project-files-empty">
-                    No Markdown files found in the project directory.
+                    No Markdown files found in the project.
                   </p>
                 ) : (
                   <div className="documents-project-files-list">
