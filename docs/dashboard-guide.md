@@ -29,6 +29,20 @@ Features:
 - Duplicate task actions
 - Quick scanning of metadata without card expansion
 
+![List view](./screenshots/list-view.png)
+
+## Chat View
+
+Chat view provides project-scoped conversations with agents.
+
+![Chat view](./screenshots/chat-view.png)
+
+## Mailbox View
+
+Mailbox view shows inbox/outbox communication threads and unread state.
+
+![Mailbox view](./screenshots/mailbox-view.png)
+
 ## Interactive Terminal
 
 Fusion embeds a terminal using xterm.js.
@@ -63,6 +77,8 @@ Features:
 - Browse project root and task worktrees
 - Open files in an editor with syntax highlighting
 - Navigate artifacts generated during task execution
+
+![Documents view](./screenshots/documents-view.png)
 
 ## Activity Log
 
@@ -173,6 +189,8 @@ Manage mission hierarchy and progression state.
 ## Roadmaps View
 
 Roadmaps provide a dedicated planning surface for organizing product development with hierarchical milestones and features.
+
+![Roadmaps view](./screenshots/roadmaps-view.png)
 
 ### Creating Roadmaps
 
@@ -322,6 +340,12 @@ Roadmaps can be exported as structured data for use in mission and task planning
 - Copy individual feature handoffs as task planning prompts
 - Preserve roadmap context when creating tasks in the task board
 
+## Memory View
+
+Memory view provides a multi-file editor for project and daily memory files.
+
+![Memory view](./screenshots/memory-view.png)
+
 ## Task Detail Modal
 
 Inspect logs, step progress, workflow outcomes, and model overrides.
@@ -331,6 +355,8 @@ Inspect logs, step progress, workflow outcomes, and model overrides.
 ## Node Dashboard
 
 The Node Dashboard provides a mesh view of connected Fusion nodes. Each node can be a local instance or a remote headless node (`fn serve`).
+
+![Nodes view](./screenshots/nodes-view.png)
 
 ### Local/Remote Node Switching
 
@@ -374,6 +400,8 @@ The selected node persists across browser sessions via localStorage. If the sele
 ## Skills API
 
 The Skills API provides endpoints for managing execution skills. Skills are toggled via project-scoped settings in `.fusion/settings.json`.
+
+![Skills view](./screenshots/skills-view.png)
 
 ### GET /api/skills/discovered
 
