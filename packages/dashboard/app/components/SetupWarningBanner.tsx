@@ -1,3 +1,5 @@
+import { X } from "lucide-react";
+
 interface SetupWarningBannerProps {
   /** Whether an AI provider is connected */
   hasAiProvider: boolean;
@@ -5,6 +7,8 @@ interface SetupWarningBannerProps {
   hasGithub: boolean;
   /** Optional: compact mode for inline use (QuickEntryBox) */
   compact?: boolean;
+  /** Optional callback to dismiss the banner */
+  onDismiss?: () => void;
 }
 
 interface WarningItem {
@@ -17,21 +21,34 @@ export function SetupWarningBanner({
   hasAiProvider,
   hasGithub,
   compact = false,
+  onDismiss,
 }: SetupWarningBannerProps) {
   if (hasAiProvider && hasGithub) {
     return null;
   }
 
+  const dismissButton = onDismiss ? (
+    <button
+      type="button"
+      className="setup-warning-banner__dismiss touch-target"
+      aria-label="Dismiss setup warning"
+      onClick={onDismiss}
+    >
+      <X size={16} aria-hidden="true" />
+    </button>
+  ) : null;
+
   if (compact) {
     return (
       <div
-        className="setup-warning-banner setup-warning-banner--compact"
+        className={`setup-warning-banner setup-warning-banner--compact${onDismiss ? " setup-warning-banner--dismissible" : ""}`}
         role="status"
         aria-live="polite"
       >
         <p className="setup-warning-banner__compact-text">
           ⚠ Setup incomplete — AI and/or GitHub features will be limited.
         </p>
+        {dismissButton}
       </div>
     );
   }
@@ -57,7 +74,12 @@ export function SetupWarningBanner({
   }
 
   return (
-    <div className="setup-warning-banner" role="status" aria-live="polite">
+    <div
+      className={`setup-warning-banner${onDismiss ? " setup-warning-banner--dismissible" : ""}`}
+      role="status"
+      aria-live="polite"
+    >
+      {dismissButton}
       {warningItems.map((warning) => (
         <div key={warning.key} className="setup-warning-banner__item">
           <strong className="setup-warning-banner__title">{warning.title}</strong>
