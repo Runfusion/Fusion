@@ -86,6 +86,7 @@ const KNOWN_EXPERIMENTAL_FEATURES: Record<string, string> = {
   insights: "Insights",
   roadmap: "Roadmaps",
   memoryView: "Memory Editor",
+  skillsView: "Skills View",
 };
 
 export type SectionId = SettingsSection["id"];
