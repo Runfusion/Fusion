@@ -19,6 +19,7 @@ import { AppModals } from "./components/AppModals";
 import { DashboardLoader, type DashboardLoaderStage } from "./components/DashboardLoader";
 import { ExecutorStatusBar } from "./components/ExecutorStatusBar";
 import { SessionNotificationBanner } from "./components/SessionNotificationBanner";
+import { SetupWarningBanner } from "./components/SetupWarningBanner";
 import { OnboardingResumeCard } from "./components/OnboardingResumeCard";
 import { PostOnboardingRecommendations } from "./components/PostOnboardingRecommendations";
 import {
@@ -42,6 +43,7 @@ import { useAppSettings } from "./hooks/useAppSettings";
 import { useDeepLink } from "./hooks/useDeepLink";
 import { useFavorites } from "./hooks/useFavorites";
 import { useAuthOnboarding } from "./hooks/useAuthOnboarding";
+import { useSetupReadiness } from "./hooks/useSetupReadiness";
 import { useViewState, type TaskView } from "./hooks/useViewState";
 import { useProjectActions } from "./hooks/useProjectActions";
 import { useTaskHandlers } from "./hooks/useTaskHandlers";
@@ -50,6 +52,9 @@ import { useRemoteNodeEvents } from "./hooks/useRemoteNodeEvents";
 import { NodeProvider, useNodeContext } from "./context/NodeContext";
 import type { AiSessionSummary } from "./api";
 import { fetchAiSession, fetchUnreadCount, reportDashboardPerf } from "./api";
+import { getScopedItem, setScopedItem } from "./utils/projectStorage";
+
+const SETUP_WARNING_DISMISSED_KEY = "kb-setup-warning-dismissed";
 
 function AppInner() {
   const { toasts, addToast, removeToast } = useToast();
@@ -59,7 +64,13 @@ function AppInner() {
   const { projects, loading: projectsLoading, error: projectsError, refresh: refreshProjects, register: registerProject, update: updateProjectHook, unregister: unregisterProjectHook } = useProjects();
   const { nodes } = useNodes();
   const { currentProject, setCurrentProject, clearCurrentProject, loading: currentProjectLoading } = useCurrentProject(projects);
-  
+  const {
+    hasAiProvider,
+    hasGithub,
+    loading: setupReadinessLoading,
+    hasWarnings,
+  } = useSetupReadiness(currentProject?.id);
+
   // Node context for local/remote node switching
   const { currentNode, currentNodeId, isRemote, setCurrentNode, clearCurrentNode } = useNodeContext();
   
@@ -203,6 +214,20 @@ function AppInner() {
   const [missionTargetId, setMissionTargetId] = useState<string | undefined>(undefined);
   const [milestoneSliceResumeSessionId, setMilestoneSliceResumeSessionId] = useState<string | undefined>(undefined);
   const [quickChatOpen, setQuickChatOpen] = useState(false);
+  const [setupWarningDismissed, setSetupWarningDismissed] = useState(
+    () => getScopedItem(SETUP_WARNING_DISMISSED_KEY, currentProject?.id) === "true",
+  );
+
+  useEffect(() => {
+    setSetupWarningDismissed(
+      getScopedItem(SETUP_WARNING_DISMISSED_KEY, currentProject?.id) === "true",
+    );
+  }, [currentProject?.id]);
+
+  const handleDismissSetupWarning = useCallback(() => {
+    setScopedItem(SETUP_WARNING_DISMISSED_KEY, "true", currentProject?.id);
+    setSetupWarningDismissed(true);
+  }, [currentProject?.id]);
 
   // Settings state
   const {
@@ -663,6 +688,13 @@ function AppInner() {
         <PostOnboardingRecommendations
           onOpenModelOnboarding={modalManager.openModelOnboarding}
           onOpenSettings={(section) => modalManager.openSettings(section as SectionId)}
+        />
+      )}
+      {viewMode === "project" && currentProject && !setupReadinessLoading && hasWarnings && !setupWarningDismissed && (
+        <SetupWarningBanner
+          hasAiProvider={hasAiProvider}
+          hasGithub={hasGithub}
+          onDismiss={handleDismissSetupWarning}
         />
       )}
       <div

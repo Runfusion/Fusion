@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { SetupWarningBanner } from "../SetupWarningBanner";
 
 describe("SetupWarningBanner", () => {
@@ -70,5 +70,70 @@ describe("SetupWarningBanner", () => {
 
     const banner = screen.getByRole("status");
     expect(banner).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("does not render dismiss button when onDismiss is not provided", () => {
+    render(<SetupWarningBanner hasAiProvider={false} hasGithub />);
+
+    expect(
+      screen.queryByRole("button", { name: "Dismiss setup warning" }),
+    ).toBeNull();
+  });
+
+  it("renders dismiss button when onDismiss is provided (full mode)", () => {
+    const onDismiss = vi.fn();
+
+    render(
+      <SetupWarningBanner
+        hasAiProvider={false}
+        hasGithub
+        onDismiss={onDismiss}
+      />,
+    );
+
+    const dismissButton = screen.getByRole("button", {
+      name: "Dismiss setup warning",
+    });
+    expect(dismissButton).toBeInTheDocument();
+
+    fireEvent.click(dismissButton);
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders dismiss button when onDismiss is provided (compact mode)", () => {
+    const onDismiss = vi.fn();
+
+    render(
+      <SetupWarningBanner
+        hasAiProvider={false}
+        hasGithub
+        compact
+        onDismiss={onDismiss}
+      />,
+    );
+
+    const dismissButton = screen.getByRole("button", {
+      name: "Dismiss setup warning",
+    });
+    expect(dismissButton).toBeInTheDocument();
+
+    fireEvent.click(dismissButton);
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it("clicking dismiss button calls onDismiss", () => {
+    const onDismiss = vi.fn();
+
+    render(
+      <SetupWarningBanner
+        hasAiProvider={false}
+        hasGithub={false}
+        onDismiss={onDismiss}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss setup warning" }));
+
+    expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 });
