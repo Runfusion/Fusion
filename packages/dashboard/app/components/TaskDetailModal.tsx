@@ -1796,30 +1796,31 @@ export function TaskDetailModal({
               {/* Move dropdown — column transitions and merge actions */}
               <div className="detail-move-dropdown" ref={moveMenuRef}>
                 {task.column === "in-review" ? (
-                  /* In-review: show merge controls inline with Move dropdown for secondary moves */
-                  <div className="detail-move-actions-in-review">
-                    <button
-                      className="btn btn-sm"
-                      onClick={() => {
-                        setShowMoveMenu((prev) => !prev);
-                        setShowActionsMenu(false);
-                      }}
-                      aria-haspopup="menu"
-                      aria-expanded={showMoveMenu}
-                    >
-                      Move
-                      <ChevronDown size={12} />
-                    </button>
-                    {prAutomationLabel ? (
-                      <button className="btn btn-primary btn-sm" disabled>
-                        {prAutomationLabel}
+                  <>
+                    {/* In-review: show merge controls inline with Move dropdown for secondary moves */}
+                    <div className="detail-move-actions-in-review">
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => {
+                          setShowMoveMenu((prev) => !prev);
+                          setShowActionsMenu(false);
+                        }}
+                        aria-haspopup="menu"
+                        aria-expanded={showMoveMenu}
+                      >
+                        Move
+                        <ChevronDown size={12} />
                       </button>
-                    ) : (
-                      <button className="btn btn-primary btn-sm" onClick={handleMergeMenuItemClick}>
-                        Merge &amp; Close
-                      </button>
-                    )}
-                  </div>
+                      {prAutomationLabel ? (
+                        <button className="btn btn-primary btn-sm" disabled>
+                          {prAutomationLabel}
+                        </button>
+                      ) : (
+                        <button className="btn btn-primary btn-sm" onClick={handleMergeMenuItemClick}>
+                          Merge &amp; Close
+                        </button>
+                      )}
+                    </div>
                     {showMoveMenu && (
                       <div className="detail-move-menu" role="menu">
                         <button
