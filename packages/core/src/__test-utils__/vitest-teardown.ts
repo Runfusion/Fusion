@@ -5,7 +5,7 @@
  * temp dirs created by vitest-setup.ts.
  */
 
-import { rmSync } from "node:fs";
+import { readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -17,8 +17,25 @@ export default function setup(): () => Promise<void> {
   process.env.FUSION_TEST_WORKER_ROOT = WORKER_ROOT;
 
   return async function teardown() {
+    // IMPORTANT: do not remove WORKER_ROOT recursively here.
+    // In some Vitest pool modes, global setup/teardown can run in multiple
+    // processes. If one process deletes the shared root while another process
+    // is still running with cwd inside it, the other process will fail with
+    // ENOENT uv_cwd.
+    //
+    // Instead, clean up only this process's worker dirs. Other processes clean
+    // up their own dirs via their exit hooks.
+    const ownPrefix = `w-${process.pid}-`;
     try {
-      rmSync(WORKER_ROOT, { recursive: true, force: true });
+      const entries = readdirSync(WORKER_ROOT, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory() || !entry.name.startsWith(ownPrefix)) continue;
+        try {
+          rmSync(join(WORKER_ROOT, entry.name), { recursive: true, force: true });
+        } catch {
+          // Ignore per-dir cleanup errors.
+        }
+      }
     } catch {
       // Ignore — OS cleans /tmp eventually.
     }
