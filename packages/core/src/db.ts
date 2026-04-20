@@ -146,6 +146,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   mergeRetries INTEGER,
   workflowStepRetries INTEGER,
   recoveryRetryCount INTEGER,
+  taskDoneRetryCount INTEGER DEFAULT 0,
   nextRecoveryAt TEXT,
   error TEXT,
   summary TEXT,
@@ -1620,6 +1621,15 @@ export class Database {
         `);
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxAgentLogEntriesTaskIdTimestamp ON agentLogEntries(taskId, timestamp)`);
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxAgentLogEntriesTaskIdType ON agentLogEntries(taskId, type)`);
+      });
+    }
+
+    if (version < 41) {
+      // Tracks self-healing auto-requeues of tasks that failed because the agent
+      // exited without calling task_done with partial step progress. Bounded so
+      // a persistently-broken task cannot loop forever.
+      this.applyMigration(41, () => {
+        this.addColumnIfMissing("tasks", "taskDoneRetryCount", "INTEGER DEFAULT 0");
       });
     }
 

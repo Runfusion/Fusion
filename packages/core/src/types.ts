@@ -734,6 +734,13 @@ export interface Task {
    *  recovery-policy module on each recoverable failure; cleared when work restarts
    *  cleanly or reaches a terminal column (in-review, done, archived). */
   recoveryRetryCount?: number;
+  /** Number of times the self-healing manager has auto-requeued this task after
+   *  the agent exited without calling `task_done`. Incremented by
+   *  `recoverPartialProgressNoTaskDoneFailures` when a failed task with partial
+   *  step progress is moved back to `todo` for a fresh execution. Capped by
+   *  `MAX_TASK_DONE_RETRIES`; when exhausted the task stays in `in-review` for
+   *  human inspection. Cleared on successful completion. */
+  taskDoneRetryCount?: number;
   /** ISO-8601 timestamp indicating when the task becomes eligible for the next
    *  recovery retry. Scheduler and triage processor skip tasks whose
    *  `nextRecoveryAt` is still in the future. Cleared alongside `recoveryRetryCount`. */

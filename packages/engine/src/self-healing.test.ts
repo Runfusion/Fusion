@@ -430,6 +430,7 @@ describe("SelfHealingManager", () => {
       const recoverNoProgressNoTaskDoneFailures = vi.spyOn(manager, "recoverNoProgressNoTaskDoneFailures").mockResolvedValue(1);
       const recoverCompletedTasks = vi.spyOn(manager, "recoverCompletedTasks").mockResolvedValue(1);
       const recoverMisclassifiedFailures = vi.spyOn(manager, "recoverMisclassifiedFailures").mockResolvedValue(1);
+      const recoverPartialProgressNoTaskDoneFailures = vi.spyOn(manager, "recoverPartialProgressNoTaskDoneFailures").mockResolvedValue(1);
       const recoverOrphanedExecutions = vi.spyOn(manager, "recoverOrphanedExecutions").mockResolvedValue(1);
       const recoverApprovedTriageTasks = vi.spyOn(manager, "recoverApprovedTriageTasks").mockResolvedValue(1);
 
@@ -438,6 +439,7 @@ describe("SelfHealingManager", () => {
       expect(recoverNoProgressNoTaskDoneFailures).toHaveBeenCalledTimes(1);
       expect(recoverCompletedTasks).toHaveBeenCalledTimes(1);
       expect(recoverMisclassifiedFailures).toHaveBeenCalledTimes(1);
+      expect(recoverPartialProgressNoTaskDoneFailures).toHaveBeenCalledTimes(1);
       expect(recoverOrphanedExecutions).toHaveBeenCalledTimes(1);
       expect(recoverApprovedTriageTasks).toHaveBeenCalledTimes(1);
     });
@@ -1016,6 +1018,145 @@ describe("SelfHealingManager", () => {
       ]);
 
       const result = await managerWithRecovery.recoverMisclassifiedFailures();
+
+      expect(result).toBe(0);
+
+      managerWithRecovery.stop();
+    });
+  });
+
+  describe("recoverPartialProgressNoTaskDoneFailures", () => {
+    it("requeues partial-progress no-task_done failures with bounded retry count", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-2164",
+          column: "in-review",
+          status: "failed",
+          error: "Agent finished without calling task_done (after retry)",
+          paused: false,
+          steps: [{ status: "done" }, { status: "pending" }, { status: "pending" }],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverPartialProgressNoTaskDoneFailures();
+
+      expect(result).toBe(1);
+      expect(store.listTasks).toHaveBeenCalledWith({ column: "in-review" });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-2164", {
+        status: null,
+        error: null,
+        sessionFile: null,
+        taskDoneRetryCount: 1,
+      });
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-2164",
+        expect.stringContaining("Auto-retry 1/3"),
+      );
+      expect(store.moveTask).toHaveBeenCalledWith("FN-2164", "todo");
+
+      managerWithRecovery.stop();
+    });
+
+    it("skips tasks whose retry count has reached the max", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-2164",
+          column: "in-review",
+          status: "failed",
+          error: "Agent finished without calling task_done (after retry)",
+          paused: false,
+          taskDoneRetryCount: 3,
+          steps: [{ status: "done" }, { status: "pending" }],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverPartialProgressNoTaskDoneFailures();
+
+      expect(result).toBe(0);
+      expect(store.updateTask).not.toHaveBeenCalled();
+      expect(store.moveTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("skips tasks where all steps are already done (handled by misclassified recovery)", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-2164",
+          column: "in-review",
+          status: "failed",
+          error: "Agent finished without calling task_done (after retry)",
+          paused: false,
+          steps: [{ status: "done" }, { status: "done" }, { status: "skipped" }],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverPartialProgressNoTaskDoneFailures();
+
+      expect(result).toBe(0);
+      expect(store.updateTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("skips tasks with zero step progress (handled by no-progress recovery)", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-2164",
+          column: "in-review",
+          status: "failed",
+          error: "Agent finished without calling task_done (after retry)",
+          paused: false,
+          steps: [{ status: "pending" }, { status: "pending" }],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverPartialProgressNoTaskDoneFailures();
+
+      expect(result).toBe(0);
+      expect(store.updateTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("skips tasks with unrelated failure reasons", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-2164",
+          column: "in-review",
+          status: "failed",
+          error: "Workflow step failed",
+          paused: false,
+          steps: [{ status: "done" }, { status: "pending" }],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverPartialProgressNoTaskDoneFailures();
 
       expect(result).toBe(0);
 
@@ -2210,6 +2351,7 @@ describe("maintenance cycle concurrency", () => {
     (vi.spyOn(manager as any, "recoverMergedReviewTasks").mockResolvedValue(0) as any);
     (vi.spyOn(manager as any, "recoverMisclassifiedFailures").mockResolvedValue(0) as any);
     (vi.spyOn(manager as any, "recoverNoProgressNoTaskDoneFailures").mockResolvedValue(0) as any);
+    (vi.spyOn(manager as any, "recoverPartialProgressNoTaskDoneFailures").mockResolvedValue(0) as any);
     (vi.spyOn(manager as any, "recoverOrphanedExecutions").mockResolvedValue(0) as any);
     (vi.spyOn(manager as any, "recoverApprovedTriageTasks").mockResolvedValue(0) as any);
     (vi.spyOn(manager as any, "recoverOrphanedSpecifyingTasks").mockResolvedValue(0) as any);
@@ -2276,6 +2418,7 @@ describe("maintenance cycle concurrency", () => {
     makeSlow("recoverMergedReviewTasks");
     makeSlow("recoverMisclassifiedFailures");
     makeSlow("recoverNoProgressNoTaskDoneFailures");
+    makeSlow("recoverPartialProgressNoTaskDoneFailures");
     makeSlow("recoverOrphanedExecutions");
     makeSlow("recoverApprovedTriageTasks");
     makeSlow("recoverOrphanedSpecifyingTasks");
@@ -2297,6 +2440,7 @@ describe("maintenance cycle concurrency", () => {
       "recoverMergedReviewTasks",
       "recoverMisclassifiedFailures",
       "recoverNoProgressNoTaskDoneFailures",
+      "recoverPartialProgressNoTaskDoneFailures",
       "recoverOrphanedExecutions",
       "recoverApprovedTriageTasks",
       "recoverOrphanedSpecifyingTasks",

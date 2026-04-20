@@ -80,6 +80,13 @@ const NON_TERMINAL_STEP_STATUSES = new Set(["pending", "in-progress"]);
  */
 const ORPHANED_WITH_WORKTREE_GRACE_MS = 300_000;
 
+/**
+ * Maximum times a task can be auto-requeued after the agent exits without
+ * calling `task_done`. Bounded so a persistently-broken task cannot loop
+ * forever; when exhausted the task stays in `in-review` for human inspection.
+ */
+const MAX_TASK_DONE_RETRIES = 3;
+
 interface LandedTaskCommit {
   sha: string;
   subject?: string;
@@ -155,6 +162,7 @@ export class SelfHealingManager {
       { name: "failed-pre-merge-steps", fn: () => this.recoverReviewTasksWithFailedPreMergeSteps().then(() => undefined) },
       { name: "interrupted-merging", fn: () => this.recoverInterruptedMergingTasks().then(() => undefined) },
       { name: "misclassified-failures", fn: () => this.recoverMisclassifiedFailures().then(() => undefined) },
+      { name: "partial-progress-no-task-done", fn: () => this.recoverPartialProgressNoTaskDoneFailures().then(() => undefined) },
       { name: "orphaned-executions", fn: () => this.recoverOrphanedExecutions().then(() => undefined) },
       { name: "approved-triage", fn: () => this.recoverApprovedTriageTasks().then(() => undefined) },
       { name: "orphaned-specifying", fn: () => this.recoverOrphanedSpecifyingTasks().then(() => undefined) },
@@ -532,6 +540,7 @@ export class SelfHealingManager {
         { name: "recover-merged-review", fn: () => this.recoverMergedReviewTasks() },
         { name: "recover-misclassified-failures", fn: () => this.recoverMisclassifiedFailures() },
         { name: "recover-no-progress-no-task-done", fn: () => this.recoverNoProgressNoTaskDoneFailures() },
+        { name: "recover-partial-progress-no-task-done", fn: () => this.recoverPartialProgressNoTaskDoneFailures() },
         { name: "recover-orphaned-executions", fn: () => this.recoverOrphanedExecutions() },
         { name: "recover-approved-triage", fn: () => this.recoverApprovedTriageTasks() },
         { name: "recover-orphaned-specifying", fn: () => this.recoverOrphanedSpecifyingTasks() },
@@ -1193,6 +1202,83 @@ export class SelfHealingManager {
       return recovered;
     } catch (err: unknown) { const errorMessage = err instanceof Error ? err.message : String(err);
       log.error(`No-progress no-task_done recovery failed: ${errorMessage}`);
+      return 0;
+    }
+  }
+
+  /**
+   * Recover `in-review` tasks marked as `failed` because the agent exited
+   * without calling `task_done` *with partial step progress* (some steps done,
+   * some still pending). The work-in-progress is valuable but incomplete —
+   * the existing worktree and branch are preserved and the task is moved back
+   * to `todo` so the scheduler re-dispatches it for a fresh execution that
+   * continues from where the previous attempt left off.
+   *
+   * Bounded by `MAX_TASK_DONE_RETRIES` (per-task `taskDoneRetryCount`) so a
+   * persistently-broken task cannot loop forever; when exhausted the task
+   * remains parked in `in-review` for manual intervention. The counter is
+   * cleared by the executor on successful completion.
+   *
+   * Distinct from sibling recoveries:
+   * - `recoverMisclassifiedFailures`: all steps done → clear error, leave for review.
+   * - `recoverNoProgressNoTaskDoneFailures`: `in-progress` with zero progress → clean requeue.
+   * - This one: `in-review` with partial progress → bounded requeue preserving work.
+   *
+   * @returns Number of tasks requeued for retry
+   */
+  async recoverPartialProgressNoTaskDoneFailures(): Promise<number> {
+    try {
+      const tasks = await this.store.listTasks({ column: "in-review" });
+
+      const candidates = tasks.filter((task) =>
+        task.column === "in-review" &&
+        task.status === "failed" &&
+        isNoTaskDoneFailure(task) &&
+        !task.paused &&
+        !isTaskWorkComplete(task) &&
+        hasStepProgress(task) &&
+        (task.taskDoneRetryCount ?? 0) < MAX_TASK_DONE_RETRIES,
+      );
+
+      if (candidates.length === 0) return 0;
+
+      log.warn(
+        `Found ${candidates.length} partial-progress no-task_done failure(s) eligible for auto-retry`,
+      );
+
+      let recovered = 0;
+      for (const task of candidates) {
+        try {
+          const nextCount = (task.taskDoneRetryCount ?? 0) + 1;
+          await this.store.updateTask(task.id, {
+            status: null,
+            error: null,
+            sessionFile: null,
+            taskDoneRetryCount: nextCount,
+          });
+          await this.store.logEntry(
+            task.id,
+            `Auto-retry ${nextCount}/${MAX_TASK_DONE_RETRIES}: agent finished without task_done — requeuing to todo to resume partial work`,
+          );
+          await this.store.moveTask(task.id, "todo");
+          recovered++;
+        } catch (err: unknown) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          log.error(
+            `Failed to auto-retry partial-progress no-task_done failure ${task.id}: ${errorMessage}`,
+          );
+        }
+      }
+
+      if (recovered > 0) {
+        log.log(
+          `Auto-retried ${recovered} partial-progress no-task_done failure(s) → todo`,
+        );
+      }
+      return recovered;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.error(`Partial-progress no-task_done recovery failed: ${errorMessage}`);
       return 0;
     }
   }
