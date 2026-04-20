@@ -868,11 +868,21 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
     );
   };
 
+  const activeModelTag = formatModelTag(activeSession?.modelProvider, activeSession?.modelId);
+
+  const threadHeaderTitle = activeSession?.agentId === FN_AGENT_ID
+    ? (activeModelTag ?? "Fusion")
+    : activeSession?.title || agentsMap.get(activeSession?.agentId ?? "")?.name || activeSession?.agentId || "Chat";
+
+  const showThreadHeaderModelTag = Boolean(activeModelTag && activeModelTag !== threadHeaderTitle);
+
   const agentName =
     agentsMap.get(activeSession?.agentId ?? "")?.name ||
     (activeSession?.agentId === FN_AGENT_ID
-      ? "Fusion"
+      ? (activeModelTag ?? "Fusion")
       : (activeSession?.agentId?.slice(0, 30) ?? "Fusion"));
+
+  const showAssistantModelTag = Boolean(activeModelTag && activeModelTag !== agentName);
 
   const pendingPreview = pendingMessage.length > 50
     ? `${pendingMessage.slice(0, 50)}…`
@@ -942,7 +952,12 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                   {session.lastMessagePreview || "No messages"}
                 </div>
                 <div className="chat-session-meta">
-                  <span>{agentsMap.get(session.agentId)?.name || (session.agentId === FN_AGENT_ID ? "Fusion" : session.agentId.slice(0, 30))}</span>
+                  <span>
+                    {agentsMap.get(session.agentId)?.name ||
+                      (session.agentId === FN_AGENT_ID
+                        ? (formatModelTag(session.modelProvider, session.modelId) ?? "Fusion")
+                        : session.agentId.slice(0, 30))}
+                  </span>
                   <span>{session.updatedAt ? formatRelativeTime(session.updatedAt) : ""}</span>
                 </div>
               </div>
@@ -1011,15 +1026,8 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
             </button>
           )}
           <Bot size={16} />
-          <span className="chat-thread-header-title">
-            {activeSession?.agentId === FN_AGENT_ID
-              ? "Fusion"
-              : activeSession?.title || agentsMap.get(activeSession?.agentId ?? "")?.name || activeSession?.agentId || "Chat"}
-          </span>
-          {activeSession && (() => {
-            const modelTag = formatModelTag(activeSession.modelProvider, activeSession.modelId);
-            return modelTag ? <span className="chat-model-tag">{modelTag}</span> : null;
-          })()}
+          <span className="chat-thread-header-title">{threadHeaderTitle}</span>
+          {showThreadHeaderModelTag && <span className="chat-model-tag">{activeModelTag}</span>}
         </div>
 
         {/* Messages */}
@@ -1044,10 +1052,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                     <div className="chat-message-avatar">
                       <Bot size={14} />
                       <span>{agentName}</span>
-                      {activeSession && (() => {
-                        const modelTag = formatModelTag(activeSession.modelProvider, activeSession.modelId);
-                        return modelTag ? <span className="chat-model-tag">{modelTag}</span> : null;
-                      })()}
+                      {showAssistantModelTag && <span className="chat-model-tag">{activeModelTag}</span>}
                     </div>
                   )}
                   <div className="chat-message-content">{renderMessageContent(message.content)}</div>
@@ -1065,10 +1070,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                   <div className="chat-message-avatar">
                     <Bot size={14} />
                     <span>{agentName}</span>
-                    {activeSession && (() => {
-                      const modelTag = formatModelTag(activeSession.modelProvider, activeSession.modelId);
-                      return modelTag ? <span className="chat-model-tag">{modelTag}</span> : null;
-                    })()}
+                    {showAssistantModelTag && <span className="chat-model-tag">{activeModelTag}</span>}
                   </div>
                   {streamingText ? (
                     <div className="chat-message-content">{renderMessageContent(streamingText)}</div>

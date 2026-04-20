@@ -432,6 +432,34 @@ describe("ChatView", () => {
     expect(within(avatar!).getByText("Fusion")).toBeInTheDocument();
   });
 
+  it("shows formatted model name in assistant message avatar for fn agent sessions", async () => {
+    setupMockChat({
+      activeSession: {
+        id: "session-001",
+        agentId: "__fn_agent__",
+        status: "active",
+        title: "Fusion Chat",
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+        updatedAt: "2026-04-08T00:00:00.000Z",
+      },
+      messages: [
+        { id: "msg-001", sessionId: "session-001", role: "assistant", content: "Built-in assistant response", createdAt: "2026-04-08T00:00:00.000Z" },
+      ],
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const avatar = document.querySelector(".chat-message-avatar");
+    expect(avatar).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(within(avatar!).getByText("Claude Sonnet 4.5")).toBeInTheDocument();
+    });
+    expect(within(avatar!).queryByText("Fusion")).not.toBeInTheDocument();
+    expect(avatar?.querySelector(".chat-model-tag")).toBeNull();
+  });
+
   it("shows resolved agent name in streaming assistant avatar", async () => {
     setupMockChat({
       activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Agent Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
@@ -1002,7 +1030,36 @@ describe("ChatView", () => {
     expect(within(dialog!).getByText("Delete Conversation?")).toBeInTheDocument();
   });
 
-  it("shows Fusion label for fn agent sessions in sidebar", () => {
+  it("shows formatted model label for fn agent sessions in sidebar", () => {
+    setupMockChat({
+      sessions: [{
+        id: "session-001",
+        agentId: "__fn_agent__",
+        status: "active",
+        title: "My Chat",
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+        updatedAt: "2026-04-08T00:00:00.000Z",
+      }],
+      filteredSessions: [{
+        id: "session-001",
+        agentId: "__fn_agent__",
+        status: "active",
+        title: "My Chat",
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+        updatedAt: "2026-04-08T00:00:00.000Z",
+      }],
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const sessionItem = screen.getByTestId("chat-session-session-001");
+    expect(within(sessionItem).getByText("Claude Sonnet 4.5")).toBeInTheDocument();
+    expect(within(sessionItem).queryByText("Fusion")).not.toBeInTheDocument();
+  });
+
+  it("shows Fusion fallback for fn agent sessions in sidebar without model info", () => {
     setupMockChat({
       sessions: [{ id: "session-001", agentId: "__fn_agent__", status: "active", title: "My Chat", updatedAt: "2026-04-08T00:00:00.000Z" }],
       filteredSessions: [{ id: "session-001", agentId: "__fn_agent__", status: "active", title: "My Chat", updatedAt: "2026-04-08T00:00:00.000Z" }],
@@ -1011,7 +1068,6 @@ describe("ChatView", () => {
     render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     const sessionItem = screen.getByTestId("chat-session-session-001");
-    // Should show "Fusion" instead of "__fn_agent__"
     expect(within(sessionItem).getByText("Fusion")).toBeInTheDocument();
   });
 
@@ -1028,13 +1084,37 @@ describe("ChatView", () => {
     expect(within(sessionItem).getByText("my-custom-agent")).toBeInTheDocument();
   });
 
-  it("shows model tag in thread header when session has model", () => {
+  it("shows formatted model name in thread header title for fn agent sessions", () => {
     setupMockChat({
       activeSession: {
         id: "session-001",
         agentId: "__fn_agent__",
         status: "active",
         title: "Test Chat",
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+        updatedAt: "2026-04-08T00:00:00.000Z",
+      },
+      messages: [
+        { id: "msg-001", sessionId: "session-001", role: "assistant", content: "Hi!", createdAt: "2026-04-08T00:00:00.000Z" },
+      ],
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const title = document.querySelector(".chat-thread-header-title");
+    expect(title).toBeInTheDocument();
+    expect(title).toHaveTextContent("Claude Sonnet 4.5");
+    expect(title).not.toHaveTextContent("Fusion");
+  });
+
+  it("shows model tag in thread header when non-fn session has model", () => {
+    setupMockChat({
+      activeSession: {
+        id: "session-001",
+        agentId: "agent-001",
+        status: "active",
+        title: "Agent Chat",
         modelProvider: "anthropic",
         modelId: "claude-sonnet-4-5",
         updatedAt: "2026-04-08T00:00:00.000Z",
@@ -1047,9 +1127,34 @@ describe("ChatView", () => {
 
     render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-    const modelTag = document.querySelector(".chat-model-tag");
-    expect(modelTag).toBeInTheDocument();
-    expect(modelTag?.textContent).toContain("Claude");
+    const headerModelTag = document.querySelector(".chat-thread-header .chat-model-tag");
+    expect(headerModelTag).toBeInTheDocument();
+    expect(headerModelTag?.textContent).toContain("Claude");
+  });
+
+  it("does not show duplicate model tag in thread header for fn agent sessions", () => {
+    setupMockChat({
+      activeSession: {
+        id: "session-001",
+        agentId: "__fn_agent__",
+        status: "active",
+        title: "Test Chat",
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+        updatedAt: "2026-04-08T00:00:00.000Z",
+      },
+      messages: [
+        { id: "msg-001", sessionId: "session-001", role: "assistant", content: "Hi!", createdAt: "2026-04-08T00:00:00.000Z" },
+      ],
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const title = document.querySelector(".chat-thread-header-title");
+    expect(title).toHaveTextContent("Claude Sonnet 4.5");
+
+    const headerModelTag = document.querySelector(".chat-thread-header .chat-model-tag");
+    expect(headerModelTag).toBeNull();
   });
 
   it("does not show model tag when session has no model", () => {
@@ -1073,7 +1178,30 @@ describe("ChatView", () => {
     expect(modelTag).not.toBeInTheDocument();
   });
 
-  it("shows model tag in message avatar when session has model", () => {
+  it("shows model tag in message avatar when non-fn session has model", () => {
+    setupMockChat({
+      activeSession: {
+        id: "session-001",
+        agentId: "agent-001",
+        status: "active",
+        title: "Agent Chat",
+        modelProvider: "openai",
+        modelId: "gpt-4o",
+        updatedAt: "2026-04-08T00:00:00.000Z",
+      },
+      messages: [
+        { id: "msg-001", sessionId: "session-001", role: "assistant", content: "Hi!", createdAt: "2026-04-08T00:01:00.000Z" },
+      ],
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const avatar = document.querySelector(".chat-message-avatar");
+    expect(avatar).toBeInTheDocument();
+    expect(avatar?.querySelector(".chat-model-tag")?.textContent).toContain("GPT");
+  });
+
+  it("does not show duplicate model tag in message avatar for fn agent sessions", () => {
     setupMockChat({
       activeSession: {
         id: "session-001",
@@ -1085,23 +1213,16 @@ describe("ChatView", () => {
         updatedAt: "2026-04-08T00:00:00.000Z",
       },
       messages: [
-        { id: "msg-001", sessionId: "session-001", role: "user", content: "Hello", createdAt: "2026-04-08T00:00:00.000Z" },
-        { id: "msg-002", sessionId: "session-001", role: "assistant", content: "Hi!", createdAt: "2026-04-08T00:01:00.000Z" },
+        { id: "msg-001", sessionId: "session-001", role: "assistant", content: "Hi!", createdAt: "2026-04-08T00:01:00.000Z" },
       ],
     });
 
     render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-    // Find the avatar with "Fusion" text
-    const avatars = document.querySelectorAll(".chat-message-avatar");
-    expect(avatars.length).toBeGreaterThan(0);
-
-    // Check that one avatar has the model tag
-    const avatarWithModelTag = Array.from(avatars).find((avatar) =>
-      avatar.querySelector(".chat-model-tag"),
-    );
-    expect(avatarWithModelTag).toBeTruthy();
-    expect(avatarWithModelTag?.querySelector(".chat-model-tag")?.textContent).toContain("GPT");
+    const avatar = document.querySelector(".chat-message-avatar");
+    expect(avatar).toBeInTheDocument();
+    expect(within(avatar!).getByText("GPT-4o")).toBeInTheDocument();
+    expect(avatar?.querySelector(".chat-model-tag")).toBeNull();
   });
 });
 
@@ -1113,7 +1234,7 @@ describe("formatModelTag helper function", () => {
     setupMockChat({
       activeSession: {
         id: "session-001",
-        agentId: "__fn_agent__",
+        agentId: "agent-001",
         status: "active",
         title: "Test",
         modelProvider: "anthropic",
@@ -1135,7 +1256,7 @@ describe("formatModelTag helper function", () => {
     setupMockChat({
       activeSession: {
         id: "session-001",
-        agentId: "__fn_agent__",
+        agentId: "agent-001",
         status: "active",
         title: "Test",
         modelProvider: "openai",
@@ -1157,7 +1278,7 @@ describe("formatModelTag helper function", () => {
     setupMockChat({
       activeSession: {
         id: "session-001",
-        agentId: "__fn_agent__",
+        agentId: "agent-001",
         status: "active",
         title: "Test",
         modelProvider: "google",
