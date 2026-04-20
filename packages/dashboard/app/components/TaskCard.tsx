@@ -1062,7 +1062,7 @@ function TaskCardComponent({
               <Layers size={12} style={{ verticalAlign: "middle" }} /> {task.blockedBy}
             </span>
           )}
-          {(queued || task.status === "queued") && <span className="queued-badge"><Clock size={12} style={{ verticalAlign: "middle" }} /> Queued</span>}
+          {(queued || task.status === "queued") && task.column !== "in-progress" && <span className="queued-badge"><Clock size={12} style={{ verticalAlign: "middle" }} /> Queued</span>}
         </div>
       )}
       <PluginSlot slotId="task-card-badge" projectId={projectId} />

@@ -568,8 +568,8 @@ describe("TaskCard queued badge logic", () => {
   }
 
   /** Mirrors the queued-badge visibility condition from TaskCard.tsx */
-  function shouldShowQueuedBadge(opts: { queued?: boolean; status?: string | null }): boolean {
-    return !!(opts.queued || opts.status === "queued");
+  function shouldShowQueuedBadge(opts: { queued?: boolean; status?: string | null; column?: string }): boolean {
+    return !!(opts.queued || opts.status === "queued") && opts.column !== "in-progress";
   }
 
   it("shows queued-badge when queued prop is true", () => {
@@ -587,6 +587,11 @@ describe("TaskCard queued badge logic", () => {
   it("does NOT show queued-badge when neither queued prop nor status is 'queued'", () => {
     expect(shouldShowQueuedBadge({ queued: false, status: "executing" })).toBe(false);
     expect(shouldShowQueuedBadge({})).toBe(false);
+  });
+
+  it("does NOT show queued-badge when column is 'in-progress' even if status is stale 'queued'", () => {
+    expect(shouldShowQueuedBadge({ status: "queued", column: "in-progress" })).toBe(false);
+    expect(shouldShowQueuedBadge({ queued: true, column: "in-progress" })).toBe(false);
   });
 
   it("does NOT show card-status-badge when status is 'queued'", () => {
