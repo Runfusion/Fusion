@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ExternalLink, Loader2, Monitor, Play, RotateCw, Square } from "lucide-react";
-import { useDevServer } from "../hooks/useDevServer";
 import type { DevServerCandidate } from "../api";
+import { useDevServer } from "../hooks/useDevServer";
+import { useDevServerConfig } from "../hooks/useDevServerConfig";
 import type { ToastType } from "../hooks/useToast";
 
 interface DevServerViewProps {
@@ -30,12 +31,56 @@ function sanitizeLogLine(line: string): string {
   return line.replace(ANSI_ESCAPE_PATTERN, "");
 }
 
-function candidateKey(candidate: DevServerCandidate): string {
-  return `${candidate.cwd}::${candidate.scriptName}::${candidate.command}`;
-}
-
 function normalizeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function normalizeCwdToSource(cwd: string): string {
+  return cwd === "." ? "root" : cwd;
+}
+
+function normalizeSourceToCwd(source: string | null | undefined): string | null {
+  if (!source) {
+    return null;
+  }
+  return source === "root" ? "." : source;
+}
+
+function candidateMatchesSelection(candidate: DevServerCandidate, selectedScript: string | null, selectedSource: string | null): boolean {
+  if (!selectedScript) {
+    return false;
+  }
+
+  if (candidate.scriptName !== selectedScript) {
+    return false;
+  }
+
+  if (!selectedSource) {
+    return true;
+  }
+
+  return normalizeCwdToSource(candidate.cwd) === selectedSource;
+}
+
+function formatCandidateSource(candidate: DevServerCandidate): string {
+  if (candidate.source === "root") {
+    return "root";
+  }
+
+  if (candidate.workspaceName) {
+    return `${candidate.workspaceName} · ${candidate.source}`;
+  }
+
+  return candidate.source;
+}
+
+function truncateCommand(command: string): string {
+  const maxLength = 60;
+  if (command.length <= maxLength) {
+    return command;
+  }
+
+  return `${command.slice(0, maxLength)}…`;
 }
 
 export function DevServerView({ addToast, projectId }: DevServerViewProps) {
@@ -51,11 +96,24 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
     error,
   } = useDevServer(projectId);
 
+  const {
+    config,
+    loading: configLoading,
+    error: configError,
+    selectScript,
+    clearSelection,
+    setPreviewUrlOverride,
+    refresh: refreshConfig,
+  } = useDevServerConfig(projectId);
+
   const status = serverState?.status ?? "stopped";
   const statusBadge = STATUS_BADGE_CONFIG[status] ?? STATUS_BADGE_CONFIG.stopped;
-  const previewUrl = serverState?.manualPreviewUrl ?? serverState?.previewUrl ?? null;
 
-  const [selectedCandidateId, setSelectedCandidateId] = useState("");
+  const previewUrl = config?.previewUrlOverride ?? serverState?.manualPreviewUrl ?? serverState?.previewUrl ?? null;
+  const detectedPreviewUrl = config?.detectedPreviewUrl ?? serverState?.previewUrl ?? null;
+  const selectedSource = config?.selectedSource ?? null;
+
+  const [showCandidates, setShowCandidates] = useState(true);
   const [commandInput, setCommandInput] = useState("");
   const [previewInput, setPreviewInput] = useState("");
   const [actionInFlight, setActionInFlight] = useState<"start" | "stop" | "restart" | "preview" | null>(null);
@@ -68,10 +126,31 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
   const logContainerRef = useRef<HTMLDivElement | null>(null);
   const stickToBottomRef = useRef(true);
 
-  const selectedCandidate = useMemo(
-    () => candidates.find((candidate) => candidateKey(candidate) === selectedCandidateId) ?? null,
-    [candidates, selectedCandidateId],
-  );
+  const selectedCandidate = useMemo(() => {
+    if (!config?.selectedScript) {
+      return null;
+    }
+
+    const selectedCwd = normalizeSourceToCwd(config.selectedSource);
+
+    return candidates.find((candidate) => {
+      if (candidate.scriptName !== config.selectedScript) {
+        return false;
+      }
+
+      if (selectedCwd && candidate.cwd !== selectedCwd) {
+        return false;
+      }
+
+      if (config.selectedCommand && candidate.command !== config.selectedCommand) {
+        return false;
+      }
+
+      return true;
+    })
+      ?? candidates.find((candidate) => candidateMatchesSelection(candidate, config.selectedScript, config.selectedSource))
+      ?? null;
+  }, [candidates, config?.selectedCommand, config?.selectedScript, config?.selectedSource]);
 
   const renderedLogs = useMemo(() => logs.map(sanitizeLogLine), [logs]);
 
@@ -83,38 +162,40 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
   }, []);
 
   useEffect(() => {
-    if (candidates.length === 0) {
-      setSelectedCandidateId("");
+    if (config?.selectedScript) {
+      setShowCandidates(false);
       return;
     }
 
-    const hasSelectedCandidate = candidates.some((candidate) => candidateKey(candidate) === selectedCandidateId);
-    if (hasSelectedCandidate) {
-      return;
-    }
-
-    const first = candidates[0];
-    setSelectedCandidateId(candidateKey(first));
-    setCommandInput(first.command);
-  }, [candidates, selectedCandidateId]);
-
-  useEffect(() => {
-    if (selectedCandidate) {
-      setCommandInput(selectedCandidate.command);
-    }
-  }, [selectedCandidate]);
+    setShowCandidates(true);
+  }, [config?.selectedScript]);
 
   useEffect(() => {
     if (serverState?.status === "running" || serverState?.status === "starting") {
       if (serverState.command.trim().length > 0) {
         setCommandInput(serverState.command);
       }
+      return;
     }
-  }, [serverState?.command, serverState?.status]);
+
+    if (selectedCandidate) {
+      setCommandInput(selectedCandidate.command);
+      return;
+    }
+
+    if (config?.selectedCommand) {
+      setCommandInput(config.selectedCommand);
+      return;
+    }
+
+    if (candidates.length > 0) {
+      setCommandInput((current) => (current.trim().length > 0 ? current : candidates[0]?.command ?? ""));
+    }
+  }, [candidates, config?.selectedCommand, selectedCandidate, serverState?.command, serverState?.status]);
 
   useEffect(() => {
-    setPreviewInput(serverState?.manualPreviewUrl ?? "");
-  }, [serverState?.manualPreviewUrl]);
+    setPreviewInput(config?.previewUrlOverride ?? serverState?.manualPreviewUrl ?? "");
+  }, [config?.previewUrlOverride, serverState?.manualPreviewUrl]);
 
   useEffect(() => {
     clearIframeTimeout();
@@ -164,14 +245,6 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
     stickToBottomRef.current = nearBottom;
   }, []);
 
-  const handleSelectCandidate = (value: string) => {
-    setSelectedCandidateId(value);
-    const nextCandidate = candidates.find((candidate) => candidateKey(candidate) === value);
-    if (nextCandidate) {
-      setCommandInput(nextCandidate.command);
-    }
-  };
-
   const openPreview = useCallback(() => {
     if (!previewUrl) {
       return;
@@ -191,6 +264,29 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
     }
   }, [addToast]);
 
+  const handleSelectCandidate = useCallback((candidate: DevServerCandidate) => {
+    void selectScript({
+      name: candidate.scriptName,
+      command: candidate.command,
+      source: normalizeCwdToSource(candidate.cwd),
+    }).then(() => {
+      setShowCandidates(false);
+      setCommandInput(candidate.command);
+      addToast(`Selected ${candidate.scriptName} script.`, "success");
+    }).catch((selectionError) => {
+      addToast(normalizeError(selectionError), "error");
+    });
+  }, [addToast, selectScript]);
+
+  const handleClearSelection = useCallback(() => {
+    void clearSelection().then(() => {
+      setShowCandidates(true);
+      addToast("Cleared selected dev server script.", "success");
+    }).catch((clearError) => {
+      addToast(normalizeError(clearError), "error");
+    });
+  }, [addToast, clearSelection]);
+
   const handleStart = () => {
     const trimmedCommand = commandInput.trim();
     if (trimmedCommand.length === 0) {
@@ -198,8 +294,9 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
       return;
     }
 
-    const scriptName = selectedCandidate?.scriptName ?? "custom";
-    const cwd = selectedCandidate?.cwd ?? ".";
+    const fallbackCwd = normalizeSourceToCwd(config?.selectedSource) ?? ".";
+    const scriptName = selectedCandidate?.scriptName ?? config?.selectedScript ?? "custom";
+    const cwd = selectedCandidate?.cwd ?? fallbackCwd;
 
     void runAction(
       "start",
@@ -223,12 +320,29 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
 
   const handleSetPreview = () => {
     const trimmed = previewInput.trim();
+    const nextUrl = trimmed.length > 0 ? trimmed : null;
+
     void runAction(
       "preview",
-      () => setPreviewUrl(trimmed.length > 0 ? trimmed : null),
-      trimmed.length > 0 ? "Preview URL updated." : "Preview URL override cleared.",
+      async () => {
+        await setPreviewUrlOverride(nextUrl);
+        await setPreviewUrl(nextUrl);
+      },
+      nextUrl ? "Preview URL updated." : "Preview URL override cleared.",
     );
   };
+
+  const handleRetry = useCallback(() => {
+    if (!configError && error) {
+      window.location.reload();
+      return;
+    }
+
+    void refreshConfig();
+  }, [configError, error, refreshConfig]);
+
+  const isLoading = loading || configLoading;
+  const combinedError = configError ?? error;
 
   const startDisabled = status === "starting" || status === "running" || actionInFlight !== null;
   const stopDisabled = status === "stopped" || actionInFlight !== null;
@@ -284,33 +398,76 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
       <section className="dev-server-panel dev-server-config" aria-label="Dev server configuration">
         <div className="dev-server-section-header">
           <h3>Configuration</h3>
-          {loading && <span className="dev-server-muted">Loading...</span>}
+          {isLoading && <span className="dev-server-muted">Loading...</span>}
         </div>
 
-        {status === "stopped" && candidates.length > 0 && (
-          <div className="dev-server-field-group">
-            <label htmlFor="dev-server-candidate" className="dev-server-label">Detected scripts</label>
-            <select
-              id="dev-server-candidate"
-              className="select"
-              value={selectedCandidateId}
-              onChange={(event) => handleSelectCandidate(event.target.value)}
-              data-testid="dev-server-candidate-select"
-            >
-              {candidates.map((candidate) => (
-                <option key={candidateKey(candidate)} value={candidateKey(candidate)}>
-                  {candidate.label}
-                </option>
-              ))}
-            </select>
+        {isLoading && !config && candidates.length === 0 && (
+          <div className="dev-server-loading-state" data-testid="dev-server-loading-state">
+            <Loader2 size={16} className="dev-server-spin" />
+            <span>Loading dev server configuration...</span>
           </div>
         )}
 
-        {status === "stopped" && candidates.length === 0 && (
-          <p className="dev-server-empty-state" data-testid="dev-server-empty-candidates">
-            No dev server scripts detected. Add a <code>dev</code>, <code>start</code>, or <code>serve</code> script to your package.json.
-          </p>
+        {combinedError && (
+          <div className="dev-server-error-box" role="alert" data-testid="dev-server-error-box">
+            <p>{combinedError}</p>
+            <button type="button" className="btn btn-sm" onClick={handleRetry}>Retry</button>
+          </div>
         )}
+
+        <div className="dev-server-section">
+          <h3>Script Selection</h3>
+
+          {config?.selectedScript && (
+            <div className="dev-server-selected" data-testid="dev-server-selected-summary">
+              <span className="dev-server-candidate-name">{config.selectedScript}</span>
+              <span className="dev-server-candidate-source">{selectedSource ?? "root"}</span>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => setShowCandidates(true)}
+                data-testid="dev-server-change-selection"
+              >
+                Change
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                onClick={handleClearSelection}
+                data-testid="dev-server-clear-selection"
+              >
+                Clear
+              </button>
+            </div>
+          )}
+
+          {showCandidates && candidates.length === 0 && (
+            <p className="dev-server-empty-state" data-testid="dev-server-empty-candidates">
+              No dev server scripts detected. Check that your project has a <code>package.json</code> with a <code>dev</code>, <code>start</code>, or similar script.
+            </p>
+          )}
+
+          {showCandidates && candidates.length > 0 && (
+            <div className="dev-server-candidates" data-testid="dev-server-candidates">
+              {candidates.map((candidate) => {
+                const isSelected = candidateMatchesSelection(candidate, config?.selectedScript ?? null, selectedSource);
+                return (
+                  <button
+                    type="button"
+                    key={`${candidate.cwd}::${candidate.scriptName}::${candidate.command}`}
+                    className={`dev-server-candidate ${isSelected ? "dev-server-candidate--selected" : ""}`}
+                    onClick={() => handleSelectCandidate(candidate)}
+                    data-testid={`dev-server-candidate-${candidate.scriptName}-${normalizeCwdToSource(candidate.cwd)}`}
+                  >
+                    <span className="dev-server-candidate-name">{candidate.scriptName}</span>
+                    <span className="dev-server-candidate-command">{truncateCommand(candidate.command)}</span>
+                    <span className="dev-server-candidate-source">{formatCandidateSource(candidate)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         <div className="dev-server-field-group">
           <label htmlFor="dev-server-command" className="dev-server-label">Command</label>
@@ -332,7 +489,31 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
           </div>
         )}
 
-        {error && <p className="dev-server-error" role="alert">{error}</p>}
+        <div className="dev-server-preview-override">
+          <label htmlFor="dev-server-preview-input" className="dev-server-label">Preview URL Override</label>
+          <input
+            id="dev-server-preview-input"
+            className="input"
+            type="url"
+            value={previewInput}
+            onChange={(event) => setPreviewInput(event.target.value)}
+            placeholder="http://localhost:3000"
+            data-testid="dev-server-preview-input"
+          />
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={handleSetPreview}
+            disabled={actionInFlight === "preview"}
+            data-testid="dev-server-set-preview"
+          >
+            Save
+          </button>
+        </div>
+
+        {detectedPreviewUrl && (
+          <p className="dev-server-preview-hint">Auto-detected: {detectedPreviewUrl}</p>
+        )}
       </section>
 
       <div className="dev-server-content">
@@ -385,25 +566,6 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
             </div>
           </div>
 
-          <div className="dev-server-preview-url-row">
-            <input
-              className="input"
-              value={previewInput}
-              onChange={(event) => setPreviewInput(event.target.value)}
-              placeholder="https://localhost:5173"
-              data-testid="dev-server-preview-input"
-            />
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={handleSetPreview}
-              disabled={actionInFlight === "preview"}
-              data-testid="dev-server-set-preview"
-            >
-              Set
-            </button>
-          </div>
-
           {!previewUrl && (
             <p className="dev-server-empty-state">Preview URL will appear once the dev server starts.</p>
           )}
@@ -448,7 +610,7 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
               {iframeError && (
                 <div className="dev-server-preview-fallback" data-testid="dev-server-preview-fallback">
                   <p>
-                    Preview cannot be embedded (blocked by the app's security policy). Open in a new tab instead.
+                    Preview cannot be embedded (blocked by the app&apos;s security policy). Open in a new tab instead.
                   </p>
                   <button type="button" className="btn btn-primary btn-sm" onClick={openPreview}>
                     Open Preview

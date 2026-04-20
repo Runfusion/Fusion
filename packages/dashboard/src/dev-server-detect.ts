@@ -2,7 +2,9 @@ import { glob, readFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 
 /** Script names in priority order (most likely first) */
-export const DEV_SCRIPT_NAMES = ["dev", "start", "web", "frontend", "serve", "storybook", "preview"] as const;
+export const DEV_SERVER_SCRIPT_NAMES = ["dev", "start", "serve", "web", "frontend", "preview", "storybook"] as const;
+/** @deprecated use DEV_SERVER_SCRIPT_NAMES */
+export const DEV_SCRIPT_NAMES = DEV_SERVER_SCRIPT_NAMES;
 
 /** Framework indicators in devDependencies/dependencies */
 export const FRAMEWORK_INDICATORS = [
@@ -47,20 +49,24 @@ async function readPackageJson(filePath: string): Promise<PackageJsonShape | nul
   }
 }
 
+export function isCandidateScript(name: string): boolean {
+  return DEV_SERVER_SCRIPT_NAMES.includes(name as (typeof DEV_SERVER_SCRIPT_NAMES)[number]);
+}
+
 function getScriptPriorityScore(scriptName: string): number {
-  const index = DEV_SCRIPT_NAMES.indexOf(scriptName as (typeof DEV_SCRIPT_NAMES)[number]);
+  const index = DEV_SERVER_SCRIPT_NAMES.indexOf(scriptName as (typeof DEV_SERVER_SCRIPT_NAMES)[number]);
   if (index === -1) {
     return 0;
   }
 
-  if (DEV_SCRIPT_NAMES.length <= 1) {
+  if (DEV_SERVER_SCRIPT_NAMES.length <= 1) {
     return 0.5;
   }
 
   const maxBoost = 0.5;
   const minBoost = 0.2;
   const delta = maxBoost - minBoost;
-  const ratio = index / (DEV_SCRIPT_NAMES.length - 1);
+  const ratio = index / (DEV_SERVER_SCRIPT_NAMES.length - 1);
   return maxBoost - (ratio * delta);
 }
 
@@ -115,7 +121,7 @@ function extractScripts(pkg: PackageJsonShape): Array<{ name: string; command: s
   const scripts = pkg.scripts ?? {};
   const output: Array<{ name: string; command: string }> = [];
 
-  for (const scriptName of DEV_SCRIPT_NAMES) {
+  for (const scriptName of DEV_SERVER_SCRIPT_NAMES) {
     const command = scripts[scriptName];
     if (typeof command === "string" && command.trim().length > 0) {
       output.push({ name: scriptName, command: command.trim() });

@@ -1,5 +1,5 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 export type DevServerStatus = "starting" | "running" | "stopped" | "failed";
 
@@ -36,6 +36,30 @@ export interface DevServerState {
   logHistory: string[];
 }
 
+export interface DevServerConfig {
+  /** Selected script name (e.g., "dev") */
+  selectedScript: string | null;
+  /** Source of the selected script ("root" or relative workspace path) */
+  selectedSource: string | null;
+  /** Full command string for the selected script */
+  selectedCommand: string | null;
+  /** Manual preview URL override (user-provided) */
+  previewUrlOverride: string | null;
+  /** Last auto-detected preview URL */
+  detectedPreviewUrl: string | null;
+  /** ISO timestamp of last selection */
+  selectedAt: string | null;
+}
+
+export const DEV_SERVER_CONFIG_DEFAULTS: DevServerConfig = {
+  selectedScript: null,
+  selectedSource: null,
+  selectedCommand: null,
+  previewUrlOverride: null,
+  detectedPreviewUrl: null,
+  selectedAt: null,
+};
+
 export const DEV_SERVER_LOG_MAX_LINES = 500;
 
 export const DEV_SERVER_DEFAULT_STATE = (): DevServerState => ({
@@ -48,7 +72,8 @@ export const DEV_SERVER_DEFAULT_STATE = (): DevServerState => ({
 });
 
 interface DevServerStoreFile {
-  state: DevServerState;
+  state?: Partial<DevServerState>;
+  config?: Partial<DevServerConfig>;
 }
 
 function devServerFilePath(projectDir: string): string {
@@ -81,9 +106,30 @@ function normalizeState(candidate: Partial<DevServerState> | null | undefined): 
   return state;
 }
 
+function normalizeStringOrNull(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeConfig(candidate: Partial<DevServerConfig> | null | undefined): DevServerConfig {
+  return {
+    selectedScript: normalizeStringOrNull(candidate?.selectedScript),
+    selectedSource: normalizeStringOrNull(candidate?.selectedSource),
+    selectedCommand: normalizeStringOrNull(candidate?.selectedCommand),
+    previewUrlOverride: normalizeStringOrNull(candidate?.previewUrlOverride),
+    detectedPreviewUrl: normalizeStringOrNull(candidate?.detectedPreviewUrl),
+    selectedAt: normalizeStringOrNull(candidate?.selectedAt),
+  };
+}
+
 export class DevServerStore {
   private readonly filePath: string;
   private state: DevServerState = DEV_SERVER_DEFAULT_STATE();
+  private config: DevServerConfig = { ...DEV_SERVER_CONFIG_DEFAULTS };
 
   constructor(projectDir: string) {
     this.filePath = devServerFilePath(projectDir);
@@ -94,20 +140,26 @@ export class DevServerStore {
       const content = await readFile(this.filePath, "utf-8");
       const parsed = JSON.parse(content) as Partial<DevServerStoreFile>;
       this.state = normalizeState(parsed?.state);
+      this.config = normalizeConfig(parsed?.config);
     } catch {
       this.state = DEV_SERVER_DEFAULT_STATE();
+      this.config = { ...DEV_SERVER_CONFIG_DEFAULTS };
     }
   }
 
   async save(): Promise<void> {
-    const dir = this.filePath.substring(0, this.filePath.lastIndexOf("/"));
+    const dir = dirname(this.filePath);
     try {
       await access(dir);
     } catch {
       await mkdir(dir, { recursive: true });
     }
 
-    const payload: DevServerStoreFile = { state: this.state };
+    const payload: DevServerStoreFile = {
+      state: this.state,
+      config: this.config,
+    };
+
     await writeFile(this.filePath, JSON.stringify(payload, null, 2), "utf-8");
   }
 
@@ -127,6 +179,26 @@ export class DevServerStore {
 
     await this.save();
     return this.getState();
+  }
+
+  getConfig(): DevServerConfig {
+    return { ...this.config };
+  }
+
+  async saveConfig(config: DevServerConfig): Promise<DevServerConfig> {
+    this.config = normalizeConfig(config);
+    await this.save();
+    return this.getConfig();
+  }
+
+  async updateConfig(partial: Partial<DevServerConfig>): Promise<DevServerConfig> {
+    this.config = normalizeConfig({
+      ...this.config,
+      ...partial,
+    });
+
+    await this.save();
+    return this.getConfig();
   }
 
   async appendLog(line: string): Promise<void> {

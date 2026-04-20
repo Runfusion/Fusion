@@ -1964,6 +1964,8 @@ export interface DevServerCandidate {
   command: string;
   scriptName: string;
   cwd: string;
+  source: string;
+  workspaceName?: string;
   label: string;
 }
 
@@ -1987,6 +1989,15 @@ export interface DevServerStartInput {
   command: string;
   scriptName: string;
   cwd?: string;
+}
+
+export interface DevServerConfig {
+  selectedScript: string | null;
+  selectedSource: string | null;
+  selectedCommand: string | null;
+  previewUrlOverride: string | null;
+  detectedPreviewUrl: string | null;
+  selectedAt: string | null;
 }
 
 interface BackendDevServerCandidate {
@@ -2029,6 +2040,8 @@ function mapBackendCandidateToFrontend(candidate: BackendDevServerCandidate): De
     command: candidate.command,
     scriptName,
     cwd,
+    source,
+    workspaceName: typeof candidate.packageName === "string" ? candidate.packageName : undefined,
     label: `${packageLabel} · ${scriptName} (${locationLabel})`,
   };
 }
@@ -2060,6 +2073,17 @@ export function fetchDevServerCandidates(projectId?: string): Promise<DevServerC
   return api<{ candidates: BackendDevServerCandidate[] }>(withProjectId("/dev-server/detect", projectId)).then((response) =>
     (response.candidates ?? []).map(mapBackendCandidateToFrontend)
   );
+}
+
+export function fetchDevServerConfig(projectId?: string): Promise<DevServerConfig> {
+  return api<DevServerConfig>(withProjectId("/dev-server/config", projectId));
+}
+
+export function saveDevServerConfig(config: Partial<DevServerConfig>, projectId?: string): Promise<DevServerConfig> {
+  return api<DevServerConfig>(withProjectId("/dev-server/config", projectId), {
+    method: "PUT",
+    body: JSON.stringify(config),
+  });
 }
 
 export function fetchDevServerStatus(projectId?: string): Promise<DevServerState> {

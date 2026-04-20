@@ -5,6 +5,7 @@ import os from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  DEV_SERVER_CONFIG_DEFAULTS,
   DEV_SERVER_DEFAULT_STATE,
   DEV_SERVER_LOG_MAX_LINES,
   DevServerStore,
@@ -16,7 +17,7 @@ function createTempProject(): string {
   return mkdtempSync(join(os.tmpdir(), "fn-dev-server-store-"));
 }
 
-function readPersistedState(projectDir: string): Record<string, unknown> {
+function readPersistedStoreFile(projectDir: string): Record<string, unknown> {
   const filePath = join(projectDir, ".fusion", "dev-server.json");
   return JSON.parse(readFileSync(filePath, "utf-8")) as Record<string, unknown>;
 }
@@ -92,6 +93,132 @@ describe("DevServerStore", () => {
     await store.load();
 
     expect(store.getState()).toEqual(DEV_SERVER_DEFAULT_STATE());
+    expect(store.getConfig()).toEqual(DEV_SERVER_CONFIG_DEFAULTS);
+  });
+
+  it("loading from missing file initializes with default config", async () => {
+    const projectDir = createTempProject();
+    tempDirs.push(projectDir);
+
+    const store = new DevServerStore(projectDir);
+    await store.load();
+
+    expect(store.getConfig()).toEqual(DEV_SERVER_CONFIG_DEFAULTS);
+  });
+
+  it("loading from valid JSON populates config", async () => {
+    const projectDir = createTempProject();
+    tempDirs.push(projectDir);
+
+    mkdirSync(join(projectDir, ".fusion"), { recursive: true });
+    writeFileSync(
+      join(projectDir, ".fusion", "dev-server.json"),
+      JSON.stringify(
+        {
+          config: {
+            selectedScript: "dev",
+            selectedSource: "apps/web",
+            selectedCommand: "pnpm dev",
+            previewUrlOverride: "http://localhost:4173",
+            detectedPreviewUrl: "http://localhost:3000",
+            selectedAt: "2026-04-19T12:00:00.000Z",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const store = new DevServerStore(projectDir);
+    await store.load();
+
+    expect(store.getConfig()).toEqual({
+      selectedScript: "dev",
+      selectedSource: "apps/web",
+      selectedCommand: "pnpm dev",
+      previewUrlOverride: "http://localhost:4173",
+      detectedPreviewUrl: "http://localhost:3000",
+      selectedAt: "2026-04-19T12:00:00.000Z",
+    });
+  });
+
+  it("updateConfig merges partial updates and persists to disk", async () => {
+    const projectDir = createTempProject();
+    tempDirs.push(projectDir);
+
+    const store = new DevServerStore(projectDir);
+    await store.load();
+
+    const updated = await store.updateConfig({
+      selectedScript: "start",
+      selectedSource: "root",
+      selectedCommand: "next dev",
+      selectedAt: "2026-04-19T13:00:00.000Z",
+    });
+
+    expect(updated).toEqual({
+      ...DEV_SERVER_CONFIG_DEFAULTS,
+      selectedScript: "start",
+      selectedSource: "root",
+      selectedCommand: "next dev",
+      selectedAt: "2026-04-19T13:00:00.000Z",
+    });
+
+    const persisted = readPersistedStoreFile(projectDir) as {
+      config: Record<string, string | null>;
+    };
+
+    expect(persisted.config).toMatchObject({
+      selectedScript: "start",
+      selectedSource: "root",
+      selectedCommand: "next dev",
+      selectedAt: "2026-04-19T13:00:00.000Z",
+    });
+  });
+
+  it("updateConfig overwrites previous values", async () => {
+    const projectDir = createTempProject();
+    tempDirs.push(projectDir);
+
+    const store = new DevServerStore(projectDir);
+    await store.load();
+
+    await store.updateConfig({ selectedScript: "dev", previewUrlOverride: "http://localhost:3000" });
+    const updated = await store.updateConfig({ selectedScript: "serve", previewUrlOverride: null });
+
+    expect(updated.selectedScript).toBe("serve");
+    expect(updated.previewUrlOverride).toBeNull();
+  });
+
+  it("saveConfig persists full config payload", async () => {
+    const projectDir = createTempProject();
+    tempDirs.push(projectDir);
+
+    const store = new DevServerStore(projectDir);
+    await store.load();
+
+    await store.saveConfig({
+      selectedScript: "storybook",
+      selectedSource: "apps/docs",
+      selectedCommand: "storybook dev -p 6006",
+      previewUrlOverride: "http://localhost:6006",
+      detectedPreviewUrl: "http://localhost:6006",
+      selectedAt: "2026-04-19T14:00:00.000Z",
+    });
+
+    const persisted = readPersistedStoreFile(projectDir) as {
+      config: Record<string, string | null>;
+    };
+
+    expect(persisted.config).toEqual({
+      selectedScript: "storybook",
+      selectedSource: "apps/docs",
+      selectedCommand: "storybook dev -p 6006",
+      previewUrlOverride: "http://localhost:6006",
+      detectedPreviewUrl: "http://localhost:6006",
+      selectedAt: "2026-04-19T14:00:00.000Z",
+    });
   });
 
   it("updateState merges partial updates and persists to disk", async () => {
@@ -116,7 +243,7 @@ describe("DevServerStore", () => {
       name: "default",
     });
 
-    const persisted = readPersistedState(projectDir) as { state: Record<string, unknown> };
+    const persisted = readPersistedStoreFile(projectDir) as { state: Record<string, unknown> };
     expect(persisted.state).toMatchObject({
       id: "abc",
       command: "pnpm dev",
@@ -151,7 +278,7 @@ describe("DevServerStore", () => {
 
     expect(store.getState().logHistory).toEqual(["line one", "line two"]);
 
-    const persisted = readPersistedState(projectDir) as { state: { logHistory: string[] } };
+    const persisted = readPersistedStoreFile(projectDir) as { state: { logHistory: string[] } };
     expect(persisted.state.logHistory).toEqual(["line one", "line two"]);
   });
 
@@ -184,7 +311,7 @@ describe("DevServerStore", () => {
 
     expect(store.getState().logHistory).toEqual([]);
 
-    const persisted = readPersistedState(projectDir) as { state: { logHistory: string[] } };
+    const persisted = readPersistedStoreFile(projectDir) as { state: { logHistory: string[] } };
     expect(persisted.state.logHistory).toEqual([]);
   });
 

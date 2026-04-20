@@ -1,7 +1,12 @@
 import { Router, type Request, type Response } from "express";
 import { badRequest, conflict, ApiError, sendErrorResponse } from "./api-error.js";
 import { detectDevServerScripts } from "./dev-server-detect.js";
-import { loadDevServerStore, resetDevServerStore, type DevServerStore } from "./dev-server-store.js";
+import {
+  loadDevServerStore,
+  resetDevServerStore,
+  type DevServerConfig,
+  type DevServerStore,
+} from "./dev-server-store.js";
 import { DevServerProcessManager } from "./dev-server-process.js";
 
 export interface DevServerRouterOptions {
@@ -43,6 +48,96 @@ function writeSSE(res: Response, chunk: string): boolean {
   }
 }
 
+const DEV_SERVER_CONFIG_FIELDS: Array<keyof DevServerConfig> = [
+  "selectedScript",
+  "selectedSource",
+  "selectedCommand",
+  "previewUrlOverride",
+  "detectedPreviewUrl",
+  "selectedAt",
+];
+
+function normalizeNullableStringField(
+  raw: unknown,
+  fieldName: keyof DevServerConfig,
+  options: { requiredNonEmpty?: boolean; requireHttpUrl?: boolean } = {},
+): string | null {
+  if (raw === null) {
+    return null;
+  }
+
+  if (typeof raw !== "string") {
+    throw badRequest(`${fieldName} must be a string or null`);
+  }
+
+  const trimmed = raw.trim();
+
+  if (options.requiredNonEmpty && trimmed.length === 0) {
+    throw badRequest(`${fieldName} must be a non-empty string when provided`);
+  }
+
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  if (options.requireHttpUrl && !trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+    throw badRequest(`${fieldName} must start with http:// or https://`);
+  }
+
+  return trimmed;
+}
+
+function parseConfigUpdateBody(body: unknown): Partial<DevServerConfig> {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw badRequest("Request body must be a JSON object");
+  }
+
+  const source = body as Record<string, unknown>;
+  const partial: Partial<DevServerConfig> = {};
+
+  for (const field of DEV_SERVER_CONFIG_FIELDS) {
+    if (Object.hasOwn(source, field)) {
+      partial[field] = source[field] as DevServerConfig[typeof field];
+    }
+  }
+
+  if (Object.keys(partial).length === 0) {
+    throw badRequest("At least one dev server config field is required");
+  }
+
+  if (Object.hasOwn(partial, "selectedScript")) {
+    partial.selectedScript = normalizeNullableStringField(partial.selectedScript, "selectedScript", {
+      requiredNonEmpty: true,
+    });
+  }
+
+  if (Object.hasOwn(partial, "selectedSource")) {
+    partial.selectedSource = normalizeNullableStringField(partial.selectedSource, "selectedSource");
+  }
+
+  if (Object.hasOwn(partial, "selectedCommand")) {
+    partial.selectedCommand = normalizeNullableStringField(partial.selectedCommand, "selectedCommand");
+  }
+
+  if (Object.hasOwn(partial, "previewUrlOverride")) {
+    partial.previewUrlOverride = normalizeNullableStringField(partial.previewUrlOverride, "previewUrlOverride", {
+      requireHttpUrl: true,
+    });
+  }
+
+  if (Object.hasOwn(partial, "detectedPreviewUrl")) {
+    partial.detectedPreviewUrl = normalizeNullableStringField(partial.detectedPreviewUrl, "detectedPreviewUrl", {
+      requireHttpUrl: true,
+    });
+  }
+
+  if (Object.hasOwn(partial, "selectedAt")) {
+    partial.selectedAt = normalizeNullableStringField(partial.selectedAt, "selectedAt");
+  }
+
+  return partial;
+}
+
 export function createDevServerRouter(options: DevServerRouterOptions): Router {
   const router = Router();
 
@@ -53,6 +148,38 @@ export function createDevServerRouter(options: DevServerRouterOptions): Router {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to detect dev server scripts";
       res.status(500).json({ error: message });
+    }
+  });
+
+  router.get("/config", async (_req, res) => {
+    try {
+      const { store } = await getRuntime(options.projectRoot);
+      res.json(store.getConfig());
+    } catch (error) {
+      if (error instanceof ApiError) {
+        sendErrorResponse(res, error.statusCode, error.message, { details: error.details });
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : "Failed to load dev server config";
+      sendErrorResponse(res, 500, message);
+    }
+  });
+
+  router.put("/config", async (req, res) => {
+    try {
+      const partial = parseConfigUpdateBody(req.body);
+      const { store } = await getRuntime(options.projectRoot);
+      const updated = await store.updateConfig(partial);
+      res.json(updated);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        sendErrorResponse(res, error.statusCode, error.message, { details: error.details });
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : "Failed to update dev server config";
+      sendErrorResponse(res, 500, message);
     }
   });
 

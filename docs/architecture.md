@@ -396,7 +396,7 @@ Key server capabilities:
 - **Dev-server stream**: `/api/dev-server/logs/stream` (`dev-server-routes.ts`)
   - SSE stream emits `history`, `log`, `stopped`, and `failed` events
   - initial connection replays persisted `logHistory` and then follows live process output
-  - companion endpoints: `/api/dev-server/detect`, `/status`, `/start`, `/stop`, `/restart`, `/preview-url`
+  - companion endpoints: `/api/dev-server/detect`, `/config`, `/status`, `/start`, `/stop`, `/restart`, `/preview-url`
 - **Badge WebSocket**: `/api/ws` (`server.ts`, `websocket.ts`)
   - Scope-keyed channels (`badge:{scopeKey}:{taskId}`) prevent cross-project collisions
 - **Terminal WebSocket**: `/api/terminal/ws` (`server.ts`, `terminal-service.ts`)

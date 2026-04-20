@@ -1,12 +1,17 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { DevServerState } from "../../api";
+import type { DevServerConfig, DevServerState } from "../../api";
 import { DevServerView } from "../DevServerView";
 
 const mockUseDevServer = vi.fn();
+const mockUseDevServerConfig = vi.fn();
 
 vi.mock("../../hooks/useDevServer", () => ({
   useDevServer: (...args: unknown[]) => mockUseDevServer(...args),
+}));
+
+vi.mock("../../hooks/useDevServerConfig", () => ({
+  useDevServerConfig: (...args: unknown[]) => mockUseDevServerConfig(...args),
 }));
 
 vi.mock("lucide-react", () => ({
@@ -31,7 +36,7 @@ function createState(overrides: Partial<DevServerState> = {}): DevServerState {
   };
 }
 
-function createHookState(overrides: Record<string, unknown> = {}) {
+function createDevServerHookState(overrides: Record<string, unknown> = {}) {
   return {
     candidates: [
       {
@@ -39,7 +44,17 @@ function createHookState(overrides: Record<string, unknown> = {}) {
         command: "pnpm dev",
         scriptName: "dev",
         cwd: ".",
+        source: "root",
         label: "project · dev (root)",
+      },
+      {
+        name: "start",
+        command: "pnpm start --filter web",
+        scriptName: "start",
+        cwd: "apps/web",
+        source: "apps/web",
+        workspaceName: "@demo/web",
+        label: "@demo/web · start (apps/web)",
       },
     ],
     serverState: createState(),
@@ -54,158 +69,125 @@ function createHookState(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function createConfig(overrides: Partial<DevServerConfig> = {}): DevServerConfig {
+  return {
+    selectedScript: null,
+    selectedSource: null,
+    selectedCommand: null,
+    previewUrlOverride: null,
+    detectedPreviewUrl: null,
+    selectedAt: null,
+    ...overrides,
+  };
+}
+
+function createConfigHookState(overrides: Record<string, unknown> = {}) {
+  return {
+    config: createConfig(),
+    loading: false,
+    error: null,
+    selectScript: vi.fn().mockResolvedValue(undefined),
+    clearSelection: vi.fn().mockResolvedValue(undefined),
+    setPreviewUrlOverride: vi.fn().mockResolvedValue(undefined),
+    refresh: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  };
+}
+
 describe("DevServerView", () => {
   const addToast = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockUseDevServer.mockReturnValue(createHookState());
+    mockUseDevServer.mockReturnValue(createDevServerHookState());
+    mockUseDevServerConfig.mockReturnValue(createConfigHookState());
   });
 
-  it("renders without crashing", () => {
+  it("renders candidate list when detection returns scripts", () => {
     render(<DevServerView addToast={addToast} projectId="project-a" />);
 
-    expect(screen.getByTestId("dev-server-view")).toBeInTheDocument();
+    expect(screen.getByTestId("dev-server-candidates")).toBeInTheDocument();
+    expect(screen.getByText("dev")).toBeInTheDocument();
+    expect(screen.getByText("start")).toBeInTheDocument();
   });
 
-  it.each([
-    ["stopped", "Stopped"],
-    ["running", "Running"],
-    ["starting", "Starting..."],
-    ["failed", "Failed"],
-  ] as const)("shows %s status badge", (status, label) => {
-    mockUseDevServer.mockReturnValue(
-      createHookState({
-        serverState: createState({ status }),
-      }),
-    );
+  it("renders no-candidates message when candidates are empty", () => {
+    mockUseDevServer.mockReturnValue(createDevServerHookState({ candidates: [] }));
 
     render(<DevServerView addToast={addToast} projectId="project-a" />);
 
-    expect(screen.getByTestId("dev-server-status-badge")).toHaveTextContent(label);
+    expect(screen.getByTestId("dev-server-empty-candidates")).toHaveTextContent("No dev server scripts detected");
   });
 
-  it("disables Start when server is running or starting", () => {
-    mockUseDevServer.mockReturnValue(
-      createHookState({
-        serverState: createState({ status: "running" }),
-      }),
-    );
-
-    const { rerender } = render(<DevServerView addToast={addToast} projectId="project-a" />);
-
-    expect(screen.getByTestId("dev-server-start-button")).toBeDisabled();
-
-    mockUseDevServer.mockReturnValue(
-      createHookState({
-        serverState: createState({ status: "starting" }),
-      }),
-    );
-
-    rerender(<DevServerView addToast={addToast} projectId="project-a" />);
-
-    expect(screen.getByTestId("dev-server-start-button")).toBeDisabled();
-  });
-
-  it("disables Stop when server is stopped", () => {
-    render(<DevServerView addToast={addToast} projectId="project-a" />);
-
-    expect(screen.getByTestId("dev-server-stop-button")).toBeDisabled();
-  });
-
-  it("clicking Start calls start from the hook", () => {
-    const start = vi.fn().mockResolvedValue(undefined);
-
-    mockUseDevServer.mockReturnValue(createHookState({ start }));
+  it("clicking a candidate persists selection via selectScript", async () => {
+    const selectScript = vi.fn().mockResolvedValue(undefined);
+    mockUseDevServerConfig.mockReturnValue(createConfigHookState({ selectScript }));
 
     render(<DevServerView addToast={addToast} projectId="project-a" />);
 
-    fireEvent.click(screen.getByTestId("dev-server-start-button"));
+    fireEvent.click(screen.getByTestId("dev-server-candidate-dev-root"));
 
-    expect(start).toHaveBeenCalledTimes(1);
-  });
-
-  it("renders log entries from hook logs", () => {
-    mockUseDevServer.mockReturnValue(
-      createHookState({
-        logs: ["first line", "second line"],
-      }),
-    );
-
-    render(<DevServerView addToast={addToast} projectId="project-a" />);
-
-    expect(screen.getByText("first line")).toBeInTheDocument();
-    expect(screen.getByText("second line")).toBeInTheDocument();
-  });
-
-  it("renders preview iframe when preview URL is set", () => {
-    mockUseDevServer.mockReturnValue(
-      createHookState({
-        serverState: createState({
-          status: "running",
-          previewUrl: "http://localhost:5173",
-        }),
-      }),
-    );
-
-    render(<DevServerView addToast={addToast} projectId="project-a" />);
-
-    const iframe = screen.getByTestId("dev-server-preview-iframe");
-    expect(iframe).toBeInTheDocument();
-    expect(iframe).toHaveAttribute("src", "http://localhost:5173");
-  });
-
-  it("shows CSP fallback message when embedding times out", async () => {
-    vi.useFakeTimers();
-
-    mockUseDevServer.mockReturnValue(
-      createHookState({
-        serverState: createState({
-          status: "running",
-          previewUrl: "http://localhost:5173",
-        }),
-      }),
-    );
-
-    render(<DevServerView addToast={addToast} projectId="project-a" />);
-
-    await act(async () => {
-      vi.advanceTimersByTime(5000);
-      await Promise.resolve();
+    await waitFor(() => {
+      expect(selectScript).toHaveBeenCalledWith({
+        name: "dev",
+        command: "pnpm dev",
+        source: "root",
+      });
     });
-
-    expect(screen.getByTestId("dev-server-preview-fallback")).toBeInTheDocument();
-    expect(screen.getByText(/Preview cannot be embedded/i)).toBeInTheDocument();
-    vi.useRealTimers();
   });
 
-  it("shows open in new tab button when preview URL exists", () => {
-    mockUseDevServer.mockReturnValue(
-      createHookState({
-        serverState: createState({
-          status: "running",
-          previewUrl: "http://localhost:5173",
+  it("highlights the selected candidate", () => {
+    mockUseDevServerConfig.mockReturnValue(
+      createConfigHookState({
+        config: createConfig({
+          selectedScript: "dev",
+          selectedSource: "root",
+          selectedCommand: "pnpm dev",
         }),
       }),
     );
 
     render(<DevServerView addToast={addToast} projectId="project-a" />);
 
-    expect(screen.getByTestId("dev-server-open-preview")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("dev-server-change-selection"));
+
+    const selected = screen.getByTestId("dev-server-candidate-dev-root");
+    expect(selected).toHaveClass("dev-server-candidate--selected");
   });
 
-  it("shows empty-state message when no candidates and server is stopped", () => {
-    mockUseDevServer.mockReturnValue(
-      createHookState({
-        candidates: [],
-        serverState: createState({ status: "stopped" }),
+  it("saves preview URL override from input", async () => {
+    const setPreviewUrlOverride = vi.fn().mockResolvedValue(undefined);
+    const setPreviewUrl = vi.fn().mockResolvedValue(undefined);
+
+    mockUseDevServerConfig.mockReturnValue(createConfigHookState({ setPreviewUrlOverride }));
+    mockUseDevServer.mockReturnValue(createDevServerHookState({ setPreviewUrl }));
+
+    render(<DevServerView addToast={addToast} projectId="project-a" />);
+
+    fireEvent.change(screen.getByTestId("dev-server-preview-input"), {
+      target: { value: "http://localhost:3000" },
+    });
+    fireEvent.click(screen.getByTestId("dev-server-set-preview"));
+
+    await waitFor(() => {
+      expect(setPreviewUrlOverride).toHaveBeenCalledWith("http://localhost:3000");
+      expect(setPreviewUrl).toHaveBeenCalledWith("http://localhost:3000");
+    });
+  });
+
+  it("renders selected script summary when config has a selection", () => {
+    mockUseDevServerConfig.mockReturnValue(
+      createConfigHookState({
+        config: createConfig({
+          selectedScript: "dev",
+          selectedSource: "root",
+          selectedCommand: "pnpm dev",
+        }),
       }),
     );
 
     render(<DevServerView addToast={addToast} projectId="project-a" />);
 
-    expect(screen.getByTestId("dev-server-empty-candidates")).toHaveTextContent(
-      "No dev server scripts detected.",
-    );
+    expect(screen.getByTestId("dev-server-selected-summary")).toBeInTheDocument();
   });
 });

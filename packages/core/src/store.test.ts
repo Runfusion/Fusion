@@ -2869,12 +2869,11 @@ describe("TaskStore", () => {
 
     it("includeArchived=false excludes archived tasks; default includes them", async () => {
       const keep = await store.createTask({ description: "Stays visible" });
-      const toArchive = await store.createTask({ description: "Will be archived" });
-      await store.moveTask(toArchive.id, "todo");
-      await store.moveTask(toArchive.id, "in-progress");
-      await store.moveTask(toArchive.id, "in-review");
-      await store.moveTask(toArchive.id, "done");
-      await store.archiveTask(toArchive.id);
+      const toArchive = await store.createTask({ description: "Will be archived", column: "done" });
+
+      // This assertion is about list filtering, not branch cleanup.
+      // Use non-cleanup archiving to avoid invoking git commands in test environments.
+      await store.archiveTask(toArchive.id, false);
 
       const withArchived = await store.listTasks();
       const withoutArchived = await store.listTasks({ includeArchived: false });
