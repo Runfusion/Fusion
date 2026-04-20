@@ -23,8 +23,11 @@ const STATUS_BADGE_CONFIG: Record<"stopped" | "starting" | "running" | "failed",
   failed: { className: "dev-server-status-badge--failed", label: "Failed" },
 };
 
+// eslint-disable-next-line no-control-regex -- ANSI escape stripping is required for readable terminal logs.
+const ANSI_ESCAPE_PATTERN = new RegExp("\\u001B\\[[0-9;]*m", "g");
+
 function sanitizeLogLine(line: string): string {
-  return line.replace(/\x1b\[[0-9;]*m/g, "");
+  return line.replace(ANSI_ESCAPE_PATTERN, "");
 }
 
 function candidateKey(candidate: DevServerCandidate): string {
