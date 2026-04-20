@@ -15940,6 +15940,8 @@ html .column.drag-over * {
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
+  padding: 0 20px;
+  margin-top: var(--space-md);
 }
 
 .prompt-manager-tabs {
@@ -16577,6 +16579,10 @@ html .column.drag-over * {
 
 /* Responsive */
 @media (max-width: 768px) {
+  .prompt-manager {
+    padding: 0 14px;
+  }
+
   .prompt-manager-tabs {
     flex-wrap: wrap;
   }
