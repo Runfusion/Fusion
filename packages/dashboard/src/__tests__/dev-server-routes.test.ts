@@ -98,7 +98,54 @@ describe("createDevServerRouter", () => {
       command: "",
       cwd: "",
       logHistory: [],
+      previewUrl: null,
+      detectedPort: null,
+      manualPreviewUrl: null,
       isRunning: false,
+    });
+  });
+
+  it("GET /api/dev-server/status exposes previewUrl, detectedPort, and manualPreviewUrl", async () => {
+    const root = createProjectRoot();
+    tempDirs.push(root);
+
+    const store = await loadDevServerStore(root);
+    await store.updateState({
+      detectedUrl: "http://localhost:5173",
+      detectedPort: 5173,
+      manualUrl: "https://localhost:3000",
+    });
+
+    const app = buildApp(root);
+    const res = await request(app, "GET", "/api/dev-server/status");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      previewUrl: "https://localhost:3000",
+      detectedPort: 5173,
+      manualPreviewUrl: "https://localhost:3000",
+    });
+  });
+
+  it("GET /api/dev-server/status falls back to detected URL when no manual override exists", async () => {
+    const root = createProjectRoot();
+    tempDirs.push(root);
+
+    const store = await loadDevServerStore(root);
+    await store.updateState({
+      detectedUrl: "http://localhost:4321",
+      detectedPort: 4321,
+      manualUrl: undefined,
+    });
+
+    const app = buildApp(root);
+    const res = await request(app, "GET", "/api/dev-server/status");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      previewUrl: "http://localhost:4321",
+      detectedPort: 4321,
+      manualPreviewUrl: null,
     });
   });
 
@@ -365,6 +412,59 @@ describe("createDevServerRouter", () => {
     });
   });
 
+  it("SSE stream forwards url-detected events with the documented payload", async () => {
+    const root = createProjectRoot();
+    tempDirs.push(root);
+    const app = buildApp(root);
+
+    await withHttpServer(app, async (baseUrl) => {
+      const streamResponse = await fetch(`${baseUrl}/api/dev-server/logs/stream`);
+      const reader = streamResponse.body?.getReader();
+      expect(reader).toBeDefined();
+
+      const startResponse = await fetch(`${baseUrl}/api/dev-server/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          command: "node -e \"console.log('detected at http://localhost:5173/'); setInterval(() => {}, 1000)\"",
+          cwd: root,
+        }),
+      });
+      expect(startResponse.status).toBe(200);
+
+      let buffered = "";
+      const startedAt = Date.now();
+      while (!buffered.includes("event: dev-server:url-detected")) {
+        if (Date.now() - startedAt > 5_000) {
+          throw new Error(`Timed out waiting for url-detected event. Current payload: ${buffered}`);
+        }
+
+        const chunk = await reader?.read();
+        if (!chunk || chunk.done) {
+          break;
+        }
+
+        buffered += new TextDecoder().decode(chunk.value);
+      }
+
+      expect(buffered).toContain("event: dev-server:url-detected");
+      const payloadMatch = buffered.match(/event: dev-server:url-detected\ndata: (.+)/);
+      expect(payloadMatch).toBeTruthy();
+      const payload = JSON.parse(payloadMatch?.[1] ?? "{}");
+      expect(payload).toMatchObject({
+        url: "http://localhost:5173",
+        port: 5173,
+        source: "generic-url",
+      });
+      expect(typeof payload.detectedAt).toBe("string");
+      expect(Number.isNaN(Date.parse(payload.detectedAt))).toBe(false);
+      expect(Object.keys(payload).sort()).toEqual(["detectedAt", "port", "source", "url"]);
+
+      await fetch(`${baseUrl}/api/dev-server/stop`, { method: "POST" });
+      await reader?.cancel();
+    });
+  });
+
   it("SSE stream cleans up listeners on client disconnect", async () => {
     const root = createProjectRoot();
     tempDirs.push(root);
@@ -377,14 +477,16 @@ describe("createDevServerRouter", () => {
 
       await waitFor(() => {
         const manager = getActiveProcessManagers()[0];
-        return (manager?.listenerCount("output") ?? 0) > 0;
+        return (manager?.listenerCount("output") ?? 0) > 0
+          && (manager?.listenerCount("url-detected") ?? 0) > 0;
       });
 
       await reader?.cancel();
 
       await waitFor(() => {
         const manager = getActiveProcessManagers()[0];
-        return (manager?.listenerCount("output") ?? 0) === 0;
+        return (manager?.listenerCount("output") ?? 0) === 0
+          && (manager?.listenerCount("url-detected") ?? 0) === 0;
       });
     });
   });

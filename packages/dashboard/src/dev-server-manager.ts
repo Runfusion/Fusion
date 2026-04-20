@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { resolve } from "node:path";
 import { SessionEventBuffer, type SessionBufferedEvent } from "./sse-buffer.js";
-import { DevServerProcessManager } from "./dev-server-process.js";
+import { DevServerProcessManager, type DevServerProcessManagerOptions } from "./dev-server-process.js";
 import {
   loadDevServerStore,
   resetDevServerStore,
@@ -15,7 +15,7 @@ const DEFAULT_LOG_LIMIT = 200;
 const DEFAULT_BUFFER_CAPACITY = 400;
 
 // Reserved dashboard port 4040 must never be suggested as a fallback dev-server port.
-export const FALLBACK_PORTS = [3000, 4173, 5173, 6006, 8080, 8888, 4000, 4200] as const;
+export const FALLBACK_PORTS = [5173, 3000, 4173, 6006, 8080, 4200, 4400, 8888, 4321, 4000] as const;
 
 type LegacyDevServerStatus = DevServerStatus | "idle";
 type DevServerLogSource = "stdout" | "stderr" | "system";
@@ -58,12 +58,24 @@ export interface DevServerSnapshot {
   logs: DevServerPersistedLogEntry[];
 }
 
+export interface DevServerUrlDetectedEvent {
+  url: string;
+  port: number;
+  source: string;
+  detectedAt: string;
+}
+
 export interface DevServerManagerEvent {
   type: "state" | "log";
   data: DevServerPersistedState | DevServerPersistedLogEntry;
 }
 
 type DevServerSubscriber = (event: DevServerManagerEvent, eventId: number) => void;
+
+export interface DevServerManagerOptions {
+  logLimit?: number;
+  processOptions?: DevServerProcessManagerOptions;
+}
 
 export class DevServerManager extends EventEmitter {
   private readonly subscribers = new Set<DevServerSubscriber>();
@@ -78,11 +90,11 @@ export class DevServerManager extends EventEmitter {
   constructor(
     private readonly rootDir: string,
     private readonly store: DevServerStore,
-    options?: { logLimit?: number },
+    options?: DevServerManagerOptions,
   ) {
     super();
     this.logLimit = options?.logLimit ?? DEFAULT_LOG_LIMIT;
-    this.processManager = new DevServerProcessManager(store);
+    this.processManager = new DevServerProcessManager(store, options?.processOptions);
     this.bindProcessEvents();
   }
 
@@ -91,10 +103,10 @@ export class DevServerManager extends EventEmitter {
       this.applyDevServerState(state);
     });
 
-    this.processManager.on("output", (payload: { line: string; timestamp: string }) => {
+    this.processManager.on("output", (payload: { line: string; stream: "stdout" | "stderr"; timestamp: string }) => {
       this.appendLog({
         serverKey: this.state.serverKey,
-        source: "stdout",
+        source: payload.stream,
         message: payload.line,
         timestamp: payload.timestamp,
       });
@@ -120,8 +132,9 @@ export class DevServerManager extends EventEmitter {
       });
     });
 
-    this.processManager.on("url-detected", () => {
+    this.processManager.on("url-detected", (payload: DevServerUrlDetectedEvent) => {
       this.applyDevServerState(this.store.getState());
+      this.emit("url-detected", payload);
     });
   }
 
@@ -153,6 +166,10 @@ export class DevServerManager extends EventEmitter {
 
   getState(): DevServerPersistedState {
     return { ...this.state };
+  }
+
+  hasPendingFallbackProbeTimer(): boolean {
+    return this.processManager.hasPendingProbeTimer();
   }
 
   getRecentLogs(limit = this.logLimit): DevServerPersistedLogEntry[] {

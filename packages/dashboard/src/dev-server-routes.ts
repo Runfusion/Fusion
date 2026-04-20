@@ -5,6 +5,7 @@ import {
   loadDevServerStore,
   resetDevServerStore,
   type DevServerConfig,
+  type DevServerState,
   type DevServerStore,
 } from "./dev-server-store.js";
 import { DevServerProcessManager } from "./dev-server-process.js";
@@ -138,6 +139,19 @@ function parseConfigUpdateBody(body: unknown): Partial<DevServerConfig> {
   return partial;
 }
 
+function buildStatusResponse(state: DevServerState, isRunning: boolean) {
+  const manualPreviewUrl = state.manualUrl ?? null;
+  const detectedPreviewUrl = state.detectedUrl ?? null;
+
+  return {
+    ...state,
+    previewUrl: manualPreviewUrl ?? detectedPreviewUrl,
+    detectedPort: state.detectedPort ?? null,
+    manualPreviewUrl,
+    isRunning,
+  };
+}
+
 export function createDevServerRouter(options: DevServerRouterOptions): Router {
   const router = Router();
 
@@ -187,7 +201,8 @@ export function createDevServerRouter(options: DevServerRouterOptions): Router {
     try {
       const { store, manager } = await getRuntime(options.projectRoot);
       const state = store.getState();
-      res.json({ ...state, isRunning: manager.isRunning() });
+
+      res.json(buildStatusResponse(state, manager.isRunning()));
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load dev server status";
       res.status(500).json({ error: message });
@@ -315,7 +330,7 @@ export function createDevServerRouter(options: DevServerRouterOptions): Router {
         return;
       }
 
-      const onOutput = (payload: { line: string; timestamp: string }) => {
+      const onOutput = (payload: { line: string; stream: "stdout" | "stderr"; timestamp: string }) => {
         writeSSE(res, `event: log\ndata: ${JSON.stringify(payload)}\n\n`);
       };
 
@@ -327,9 +342,14 @@ export function createDevServerRouter(options: DevServerRouterOptions): Router {
         writeSSE(res, `event: failed\ndata: ${JSON.stringify(payload)}\n\n`);
       };
 
+      const onUrlDetected = (payload: { url: string; port: number; source: string; detectedAt: string }) => {
+        writeSSE(res, `event: dev-server:url-detected\ndata: ${JSON.stringify(payload)}\n\n`);
+      };
+
       manager.on("output", onOutput);
       manager.on("stopped", onStopped);
       manager.on("failed", onFailed);
+      manager.on("url-detected", onUrlDetected);
 
       const heartbeat = setInterval(() => {
         writeSSE(res, ": heartbeat\n\n");
@@ -345,6 +365,7 @@ export function createDevServerRouter(options: DevServerRouterOptions): Router {
         manager.off("output", onOutput);
         manager.off("stopped", onStopped);
         manager.off("failed", onFailed);
+        manager.off("url-detected", onUrlDetected);
       };
 
       req.on("close", cleanup);

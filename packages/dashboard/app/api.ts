@@ -2007,6 +2007,33 @@ export interface DevServerConfig {
   selectedAt: string | null;
 }
 
+export interface DevServerLogHistoryEntry {
+  id: number;
+  text: string;
+  stream: "stdout" | "stderr";
+  timestamp: string;
+}
+
+export interface DevServerLogHistoryResponse {
+  lines: DevServerLogHistoryEntry[];
+  totalLines: number;
+}
+
+export interface FetchDevServerLogHistoryOptions {
+  maxLines?: number;
+  offset?: number;
+  lastEventId?: number;
+}
+
+export interface DevServerConfig {
+  selectedScript: string | null;
+  selectedSource: string | null;
+  selectedCommand: string | null;
+  previewUrlOverride: string | null;
+  detectedPreviewUrl: string | null;
+  selectedAt: string | null;
+}
+
 interface BackendDevServerCandidate {
   name: string;
   command: string;
@@ -2025,11 +2052,26 @@ interface BackendDevServerState {
   cwd?: string;
   pid?: number;
   startedAt?: string;
+  previewUrl?: string;
   detectedUrl?: string;
   detectedPort?: number;
+  manualPreviewUrl?: string;
   manualUrl?: string;
   logHistory?: string[];
   exitCode?: number | null;
+}
+
+interface BackendDevServerLogHistoryLine {
+  id?: number;
+  text?: string;
+  line?: string;
+  stream?: "stdout" | "stderr";
+  timestamp?: string;
+}
+
+interface BackendDevServerLogHistoryResponse {
+  lines?: BackendDevServerLogHistoryLine[];
+  totalLines?: number;
 }
 
 function mapBackendCandidateToFrontend(candidate: BackendDevServerCandidate): DevServerCandidate {
@@ -2069,6 +2111,13 @@ function mapBackendStateToFrontend(state: BackendDevServerState): DevServerState
     ? status
     : "stopped";
 
+  const previewUrl = typeof state.previewUrl === "string"
+    ? state.previewUrl
+    : state.detectedUrl;
+  const manualPreviewUrl = typeof state.manualPreviewUrl === "string"
+    ? state.manualPreviewUrl
+    : state.manualUrl;
+
   return {
     id: typeof state.id === "string" ? state.id : "",
     name: typeof state.name === "string" && state.name.length > 0 ? state.name : "default",
@@ -2078,13 +2127,69 @@ function mapBackendStateToFrontend(state: BackendDevServerState): DevServerState
     cwd: typeof state.cwd === "string" ? state.cwd : "",
     pid: state.pid,
     startedAt: state.startedAt,
-    previewUrl: state.detectedUrl,
-    detectedUrl: state.detectedUrl,
+    previewUrl,
+    detectedUrl: typeof state.detectedUrl === "string" ? state.detectedUrl : previewUrl,
     detectedPort: state.detectedPort,
-    manualPreviewUrl: state.manualUrl,
-    manualUrl: state.manualUrl,
+    manualPreviewUrl,
+    manualUrl: typeof state.manualUrl === "string" ? state.manualUrl : manualPreviewUrl,
     logs: Array.isArray(state.logHistory) ? state.logHistory : [],
     exitCode: state.exitCode,
+  };
+}
+
+function normalizeDevServerLogLine(line: BackendDevServerLogHistoryLine, fallbackId: number): DevServerLogHistoryEntry {
+  return {
+    id: typeof line.id === "number" && Number.isFinite(line.id) ? line.id : fallbackId,
+    text: typeof line.text === "string" ? line.text : (typeof line.line === "string" ? line.line : ""),
+    stream: line.stream === "stderr" ? "stderr" : "stdout",
+    timestamp: typeof line.timestamp === "string" ? line.timestamp : "",
+  };
+}
+
+function normalizeDevServerLogHistoryResponse(response: BackendDevServerLogHistoryResponse): DevServerLogHistoryResponse {
+  const rawLines = Array.isArray(response.lines) ? response.lines : [];
+  const lines = rawLines.map((line, index) => normalizeDevServerLogLine(line, index + 1));
+
+  return {
+    lines,
+    totalLines: typeof response.totalLines === "number" && Number.isFinite(response.totalLines)
+      ? response.totalLines
+      : lines.length,
+  };
+}
+
+function mapLegacyDevServerLogs(logs: string[], options: FetchDevServerLogHistoryOptions): DevServerLogHistoryResponse {
+  const maxLines = typeof options.maxLines === "number" && Number.isFinite(options.maxLines)
+    ? Math.max(1, Math.floor(options.maxLines))
+    : 100;
+  const offset = typeof options.offset === "number" && Number.isFinite(options.offset)
+    ? Math.max(0, Math.floor(options.offset))
+    : 0;
+  const lastEventId = typeof options.lastEventId === "number" && Number.isFinite(options.lastEventId)
+    ? Math.max(0, Math.floor(options.lastEventId))
+    : null;
+
+  const totalLines = logs.length;
+  const fullLines = logs.map<DevServerLogHistoryEntry>((text, index) => ({
+    id: index + 1,
+    text,
+    stream: "stdout",
+    timestamp: "",
+  }));
+
+  if (lastEventId !== null) {
+    return {
+      lines: fullLines.filter((line) => line.id > lastEventId).slice(0, maxLines),
+      totalLines,
+    };
+  }
+
+  const endExclusive = Math.max(totalLines - offset, 0);
+  const start = Math.max(endExclusive - maxLines, 0);
+
+  return {
+    lines: fullLines.slice(start, endExclusive),
+    totalLines,
   };
 }
 
@@ -2111,6 +2216,38 @@ export function saveDevServerConfig(config: Partial<DevServerConfig>, projectId?
 
 export function fetchDevServerStatus(projectId?: string): Promise<DevServerState> {
   return api<BackendDevServerState>(withProjectId("/dev-server/status", projectId)).then(mapBackendStateToFrontend);
+}
+
+export async function fetchDevServerLogHistory(
+  options: FetchDevServerLogHistoryOptions = {},
+  projectId?: string,
+): Promise<DevServerLogHistoryResponse> {
+  const query = new URLSearchParams();
+  if (typeof options.maxLines === "number" && Number.isFinite(options.maxLines)) {
+    query.set("maxLines", String(Math.max(1, Math.floor(options.maxLines))));
+  }
+  if (typeof options.offset === "number" && Number.isFinite(options.offset)) {
+    query.set("offset", String(Math.max(0, Math.floor(options.offset))));
+  }
+  if (typeof options.lastEventId === "number" && Number.isFinite(options.lastEventId)) {
+    query.set("lastEventId", String(Math.max(0, Math.floor(options.lastEventId))));
+  }
+
+  const suffix = query.size > 0 ? `?${query.toString()}` : "";
+
+  try {
+    const response = await api<BackendDevServerLogHistoryResponse>(
+      withProjectId(`/dev-server/logs/history${suffix}`, projectId),
+    );
+    return normalizeDevServerLogHistoryResponse(response);
+  } catch (error) {
+    // Backward compatibility for workspaces without /dev-server/logs/history.
+    if (error instanceof Error && /\/dev-server\/logs\/history/.test(error.message)) {
+      const status = await fetchDevServerStatus(projectId);
+      return mapLegacyDevServerLogs(status.logs, options);
+    }
+    throw error;
+  }
 }
 
 export function startDevServer(body: DevServerStartInput, projectId?: string): Promise<DevServerState> {

@@ -40,7 +40,7 @@ describe("DevServerProcessManager", () => {
     resetDevServerStore();
   });
 
-  async function createManager(options?: { stopTimeoutMs?: number; probeDelayMs?: number }) {
+  async function createManager(options?: { stopTimeoutMs?: number; probeDelayMs?: number; probeTimeoutMs?: number }) {
     const root = mkdtempSync(join(os.tmpdir(), "fn-dev-process-"));
     tempDirs.push(root);
     const store = await loadDevServerStore(root);
@@ -168,6 +168,60 @@ describe("DevServerProcessManager", () => {
 
     await waitFor(() => store.getState().detectedUrl === "http://localhost:5173");
     expect(store.getState().detectedPort).toBe(5173);
+  });
+
+  it("schedules fallback probing after startup when no URL is announced", async () => {
+    const { root, manager } = await createManager({ probeDelayMs: 25, probeTimeoutMs: 5 });
+
+    await manager.start("node -e \"setInterval(() => {}, 1000)\"", root);
+
+    expect(manager.hasPendingProbeTimer()).toBe(true);
+    await waitFor(() => manager.hasPendingProbeTimer() === false, 3_000);
+  });
+
+  it("clears fallback probe timer when URL is detected from logs", async () => {
+    const { root, store, manager } = await createManager({ probeDelayMs: 2_000, probeTimeoutMs: 5 });
+
+    await manager.start(
+      "node -e \"console.log('ready at http://localhost:4321'); setInterval(() => {}, 1000)\"",
+      root,
+    );
+
+    await waitFor(() => store.getState().detectedPort === 4321);
+    expect(manager.hasPendingProbeTimer()).toBe(false);
+  });
+
+  it("clears fallback probe timer on stop", async () => {
+    const { root, manager } = await createManager({ probeDelayMs: 2_000, probeTimeoutMs: 5 });
+
+    await manager.start("node -e \"setInterval(() => {}, 1000)\"", root);
+    expect(manager.hasPendingProbeTimer()).toBe(true);
+
+    await manager.stop();
+
+    expect(manager.hasPendingProbeTimer()).toBe(false);
+  });
+
+  it("clears fallback probe timer when process exits naturally", async () => {
+    const { root, store, manager } = await createManager({ probeDelayMs: 2_000, probeTimeoutMs: 5 });
+
+    await manager.start("node -e \"setTimeout(() => process.exit(0), 20)\"", root);
+    expect(manager.hasPendingProbeTimer()).toBe(true);
+
+    await waitFor(() => store.getState().status === "stopped");
+
+    expect(manager.hasPendingProbeTimer()).toBe(false);
+  });
+
+  it("restarts with a fresh fallback probe timer", async () => {
+    const { root, manager } = await createManager({ probeDelayMs: 2_000, probeTimeoutMs: 5 });
+
+    await manager.start("node -e \"setInterval(() => {}, 1000)\"", root, { scriptId: "dev" });
+    expect(manager.hasPendingProbeTimer()).toBe(true);
+
+    await manager.restart();
+
+    expect(manager.hasPendingProbeTimer()).toBe(true);
   });
 
   it("cleanup() kills process and clears listeners", async () => {

@@ -1,625 +1,612 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  AlertCircle,
-  ChevronLeft,
-  ChevronRight,
-  Copy,
-  ExternalLink,
-  Loader2,
-  Play,
-  RotateCw,
-  Search,
-  Server,
-  Square,
-  Terminal,
-} from "lucide-react";
+import { ExternalLink, Loader2, Monitor, Play, RotateCw, Square } from "lucide-react";
 import type { DevServerCandidate } from "../api";
 import { useDevServer } from "../hooks/useDevServer";
+import { useDevServerConfig } from "../hooks/useDevServerConfig";
+import { useDevServerLogs } from "../hooks/useDevServerLogs";
 import type { ToastType } from "../hooks/useToast";
+import { DevServerLogViewer } from "./DevServerLogViewer";
 
 interface DevServerViewProps {
+  addToast: (msg: string, type?: ToastType) => void;
   projectId?: string;
-  addToast: (message: string, type?: ToastType) => void;
 }
 
-type MobilePanel = "logs" | "preview";
+type PreviewMode = "embedded" | "external";
 
-interface CandidateSelection {
-  scriptName: string;
-  command: string;
-  cwd?: string;
-  packagePath?: string;
+interface StatusBadgeConfig {
+  className: string;
+  label: string;
 }
 
-const STATUS_LABEL: Record<"starting" | "running" | "stopped" | "failed", string> = {
-  starting: "Starting",
-  running: "Running",
-  stopped: "Stopped",
-  failed: "Failed",
+const STATUS_BADGE_CONFIG: Record<"stopped" | "starting" | "running" | "failed", StatusBadgeConfig> = {
+  stopped: { className: "dev-server-status-badge--stopped", label: "Stopped" },
+  starting: { className: "dev-server-status-badge--starting", label: "Starting..." },
+  running: { className: "dev-server-status-badge--running", label: "Running" },
+  failed: { className: "dev-server-status-badge--failed", label: "Failed" },
 };
-
-function getCandidateKey(candidate: DevServerCandidate): string {
-  return `${candidate.packagePath}::${candidate.scriptName}::${candidate.command}`;
-}
 
 function normalizeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function candidateFromSelection(candidates: DevServerCandidate[], selection: CandidateSelection | null): DevServerCandidate | null {
-  if (!selection) {
-    return null;
-  }
-
-  return candidates.find((candidate) => (
-    candidate.scriptName === selection.scriptName
-    && candidate.command === selection.command
-    && (candidate.packagePath === selection.packagePath || candidate.cwd === selection.cwd)
-  )) ?? null;
+function normalizeCwdToSource(cwd: string): string {
+  return cwd === "." ? "root" : cwd;
 }
 
-export function DevServerView({ projectId, addToast }: DevServerViewProps) {
+function normalizeSourceToCwd(source: string | null | undefined): string | null {
+  if (!source) {
+    return null;
+  }
+  return source === "root" ? "." : source;
+}
+
+function candidateMatchesSelection(candidate: DevServerCandidate, selectedScript: string | null, selectedSource: string | null): boolean {
+  if (!selectedScript) {
+    return false;
+  }
+
+  if (candidate.scriptName !== selectedScript) {
+    return false;
+  }
+
+  if (!selectedSource) {
+    return true;
+  }
+
+  return normalizeCwdToSource(candidate.cwd) === selectedSource;
+}
+
+function formatCandidateSource(candidate: DevServerCandidate): string {
+  if (candidate.source === "root") {
+    return "root";
+  }
+
+  if (candidate.workspaceName) {
+    return `${candidate.workspaceName} · ${candidate.source}`;
+  }
+
+  return candidate.source;
+}
+
+function truncateCommand(command: string): string {
+  const maxLength = 60;
+  if (command.length <= maxLength) {
+    return command;
+  }
+
+  return `${command.slice(0, maxLength)}…`;
+}
+
+export function DevServerView({ addToast, projectId }: DevServerViewProps) {
   const {
-    status,
-    logs,
-    detectedUrl,
-    manualUrl,
-    selectedCommand,
     candidates,
-    isLoading,
-    error,
+    serverState,
     start,
     stop,
     restart,
-    setManualUrl,
+    setPreviewUrl,
+    loading,
+    error,
     detect,
   } = useDevServer(projectId);
 
-  const [selectedCandidate, setSelectedCandidate] = useState<CandidateSelection | null>(null);
-  const [manualUrlInput, setManualUrlInput] = useState("");
-  const [isSettingUrl, setIsSettingUrl] = useState(false);
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [mobilePanel, setMobilePanel] = useState<MobilePanel>("logs");
-  const [isAutoscrollPaused, setIsAutoscrollPaused] = useState(false);
-  const [previewBlocked, setPreviewBlocked] = useState(false);
-  const [previewLoading, setPreviewLoading] = useState(false);
+  const {
+    config,
+    loading: configLoading,
+    error: configError,
+    selectScript,
+    clearSelection,
+    setPreviewUrlOverride,
+    refresh: refreshConfig,
+  } = useDevServerConfig(projectId);
 
-  const logsRef = useRef<HTMLDivElement | null>(null);
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const logsPanelId = "devserver-panel-logs";
-  const previewPanelId = "devserver-panel-preview";
+  const status = serverState?.status ?? "stopped";
+  const isRunning = status === "running" || status === "starting";
+  const statusBadge = STATUS_BADGE_CONFIG[status] ?? STATUS_BADGE_CONFIG.stopped;
+
+  const {
+    entries: logEntries,
+    loading: logsLoading,
+    loadingMore: logsLoadingMore,
+    hasMore: logsHasMore,
+    total: logsTotal,
+    loadMore: loadMoreLogs,
+  } = useDevServerLogs(projectId, Boolean(projectId));
+
+  const previewUrl = config?.previewUrlOverride ?? serverState?.manualPreviewUrl ?? serverState?.previewUrl ?? null;
+  const detectedPreviewUrl = config?.detectedPreviewUrl ?? serverState?.previewUrl ?? null;
+  const selectedSource = config?.selectedSource ?? null;
+
+  const [showCandidates, setShowCandidates] = useState(true);
+  const [commandInput, setCommandInput] = useState("");
+  const [previewInput, setPreviewInput] = useState("");
+  const [actionInFlight, setActionInFlight] = useState<"start" | "stop" | "restart" | "preview" | null>(null);
+
+  const [previewMode, setPreviewMode] = useState<PreviewMode>("embedded");
+  const [iframeLoading, setIframeLoading] = useState(false);
+  const [iframeError, setIframeError] = useState(false);
+
+  const iframeTimeoutRef = useRef<number | null>(null);
+
+  const selectedCandidate = useMemo(() => {
+    if (!config?.selectedScript) {
+      return null;
+    }
+
+    const selectedCwd = normalizeSourceToCwd(config.selectedSource);
+
+    return candidates.find((candidate) => {
+      if (candidate.scriptName !== config.selectedScript) {
+        return false;
+      }
+
+      if (selectedCwd && candidate.cwd !== selectedCwd) {
+        return false;
+      }
+
+      if (config.selectedCommand && candidate.command !== config.selectedCommand) {
+        return false;
+      }
+
+      return true;
+    })
+      ?? candidates.find((candidate) => candidateMatchesSelection(candidate, config.selectedScript, config.selectedSource))
+      ?? null;
+  }, [candidates, config?.selectedCommand, config?.selectedScript, config?.selectedSource]);
+
+  const clearIframeTimeout = useCallback(() => {
+    if (iframeTimeoutRef.current !== null) {
+      window.clearTimeout(iframeTimeoutRef.current);
+      iframeTimeoutRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
+    if (typeof detect !== "function") {
+      return;
+    }
+
     void detect().catch((detectError) => {
       addToast(normalizeError(detectError), "error");
     });
   }, [addToast, detect]);
 
   useEffect(() => {
-    setManualUrlInput(manualUrl ?? "");
-  }, [manualUrl]);
-
-  useEffect(() => {
-    if (selectedCandidate) {
+    if (config?.selectedScript) {
+      setShowCandidates(false);
       return;
     }
 
-    if (selectedCommand) {
-      const matchingCandidate = candidates.find((candidate) => candidate.command === selectedCommand);
-      if (matchingCandidate) {
-        setSelectedCandidate({
-          scriptName: matchingCandidate.scriptName,
-          command: matchingCandidate.command,
-          cwd: matchingCandidate.cwd,
-          packagePath: matchingCandidate.packagePath,
-        });
-        return;
+    setShowCandidates(true);
+  }, [config?.selectedScript]);
+
+  useEffect(() => {
+    if (serverState?.status === "running" || serverState?.status === "starting") {
+      if (serverState.command.trim().length > 0) {
+        setCommandInput(serverState.command);
       }
+      return;
+    }
+
+    if (selectedCandidate) {
+      setCommandInput(selectedCandidate.command);
+      return;
+    }
+
+    if (config?.selectedCommand) {
+      setCommandInput(config.selectedCommand);
+      return;
     }
 
     if (candidates.length > 0) {
-      const firstCandidate = candidates[0];
-      if (firstCandidate) {
-        setSelectedCandidate({
-          scriptName: firstCandidate.scriptName,
-          command: firstCandidate.command,
-          cwd: firstCandidate.cwd,
-          packagePath: firstCandidate.packagePath,
-        });
-      }
+      setCommandInput((current) => (current.trim().length > 0 ? current : candidates[0]?.command ?? ""));
     }
-  }, [candidates, selectedCandidate, selectedCommand]);
+  }, [candidates, config?.selectedCommand, selectedCandidate, serverState?.command, serverState?.status]);
 
   useEffect(() => {
-    if (isAutoscrollPaused) {
+    setPreviewInput(config?.previewUrlOverride ?? serverState?.manualPreviewUrl ?? "");
+  }, [config?.previewUrlOverride, serverState?.manualPreviewUrl]);
+
+  useEffect(() => {
+    clearIframeTimeout();
+
+    if (previewMode !== "embedded" || !previewUrl) {
+      setIframeError(false);
+      setIframeLoading(false);
       return;
     }
 
-    const node = logsRef.current;
-    if (!node) {
+    setIframeError(false);
+    setIframeLoading(true);
+
+    iframeTimeoutRef.current = window.setTimeout(() => {
+      setIframeLoading(false);
+      setIframeError(true);
+    }, 5000);
+
+    return () => {
+      clearIframeTimeout();
+    };
+  }, [clearIframeTimeout, previewMode, previewUrl]);
+
+  useEffect(() => {
+    return () => {
+      clearIframeTimeout();
+    };
+  }, [clearIframeTimeout]);
+
+  const openPreview = useCallback(() => {
+    if (!previewUrl) {
       return;
     }
+    window.open(previewUrl, "_blank", "noopener,noreferrer");
+  }, [previewUrl]);
 
-    node.scrollTop = node.scrollHeight;
-  }, [isAutoscrollPaused, logs]);
-
-  const effectiveUrl = useMemo(() => {
-    const manual = manualUrl?.trim();
-    if (manual) {
-      return manual;
-    }
-    return detectedUrl?.trim() || "";
-  }, [detectedUrl, manualUrl]);
-
-  const selectedCandidateDetails = useMemo(
-    () => candidateFromSelection(candidates, selectedCandidate),
-    [candidates, selectedCandidate],
-  );
-
-  const handleDetect = useCallback(() => {
-    void detect()
-      .then(() => {
-        addToast("Dev server command detection complete.", "success");
-      })
-      .catch((detectError) => {
-        addToast(normalizeError(detectError), "error");
-      });
-  }, [addToast, detect]);
-
-  const handleStart = useCallback(() => {
-    const command = selectedCandidate?.command ?? selectedCommand ?? "";
-    if (!command.trim()) {
-      addToast("Select or enter a command before starting.", "warning");
-      return;
-    }
-
-    void start(
-      command,
-      selectedCandidate?.cwd,
-      selectedCandidate?.scriptName,
-      selectedCandidate?.packagePath,
-    )
-      .then(() => {
-        addToast("Dev server start requested.", "success");
-      })
-      .catch((startError) => {
-        addToast(normalizeError(startError), "error");
-      });
-  }, [addToast, selectedCandidate, selectedCommand, start]);
-
-  const handleStop = useCallback(() => {
-    void stop()
-      .then(() => {
-        addToast("Dev server stopped.", "success");
-      })
-      .catch((stopError) => {
-        addToast(normalizeError(stopError), "error");
-      });
-  }, [addToast, stop]);
-
-  const handleRestart = useCallback(() => {
-    void restart()
-      .then(() => {
-        addToast("Dev server restart requested.", "success");
-      })
-      .catch((restartError) => {
-        addToast(normalizeError(restartError), "error");
-      });
-  }, [addToast, restart]);
-
-  const handleSetManualUrl = useCallback(() => {
-    setIsSettingUrl(true);
-    const nextUrl = manualUrlInput.trim().length > 0 ? manualUrlInput.trim() : null;
-
-    void setManualUrl(nextUrl)
-      .then(() => {
-        addToast(nextUrl ? "Manual preview URL saved." : "Manual preview URL cleared.", "success");
-      })
-      .catch((setUrlError) => {
-        addToast(normalizeError(setUrlError), "error");
-      })
-      .finally(() => {
-        setIsSettingUrl(false);
-      });
-  }, [addToast, manualUrlInput, setManualUrl]);
-
-  const handleCopyUrl = useCallback(() => {
-    if (!effectiveUrl) {
-      return;
-    }
-
-    if (!navigator.clipboard?.writeText) {
-      addToast("Copy not supported in this browser.", "warning");
-      return;
-    }
-
-    void navigator.clipboard.writeText(effectiveUrl)
-      .then(() => {
-        addToast("Preview URL copied.", "success");
-      })
-      .catch(() => {
-        addToast("Could not copy preview URL.", "error");
-      });
-  }, [addToast, effectiveUrl]);
-
-  const openInNewTab = useCallback(() => {
-    if (!effectiveUrl) {
-      return;
-    }
-    window.open(effectiveUrl, "_blank", "noopener,noreferrer");
-  }, [effectiveUrl]);
-
-  const handleToggleAutoscroll = useCallback(() => {
-    setIsAutoscrollPaused((current) => {
-      const next = !current;
-      if (!next) {
-        const node = logsRef.current;
-        if (node) {
-          node.scrollTop = node.scrollHeight;
-        }
-      }
-      return next;
-    });
-  }, []);
-
-  const handleLogsScroll = useCallback(() => {
-    const node = logsRef.current;
-    if (!node) {
-      return;
-    }
-
-    const nearBottom = node.scrollTop + node.clientHeight >= node.scrollHeight - 12;
-    if (nearBottom) {
-      setIsAutoscrollPaused(false);
-    } else {
-      setIsAutoscrollPaused(true);
-    }
-  }, []);
-
-  const handleIframeLoad = useCallback(() => {
-    setPreviewLoading(false);
-
-    const frame = iframeRef.current;
-    if (!frame || !effectiveUrl) {
-      setPreviewBlocked(false);
-      return;
-    }
-
+  const runAction = useCallback(async (kind: "start" | "stop" | "restart" | "preview", action: () => Promise<void>, successMessage: string) => {
+    setActionInFlight(kind);
     try {
-      const sameOrigin = effectiveUrl.startsWith(window.location.origin);
-      if (sameOrigin) {
-        void frame.contentWindow?.location?.href;
-      }
-      setPreviewBlocked(false);
-    } catch {
-      setPreviewBlocked(true);
+      await action();
+      addToast(successMessage, "success");
+    } catch (actionError) {
+      addToast(normalizeError(actionError), "error");
+    } finally {
+      setActionInFlight(null);
     }
-  }, [effectiveUrl]);
+  }, [addToast]);
 
-  const handleIframeError = useCallback(() => {
-    setPreviewLoading(false);
-    setPreviewBlocked(true);
-  }, []);
+  const handleSelectCandidate = useCallback((candidate: DevServerCandidate) => {
+    void selectScript({
+      name: candidate.scriptName,
+      command: candidate.command,
+      source: normalizeCwdToSource(candidate.cwd),
+    }).then(() => {
+      setShowCandidates(false);
+      setCommandInput(candidate.command);
+      addToast(`Selected ${candidate.scriptName} script.`, "success");
+    }).catch((selectionError) => {
+      addToast(normalizeError(selectionError), "error");
+    });
+  }, [addToast, selectScript]);
 
-  useEffect(() => {
-    if (!effectiveUrl) {
-      setPreviewBlocked(false);
-      setPreviewLoading(false);
+  const handleClearSelection = useCallback(() => {
+    void clearSelection().then(() => {
+      setShowCandidates(true);
+      addToast("Cleared selected dev server script.", "success");
+    }).catch((clearError) => {
+      addToast(normalizeError(clearError), "error");
+    });
+  }, [addToast, clearSelection]);
+
+  const handleStart = () => {
+    const trimmedCommand = commandInput.trim();
+    if (trimmedCommand.length === 0) {
+      addToast("Enter a command before starting the dev server.", "warning");
       return;
     }
 
-    setPreviewBlocked(false);
-    setPreviewLoading(true);
-  }, [effectiveUrl]);
+    const fallbackCwd = normalizeSourceToCwd(config?.selectedSource) ?? ".";
+    const scriptName = selectedCandidate?.scriptName ?? config?.selectedScript ?? "custom";
+    const cwd = selectedCandidate?.cwd ?? fallbackCwd;
 
-  const startDisabled = status === "running" || status === "starting";
-  const stopDisabled = status === "stopped";
-  const restartDisabled = status !== "running";
+    void runAction(
+      "start",
+      () => {
+        if (selectedCandidate && trimmedCommand === selectedCandidate.command) {
+          return start(selectedCandidate);
+        }
+        return start({ command: trimmedCommand, scriptName, cwd });
+      },
+      "Dev server started.",
+    );
+  };
+
+  const handleStop = () => {
+    void runAction("stop", stop, "Dev server stopped.");
+  };
+
+  const handleRestart = () => {
+    void runAction("restart", restart, "Dev server restarted.");
+  };
+
+  const handleSetPreview = () => {
+    const trimmed = previewInput.trim();
+    const nextUrl = trimmed.length > 0 ? trimmed : null;
+
+    void runAction(
+      "preview",
+      async () => {
+        await setPreviewUrlOverride(nextUrl);
+        await setPreviewUrl(nextUrl);
+      },
+      nextUrl ? "Preview URL updated." : "Preview URL override cleared.",
+    );
+  };
+
+  const handleRetry = useCallback(() => {
+    if (!configError && error) {
+      window.location.reload();
+      return;
+    }
+
+    void refreshConfig();
+  }, [configError, error, refreshConfig]);
+
+  const isLoading = loading || configLoading;
+  const combinedError = configError ?? error;
+
+  const startDisabled = status === "starting" || status === "running" || actionInFlight !== null;
+  const stopDisabled = status === "stopped" || actionInFlight !== null;
+  const restartDisabled = status === "stopped" || status === "starting" || actionInFlight !== null;
 
   return (
-    <div className={`devserver-layout${isSidebarCollapsed ? " devserver-sidebar--collapsed" : ""}`} data-testid="devserver-layout">
-      <div className="devserver-main" data-testid="devserver-main">
-        <section className="devserver-detect-panel" aria-label="Command detection panel">
-          <div className="devserver-panel-header">
-            <div className="devserver-panel-title">
-              <Search size={14} />
-              <h2>Command Detection</h2>
-            </div>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={handleDetect}
-              data-testid="devserver-detect-button"
-            >
-              <Search size={14} />
-              <span>Detect</span>
-            </button>
+    <div className="dev-server-view" data-testid="dev-server-view">
+      <section className="dev-server-header" aria-label="Dev server controls header">
+        <div className="dev-server-header-title">
+          <Monitor size={16} />
+          <h2>Dev Server</h2>
+          <span
+            className={`dev-server-status-badge ${statusBadge.className}`}
+            data-testid="dev-server-status-badge"
+          >
+            {statusBadge.label}
+          </span>
+        </div>
+        <div className="dev-server-header-actions">
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={handleStart}
+            disabled={startDisabled}
+            data-testid="dev-server-start-button"
+          >
+            <Play size={14} />
+            <span>{actionInFlight === "start" ? "Starting..." : "Start"}</span>
+          </button>
+          <button
+            type="button"
+            className="btn btn-danger btn-sm"
+            onClick={handleStop}
+            disabled={stopDisabled}
+            data-testid="dev-server-stop-button"
+          >
+            <Square size={14} />
+            <span>{actionInFlight === "stop" ? "Stopping..." : "Stop"}</span>
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={handleRestart}
+            disabled={restartDisabled}
+            data-testid="dev-server-restart-button"
+          >
+            <RotateCw size={14} />
+            <span>{actionInFlight === "restart" ? "Restarting..." : "Restart"}</span>
+          </button>
+        </div>
+      </section>
+
+      <section className="dev-server-panel dev-server-config" aria-label="Dev server configuration">
+        <div className="dev-server-section-header">
+          <h3>Configuration</h3>
+          {isLoading && <span className="dev-server-muted">Loading...</span>}
+        </div>
+
+        {isLoading && !config && candidates.length === 0 && (
+          <div className="dev-server-loading-state" data-testid="dev-server-loading-state">
+            <Loader2 size={16} className="dev-server-spin" />
+            <span>Loading dev server configuration...</span>
           </div>
+        )}
 
-          {isLoading && (
-            <div className="devserver-loading" data-testid="devserver-loading">
-              <Loader2 size={14} className="devserver-spin" />
-              <span>Loading dev server state…</span>
+        {combinedError && (
+          <div className="dev-server-error-box" role="alert" data-testid="dev-server-error-box">
+            <p>{combinedError}</p>
+            <button type="button" className="btn btn-sm" onClick={handleRetry}>Retry</button>
+          </div>
+        )}
+
+        <div className="dev-server-section">
+          <h3>Script Selection</h3>
+
+          {config?.selectedScript && (
+            <div className="dev-server-selected" data-testid="dev-server-selected-summary">
+              <span className="dev-server-candidate-name">{config.selectedScript}</span>
+              <span className="dev-server-candidate-source">{selectedSource ?? "root"}</span>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => setShowCandidates(true)}
+                data-testid="dev-server-change-selection"
+              >
+                Change
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                onClick={handleClearSelection}
+                data-testid="dev-server-clear-selection"
+              >
+                Clear
+              </button>
             </div>
           )}
 
-          {error && (
-            <div className="devserver-error" role="alert" data-testid="devserver-error">
-              <AlertCircle size={14} />
-              <span>{error}</span>
-            </div>
+          {showCandidates && candidates.length === 0 && (
+            <p className="dev-server-empty-state" data-testid="dev-server-empty-candidates">
+              No dev server scripts detected. Check that your project has a <code>package.json</code> with a <code>dev</code>, <code>start</code>, or similar script.
+            </p>
           )}
 
-          {candidates.length === 0 ? (
-            <p className="devserver-empty" data-testid="devserver-empty-candidates">No command candidates detected.</p>
-          ) : (
-            <div className="devserver-candidate-list" data-testid="devserver-candidates">
-              {candidates.map((candidate, index) => {
-                const isSelected = getCandidateKey(candidate) === (selectedCandidateDetails ? getCandidateKey(selectedCandidateDetails) : "");
-
+          {showCandidates && candidates.length > 0 && (
+            <div className="dev-server-candidates" data-testid="dev-server-candidates">
+              {candidates.map((candidate) => {
+                const isSelected = candidateMatchesSelection(candidate, config?.selectedScript ?? null, selectedSource);
                 return (
                   <button
-                    key={getCandidateKey(candidate)}
                     type="button"
-                    className={`devserver-candidate${isSelected ? " devserver-candidate--selected" : ""}`}
-                    onClick={() => {
-                      setSelectedCandidate({
-                        scriptName: candidate.scriptName,
-                        command: candidate.command,
-                        cwd: candidate.cwd,
-                        packagePath: candidate.packagePath,
-                      });
-                    }}
-                    data-testid={`devserver-candidate-${index}`}
+                    key={`${candidate.cwd}::${candidate.scriptName}::${candidate.command}`}
+                    className={`dev-server-candidate ${isSelected ? "dev-server-candidate--selected" : ""}`}
+                    onClick={() => handleSelectCandidate(candidate)}
+                    data-testid={`dev-server-candidate-${candidate.scriptName}-${normalizeCwdToSource(candidate.cwd)}`}
                   >
-                    <span className="devserver-candidate-script">{candidate.scriptName}</span>
-                    <span className="devserver-candidate-command">{candidate.command}</span>
-                    <span className="devserver-candidate-path">{candidate.packagePath}</span>
+                    <span className="dev-server-candidate-name">{candidate.scriptName}</span>
+                    <span className="dev-server-candidate-command">{truncateCommand(candidate.command)}</span>
+                    <span className="dev-server-candidate-source">{formatCandidateSource(candidate)}</span>
                   </button>
                 );
               })}
             </div>
           )}
+        </div>
 
-          {selectedCandidateDetails && (
-            <div className="devserver-selected-command" data-testid="devserver-selected-command">
-              <Terminal size={14} />
-              <div>
-                <strong>{selectedCandidateDetails.scriptName}</strong>
-                <p>{selectedCandidateDetails.packagePath}</p>
-              </div>
-            </div>
-          )}
-        </section>
+        <div className="dev-server-field-group">
+          <label htmlFor="dev-server-command" className="dev-server-label">Command</label>
+          <input
+            id="dev-server-command"
+            className="input"
+            value={commandInput}
+            onChange={(event) => setCommandInput(event.target.value)}
+            placeholder="pnpm dev"
+            data-testid="dev-server-command-input"
+            readOnly={status === "running" || status === "starting"}
+          />
+        </div>
 
-        <section className="devserver-controls" aria-label="Process controls">
-          <div className="devserver-status" data-testid="devserver-status">
-            <span
-              className={`devserver-status-dot devserver-status-dot--${status}`}
-              aria-hidden="true"
-              data-testid="devserver-status-dot"
-            />
-            <span className="devserver-status-label">{STATUS_LABEL[status]}</span>
+        {(status === "running" || status === "starting") && serverState && (
+          <div className="dev-server-current-command" data-testid="dev-server-current-command">
+            <span className="dev-server-label">Running command</span>
+            <code>{serverState.command}</code>
           </div>
+        )}
 
-          <div className="devserver-controls-actions">
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              disabled={startDisabled}
-              onClick={handleStart}
-              data-testid="devserver-start-button"
-            >
-              <Play size={14} />
-              <span>Start</span>
-            </button>
-            <button
-              type="button"
-              className="btn btn-danger btn-sm"
-              disabled={stopDisabled}
-              onClick={handleStop}
-              data-testid="devserver-stop-button"
-            >
-              <Square size={14} />
-              <span>Stop</span>
-            </button>
-            <button
-              type="button"
-              className="btn btn-sm"
-              disabled={restartDisabled}
-              onClick={handleRestart}
-              data-testid="devserver-restart-button"
-            >
-              <RotateCw size={14} />
-              <span>Restart</span>
-            </button>
-          </div>
-        </section>
-
-        <div className="devserver-mobile-tabs" role="tablist" aria-label="Dev server panels" data-testid="devserver-mobile-tabs">
+        <div className="dev-server-preview-override">
+          <label htmlFor="dev-server-preview-input" className="dev-server-label">Preview URL Override</label>
+          <input
+            id="dev-server-preview-input"
+            className="input"
+            type="url"
+            value={previewInput}
+            onChange={(event) => setPreviewInput(event.target.value)}
+            placeholder="http://localhost:3000"
+            data-testid="dev-server-preview-input"
+          />
           <button
             type="button"
-            className={`btn btn-sm${mobilePanel === "logs" ? " btn-primary" : ""}`}
-            role="tab"
-            aria-selected={mobilePanel === "logs"}
-            aria-controls={logsPanelId}
-            tabIndex={mobilePanel === "logs" ? 0 : -1}
-            onClick={() => setMobilePanel("logs")}
-            data-testid="devserver-mobile-tab-logs"
+            className="btn btn-primary btn-sm"
+            onClick={handleSetPreview}
+            disabled={actionInFlight === "preview"}
+            data-testid="dev-server-set-preview"
           >
-            <Terminal size={14} />
-            <span>Logs</span>
-          </button>
-          <button
-            type="button"
-            className={`btn btn-sm${mobilePanel === "preview" ? " btn-primary" : ""}`}
-            role="tab"
-            aria-selected={mobilePanel === "preview"}
-            aria-controls={previewPanelId}
-            tabIndex={mobilePanel === "preview" ? 0 : -1}
-            onClick={() => setMobilePanel("preview")}
-            data-testid="devserver-mobile-tab-preview"
-          >
-            <Server size={14} />
-            <span>Preview</span>
+            Save
           </button>
         </div>
 
-        <section
-          id={logsPanelId}
-          className={`devserver-logs${mobilePanel !== "logs" ? " devserver-panel--mobile-hidden" : ""}`}
-          role="tabpanel"
-          aria-label="Dev server logs"
-          data-testid="devserver-logs"
-        >
-          <div className="devserver-panel-header">
-            <div className="devserver-panel-title">
-              <Terminal size={14} />
-              <h2>Logs</h2>
-            </div>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={handleToggleAutoscroll}
-              data-testid="devserver-autoscroll-toggle"
-            >
-              {isAutoscrollPaused ? <ChevronDownIcon /> : <ChevronUpIcon />}
-              <span>{isAutoscrollPaused ? "Resume Auto-Scroll" : "Pause Auto-Scroll"}</span>
-            </button>
+        {detectedPreviewUrl && (
+          <p className="dev-server-preview-hint">Auto-detected: {detectedPreviewUrl}</p>
+        )}
+      </section>
+
+      <div className="dev-server-content">
+        <section className="dev-server-panel dev-server-logs-panel" data-testid="dev-server-logs-panel" aria-label="Dev server logs">
+          <div className="dev-server-section-header">
+            <h3>Logs</h3>
+            <span className="dev-server-muted">{logsTotal ?? logEntries.length} lines</span>
           </div>
-          <div
-            className="devserver-log-viewer"
-            ref={logsRef}
-            onScroll={handleLogsScroll}
-            data-testid="devserver-log-viewer"
-          >
-            {logs.length === 0 ? (
-              <p className="devserver-empty">No output yet.</p>
-            ) : (
-              logs.map((line, index) => {
-                const isStderr = line.startsWith("[stderr]");
-                return (
-                  <pre
-                    key={`${index}-${line.slice(0, 24)}`}
-                    className={`devserver-log-line${isStderr ? " devserver-log-line--stderr" : ""}`}
-                  >
-                    {line}
-                  </pre>
-                );
-              })
-            )}
+          <div className="dev-server-logs-viewer" data-testid="dev-server-log-viewer">
+            <DevServerLogViewer
+              entries={logEntries}
+              loading={logsLoading}
+              loadingMore={logsLoadingMore}
+              hasMore={logsHasMore}
+              total={logsTotal}
+              onLoadMore={loadMoreLogs}
+              isRunning={isRunning}
+            />
           </div>
         </section>
-      </div>
 
-      <aside
-        id={previewPanelId}
-        className={`devserver-sidebar${mobilePanel !== "preview" ? " devserver-panel--mobile-hidden" : ""}`}
-        role="tabpanel"
-        aria-label="Dev server preview"
-        data-testid="devserver-sidebar"
-      >
-        <section className="devserver-preview">
-          <div className="devserver-panel-header">
-            <div className="devserver-panel-title">
-              <Server size={14} />
-              <h2>Preview</h2>
+        <section className="dev-server-panel dev-server-preview" data-testid="dev-server-preview-panel" aria-label="Dev server preview">
+          <div className="dev-server-section-header">
+            <h3>Preview</h3>
+            <div className="dev-server-preview-actions">
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => setPreviewMode((current) => (current === "embedded" ? "external" : "embedded"))}
+                data-testid="dev-server-preview-mode-toggle"
+              >
+                {previewMode === "embedded" ? "External only" : "Embedded"}
+              </button>
+              {previewUrl && (
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={openPreview}
+                  data-testid="dev-server-open-preview"
+                >
+                  <ExternalLink size={14} />
+                  <span>Open in new tab</span>
+                </button>
+              )}
             </div>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => setIsSidebarCollapsed((current) => !current)}
-              data-testid="devserver-toggle-sidebar"
-            >
-              {isSidebarCollapsed ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
-              <span>{isSidebarCollapsed ? "Expand" : "Collapse"}</span>
-            </button>
           </div>
 
-          <div className="devserver-url-display">
-            <span className="devserver-url-label">Detected URL</span>
-            <code data-testid="devserver-effective-url">{effectiveUrl || "Not available"}</code>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={handleCopyUrl}
-              disabled={!effectiveUrl}
-              data-testid="devserver-copy-url"
-            >
-              <Copy size={14} />
-              <span>Copy</span>
-            </button>
-          </div>
-
-          <div className="devserver-url-bar">
-            <input
-              className="input"
-              value={manualUrlInput}
-              onChange={(event) => setManualUrlInput(event.target.value)}
-              placeholder="http://localhost:5173"
-              data-testid="devserver-manual-url-input"
-            />
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={handleSetManualUrl}
-              disabled={isSettingUrl}
-              data-testid="devserver-set-url-button"
-            >
-              {isSettingUrl ? <Loader2 size={14} className="devserver-spin" /> : <Server size={14} />}
-              <span>Set</span>
-            </button>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={openInNewTab}
-              disabled={!effectiveUrl}
-              data-testid="devserver-open-tab-button"
-            >
-              <ExternalLink size={14} />
-              <span>Open in New Tab</span>
-            </button>
-          </div>
-
-          {effectiveUrl && !previewBlocked && (
-            <iframe
-              ref={iframeRef}
-              src={effectiveUrl}
-              title="Dev server preview"
-              onLoad={handleIframeLoad}
-              onError={handleIframeError}
-              onErrorCapture={handleIframeError}
-              data-testid="devserver-preview-iframe"
-            />
+          {!previewUrl && (
+            <p className="dev-server-empty-state">Preview URL will appear once the dev server starts.</p>
           )}
 
-          {previewLoading && !previewBlocked && (
-            <div className="devserver-preview-fallback" data-testid="devserver-preview-loading">
-              <Loader2 size={16} className="devserver-spin" />
-              <span>Loading preview…</span>
+          {previewUrl && previewMode === "external" && (
+            <div className="dev-server-preview-external-only" data-testid="dev-server-preview-external-only">
+              <p>Embedded preview is disabled. Open the preview in a new tab.</p>
+              <button type="button" className="btn btn-primary btn-sm touch-target" onClick={openPreview}>
+                Open Preview
+              </button>
             </div>
           )}
 
-          {(previewBlocked || !effectiveUrl) && (
-            <div className="devserver-preview-fallback" data-testid="devserver-preview-fallback">
-              <AlertCircle size={16} />
-              <p>
-                {effectiveUrl
-                  ? "Preview cannot be embedded due to security restrictions. Click 'Open in New Tab' to view."
-                  : "Start the dev server to load a preview URL."}
-              </p>
+          {previewUrl && previewMode === "embedded" && (
+            <div className="dev-server-preview-frame-wrap">
+              {!iframeError && (
+                <iframe
+                  title="Dev server preview"
+                  src={previewUrl}
+                  className="dev-server-preview-iframe"
+                  data-testid="dev-server-preview-iframe"
+                  onLoad={() => {
+                    clearIframeTimeout();
+                    setIframeLoading(false);
+                    setIframeError(false);
+                  }}
+                  onError={() => {
+                    clearIframeTimeout();
+                    setIframeLoading(false);
+                    setIframeError(true);
+                  }}
+                />
+              )}
+
+              {iframeLoading && !iframeError && (
+                <div className="dev-server-preview-loading" data-testid="dev-server-preview-loading">
+                  <Loader2 size={16} className="dev-server-spin" />
+                  <span>Loading preview...</span>
+                </div>
+              )}
+
+              {iframeError && (
+                <div className="dev-server-preview-fallback" data-testid="dev-server-preview-fallback">
+                  <p>
+                    Preview cannot be embedded (blocked by the app&apos;s security policy). Open in a new tab instead.
+                  </p>
+                  <button type="button" className="btn btn-primary btn-sm touch-target" onClick={openPreview}>
+                    Open Preview
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </section>
-      </aside>
+      </div>
     </div>
   );
-}
-
-function ChevronDownIcon() {
-  return <ChevronRight size={14} className="devserver-chevron devserver-chevron--down" />;
-}
-
-function ChevronUpIcon() {
-  return <ChevronRight size={14} className="devserver-chevron" />;
 }

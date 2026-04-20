@@ -1,9 +1,12 @@
 import { EventEmitter } from "node:events";
 import { spawn, type ChildProcess } from "node:child_process";
-import { createConnection } from "node:net";
-import type { Socket } from "node:net";
 import type { Readable } from "node:stream";
 import type { DevServerState, DevServerStore } from "./dev-server-store.js";
+import {
+  detectPortFromLogLine,
+  probeFallbackPorts,
+  type PortDetectionResult,
+} from "./dev-server-port-detect.js";
 
 export type DevServerEvent =
   | "started"
@@ -12,18 +15,26 @@ export type DevServerEvent =
   | "failed"
   | "url-detected";
 
-interface DevServerProcessManagerOptions {
+export interface DevServerProcessManagerOptions {
   stopTimeoutMs?: number;
   probeDelayMs?: number;
+  probeTimeoutMs?: number;
+}
+
+interface UrlDetectedEventPayload {
+  url: string;
+  port: number;
+  source: string;
+  detectedAt: string;
 }
 
 const DEFAULT_STOP_TIMEOUT_MS = 5_000;
 const DEFAULT_PROBE_DELAY_MS = 10_000;
-const PROBE_PORTS = [3000, 4173, 5173, 6006, 8080, 8888, 4000, 4200] as const;
+const DEFAULT_PROBE_HOST = "127.0.0.1";
+const DEFAULT_PROBE_TIMEOUT_MS = 1_000;
 
 export class DevServerProcessManager extends EventEmitter {
   private childProcess: ChildProcess | null = null;
-  private urlDetectionTimer: NodeJS.Timeout | null = null;
   private portProbeTimer: NodeJS.Timeout | null = null;
   private hasDetectedUrl = false;
   private closePromise: Promise<DevServerState> | null = null;
@@ -31,6 +42,7 @@ export class DevServerProcessManager extends EventEmitter {
 
   private readonly stopTimeoutMs: number;
   private readonly probeDelayMs: number;
+  private readonly probeTimeoutMs: number;
 
   constructor(
     private readonly store: DevServerStore,
@@ -39,6 +51,7 @@ export class DevServerProcessManager extends EventEmitter {
     super();
     this.stopTimeoutMs = options?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
     this.probeDelayMs = options?.probeDelayMs ?? DEFAULT_PROBE_DELAY_MS;
+    this.probeTimeoutMs = options?.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
   }
 
   async start(
@@ -95,20 +108,20 @@ export class DevServerProcessManager extends EventEmitter {
 
     let lifecycleSettled = false;
 
-    const handleLine = async (line: string): Promise<void> => {
+    const handleLine = async (line: string, stream: "stdout" | "stderr"): Promise<void> => {
       const trimmed = line.replace(/\r$/, "");
       if (!trimmed) {
         return;
       }
 
       await this.store.appendLog(trimmed);
-      const payload = { line: trimmed, timestamp: new Date().toISOString() };
+      const payload = { line: trimmed, stream, timestamp: new Date().toISOString() };
       this.emit("output", payload);
-      this.parseUrlFromOutput(trimmed);
+      void this.handleDetectionFromLine(trimmed);
     };
 
-    this.attachOutput(child.stdout, handleLine);
-    this.attachOutput(child.stderr, handleLine);
+    this.attachOutput(child.stdout, "stdout", handleLine);
+    this.attachOutput(child.stderr, "stderr", handleLine);
 
     child.on("close", (code) => {
       if (lifecycleSettled) {
@@ -126,12 +139,8 @@ export class DevServerProcessManager extends EventEmitter {
       void this.handleFailure(err);
     });
 
-    this.urlDetectionTimer = setTimeout(() => {
-      this.urlDetectionTimer = null;
-    }, this.probeDelayMs);
-
     this.portProbeTimer = setTimeout(() => {
-      void this.probePorts();
+      void this.runFallbackProbe();
     }, this.probeDelayMs);
 
     return runningState;
@@ -190,6 +199,10 @@ export class DevServerProcessManager extends EventEmitter {
     return this.childProcess !== null && !this.childProcess.killed;
   }
 
+  hasPendingProbeTimer(): boolean {
+    return this.portProbeTimer !== null;
+  }
+
   cleanup(): void {
     this.clearTimers();
 
@@ -210,7 +223,8 @@ export class DevServerProcessManager extends EventEmitter {
 
   private attachOutput(
     stream: Readable | null,
-    onLine: (line: string) => Promise<void>,
+    source: "stdout" | "stderr",
+    onLine: (line: string, source: "stdout" | "stderr") => Promise<void>,
   ): void {
     if (!stream) {
       return;
@@ -223,7 +237,7 @@ export class DevServerProcessManager extends EventEmitter {
       pending = lines.pop() ?? "";
 
       for (const line of lines) {
-        void onLine(line);
+        void onLine(line, source);
       }
     });
 
@@ -231,7 +245,7 @@ export class DevServerProcessManager extends EventEmitter {
       if (pending.length > 0) {
         const line = pending;
         pending = "";
-        void onLine(line);
+        void onLine(line, source);
       }
     };
 
@@ -239,109 +253,60 @@ export class DevServerProcessManager extends EventEmitter {
     stream.on("close", flushPending);
   }
 
-  private parseUrlFromOutput(line: string): void {
+  private async handleDetectionFromLine(line: string): Promise<void> {
     if (this.hasDetectedUrl) {
       return;
     }
 
-    let url: string | undefined;
-    let port: number | undefined;
-
-    const httpMatch = line.match(/http:\/\/(?:localhost|127\.0\.0\.1):(\d+)/i);
-    if (httpMatch) {
-      port = Number.parseInt(httpMatch[1], 10);
-      url = httpMatch[0];
+    const detected = detectPortFromLogLine(line);
+    if (!detected) {
+      return;
     }
 
-    if (!url) {
-      const httpsMatch = line.match(/https:\/\/(?:localhost|127\.0\.0\.1):(\d+)/i);
-      if (httpsMatch) {
-        port = Number.parseInt(httpsMatch[1], 10);
-        url = httpsMatch[0];
-      }
+    await this.persistDetection(detected);
+  }
+
+  private async runFallbackProbe(): Promise<void> {
+    this.portProbeTimer = null;
+
+    if (this.hasDetectedUrl || !this.isRunning()) {
+      return;
     }
 
-    if (!url) {
-      const keywordPortMatch = line.match(/\b(?:ready|listening|started|available|compiled)\b[^\d]*?(?:port\s+|:)(\d{2,5})/i);
-      if (keywordPortMatch) {
-        port = Number.parseInt(keywordPortMatch[1], 10);
-        url = `http://localhost:${port}`;
-      }
+    const detected = await probeFallbackPorts(DEFAULT_PROBE_HOST, this.probeTimeoutMs);
+    if (!detected || this.hasDetectedUrl || !this.isRunning()) {
+      return;
     }
 
-    if (!url || !port || Number.isNaN(port)) {
+    await this.persistDetection(detected);
+  }
+
+  private async persistDetection(detected: PortDetectionResult): Promise<void> {
+    if (this.hasDetectedUrl) {
       return;
     }
 
     this.hasDetectedUrl = true;
     this.clearProbeTimer();
 
-    void this.store.updateState({ detectedUrl: url, detectedPort: port })
-      .then((state) => {
-        this.emit("url-detected", { url: state.detectedUrl, port: state.detectedPort });
-      })
-      .catch(() => {
-        this.hasDetectedUrl = false;
+    const detectedAt = new Date().toISOString();
+
+    try {
+      const updated = await this.store.updateState({
+        detectedUrl: detected.url,
+        detectedPort: detected.port,
       });
-  }
 
-  private async probePorts(): Promise<void> {
-    if (this.hasDetectedUrl || !this.isRunning()) {
-      return;
-    }
-
-    let foundPort: number | null = null;
-    const activeSockets = new Set<Socket>();
-
-    const probePromises = PROBE_PORTS.map((port) => new Promise<number>((resolve, reject) => {
-      const socket = createConnection({ host: "127.0.0.1", port, timeout: 1000 });
-      activeSockets.add(socket);
-
-      const cleanup = () => {
-        activeSockets.delete(socket);
-        socket.removeAllListeners();
+      const payload: UrlDetectedEventPayload = {
+        url: updated.detectedUrl ?? detected.url,
+        port: updated.detectedPort ?? detected.port,
+        source: detected.source,
+        detectedAt,
       };
-
-      socket.once("connect", () => {
-        cleanup();
-        socket.end();
-        resolve(port);
-      });
-
-      socket.once("timeout", () => {
-        cleanup();
-        socket.destroy();
-        reject(new Error(`timeout:${port}`));
-      });
-
-      socket.once("error", (error) => {
-        cleanup();
-        reject(error);
-      });
-
-      socket.once("close", () => {
-        cleanup();
-      });
-    }).then((port) => {
-      if (foundPort === null) {
-        foundPort = port;
-        for (const socket of activeSockets) {
-          socket.destroy();
-        }
-      }
-      return port;
-    }));
-
-    await Promise.allSettled(probePromises);
-
-    if (foundPort === null || this.hasDetectedUrl) {
-      return;
+      this.emit("url-detected", payload);
+    } catch {
+      this.hasDetectedUrl = false;
     }
-
-    this.hasDetectedUrl = true;
-    const detectedUrl = `http://localhost:${foundPort}`;
-    const updated = await this.store.updateState({ detectedUrl, detectedPort: foundPort });
-    this.emit("url-detected", { url: updated.detectedUrl, port: updated.detectedPort });
   }
 
   private async handleClose(code: number): Promise<void> {
@@ -383,10 +348,6 @@ export class DevServerProcessManager extends EventEmitter {
   }
 
   private clearTimers(): void {
-    if (this.urlDetectionTimer) {
-      clearTimeout(this.urlDetectionTimer);
-      this.urlDetectionTimer = null;
-    }
     this.clearProbeTimer();
   }
 }
