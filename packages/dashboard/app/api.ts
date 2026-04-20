@@ -1948,119 +1948,145 @@ function createResilientEventSource(
   };
 }
 
-export type DevServerStatus = "idle" | "starting" | "running" | "stopped" | "failed";
+export interface DevServerCandidate {
+  name: string;
+  command: string;
+  scriptName: string;
+  cwd: string;
+  label: string;
+}
 
 export interface DevServerState {
-  serverKey: string;
-  status: DevServerStatus;
-  command: string | null;
-  scriptName: string | null;
-  cwd: string | null;
-  pid: number | null;
-  startedAt: string | null;
-  updatedAt: string;
-  previewUrl: string | null;
-  previewProtocol: string | null;
-  previewHost: string | null;
-  previewPort: number | null;
-  previewPath: string | null;
-  exitCode: number | null;
-  exitSignal: string | null;
-  exitedAt: string | null;
-  failureReason: string | null;
-}
-
-export interface DevServerLogEntry {
-  serverKey: string;
-  source: "stdout" | "stderr" | "system";
-  message: string;
-  timestamp: string;
-}
-
-export interface DevServerSnapshot {
-  state: DevServerState;
-  logs: DevServerLogEntry[];
+  id: string;
+  name: string;
+  status: "stopped" | "starting" | "running" | "failed";
+  command: string;
+  scriptName: string;
+  cwd: string;
+  pid?: number;
+  startedAt?: string;
+  previewUrl?: string;
+  detectedPort?: number;
+  manualPreviewUrl?: string;
+  logs: string[];
+  exitCode?: number | null;
 }
 
 export interface DevServerStartInput {
   command: string;
+  scriptName: string;
   cwd?: string;
-  scriptName?: string;
 }
 
-export function fetchDevServerStatus(projectId?: string): Promise<DevServerSnapshot> {
-  return api<DevServerSnapshot>(withProjectId("/dev-server/status", projectId));
+interface BackendDevServerCandidate {
+  name: string;
+  command: string;
+  source?: string;
+  packageName?: string;
 }
 
-export function fetchDevServerHistory(projectId?: string, limit = 200): Promise<{ logs: DevServerLogEntry[] }> {
-  const params = new URLSearchParams();
-  if (Number.isFinite(limit) && limit > 0) {
-    params.set("limit", String(Math.floor(limit)));
-  }
-  const suffix = params.size > 0 ? `?${params.toString()}` : "";
-  return api<{ logs: DevServerLogEntry[] }>(withProjectId(`/dev-server/history${suffix}`, projectId));
+interface BackendDevServerState {
+  id?: string;
+  name?: string;
+  status?: "stopped" | "starting" | "running" | "failed";
+  command?: string;
+  scriptId?: string;
+  cwd?: string;
+  pid?: number;
+  startedAt?: string;
+  detectedUrl?: string;
+  detectedPort?: number;
+  manualUrl?: string;
+  logHistory?: string[];
+  exitCode?: number | null;
 }
 
-export function startDevServer(input: DevServerStartInput, projectId?: string): Promise<{ state: DevServerState }> {
-  return api<{ state: DevServerState }>(withProjectId("/dev-server/start", projectId), {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+function mapBackendCandidateToFrontend(candidate: BackendDevServerCandidate): DevServerCandidate {
+  const source = typeof candidate.source === "string" && candidate.source.trim().length > 0
+    ? candidate.source.trim()
+    : "root";
+  const cwd = source === "root" ? "." : source;
+  const scriptName = candidate.name;
+
+  const locationLabel = source === "root" ? "root" : source;
+  const packageLabel = typeof candidate.packageName === "string" && candidate.packageName.trim().length > 0
+    ? candidate.packageName.trim()
+    : "project";
+
+  return {
+    name: candidate.name,
+    command: candidate.command,
+    scriptName,
+    cwd,
+    label: `${packageLabel} · ${scriptName} (${locationLabel})`,
+  };
 }
 
-export function stopDevServer(projectId?: string): Promise<{ state: DevServerState }> {
-  return api<{ state: DevServerState }>(withProjectId("/dev-server/stop", projectId), {
-    method: "POST",
-  });
+function mapBackendStateToFrontend(state: BackendDevServerState): DevServerState {
+  const status = state.status;
+  const normalizedStatus = status === "starting" || status === "running" || status === "failed" || status === "stopped"
+    ? status
+    : "stopped";
+
+  return {
+    id: typeof state.id === "string" ? state.id : "",
+    name: typeof state.name === "string" && state.name.length > 0 ? state.name : "default",
+    status: normalizedStatus,
+    command: typeof state.command === "string" ? state.command : "",
+    scriptName: typeof state.scriptId === "string" ? state.scriptId : "",
+    cwd: typeof state.cwd === "string" ? state.cwd : "",
+    pid: state.pid,
+    startedAt: state.startedAt,
+    previewUrl: state.detectedUrl,
+    detectedPort: state.detectedPort,
+    manualPreviewUrl: state.manualUrl,
+    logs: Array.isArray(state.logHistory) ? state.logHistory : [],
+    exitCode: state.exitCode,
+  };
 }
 
-export function restartDevServer(input?: Partial<DevServerStartInput>, projectId?: string): Promise<{ state: DevServerState }> {
-  return api<{ state: DevServerState }>(withProjectId("/dev-server/restart", projectId), {
-    method: "POST",
-    body: JSON.stringify(input ?? {}),
-  });
-}
-
-export function getDevServerStreamUrl(projectId?: string): string {
-  return buildApiUrl(withProjectId("/dev-server/stream", projectId));
-}
-
-export function connectDevServerStream(
-  projectId: string | undefined,
-  handlers: {
-    onState?: (state: DevServerState) => void;
-    onLog?: (entry: DevServerLogEntry) => void;
-    onConnectionStateChange?: (state: StreamConnectionState) => void;
-    onError?: (message: string) => void;
-  },
-  options?: { maxReconnectAttempts?: number },
-): { close: () => void; isConnected: () => boolean } {
-  return createResilientEventSource(
-    getDevServerStreamUrl(projectId),
-    {
-      events: {
-        state: (event) => {
-          try {
-            handlers.onState?.(JSON.parse(event.data) as DevServerState);
-          } catch {
-            // Ignore malformed events.
-          }
-        },
-        log: (event) => {
-          try {
-            handlers.onLog?.(JSON.parse(event.data) as DevServerLogEntry);
-          } catch {
-            // Ignore malformed events.
-          }
-        },
-      },
-    },
-    {
-      maxReconnectAttempts: options?.maxReconnectAttempts,
-      onConnectionStateChange: handlers.onConnectionStateChange,
-      onFatalError: (message) => handlers.onError?.(message),
-    },
+export function fetchDevServerCandidates(projectId?: string): Promise<DevServerCandidate[]> {
+  return api<{ candidates: BackendDevServerCandidate[] }>(withProjectId("/dev-server/detect", projectId)).then((response) =>
+    (response.candidates ?? []).map(mapBackendCandidateToFrontend)
   );
+}
+
+export function fetchDevServerStatus(projectId?: string): Promise<DevServerState> {
+  return api<BackendDevServerState>(withProjectId("/dev-server/status", projectId)).then(mapBackendStateToFrontend);
+}
+
+export function startDevServer(body: DevServerStartInput, projectId?: string): Promise<DevServerState> {
+  return api<BackendDevServerState>(withProjectId("/dev-server/start", projectId), {
+    method: "POST",
+    body: JSON.stringify({
+      command: body.command,
+      scriptId: body.scriptName,
+      cwd: body.cwd ?? ".",
+    }),
+  }).then(mapBackendStateToFrontend);
+}
+
+export function stopDevServer(projectId?: string): Promise<DevServerState> {
+  return api<BackendDevServerState>(withProjectId("/dev-server/stop", projectId), {
+    method: "POST",
+  }).then(mapBackendStateToFrontend);
+}
+
+export function restartDevServer(projectId?: string): Promise<DevServerState> {
+  return api<BackendDevServerState>(withProjectId("/dev-server/restart", projectId), {
+    method: "POST",
+  }).then(mapBackendStateToFrontend);
+}
+
+export function setDevServerPreviewUrl(body: { url: string | null }, projectId?: string): Promise<DevServerState> {
+  return api<BackendDevServerState>(withProjectId("/dev-server/preview-url", projectId), {
+    method: "PUT",
+    body: JSON.stringify(body),
+  }).then(mapBackendStateToFrontend);
+}
+
+export function getDevServerLogsStreamUrl(projectId?: string): string {
+  return buildApiUrl(withProjectId("/dev-server/logs/stream", projectId));
 }
 
 function startKeepAlive(
