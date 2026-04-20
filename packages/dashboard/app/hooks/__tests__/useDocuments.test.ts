@@ -32,7 +32,7 @@ function createDocumentsFetchMock(options: {
   return vi.fn().mockImplementation((input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
 
-    if (url.includes("/files/markdown")) {
+    if (url.includes("/files/markdown-list")) {
       if (options.failProjectFiles) {
         return mockFetchResponse(false, { error: "Project files failed" }, 500);
       }
@@ -198,7 +198,7 @@ describe("useDocuments", () => {
     await waitFor(() => {
       const urls = globalThis.fetch.mock.calls.map((call) => String(call[0]));
       expect(urls.some((url) => url.includes("/documents?q=readme"))).toBe(true);
-      expect(urls.some((url) => url.includes("/files/markdown") && !url.includes("q=readme"))).toBe(true);
+      expect(urls.some((url) => url.includes("/files/markdown-list") && !url.includes("q=readme"))).toBe(true);
       expect(urls.some((url) => url.includes("/project-files/md"))).toBe(false);
     });
   });
@@ -218,7 +218,7 @@ describe("useDocuments", () => {
     await waitFor(() => {
       const urls = globalThis.fetch.mock.calls.map((call) => String(call[0]));
       expect(urls.some((url) => url.includes("/documents") && url.includes("projectId=proj-123"))).toBe(true);
-      expect(urls.some((url) => url.includes("/files/markdown") && url.includes("projectId=proj-123"))).toBe(true);
+      expect(urls.some((url) => url.includes("/files/markdown-list") && url.includes("projectId=proj-123"))).toBe(true);
     });
   });
 

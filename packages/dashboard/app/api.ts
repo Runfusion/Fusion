@@ -776,7 +776,7 @@ export async function fetchAllDocuments(
 }
 
 export function fetchProjectMarkdownFiles(projectId?: string): Promise<MarkdownFileListResponse> {
-  return api<MarkdownFileListResponse>(withProjectId("/files/markdown", projectId));
+  return api<MarkdownFileListResponse>(withProjectId("/files/markdown-list", projectId));
 }
 
 export function putTaskDocument(

@@ -7873,11 +7873,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   });
 
   /**
-   * GET /api/files/markdown
+   * GET /api/files/markdown-list
    * Recursively list markdown files in the project workspace.
    * Returns: { files: MarkdownFileEntry[] }
    */
-  router.get("/files/markdown", async (req, res) => {
+  router.get("/files/markdown-list", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const result: MarkdownFileListResponse = await listProjectMarkdownFiles(scopedStore);
