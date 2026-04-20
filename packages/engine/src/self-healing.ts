@@ -1509,6 +1509,7 @@ export class SelfHealingManager {
       if (orphaned.length === 0) return 0;
 
       let cleaned = 0;
+      const deletedBranches: string[] = [];
       for (const branch of orphaned) {
         try {
           // Try safe delete first (-d requires branch to be merged)
@@ -1518,6 +1519,7 @@ export class SelfHealingManager {
           });
           log.log(`Deleted branch: ${branch}`);
           cleaned++;
+          deletedBranches.push(branch);
         } catch (err: unknown) {
           const errorMessage = err instanceof Error ? err.message : String(err);
           log.warn(
@@ -1531,11 +1533,22 @@ export class SelfHealingManager {
             });
             log.log(`Force-deleted branch: ${branch}`);
             cleaned++;
+            deletedBranches.push(branch);
           } catch (forceErr: unknown) {
             const forceErrorMessage = forceErr instanceof Error ? forceErr.message : String(forceErr);
             log.warn(`Failed to force-delete orphaned branch ${branch}: ${forceErrorMessage} — non-fatal`);
             // Individual failure is non-fatal
           }
+        }
+      }
+
+      if (deletedBranches.length > 0) {
+        // FN-2165 regression guard: if any dependent task stored one of these
+        // now-gone branches as its baseBranch, null it so the task doesn't
+        // hard-fail at worktree creation time.
+        const cleared = this.store.clearStaleBaseBranchReferences(deletedBranches);
+        if (cleared.length > 0) {
+          log.log(`Cleared stale baseBranch on ${cleared.length} task(s): ${cleared.join(", ")}`);
         }
       }
 

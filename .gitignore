@@ -15,6 +15,13 @@ coverage/
 .factory/
 kb.db/
 
+# Stray worktrees accidentally created at the repo root by the executor
+# or by manual `git worktree add` invocations. Without this, any such
+# directory gets captured as a 160000 gitlink by `git add -A` during
+# merger amend, producing broken submodule entries in HEAD (see FN-2152).
+.tmp-fn-*
+.tmp-kb-*
+
 # Pi
 .pi/
 

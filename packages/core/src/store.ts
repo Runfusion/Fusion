@@ -2926,7 +2926,57 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         deleted.push(branch);
       }
     }
+    if (deleted.length > 0) {
+      this.clearStaleBaseBranchReferences(deleted, task.id);
+    }
     return deleted;
+  }
+
+  /**
+   * Clear `baseBranch` on any live task whose stored value matches one of the
+   * provided (now-deleted) branch names. Prevents the scenario where a
+   * dependent task was dispatched with baseBranch set to an upstream dep's
+   * conflict-suffixed branch, the upstream dep was later merged and its
+   * branch deleted, and the dependent task then failed permanently trying
+   * to create a worktree from the vanished ref (FN-2165).
+   *
+   * Excludes the owner task (when provided) so a task's own archival doesn't
+   * null its own baseBranch.
+   *
+   * @returns IDs of tasks whose baseBranch was cleared
+   */
+  clearStaleBaseBranchReferences(deletedBranches: string[], ownerTaskId?: string): string[] {
+    if (deletedBranches.length === 0) return [];
+    const placeholders = deletedBranches.map(() => "?").join(",");
+    const params: string[] = [...deletedBranches];
+    let whereClause = `baseBranch IN (${placeholders})`;
+    if (ownerTaskId) {
+      whereClause += ` AND id != ?`;
+      params.push(ownerTaskId);
+    }
+    const rows = this.db
+      .prepare(`SELECT id FROM tasks WHERE ${whereClause}`)
+      .all(...params) as Array<{ id: string }>;
+
+    if (rows.length === 0) return [];
+    const update = this.db.prepare(
+      `UPDATE tasks SET baseBranch = NULL, updatedAt = ? WHERE id = ?`,
+    );
+    const now = new Date().toISOString();
+    const clearedIds: string[] = [];
+    for (const row of rows) {
+      update.run(now, row.id);
+      clearedIds.push(row.id);
+      if (this.isWatching) {
+        const cached = this.taskCache.get(row.id);
+        if (cached) {
+          cached.baseBranch = undefined;
+          cached.updatedAt = now;
+        }
+      }
+    }
+    this.db.bumpLastModified();
+    return clearedIds;
   }
 
   private async collectMergeDetails(_id: string, _branch: string, task: Task, commitMessage: string): Promise<import("./types.js").MergeDetails> {

@@ -119,6 +119,7 @@ function createMockStore(overrides: Record<string, unknown> = {}): TaskStore & E
     walCheckpoint: vi.fn().mockReturnValue({ busy: 0, log: 5, checkpointed: 5 }),
     listTasks: vi.fn().mockResolvedValue([]),
     getRootDir: vi.fn().mockReturnValue("/tmp/test-project"),
+    clearStaleBaseBranchReferences: vi.fn().mockReturnValue([]),
     ...overrides,
   }) as unknown as TaskStore & EventEmitter;
   return store;

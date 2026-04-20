@@ -2,7 +2,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability, RunMutationContext } from "@fusion/core";
@@ -15,7 +15,7 @@ import { buildSessionSkillContext } from "./session-skill-context.js";
 import { reviewStep, type ReviewVerdict } from "./reviewer.js";
 import { ModelRegistry, SessionManager, type ToolDefinition, type AgentSession } from "@mariozechner/pi-coding-agent";
 import { PRIORITY_EXECUTE, type AgentSemaphore } from "./concurrency.js";
-import { isRegisteredGitWorktree, isUsableTaskWorktree, type WorktreePool } from "./worktree-pool.js";
+import { getRegisteredWorktreePaths, isRegisteredGitWorktree, isUsableTaskWorktree, type WorktreePool } from "./worktree-pool.js";
 import { AgentLogger } from "./agent-logger.js";
 import { executorLog, reviewerLog } from "./logger.js";
 import { TokenCapDetector } from "./token-cap-detector.js";
@@ -2115,16 +2115,24 @@ export class TaskExecutor {
         executorLog.log(`${task.id} terminated by stuck task detector — will ${stuckRequeue ? "retry" : "not retry (budget exhausted)"}`);
       } else {
         // Context-limit error reached the executor after promptWithFallback's auto-compaction
-        // already attempted to recover. Try reduced-prompt retry as a second-level fallback.
-        // This is bounded to 1 attempt to prevent infinite retry loops.
+        // already attempted to recover. Recovery strategy (in order):
+        //   1. Reduced-prompt retry in the same session (up to MAX_REDUCED_PROMPT_ATTEMPTS)
+        //   2. Fresh-session requeue — terminate the saturated session and move the task
+        //      back to "todo" so the next dispatch gets a clean session (bounded by
+        //      recoveryRetryCount / MAX_RECOVERY_RETRIES).
+        // FN-2182 class: Step 7 overflow after earlier compaction used to hit the
+        // loopAttempts<1 guard and fail permanently; the requeue path below recovers
+        // by restarting with a fresh session against the already-written step output.
+        const MAX_REDUCED_PROMPT_ATTEMPTS = 3;
         const loopState = this.loopRecoveryState.get(task.id);
         const loopAttempts = loopState?.attempts ?? 0;
+        const isContextError = isContextLimitError(errorMessage);
 
-        if (isContextLimitError(errorMessage) && loopAttempts < 1) {
+        if (isContextError && loopAttempts < MAX_REDUCED_PROMPT_ATTEMPTS) {
           const activeEntry = this.activeSessions.get(task.id);
           if (activeEntry) {
-            executorLog.log(`${task.id} context limit error after auto-compaction — attempting reduced-prompt retry`);
-            await this.store.logEntry(task.id, `Context limit error after auto-compaction — attempting reduced-prompt retry: ${errorMessage}`, undefined, this.currentRunContext);
+            executorLog.log(`${task.id} context limit error after auto-compaction — attempting reduced-prompt retry (${loopAttempts + 1}/${MAX_REDUCED_PROMPT_ATTEMPTS})`);
+            await this.store.logEntry(task.id, `Context limit error after auto-compaction — attempting reduced-prompt retry (${loopAttempts + 1}/${MAX_REDUCED_PROMPT_ATTEMPTS}): ${errorMessage}`, undefined, this.currentRunContext);
 
             this.loopRecoveryState.set(task.id, { attempts: loopAttempts + 1, pending: false });
 
@@ -2151,11 +2159,52 @@ export class TaskExecutor {
               return;
             } catch (reducedErr: unknown) {
               const reducedErrorMessage = reducedErr instanceof Error ? reducedErr.message : String(reducedErr);
-              executorLog.error(`${task.id} reduced-prompt recovery also failed: ${reducedErrorMessage}`);
-              await this.store.logEntry(task.id, `Reduced-prompt recovery failed: ${reducedErrorMessage}`, undefined, this.currentRunContext);
-              // Fall through to mark task as failed
+              if (!isContextLimitError(reducedErrorMessage)) {
+                executorLog.error(`${task.id} reduced-prompt recovery also failed: ${reducedErrorMessage}`);
+                await this.store.logEntry(task.id, `Reduced-prompt recovery failed: ${reducedErrorMessage}`, undefined, this.currentRunContext);
+                // Non-context failure — fall through to mark task as failed
+              } else {
+                // Still a context error — the session is saturated beyond recovery.
+                // Fall through to the fresh-session requeue path below.
+                executorLog.warn(`${task.id} session still saturated after reduced-prompt retry — will attempt fresh-session requeue`);
+                await this.store.logEntry(task.id, `Reduced-prompt retry still over context — will attempt fresh-session requeue`, undefined, this.currentRunContext);
+              }
             }
           }
+        }
+
+        // Fresh-session requeue for context-limit errors: the saturated session
+        // cannot be salvaged, but the task's git state is intact. Move the task
+        // back to todo so the next scheduling pass creates a new session.
+        if (isContextError) {
+          const decision = computeRecoveryDecision({
+            recoveryRetryCount: task.recoveryRetryCount,
+            nextRecoveryAt: task.nextRecoveryAt,
+          });
+
+          if (decision.shouldRetry) {
+            const attempt = decision.nextState.recoveryRetryCount;
+            const delay = formatDelay(decision.delayMs);
+            executorLog.warn(`⚡ ${task.id} context-overflow fresh-session requeue ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}`);
+            await this.store.logEntry(task.id, `Context-overflow fresh-session requeue (${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, this.currentRunContext);
+            // Retain the worktree so the fresh session sees prior progress;
+            // only clear the in-memory session pointer so a new one is built.
+            await this.store.updateTask(task.id, {
+              recoveryRetryCount: decision.nextState.recoveryRetryCount,
+              nextRecoveryAt: decision.nextState.nextRecoveryAt,
+            });
+            await this.store.moveTask(task.id, "todo");
+            return;
+          }
+
+          executorLog.error(`✗ ${task.id} context-overflow requeue budget exhausted (${MAX_RECOVERY_RETRIES} attempts): ${errorMessage}`);
+          await this.store.logEntry(task.id, `Context-overflow requeues exhausted after ${MAX_RECOVERY_RETRIES} attempts: ${errorMessage}`, undefined, this.currentRunContext);
+          // Reset so downstream failure path can persist cleanly
+          await this.store.updateTask(task.id, {
+            recoveryRetryCount: null,
+            nextRecoveryAt: null,
+          });
+          // Fall through to terminal failure marking
         } else if (this.options.usageLimitPauser && isUsageLimitError(errorMessage)) {
           await this.options.usageLimitPauser.onUsageLimitHit("executor", task.id, errorMessage);
         } else if (isTransientError(errorMessage)) {
@@ -2703,11 +2752,17 @@ export class TaskExecutor {
     // Delete the branch — use stored branch name if available, fall back to convention
     const task = await this.store.getTask(taskId);
     const branch = task.branch || `fusion/${taskId.toLowerCase()}`;
+    let branchDeleted = false;
     try {
       await execAsync(`git branch -D "${branch}"`, { cwd: this.rootDir });
+      branchDeleted = true;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       executorLog.warn(`${taskId}: failed to delete branch during dep-abort cleanup (${branch}): ${msg}`);
+    }
+    if (branchDeleted) {
+      // FN-2165 regression guard: null baseBranch on any task that stored this branch
+      try { this.store.clearStaleBaseBranchReferences([branch], taskId); } catch { /* best-effort */ }
     }
 
     // Clear worktree tracking
@@ -3526,9 +3581,18 @@ and show an appropriate message to the user.\`
   ): Promise<{ path: string; branch: string }> {
     // Track the worktree path we're attempting to use (may change during recovery)
     const currentPath = path;
-    const resolvedStartPoint = startPoint
-      ? await this.resolveWorktreeStartPoint(startPoint, taskId)
-      : undefined;
+    let resolvedStartPoint: string | undefined;
+    if (startPoint) {
+      const resolved = await this.resolveWorktreeStartPoint(startPoint, taskId);
+      if (resolved === null) {
+        // Stored baseBranch no longer exists (e.g., upstream dep merged and branch
+        // deleted while this task sat queued/stuck). Clear it on the task so any
+        // subsequent retry branches from the default base, and proceed from HEAD.
+        await this.store.updateTask(taskId, { baseBranch: null });
+      } else {
+        resolvedStartPoint = resolved;
+      }
+    }
 
     for (let attempt = 0; attempt < this.MAX_WORKTREE_RETRIES; attempt++) {
       try {
@@ -3559,7 +3623,15 @@ and show an appropriate message to the user.\`
     throw new Error("Unexpected exit from worktree creation retry loop");
   }
 
-  private async resolveWorktreeStartPoint(startPoint: string, taskId: string): Promise<string> {
+  /**
+   * Resolve a stored baseBranch to a concrete commit SHA.
+   *
+   * Returns `null` (not throw) when the ref cannot be resolved — typically
+   * because the upstream dep's branch was merged and deleted while this task
+   * sat queued/stuck. Callers should treat null as "fall back to default base"
+   * rather than fail the task permanently.
+   */
+  private async resolveWorktreeStartPoint(startPoint: string, taskId: string): Promise<string | null> {
     const command = isAbsolute(startPoint) && existsSync(startPoint)
       ? `git -C "${startPoint}" rev-parse --verify HEAD^{commit}`
       : `git rev-parse --verify "${startPoint}^{commit}"`;
@@ -3571,12 +3643,10 @@ and show an appropriate message to the user.\`
       const errorMessage = error instanceof Error ? error.message : String(error);
       await this.store.logEntry(
         taskId,
-        `Worktree base ref is missing`,
-        `${startPoint}: ${errorMessage}`,
+        `Worktree base ref "${startPoint}" is missing — falling back to default base`,
+        errorMessage,
       );
-      throw new NonRetryableWorktreeError(
-        `Cannot create worktree for ${taskId}: base ref "${startPoint}" does not exist or cannot be resolved`,
-      );
+      return null;
     }
   }
 
@@ -3592,6 +3662,13 @@ and show an appropriate message to the user.\`
     attemptNumber = 0,
     recoveryDepth = 0,
   ): Promise<{ path: string; branch: string }> {
+    // Guard: refuse to create a worktree nested inside another worktree.
+    // Nested worktrees happen when the executor is launched with rootDir pointed
+    // at a worktree directory instead of the main repo — produces paths like
+    // `.worktrees/green-finch/.worktrees/amber-panda` that bloat the filesystem
+    // and confuse every tool that walks git state.
+    await this.assertWorktreePathNotNested(path, taskId);
+
     // If directory exists but is not a registered worktree, remove it first
     if (existsSync(path)) {
       const isRegistered = await this.isRegisteredWorktree(path);
@@ -3787,6 +3864,34 @@ and show an appropriate message to the user.\`
   }
 
   /**
+   * Throw if `path` lies inside an existing registered worktree other than the
+   * repo root. The repo root itself is a worktree (main branch) and must be
+   * allowed — we only reject paths strictly *inside* a non-root worktree.
+   */
+  private async assertWorktreePathNotNested(path: string, taskId: string): Promise<void> {
+    const target = resolvePath(path);
+    const rootResolved = resolvePath(this.rootDir);
+    const registered = await getRegisteredWorktreePaths(this.rootDir);
+
+    for (const wt of registered) {
+      if (wt === rootResolved) continue; // root is allowed as ancestor
+      if (wt === target) continue; // exact match handled later as "already registered"
+      const rel = relative(wt, target);
+      if (rel && !rel.startsWith("..") && !isAbsolute(rel)) {
+        await this.store.logEntry(
+          taskId,
+          `Refusing to create nested worktree`,
+          `target ${target} is inside registered worktree ${wt}`,
+        );
+        throw new NonRetryableWorktreeError(
+          `Refusing to create worktree at ${target}: path is nested inside existing worktree ${wt}. ` +
+          `This usually means the executor was launched with rootDir pointing at a worktree instead of the main repo.`,
+        );
+      }
+    }
+  }
+
+  /**
    * Determine if we should generate a new worktree name instead of cleaning up.
    * Returns true if the conflicting worktree is used by an active task.
    */
@@ -3840,6 +3945,8 @@ and show an appropriate message to the user.\`
           cwd: this.rootDir,
         });
         await this.store.logEntry(taskId, `Deleted branch`, branch);
+        // FN-2165 regression guard: null baseBranch on any task that stored this branch
+        this.store.clearStaleBaseBranchReferences([branch], taskId);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         executorLog.warn(`${taskId}: failed to delete conflicting branch ${branch}: ${msg}`);
@@ -3885,6 +3992,8 @@ and show an appropriate message to the user.\`
         cwd: this.rootDir,
       });
       await this.store.logEntry(taskId, `Removed stale branch`, branch);
+      // FN-2165 regression guard: null baseBranch on any task that stored this branch
+      try { this.store.clearStaleBaseBranchReferences([branch], taskId); } catch { /* best-effort */ }
       return true;
     } catch (branchDeleteError: unknown) {
       const branchDeleteErrorMessage = branchDeleteError instanceof Error ? branchDeleteError.message : String(branchDeleteError);
@@ -3902,6 +4011,8 @@ and show an appropriate message to the user.\`
         cwd: this.rootDir,
       });
       await this.store.logEntry(taskId, `Force-removed stale branch reference via update-ref`, refPath);
+      // FN-2165 regression guard: null baseBranch on any task that stored this branch
+      try { this.store.clearStaleBaseBranchReferences([branch], taskId); } catch { /* best-effort */ }
       return true;
     } catch (updateRefError: unknown) {
       const updateRefErrorMessage = updateRefError instanceof Error ? updateRefError.message : String(updateRefError);

@@ -233,6 +233,7 @@ function createMockStore() {
     listWorkflowSteps: vi.fn().mockResolvedValue([]),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     getFusionDir: vi.fn().mockReturnValue("/tmp/test/.fusion"),
+    clearStaleBaseBranchReferences: vi.fn().mockReturnValue([]),
   };
   return store as any;
 }
@@ -874,12 +875,14 @@ describe("TaskExecutor worktree recovery", () => {
     );
   });
 
-  it("fails fast when the configured base ref is missing", async () => {
+  it("falls back to default base and clears task.baseBranch when the configured base ref is missing (FN-2165)", async () => {
     const store = createMockStore();
 
     mockedExecSync.mockImplementation((cmd: string | string[]) => {
       const command = typeof cmd === "string" ? cmd : cmd[0];
       if (command.includes("git rev-parse --verify")) {
+        // The stored baseBranch no longer exists — simulates a dep's branch
+        // being deleted while this task sat queued/stuck.
         const error: any = new Error("fatal: Needed a single revision");
         error.stderr = Buffer.from("fatal: Needed a single revision");
         throw error;
@@ -891,20 +894,86 @@ describe("TaskExecutor worktree recovery", () => {
     const executor = new TaskExecutor(store, "/tmp/test", { onError });
     await executor.execute({ ...makeTask(), baseBranch: "fusion/missing-base" });
 
-    expect(mockedExecSync).not.toHaveBeenCalledWith(
-      expect.stringContaining("git worktree add"),
-      expect.any(Object),
-    );
+    // Should log the soft fallback, not a terminal failure
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-050",
-      "Worktree base ref is missing",
-      expect.stringContaining("fusion/missing-base"),
+      expect.stringContaining('Worktree base ref "fusion/missing-base" is missing'),
+      expect.any(String),
     );
+    // Should clear baseBranch on the task so retries use the default
     expect(store.updateTask).toHaveBeenCalledWith(
       "FN-050",
-      expect.objectContaining({ status: "failed" }),
+      expect.objectContaining({ baseBranch: null }),
     );
-    expect(onError).toHaveBeenCalled();
+    // Should proceed to create a worktree from HEAD (no startPoint)
+    const worktreeAddCalls = mockedExecSync.mock.calls.filter(
+      (c) => typeof c[0] === "string" && c[0].includes("git worktree add"),
+    );
+    expect(worktreeAddCalls.length).toBeGreaterThan(0);
+    // None of the worktree add calls should include the stale base ref
+    for (const call of worktreeAddCalls) {
+      expect(String(call[0])).not.toContain("fusion/missing-base");
+    }
+    // The task should NOT have been marked failed because of the stale baseBranch
+    // (downstream errors unrelated to worktree creation may still occur in this
+    // integration-style test — we only assert that baseBranch-missing is no
+    // longer a terminal failure).
+    const worktreeFailureCalls = (store.logEntry as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => typeof c[1] === "string" && c[1].includes("Worktree creation failed"),
+    );
+    expect(worktreeFailureCalls).toHaveLength(0);
+    // onError may still fire from downstream step execution in this test harness;
+    // what matters is that the failure reason is NOT "base ref missing".
+    void onError;
+  });
+
+  it("refuses to create a worktree nested inside another worktree (FN-2165 guard)", async () => {
+    const store = createMockStore();
+
+    // Simulate `git worktree list --porcelain` returning a non-root worktree
+    // that would be an ancestor of the target path.
+    mockedExecSync.mockImplementation((cmd: string | string[]) => {
+      const command = typeof cmd === "string" ? cmd : cmd[0];
+      if (command === "git worktree list --porcelain") {
+        return Buffer.from(
+          [
+            "worktree /tmp/test",
+            "HEAD abc123",
+            "branch refs/heads/main",
+            "",
+            "worktree /tmp/test/.worktrees/green-finch",
+            "HEAD def456",
+            "branch refs/heads/fusion/fn-007",
+            "",
+          ].join("\n"),
+        );
+      }
+      return Buffer.from("");
+    });
+
+    const onError = vi.fn();
+    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+    // Task has a worktree path nested inside green-finch — must be refused
+    await executor.execute({
+      ...makeTask(),
+      worktree: "/tmp/test/.worktrees/green-finch/.worktrees/amber-panda",
+    });
+
+    // Should NEVER attempt a git worktree add for the nested path
+    const worktreeAddCalls = mockedExecSync.mock.calls.filter(
+      (c) =>
+        typeof c[0] === "string" &&
+        c[0].includes("git worktree add") &&
+        c[0].includes("green-finch/.worktrees/amber-panda"),
+    );
+    expect(worktreeAddCalls).toHaveLength(0);
+
+    // Should log the refusal with both the target and ancestor paths
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-050",
+      "Refusing to create nested worktree",
+      expect.stringContaining("green-finch"),
+    );
   });
 
   it("fails after 3 unsuccessful attempts with detailed error", async () => {

@@ -761,6 +761,31 @@ async function amendMergeCommitWithFixes(
       await execAsync("git add -A", { cwd: rootDir });
     }
 
+    // FN-2152 regression guard: `git add -A` at the repo root will capture any
+    // directory with a `.git` file/dir (nested worktree, orphaned checkout) as
+    // a 160000 gitlink. The project uses no submodules, so any staged gitlink
+    // is a bug. Unstage such entries before amending so they cannot land in
+    // HEAD. Loud log so operators can clean up the offending directory.
+    const { stdout: staged } = await execAsync("git diff --cached --raw", {
+      cwd: rootDir,
+      encoding: "utf-8",
+    });
+    const gitlinkPaths: string[] = [];
+    for (const line of staged.split("\n")) {
+      // raw format: `:<srcMode> <dstMode> <srcSha> <dstSha> <status>\t<path>`
+      const match = line.match(/^:\d{6} 160000 [^\t]+\t(.+)$/);
+      if (match) gitlinkPaths.push(match[1]);
+    }
+    for (const path of gitlinkPaths) {
+      mergerLog.warn(`${taskId}: refusing to stage gitlink "${path}" (project uses no submodules — likely a nested worktree). Unstaging.`);
+      try {
+        await execAsync(`git reset HEAD -- "${path}"`, { cwd: rootDir });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        mergerLog.warn(`${taskId}: failed to unstage gitlink "${path}": ${msg}`);
+      }
+    }
+
     // Check if there are staged changes to amend
     const { stdout: finalStaged } = await execAsync("git diff --cached --name-only", {
       cwd: rootDir,
@@ -2105,6 +2130,22 @@ export async function aiMergeTask(
       // Audit trail: record branch deletion (force) (FN-1404)
       await audit.git({ type: "branch:delete", target: branch, metadata: { force: true } });
     } catch { /* non-fatal */ }
+  }
+
+  if (result.branchDeleted) {
+    // FN-2165 regression guard: if any other task had this branch stored as
+    // its baseBranch (common when a dependent task was dispatched off a
+    // conflict-suffixed branch), null it so the dependent task doesn't
+    // hard-fail at worktree creation once this branch is gone.
+    try {
+      const cleared = store.clearStaleBaseBranchReferences([branch], taskId);
+      if (cleared.length > 0) {
+        mergerLog.log(`${taskId}: cleared stale baseBranch on ${cleared.length} dependent task(s): ${cleared.join(", ")}`);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      mergerLog.warn(`${taskId}: failed to clear stale baseBranch references: ${msg}`);
+    }
   }
 
   // 7. Clean up worktree

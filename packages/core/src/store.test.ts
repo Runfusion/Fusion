@@ -8852,4 +8852,60 @@ describe("RunMutationContext", () => {
     }
   });
   });
+
+  describe("clearStaleBaseBranchReferences (FN-2165)", () => {
+    it("nulls baseBranch on live tasks that reference a deleted branch", async () => {
+      const upstream = await store.createTask({ description: "Upstream" });
+      const dependent = await store.createTask({ description: "Dependent" });
+      await store.updateTask(dependent.id, {
+        baseBranch: `fusion/${upstream.id.toLowerCase()}-2`,
+      });
+
+      const cleared = store.clearStaleBaseBranchReferences([
+        `fusion/${upstream.id.toLowerCase()}-2`,
+      ]);
+
+      expect(cleared).toEqual([dependent.id]);
+      const reloaded = await store.getTask(dependent.id);
+      expect(reloaded.baseBranch).toBeUndefined();
+    });
+
+    it("excludes the owner task so archival doesn't null its own baseBranch", async () => {
+      const upstream = await store.createTask({ description: "Upstream" });
+      await store.updateTask(upstream.id, { baseBranch: "fusion/some-base" });
+
+      const cleared = store.clearStaleBaseBranchReferences(
+        ["fusion/some-base"],
+        upstream.id,
+      );
+
+      expect(cleared).toEqual([]);
+      const reloaded = await store.getTask(upstream.id);
+      expect(reloaded.baseBranch).toBe("fusion/some-base");
+    });
+
+    it("returns [] and is a no-op when no branches given", () => {
+      expect(store.clearStaleBaseBranchReferences([])).toEqual([]);
+    });
+
+    it("clears baseBranch on multiple dependents in one call", async () => {
+      const [a, b, c] = await Promise.all([
+        store.createTask({ description: "A" }),
+        store.createTask({ description: "B" }),
+        store.createTask({ description: "C" }),
+      ]);
+      await store.updateTask(a.id, { baseBranch: "fusion/gone-a" });
+      await store.updateTask(b.id, { baseBranch: "fusion/gone-b" });
+      await store.updateTask(c.id, { baseBranch: "fusion/still-alive" });
+
+      const cleared = store.clearStaleBaseBranchReferences([
+        "fusion/gone-a",
+        "fusion/gone-b",
+      ]);
+
+      expect(cleared.sort()).toEqual([a.id, b.id].sort());
+      const cReloaded = await store.getTask(c.id);
+      expect(cReloaded.baseBranch).toBe("fusion/still-alive");
+    });
+  });
 });

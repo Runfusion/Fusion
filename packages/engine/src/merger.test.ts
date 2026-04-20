@@ -151,6 +151,7 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
     getActiveMergingTask: vi.fn().mockReturnValue(null),
     emit: vi.fn(),
     on: vi.fn(),
+    clearStaleBaseBranchReferences: vi.fn().mockReturnValue([]),
   } as unknown as TaskStore;
 }
 
