@@ -32772,6 +32772,7 @@ html .column.drag-over * {
   align-items: center;
   justify-content: center;
   gap: 2px;
+  min-width: 36px;
   min-height: 36px;
   padding: 6px 0;
   background: none;
@@ -32799,6 +32800,9 @@ html .column.drag-over * {
 }
 
 .mobile-nav-tab-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 10px;
   line-height: 1.2;
   white-space: nowrap;

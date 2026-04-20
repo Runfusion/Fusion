@@ -172,6 +172,23 @@ export function MobileNavBar({
 
   const planningHandler = activePlanningSessionCount > 0 && onResumePlanning ? onResumePlanning : onOpenPlanning;
 
+  const roadmapEnabled = Boolean(experimentalFeatures?.roadmap);
+  const skillsEnabled = Boolean(showSkillsTab);
+
+  // Keep a maximum of one optional primary tab visible at once to preserve touch-target width.
+  // Overflowed destinations remain available in the More sheet.
+  const showRoadmapsTopLevel = roadmapEnabled && (!skillsEnabled || view === "roadmaps");
+  const showSkillsTopLevel = skillsEnabled && (!roadmapEnabled || view !== "roadmaps");
+  const showSkillsInMore = skillsEnabled && !showSkillsTopLevel;
+
+  const isMoreActive =
+    view === "documents"
+    || view === "insights"
+    || view === "memory"
+    || view === "dev-server"
+    || (view === "roadmaps" && !showRoadmapsTopLevel)
+    || (view === "skills" && !showSkillsTopLevel);
+
   return (
     <>
       <nav
@@ -250,7 +267,7 @@ export function MobileNavBar({
           )}
         </button>
 
-        {showSkillsTab && (
+        {showSkillsTopLevel && (
           <button
             type="button"
             className={`mobile-nav-tab${view === "skills" ? " mobile-nav-tab--active" : ""}`}
@@ -264,7 +281,7 @@ export function MobileNavBar({
           </button>
         )}
 
-        {experimentalFeatures?.roadmap && (
+        {showRoadmapsTopLevel && (
           <button
             type="button"
             className={`mobile-nav-tab${view === "roadmaps" ? " mobile-nav-tab--active" : ""}`}
@@ -280,7 +297,7 @@ export function MobileNavBar({
 
         <button
           type="button"
-          className="mobile-nav-tab"
+          className={`mobile-nav-tab${isMoreActive ? " mobile-nav-tab--active" : ""}`}
           data-testid="mobile-nav-tab-more"
           role="tab"
           aria-selected={false}
@@ -513,7 +530,19 @@ export function MobileNavBar({
               <span>Documents</span>
             </button>
 
-            {experimentalFeatures?.roadmap && (
+            {showSkillsInMore && (
+              <button
+                type="button"
+                className="mobile-more-item"
+                data-testid="mobile-more-item-skills"
+                onClick={() => handleMoreAction(() => onChangeView("skills"))}
+              >
+                <Zap />
+                <span>Skills</span>
+              </button>
+            )}
+
+            {roadmapEnabled && (
               <button
                 type="button"
                 className="mobile-more-item"

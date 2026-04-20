@@ -74,6 +74,26 @@ describe("MobileNavBar", () => {
     expect(screen.getByTestId("mobile-nav-tab-roadmaps")).toBeDefined();
   });
 
+  it("keeps optional tabs within mobile top-level capacity by overflowing roadmaps into More", () => {
+    render(<MobileNavBar {...createDefaultProps()} showSkillsTab={true} experimentalFeatures={{ roadmap: true }} />);
+
+    expect(screen.getByTestId("mobile-nav-tab-skills")).toBeDefined();
+    expect(screen.queryByTestId("mobile-nav-tab-roadmaps")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    expect(screen.getByTestId("mobile-more-item-roadmaps")).toBeDefined();
+  });
+
+  it("moves skills into More when roadmaps is the active optional top-level tab", () => {
+    render(<MobileNavBar {...createDefaultProps()} view="roadmaps" showSkillsTab={true} experimentalFeatures={{ roadmap: true }} />);
+
+    expect(screen.getByTestId("mobile-nav-tab-roadmaps")).toBeDefined();
+    expect(screen.queryByTestId("mobile-nav-tab-skills")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    expect(screen.getByTestId("mobile-more-item-skills")).toBeDefined();
+  });
+
   it("does not render skills tab when showSkillsTab is false", () => {
     render(<MobileNavBar {...createDefaultProps()} showSkillsTab={false} />);
     expect(screen.queryByTestId("mobile-nav-tab-skills")).toBeNull();
