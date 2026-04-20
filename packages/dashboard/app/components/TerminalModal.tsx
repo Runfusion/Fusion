@@ -989,9 +989,8 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
             ref={terminalRef}
             className="terminal-xterm"
             data-testid="terminal-xterm"
-            onPointerDownCapture={handleTerminalGestureFocus}
-            onTouchStartCapture={handleTerminalGestureFocus}
-            onClickCapture={handleTerminalGestureFocus}
+            onPointerDown={handleTerminalGestureFocus}
+            onTouchStart={handleTerminalGestureFocus}
           />
         </div>
 

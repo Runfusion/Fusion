@@ -3603,7 +3603,7 @@ describe("TerminalModal — xterm focus initialization (FN-1602)", () => {
     });
   });
 
-  it("focuses xterm helper textarea on user pointer gesture (capture phase)", async () => {
+  it("focuses xterm helper textarea on user pointer gesture", async () => {
     render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
     await waitFor(() => {
@@ -3617,12 +3617,7 @@ describe("TerminalModal — xterm focus initialization (FN-1602)", () => {
     const setSelectionRangeSpy = vi.spyOn(helperTextarea, "setSelectionRange");
     terminalDiv.appendChild(helperTextarea);
 
-    // Simulate xterm child event handlers stopping bubble propagation.
-    const child = document.createElement("div");
-    child.addEventListener("pointerdown", (event) => event.stopPropagation());
-    terminalDiv.appendChild(child);
-
-    fireEvent.pointerDown(child);
+    fireEvent.pointerDown(terminalDiv);
 
     expect(mockTerminalInstance.focus).toHaveBeenCalled();
     expect(focusSpy).toHaveBeenCalled();

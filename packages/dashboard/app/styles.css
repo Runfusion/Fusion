@@ -9995,6 +9995,25 @@ input[type="range"]:focus-visible {
   z-index: 1 !important;
 }
 
+/*
+ * On touch-primary devices (mobile/tablet), expand the helper textarea to
+ * cover the entire terminal surface so taps land directly on it. iOS Safari
+ * reliably opens the soft keyboard and routes input events only when focus
+ * originates from a tap on the focused element itself — programmatic focus()
+ * from a parent's touch handler is often silently ignored. The textarea
+ * remains visually invisible via opacity:0 and sits above the canvas so
+ * tap/drag events land on it. Desktop (mouse) keeps the 1×1 rule so xterm
+ * can still handle drag-to-select and mouse-tracking on the canvas.
+ */
+@media (hover: none) and (pointer: coarse) {
+  .terminal-xterm .xterm .xterm-helper-textarea {
+    width: 100% !important;
+    height: 100% !important;
+    opacity: 0 !important;
+    z-index: 2 !important;
+  }
+}
+
 .terminal-loading {
   display: flex;
   flex-direction: column;
