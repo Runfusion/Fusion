@@ -310,6 +310,8 @@ export class DevServerProcessManager extends EventEmitter {
   }
 
   private async handleClose(code: number): Promise<void> {
+    this.clearTimers();
+
     const updated = await this.store.updateState({
       status: "stopped",
       exitCode: code,
@@ -318,7 +320,6 @@ export class DevServerProcessManager extends EventEmitter {
     });
 
     this.childProcess = null;
-    this.clearTimers();
     this.resolveClosePromise?.(updated);
     this.resolveClosePromise = null;
     this.closePromise = null;
@@ -326,6 +327,8 @@ export class DevServerProcessManager extends EventEmitter {
   }
 
   private async handleFailure(error: Error): Promise<void> {
+    this.clearTimers();
+
     const updated = await this.store.updateState({
       status: "failed",
       stoppedAt: new Date().toISOString(),
@@ -333,7 +336,6 @@ export class DevServerProcessManager extends EventEmitter {
     });
 
     this.childProcess = null;
-    this.clearTimers();
     this.resolveClosePromise?.(updated);
     this.resolveClosePromise = null;
     this.closePromise = null;

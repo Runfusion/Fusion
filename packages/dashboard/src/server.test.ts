@@ -503,6 +503,74 @@ describe("Terminal WebSocket heartbeat", () => {
   });
 });
 
+describe("Terminal stale-session eviction", () => {
+  let app: ReturnType<typeof express>;
+  let server: http.Server;
+  let store: TaskStore;
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    app = express();
+    server = http.createServer(app);
+    store = createMockStore();
+    vi.useFakeTimers();
+    mockTerminalService.evictStaleSessions.mockReset().mockReturnValue(0);
+    consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    server.close();
+  });
+
+  it("calls evictStaleSessions on each 60s interval tick", () => {
+    setupTerminalWebSocket(app, server, store);
+
+    vi.advanceTimersByTime(60_000);
+    expect(mockTerminalService.evictStaleSessions).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(60_000);
+    expect(mockTerminalService.evictStaleSessions).toHaveBeenCalledTimes(2);
+    expect(consoleErrorSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("Stale session eviction failed"),
+      expect.anything(),
+    );
+  });
+
+  it("logs error and continues when evictStaleSessions throws", () => {
+    mockTerminalService.evictStaleSessions.mockImplementation(() => {
+      throw new Error("simulated eviction failure");
+    });
+
+    setupTerminalWebSocket(app, server, store);
+
+    vi.advanceTimersByTime(60_000);
+
+    expect(consoleErrorSpy).toHaveBeenCalled();
+    const failureCall = consoleErrorSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("[terminal] Stale session eviction failed:"),
+    );
+    expect(failureCall).toBeDefined();
+    expect(failureCall?.[0]).toEqual(expect.stringContaining("[terminal] Stale session eviction failed:"));
+    expect(failureCall?.[1]).toBeInstanceOf(Error);
+    expect((failureCall?.[1] as Error).message).toContain("simulated eviction failure");
+
+    vi.advanceTimersByTime(60_000);
+    expect(mockTerminalService.evictStaleSessions).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops eviction interval when server closes", () => {
+    setupTerminalWebSocket(app, server, store);
+
+    server.emit("close");
+
+    vi.advanceTimersByTime(120_000);
+    expect(mockTerminalService.evictStaleSessions).not.toHaveBeenCalled();
+  });
+});
+
 /**
  * Scoped Scheduling Resolver Regression Tests
  * ===========================================

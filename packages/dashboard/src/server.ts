@@ -1051,8 +1051,8 @@ export function setupTerminalWebSocket(
   const staleEvictionInterval = setInterval(() => {
     try {
       defaultTerminalService.evictStaleSessions();
-    } catch {
-      // Ignore errors during periodic eviction
+    } catch (err) {
+      console.error("[terminal] Stale session eviction failed:", err);
     }
   }, 60_000);
 
