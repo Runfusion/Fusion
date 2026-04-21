@@ -1656,6 +1656,42 @@ export async function pushToRemoteAfterMerge(
 }
 
 /**
+ * Create a temporary worktree from the current HEAD for isolated post-merge step execution.
+ * Returns the worktree path, or null if creation fails (graceful fallback to rootDir).
+ */
+async function createPostMergeWorktree(
+  rootDir: string,
+  taskId: string,
+): Promise<string | null> {
+  const randomSuffix = Math.random().toString(36).slice(2, 10);
+  const postMergeWorktree = join(rootDir, ".worktrees", `post-merge-${taskId}-${randomSuffix}`);
+
+  try {
+    await execAsync(`git worktree add ${quoteArg(postMergeWorktree)} HEAD`, { cwd: rootDir });
+    return postMergeWorktree;
+  } catch (err: unknown) {
+    mergerLog.warn(`${taskId}: failed to create post-merge worktree: ${getCommandErrorMessage(err)}`);
+    return null;
+  }
+}
+
+/**
+ * Remove a temporary worktree created for post-merge step execution.
+ * Non-fatal: logs and swallows errors.
+ */
+async function removePostMergeWorktree(
+  rootDir: string,
+  postMergeWorktree: string,
+  taskId: string,
+): Promise<void> {
+  try {
+    await execAsync(`git worktree remove --force ${quoteArg(postMergeWorktree)}`, { cwd: rootDir });
+  } catch (err: unknown) {
+    mergerLog.warn(`${taskId}: failed to remove post-merge worktree ${postMergeWorktree}: ${getCommandErrorMessage(err)}`);
+  }
+}
+
+/**
  * AI-powered merge with 3-attempt retry logic when autoResolveConflicts is enabled.
  *
  * Attempt 1: Standard merge + AI agent with full context
@@ -2148,7 +2184,30 @@ export async function aiMergeTask(
     }
   }
 
-  // 7. Clean up worktree
+  // 7. Run post-merge workflow steps (in temporary worktree for isolation)
+  const hasPostMergeSteps = await hasEnabledPostMergeWorkflowSteps(store, taskId, task.enabledWorkflowSteps);
+  if (hasPostMergeSteps) {
+    const postMergeWorktree = await createPostMergeWorktree(rootDir, taskId);
+    const postMergeCwd = postMergeWorktree || rootDir;
+    if (postMergeWorktree) {
+      mergerLog.log(`${taskId}: running post-merge workflow steps in isolated worktree: ${postMergeWorktree}`);
+    } else {
+      mergerLog.warn(`${taskId}: could not create post-merge worktree — falling back to rootDir`);
+    }
+
+    try {
+      await runPostMergeWorkflowSteps(store, taskId, rootDir, postMergeCwd, settings, options);
+    } catch (err: any) {
+      mergerLog.error(`${taskId}: post-merge workflow steps error: ${err.message}`);
+      // Non-fatal — task still moves to done
+    } finally {
+      if (postMergeWorktree) {
+        await removePostMergeWorktree(rootDir, postMergeWorktree, taskId);
+      }
+    }
+  }
+
+  // 8. Clean up worktree
   if (worktreePath && existsSync(worktreePath)) {
     const otherUser = await findWorktreeUser(store, worktreePath, taskId);
     if (otherUser) {
@@ -2169,7 +2228,7 @@ export async function aiMergeTask(
     }
   }
 
-  // 7b. Push to remote if configured
+  // 8b. Push to remote if configured
   if (settings.pushAfterMerge && settings.mergeStrategy !== "pull-request") {
     try {
       const pushResult = await pushToRemoteAfterMerge(store, rootDir, taskId, settings, options);
@@ -2187,14 +2246,6 @@ export async function aiMergeTask(
       result.pushedToRemote = false;
       result.pushError = err.message;
     }
-  }
-
-  // 8. Run post-merge workflow steps (failures logged but do not block completion)
-  try {
-    await runPostMergeWorkflowSteps(store, taskId, rootDir, settings, options);
-  } catch (err: any) {
-    mergerLog.error(`${taskId}: post-merge workflow steps error: ${err.message}`);
-    // Non-fatal — task still moves to done
   }
 
   // 9. Move task to done
@@ -2941,15 +2992,40 @@ export function buildMergePrompt(params: MergePromptParams): string {
   return parts.join("\n");
 }
 
+async function hasEnabledPostMergeWorkflowSteps(
+  store: TaskStore,
+  taskId: string,
+  enabledWorkflowSteps: string[] | undefined,
+): Promise<boolean> {
+  if (!enabledWorkflowSteps?.length) return false;
+
+  for (const wsId of enabledWorkflowSteps) {
+    try {
+      const ws = await store.getWorkflowStep(wsId);
+      if (!ws) continue;
+      const stepPhase = ws.phase || "pre-merge";
+      if (stepPhase === "post-merge") {
+        return true;
+      }
+    } catch (err: unknown) {
+      mergerLog.warn(`${taskId}: failed to inspect workflow step ${wsId} for post-merge phase: ${getCommandErrorMessage(err)}`);
+    }
+  }
+
+  return false;
+}
+
 /**
  * Run post-merge workflow steps for a task after the merge succeeds.
- * These steps run in the root directory (after merge, worktree may be cleaned up).
- * Failures are logged but do NOT block task completion — the merge is already committed.
+ * Steps execute in an isolated worktree (created from merged HEAD) to prevent
+ * modifications to the main project directory. Falls back to rootDir if worktree
+ * creation fails. Failures are logged but do NOT block task completion.
  */
 async function runPostMergeWorkflowSteps(
   store: TaskStore,
   taskId: string,
   rootDir: string,
+  cwd: string,
   settings: Settings,
   mergeOptions: MergerOptions = {},
 ): Promise<void> {
@@ -3009,8 +3085,8 @@ async function runPostMergeWorkflowSteps(
 
     try {
       const result = stepMode === "script"
-        ? await executePostMergeScriptStep(store, taskId, ws, rootDir, settings)
-        : await executePostMergePromptStep(store, taskId, ws, rootDir, settings, mergeOptions);
+        ? await executePostMergeScriptStep(store, taskId, ws, cwd, settings)
+        : await executePostMergePromptStep(store, taskId, ws, rootDir, cwd, settings, mergeOptions);
       const completedAt = new Date().toISOString();
 
       if (result.success) {
@@ -3059,12 +3135,12 @@ async function runPostMergeWorkflowSteps(
   }
 }
 
-/** Execute a script-mode post-merge workflow step */
+/** Execute a script-mode post-merge workflow step in the provided execution directory. */
 async function executePostMergeScriptStep(
   store: TaskStore,
   taskId: string,
   workflowStep: WorkflowStep,
-  rootDir: string,
+  cwd: string,
   settings: Settings,
 ): Promise<{ success: boolean; output?: string; error?: string }> {
   const scriptName = workflowStep.scriptName!.trim();
@@ -3077,7 +3153,7 @@ async function executePostMergeScriptStep(
 
   try {
     await execAsync(scriptCommand, {
-      cwd: rootDir,
+      cwd,
       encoding: "utf-8",
       timeout: 120_000,
       maxBuffer: 10 * 1024 * 1024,
@@ -3096,12 +3172,13 @@ async function executePostMergeScriptStep(
   }
 }
 
-/** Execute a prompt-mode post-merge workflow step using AI agent */
+/** Execute a prompt-mode post-merge workflow step using an AI agent in the provided execution directory. */
 async function executePostMergePromptStep(
   store: TaskStore,
   taskId: string,
   workflowStep: WorkflowStep,
   rootDir: string,
+  cwd: string,
   settings: Settings,
   mergeOptions: MergerOptions = {},
 ): Promise<{ success: boolean; output?: string; error?: string }> {
@@ -3111,7 +3188,7 @@ async function executePostMergePromptStep(
 Task Context:
 - Task ID: ${taskId}
 - The merge has already been completed successfully.
-- You are running in the project's root directory with the merged code.
+- You are running in a temporary worktree with the merged code.
 
 Your Instructions:
 ${workflowStep.prompt}
@@ -3165,7 +3242,7 @@ If issues are found that need attention, describe them clearly.`;
     }
 
     const { session } = await createFnAgent({
-      cwd: rootDir,
+      cwd,
       systemPrompt: postMergeSystemPrompt,
       tools: toolMode,
       defaultProvider: stepProvider,
@@ -3193,7 +3270,7 @@ If issues are found that need attention, describe them clearly.`;
     await promptWithFallback(
       session,
       `Execute the post-merge workflow step "${workflowStep.name}" for task ${taskId}.\n\n` +
-      `Review the merged code in the project root and evaluate it against your instructions.`,
+      `Review the merged code in the temporary worktree and evaluate it against your instructions.`,
     );
 
     checkSessionError(session);
