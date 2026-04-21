@@ -375,6 +375,129 @@ describe("In-progress task resume after restart", () => {
     expect(initCalls).toHaveLength(0);
   });
 
+  it("recovers a step whose code review approved before the engine stopped (no review replay)", async () => {
+    const store = createMockStore();
+    const steps: StepStatus[] = ["done", "in-progress", "pending"];
+    const task = makeTask("FN-1701", "in-progress", {
+      steps: makeSteps(...steps),
+      currentStep: 1,
+    });
+    // Log order mirrors what we saw in FN-2215: plan review APPROVE → impl →
+    // code review requested → code review APPROVE → (engine stops before
+    // step status flips to done).
+    const detail = makeTaskDetail("FN-1701", "in-progress", {
+      steps: makeSteps(...steps),
+      currentStep: 1,
+      log: [
+        { timestamp: "2026-04-21T00:00:00.000Z", action: "Step 1 (Step 1) → in-progress" },
+        { timestamp: "2026-04-21T00:00:01.000Z", action: "plan review Step 1: APPROVE" },
+        { timestamp: "2026-04-21T00:00:02.000Z", action: "code review requested for Step 1 (Step 1)" },
+        { timestamp: "2026-04-21T00:00:03.000Z", action: "code review Step 1: APPROVE" },
+      ],
+    });
+    store.listTasks.mockResolvedValue([task]);
+    store.getTask.mockResolvedValue(detail);
+
+    mockAgentSuccess();
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.resumeOrphaned();
+    await new Promise((r) => setTimeout(r, 50));
+
+    // The step should have been flipped to done *before* execute ran.
+    expect(store.updateStep).toHaveBeenCalledWith("FN-1701", 1, "done");
+    // A recovery log entry should have been written explaining the flip.
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-1701",
+      expect.stringContaining("recovered as done on resume"),
+    );
+  });
+
+  it("does NOT recover a step that was reset to pending after its code review approved", async () => {
+    const store = createMockStore();
+    const steps: StepStatus[] = ["done", "in-progress", "pending"];
+    const detail = makeTaskDetail("FN-1702", "in-progress", {
+      steps: makeSteps(...steps),
+      currentStep: 1,
+      log: [
+        { timestamp: "2026-04-21T00:00:00.000Z", action: "Step 1 (Step 1) → in-progress" },
+        { timestamp: "2026-04-21T00:00:01.000Z", action: "code review Step 1: APPROVE" },
+        // Workflow revision came in after the approval and reset this step.
+        { timestamp: "2026-04-21T00:00:02.000Z", action: "Step 1 (Step 1) → pending" },
+        { timestamp: "2026-04-21T00:00:03.000Z", action: "Step 1 (Step 1) → in-progress" },
+      ],
+    });
+    store.listTasks.mockResolvedValue([makeTask("FN-1702", "in-progress", { steps: makeSteps(...steps), currentStep: 1 })]);
+    store.getTask.mockResolvedValue(detail);
+
+    mockAgentSuccess();
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.resumeOrphaned();
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Must NOT mark the step done — the reset invalidated the prior approval.
+    const updateStepDoneCalls = store.updateStep.mock.calls.filter(
+      (c: any[]) => c[0] === "FN-1702" && c[2] === "done",
+    );
+    expect(updateStepDoneCalls).toHaveLength(0);
+  });
+
+  it("does NOT recover a step whose code review only revised (no APPROVE)", async () => {
+    const store = createMockStore();
+    const steps: StepStatus[] = ["done", "in-progress", "pending"];
+    const detail = makeTaskDetail("FN-1703", "in-progress", {
+      steps: makeSteps(...steps),
+      currentStep: 1,
+      log: [
+        { timestamp: "2026-04-21T00:00:00.000Z", action: "Step 1 (Step 1) → in-progress" },
+        { timestamp: "2026-04-21T00:00:01.000Z", action: "code review Step 1: REVISE" },
+      ],
+    });
+    store.listTasks.mockResolvedValue([makeTask("FN-1703", "in-progress", { steps: makeSteps(...steps), currentStep: 1 })]);
+    store.getTask.mockResolvedValue(detail);
+
+    mockAgentSuccess();
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.resumeOrphaned();
+    await new Promise((r) => setTimeout(r, 50));
+
+    const updateStepDoneCalls = store.updateStep.mock.calls.filter(
+      (c: any[]) => c[0] === "FN-1703" && c[2] === "done",
+    );
+    expect(updateStepDoneCalls).toHaveLength(0);
+  });
+
+  it("recovers multiple in-progress steps that each have approved code reviews", async () => {
+    const store = createMockStore();
+    // Two consecutive steps each stuck in-progress with approved code reviews.
+    // (Rare but possible if the agent was processing step N+1 when the engine
+    // stopped after approving step N.)
+    const steps: StepStatus[] = ["in-progress", "in-progress", "pending"];
+    const detail = makeTaskDetail("FN-1704", "in-progress", {
+      steps: makeSteps(...steps),
+      currentStep: 0,
+      log: [
+        { timestamp: "2026-04-21T00:00:00.000Z", action: "Step 0 (Step 0) → in-progress" },
+        { timestamp: "2026-04-21T00:00:01.000Z", action: "code review Step 0: APPROVE" },
+        { timestamp: "2026-04-21T00:00:02.000Z", action: "Step 1 (Step 1) → in-progress" },
+        { timestamp: "2026-04-21T00:00:03.000Z", action: "code review Step 1: APPROVE" },
+      ],
+    });
+    store.listTasks.mockResolvedValue([makeTask("FN-1704", "in-progress", { steps: makeSteps(...steps), currentStep: 0 })]);
+    store.getTask.mockResolvedValue(detail);
+
+    mockAgentSuccess();
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.resumeOrphaned();
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(store.updateStep).toHaveBeenCalledWith("FN-1704", 0, "done");
+    expect(store.updateStep).toHaveBeenCalledWith("FN-1704", 1, "done");
+  });
+
   it("resumeOrphaned() logs 'Resumed after engine restart' for each orphaned task", async () => {
     const store = createMockStore();
     const task1 = makeTask("FN-040", "in-progress");

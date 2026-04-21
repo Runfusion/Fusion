@@ -608,6 +608,7 @@ export class TaskExecutor {
             try {
               await this.clearResumeFailureState(task);
               await this.store.logEntry(task.id, "Resuming execution after unpause", undefined, this.currentRunContext);
+              await this.recoverApprovedStepsOnResume(task.id);
             } catch (clearErr) {
               executorLog.warn(`${task.id} clearResumeFailureState failed during unpause: ${clearErr instanceof Error ? clearErr.message : String(clearErr)}`);
             }
@@ -999,6 +1000,7 @@ export class TaskExecutor {
       try {
         await this.clearResumeFailureState(task);
         await this.store.logEntry(task.id, "Resumed after engine restart");
+        await this.recoverApprovedStepsOnResume(task.id);
       } catch (err) {
         executorLog.error(`Failed to write resume log for ${task.id}:`, err);
       }
@@ -4201,6 +4203,74 @@ and show an appropriate message to the user.\`
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       executorLog.error(`Failed to clean up worktree for ${taskId}:`, errorMessage);
+    }
+  }
+
+  /**
+   * When the engine restarts mid-step, an `in-progress` step may have already
+   * passed its code review (log: `code review Step N: APPROVE`) but not yet
+   * been flipped to `done` by the agent's next `task_update` call. Without
+   * intervention, the next executor pass re-enters the step and replays plan
+   * + code review, which we've measured at 5–20 min of pure waste per restart.
+   *
+   * This reconciler scans the task log for any in-progress step whose most
+   * recent approved code review is newer than its most recent `→ pending`
+   * transition, and marks those steps `done`. Subsequent resume logic then
+   * advances to the next actually-pending step.
+   */
+  private async recoverApprovedStepsOnResume(taskId: string): Promise<void> {
+    let detail: TaskDetail;
+    try {
+      detail = await this.store.getTask(taskId);
+    } catch (err) {
+      executorLog.warn(`${taskId}: recoverApprovedStepsOnResume getTask failed: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    const log = detail.log ?? [];
+    if (log.length === 0) return;
+
+    let recovered = 0;
+    for (let i = 0; i < detail.steps.length; i++) {
+      if (detail.steps[i].status !== "in-progress") continue;
+
+      let lastPendingAt = -1;
+      let lastApproveAt = -1;
+      const stepName = detail.steps[i].name;
+      // Matches "Step 3 (My Step) → pending"; name is user-controlled, so match
+      // on prefix rather than a regex built from the name.
+      const transitionPrefix = `Step ${i} (${stepName}) → `;
+      const approvePrefix = `code review Step ${i}:`;
+      for (let j = 0; j < log.length; j++) {
+        const action = log[j].action || "";
+        if (action.startsWith(transitionPrefix)) {
+          const status = action.slice(transitionPrefix.length).trim();
+          if (status === "pending") lastPendingAt = j;
+        } else if (action.startsWith(approvePrefix) && action.includes("APPROVE")) {
+          lastApproveAt = j;
+        }
+      }
+
+      if (lastApproveAt > lastPendingAt) {
+        executorLog.log(
+          `${taskId}: step ${i} ("${stepName}") already has an approved code review — marking done on resume (skipping review replay)`,
+        );
+        try {
+          await this.store.logEntry(
+            taskId,
+            `Step ${i} (${stepName}) recovered as done on resume — code review had already approved before the engine stopped`,
+          );
+          await this.store.updateStep(taskId, i, "done");
+          recovered++;
+        } catch (err) {
+          executorLog.warn(
+            `${taskId}: failed to recover step ${i} on resume: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+    }
+
+    if (recovered > 0) {
+      executorLog.log(`${taskId}: recovered ${recovered} approved step(s) on resume`);
     }
   }
 
