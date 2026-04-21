@@ -48,7 +48,7 @@ Fusion supports multiple projects with a central registry at `~/.fusion/fusion-c
 ## Testing
 
 ```bash
-pnpm test          # run all tests
+VITEST_MAX_WORKERS=4 pnpm test  # run all tests
 pnpm build         # build all packages
 ```
 
