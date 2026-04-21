@@ -268,7 +268,7 @@ Usage:
 Options:
   --project, -P <name>       Target a specific project (bypasses CWD detection)
   --port, -p <port>          Dashboard/serve port (default: 4040)
-  --host <host>              Serve host (default: 0.0.0.0)
+  --host <host>              Serve host (default: 127.0.0.1 — localhost only; pass 0.0.0.0 to expose)
   --interactive              Interactive mode (port selection for dashboard, issue selection for import)
   --paused                   Start with engine paused (automation disabled)
   --dev                      Start dashboard only (no AI engine)
@@ -504,7 +504,9 @@ async function main() {
         const paused = args.includes("--paused");
         const dev = args.includes("--dev");
         const interactive = args.includes("--interactive");
-        await runDashboard(port, { paused, dev, interactive });
+        const dashHostIdx = args.indexOf("--host");
+        const host = dashHostIdx !== -1 && dashHostIdx + 1 < args.length ? args[dashHostIdx + 1] : undefined;
+        await runDashboard(port, { paused, dev, interactive, host });
         break;
       }
 

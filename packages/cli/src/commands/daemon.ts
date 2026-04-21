@@ -128,7 +128,8 @@ function maskToken(token: string): string {
 export interface DaemonOptions {
   /** Port to listen on (default: 0 for random port) */
   port?: number;
-  /** Host to bind to (default: 0.0.0.0) */
+  /** Host to bind to (default: 127.0.0.1 — localhost only). Pass "0.0.0.0" to
+   *  expose on all interfaces. */
   host?: string;
   /** Specific token to use (generated if not provided) */
   token?: string;
@@ -207,7 +208,7 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     }
   }
 
-  const selectedHost = opts.host ?? "0.0.0.0";
+  const selectedHost = opts.host ?? "127.0.0.1";
   const cwd = await resolveRuntimeProjectPath();
 
   // ── CentralCore: global coordination + ntfy project ID lookup ─────────
@@ -466,13 +467,16 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     console.warn(`[daemon] Failed to set local node online: ${message}`);
   }
 
-  // Print startup banner with full token (shown once at startup)
+  // Print startup banner with a masked token. The full token is persisted in
+  // global settings (~/.fusion/settings.json, chmod 0600) and can be retrieved
+  // with `fn daemon --token-only` — printing it here would write the raw
+  // secret to terminal scrollback, CI logs, and screen-capture tools.
   console.log();
   console.log(`  Fusion Daemon`);
   console.log(`  ────────────────────────`);
   console.log(`  → http://${selectedHost}:${actualPort}`);
   console.log();
-  console.log(`  Token:      ${daemonToken}`);
+  console.log(`  Token:      ${maskToken(daemonToken)} (run "fn daemon --token-only" to retrieve)`);
   console.log();
   console.log(`  Health:     GET /api/health`);
   console.log(`  API:        /api/* (bearer token required)`);

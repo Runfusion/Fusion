@@ -41,7 +41,7 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   // Daemon mode settings
   daemonToken: undefined,
   daemonPort: 4040,
-  daemonHost: "0.0.0.0",
+  daemonHost: "127.0.0.1",
   // Node settings sync
   settingsSyncEnabled: false,
   settingsSyncAuth: false,

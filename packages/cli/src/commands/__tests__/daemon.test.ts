@@ -670,13 +670,21 @@ describe("runDaemon", () => {
     await triggerSignal("SIGINT");
   });
 
-  it("prints banner with full token at startup", async () => {
+  it("prints banner with masked token at startup (full token never hits stdout)", async () => {
     const providedToken = "fn_fulltoken12345678901234567890";
 
     await runDaemon({ token: providedToken });
 
-    // Banner should contain the full token
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining(providedToken));
+    // Banner should contain a MASKED form, not the raw token. The full token
+    // is persisted to ~/.fusion/settings.json (chmod 0600) and retrievable via
+    // `fn daemon --token-only` — printing it here would leak it to terminal
+    // scrollback and CI logs.
+    const allBannerArgs = logSpy.mock.calls.map((args) => String(args[0] ?? ""));
+    const banner = allBannerArgs.join("\n");
+    expect(banner).not.toContain(providedToken);
+    expect(banner).toContain("fn_ful");
+    expect(banner).toContain("7890");
+    expect(banner).toContain("fn daemon --token-only");
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Fusion Daemon"));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("bearer token required"));
 
@@ -701,7 +709,7 @@ describe("runDaemon", () => {
 
     expect(mocks.listenCalls[0]).toMatchObject({
       port: 0,
-      host: "0.0.0.0",
+      host: "127.0.0.1",
     });
 
     await triggerSignal("SIGINT");

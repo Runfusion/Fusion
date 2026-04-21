@@ -11093,16 +11093,26 @@ describe("Routine routes", () => {
       }));
     });
 
-    it("creates a routine with webhook trigger", async () => {
+    it("creates a routine with webhook trigger (requires secret)", async () => {
       const { app, routineStore } = buildRoutineApp();
+      const res = await REQUEST(app, "POST", "/api/routines", JSON.stringify({
+        name: "Webhook Routine",
+        trigger: { type: "webhook", webhookPath: "/trigger/test", secret: "s".repeat(16) },
+      }), { "Content-Type": "application/json" });
+      expect(res.status).toBe(201);
+      expect(routineStore.createRoutine).toHaveBeenCalledWith(expect.objectContaining({
+        trigger: { type: "webhook", webhookPath: "/trigger/test", secret: "s".repeat(16) },
+      }));
+    });
+
+    it("rejects a webhook trigger without a secret", async () => {
+      const { app } = buildRoutineApp();
       const res = await REQUEST(app, "POST", "/api/routines", JSON.stringify({
         name: "Webhook Routine",
         trigger: { type: "webhook", webhookPath: "/trigger/test" },
       }), { "Content-Type": "application/json" });
-      expect(res.status).toBe(201);
-      expect(routineStore.createRoutine).toHaveBeenCalledWith(expect.objectContaining({
-        trigger: { type: "webhook", webhookPath: "/trigger/test" },
-      }));
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("secret");
     });
 
     it("creates a routine with api trigger", async () => {
@@ -11458,7 +11468,10 @@ describe("Routine routes", () => {
       return { app, routineStore, routineRunner };
     }
 
-    it("triggers a webhook routine without secret", async () => {
+    it("rejects a webhook trigger on a routine without a secret", async () => {
+      // Webhook routines persisted before the secret requirement are still
+      // accepted as stored objects but must be refused at trigger time —
+      // otherwise unauthenticated callers could execute them.
       const mockStore = createMockRoutineStore();
       mockStore.getRoutine.mockResolvedValue({
         ...FAKE_ROUTINE,
@@ -11466,11 +11479,8 @@ describe("Routine routes", () => {
       });
       const { app, routineRunner } = buildRoutineApp(mockStore);
       const res = await REQUEST(app, "POST", "/api/routines/routine-001/webhook", JSON.stringify({}), { "Content-Type": "application/json" });
-      expect(res.status).toBe(200);
-      expect(res.body.result).toBeDefined();
-      expect(res.body.result.triggerType).toBe("webhook");
-      expect(routineRunner.triggerWebhook).toHaveBeenCalled();
-      // Verify recordRun was NOT called (double-persist fix)
+      expect(res.status).toBe(401);
+      expect(routineRunner.triggerWebhook).not.toHaveBeenCalled();
       expect(mockStore.recordRun).not.toHaveBeenCalled();
     });
 
@@ -11516,7 +11526,7 @@ describe("Routine routes", () => {
       expect(res.status).toBe(503);
     });
 
-    it("accepts webhook when no secret is configured", async () => {
+    it("refuses webhook routines that are missing a secret", async () => {
       const mockStore = createMockRoutineStore();
       mockStore.getRoutine.mockResolvedValue({
         ...FAKE_ROUTINE,
@@ -11524,7 +11534,7 @@ describe("Routine routes", () => {
       });
       const { app } = buildRoutineApp(mockStore);
       const res = await REQUEST(app, "POST", "/api/routines/routine-001/webhook", JSON.stringify({}), { "Content-Type": "application/json" });
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(401);
     });
 
     it("returns 401 when secret is configured but signature header is missing (was 403)", async () => {
@@ -11750,16 +11760,37 @@ describe("Routine routes", () => {
     // ── Additional scope regression coverage ──────────────────────
 
     it("POST /routines/:id/webhook is scope-independent (webhooks use routine's own scope)", async () => {
-      // Webhooks should NOT filter by request scope params - they use the routine's own scope
+      // Webhooks should NOT filter by request scope params - they use the routine's own scope.
+      // Use a secret-configured trigger with a matching HMAC signature so the
+      // request passes the authentication gate regardless of scope.
+      const secret = "test-secret-test-secret";
+      const payload = JSON.stringify({});
+      const signature =
+        "sha256=" +
+        createHmac("sha256", secret).update(payload).digest("hex");
+
       const mockStore = createMockRoutineStore();
       mockStore.getRoutine.mockResolvedValue({
         ...FAKE_ROUTINE,
         scope: "project" as const,
-        trigger: { type: "webhook" as const, webhookPath: "/trigger/test" },
+        trigger: { type: "webhook" as const, webhookPath: "/trigger/test", secret },
       });
-      const { app, routineRunner } = buildRoutineApp(mockStore);
-      // POST to webhook WITHOUT any scope param - should work regardless of scope
-      const res = await REQUEST(app, "POST", "/api/routines/routine-001/webhook", JSON.stringify({}), { "Content-Type": "application/json" });
+      const store = createMockStore();
+      const routineRunner = createMockRoutineRunner();
+      const testApp = express();
+      testApp.use(express.json());
+      testApp.use((req, _res, next) => {
+        (req as any).rawBody = Buffer.from(payload);
+        next();
+      });
+      testApp.use("/api", createApiRoutes(store, { routineStore: mockStore as any, routineRunner }));
+      const res = await REQUEST(
+        testApp,
+        "POST",
+        "/api/routines/routine-001/webhook",
+        payload,
+        { "Content-Type": "application/json", "x-hub-signature-256": signature },
+      );
       expect(res.status).toBe(200);
       expect(res.body.result).toBeDefined();
       expect(routineRunner.triggerWebhook).toHaveBeenCalled();

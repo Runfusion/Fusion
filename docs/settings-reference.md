@@ -58,7 +58,7 @@ Defaults from `DEFAULT_GLOBAL_SETTINGS`; key scope from `GLOBAL_SETTINGS_KEYS`.
 | `titleSummarizerGlobalModelId` | `string` | `undefined` | Global baseline model ID for title summarization. |
 | `daemonToken` | `string` | `undefined` | Daemon authentication token (`fn_<32 hex chars>`) used by CLI clients. |
 | `daemonPort` | `number` | `4040` | Port for daemon/serve mode binding. |
-| `daemonHost` | `string` | `"0.0.0.0"` | Host for daemon/serve mode binding. |
+| `daemonHost` | `string` | `"127.0.0.1"` | Host for daemon/serve mode binding. Defaults to localhost only; pass `"0.0.0.0"` to expose on all interfaces. |
 | `settingsSyncEnabled` | `boolean` | `false` | Enable automatic settings synchronization between nodes. |
 | `settingsSyncAuth` | `boolean` | `false` | Include model auth credentials in settings sync operations. |
 | `settingsSyncInterval` | `number` | `900000` | Automatic sync interval in ms. Valid values: `300000`, `900000`, `1800000`, `3600000`. |

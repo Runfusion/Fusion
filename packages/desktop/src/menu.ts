@@ -206,7 +206,7 @@ function buildHelpSubmenu(): MenuItemConstructorOptions {
       {
         label: "Fusion Documentation",
         click: () => {
-          void shell.openExternal("https://github.com/eclipxe/fusion#readme");
+          void shell.openExternal("https://github.com/Runfusion/Fusion#readme");
         },
       },
     ],

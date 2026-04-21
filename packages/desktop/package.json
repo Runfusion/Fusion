@@ -1,6 +1,16 @@
 {
   "name": "@fusion/desktop",
   "version": "0.1.0",
+  "description": "Fusion desktop: Electron wrapper around the Fusion dashboard for macOS, Windows, and Linux.",
+  "homepage": "https://github.com/Runfusion/Fusion#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Runfusion/Fusion",
+    "directory": "packages/desktop"
+  },
+  "bugs": {
+    "url": "https://github.com/Runfusion/Fusion/issues"
+  },
   "private": true,
   "type": "module",
   "main": "dist/main.js",

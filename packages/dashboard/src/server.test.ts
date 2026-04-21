@@ -2,6 +2,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import http from "node:http";
+import { createHmac } from "node:crypto";
 import express from "express";
 import { createServer, setupTerminalWebSocket } from "./server.js";
 import type { TaskStore } from "@fusion/core";
@@ -1137,11 +1138,17 @@ describe("createServer scoped scheduling resolver regressions", () => {
     });
 
     it("POST /api/routines/:id/webhook is scope-independent (uses routine's own scope)", async () => {
+      const secret = "test-secret-test-secret";
+      const payload = JSON.stringify({});
+      const signature =
+        "sha256=" +
+        createHmac("sha256", secret).update(payload).digest("hex");
+
       const globalStore = createMockRoutineStore("global");
       const routineRunner = createMockRoutineRunner();
       globalStore.getRoutine.mockResolvedValue({
         ...FAKE_PROJECT_ROUTINE,
-        trigger: { type: "webhook" as const, webhookPath: "/trigger/test" },
+        trigger: { type: "webhook" as const, webhookPath: "/trigger/test", secret },
       });
 
       const store = createMockStore();
@@ -1151,7 +1158,10 @@ describe("createServer scoped scheduling resolver regressions", () => {
       });
 
       // Webhook without scope param - should work regardless of scope
-      const res = await REQUEST(app, "POST", "/api/routines/routine-proj-a-1/webhook", JSON.stringify({}), { "Content-Type": "application/json" });
+      const res = await REQUEST(app, "POST", "/api/routines/routine-proj-a-1/webhook", payload, {
+        "Content-Type": "application/json",
+        "x-hub-signature-256": signature,
+      });
 
       expect(res.status).toBe(200);
       expect(routineRunner.triggerWebhook).toHaveBeenCalled();

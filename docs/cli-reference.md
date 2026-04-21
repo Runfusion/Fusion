@@ -64,7 +64,7 @@ fn serve --interactive
 | Option | Description |
 |---|---|
 | `--port`, `-p` | Port for the API server (default `4040`). |
-| `--host` | Host to bind (default `0.0.0.0`, all interfaces). |
+| `--host` | Host to bind (default `127.0.0.1`, localhost only). Pass `0.0.0.0` to expose on all interfaces. |
 | `--paused` | Start with engine paused (automation disabled). |
 | `--interactive` | Interactive port selection. |
 | `--daemon` | Enable bearer token authentication for CLI client connections. |
@@ -82,7 +82,7 @@ fn daemon [--port <port>] [--host <host>] [--token <token>] [--paused] [--intera
 | Option | Description |
 |---|---|
 | `--port`, `-p` | Port for the daemon server (default: auto-assigned). |
-| `--host` | Host to bind (default `0.0.0.0`, all interfaces). |
+| `--host` | Host to bind (default `127.0.0.1`, localhost only). Pass `0.0.0.0` to expose on all interfaces. |
 | `--token` | Set a specific daemon token. If not provided, a random token is generated and printed. |
 | `--paused` | Start with engine paused (automation disabled). |
 | `--token-only` | Only generate/show the token without starting the server. |

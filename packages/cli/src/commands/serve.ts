@@ -218,7 +218,7 @@ export async function runServe(
     }
   }
 
-  const selectedHost = opts.host ?? "0.0.0.0";
+  const selectedHost = opts.host ?? "127.0.0.1";
   const cwd = await resolveRuntimeProjectPath();
 
   // ── CentralCore: global coordination + ntfy project ID lookup ─────────

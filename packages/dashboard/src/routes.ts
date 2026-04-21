@@ -10391,6 +10391,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           throw badRequest(`Invalid cron expression: "${trigger.cronExpression}"`);
         }
       }
+      if (trigger.type === "webhook") {
+        // Require an HMAC secret so the webhook endpoint authenticates callers
+        // via signed payloads. Without this, anyone who can reach the server
+        // and knows the routine id could trigger execution by sending an empty
+        // POST to /routines/:id/webhook.
+        if (typeof trigger.secret !== "string" || trigger.secret.trim().length < 16) {
+          throw badRequest(
+            "Webhook trigger requires a secret of at least 16 characters for HMAC signature verification",
+          );
+        }
+      }
       const hasSteps = Array.isArray(steps) && steps.length > 0;
       const hasCommand = typeof command === "string" && command.trim().length > 0;
       if (hasSteps) {
@@ -10497,6 +10508,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           if (trigger.type === "cron" && trigger.cronExpression) {
             if (!RoutineStore.isValidCron(trigger.cronExpression)) {
               throw badRequest(`Invalid cron expression: "${trigger.cronExpression}"`);
+            }
+          }
+          if (trigger.type === "webhook") {
+            if (typeof trigger.secret !== "string" || trigger.secret.trim().length < 16) {
+              throw badRequest(
+                "Webhook trigger requires a secret of at least 16 characters for HMAC signature verification",
+              );
             }
           }
         }
@@ -10688,18 +10706,25 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const rawBody = req.rawBody;
       const signatureHeader = req.headers["x-hub-signature-256"] as string | undefined;
 
-      // If webhook secret is configured, verify the signature (auth failures return 401)
-      if (routine.trigger.secret) {
-        if (!rawBody) {
-          throw badRequest("Raw body not available for signature verification");
-        }
-        if (!signatureHeader) {
-          throw new ApiError(401, "Missing signature header");
-        }
-        const verification = verifyWebhookSignature(rawBody, signatureHeader, routine.trigger.secret);
-        if (!verification.valid) {
-          throw new ApiError(401, verification.error ?? "Invalid signature");
-        }
+      // A webhook routine without a secret is treated as a misconfiguration
+      // and refused. New routines require a secret at create time (see POST
+      // /routines), but legacy routines persisted before that validation was
+      // added could still reach this branch without one.
+      if (!routine.trigger.secret) {
+        throw new ApiError(
+          401,
+          "Webhook trigger is not configured with a secret; set routine.trigger.secret before use",
+        );
+      }
+      if (!rawBody) {
+        throw badRequest("Raw body not available for signature verification");
+      }
+      if (!signatureHeader) {
+        throw new ApiError(401, "Missing signature header");
+      }
+      const verification = verifyWebhookSignature(rawBody, signatureHeader, routine.trigger.secret);
+      if (!verification.valid) {
+        throw new ApiError(401, verification.error ?? "Invalid signature");
       }
 
       // Execute via RoutineRunner (persistence handled by RoutineRunner.completeRoutineExecution)

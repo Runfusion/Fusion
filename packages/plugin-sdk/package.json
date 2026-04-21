@@ -1,6 +1,16 @@
 {
   "name": "@fusion/plugin-sdk",
   "version": "0.1.0",
+  "description": "Fusion plugin SDK: types and helpers for authoring third-party plugins that extend the Fusion dashboard and engine.",
+  "homepage": "https://github.com/Runfusion/Fusion#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Runfusion/Fusion",
+    "directory": "packages/plugin-sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/Runfusion/Fusion/issues"
+  },
   "type": "module",
   "exports": {
     ".": {

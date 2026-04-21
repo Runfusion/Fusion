@@ -88,7 +88,7 @@ Fusion also works as a standalone CLI outside of pi. See [STANDALONE.md](./STAND
 
 ## Full documentation
 
-For architecture details, development setup, and contributor info, see the [project README](https://github.com/gsxdsm/fusion#readme).
+For architecture details, development setup, and contributor info, see the [project README](https://github.com/Runfusion/Fusion#readme).
 
 ## License
 

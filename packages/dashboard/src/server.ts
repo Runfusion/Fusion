@@ -379,8 +379,17 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   // Only applied to the webhook route
   app.use("/api/github/webhooks", express.raw({ type: "application/json" }));
 
-  // Standard JSON parsing for all other routes
-  app.use(express.json());
+  // Standard JSON parsing for all other routes.
+  // Preserve the raw payload buffer so signed endpoints (for example
+  // /api/routines/:id/webhook and settings sync proxying) can verify HMAC
+  // signatures and forward exact request bytes.
+  app.use(express.json({
+    verify: (req, _res, buf) => {
+      if (buf.length > 0) {
+        (req as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buf);
+      }
+    },
+  }));
 
   // Daemon mode: bearer token authentication middleware
   // Auth is enabled when daemon option is provided OR FUSION_DAEMON_TOKEN env var is set

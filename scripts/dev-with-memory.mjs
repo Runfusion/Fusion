@@ -17,8 +17,18 @@ process.env.NODE_OPTIONS = `--max-old-space-size=${MEMORY_MB} ${process.env.NODE
 const { spawn } = await import("child_process");
 const args = process.argv.slice(2);
 
+// In dev we bind the dashboard to 0.0.0.0 so the server is reachable from
+// mobile devices and other machines on the LAN for testing. Production
+// builds default to 127.0.0.1; this override only applies when starting
+// the dashboard via `pnpm dev dashboard` and only if no --host was passed.
+const needsDevHostInjection =
+  args[0] === "dashboard" && !args.includes("--host");
+const forwardedArgs = needsDevHostInjection
+  ? [...args, "--host", "0.0.0.0"]
+  : args;
+
 // If no args, run default: build + CLI
-if (args.length === 0) {
+if (forwardedArgs.length === 0) {
   const pnpm = spawn("pnpm", ["build"], { stdio: "inherit", shell: true });
   pnpm.on("close", (code) => {
     if (code !== 0) process.exit(code ?? 1);
@@ -27,6 +37,6 @@ if (args.length === 0) {
   });
 } else {
   // Forward all arguments (e.g., "dashboard", "task list", etc.)
-  const cmd = spawn("pnpm", ["build", "&&", "pnpm", "exec", "tsx", "packages/cli/src/bin.ts", ...args], { stdio: "inherit", shell: true });
+  const cmd = spawn("pnpm", ["build", "&&", "pnpm", "exec", "tsx", "packages/cli/src/bin.ts", ...forwardedArgs], { stdio: "inherit", shell: true });
   cmd.on("close", (c) => process.exit(c ?? 1));
 }

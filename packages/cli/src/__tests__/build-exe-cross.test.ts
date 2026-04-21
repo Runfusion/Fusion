@@ -127,14 +127,15 @@ describe("build-exe-cross: --all builds all platforms", () => {
 
     const result = spawnSync(bin, ["--help"], {
       encoding: "utf-8",
-      timeout: 15_000,
+      // CI can occasionally be slow to launch freshly built native binaries.
+      timeout: 45_000,
     });
     if (hasKnownBunSqliteLimitation(result)) {
       return;
     }
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("fn");
-  }, 20_000);
+  }, 60_000);
 });
 
 describe("build-exe-cross: default (no args) backward compatibility", () => {

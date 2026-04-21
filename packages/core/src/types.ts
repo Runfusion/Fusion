@@ -863,7 +863,10 @@ export interface DaemonTokenSettings {
   daemonToken?: string;
   /** Port for daemon mode server binding. Default: 4040. */
   daemonPort?: number;
-  /** Host for daemon mode server binding. Default: "0.0.0.0" (all interfaces). */
+  /** Host for daemon mode server binding. Default: "127.0.0.1" (localhost only).
+   *  Set to "0.0.0.0" explicitly to expose the API on all interfaces — only do
+   *  this if you understand the implications (terminal/exec endpoints become
+   *  reachable from the LAN even with a bearer token). */
   daemonHost?: string;
 }
 
@@ -978,7 +981,10 @@ export interface GlobalSettings {
   daemonToken?: string;
   /** Port for daemon mode server binding. Default: 4040. */
   daemonPort?: number;
-  /** Host for daemon mode server binding. Default: "0.0.0.0" (all interfaces). */
+  /** Host for daemon mode server binding. Default: "127.0.0.1" (localhost only).
+   *  Set to "0.0.0.0" explicitly to expose the API on all interfaces — only do
+   *  this if you understand the implications (terminal/exec endpoints become
+   *  reachable from the LAN even with a bearer token). */
   daemonHost?: string;
   /** When true, enables automatic settings synchronization between nodes.
    *  Settings are pushed/pulled on the configured interval. Default: false. */

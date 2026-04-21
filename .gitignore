@@ -25,6 +25,13 @@ kb.db/
 # Pi
 .pi/
 
+# VS Code Local History (editor auto-saved snapshots)
+.history/
+
+# Ad-hoc task completion notes left by agents after a run; per-session scratch,
+# never meant to be committed.
+.DONE
+
 # Local kb state and backups
 .kb/
 .fusion-backup/

@@ -15,7 +15,7 @@
 
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { mkdir, readFile, writeFile, rename } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rename, chmod } from "node:fs/promises";
 import { existsSync, mkdirSync, renameSync } from "node:fs";
 import type { GlobalSettings } from "./types.js";
 import { DEFAULT_GLOBAL_SETTINGS } from "./types.js";
@@ -228,11 +228,24 @@ export class GlobalSettingsStore {
   /**
    * Atomically write settings to disk. Writes to a temp file first,
    * then renames into place (atomic on POSIX).
+   *
+   * The file is written with mode 0600 (owner-only read/write) because the
+   * settings object can contain secrets — specifically `daemonToken`, which
+   * is a bearer credential for the HTTP API. POSIX-only; no-op on Windows.
    */
   private async atomicWrite(settings: GlobalSettings): Promise<void> {
     const tmpPath = this.settingsPath + ".tmp";
-    await writeFile(tmpPath, JSON.stringify(settings, null, 2));
+    await writeFile(tmpPath, JSON.stringify(settings, null, 2), { mode: 0o600 });
     await rename(tmpPath, this.settingsPath);
+    // `writeFile` with `mode` honors umask on some platforms, so re-chmod the
+    // final path to guarantee 0600. Ignore failures (Windows has no POSIX
+    // permission bits; some filesystems may reject chmod).
+    try {
+      await chmod(this.settingsPath, 0o600);
+    } catch {
+      // Best effort — on Windows or filesystems without POSIX perms, the file
+      // is already protected by the user's home directory ACL.
+    }
   }
 
   /**

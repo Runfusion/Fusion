@@ -15,7 +15,7 @@
     "skills": [
       "./skill"
     ],
-    "image": "https://raw.githubusercontent.com/gsxdsm/fusion/main/demo/screenshot.png"
+    "image": "https://raw.githubusercontent.com/Runfusion/Fusion/main/demo/screenshot.png"
   },
   "publishConfig": {
     "access": "public"
@@ -75,6 +75,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/gsxdsm/fusion"
+    "url": "https://github.com/Runfusion/Fusion"
   }
 }

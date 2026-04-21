@@ -1,6 +1,16 @@
 {
   "name": "@fusion/mobile",
   "version": "0.1.0",
+  "description": "Fusion mobile: Capacitor wrapper around the Fusion dashboard for iOS and Android.",
+  "homepage": "https://github.com/Runfusion/Fusion#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Runfusion/Fusion",
+    "directory": "packages/mobile"
+  },
+  "bugs": {
+    "url": "https://github.com/Runfusion/Fusion/issues"
+  },
   "private": true,
   "type": "module",
   "scripts": {

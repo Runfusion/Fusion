@@ -203,7 +203,7 @@ describe("application menu", () => {
     expect(docsItem).toBeDefined();
     docsItem?.click?.({} as never, {} as never, {} as never);
     expect(mocks.shell.openExternal).toHaveBeenCalledWith(
-      "https://github.com/eclipxe/fusion#readme",
+      "https://github.com/Runfusion/Fusion#readme",
     );
   });
 

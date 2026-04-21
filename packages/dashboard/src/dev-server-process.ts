@@ -33,6 +33,26 @@ const DEFAULT_PROBE_DELAY_MS = 10_000;
 const DEFAULT_PROBE_HOST = "127.0.0.1";
 const DEFAULT_PROBE_TIMEOUT_MS = 1_000;
 
+/**
+ * Reject dev-server commands whose strings contain command-substitution
+ * syntax. Dev-server commands are user-configured project settings (e.g.
+ * `npm run dev`, `bun dev`) and are spawned with `shell: true` so users
+ * can chain `&&` / `|`, but command substitution (`$(...)`, backticks,
+ * process substitution) is never needed for a start command and is the
+ * main payload for a settings-file compromise. Legitimate commands don't
+ * need to execute a sub-command before launching the dev server.
+ */
+function assertSafeDevServerCommand(command: string): void {
+  if (/\$\(|`|<\(|>\(/.test(command)) {
+    throw new Error(
+      "Dev-server command contains command substitution ($(...), backticks, or process substitution), which is not permitted",
+    );
+  }
+  if (/[\0\r\n]/.test(command)) {
+    throw new Error("Dev-server command contains invalid control characters");
+  }
+}
+
 export class DevServerProcessManager extends EventEmitter {
   private childProcess: ChildProcess | null = null;
   private portProbeTimer: NodeJS.Timeout | null = null;
@@ -67,6 +87,7 @@ export class DevServerProcessManager extends EventEmitter {
     if (safeCommand.length === 0) {
       throw new Error("command is required");
     }
+    assertSafeDevServerCommand(safeCommand);
 
     const safeCwd = cwd.trim();
     if (safeCwd.length === 0) {

@@ -1516,8 +1516,8 @@ describe("runDashboard — port fallback on EADDRINUSE", () => {
     // Wait for async 'listening' event
     await new Promise((r) => setTimeout(r, 50));
 
-    // mockListen should have been called with the requested port
-    expect(mockListen).toHaveBeenCalledWith(4040);
+    // mockListen should have been called with the requested port bound to localhost by default.
+    expect(mockListen).toHaveBeenCalledWith(4040, "127.0.0.1");
 
     // Banner should show the requested port
     expect(consoleSpy).toHaveBeenCalledWith(
@@ -1562,8 +1562,8 @@ describe("runDashboard — port fallback on EADDRINUSE", () => {
     // Wait for async events to settle
     await new Promise((r) => setTimeout(r, 100));
 
-    // Server should have retried with port 0
-    expect(mockServerListen).toHaveBeenCalledWith(0);
+    // Server should have retried with port 0, still bound to localhost.
+    expect(mockServerListen).toHaveBeenCalledWith(0, "127.0.0.1");
 
     // Banner should show the fallback port, not the requested port
     expect(consoleSpy).toHaveBeenCalledWith(
@@ -1888,9 +1888,9 @@ describe("runDashboard — --dev mode", () => {
     // Wait for async 'listening' event
     await new Promise((r) => setTimeout(r, 50));
 
-    // Server should have been created and listen called
+    // Server should have been created and listen called (localhost default)
     expect(createServer).toHaveBeenCalled();
-    expect(mockListen).toHaveBeenCalledWith(4040);
+    expect(mockListen).toHaveBeenCalledWith(4040, "127.0.0.1");
 
     // Banner should show the port
     expect(consoleSpy).toHaveBeenCalledWith(

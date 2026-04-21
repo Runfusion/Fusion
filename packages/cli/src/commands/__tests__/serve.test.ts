@@ -729,18 +729,18 @@ describe("runServe", () => {
     expect(mocks.taskStores[0].close).toHaveBeenCalledTimes(1);
   });
 
-  it("listens on 0.0.0.0 by default and respects a custom host", async () => {
+  it("listens on 127.0.0.1 by default and respects a custom host", async () => {
     await runServe(3010, {});
     expect(mocks.listenCalls[0]).toMatchObject({
       port: 3010,
-      host: "0.0.0.0",
+      host: "127.0.0.1",
     });
     await triggerSignal("SIGINT");
 
-    await runServe(3020, { host: "127.0.0.1" });
+    await runServe(3020, { host: "0.0.0.0" });
     expect(mocks.listenCalls[1]).toMatchObject({
       port: 3020,
-      host: "127.0.0.1",
+      host: "0.0.0.0",
     });
     await triggerSignal("SIGINT");
   });
