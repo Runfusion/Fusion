@@ -1097,6 +1097,38 @@ describe("AgentStore", () => {
       expect(activeAll).toHaveLength(1);
       expect(activeAll[0].id).toBe(taskWorker.id);
     });
+
+    it("filters out agents marked with metadata.internal", async () => {
+      const normal = await store.createAgent({ name: "Normal Agent", role: "executor" });
+      await store.createAgent({
+        name: "internal-agent",
+        role: "executor",
+        metadata: { internal: true },
+      });
+
+      const defaultAgents = await store.listAgents();
+      expect(defaultAgents).toHaveLength(1);
+      expect(defaultAgents[0].id).toBe(normal.id);
+
+      const includingEphemeral = await store.listAgents({ includeEphemeral: true });
+      expect(includingEphemeral).toHaveLength(2);
+    });
+
+    it("filters legacy verification-agent fallback by default", async () => {
+      const normal = await store.createAgent({ name: "Normal Agent", role: "executor" });
+      await store.createAgent({
+        name: "verification-agent",
+        role: "executor",
+        metadata: {},
+      });
+
+      const defaultAgents = await store.listAgents();
+      expect(defaultAgents).toHaveLength(1);
+      expect(defaultAgents[0].id).toBe(normal.id);
+
+      const includingEphemeral = await store.listAgents({ includeEphemeral: true });
+      expect(includingEphemeral).toHaveLength(2);
+    });
   });
 
   // ── Org Hierarchy ────────────────────────────────────────────────

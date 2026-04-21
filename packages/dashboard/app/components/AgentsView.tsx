@@ -266,12 +266,17 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
 
   // Filter agents for display. "All States" means all non-ephemeral agents,
   // including disabled/terminated agents that still carry configuration.
+  // When "Show system agents" is enabled, include ephemeral/internal agents.
   const displayAgents = useMemo(() => {
-    return agents.filter(a => !isEphemeralAgent(a));
-  }, [agents]);
+    return agents.filter((agent) => showSystemAgents || !isEphemeralAgent(agent));
+  }, [agents, showSystemAgents]);
 
   // Filter org tree to exclude ephemeral agents in default view.
   const displayOrgTree = useMemo(() => {
+    if (showSystemAgents) {
+      return orgTree;
+    }
+
     // Recursively filter out ephemeral agents from the org tree.
     const filterNode = (node: OrgTreeNode): OrgTreeNode | null => {
       if (isEphemeralAgent(node.agent)) return null;
@@ -285,7 +290,7 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
     return orgTree
       .map(filterNode)
       .filter((n): n is OrgTreeNode => n !== null);
-  }, [orgTree]);
+  }, [orgTree, showSystemAgents]);
 
   const loadAgents = useCallback(async () => {
     setIsLoading(true);

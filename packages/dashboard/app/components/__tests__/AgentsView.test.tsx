@@ -628,6 +628,7 @@ describe("AgentsView", () => {
       // Now the agents should be reloaded with system agents included
       await waitFor(() => {
         expect(mockFetchAgents).toHaveBeenCalledWith({ includeEphemeral: true }, projectId);
+        expect(screen.getByText("executor-FN-TEST")).toBeTruthy();
       });
     });
   });
