@@ -1971,6 +1971,9 @@ export interface DevServerCandidate {
   label: string;
 }
 
+// Backward-compatible alias for backend naming in FN-2178 scope.
+export type DetectedCandidate = DevServerCandidate;
+
 export interface DevServerState {
   id: string;
   name: string;
@@ -2193,10 +2196,30 @@ function mapLegacyDevServerLogs(logs: string[], options: FetchDevServerLogHistor
   };
 }
 
-export function fetchDevServerCandidates(projectId?: string): Promise<DevServerCandidate[]> {
-  return api<{ candidates: BackendDevServerCandidate[] }>(withProjectId("/dev-server/detect", projectId)).then((response) =>
-    (response.candidates ?? []).map(mapBackendCandidateToFrontend)
-  );
+type DevServerCandidatesResponse =
+  | { candidates?: BackendDevServerCandidate[] }
+  | BackendDevServerCandidate[];
+
+function mapCandidatesResponse(response: DevServerCandidatesResponse): DevServerCandidate[] {
+  if (Array.isArray(response)) {
+    return response.map(mapBackendCandidateToFrontend);
+  }
+
+  return (response.candidates ?? []).map(mapBackendCandidateToFrontend);
+}
+
+export async function fetchDevServerCandidates(projectId?: string): Promise<DevServerCandidate[]> {
+  try {
+    const response = await api<DevServerCandidatesResponse>(withProjectId("/dev-server/candidates", projectId));
+    return mapCandidatesResponse(response);
+  } catch (error) {
+    // Backward compatibility for workspaces that still expose /dev-server/detect.
+    if (error instanceof Error && /\/dev-server\/candidates/.test(error.message)) {
+      const fallback = await api<DevServerCandidatesResponse>(withProjectId("/dev-server/detect", projectId));
+      return mapCandidatesResponse(fallback);
+    }
+    throw error;
+  }
 }
 
 export function detectDevServer(projectId?: string): Promise<DevServerCandidate[]> {
@@ -2252,13 +2275,14 @@ export async function fetchDevServerLogHistory(
 
 export function startDevServer(body: DevServerStartInput, projectId?: string): Promise<DevServerState> {
   const cwd = body.cwd ?? body.packagePath ?? ".";
-  const scriptId = body.scriptName;
+  const scriptName = body.scriptName;
 
   return api<BackendDevServerState>(withProjectId("/dev-server/start", projectId), {
     method: "POST",
     body: JSON.stringify({
       command: body.command,
-      scriptId,
+      scriptName,
+      scriptId: scriptName,
       cwd,
       packagePath: body.packagePath,
     }),
@@ -2277,15 +2301,28 @@ export function restartDevServer(projectId?: string): Promise<DevServerState> {
   }).then(mapBackendStateToFrontend);
 }
 
-export function setDevServerPreviewUrl(urlOrBody: string | { url: string | null }, projectId?: string): Promise<DevServerState> {
+export async function setDevServerPreviewUrl(urlOrBody: string | { url: string | null }, projectId?: string): Promise<DevServerState> {
   const body = typeof urlOrBody === "string"
     ? { url: urlOrBody }
     : urlOrBody;
 
-  return api<BackendDevServerState>(withProjectId("/dev-server/preview-url", projectId), {
-    method: "PUT",
-    body: JSON.stringify(body),
-  }).then(mapBackendStateToFrontend);
+  try {
+    const response = await api<BackendDevServerState>(withProjectId("/dev-server/preview-url", projectId), {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return mapBackendStateToFrontend(response);
+  } catch (error) {
+    // Backward compatibility for workspaces that still use PUT.
+    if (error instanceof Error && /\/dev-server\/preview-url/.test(error.message)) {
+      const fallback = await api<BackendDevServerState>(withProjectId("/dev-server/preview-url", projectId), {
+        method: "PUT",
+        body: JSON.stringify(body),
+      });
+      return mapBackendStateToFrontend(fallback);
+    }
+    throw error;
+  }
 }
 
 export function getDevServerLogsStreamUrl(projectId?: string): string {

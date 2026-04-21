@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  detectDevServer,
+  fetchDevServerCandidates,
   fetchDevServerStatus,
   getDevServerLogsStreamUrl,
   restartDevServer,
@@ -13,7 +13,7 @@ import {
 import { subscribeSse } from "../sse-bus";
 
 const MAX_LOG_LINES = 500;
-const POLL_INTERVAL_MS = 5000;
+const POLL_INTERVAL_MS = 3000;
 
 let resetVersion = 0;
 
@@ -136,6 +136,7 @@ export function useDevServer(projectId?: string): UseDevServerReturn {
         return;
       }
       setError(normalizeError(refreshError));
+      throw refreshError;
     }
   }, [applyStatusState, projectId]);
 
@@ -153,25 +154,31 @@ export function useDevServer(projectId?: string): UseDevServerReturn {
     setError(null);
     setServerState(null);
 
-    void fetchDevServerStatus(projectId)
-      .then((nextState) => {
-        if (contextVersionRef.current !== versionAtStart) {
-          return;
-        }
-        applyStatusState(nextState);
-        setError(null);
-      })
-      .catch((statusError) => {
-        if (contextVersionRef.current !== versionAtStart) {
-          return;
-        }
-        setError(normalizeError(statusError));
-      })
-      .finally(() => {
-        if (contextVersionRef.current === versionAtStart) {
-          setIsLoading(false);
-        }
-      });
+    void Promise.allSettled([
+      fetchDevServerCandidates(projectId),
+      fetchDevServerStatus(projectId),
+    ]).then(([candidateResult, statusResult]) => {
+      if (contextVersionRef.current !== versionAtStart) {
+        return;
+      }
+
+      let nextError: string | null = null;
+
+      if (candidateResult.status === "fulfilled") {
+        setCandidates(candidateResult.value);
+      } else {
+        nextError = normalizeError(candidateResult.reason);
+      }
+
+      if (statusResult.status === "fulfilled") {
+        applyStatusState(statusResult.value);
+      } else {
+        nextError = nextError ?? normalizeError(statusResult.reason);
+      }
+
+      setError(nextError);
+      setIsLoading(false);
+    });
 
     return () => {
       contextVersionRef.current += 1;
@@ -184,7 +191,9 @@ export function useDevServer(projectId?: string): UseDevServerReturn {
     }
 
     const intervalId = window.setInterval(() => {
-      void refreshStatus();
+      void refreshStatus().catch(() => {
+        // Errors are recorded in hook state.
+      });
     }, POLL_INTERVAL_MS);
 
     return () => {
@@ -193,10 +202,6 @@ export function useDevServer(projectId?: string): UseDevServerReturn {
   }, [refreshStatus, status]);
 
   useEffect(() => {
-    if (status !== "running" && status !== "starting") {
-      return;
-    }
-
     const versionAtStart = contextVersionRef.current;
 
     const unsubscribe = subscribeSse(getDevServerLogsStreamUrl(projectId), {
@@ -206,11 +211,20 @@ export function useDevServer(projectId?: string): UseDevServerReturn {
             return;
           }
 
-          const payload = parseJson<{ lines?: string[] }>(event.data);
+          const payload = parseJson<{ lines?: Array<string | { text?: string; line?: string; stream?: "stdout" | "stderr" }> }>(event.data);
           const nextLogs = Array.isArray(payload?.lines)
-            ? payload.lines.filter((line): line is string => typeof line === "string")
+            ? payload.lines.map((entry) => {
+              if (typeof entry === "string") {
+                return entry;
+              }
+              const text = typeof entry?.text === "string" ? entry.text : (typeof entry?.line === "string" ? entry.line : "");
+              const stream = entry?.stream;
+              return stream === "stderr" ? `[stderr] ${text}` : text;
+            }).filter((line) => line.length > 0)
             : [];
-          setLogs(capLogs(nextLogs));
+          if (nextLogs.length > 0) {
+            setLogs(capLogs(nextLogs));
+          }
         },
         log: (event) => {
           if (contextVersionRef.current !== versionAtStart) {
@@ -226,6 +240,23 @@ export function useDevServer(projectId?: string): UseDevServerReturn {
           const stream = payload?.stream;
           const formatted = stream === "stderr" ? `[stderr] ${text}` : text;
           setLogs((current) => appendLog(current, formatted));
+          setError(null);
+        },
+        "dev-server:log": (event) => {
+          if (contextVersionRef.current !== versionAtStart) {
+            return;
+          }
+
+          const payload = parseJson<{ line?: string; text?: string; stream?: "stdout" | "stderr" }>(event.data);
+          const text = typeof payload?.line === "string"
+            ? payload.line
+            : typeof payload?.text === "string"
+              ? payload.text
+              : event.data;
+          const stream = payload?.stream;
+          const formatted = stream === "stderr" ? `[stderr] ${text}` : text;
+          setLogs((current) => appendLog(current, formatted));
+          setError(null);
         },
         "dev-server:output": (event) => {
           if (contextVersionRef.current !== versionAtStart) {
@@ -238,25 +269,52 @@ export function useDevServer(projectId?: string): UseDevServerReturn {
           }
           const formatted = payload.stream === "stderr" ? `[stderr] ${payload.text}` : payload.text;
           setLogs((current) => appendLog(current, formatted));
+          setError(null);
+        },
+        status: (event) => {
+          if (contextVersionRef.current !== versionAtStart) {
+            return;
+          }
+          const payload = parseJson<DevServerState>(event.data);
+          if (payload) {
+            applyStatusState(payload);
+            setError(null);
+          }
+        },
+        "dev-server:status": (event) => {
+          if (contextVersionRef.current !== versionAtStart) {
+            return;
+          }
+          const payload = parseJson<DevServerState>(event.data);
+          if (payload) {
+            applyStatusState(payload);
+            setError(null);
+          }
         },
         stopped: () => {
           if (contextVersionRef.current !== versionAtStart) {
             return;
           }
-          void refreshStatus();
+          void refreshStatus().catch(() => {
+            // Errors are recorded in hook state.
+          });
         },
         failed: () => {
           if (contextVersionRef.current !== versionAtStart) {
             return;
           }
-          void refreshStatus();
+          void refreshStatus().catch(() => {
+            // Errors are recorded in hook state.
+          });
         },
       },
       onReconnect: () => {
         if (contextVersionRef.current !== versionAtStart) {
           return;
         }
-        void refreshStatus();
+        void refreshStatus().catch(() => {
+          // Errors are recorded in hook state.
+        });
       },
       onError: () => {
         if (contextVersionRef.current !== versionAtStart) {
@@ -269,7 +327,7 @@ export function useDevServer(projectId?: string): UseDevServerReturn {
     return () => {
       unsubscribe();
     };
-  }, [projectId, refreshStatus, status]);
+  }, [applyStatusState, projectId, refreshStatus]);
 
   useEffect(() => {
     const version = resetVersion;
@@ -302,8 +360,9 @@ export function useDevServer(projectId?: string): UseDevServerReturn {
 
     const trimmedCommand = payload.command.trim();
     if (!trimmedCommand) {
-      setError("Command is required to start the dev server.");
-      return;
+      const message = "Command is required to start the dev server.";
+      setError(message);
+      throw new Error(message);
     }
 
     const versionAtStart = contextVersionRef.current;
@@ -312,7 +371,7 @@ export function useDevServer(projectId?: string): UseDevServerReturn {
     setSelectedCommand(trimmedCommand);
 
     try {
-      await startDevServer(
+      const nextState = await startDevServer(
         {
           command: trimmedCommand,
           cwd: payload.cwd,
@@ -326,7 +385,8 @@ export function useDevServer(projectId?: string): UseDevServerReturn {
         return;
       }
 
-      await refreshStatus();
+      applyStatusState(nextState);
+      setError(null);
     } catch (startError) {
       if (contextVersionRef.current !== versionAtStart) {
         return;
@@ -336,21 +396,21 @@ export function useDevServer(projectId?: string): UseDevServerReturn {
       setError(normalizeError(startError));
       throw startError;
     }
-  }, [projectId, refreshStatus]);
+  }, [applyStatusState, projectId]);
 
   const stop = useCallback(async () => {
     const versionAtStart = contextVersionRef.current;
     setError(null);
 
     try {
-      await stopDevServer(projectId);
+      const nextState = await stopDevServer(projectId);
 
       if (contextVersionRef.current !== versionAtStart) {
         return;
       }
 
-      setStatus("stopped");
-      await refreshStatus();
+      applyStatusState(nextState);
+      setError(null);
     } catch (stopError) {
       if (contextVersionRef.current !== versionAtStart) {
         return;
@@ -359,7 +419,7 @@ export function useDevServer(projectId?: string): UseDevServerReturn {
       setError(normalizeError(stopError));
       throw stopError;
     }
-  }, [projectId, refreshStatus]);
+  }, [applyStatusState, projectId]);
 
   const restart = useCallback(async () => {
     const versionAtStart = contextVersionRef.current;
@@ -367,13 +427,14 @@ export function useDevServer(projectId?: string): UseDevServerReturn {
     setStatus("starting");
 
     try {
-      await restartDevServer(projectId);
+      const nextState = await restartDevServer(projectId);
 
       if (contextVersionRef.current !== versionAtStart) {
         return;
       }
 
-      await refreshStatus();
+      applyStatusState(nextState);
+      setError(null);
     } catch (restartError) {
       if (contextVersionRef.current !== versionAtStart) {
         return;
@@ -382,7 +443,7 @@ export function useDevServer(projectId?: string): UseDevServerReturn {
       setError(normalizeError(restartError));
       throw restartError;
     }
-  }, [projectId, refreshStatus]);
+  }, [applyStatusState, projectId]);
 
   const setManualUrl = useCallback(async (url: string | null) => {
     const versionAtStart = contextVersionRef.current;
@@ -396,6 +457,7 @@ export function useDevServer(projectId?: string): UseDevServerReturn {
 
       applyStatusState(nextState);
       setManualUrlState(nextState.manualUrl ?? nextState.manualPreviewUrl ?? url ?? null);
+      setError(null);
     } catch (previewError) {
       if (contextVersionRef.current !== versionAtStart) {
         return;
@@ -411,12 +473,13 @@ export function useDevServer(projectId?: string): UseDevServerReturn {
     setError(null);
 
     try {
-      const detected = await detectDevServer(projectId);
+      const detected = await fetchDevServerCandidates(projectId);
       if (contextVersionRef.current !== versionAtStart) {
         return;
       }
 
       setCandidates(detected);
+      setError(null);
     } catch (detectError) {
       if (contextVersionRef.current !== versionAtStart) {
         return;

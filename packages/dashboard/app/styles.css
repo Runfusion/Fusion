@@ -38308,6 +38308,21 @@ html .column.drag-over * {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .devserver-preview-header {
+    flex-wrap: wrap;
+  }
+
+  .devserver-preview-url-badge {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .devserver-preview-actions {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-end;
+  }
+
   .dev-server-preview-override {
     flex-direction: column;
     align-items: stretch;

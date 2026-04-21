@@ -384,6 +384,14 @@ The Experimental Features section in Settings shows:
 - Project scope indicator (features are project-specific, not global)
 - Description explaining the purpose of experimental features
 
+Common built-in dashboard flags include:
+- `insights`
+- `roadmap`
+- `memoryView`
+- `skillsView`
+- `nodesView`
+- `devServerView`
+
 ---
 
 ## Background Memory Summarization & Audit

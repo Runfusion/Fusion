@@ -6,6 +6,7 @@ import { DevServerView } from "../DevServerView";
 const mockUseDevServer = vi.fn();
 const mockUseDevServerConfig = vi.fn();
 const mockUseDevServerLogs = vi.fn();
+const mockUsePreviewEmbed = vi.fn();
 
 vi.mock("../../hooks/useDevServer", () => ({
   useDevServer: (...args: unknown[]) => mockUseDevServer(...args),
@@ -17,6 +18,14 @@ vi.mock("../../hooks/useDevServerConfig", () => ({
 
 vi.mock("../../hooks/useDevServerLogs", () => ({
   useDevServerLogs: (...args: unknown[]) => mockUseDevServerLogs(...args),
+}));
+
+vi.mock("../../hooks/usePreviewEmbed", () => ({
+  usePreviewEmbed: (...args: unknown[]) => mockUsePreviewEmbed(...args),
+}));
+
+vi.mock("../DevServerLogViewer", () => ({
+  DevServerLogViewer: () => <div data-testid="mock-devserver-log-viewer" />,
 }));
 
 vi.mock("lucide-react", () => ({
@@ -77,6 +86,7 @@ function createDevServerHookState(overrides: Record<string, unknown> = {}) {
     setPreviewUrl: vi.fn().mockResolvedValue(undefined),
     loading: false,
     error: null,
+    detect: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -119,6 +129,19 @@ function createDevServerLogsHookState(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function createPreviewEmbedState(overrides: Record<string, unknown> = {}) {
+  return {
+    embedStatus: "embedded",
+    iframeRef: { current: null },
+    handleIframeLoad: vi.fn(),
+    handleIframeError: vi.fn(),
+    resetEmbed: vi.fn(),
+    isEmbedded: true,
+    isBlocked: false,
+    ...overrides,
+  };
+}
+
 describe("DevServerView", () => {
   const addToast = vi.fn();
 
@@ -127,6 +150,13 @@ describe("DevServerView", () => {
     mockUseDevServer.mockReturnValue(createDevServerHookState());
     mockUseDevServerConfig.mockReturnValue(createConfigHookState());
     mockUseDevServerLogs.mockReturnValue(createDevServerLogsHookState());
+    mockUsePreviewEmbed.mockReturnValue(createPreviewEmbedState());
+  });
+
+  it("renders without crashing", () => {
+    render(<DevServerView addToast={addToast} projectId="project-a" />);
+
+    expect(screen.getByTestId("dev-server-view")).toBeInTheDocument();
   });
 
   it("renders candidate list when detection returns scripts", () => {
@@ -143,6 +173,84 @@ describe("DevServerView", () => {
     render(<DevServerView addToast={addToast} projectId="project-a" />);
 
     expect(screen.getByTestId("dev-server-empty-candidates")).toHaveTextContent("No dev server scripts detected");
+  });
+
+  it("shows stopped status badge", () => {
+    mockUseDevServer.mockReturnValue(createDevServerHookState({ serverState: createState({ status: "stopped" }) }));
+
+    render(<DevServerView addToast={addToast} projectId="project-a" />);
+
+    expect(screen.getByTestId("dev-server-status-badge")).toHaveTextContent("Stopped");
+  });
+
+  it("shows running status badge", () => {
+    mockUseDevServer.mockReturnValue(createDevServerHookState({ serverState: createState({ status: "running" }) }));
+
+    render(<DevServerView addToast={addToast} projectId="project-a" />);
+
+    expect(screen.getByTestId("dev-server-status-badge")).toHaveTextContent("Running");
+  });
+
+  it("disables start when running and stop when stopped", () => {
+    mockUseDevServer.mockReturnValue(createDevServerHookState({ serverState: createState({ status: "running" }) }));
+
+    const { rerender } = render(<DevServerView addToast={addToast} projectId="project-a" />);
+
+    expect(screen.getByTestId("dev-server-start-button")).toBeDisabled();
+
+    mockUseDevServer.mockReturnValue(createDevServerHookState({ serverState: createState({ status: "stopped" }) }));
+    rerender(<DevServerView addToast={addToast} projectId="project-a" />);
+
+    expect(screen.getByTestId("dev-server-stop-button")).toBeDisabled();
+  });
+
+  it("clicking start calls start from hook", async () => {
+    const start = vi.fn().mockResolvedValue(undefined);
+    mockUseDevServer.mockReturnValue(createDevServerHookState({ start }));
+
+    render(<DevServerView addToast={addToast} projectId="project-a" />);
+
+    fireEvent.click(screen.getByTestId("dev-server-start-button"));
+
+    await waitFor(() => {
+      expect(start).toHaveBeenCalled();
+    });
+  });
+
+  it("clicking stop calls stop from hook", async () => {
+    const stop = vi.fn().mockResolvedValue(undefined);
+    mockUseDevServer.mockReturnValue(
+      createDevServerHookState({
+        stop,
+        serverState: createState({ status: "running" }),
+      }),
+    );
+
+    render(<DevServerView addToast={addToast} projectId="project-a" />);
+
+    fireEvent.click(screen.getByTestId("dev-server-stop-button"));
+
+    await waitFor(() => {
+      expect(stop).toHaveBeenCalled();
+    });
+  });
+
+  it("clicking restart calls restart from hook", async () => {
+    const restart = vi.fn().mockResolvedValue(undefined);
+    mockUseDevServer.mockReturnValue(
+      createDevServerHookState({
+        restart,
+        serverState: createState({ status: "running" }),
+      }),
+    );
+
+    render(<DevServerView addToast={addToast} projectId="project-a" />);
+
+    fireEvent.click(screen.getByTestId("dev-server-restart-button"));
+
+    await waitFor(() => {
+      expect(restart).toHaveBeenCalled();
+    });
   });
 
   it("clicking a candidate persists selection via selectScript", async () => {
@@ -199,6 +307,31 @@ describe("DevServerView", () => {
       expect(setPreviewUrlOverride).toHaveBeenCalledWith("http://localhost:3000");
       expect(setPreviewUrl).toHaveBeenCalledWith("http://localhost:3000");
     });
+  });
+
+  it("renders log viewer panel", () => {
+    mockUseDevServerLogs.mockReturnValue(
+      createDevServerLogsHookState({
+        entries: [{ id: 1, text: "server started", stream: "stdout", timestamp: "2026-01-01T00:00:00.000Z" }],
+      }),
+    );
+
+    render(<DevServerView addToast={addToast} projectId="project-a" />);
+
+    expect(screen.getByTestId("mock-devserver-log-viewer")).toBeInTheDocument();
+  });
+
+  it("renders preview iframe when preview URL is available", () => {
+    mockUseDevServer.mockReturnValue(
+      createDevServerHookState({
+        serverState: createState({ status: "running", previewUrl: "http://localhost:3000" }),
+      }),
+    );
+    mockUsePreviewEmbed.mockReturnValue(createPreviewEmbedState({ embedStatus: "embedded", isBlocked: false }));
+
+    render(<DevServerView addToast={addToast} projectId="project-a" />);
+
+    expect(screen.getByTitle("Dev server preview")).toBeInTheDocument();
   });
 
   it("renders selected script summary when config has a selection", () => {

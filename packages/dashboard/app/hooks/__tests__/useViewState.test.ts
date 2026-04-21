@@ -200,26 +200,31 @@ describe("useViewState", () => {
     expect(localStorage.getItem("kb:proj_123:kb-dashboard-task-view")).toBe("insights");
   });
 
-  it("restores and persists dev-server task view as devserver", async () => {
+  it("restores dev-server task view and normalizes legacy devserver values", async () => {
     localStorage.setItem("kb:proj_123:kb-dashboard-task-view", "dev-server");
 
-    const { result } = renderHook(() =>
-      useViewState(
-        createOptions({
-          currentProject: PROJECT,
-        }),
-      ),
+    const { result, rerender } = renderHook(
+      ({ project }) => useViewState(createOptions({ currentProject: project })),
+      { initialProps: { project: PROJECT } },
     );
 
     await waitFor(() => {
-      expect(result.current.taskView).toBe("devserver");
+      expect(result.current.taskView).toBe("dev-server");
     });
 
     await act(async () => {
       result.current.setTaskView("dev-server");
     });
 
-    expect(localStorage.getItem("kb:proj_123:kb-dashboard-task-view")).toBe("devserver");
+    expect(localStorage.getItem("kb:proj_123:kb-dashboard-task-view")).toBe("dev-server");
+
+    localStorage.setItem("kb:proj_123:kb-dashboard-task-view", "devserver");
+    rerender({ project: { ...PROJECT, id: "proj_legacy", name: "Legacy" } });
+    rerender({ project: PROJECT });
+
+    await waitFor(() => {
+      expect(result.current.taskView).toBe("dev-server");
+    });
   });
 
   it("restores legacy views (board/list/agents/missions/chat) from scoped storage", async () => {

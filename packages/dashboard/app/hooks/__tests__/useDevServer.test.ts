@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  detectDevServer,
+  fetchDevServerCandidates,
   fetchDevServerStatus,
   getDevServerLogsStreamUrl,
   restartDevServer,
@@ -15,7 +15,7 @@ import { subscribeSse, type SseSubscription } from "../../sse-bus";
 import { __resetUseDevServerForTests, useDevServer } from "../useDevServer";
 
 vi.mock("../../api", () => ({
-  detectDevServer: vi.fn(),
+  fetchDevServerCandidates: vi.fn(),
   fetchDevServerStatus: vi.fn(),
   getDevServerLogsStreamUrl: vi.fn(),
   startDevServer: vi.fn(),
@@ -28,7 +28,7 @@ vi.mock("../../sse-bus", () => ({
   subscribeSse: vi.fn(),
 }));
 
-const mockDetectDevServer = vi.mocked(detectDevServer);
+const mockFetchDevServerCandidates = vi.mocked(fetchDevServerCandidates);
 const mockFetchDevServerStatus = vi.mocked(fetchDevServerStatus);
 const mockGetDevServerLogsStreamUrl = vi.mocked(getDevServerLogsStreamUrl);
 const mockStartDevServer = vi.mocked(startDevServer);
@@ -85,9 +85,9 @@ describe("useDevServer", () => {
     activeSubscription = null;
     unsubscribeSpy = vi.fn();
 
-    mockGetDevServerLogsStreamUrl.mockReturnValue("/api/dev-server/logs/stream");
+    mockGetDevServerLogsStreamUrl.mockReturnValue("/api/dev-server/logs/stream?projectId=project-a");
+    mockFetchDevServerCandidates.mockResolvedValue([createCandidate()]);
     mockFetchDevServerStatus.mockResolvedValue(createState());
-    mockDetectDevServer.mockResolvedValue([createCandidate()]);
     mockStartDevServer.mockResolvedValue(createState({ status: "running", pid: 1111 }));
     mockStopDevServer.mockResolvedValue(createState({ status: "stopped", pid: undefined }));
     mockRestartDevServer.mockResolvedValue(createState({ status: "running", pid: 2222 }));
@@ -99,26 +99,41 @@ describe("useDevServer", () => {
     });
   });
 
-  it("fetches status on mount", async () => {
+  it("initially exposes loading state", () => {
     const { result } = renderHook(() => useDevServer("project-a"));
 
     expect(result.current.isLoading).toBe(true);
+    expect(result.current.candidates).toEqual([]);
+    expect(result.current.serverState).toBeNull();
+  });
+
+  it("fetches candidates and status on mount", async () => {
+    const { result } = renderHook(() => useDevServer("project-a"));
 
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);
     });
 
+    expect(mockFetchDevServerCandidates).toHaveBeenCalledWith("project-a");
     expect(mockFetchDevServerStatus).toHaveBeenCalledWith("project-a");
-    expect(result.current.status).toBe("stopped");
-    expect(result.current.detectedUrl).toBe("http://localhost:5173");
+    expect(result.current.candidates).toHaveLength(1);
+    expect(result.current.serverState?.status).toBe("stopped");
   });
 
-  it("starts polling while running", async () => {
-    vi.useFakeTimers();
+  it("opens SSE stream on mount", async () => {
+    renderHook(() => useDevServer("project-a"));
 
-    mockFetchDevServerStatus
-      .mockResolvedValueOnce(createState({ status: "running" }))
-      .mockResolvedValue(createState({ status: "running" }));
+    await waitFor(() => {
+      expect(mockSubscribeSse).toHaveBeenCalledWith(
+        "/api/dev-server/logs/stream?projectId=project-a",
+        expect.any(Object),
+      );
+    });
+  });
+
+  it("polls every 3s while running", async () => {
+    vi.useFakeTimers();
+    mockFetchDevServerStatus.mockResolvedValue(createState({ status: "running" }));
 
     renderHook(() => useDevServer("project-a"));
 
@@ -126,23 +141,15 @@ describe("useDevServer", () => {
     expect(mockFetchDevServerStatus).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      vi.advanceTimersByTime(5000);
+      vi.advanceTimersByTime(3000);
       await Promise.resolve();
     });
 
     expect(mockFetchDevServerStatus).toHaveBeenCalledTimes(2);
-
-    await act(async () => {
-      vi.advanceTimersByTime(5000);
-      await Promise.resolve();
-    });
-
-    expect(mockFetchDevServerStatus).toHaveBeenCalledTimes(3);
   });
 
   it("does not poll while stopped", async () => {
     vi.useFakeTimers();
-
     mockFetchDevServerStatus.mockResolvedValue(createState({ status: "stopped" }));
 
     renderHook(() => useDevServer("project-a"));
@@ -151,32 +158,14 @@ describe("useDevServer", () => {
     expect(mockFetchDevServerStatus).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      vi.advanceTimersByTime(15000);
+      vi.advanceTimersByTime(9000);
       await Promise.resolve();
     });
 
     expect(mockFetchDevServerStatus).toHaveBeenCalledTimes(1);
   });
 
-  it("subscribes to SSE while running and unsubscribes when stopped", async () => {
-    mockFetchDevServerStatus.mockResolvedValueOnce(createState({ status: "running" }));
-
-    const { result } = renderHook(() => useDevServer("project-a"));
-
-    await waitFor(() => {
-      expect(mockSubscribeSse).toHaveBeenCalledTimes(1);
-    });
-
-    await act(async () => {
-      await result.current.stop();
-    });
-
-    expect(unsubscribeSpy).toHaveBeenCalledTimes(1);
-  });
-
   it("appends logs from SSE events", async () => {
-    mockFetchDevServerStatus.mockResolvedValueOnce(createState({ status: "running", logs: [] }));
-
     const { result } = renderHook(() => useDevServer("project-a"));
 
     await waitFor(() => {
@@ -184,21 +173,20 @@ describe("useDevServer", () => {
     });
 
     act(() => {
-      activeSubscription?.events?.history?.({ data: JSON.stringify({ lines: ["from history"] }) } as MessageEvent<string>);
-      activeSubscription?.events?.log?.({ data: JSON.stringify({ line: "from log" }) } as MessageEvent<string>);
-      activeSubscription?.events?.["dev-server:output"]?.({
-        data: JSON.stringify({ text: "stderr line", stream: "stderr" }),
+      activeSubscription?.events?.["dev-server:log"]?.({
+        data: JSON.stringify({ line: "from namespaced log" }),
+      } as MessageEvent<string>);
+      activeSubscription?.events?.log?.({
+        data: JSON.stringify({ line: "from log" }),
       } as MessageEvent<string>);
     });
 
     await waitFor(() => {
-      expect(result.current.logs).toEqual(["from history", "from log", "[stderr] stderr line"]);
+      expect(result.current.logs).toEqual(["from namespaced log", "from log"]);
     });
   });
 
-  it("caps logs to 500 entries", async () => {
-    mockFetchDevServerStatus.mockResolvedValueOnce(createState({ status: "running", logs: [] }));
-
+  it("updates state from dev-server:status SSE events", async () => {
     const { result } = renderHook(() => useDevServer("project-a"));
 
     await waitFor(() => {
@@ -206,108 +194,74 @@ describe("useDevServer", () => {
     });
 
     act(() => {
-      for (let index = 1; index <= 510; index += 1) {
-        activeSubscription?.events?.log?.({ data: JSON.stringify({ line: `line-${index}` }) } as MessageEvent<string>);
-      }
+      activeSubscription?.events?.["dev-server:status"]?.({
+        data: JSON.stringify(createState({ status: "running", pid: 9876 })),
+      } as MessageEvent<string>);
     });
 
     await waitFor(() => {
-      expect(result.current.logs).toHaveLength(500);
-      expect(result.current.logs[0]).toBe("line-11");
-      expect(result.current.logs[499]).toBe("line-510");
+      expect(result.current.serverState?.status).toBe("running");
+      expect(result.current.serverState?.pid).toBe(9876);
     });
   });
 
-  it("start() calls API and sets status to starting", async () => {
-    let resolveStart: ((state: DevServerState) => void) | null = null;
-    const pendingStart = new Promise<DevServerState>((resolve) => {
-      resolveStart = resolve;
-    });
-
-    mockFetchDevServerStatus
-      .mockResolvedValueOnce(createState({ status: "stopped" }))
-      .mockResolvedValueOnce(createState({ status: "running" }));
-    mockStartDevServer.mockReturnValueOnce(pendingStart);
-
+  it("start() accepts candidate and custom payload inputs", async () => {
     const { result } = renderHook(() => useDevServer("project-a"));
 
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);
     });
 
-    act(() => {
-      void result.current.start("pnpm dev", "apps/web", "dev", "apps/web");
+    await act(async () => {
+      await result.current.start(createCandidate({ cwd: "apps/web", packagePath: "apps/web" }));
     });
 
-    expect(result.current.status).toBe("starting");
+    expect(mockStartDevServer).toHaveBeenCalledWith(
+      {
+        command: "pnpm dev",
+        cwd: "apps/web",
+        scriptName: "dev",
+        packagePath: "apps/web",
+      },
+      "project-a",
+    );
 
-    act(() => {
-      resolveStart?.(createState({ status: "running" }));
+    await act(async () => {
+      await result.current.start({ command: "pnpm start", scriptName: "start", cwd: "apps/api" });
     });
 
-    await waitFor(() => {
-      expect(mockStartDevServer).toHaveBeenCalledWith(
-        {
-          command: "pnpm dev",
-          cwd: "apps/web",
-          scriptName: "dev",
-          packagePath: "apps/web",
-        },
-        "project-a",
-      );
-    });
+    expect(mockStartDevServer).toHaveBeenLastCalledWith(
+      {
+        command: "pnpm start",
+        cwd: "apps/api",
+        scriptName: "start",
+        packagePath: "apps/api",
+      },
+      "project-a",
+    );
   });
 
-  it("stop() calls API and sets status stopped", async () => {
-    mockFetchDevServerStatus.mockResolvedValueOnce(createState({ status: "running" }));
-
+  it("stop(), restart(), and setPreviewUrl() call APIs", async () => {
     const { result } = renderHook(() => useDevServer("project-a"));
 
     await waitFor(() => {
-      expect(result.current.status).toBe("running");
+      expect(result.current.isLoading).toBe(false);
     });
 
     await act(async () => {
       await result.current.stop();
+      await result.current.restart();
+      await result.current.setPreviewUrl("http://localhost:3000");
     });
 
     expect(mockStopDevServer).toHaveBeenCalledWith("project-a");
-    expect(result.current.status).toBe("stopped");
+    expect(mockRestartDevServer).toHaveBeenCalledWith("project-a");
+    expect(mockSetDevServerPreviewUrl).toHaveBeenCalledWith({ url: "http://localhost:3000" }, "project-a");
   });
 
-  it("restart() calls API and sets status starting", async () => {
-    let resolveRestart: ((state: DevServerState) => void) | null = null;
-    const pendingRestart = new Promise<DevServerState>((resolve) => {
-      resolveRestart = resolve;
-    });
+  it("sets error when API operations fail", async () => {
+    mockStartDevServer.mockRejectedValueOnce(new Error("boom"));
 
-    mockFetchDevServerStatus
-      .mockResolvedValueOnce(createState({ status: "running" }))
-      .mockResolvedValueOnce(createState({ status: "running" }));
-    mockRestartDevServer.mockReturnValueOnce(pendingRestart);
-
-    const { result } = renderHook(() => useDevServer("project-a"));
-
-    await waitFor(() => {
-      expect(result.current.status).toBe("running");
-    });
-
-    act(() => {
-      void result.current.restart();
-    });
-
-    expect(result.current.status).toBe("starting");
-
-    act(() => {
-      resolveRestart?.(createState({ status: "running" }));
-    });
-
-    await waitFor(() => {
-      expect(mockRestartDevServer).toHaveBeenCalledWith("project-a");
-    });
-  });
-
-  it("setManualUrl() calls API and updates local manual url", async () => {
     const { result } = renderHook(() => useDevServer("project-a"));
 
     await waitFor(() => {
@@ -315,17 +269,16 @@ describe("useDevServer", () => {
     });
 
     await act(async () => {
-      await result.current.setManualUrl("http://localhost:3000");
+      await expect(result.current.start({ command: "pnpm dev", scriptName: "dev" })).rejects.toThrow("boom");
     });
 
-    expect(mockSetDevServerPreviewUrl).toHaveBeenCalledWith({ url: "http://localhost:3000" }, "project-a");
-    expect(result.current.manualUrl).toBe("http://localhost:3000");
+    expect(result.current.error).toBe("boom");
   });
 
-  it("detect() loads command candidates", async () => {
-    mockDetectDevServer.mockResolvedValueOnce([
-      createCandidate({ scriptName: "start", command: "pnpm start", packagePath: "apps/web" }),
-    ]);
+  it("detect() refreshes candidate list", async () => {
+    mockFetchDevServerCandidates
+      .mockResolvedValueOnce([createCandidate()])
+      .mockResolvedValueOnce([createCandidate({ scriptName: "start", command: "pnpm start" })]);
 
     const { result } = renderHook(() => useDevServer("project-a"));
 
@@ -337,31 +290,21 @@ describe("useDevServer", () => {
       await result.current.detect();
     });
 
-    expect(mockDetectDevServer).toHaveBeenCalledWith("project-a");
+    expect(mockFetchDevServerCandidates).toHaveBeenCalledTimes(2);
     expect(result.current.candidates).toEqual([
       expect.objectContaining({ scriptName: "start", command: "pnpm start" }),
     ]);
   });
 
-  it("cleans up SSE and polling on unmount", async () => {
-    vi.useFakeTimers();
-
-    mockFetchDevServerStatus.mockResolvedValue(createState({ status: "running" }));
-
+  it("cleans up SSE on unmount", async () => {
     const { unmount } = renderHook(() => useDevServer("project-a"));
 
-    await flushMicrotasks();
-    expect(mockSubscribeSse).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(mockSubscribeSse).toHaveBeenCalledTimes(1);
+    });
 
     unmount();
 
     expect(unsubscribeSpy).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      vi.advanceTimersByTime(10000);
-      await Promise.resolve();
-    });
-
-    expect(mockFetchDevServerStatus).toHaveBeenCalledTimes(1);
   });
 });

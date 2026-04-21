@@ -72,7 +72,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
       setInsightsEnabled(features.insights === true);
       setRoadmapEnabled(features.roadmap === true);
       setMemoryEnabled(features.memoryView === true);
-      setDevServerEnabled(features.devServer === true || features.devServerView === true);
+      setDevServerEnabled(features.devServerView === true);
     }
   }, [projectId]);
 

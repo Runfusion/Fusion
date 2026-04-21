@@ -27,7 +27,7 @@ function isTaskView(value: string | null): value is TaskView {
 }
 
 function normalizeTaskView(value: TaskView): TaskView {
-  return value === "dev-server" ? "devserver" : value;
+  return value === "devserver" ? "dev-server" : value;
 }
 
 interface UseViewStateOptions {

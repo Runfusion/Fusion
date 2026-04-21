@@ -18,7 +18,7 @@ import {
   MoreHorizontal,
   Play,
   Settings,
-  Server,
+  Monitor,
   Sparkles,
   Target,
   Terminal,
@@ -579,16 +579,16 @@ export function MobileNavBar({
               </button>
             )}
 
-            {(experimentalFeatures?.devServer || experimentalFeatures?.devServerView) && (
+            {experimentalFeatures?.devServerView && (
               <button
                 type="button"
                 className="mobile-more-item"
-                data-testid="mobile-more-item-devserver"
+                data-testid="mobile-more-item-dev-server"
                 onClick={() => {
-                  handleMoreAction(() => onChangeView("devserver"));
+                  handleMoreAction(() => onChangeView("dev-server"));
                 }}
               >
-                <Server size={14} />
+                <Monitor size={14} />
                 <span>Dev Server</span>
               </button>
             )}

@@ -274,8 +274,8 @@ function AppInner() {
     if ((taskView === "devserver" || taskView === "dev-server") && !devServerEnabled) {
       handleChangeTaskView("board");
     }
-    if (taskView === "dev-server" && devServerEnabled) {
-      handleChangeTaskView("devserver");
+    if (taskView === "devserver" && devServerEnabled) {
+      handleChangeTaskView("dev-server");
     }
   }, [taskView, insightsEnabled, roadmapEnabled, experimentalFeatures, handleChangeTaskView, agentsEnabled, memoryEnabled, devServerEnabled]);
 
