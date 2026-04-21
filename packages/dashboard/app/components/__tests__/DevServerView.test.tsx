@@ -20,13 +20,16 @@ vi.mock("../../hooks/useDevServerLogs", () => ({
 }));
 
 vi.mock("lucide-react", () => ({
+  AlertTriangle: () => <span data-testid="icon-alert-triangle" />,
   ChevronDown: () => <span data-testid="icon-chevron-down" />,
   ExternalLink: () => <span data-testid="icon-external-link" />,
+  Eye: () => <span data-testid="icon-eye" />,
   Loader2: () => <span data-testid="icon-loader" />,
   Maximize2: () => <span data-testid="icon-maximize" />,
   Minimize2: () => <span data-testid="icon-minimize" />,
   Monitor: () => <span data-testid="icon-monitor" />,
   Play: () => <span data-testid="icon-play" />,
+  RefreshCw: () => <span data-testid="icon-refresh" />,
   RotateCw: () => <span data-testid="icon-rotate" />,
   Search: () => <span data-testid="icon-search" />,
   Square: () => <span data-testid="icon-square" />,
