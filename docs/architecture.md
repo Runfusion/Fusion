@@ -378,6 +378,7 @@ Key server capabilities:
   - `dev-server-process.ts` (`DevServerProcessManager` for spawn/stop/restart/url-detection)
   - `dev-server-store.ts` (durable `.fusion/dev-server.json` state + log ring buffer)
   - `dev-server-detect.ts` (project/workspace script auto-detection + confidence scoring)
+  - Note: this **hyphenated `dev-server-*` family is the canonical runtime owner** today; see `docs/dev-server-module-boundary-audit.md` for the FN-2212 boundary/consolidation audit covering parallel `devserver-*` modules.
 - Plugin management routes (`plugin-routes.ts`)
 - Insights routes (`insights-routes.ts`)
 - Roadmap routes (`roadmap-routes.ts`)

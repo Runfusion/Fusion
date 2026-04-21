@@ -1,13 +1,12 @@
-FN-2197 complete (2026-04-20)
+FN-2213 complete (2026-04-21)
 
 Summary:
-- Audited active skipped-test usage across package test suites and documented the reconciled inventory.
-- Added `docs/skipped-test-inventory.md` and linked it from `docs/README.md`.
-- Confirmed older actionable skip follow-ups (FN-2085, FN-2076, FN-2106, FN-2109) are resolved and no longer represented as active skip backlog.
-- Stabilized `PlanningModeModal` conversation-history resume test by overriding stream behavior in the targeted test case to avoid racey question replacement.
+- Triaged and prioritized FN-2212 by auditing parallel `dev-server-*` and `devserver-*` module families in `packages/dashboard/src`.
+- Added `docs/dev-server-module-boundary-audit.md` with ownership boundaries, risk assessment, consolidation proposal, and a proposed FN-2212 definition of done.
+- Updated `docs/architecture.md` to explicitly mark `dev-server-*` as the current canonical runtime owner and linked the audit.
+- Added the new audit to `docs/README.md` so contributors can find the boundary guidance quickly.
 
 Verification commands:
-- pnpm lint
-- pnpm typecheck
-- VITEST_MAX_WORKERS=2 pnpm test
 - pnpm build
+- VITEST_MAX_WORKERS=2 pnpm test
+- pnpm typecheck
