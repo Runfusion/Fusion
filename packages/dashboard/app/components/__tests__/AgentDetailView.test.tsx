@@ -991,8 +991,8 @@ describe("AgentDetailView", () => {
 
       await waitFor(() => {
         // Heartbeat Settings section
-        expect(screen.getByLabelText("Heartbeat Interval (ms)")).toBeInTheDocument();
-        expect(screen.getByLabelText("Heartbeat Timeout (ms)")).toBeInTheDocument();
+        expect(screen.getByLabelText("Heartbeat Interval (s)")).toBeInTheDocument();
+        expect(screen.getByLabelText("Heartbeat Timeout (s)")).toBeInTheDocument();
         // Advanced Settings section
         expect(screen.getByLabelText("Max Retries")).toBeInTheDocument();
         expect(screen.getByLabelText("Task Timeout (ms)")).toBeInTheDocument();
@@ -1118,7 +1118,7 @@ describe("AgentDetailView", () => {
       await navigateToSettings(user);
 
       await waitFor(() => {
-        const heartbeatInput = screen.getByLabelText("Heartbeat Interval (ms)") as HTMLInputElement;
+        const heartbeatInput = screen.getByLabelText("Heartbeat Interval (s)") as HTMLInputElement;
         expect(heartbeatInput.value).toBe("");
       });
     });
@@ -1137,10 +1137,10 @@ describe("AgentDetailView", () => {
 
       await navigateToSettings(user);
 
-      const heartbeatInput = await screen.findByLabelText("Heartbeat Interval (ms)");
-      expect(heartbeatInput).toHaveAttribute("placeholder", String(DEFAULT_HEARTBEAT_INTERVAL_MS));
+      const heartbeatInput = await screen.findByLabelText("Heartbeat Interval (s)");
+      expect(heartbeatInput).toHaveAttribute("placeholder", String(DEFAULT_HEARTBEAT_INTERVAL_MS / 1000));
       expect(
-        screen.getByText(`How often heartbeats are checked. Leave empty for system default (${DEFAULT_HEARTBEAT_INTERVAL_MS}ms / 1h).`),
+        screen.getByText(`How often heartbeats are checked. Leave empty for system default (${DEFAULT_HEARTBEAT_INTERVAL_MS / 1000}s / 1h).`),
       ).toBeInTheDocument();
     });
 
@@ -1168,11 +1168,11 @@ describe("AgentDetailView", () => {
       await navigateToSettings(user);
 
       await waitFor(() => {
-        const heartbeatInput = screen.getByLabelText("Heartbeat Interval (ms)") as HTMLInputElement;
-        expect(heartbeatInput.value).toBe("15000");
+        const heartbeatInput = screen.getByLabelText("Heartbeat Interval (s)") as HTMLInputElement;
+        expect(heartbeatInput.value).toBe("15");
 
-        const heartbeatTimeoutInput = screen.getByLabelText("Heartbeat Timeout (ms)") as HTMLInputElement;
-        expect(heartbeatTimeoutInput.value).toBe("120000");
+        const heartbeatTimeoutInput = screen.getByLabelText("Heartbeat Timeout (s)") as HTMLInputElement;
+        expect(heartbeatTimeoutInput.value).toBe("120");
 
         const retriesInput = screen.getByLabelText("Max Retries") as HTMLInputElement;
         expect(retriesInput.value).toBe("5");
@@ -1201,6 +1201,33 @@ describe("AgentDetailView", () => {
       });
     });
 
+    it("keeps Save Settings disabled when heartbeat runtimeConfig values are pre-filled and unchanged", async () => {
+      mockFetchAgent.mockResolvedValue(createMockAgent({
+        metadata: {},
+        runtimeConfig: {
+          heartbeatIntervalMs: 30000,
+          heartbeatTimeoutMs: 60000,
+        },
+      }));
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await navigateToSettings(user);
+
+      await waitFor(() => {
+        expect((screen.getByLabelText("Heartbeat Interval (s)") as HTMLInputElement).value).toBe("30");
+        expect((screen.getByLabelText("Heartbeat Timeout (s)") as HTMLInputElement).value).toBe("60");
+        expect(screen.getByText("Save Settings")).toBeDisabled();
+      });
+    });
+
     it("enables Save Settings when a field is changed", async () => {
       const user = userEvent.setup();
       render(
@@ -1213,10 +1240,10 @@ describe("AgentDetailView", () => {
 
       await navigateToSettings(user);
 
-      const heartbeatInput = await screen.findByLabelText("Heartbeat Interval (ms)");
+      const heartbeatInput = await screen.findByLabelText("Heartbeat Interval (s)");
 
       await user.clear(heartbeatInput);
-      await user.type(heartbeatInput, "15000");
+      await user.type(heartbeatInput, "15");
 
       await waitFor(() => {
         expect(screen.getByText("Save Settings")).not.toBeDisabled();
@@ -1237,7 +1264,7 @@ describe("AgentDetailView", () => {
 
       // Simulate setting a non-numeric value via React's internal value setter
       // (userEvent.type on type="number" rejects non-numeric chars, so we bypass it)
-      const heartbeatInput = (await screen.findByLabelText("Heartbeat Interval (ms)")) as HTMLInputElement;
+      const heartbeatInput = (await screen.findByLabelText("Heartbeat Interval (s)")) as HTMLInputElement;
       const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
         window.HTMLInputElement.prototype, 'value'
       )?.set;
@@ -1263,15 +1290,15 @@ describe("AgentDetailView", () => {
 
       await navigateToSettings(user);
 
-      const heartbeatTimeoutInput = await screen.findByLabelText("Heartbeat Timeout (ms)");
+      const heartbeatTimeoutInput = await screen.findByLabelText("Heartbeat Timeout (s)");
 
       await user.clear(heartbeatTimeoutInput);
-      await user.type(heartbeatTimeoutInput, "500");
+      await user.type(heartbeatTimeoutInput, "4");
 
       await user.click(screen.getByText("Save Settings"));
 
       await waitFor(() => {
-        expect(screen.getByText(/must be at least 5,000/)).toBeInTheDocument();
+        expect(screen.getByText(/must be at least 5/)).toBeInTheDocument();
       });
     });
 
@@ -1314,10 +1341,10 @@ describe("AgentDetailView", () => {
 
       await navigateToSettings(user);
 
-      const heartbeatInput = await screen.findByLabelText("Heartbeat Interval (ms)");
+      const heartbeatInput = await screen.findByLabelText("Heartbeat Interval (s)");
 
       await user.clear(heartbeatInput);
-      await user.type(heartbeatInput, "15000");
+      await user.type(heartbeatInput, "15");
 
       await user.click(screen.getByText("Save Settings"));
 
@@ -1351,10 +1378,10 @@ describe("AgentDetailView", () => {
 
       await navigateToSettings(user);
 
-      const heartbeatInput = await screen.findByLabelText("Heartbeat Interval (ms)");
+      const heartbeatInput = await screen.findByLabelText("Heartbeat Interval (s)");
 
       await user.clear(heartbeatInput);
-      await user.type(heartbeatInput, "20000");
+      await user.type(heartbeatInput, "20");
 
       await user.click(screen.getByText("Save Settings"));
 
@@ -1438,7 +1465,7 @@ describe("AgentDetailView", () => {
       await navigateToSettings(user);
 
       // Type "abc" directly into a text input
-      const heartbeatInput = await screen.findByLabelText("Heartbeat Interval (ms)");
+      const heartbeatInput = await screen.findByLabelText("Heartbeat Interval (s)");
 
       await user.clear(heartbeatInput);
       await user.type(heartbeatInput, "abc");
@@ -1487,8 +1514,8 @@ describe("AgentDetailView", () => {
 
       await navigateToSettings(user);
 
-      const heartbeatInput = await screen.findByLabelText("Heartbeat Interval (ms)");
-      expect((heartbeatInput as HTMLInputElement).value).toBe("30000");
+      const heartbeatInput = await screen.findByLabelText("Heartbeat Interval (s)");
+      expect((heartbeatInput as HTMLInputElement).value).toBe("30");
 
       await user.clear(heartbeatInput);
 
@@ -1523,10 +1550,10 @@ describe("AgentDetailView", () => {
 
       await navigateToSettings(user);
 
-      const heartbeatInput = await screen.findByLabelText("Heartbeat Interval (ms)");
+      const heartbeatInput = await screen.findByLabelText("Heartbeat Interval (s)");
 
       await user.clear(heartbeatInput);
-      await user.type(heartbeatInput, "45000");
+      await user.type(heartbeatInput, "45");
 
       await user.click(screen.getByText("Save Settings"));
 

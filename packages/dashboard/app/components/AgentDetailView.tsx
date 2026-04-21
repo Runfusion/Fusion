@@ -2625,10 +2625,10 @@ function deriveHeartbeatValues(runtimeConfig: AgentDetail["runtimeConfig"] | und
   const nextValues: Record<string, string> = {};
 
   if (rc.heartbeatIntervalMs !== undefined && rc.heartbeatIntervalMs !== null) {
-    nextValues.heartbeatIntervalMs = String(rc.heartbeatIntervalMs);
+    nextValues.heartbeatIntervalMs = String(Number(rc.heartbeatIntervalMs) / 1000);
   }
   if (rc.heartbeatTimeoutMs !== undefined && rc.heartbeatTimeoutMs !== null) {
-    nextValues.heartbeatTimeoutMs = String(rc.heartbeatTimeoutMs);
+    nextValues.heartbeatTimeoutMs = String(Number(rc.heartbeatTimeoutMs) / 1000);
   }
   if (rc.maxConcurrentRuns !== undefined && rc.maxConcurrentRuns !== null) {
     nextValues.maxConcurrentRuns = String(rc.maxConcurrentRuns);
@@ -2811,7 +2811,12 @@ function ConfigTab({
     const rc = agent.runtimeConfig ?? {};
     for (const key of ["heartbeatIntervalMs", "heartbeatTimeoutMs", "maxConcurrentRuns", "messageResponseMode"] as const) {
       const current = heartbeatValues[key]?.trim() ?? "";
-      const persisted = rc[key] !== undefined && rc[key] !== null ? String(rc[key]) : "";
+      let persisted = rc[key] !== undefined && rc[key] !== null ? String(rc[key]) : "";
+
+      if ((key === "heartbeatIntervalMs" || key === "heartbeatTimeoutMs") && persisted) {
+        persisted = String(Number(persisted) / 1000);
+      }
+
       if (current !== persisted) return true;
     }
     // Check budget config values
@@ -2920,8 +2925,8 @@ function ConfigTab({
 
     // Validate heartbeat settings
     for (const [key, config] of Object.entries({
-      heartbeatIntervalMs: { label: "Heartbeat Interval", min: 1000 },
-      heartbeatTimeoutMs: { label: "Heartbeat Timeout", min: 5000 },
+      heartbeatIntervalMs: { label: "Heartbeat Interval", min: 1 },
+      heartbeatTimeoutMs: { label: "Heartbeat Timeout", min: 5 },
       maxConcurrentRuns: { label: "Max Concurrent Runs", min: 1 },
     })) {
       const raw = heartbeatValues[key]?.trim();
@@ -3016,7 +3021,8 @@ function ConfigTab({
       if (!raw) {
         delete newRuntimeConfig[key];
       } else {
-        newRuntimeConfig[key] = Number(raw);
+        const num = Number(raw);
+        newRuntimeConfig[key] = key === "maxConcurrentRuns" ? num : num * 1000;
       }
     }
 
@@ -3231,13 +3237,13 @@ function ConfigTab({
 
         <div className="config-fields">
           <div className="config-field">
-            <label htmlFor="hb-heartbeatIntervalMs">Heartbeat Interval (ms)</label>
+            <label htmlFor="hb-heartbeatIntervalMs">Heartbeat Interval (s)</label>
             <input
               id="hb-heartbeatIntervalMs"
               type="text"
               inputMode="numeric"
               className={cn("input", !!errors.heartbeatIntervalMs && "input--error")}
-              placeholder={String(DEFAULT_HEARTBEAT_INTERVAL_MS)}
+              placeholder={String(DEFAULT_HEARTBEAT_INTERVAL_MS / 1000)}
               value={heartbeatValues.heartbeatIntervalMs ?? ""}
               onChange={(e) => handleHeartbeatFieldChange("heartbeatIntervalMs", e.target.value)}
             />
@@ -3245,26 +3251,26 @@ function ConfigTab({
               <span className="config-error">{errors.heartbeatIntervalMs}</span>
             ) : (
               <span className="config-hint">
-                How often heartbeats are checked. Leave empty for system default ({DEFAULT_HEARTBEAT_INTERVAL_MS}ms / {DEFAULT_HEARTBEAT_INTERVAL_LABEL}).
+                How often heartbeats are checked. Leave empty for system default ({DEFAULT_HEARTBEAT_INTERVAL_MS / 1000}s / {DEFAULT_HEARTBEAT_INTERVAL_LABEL}).
               </span>
             )}
           </div>
 
           <div className="config-field">
-            <label htmlFor="hb-heartbeatTimeoutMs">Heartbeat Timeout (ms)</label>
+            <label htmlFor="hb-heartbeatTimeoutMs">Heartbeat Timeout (s)</label>
             <input
               id="hb-heartbeatTimeoutMs"
               type="text"
               inputMode="numeric"
               className={cn("input", !!errors.heartbeatTimeoutMs && "input--error")}
-              placeholder="60000"
+              placeholder="60"
               value={heartbeatValues.heartbeatTimeoutMs ?? ""}
               onChange={(e) => handleHeartbeatFieldChange("heartbeatTimeoutMs", e.target.value)}
             />
             {errors.heartbeatTimeoutMs ? (
               <span className="config-error">{errors.heartbeatTimeoutMs}</span>
             ) : (
-              <span className="config-hint">Time without heartbeat before agent is considered unresponsive. Leave empty for system default (60000ms)</span>
+              <span className="config-hint">Time without heartbeat before agent is considered unresponsive. Leave empty for system default (60s)</span>
             )}
           </div>
 
