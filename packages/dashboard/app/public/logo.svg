@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
-  <circle cx="44" cy="44" r="20" fill="currentColor"/>
-  <circle cx="84" cy="44" r="20" fill="currentColor"/>
-  <circle cx="44" cy="84" r="20" fill="currentColor"/>
-  <circle cx="84" cy="84" r="20" fill="currentColor"/>
+  <!-- Outer ring: matches Header.tsx header-logo geometry -->
+  <circle cx="64" cy="64" r="52" stroke="currentColor" stroke-width="8" fill="none"/>
+  <!-- Swoosh/comet shape: matches Header.tsx header-logo path -->
+  <path d="M26 101C44 82 62 64 82 45C90 37 98 30 104 24C96 35 89 47 81 60C70 79 57 95 43 108C38 112 32 108 26 101Z" fill="currentColor"/>
 </svg>

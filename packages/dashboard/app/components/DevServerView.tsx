@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ExternalLink, Eye, Loader2, Monitor, Play, RefreshCw, RotateCw, ShieldAlert, Square } from "lucide-react";
-import type { DetectedDevServerCommand } from "../api";
+import type { DetectedDevServerCommand, DevServerSession, DevServerState } from "../api";
 import { useDevServer } from "../hooks/useDevServer";
 import { useDevServerConfig } from "../hooks/useDevServerConfig";
 import { useDevServerLogs } from "../hooks/useDevServerLogs";

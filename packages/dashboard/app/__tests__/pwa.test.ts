@@ -66,4 +66,51 @@ describe("PWA configuration", () => {
     expect(swSource).toContain('addEventListener("activate"');
     expect(swSource).toMatch(/fusion-cache-v\d+/);
   });
+
+  describe("logo assets", () => {
+    it("logo.svg uses ring + swoosh geometry matching Header.tsx brand mark", () => {
+      const logoSvg = readFileSync(resolve(__dirname, "../public/logo.svg"), "utf8");
+
+      // Must contain the outer ring (circle with r=52, matching Header.tsx header-logo)
+      expect(logoSvg).toContain('cx="64"');
+      expect(logoSvg).toContain('cy="64"');
+      expect(logoSvg).toContain('r="52"');
+      expect(logoSvg).toContain('stroke-width="8"');
+
+      // Must contain the swoosh/comet path shape (d attribute from Header.tsx)
+      // The path starts with M26 101C... and creates the comet-like swoosh
+      expect(logoSvg).toContain('d="M26 101');
+      expect(logoSvg).toContain("fill=\"currentColor\"");
+
+      // Must use SVG namespace
+      expect(logoSvg).toContain("xmlns=");
+    });
+
+    it("logo.svg does not contain retired 4-circle glyph pattern", () => {
+      const logoSvg = readFileSync(resolve(__dirname, "../public/logo.svg"), "utf8");
+
+      // The old 4-circle glyph used circles at (44,44), (84,44), (44,84), (84,84) with r=20
+      // Verify these specific circle positions are NOT present
+      expect(logoSvg).not.toContain("cx=\"44\"");
+      expect(logoSvg).not.toContain("cy=\"44\"");
+      expect(logoSvg).not.toContain("r=\"20\"");
+    });
+
+    it("PWA icon files exist with correct sizes", async () => {
+      const fs = await import("node:fs");
+
+      const icon192Path = resolve(__dirname, "../public/icons/icon-192.png");
+      const icon512Path = resolve(__dirname, "../public/icons/icon-512.png");
+
+      expect(fs.existsSync(icon192Path)).toBe(true);
+      expect(fs.existsSync(icon512Path)).toBe(true);
+
+      // Verify PNG files have reasonable size (not empty)
+      const stats192 = fs.statSync(icon192Path);
+      const stats512 = fs.statSync(icon512Path);
+
+      expect(stats192.size).toBeGreaterThan(100);
+      expect(stats512.size).toBeGreaterThan(100);
+    });
+  });
 });
