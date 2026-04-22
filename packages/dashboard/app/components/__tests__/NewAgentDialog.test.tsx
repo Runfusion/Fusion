@@ -139,6 +139,19 @@ describe("NewAgentDialog", () => {
       });
       expect(screen.getByRole("dialog", { name: "Create new agent" })).toBeTruthy();
     });
+
+    it("shows Identity and Configuration section headers on step 0", async () => {
+      await act(async () => {
+        render(
+          <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+        );
+      });
+
+      expect(screen.getByText("Identity")).toBeInTheDocument();
+      expect(screen.getByText("Configuration")).toBeInTheDocument();
+      expect(screen.getByLabelText(/Name/)).toBeInTheDocument();
+      expect(screen.getByLabelText(/Reports To/)).toBeInTheDocument();
+    });
   });
 
   describe("model dropdown", () => {

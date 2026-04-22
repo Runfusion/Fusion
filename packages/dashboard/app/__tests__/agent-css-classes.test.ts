@@ -289,6 +289,13 @@ describe("Agent CSS classes", () => {
     expect(hasClass(".agent-dialog-loading")).toBe(true);
   });
 
+  it("should give role option buttons a tokenized focus-visible state", () => {
+    expect(stylesContent).toContain(".agent-role-option:focus-visible");
+    const roleFocusBlock = extractRuleBlock(".agent-role-option:focus-visible");
+    expect(roleFocusBlock).toContain("border-color: var(--todo)");
+    expect(roleFocusBlock).toContain("box-shadow: var(--focus-ring-strong)");
+  });
+
   it("should define shared AgentEmptyState component primitives", () => {
     expect(hasClass(".agent-empty-state__icon")).toBe(true);
     expect(hasClass(".agent-empty-state__title")).toBe(true);

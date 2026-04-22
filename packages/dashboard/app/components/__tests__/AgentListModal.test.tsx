@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import fs from "node:fs";
+import path from "node:path";
 import { AgentListModal } from "../AgentListModal";
 import * as apiModule from "../../api";
 import type { Agent, AgentState, AgentCapability } from "../../api";
@@ -17,6 +19,9 @@ const mockFetchAgents = vi.mocked(apiModule.fetchAgents);
 const mockCreateAgent = vi.mocked(apiModule.createAgent);
 const mockUpdateAgentState = vi.mocked(apiModule.updateAgentState);
 const mockDeleteAgent = vi.mocked(apiModule.deleteAgent);
+
+const stylesPath = path.join(__dirname, "../../styles.css");
+const readStyles = () => fs.readFileSync(stylesPath, "utf-8");
 
 describe("AgentListModal", () => {
   const mockOnClose = vi.fn();
@@ -270,6 +275,23 @@ describe("AgentListModal", () => {
         // Active agent with heartbeat should show "Healthy"
         expect(screen.getByText("Healthy")).toBeTruthy();
       });
+    });
+
+    it("renders health badges via data attributes instead of inline color styles", async () => {
+      render(
+        <AgentListModal
+          isOpen={true}
+          onClose={mockOnClose}
+          addToast={mockAddToast}
+        />
+      );
+
+      const healthyBadge = await screen.findByText("Healthy");
+      const badge = healthyBadge.closest(".agent-list-health-badge") as HTMLElement | null;
+
+      expect(badge).toBeTruthy();
+      expect(badge).toHaveAttribute("data-health", "active");
+      expect(badge).not.toHaveAttribute("style");
     });
   });
 
@@ -936,12 +958,12 @@ describe("AgentListModal", () => {
         expect(screen.getByText("Agents")).toBeTruthy();
       });
 
-      // Agent state variables are defined globally in styles.css (:root),
-      // not duplicated in the inline style tag. The inline style only
-      // defines the scoped --text-secondary alias.
-      const styleTag = document.querySelector("style");
-      expect(styleTag).toBeTruthy();
-      expect(styleTag?.textContent).toContain("--text-secondary");
+      const styles = readStyles();
+      expect(styles).toContain('.agent-list-modal .agent-board-badge[data-state="idle"]');
+      expect(styles).toContain('var(--state-idle-bg)');
+      expect(styles).toContain('.agent-list-modal .agent-list-state-badge[data-state="error"]');
+      expect(styles).toContain('.agent-list-modal .agent-list-health-badge[data-health="active"]');
+      expect(styles).toContain('.agent-list-modal .agent-board-health[data-health="error"]');
     });
   });
 
@@ -965,18 +987,10 @@ describe("AgentListModal", () => {
       const createForm = document.querySelector(".agent-create-form");
       expect(createForm).toBeTruthy();
 
-      // The inline style block should use var(--radius-sm) instead of hardcoded 8px
-      const styleElements = document.querySelectorAll("style");
-      let foundCreateFormRule = false;
-      styleElements.forEach(styleEl => {
-        const css = styleEl.textContent ?? "";
-        if (css.includes(".agent-create-form")) {
-          foundCreateFormRule = true;
-          // Must not contain hardcoded border-radius: 8px
-          expect(css).not.toMatch(/\.agent-create-form\s*\{[^}]*border-radius:\s*8px/);
-        }
-      });
-      expect(foundCreateFormRule).toBe(true);
+      const styles = readStyles();
+      expect(styles).toContain('.agent-list-modal .agent-create-form');
+      expect(styles).toContain('border-radius: var(--radius-md)');
+      expect(styles).not.toMatch(/\.agent-list-modal \.agent-create-form\s*\{[^}]*border-radius:\s*8px/);
     });
 
     it("create form input and select use theme tokens", async () => {
@@ -994,35 +1008,18 @@ describe("AgentListModal", () => {
 
       fireEvent.click(screen.getByText("New Agent"));
 
-      const styleElements = document.querySelectorAll("style");
-      let foundInputRule = false;
-      let foundSelectRule = false;
-      styleElements.forEach(styleEl => {
-        const css = styleEl.textContent ?? "";
-        if (css.includes(".agent-create-form .input")) {
-          foundInputRule = true;
-          // Assert theme token usage
-          expect(css).toContain("var(--surface)");
-          expect(css).toContain("var(--text)");
-          expect(css).toContain("var(--border)");
-          expect(css).toContain("var(--radius-sm)");
-          // Focus ring token
-          expect(css).toContain("var(--focus-ring)");
-          // Guard against hardcoded light-only styles
-          expect(css).not.toMatch(/background:\s*#fff/);
-          expect(css).not.toMatch(/background:\s*white/);
-        }
-        if (css.includes(".agent-create-form .select")) {
-          foundSelectRule = true;
-          expect(css).toContain("var(--surface)");
-          expect(css).toContain("var(--text)");
-          expect(css).toContain("var(--border)");
-          expect(css).toContain("var(--radius-sm)");
-          expect(css).toContain("var(--focus-ring)");
-        }
-      });
-      expect(foundInputRule).toBe(true);
-      expect(foundSelectRule).toBe(true);
+      const styles = readStyles();
+      expect(styles).toContain('.agent-list-modal .agent-create-form .input');
+      expect(styles).toContain('.agent-list-modal .agent-create-form .input');
+      expect(styles).toContain('flex: 1;');
+      expect(styles).toContain('min-width: 0;');
+      expect(styles).toContain('var(--surface)');
+      expect(styles).toContain('var(--text)');
+      expect(styles).toContain('var(--border)');
+      expect(styles).toContain('var(--radius-sm)');
+      expect(styles).toContain('var(--focus-ring)');
+      expect(styles).not.toMatch(/background:\s*#fff/);
+      expect(styles).not.toMatch(/background:\s*white/);
     });
 
     it("renders filter with styled container matching AgentsView", async () => {
@@ -1061,20 +1058,11 @@ describe("AgentListModal", () => {
         expect(screen.getByText("Agents")).toBeTruthy();
       });
 
-      const styleElements = document.querySelectorAll("style");
-      let foundFilterRule = false;
-      styleElements.forEach(styleEl => {
-        const css = styleEl.textContent ?? "";
-        if (css.includes(".agent-state-filter {")) {
-          foundFilterRule = true;
-          // Should use var(--radius-sm) token
-          expect(css).toContain("border-radius: var(--radius-sm)");
-          // Should have hover and focus-within states
-          expect(css).toContain(".agent-state-filter:hover");
-          expect(css).toContain(".agent-state-filter:focus-within");
-        }
-      });
-      expect(foundFilterRule).toBe(true);
+      const styles = readStyles();
+      expect(styles).toContain('.agent-state-filter {');
+      expect(styles).toContain('border-radius: var(--radius-sm)');
+      expect(styles).toContain('.agent-state-filter:hover');
+      expect(styles).toContain('.agent-state-filter:focus-within');
     });
   });
 
@@ -1397,22 +1385,10 @@ describe("AgentListModal", () => {
         expect(screen.getByText("Agents")).toBeTruthy();
       });
 
-      const styleElements = document.querySelectorAll("style");
-      let foundCardHover = false;
-      let foundBoardCardHover = false;
-      styleElements.forEach(styleEl => {
-        const css = styleEl.textContent ?? "";
-        if (css.includes(".agent-card:hover")) {
-          foundCardHover = true;
-          // Should transition background
-          expect(css).toContain("transition:");
-        }
-        if (css.includes(".agent-board-card:hover")) {
-          foundBoardCardHover = true;
-        }
-      });
-      expect(foundCardHover).toBe(true);
-      expect(foundBoardCardHover).toBe(true);
+      const styles = readStyles();
+      expect(styles).toContain('.agent-list-modal .agent-card:hover');
+      expect(styles).toContain('.agent-list-modal .agent-board-card:hover');
+      expect(styles).toContain('transition: background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);');
     });
 
     it("CSS includes responsive media queries for mobile", async () => {
@@ -1428,22 +1404,14 @@ describe("AgentListModal", () => {
         expect(screen.getByText("Agents")).toBeTruthy();
       });
 
-      const styleElements = document.querySelectorAll("style");
-      const allCss = Array.from(styleElements).map(el => el.textContent ?? "").join("");
+      const styles = readStyles();
 
-      // Should have responsive breakpoints
-      expect(allCss).toContain("@media (max-width: 768px)");
-      expect(allCss).toContain("@media (max-width: 640px)");
-
-      // 768px: board grid narrows
-      expect(allCss).toContain("grid-template-columns: repeat(auto-fill, minmax(160px, 1fr))");
-
-      // 640px: controls and create form stack
-      expect(allCss).toContain(".agent-controls");
-      expect(allCss).toContain(".agent-create-form");
-
-      // 640px: board goes single-column
-      expect(allCss).toContain("grid-template-columns: 1fr");
+      expect(styles).toContain("@media (max-width: 768px)");
+      expect(styles).toContain("@media (max-width: 640px)");
+      expect(styles).toContain("grid-template-columns: repeat(auto-fill, minmax(calc(var(--space-xl) * 6 + var(--space-lg)), 1fr))");
+      expect(styles).toContain(".agent-list-modal .agent-controls");
+      expect(styles).toContain(".agent-list-modal .agent-create-form");
+      expect(styles).toContain("grid-template-columns: 1fr");
     });
 
     it("no regressions in open/close behavior after styling changes", async () => {

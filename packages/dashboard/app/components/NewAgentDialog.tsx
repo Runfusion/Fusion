@@ -266,98 +266,115 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
                   ))}
                 </div>
               </div>
-              <div className="agent-dialog-field">
-                <label htmlFor="agent-name">Name {!selectedPresetId && <span className="agent-dialog-required">*</span>}</label>
-                <input
-                  id="agent-name"
-                  type="text"
-                  className="input"
-                  placeholder="e.g. Frontend Reviewer"
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                />
-              </div>
-              <div className="agent-dialog-field">
-                <label htmlFor="agent-title">Title <span className="agent-dialog-optional">(optional)</span></label>
-                <input
-                  id="agent-title"
-                  type="text"
-                  className="input"
-                  placeholder="e.g. Senior Code Reviewer"
-                  value={title}
-                  onChange={e => setTitle(e.target.value)}
-                />
-              </div>
-              <div className="agent-dialog-field">
-                <label>Role</label>
-                <div className="agent-role-grid">
-                  {AGENT_ROLES.map(r => (
-                    <button
-                      key={r.value}
-                      type="button"
-                      className={`agent-role-option${role === r.value ? " selected" : ""}`}
-                      onClick={() => setRole(r.value)}
-                    >
-                      <span className="agent-role-option-icon">{r.icon}</span>
-                      <span className="agent-role-option-label">{r.label}</span>
-                    </button>
-                  ))}
+              <div className="agent-dialog-section">
+                <div className="agent-dialog-section-header">Identity</div>
+                <div className="agent-dialog-field">
+                  <label htmlFor="agent-name">Name {!selectedPresetId && <span className="agent-dialog-required">*</span>}</label>
+                  <input
+                    id="agent-name"
+                    type="text"
+                    className="input"
+                    placeholder="e.g. Frontend Reviewer"
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                  />
+                </div>
+                <div className="agent-dialog-field">
+                  <label htmlFor="agent-title">Title <span className="agent-dialog-optional">(optional)</span></label>
+                  <input
+                    id="agent-title"
+                    type="text"
+                    className="input"
+                    placeholder="e.g. Senior Code Reviewer"
+                    value={title}
+                    onChange={e => setTitle(e.target.value)}
+                  />
+                </div>
+                <div className="agent-dialog-field">
+                  <label htmlFor="agent-icon">Icon <span className="agent-dialog-optional">(optional)</span></label>
+                  <input
+                    id="agent-icon"
+                    type="text"
+                    className="input"
+                    placeholder="e.g. 🤖"
+                    value={icon}
+                    onChange={e => setIcon(e.target.value)}
+                  />
+                </div>
+                <div className="agent-dialog-field">
+                  <label>Role</label>
+                  <div className="agent-role-grid">
+                    {AGENT_ROLES.map(r => (
+                      <button
+                        key={r.value}
+                        type="button"
+                        className={`agent-role-option${role === r.value ? " selected" : ""}`}
+                        onClick={() => setRole(r.value)}
+                      >
+                        <span className="agent-role-option-icon">{r.icon}</span>
+                        <span className="agent-role-option-label">{r.label}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
-              <div className="agent-dialog-field">
-                <label htmlFor="agent-reports-to">Reports To <span className="agent-dialog-optional">(optional agent ID)</span></label>
-                <input
-                  id="agent-reports-to"
-                  type="text"
-                  className="input"
-                  placeholder="e.g. agent-1234abcd"
-                  value={reportsTo}
-                  onChange={e => setReportsTo(e.target.value)}
-                />
-              </div>
-              <div className="agent-dialog-field">
-                <label htmlFor="agent-soul">Soul <span className="agent-dialog-optional">(optional)</span></label>
-                <textarea
-                  id="agent-soul"
-                  className="input"
-                  rows={2}
-                  placeholder="Describe the agent's personality and communication style..."
-                  value={soul}
-                  onChange={e => setSoul(e.target.value)}
-                />
-              </div>
-              <div className="agent-dialog-field">
-                <label htmlFor="agent-memory">Agent Memory <span className="agent-dialog-optional">(optional)</span></label>
-                <textarea
-                  id="agent-memory"
-                  className="input"
-                  rows={2}
-                  placeholder="Private to this agent — durable preferences, operating habits, and context it should carry across tasks..."
-                  value={memory}
-                  onChange={e => setMemory(e.target.value)}
-                />
-              </div>
-              <div className="agent-dialog-field">
-                <label htmlFor="agent-instructions-path">Instructions Path <span className="agent-dialog-optional">(optional)</span></label>
-                <input
-                  id="agent-instructions-path"
-                  type="text"
-                  className="input"
-                  placeholder="e.g. .fusion/agents/reviewer.md"
-                  value={instructionsPath}
-                  onChange={e => setInstructionsPath(e.target.value)}
-                />
-              </div>
-              <div className="agent-dialog-field">
-                <label htmlFor="agent-instructions-text">Inline Instructions <span className="agent-dialog-optional">(optional)</span></label>
-                <textarea
-                  id="agent-instructions-text"
-                  className="input"
-                  rows={4}
-                  placeholder="Add custom behavior instructions..."
-                  value={instructionsText}
-                  onChange={e => setInstructionsText(e.target.value)}
-                />
+              <div className="agent-dialog-section">
+                <div className="agent-dialog-section-header">Configuration</div>
+                <div className="agent-dialog-field">
+                  <label htmlFor="agent-reports-to">Reports To <span className="agent-dialog-optional">(optional agent ID)</span></label>
+                  <input
+                    id="agent-reports-to"
+                    type="text"
+                    className="input"
+                    placeholder="e.g. agent-1234abcd"
+                    value={reportsTo}
+                    onChange={e => setReportsTo(e.target.value)}
+                  />
+                </div>
+                <div className="agent-dialog-field">
+                  <label htmlFor="agent-soul">Soul <span className="agent-dialog-optional">(optional)</span></label>
+                  <textarea
+                    id="agent-soul"
+                    className="input"
+                    rows={2}
+                    placeholder="Describe the agent's personality and communication style..."
+                    value={soul}
+                    onChange={e => setSoul(e.target.value)}
+                  />
+                </div>
+                <div className="agent-dialog-field">
+                  <label htmlFor="agent-memory">Agent Memory <span className="agent-dialog-optional">(optional)</span></label>
+                  <textarea
+                    id="agent-memory"
+                    className="input"
+                    rows={2}
+                    placeholder="Private to this agent — durable preferences, operating habits, and context it should carry across tasks..."
+                    value={memory}
+                    onChange={e => setMemory(e.target.value)}
+                  />
+                </div>
+                <div className="agent-dialog-field">
+                  <label htmlFor="agent-instructions-path">Instructions Path <span className="agent-dialog-optional">(optional)</span></label>
+                  <input
+                    id="agent-instructions-path"
+                    type="text"
+                    className="input"
+                    placeholder="e.g. .fusion/agents/reviewer.md"
+                    value={instructionsPath}
+                    onChange={e => setInstructionsPath(e.target.value)}
+                  />
+                </div>
+                <div className="agent-dialog-field">
+                  <label htmlFor="agent-instructions-text">Inline Instructions <span className="agent-dialog-optional">(optional)</span></label>
+                  <textarea
+                    id="agent-instructions-text"
+                    className="input"
+                    rows={4}
+                    placeholder="Add custom behavior instructions..."
+                    value={instructionsText}
+                    onChange={e => setInstructionsText(e.target.value)}
+                  />
+                </div>
               </div>
               {/* AI-assisted generation */}
               <div className="agent-dialog-ai-generate">

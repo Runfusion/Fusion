@@ -168,22 +168,14 @@ export function AgentGenerationModal({
       >
         {/* Header */}
         <div className="agent-dialog-header">
-          <span style={{ fontWeight: 600, fontSize: 15 }}>
-            <span style={{ marginRight: 8 }}>✨</span>
+          <span className="agent-dialog-header-title">
+            <span className="agent-dialog-header-sparkle">✨</span>
             Generate Agent
           </span>
           <button
             className="modal-close"
             onClick={handleCancel}
             aria-label="Close"
-            style={{
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              color: "var(--text-muted)",
-              fontSize: 18,
-              lineHeight: 1,
-            }}
           >
             &times;
           </button>
@@ -191,31 +183,11 @@ export function AgentGenerationModal({
 
         {/* Body */}
         <div className="agent-dialog-body">
-          {error && (
-            <div
-              style={{
-                color: "var(--state-error-text, #f85149)",
-                fontSize: 13,
-                padding: "8px 12px",
-                background: "var(--state-error-bg, rgba(248,81,73,0.1))",
-                borderRadius: 6,
-                marginBottom: 12,
-              }}
-            >
-              {error}
-            </div>
-          )}
+          {error && <div className="agent-dialog-error-banner">{error}</div>}
 
           {view.type === "input" && (
             <div>
-              <p
-                style={{
-                  color: "var(--text-muted)",
-                  fontSize: 13,
-                  marginTop: 0,
-                  marginBottom: 12,
-                }}
-              >
+              <p className="agent-dialog-info">
                 Describe your agent&apos;s role and the AI will generate a complete
                 specification including system prompt, suggested configuration, and
                 more.
@@ -225,7 +197,7 @@ export function AgentGenerationModal({
                 <textarea
                   ref={textareaRef}
                   id="agent-role-description"
-                  className="input"
+                  className="input agent-dialog-textarea"
                   rows={4}
                   placeholder='e.g. "Senior frontend code reviewer who specializes in React accessibility"'
                   value={roleDescription}
@@ -237,22 +209,11 @@ export function AgentGenerationModal({
                     }
                   }}
                   maxLength={MAX_ROLE_LENGTH}
-                  style={{
-                    width: "100%",
-                    boxSizing: "border-box",
-                    resize: "vertical",
-                  }}
                   aria-describedby="role-description-hint"
                 />
                 <div
                   id="role-description-hint"
-                  style={{
-                    fontSize: 11,
-                    color: "var(--text-muted)",
-                    marginTop: 4,
-                    display: "flex",
-                    justifyContent: "space-between",
-                  }}
+                  className="agent-dialog-hint"
                 >
                   <span>Describe what your agent should do</span>
                   <span>
@@ -264,27 +225,9 @@ export function AgentGenerationModal({
           )}
 
           {view.type === "loading" && (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                padding: "32px 16px",
-                gap: 12,
-              }}
-            >
-              <div
-                className="spin"
-                style={{
-                  width: 32,
-                  height: 32,
-                  border: "3px solid var(--border)",
-                  borderTopColor: "var(--text-accent, #58a6ff)",
-                  borderRadius: "50%",
-                  animation: "spin 1s linear infinite",
-                }}
-              />
-              <p style={{ color: "var(--text-muted)", fontSize: 13, margin: 0 }}>
+            <div className="agent-dialog-loading-center">
+              <div className="agent-dialog-spinner spin" />
+              <p className="agent-dialog-loading-text">
                 Generating agent specification...
               </p>
             </div>
@@ -292,47 +235,37 @@ export function AgentGenerationModal({
 
           {view.type === "preview" && (
             <div>
-              <div className="agent-dialog-summary" style={{ marginBottom: 12 }}>
+              <div className="agent-dialog-summary agent-dialog-summary--spaced">
                 <div className="agent-dialog-summary-row">
-                  <span
-                    style={{ color: "var(--text-muted)", fontSize: 13, width: 90 }}
-                  >
+                  <span className="agent-dialog-summary-row-label agent-dialog-summary-row-label--fixed">
                     Title
                   </span>
-                  <span style={{ fontWeight: 600 }}>
+                  <span className="agent-dialog-summary-row-value">
                     {view.spec.icon} {view.spec.title}
                   </span>
                 </div>
                 <div className="agent-dialog-summary-row">
-                  <span
-                    style={{ color: "var(--text-muted)", fontSize: 13, width: 90 }}
-                  >
+                  <span className="agent-dialog-summary-row-label agent-dialog-summary-row-label--fixed">
                     Role
                   </span>
                   <span>{view.spec.role}</span>
                 </div>
                 <div className="agent-dialog-summary-row">
-                  <span
-                    style={{ color: "var(--text-muted)", fontSize: 13, width: 90 }}
-                  >
+                  <span className="agent-dialog-summary-row-label agent-dialog-summary-row-label--fixed">
                     Description
                   </span>
-                  <span style={{ fontSize: 13 }}>{view.spec.description}</span>
+                  <span className="agent-dialog-summary-row-value agent-dialog-summary-row-value--body">{view.spec.description}</span>
                 </div>
                 <div className="agent-dialog-summary-row">
-                  <span
-                    style={{ color: "var(--text-muted)", fontSize: 13, width: 90 }}
-                  >
+                  <span className="agent-dialog-summary-row-label agent-dialog-summary-row-label--fixed">
                     Thinking
                   </span>
-                  <span style={{ textTransform: "capitalize" }}>
+                  <span className="agent-dialog-summary-row-value agent-dialog-summary-row-value--capitalize">
                     {view.spec.thinkingLevel}
                   </span>
                 </div>
                 <div className="agent-dialog-summary-row">
-                  <span
-                    style={{ color: "var(--text-muted)", fontSize: 13, width: 90 }}
-                  >
+                  <span className="agent-dialog-summary-row-label agent-dialog-summary-row-label--fixed">
                     Max Turns
                   </span>
                   <span>{view.spec.maxTurns}</span>
@@ -345,51 +278,19 @@ export function AgentGenerationModal({
                   System Prompt
                   <button
                     type="button"
-                    style={{
-                      background: "none",
-                      border: "none",
-                      color: "var(--text-accent, #58a6ff)",
-                      cursor: "pointer",
-                      fontSize: 12,
-                      marginLeft: 8,
-                      padding: 0,
-                    }}
+                    className="agent-dialog-expand-btn"
                     onClick={() => setSystemPromptExpanded(!systemPromptExpanded)}
                   >
                     {systemPromptExpanded ? "Collapse" : "Expand"}
                   </button>
                 </label>
                 <div
-                  style={{
-                    background: "var(--bg-secondary, #161b22)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 6,
-                    padding: 12,
-                    fontSize: 12,
-                    fontFamily: "monospace",
-                    maxHeight: systemPromptExpanded ? "none" : 150,
-                    overflow: systemPromptExpanded ? "auto" : "hidden",
-                    position: "relative",
-                    lineHeight: 1.5,
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                  }}
+                  className={`agent-generation-prompt-box${systemPromptExpanded ? "" : " agent-generation-prompt-box--collapsed"}`}
                 >
                   {view.spec.systemPrompt}
                   {!systemPromptExpanded &&
                     view.spec.systemPrompt.length > 500 && (
-                      <div
-                        style={{
-                          position: "absolute",
-                          bottom: 0,
-                          left: 0,
-                          right: 0,
-                          height: 40,
-                          background:
-                            "linear-gradient(transparent, var(--bg-secondary, #161b22))",
-                          pointerEvents: "none",
-                        }}
-                      />
+                      <div className="agent-generation-prompt-fade" />
                     )}
                 </div>
               </div>

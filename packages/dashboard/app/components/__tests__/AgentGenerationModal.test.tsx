@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import fs from "node:fs";
+import path from "node:path";
 import { AgentGenerationModal } from "../AgentGenerationModal";
 import * as api from "../../api";
 import type { AgentGenerationSpec } from "../../api";
@@ -14,6 +16,9 @@ vi.mock("../../api", () => ({
 const mockStartAgentGeneration = vi.mocked(api.startAgentGeneration);
 const mockGenerateAgentSpec = vi.mocked(api.generateAgentSpec);
 const mockCancelAgentGeneration = vi.mocked(api.cancelAgentGeneration);
+
+const stylesPath = path.join(__dirname, "../../styles.css");
+const readStyles = () => fs.readFileSync(stylesPath, "utf-8");
 
 const generatedSpec: AgentGenerationSpec = {
   title: "Accessibility Reviewer",
@@ -75,6 +80,17 @@ describe("AgentGenerationModal", () => {
 
     expect(screen.getByText("Generate Agent")).toBeInTheDocument();
     expect(screen.getByLabelText("Role Description")).toBeInTheDocument();
+  });
+
+  it("uses token-based agent dialog styles in styles.css", () => {
+    const styles = readStyles();
+
+    expect(styles).toContain('.agent-dialog-overlay');
+    expect(styles).toContain('background: color-mix(in srgb, var(--bg) 60%, transparent);');
+    expect(styles).toContain('.btn--ai-generate');
+    expect(styles).toContain('background: var(--cta-bg, var(--todo));');
+    expect(styles).toContain('.agent-dialog-field label');
+    expect(styles).toContain('margin-bottom: calc(var(--space-sm) - var(--space-xs) * 0.5);');
   });
 
   it("focuses role description textarea on open", () => {

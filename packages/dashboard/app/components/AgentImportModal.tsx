@@ -488,7 +488,7 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
                         <span className="agent-import-browse-selected-name">{selectedCompany.name}</span>
                         <button
                           type="button"
-                          className="btn btn--small"
+                          className="btn btn-sm"
                           onClick={() => setSelectedCompany(null)}
                         >
                           Change
@@ -691,19 +691,16 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
               <div className="agent-import-result-stats">
                 {importResult.created.length > 0 && (
                   <div className="agent-import-result-stat agent-import-result-stat--success">
-                    <CheckCircle size={14} />
                     <span>{importResult.created.length} created</span>
                   </div>
                 )}
                 {importResult.skipped.length > 0 && (
                   <div className="agent-import-result-stat agent-import-result-stat--skipped">
-                    <span>○</span>
                     <span>{importResult.skipped.length} skipped (already exist)</span>
                   </div>
                 )}
                 {importResult.errors.length > 0 && (
                   <div className="agent-import-result-stat agent-import-result-stat--error">
-                    <AlertTriangle size={14} />
                     <span>{importResult.errors.length} error{importResult.errors.length !== 1 ? "s" : ""}</span>
                   </div>
                 )}
@@ -738,25 +735,21 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
                   <div className="agent-import-result-stats">
                     {importResult.skills.imported.length > 0 && (
                       <div className="agent-import-result-stat agent-import-result-stat--success">
-                        <CheckCircle size={14} />
                         <span>{importResult.skills.imported.length} skill{importResult.skills.imported.length !== 1 ? "s" : ""} imported</span>
                       </div>
                     )}
                     {importResult.skills.skipped.length > 0 && (
                       <div className="agent-import-result-stat agent-import-result-stat--skipped">
-                        <span>○</span>
                         <span>{importResult.skills.skipped.length} skill{importResult.skills.skipped.length !== 1 ? "s" : ""} skipped (already exist)</span>
                       </div>
                     )}
                     {importResult.skills.errors.length > 0 && (
                       <div className="agent-import-result-stat agent-import-result-stat--error">
-                        <AlertTriangle size={14} />
                         <span>{importResult.skills.errors.length} skill{importResult.skills.errors.length !== 1 ? "s" : ""} error{importResult.skills.errors.length !== 1 ? "s" : ""}</span>
                       </div>
                     )}
                     {importResult.skills.imported.length === 0 && importResult.skills.skipped.length === 0 && importResult.skills.errors.length === 0 && (
                       <div className="agent-import-result-stat agent-import-result-stat--skipped">
-                        <span>○</span>
                         <span>No skills in package</span>
                       </div>
                     )}

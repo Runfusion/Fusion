@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { X, Plus, Play, Pause, Square, Activity, Heart, Trash2, RefreshCw, Bot, LayoutGrid, List, Filter } from "lucide-react";
+import { Plus, Play, Pause, Square, Trash2, RefreshCw, Bot, LayoutGrid, List, Filter } from "lucide-react";
 import type { Agent, AgentCapability, AgentState } from "../api";
 import { fetchAgents, createAgent, updateAgent, updateAgentState, deleteAgent } from "../api";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
@@ -22,15 +22,6 @@ const AGENT_ROLES: { value: AgentCapability; label: string; icon: string }[] = [
   { value: "engineer", label: "Engineer", icon: "⎔" },
   { value: "custom", label: "Custom", icon: "✦" },
 ];
-
-const STATE_COLORS: Record<AgentState, { bg: string; text: string; border: string }> = {
-  idle: { bg: "var(--state-idle-bg)", text: "var(--state-idle-text)", border: "var(--state-idle-border)" },
-  active: { bg: "var(--state-active-bg)", text: "var(--state-active-text)", border: "var(--state-active-border)" },
-  running: { bg: "var(--state-active-bg)", text: "var(--state-active-text)", border: "var(--state-active-border)" },
-  paused: { bg: "var(--state-paused-bg)", text: "var(--state-paused-text)", border: "var(--state-paused-border)" },
-  terminated: { bg: "var(--state-error-bg)", text: "var(--state-error-text)", border: "var(--state-error-border)" },
-  error: { bg: "var(--state-error-bg)", text: "var(--state-error-text)", border: "var(--state-error-border)" },
-};
 
 export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentListModalProps) {
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -173,11 +164,18 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
     return getAgentHealthStatus(agent);
   };
 
+  const getHealthTone = (health: AgentHealthStatus): "active" | "paused" | "error" | "muted" => {
+    if (health.color === "var(--state-active-text)") return "active";
+    if (health.color === "var(--state-paused-text)") return "paused";
+    if (health.color === "var(--state-error-text)") return "error";
+    return "muted";
+  };
+
   if (!isOpen) return null;
 
   return (
     <div className="modal-overlay open" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true">
-      <div className="modal modal--wide">
+      <div className="modal modal--wide agent-list-modal">
         <div className="modal-header">
           <h2 className="modal-title">
             <Bot size={20} />
@@ -289,22 +287,18 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
               // Board view: compact grid layout
               displayAgents.map(agent => {
                 const health = getHealthStatus(agent);
-                const stateStyle = STATE_COLORS[agent.state];
+                const healthTone = getHealthTone(health);
                 return (
-                  <div key={agent.id} className="agent-board-card" style={{ borderColor: stateStyle.border }}>
+                  <div key={agent.id} className="agent-board-card" data-state={agent.state}>
                     <div className="agent-board-header">
                       <span className="agent-board-icon">{getRoleIcon(agent.role)}</span>
                       <span
                         className="agent-board-badge"
-                        style={{
-                          background: stateStyle.bg,
-                          color: stateStyle.text,
-                          border: `1px solid ${stateStyle.border}`,
-                        }}
+                        data-state={agent.state}
                       >
                         {agent.state}
                       </span>
-                      <span className="agent-board-health" style={{ color: health.color }} title={health.label}>
+                      <span className="agent-board-health" data-health={healthTone} title={health.label}>
                         {health.icon}
                       </span>
                     </div>
@@ -420,9 +414,9 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
               // List view: detailed card layout
               displayAgents.map(agent => {
                 const health = getHealthStatus(agent);
-                const stateStyle = STATE_COLORS[agent.state];
+                const healthTone = getHealthTone(health);
                 return (
-                  <div key={agent.id} className="agent-card" style={{ borderLeftColor: stateStyle.border }}>
+                  <div key={agent.id} className="agent-card" data-state={agent.state}>
                     <div className="agent-card-header">
                       <div className="agent-info">
                         {editingRoleForAgent === agent.id ? (
@@ -464,16 +458,12 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                       </div>
                       <div className="agent-badges">
                         <span
-                          className="badge"
-                          style={{
-                            background: stateStyle.bg,
-                            color: stateStyle.text,
-                            border: `1px solid ${stateStyle.border}`,
-                          }}
+                          className="badge agent-list-state-badge"
+                          data-state={agent.state}
                         >
                           {agent.state}
                         </span>
-                        <span className="badge" style={{ color: health.color }} title={health.label}>
+                        <span className="badge agent-list-health-badge" data-health={healthTone} title={health.label}>
                           {health.icon}{!health.stateDerived && ` ${health.label}`}
                         </span>
                         <span className="badge text-secondary">
@@ -614,479 +604,6 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
           </div>
         </div>
       </div>
-
-      <style>{`
-        :host, .modal--wide {
-          /* Scoped alias — maps to the global --text-muted defined in styles.css */
-          --text-secondary: var(--text-muted);
-        }
-
-        /* === Modal shell === */
-        .modal--wide {
-          width: 90vw;
-          max-width: 900px;
-          max-height: 80vh;
-        }
-
-        .modal-title {
-          display: flex;
-          align-items: center;
-          gap: var(--space-sm, 8px);
-          font-size: 15px;
-          font-weight: 600;
-          letter-spacing: 0.3px;
-          margin: 0;
-        }
-
-        /* === Content area === */
-        .agent-modal-content {
-          padding: var(--space-xl, 24px) 20px;
-          overflow-y: auto;
-        }
-
-        /* === Controls bar === */
-        .agent-controls {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: var(--space-md, 12px);
-          margin-bottom: var(--space-lg, 16px);
-        }
-
-        .agent-state-filter {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          padding: 6px 10px;
-          background: var(--bg);
-          border: 1px solid var(--border);
-          border-radius: var(--radius-sm);
-          color: var(--text-muted);
-          transition: border-color var(--transition-fast), color var(--transition-fast);
-        }
-
-        .agent-state-filter:hover {
-          border-color: var(--text-dim);
-          color: var(--text);
-        }
-
-        .agent-state-filter:focus-within {
-          border-color: var(--todo);
-          box-shadow: var(--focus-ring);
-        }
-
-        .agent-state-filter-select {
-          appearance: none;
-          background: transparent;
-          border: none;
-          color: var(--text);
-          font-size: 13px;
-          font-family: var(--font-primary);
-          cursor: pointer;
-          outline: none;
-          padding-right: 4px;
-        }
-
-        /* === Create form === */
-        .agent-create-form {
-          display: flex;
-          gap: var(--space-md, 12px);
-          align-items: center;
-          margin-bottom: var(--space-lg, 16px);
-          padding: var(--space-lg, 16px);
-          background: var(--bg-secondary);
-          border: 1px solid var(--border);
-          border-radius: var(--radius-md, 8px);
-        }
-
-        .agent-create-form .input {
-          flex: 1;
-          min-width: 0;
-          background: var(--surface);
-          color: var(--text);
-          border: 1px solid var(--border);
-          border-radius: var(--radius-sm);
-          padding: 6px 10px;
-          font-size: 13px;
-          font-family: var(--font-primary);
-          outline: none;
-          transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-        }
-
-        .agent-create-form .input:focus {
-          border-color: var(--todo);
-          box-shadow: var(--focus-ring);
-        }
-
-        .agent-create-form .input::placeholder {
-          color: var(--text-dim);
-        }
-
-        .agent-create-form .select {
-          background: var(--surface);
-          color: var(--text);
-          border: 1px solid var(--border);
-          border-radius: var(--radius-sm);
-          padding: 6px 10px;
-          font-size: 13px;
-          font-family: var(--font-primary);
-          cursor: pointer;
-          outline: none;
-          transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-        }
-
-        .agent-create-form .select:focus {
-          border-color: var(--todo);
-          box-shadow: var(--focus-ring);
-        }
-
-        /* === Agent list (default view) === */
-        .agent-list {
-          display: flex;
-          flex-direction: column;
-          gap: var(--space-md, 12px);
-        }
-
-        /* === Agent board (grid view) === */
-        .agent-board {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-          gap: var(--space-lg, 16px);
-        }
-
-        /* === Board cards === */
-        .agent-board-card {
-          display: flex;
-          flex-direction: column;
-          gap: var(--space-sm, 8px);
-          padding: var(--space-lg, 16px);
-          background: var(--surface, var(--bg-primary));
-          border: 1px solid var(--border);
-          border-top-width: 3px;
-          border-radius: var(--radius-md, 8px);
-          transition: background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
-        }
-
-        .agent-board-card:hover {
-          background: var(--card-hover);
-          border-color: var(--text-muted);
-          box-shadow: var(--shadow-sm);
-        }
-
-        .agent-board-card:focus-within {
-          box-shadow: var(--focus-ring);
-        }
-
-        .agent-board-header {
-          display: flex;
-          align-items: center;
-          gap: var(--space-sm, 8px);
-        }
-
-        .agent-board-icon {
-          font-size: 20px;
-          line-height: 1;
-        }
-
-        .agent-board-badge {
-          font-size: 10px;
-          font-weight: 600;
-          text-transform: uppercase;
-          letter-spacing: 0.5px;
-          padding: 2px 6px;
-          border-radius: var(--radius-sm);
-          margin-left: auto;
-        }
-
-        .agent-board-health {
-          display: flex;
-          align-items: center;
-        }
-
-        .agent-board-name {
-          font-weight: 600;
-          font-size: 14px;
-          line-height: 1.3;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-
-        .agent-board-id {
-          font-size: 11px;
-          font-family: var(--font-mono);
-          color: var(--text-secondary);
-          line-height: 1.3;
-        }
-
-        .agent-board-actions {
-          display: flex;
-          gap: 6px;
-          margin-top: var(--space-xs, 4px);
-          padding-top: var(--space-sm, 8px);
-          border-top: 1px solid var(--border);
-        }
-
-        .agent-board-actions .btn {
-          flex: 1;
-          justify-content: center;
-        }
-
-        /* === Empty state === */
-        .agent-empty {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: var(--space-sm, 8px);
-          padding: 48px 20px;
-          color: var(--text-secondary);
-          text-align: center;
-        }
-
-        .agent-empty p {
-          margin: 0;
-        }
-
-        /* === List cards === */
-        .agent-card {
-          border: 1px solid var(--border);
-          border-left-width: 4px;
-          border-radius: var(--radius-md, 8px);
-          padding: var(--space-lg, 16px);
-          background: var(--surface, var(--bg-primary));
-          transition: background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
-        }
-
-        .agent-card:hover {
-          background: var(--card-hover);
-        }
-
-        .agent-card:focus-within {
-          box-shadow: var(--focus-ring);
-        }
-
-        .agent-card-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          gap: var(--space-md, 12px);
-          margin-bottom: var(--space-md, 12px);
-        }
-
-        .agent-info {
-          display: flex;
-          align-items: center;
-          gap: var(--space-md, 12px);
-          min-width: 0;
-        }
-
-        .agent-icon {
-          font-size: 24px;
-          flex-shrink: 0;
-        }
-
-        .agent-icon--clickable {
-          cursor: pointer;
-          transition: opacity 0.2s ease, transform 0.2s ease;
-          user-select: none;
-        }
-
-        .agent-icon--clickable:hover {
-          opacity: 0.7;
-          transform: scale(1.1);
-        }
-
-        .agent-icon--clickable:focus {
-          outline: 2px solid var(--accent);
-          outline-offset: 2px;
-          border-radius: var(--radius-sm);
-        }
-
-        .agent-role-select {
-          font-size: 14px;
-          padding: 4px 8px;
-          min-width: 120px;
-          width: auto;
-          cursor: pointer;
-        }
-
-        .agent-meta {
-          display: flex;
-          flex-direction: column;
-          gap: 2px;
-          min-width: 0;
-        }
-
-        .agent-name {
-          font-weight: 600;
-          font-size: 15px;
-          line-height: 1.3;
-        }
-
-        .agent-id {
-          font-size: 12px;
-          font-family: var(--font-mono);
-          line-height: 1.3;
-        }
-
-        .agent-badges {
-          display: flex;
-          gap: var(--space-sm, 8px);
-          flex-wrap: wrap;
-          align-items: center;
-          flex-shrink: 0;
-        }
-
-        .agent-badges .badge {
-          white-space: nowrap;
-        }
-
-        .agent-card-body {
-          display: flex;
-          flex-direction: column;
-          gap: 4px;
-          margin-bottom: var(--space-md, 12px);
-          padding: var(--space-sm, 8px);
-          background: var(--bg-secondary);
-          border-radius: var(--radius-sm);
-          font-size: 13px;
-          line-height: 1.4;
-        }
-
-        .agent-task,
-        .agent-heartbeat {
-          display: flex;
-          gap: var(--space-sm, 8px);
-          align-items: baseline;
-        }
-
-        .agent-card-actions {
-          display: flex;
-          gap: var(--space-sm, 8px);
-          flex-wrap: wrap;
-        }
-
-        .agent-card-actions .btn {
-          transition: transform var(--transition-fast);
-        }
-
-        .agent-card-actions .btn:active {
-          transform: scale(0.97);
-        }
-
-        /* === Utility === */
-        .spin {
-          animation: spin 1s linear infinite;
-        }
-
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-
-        .text-secondary {
-          color: var(--text-secondary);
-        }
-
-        /* === Responsive: tablet (<=768px) === */
-        @media (max-width: 768px) {
-          .modal--wide {
-            width: 100%;
-            max-width: 100%;
-            max-height: 100vh;
-            max-height: 100dvh;
-            border-radius: 0;
-          }
-
-          .agent-modal-content {
-            padding: var(--space-lg, 16px) var(--space-lg, 16px);
-            padding-bottom: max(var(--space-lg, 16px), env(safe-area-inset-bottom, 0px));
-          }
-
-          .agent-state-filter-select {
-            font-size: 16px;
-            min-height: 44px;
-          }
-
-          .agent-board-actions .btn {
-            min-height: 44px;
-            min-width: 44px;
-          }
-
-          .view-toggle-btn {
-            min-height: 44px;
-            min-width: 44px;
-          }
-
-          /* Header actions wrap safely */
-          .modal-header .modal-actions {
-            flex-wrap: wrap;
-            gap: var(--space-xs, 4px);
-          }
-
-          /* Board goes to 2-column max */
-          .agent-board {
-            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-            gap: var(--space-md, 12px);
-          }
-
-          /* List cards stack badges under info */
-          .agent-card-header {
-            flex-direction: column;
-            gap: var(--space-sm, 8px);
-          }
-
-          .agent-badges {
-            flex-shrink: initial;
-          }
-
-          /* Reduce card body padding on mobile */
-          .agent-empty {
-            padding: var(--space-xl, 24px) var(--space-lg, 16px);
-          }
-        }
-
-        /* === Responsive: narrow (<=640px) === */
-        @media (max-width: 640px) {
-          /* Controls stack vertically */
-          .agent-controls {
-            flex-direction: column;
-            align-items: stretch;
-          }
-
-          /* Create form stacks fields */
-          .agent-create-form {
-            flex-direction: column;
-            align-items: stretch;
-          }
-
-          .agent-create-form .input,
-          .agent-create-form .select {
-            width: 100%;
-            font-size: 16px;
-            min-height: 44px;
-          }
-
-          .agent-create-form .btn {
-            min-height: 44px;
-          }
-
-          /* Board goes to single-column */
-          .agent-board {
-            grid-template-columns: 1fr;
-          }
-
-          /* Card actions wrap without overflow */
-          .agent-card-actions {
-            flex-wrap: wrap;
-          }
-
-          .agent-card-actions .btn {
-            flex: 1;
-            min-width: 0;
-          }
-        }
-      `}</style>
-    </div>
+   </div>
   );
 }

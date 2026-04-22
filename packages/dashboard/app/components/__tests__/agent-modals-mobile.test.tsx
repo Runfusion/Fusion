@@ -63,12 +63,6 @@ function readStyles(): string {
   return fs.readFileSync(stylesPath, "utf-8");
 }
 
-function readRenderedInlineStyles(): string {
-  return Array.from(document.querySelectorAll("style"))
-    .map((el) => el.textContent ?? "")
-    .join("\n");
-}
-
 describe("agent modal mobile CSS structure", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -262,38 +256,38 @@ describe("agent modal mobile CSS structure", () => {
       });
     });
 
-    it("inline CSS contains 768px and 640px breakpoints", async () => {
+    it("styles.css contains 768px and 640px breakpoints for agent list modal", async () => {
       render(<AgentListModal isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
 
       await waitFor(() => {
         expect(screen.getByText("Agents")).toBeInTheDocument();
       });
 
-      const css = readRenderedInlineStyles();
-      expect(css).toContain("@media (max-width: 768px)");
-      expect(css).toContain("@media (max-width: 640px)");
+      const styles = readStyles();
+      expect(styles).toContain("@media (max-width: 768px)");
+      expect(styles).toContain("@media (max-width: 640px)");
     });
 
-    it("inline CSS has board single-column at 640px", async () => {
+    it("styles.css has board single-column at 640px", async () => {
       render(<AgentListModal isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
 
       await waitFor(() => {
         expect(screen.getByText("Agents")).toBeInTheDocument();
       });
 
-      const css = readRenderedInlineStyles();
-      expect(css).toMatch(/@media \(max-width: 640px\)[\s\S]*?\.agent-board\s*{[\s\S]*?grid-template-columns:\s*1fr/);
+      const styles = readStyles();
+      expect(styles).toMatch(/@media \(max-width: 640px\)[\s\S]*?\.agent-list-modal \.agent-board\s*{[\s\S]*?grid-template-columns:\s*1fr/);
     });
 
-    it("inline CSS has controls stacking at 640px", async () => {
+    it("styles.css has controls stacking at 640px", async () => {
       render(<AgentListModal isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
 
       await waitFor(() => {
         expect(screen.getByText("Agents")).toBeInTheDocument();
       });
 
-      const css = readRenderedInlineStyles();
-      expect(css).toMatch(/@media \(max-width: 640px\)[\s\S]*?\.agent-controls\s*{[\s\S]*?flex-direction:\s*column/);
+      const styles = readStyles();
+      expect(styles).toMatch(/@media \(max-width: 640px\)[\s\S]*?\.agent-list-modal \.agent-controls\s*{[\s\S]*?flex-direction:\s*column/);
     });
   });
 
@@ -303,9 +297,9 @@ describe("agent modal mobile CSS structure", () => {
       expect(styles).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.agent-dialog[\s\S]*?safe-area-inset-bottom/);
     });
 
-    it("agent-dialog mobile rules include 16px field font-size", () => {
+    it("agent-dialog mobile rules tokenize field font-size for iOS zoom prevention", () => {
       const styles = readStyles();
-      expect(styles).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.agent-dialog-field[\s\S]*?font-size:\s*16px/);
+      expect(styles).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.agent-dialog-field[\s\S]*?font-size:\s*calc\(var\(--space-md\) \+ var\(--space-xs\)\)/);
     });
   });
 });

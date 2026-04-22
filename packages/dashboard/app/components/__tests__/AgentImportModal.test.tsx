@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import fs from "node:fs";
+import path from "node:path";
 import { AgentImportModal } from "../AgentImportModal";
 
 interface MockResponse {
@@ -16,6 +18,9 @@ function mockResponse({ ok, status = ok ? 200 : 400, body }: MockResponse): Prom
     json: async () => body,
   } as Response);
 }
+
+const stylesPath = path.join(__dirname, "../../styles.css");
+const readStyles = () => fs.readFileSync(stylesPath, "utf-8");
 
 describe("AgentImportModal", () => {
   const onClose = vi.fn();
@@ -444,6 +449,17 @@ describe("AgentImportModal", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("uses token-based semantic colors for result and browse styling", () => {
+    const styles = readStyles();
+
+    expect(styles).toContain('.agent-import-result-stat--success');
+    expect(styles).toContain('color: var(--color-success);');
+    expect(styles).toContain('.agent-import-result-error');
+    expect(styles).toContain('background: color-mix(in srgb, var(--color-error) 8%, transparent);');
+    expect(styles).toContain('.agent-import-browse-selected');
+    expect(styles).toContain('background: color-mix(in srgb, var(--todo) 10%, transparent);');
+  });
+
   describe("Browse Catalog Mode", () => {
     function createMockResponse(body: unknown): Response {
       return {
@@ -488,6 +504,24 @@ describe("AgentImportModal", () => {
       await waitFor(() => {
         expect(screen.getByText(/Failed to fetch companies.sh catalog/)).toBeInTheDocument();
       });
+    });
+
+    it("uses the shared small button class for selected catalog actions", async () => {
+      const mockCompanies = [
+        { slug: "test-company", name: "Test Company", tagline: "A great company" },
+      ];
+
+      globalThis.fetch = vi.fn().mockResolvedValue(createMockResponse({ companies: mockCompanies }));
+
+      renderModal(true);
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "Browse Catalog" }));
+      await user.click(await screen.findByText("Test Company"));
+
+      const changeButton = await screen.findByRole("button", { name: "Change" });
+      expect(changeButton).toHaveClass("btn-sm");
+      expect(changeButton).not.toHaveClass("btn--small");
     });
 
     it("shows Retry button when error occurs", async () => {
