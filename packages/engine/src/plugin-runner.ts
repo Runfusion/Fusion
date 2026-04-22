@@ -15,6 +15,7 @@ import type {
   PluginToolDefinition,
   PluginRouteDefinition,
   PluginUiSlotDefinition,
+  PluginRuntimeRegistration,
   PluginContext,
 } from "@fusion/core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
@@ -60,6 +61,14 @@ interface CachedUiSlots {
   version: number;
 }
 
+/**
+ * Cached runtimes - rebuilt when plugin state changes
+ */
+interface CachedRuntimes {
+  runtimes: Array<{ pluginId: string; runtime: PluginRuntimeRegistration }>;
+  version: number;
+}
+
 const DEFAULT_HOOK_TIMEOUT_MS = 5000;
 
 export class PluginRunner {
@@ -67,9 +76,11 @@ export class PluginRunner {
   private cachedTools: CachedTools | null = null;
   private cachedRoutes: CachedRoutes | null = null;
   private cachedUiSlots: CachedUiSlots | null = null;
+  private cachedRuntimes: CachedRuntimes | null = null;
   private toolsCacheVersion = 0;
   private routesCacheVersion = 0;
   private uiSlotsCacheVersion = 0;
+  private runtimesCacheVersion = 0;
   private hookTimeoutMs: number;
 
   // Event handler references for cleanup
@@ -126,6 +137,7 @@ export class PluginRunner {
     this.invalidateToolsCache();
     this.invalidateRoutesCache();
     this.invalidateUiSlotsCache();
+    this.invalidateRuntimesCache();
   }
 
   /**
@@ -209,6 +221,20 @@ export class PluginRunner {
   }
 
   /**
+   * Get all runtime registrations from loaded plugins.
+   * Runtimes are cached and only rebuilt when plugin state changes.
+   */
+  getPluginRuntimes(): Array<{ pluginId: string; runtime: PluginRuntimeRegistration }> {
+    if (!this.cachedRuntimes || this.cachedRuntimes.version !== this.runtimesCacheVersion) {
+      this.cachedRuntimes = {
+        runtimes: this.options.pluginLoader.getPluginRuntimes(),
+        version: this.runtimesCacheVersion,
+      };
+    }
+    return this.cachedRuntimes.runtimes;
+  }
+
+  /**
    * Get the underlying plugin loader.
    */
   getLoader(): PluginLoader {
@@ -224,7 +250,7 @@ export class PluginRunner {
 
   /**
    * Reload a plugin: stop the old instance, re-import, and start the new one.
-   * This invalidates the tools and routes caches.
+   * This invalidates the tools, routes, uiSlots, and runtimes caches.
    */
   async reloadPlugin(pluginId: string): Promise<void> {
     executorLog.log(`Reloading plugin: ${pluginId}`);
@@ -232,6 +258,7 @@ export class PluginRunner {
     this.invalidateToolsCache();
     this.invalidateRoutesCache();
     this.invalidateUiSlotsCache();
+    this.invalidateRuntimesCache();
     executorLog.log(`Plugin ${pluginId} reloaded`);
   }
 
@@ -245,6 +272,7 @@ export class PluginRunner {
     this.invalidateToolsCache();
     this.invalidateRoutesCache();
     this.invalidateUiSlotsCache();
+    this.invalidateRuntimesCache();
 
     try {
       executorLog.log(`Auto-loading enabled plugin: ${plugin.id}`);
@@ -263,6 +291,7 @@ export class PluginRunner {
     this.invalidateToolsCache();
     this.invalidateRoutesCache();
     this.invalidateUiSlotsCache();
+    this.invalidateRuntimesCache();
 
     try {
       executorLog.log(`Auto-stopping disabled plugin: ${plugin.id}`);
@@ -281,6 +310,7 @@ export class PluginRunner {
     this.invalidateToolsCache();
     this.invalidateRoutesCache();
     this.invalidateUiSlotsCache();
+    this.invalidateRuntimesCache();
 
     try {
       executorLog.log(`Stopping unregistered plugin: ${plugin.id}`);
@@ -298,6 +328,7 @@ export class PluginRunner {
     this.invalidateToolsCache();
     this.invalidateRoutesCache();
     this.invalidateUiSlotsCache();
+    this.invalidateRuntimesCache();
   }
 
   /**
@@ -307,6 +338,7 @@ export class PluginRunner {
     this.invalidateToolsCache();
     this.invalidateRoutesCache();
     this.invalidateUiSlotsCache();
+    this.invalidateRuntimesCache();
   }
 
   /**
@@ -316,6 +348,7 @@ export class PluginRunner {
     this.invalidateToolsCache();
     this.invalidateRoutesCache();
     this.invalidateUiSlotsCache();
+    this.invalidateRuntimesCache();
   }
 
   /**
@@ -325,6 +358,7 @@ export class PluginRunner {
     this.invalidateToolsCache();
     this.invalidateRoutesCache();
     this.invalidateUiSlotsCache();
+    this.invalidateRuntimesCache();
   }
 
   /**
@@ -334,6 +368,7 @@ export class PluginRunner {
     this.invalidateToolsCache();
     this.invalidateRoutesCache();
     this.invalidateUiSlotsCache();
+    this.invalidateRuntimesCache();
   }
 
   // ── Tool Conversion ───────────────────────────────────────────────
@@ -500,6 +535,14 @@ export class PluginRunner {
   private invalidateUiSlotsCache(): void {
     this.uiSlotsCacheVersion++;
     this.log.log(`UI slots cache invalidated (version: ${this.uiSlotsCacheVersion})`);
+  }
+
+  /**
+   * Invalidate the runtimes cache, forcing rebuild on next access.
+   */
+  private invalidateRuntimesCache(): void {
+    this.runtimesCacheVersion++;
+    this.log.log(`Runtimes cache invalidated (version: ${this.runtimesCacheVersion})`);
   }
 
   // ── Store Event Subscriptions ────────────────────────────────────

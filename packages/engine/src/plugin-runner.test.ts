@@ -33,6 +33,7 @@ describe("PluginRunner", () => {
     getPluginTools: ReturnType<typeof vi.fn>;
     getPluginRoutes: ReturnType<typeof vi.fn>;
     getPluginUiSlots: ReturnType<typeof vi.fn>;
+    getPluginRuntimes: ReturnType<typeof vi.fn>;
     getLoadedPlugins: ReturnType<typeof vi.fn>;
     getPlugin: ReturnType<typeof vi.fn>;
     loadPlugin: ReturnType<typeof vi.fn>;
@@ -85,6 +86,7 @@ describe("PluginRunner", () => {
       getPluginTools: vi.fn().mockReturnValue([]),
       getPluginRoutes: vi.fn().mockReturnValue([]),
       getPluginUiSlots: vi.fn().mockReturnValue([]),
+      getPluginRuntimes: vi.fn().mockReturnValue([]),
       getLoadedPlugins: vi.fn().mockReturnValue([]),
       getPlugin: vi.fn(),
       loadPlugin: vi.fn().mockResolvedValue({}),
@@ -488,6 +490,251 @@ describe("PluginRunner", () => {
       // Next call should rebuild cache
       pluginRunner.getPluginUiSlots();
       expect(mockPluginLoader.getPluginUiSlots).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("getPluginRuntimes()", () => {
+    it("should return empty array when no plugins have runtimes", async () => {
+      mockPluginLoader.getPluginRuntimes.mockReturnValue([]);
+      await pluginRunner.init();
+      const runtimes = pluginRunner.getPluginRuntimes();
+      expect(runtimes).toEqual([]);
+    });
+
+    it("should return cached runtimes after plugins load", async () => {
+      const mockRuntimes = [
+        {
+          pluginId: "test-plugin",
+          runtime: {
+            metadata: {
+              runtimeId: "code-interpreter",
+              name: "Code Interpreter",
+              description: "Executes code",
+            },
+            factory: async () => ({}),
+          },
+        },
+      ];
+      mockPluginLoader.getPluginRuntimes.mockReturnValue(mockRuntimes);
+      
+      await pluginRunner.init();
+      const runtimes1 = pluginRunner.getPluginRuntimes();
+      const runtimes2 = pluginRunner.getPluginRuntimes();
+      
+      expect(runtimes1).toEqual(mockRuntimes);
+      expect(runtimes2).toBe(runtimes1); // Same reference (cached)
+    });
+
+    it("should invalidate cache on plugin:reloaded event", async () => {
+      const mockRuntimes = [
+        {
+          pluginId: "test-plugin",
+          runtime: {
+            metadata: {
+              runtimeId: "runtime-v1",
+              name: "Runtime V1",
+            },
+            factory: async () => ({}),
+          },
+        },
+      ];
+      mockPluginLoader.getPluginRuntimes.mockReturnValue(mockRuntimes);
+      
+      await pluginRunner.init();
+      const runtimes1 = pluginRunner.getPluginRuntimes();
+      expect(runtimes1).toEqual(mockRuntimes);
+      
+      // Simulate plugin:reloaded event that invalidates cache
+      const reloadHandler = mockPluginLoader.on.mock.calls.find(
+        call => call[0] === "plugin:reloaded"
+      )?.[1];
+      if (reloadHandler) {
+        reloadHandler({ pluginId: "test-plugin" });
+      }
+      
+      // Next call should rebuild cache
+      const newRuntimes = [
+        {
+          pluginId: "test-plugin",
+          runtime: {
+            metadata: {
+              runtimeId: "runtime-v2",
+              name: "Runtime V2",
+            },
+            factory: async () => ({}),
+          },
+        },
+      ];
+      mockPluginLoader.getPluginRuntimes.mockReturnValue(newRuntimes);
+      
+      const runtimes2 = pluginRunner.getPluginRuntimes();
+      expect(runtimes2).toEqual(newRuntimes);
+      expect(mockPluginLoader.getPluginRuntimes).toHaveBeenCalledTimes(2);
+    });
+
+    it("should invalidate cache on plugin:enabled event", async () => {
+      mockPluginLoader.getPluginRuntimes.mockReturnValue([]);
+      await pluginRunner.init();
+      
+      // Get initial runtimes
+      pluginRunner.getPluginRuntimes();
+      
+      // Simulate plugin:enabled event
+      const enabledHandler = mockPluginStore.on.mock.calls.find(
+        call => call[0] === "plugin:enabled"
+      )?.[1];
+      
+      const newPlugin = {
+        id: "new-plugin",
+        name: "New Plugin",
+        version: "1.0.0",
+        path: "/test/path",
+        enabled: true,
+        state: "stopped" as const,
+        settings: {},
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      };
+      
+      if (enabledHandler) {
+        enabledHandler(newPlugin);
+      }
+      
+      // Next call should rebuild cache
+      pluginRunner.getPluginRuntimes();
+      expect(mockPluginLoader.getPluginRuntimes).toHaveBeenCalledTimes(2);
+    });
+
+    it("should invalidate cache on plugin:disabled event", async () => {
+      mockPluginLoader.getPluginRuntimes.mockReturnValue([]);
+      await pluginRunner.init();
+      
+      // Get initial runtimes
+      pluginRunner.getPluginRuntimes();
+      
+      // Simulate plugin:disabled event
+      const disabledHandler = mockPluginStore.on.mock.calls.find(
+        call => call[0] === "plugin:disabled"
+      )?.[1];
+      
+      const plugin = {
+        id: "test-plugin",
+        name: "Test Plugin",
+        version: "1.0.0",
+        path: "/test/path",
+        enabled: true,
+        state: "stopped" as const,
+        settings: {},
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      };
+      
+      if (disabledHandler) {
+        disabledHandler(plugin);
+      }
+      
+      // Next call should rebuild cache
+      pluginRunner.getPluginRuntimes();
+      expect(mockPluginLoader.getPluginRuntimes).toHaveBeenCalledTimes(2);
+    });
+
+    it("should invalidate cache on plugin:stateChanged event", async () => {
+      mockPluginLoader.getPluginRuntimes.mockReturnValue([]);
+      await pluginRunner.init();
+      
+      // Get initial runtimes
+      pluginRunner.getPluginRuntimes();
+      
+      // Simulate plugin:stateChanged event
+      const stateHandler = mockPluginStore.on.mock.calls.find(
+        call => call[0] === "plugin:stateChanged"
+      )?.[1];
+      
+      if (stateHandler) {
+        stateHandler();
+      }
+      
+      // Next call should rebuild cache
+      pluginRunner.getPluginRuntimes();
+      expect(mockPluginLoader.getPluginRuntimes).toHaveBeenCalledTimes(2);
+    });
+
+    it("should invalidate cache on plugin:updated event", async () => {
+      mockPluginLoader.getPluginRuntimes.mockReturnValue([]);
+      await pluginRunner.init();
+      
+      // Get initial runtimes
+      pluginRunner.getPluginRuntimes();
+      
+      // Simulate plugin:updated event
+      const updatedHandler = mockPluginStore.on.mock.calls.find(
+        call => call[0] === "plugin:updated"
+      )?.[1];
+      
+      if (updatedHandler) {
+        updatedHandler();
+      }
+      
+      // Next call should rebuild cache
+      pluginRunner.getPluginRuntimes();
+      expect(mockPluginLoader.getPluginRuntimes).toHaveBeenCalledTimes(2);
+    });
+
+    it("should invalidate cache on reloadPlugin()", async () => {
+      mockPluginLoader.getPluginRuntimes.mockReturnValue([]);
+      await pluginRunner.init();
+      
+      // Get initial runtimes
+      pluginRunner.getPluginRuntimes();
+      
+      // Call reloadPlugin
+      await pluginRunner.reloadPlugin("test-plugin");
+      
+      // Next call should rebuild cache
+      pluginRunner.getPluginRuntimes();
+      expect(mockPluginLoader.getPluginRuntimes).toHaveBeenCalledTimes(2);
+    });
+
+    it("should invalidate cache on plugin:loaded event", async () => {
+      mockPluginLoader.getPluginRuntimes.mockReturnValue([]);
+      await pluginRunner.init();
+      
+      // Get initial runtimes
+      pluginRunner.getPluginRuntimes();
+      
+      // Simulate plugin:loaded event
+      const loadedHandler = mockPluginLoader.on.mock.calls.find(
+        call => call[0] === "plugin:loaded"
+      )?.[1];
+      
+      if (loadedHandler) {
+        loadedHandler({ pluginId: "test-plugin" });
+      }
+      
+      // Next call should rebuild cache
+      pluginRunner.getPluginRuntimes();
+      expect(mockPluginLoader.getPluginRuntimes).toHaveBeenCalledTimes(2);
+    });
+
+    it("should invalidate cache on plugin:unloaded event", async () => {
+      mockPluginLoader.getPluginRuntimes.mockReturnValue([]);
+      await pluginRunner.init();
+      
+      // Get initial runtimes
+      pluginRunner.getPluginRuntimes();
+      
+      // Simulate plugin:unloaded event
+      const unloadedHandler = mockPluginLoader.on.mock.calls.find(
+        call => call[0] === "plugin:unloaded"
+      )?.[1];
+      
+      if (unloadedHandler) {
+        unloadedHandler({ pluginId: "test-plugin" });
+      }
+      
+      // Next call should rebuild cache
+      pluginRunner.getPluginRuntimes();
+      expect(mockPluginLoader.getPluginRuntimes).toHaveBeenCalledTimes(2);
     });
   });
 
