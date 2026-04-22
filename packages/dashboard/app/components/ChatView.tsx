@@ -257,11 +257,12 @@ function getMentionTriggerMatch(
 }
 
 interface NewChatDialogProps {
+  projectId?: string;
   onClose: () => void;
   onCreate: (input: { agentId: string; modelProvider?: string; modelId?: string }) => void;
 }
 
-function NewChatDialog({ onClose, onCreate }: NewChatDialogProps) {
+function NewChatDialog({ projectId, onClose, onCreate }: NewChatDialogProps) {
   const [chatMode, setChatMode] = useState<"agent" | "model">("agent");
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(true);
@@ -270,21 +271,31 @@ function NewChatDialog({ onClose, onCreate }: NewChatDialogProps) {
   const [modelsLoading, setModelsLoading] = useState(true);
   const [selectedModel, setSelectedModel] = useState<string>("");
 
-  // Load agents on mount
+  // Load agents on mount (project-scoped)
   useEffect(() => {
+    let cancelled = false;
     setAgentsLoading(true);
-    fetchAgents()
+    fetchAgents(undefined, projectId)
       .then((response) => {
-        setAgents(response);
+        if (!cancelled) {
+          setAgents(response);
+        }
       })
       .catch(() => {
-        // Silently fail - show empty list
-        setAgents([]);
+        if (!cancelled) {
+          // Silently fail - show empty list
+          setAgents([]);
+        }
       })
       .finally(() => {
-        setAgentsLoading(false);
+        if (!cancelled) {
+          setAgentsLoading(false);
+        }
       });
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
 
   // Load models on mount
   useEffect(() => {
@@ -538,10 +549,14 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
     }
   }, [contextMenu]);
 
-  // Fetch agents on mount for name resolution
+  // Fetch agents on mount for name resolution (project-scoped with stale-request protection)
   useEffect(() => {
-    fetchAgents()
+    let cancelled = false;
+    const currentProjectId = projectId;
+    fetchAgents(undefined, projectId)
       .then((agents) => {
+        // Ignore response if project changed during fetch
+        if (cancelled || currentProjectId !== projectId) return;
         const map = new Map<string, Agent>();
         for (const agent of agents) {
           map.set(agent.id, agent);
@@ -551,7 +566,10 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
       .catch(() => {
         // Silently fail - keep empty map
       });
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
 
   // Fetch discovered skills for slash command autocomplete
   useEffect(() => {
@@ -1316,6 +1334,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
       {/* New Chat Dialog (rendered at root level) */}
       {showNewDialog && (
         <NewChatDialog
+          projectId={projectId}
           onClose={() => setShowNewDialog(false)}
           onCreate={handleCreateSession}
         />

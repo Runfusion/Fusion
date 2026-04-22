@@ -191,10 +191,13 @@ export function useChat(projectId?: string): UseChatReturn {
     projectContextVersionRef.current++;
   }
 
-  // Fetch agents on mount for name resolution
+  // Fetch agents on mount for name resolution (project-scoped with stale-request protection)
   useEffect(() => {
-    fetchAgents()
+    const contextVersionAtStart = projectContextVersionRef.current;
+    fetchAgents(undefined, projectId)
       .then((agents) => {
+        // Ignore response if project changed during fetch
+        if (projectContextVersionRef.current !== contextVersionAtStart) return;
         const map = new Map<string, Agent>();
         for (const agent of agents) {
           map.set(agent.id, agent);
@@ -204,7 +207,7 @@ export function useChat(projectId?: string): UseChatReturn {
       .catch(() => {
         // Silently fail - keep empty map
       });
-  }, []);
+  }, [projectId]);
 
   // Fetch sessions
   const refreshSessions = useCallback(async () => {

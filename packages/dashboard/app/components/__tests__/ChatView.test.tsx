@@ -1605,3 +1605,86 @@ describe("ChatView CSS — nested flexbox scrolling fix", () => {
     expect(match![1]).toContain("min-height: 0");
   });
 });
+
+describe("ChatView project-scoped agent fetching", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchDiscoveredSkills.mockResolvedValue([]);
+  });
+
+  it("passes projectId to fetchAgents in agent name resolution effect", async () => {
+    // Mock useChat to return empty agentsMap so ChatView fetches its own
+    setupMockChat({ agentsMap: new Map() });
+
+    render(<ChatView projectId="proj-456" addToast={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(apiModule.fetchAgents).toHaveBeenCalledWith(undefined, "proj-456");
+    });
+  });
+
+  it("passes projectId to NewChatDialog for agent selection", async () => {
+    setupMockChat({ sessions: [], filteredSessions: [] });
+
+    render(<ChatView projectId="proj-789" addToast={vi.fn()} />);
+
+    // Open the new chat dialog
+    await userEvent.click(screen.getByTestId("chat-new-btn"));
+
+    // The dialog should have been rendered with projectId
+    // We verify the mock fetchAgents was called with the correct projectId
+    await waitFor(() => {
+      expect(apiModule.fetchAgents).toHaveBeenCalledWith(undefined, "proj-789");
+    });
+  });
+
+  it("refetches agents when projectId changes in ChatView", async () => {
+    // First render with proj-001
+    setupMockChat({ agentsMap: new Map() });
+    const { rerender } = render(<ChatView projectId="proj-001" addToast={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(apiModule.fetchAgents).toHaveBeenCalledWith(undefined, "proj-001");
+    });
+
+    const callsBeforeRerender = apiModule.fetchAgents.mock.calls.length;
+
+    // Rerender with proj-002
+    rerender(<ChatView projectId="proj-002" addToast={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(apiModule.fetchAgents).toHaveBeenCalledWith(undefined, "proj-002");
+    });
+
+    // Should have made an additional fetch call
+    expect(apiModule.fetchAgents.mock.calls.length).toBeGreaterThan(callsBeforeRerender);
+  });
+
+  it("refetches agents when projectId changes in NewChatDialog", async () => {
+    setupMockChat({ sessions: [], filteredSessions: [] });
+
+    const { rerender } = render(<ChatView projectId="proj-001" addToast={vi.fn()} />);
+
+    // Open dialog and check initial projectId
+    await userEvent.click(screen.getByTestId("chat-new-btn"));
+    await waitFor(() => {
+      expect(apiModule.fetchAgents).toHaveBeenCalledWith(undefined, "proj-001");
+    });
+
+    // Close dialog, change projectId, reopen
+    // Note: we need to trigger a new dialog render with the new projectId
+    rerender(<ChatView projectId="proj-002" addToast={vi.fn()} />);
+
+    // Close and reopen dialog
+    const closeBtn = document.querySelector(".chat-new-dialog-backdrop");
+    if (closeBtn) {
+      await userEvent.click(closeBtn);
+    }
+
+    await userEvent.click(screen.getByTestId("chat-new-btn"));
+
+    await waitFor(() => {
+      expect(apiModule.fetchAgents).toHaveBeenCalledWith(undefined, "proj-002");
+    });
+  });
+});

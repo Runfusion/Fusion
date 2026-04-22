@@ -445,6 +445,25 @@ describe("MailboxView", () => {
     });
   });
 
+  it("passes projectId to fetchAgents in agents tab", async () => {
+    mockFetchInbox.mockResolvedValue({
+      messages: [],
+      unreadCount: 0,
+    });
+
+    render(<MailboxView {...defaultProps} projectId="test-project" />);
+
+    // Switch to agents tab
+    const agentsTab = screen.getByTestId("mailbox-tab-agents");
+    await act(async () => {
+      fireEvent.click(agentsTab);
+    });
+
+    await waitFor(() => {
+      expect(mockFetchAgents).toHaveBeenCalledWith(undefined, "test-project");
+    });
+  });
+
   it("calls onUnreadCountChange when unread count changes", async () => {
     mockFetchInbox.mockResolvedValue({
       messages: [],
