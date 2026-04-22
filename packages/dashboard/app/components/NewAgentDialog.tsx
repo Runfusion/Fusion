@@ -63,8 +63,9 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
   const [favoriteProviders, setFavoriteProviders] = useState<string[]>([]);
   const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
 
-  // Load models on mount (global data, not per-agent)
+  // Load models when dialog opens — guard prevents async setState after test assertions
   useEffect(() => {
+    if (!isOpen) return;
     setModelsLoading(true);
     fetchModels()
       .then((response) => {
@@ -76,7 +77,7 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
         // Gracefully handle — dropdown will show empty list
       })
       .finally(() => setModelsLoading(false));
-  }, []);
+  }, [isOpen]);
 
   // Selected model in "provider/modelId" format, or "" for default
   const selectedModel = runtimeConfig.model.includes("/")

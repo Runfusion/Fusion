@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NewAgentDialog } from "../NewAgentDialog";
 import * as apiModule from "../../api";
@@ -131,19 +131,23 @@ describe("NewAgentDialog", () => {
       expect(container.innerHTML).toBe("");
     });
 
-    it("renders the dialog when isOpen is true", () => {
-      render(
-        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
-      );
+    it("renders the dialog when isOpen is true", async () => {
+      await act(async () => {
+        render(
+          <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+        );
+      });
       expect(screen.getByRole("dialog", { name: "Create new agent" })).toBeTruthy();
     });
   });
 
   describe("model dropdown", () => {
-    it("fetches models on mount", () => {
-      render(
-        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
-      );
+    it("fetches models on mount", async () => {
+      await act(async () => {
+        render(
+          <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+        );
+      });
       expect(mockFetchModels).toHaveBeenCalledOnce();
     });
 
@@ -428,11 +432,15 @@ describe("NewAgentDialog", () => {
 
       expect(mockOnClose).toHaveBeenCalled();
 
-      // Unmount and reopen - state should be reset
+      // Unmount and reopen - state should be reset; wait for the second fetchModels useEffect to settle
       unmount();
-      render(
-        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
-      );
+      await act(async () => {
+        render(
+          <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+        );
+      });
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledTimes(2));
 
       // Name should be empty
       const newNameInput = screen.getByLabelText(/Name/) as HTMLInputElement;
@@ -441,18 +449,22 @@ describe("NewAgentDialog", () => {
   });
 
   describe("AI generation integration", () => {
-    it("shows Generate with AI button in step 0", () => {
-      render(
-        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
-      );
+    it("shows Generate with AI button in step 0", async () => {
+      await act(async () => {
+        render(
+          <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+        );
+      });
       expect(screen.getByText("Generate with AI")).toBeTruthy();
     });
 
     it("opens AgentGenerationModal when Generate with AI is clicked", async () => {
       const user = userEvent.setup();
-      render(
-        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
-      );
+      await act(async () => {
+        render(
+          <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+        );
+      });
 
       // Generation modal should not be open initially
       expect(screen.queryByTestId("agent-generation-modal")).toBeNull();
@@ -606,18 +618,22 @@ describe("NewAgentDialog", () => {
   });
 
   describe("preset selection", () => {
-    it("renders all 20 preset cards in step 0", () => {
-      render(
-        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
-      );
+    it("renders all 20 preset cards in step 0", async () => {
+      await act(async () => {
+        render(
+          <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+        );
+      });
       const presetCards = screen.getAllByTestId(/^preset-/);
       expect(presetCards).toHaveLength(20);
     });
 
-    it("shows the quick start header text", () => {
-      render(
-        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
-      );
+    it("shows the quick start header text", async () => {
+      await act(async () => {
+        render(
+          <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+        );
+      });
       expect(screen.getByText("Choose a preset or fill in details manually")).toBeTruthy();
     });
 
@@ -742,11 +758,15 @@ describe("NewAgentDialog", () => {
       await user.click(screen.getByLabelText("Close"));
       expect(mockOnClose).toHaveBeenCalled();
 
-      // Re-open — state should be reset
+      // Re-open — state should be reset; wait for the second fetchModels useEffect to settle
       unmount();
-      render(
-        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
-      );
+      await act(async () => {
+        render(
+          <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+        );
+      });
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledTimes(2));
 
       // Name should be empty (no preset selected)
       const nameInput = screen.getByLabelText(/Name/) as HTMLInputElement;
@@ -798,10 +818,12 @@ describe("NewAgentDialog", () => {
       expect(typeof createCall.instructionsText).toBe("string");
     });
 
-    it("preset card titles show the professional title", () => {
-      render(
-        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
-      );
+    it("preset card titles show the professional title", async () => {
+      await act(async () => {
+        render(
+          <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+        );
+      });
 
       const ceoCard = screen.getByTestId("preset-ceo");
       expect(ceoCard.getAttribute("title")).toBe("Chief Executive Officer");
@@ -810,10 +832,12 @@ describe("NewAgentDialog", () => {
       expect(ctoCard.getAttribute("title")).toBe("Chief Technology Officer");
     });
 
-    it("renders descriptions in all 20 preset cards", () => {
-      render(
-        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
-      );
+    it("renders descriptions in all 20 preset cards", async () => {
+      await act(async () => {
+        render(
+          <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+        );
+      });
 
       // Every preset should have a description element rendered
       const descriptionElements = screen.getAllByText(/.\./, {
@@ -827,11 +851,13 @@ describe("NewAgentDialog", () => {
       });
     });
 
-    it("all presets have non-empty description strings", () => {
+    it("all presets have non-empty description strings", async () => {
       // Import the array directly by checking the rendered cards
-      render(
-        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
-      );
+      await act(async () => {
+        render(
+          <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+        );
+      });
 
       const presetIds = [
         "ceo", "cto", "cmo", "cfo", "engineer", "backend-engineer",
@@ -867,10 +893,12 @@ describe("NewAgentDialog", () => {
       expect(titleInput.value).toBe("Oversees project strategy, sets priorities, and coordinates between departments to ensure alignment with business goals.");
     });
 
-    it("name label shows required indicator when no preset is selected", () => {
-      render(
-        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
-      );
+    it("name label shows required indicator when no preset is selected", async () => {
+      await act(async () => {
+        render(
+          <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+        );
+      });
 
       // On initial render (step 0, no preset), the * required indicator should be visible
       const nameLabel = screen.getByText("Name", { selector: "label" });
@@ -922,10 +950,12 @@ describe("NewAgentDialog", () => {
       expect(screen.getByText("Next")).not.toBeDisabled();
     });
 
-    it("Next button is disabled when no preset is selected and name is empty", () => {
-      render(
-        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
-      );
+    it("Next button is disabled when no preset is selected and name is empty", async () => {
+      await act(async () => {
+        render(
+          <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+        );
+      });
 
       // On initial render (step 0, no preset, empty name), Next should be disabled
       expect(screen.getByText("Next")).toBeDisabled();
@@ -1057,15 +1087,17 @@ describe("NewAgentDialog", () => {
       // Select a preset
       await user.click(screen.getByTestId("preset-cto"));
 
-      // Close the dialog
+      // Close the dialog — wait for the state updates to flush before unmounting
       await user.click(screen.getByLabelText("Close"));
       expect(mockOnClose).toHaveBeenCalled();
 
-      // Re-open — state should be reset
+      // Re-open — wait for the fetchModels useEffect to settle after remount
       unmount();
       render(
         <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
       );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledTimes(2));
 
       // Soul and instructionsText should be empty
       const soulTextarea = screen.getByLabelText(/Soul/) as HTMLTextAreaElement;

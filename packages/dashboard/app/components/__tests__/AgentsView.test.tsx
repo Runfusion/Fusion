@@ -243,7 +243,9 @@ describe("AgentsView", () => {
 
     it("shows refresh button", async () => {
       render(<AgentsView addToast={mockAddToast} />);
-      const refreshBtn = screen.getByTitle("Refresh");
+      // Use findBy to ensure React has flushed all pending state updates before asserting.
+      // This prevents act(...) warnings from any async effects triggered during render.
+      const refreshBtn = await screen.findByTitle("Refresh");
       expect(refreshBtn).toBeTruthy();
     });
   });
@@ -677,7 +679,10 @@ describe("AgentsView", () => {
 
       fireEvent.click(screen.getByText("New Agent"));
 
-      expect(screen.getByPlaceholderText("e.g. Frontend Reviewer")).toBeTruthy();
+      // Wait for the dialog to settle after the model fetch completes
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText("e.g. Frontend Reviewer")).toBeTruthy();
+      });
     });
 
     it("does not allow proceeding with empty name", async () => {
@@ -688,6 +693,12 @@ describe("AgentsView", () => {
       });
 
       fireEvent.click(screen.getByText("New Agent"));
+
+      // Wait for the dialog to settle after the model fetch completes
+      await waitFor(() => {
+        const nextBtn = screen.getByText("Next");
+        expect(nextBtn).toBeTruthy();
+      });
 
       // Next button should be disabled when name is empty
       const nextBtn = screen.getByText("Next");
