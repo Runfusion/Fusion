@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ExternalLink, Eye, Loader2, Monitor, Play, RefreshCw, RotateCw, ShieldAlert, Square } from "lucide-react";
-import type { DetectedDevServerCommand, DevServerState, DevServerSession } from "../api";
+import type { DetectedDevServerCommand } from "../api";
 import { useDevServer } from "../hooks/useDevServer";
-import { useDevServerConfig } from "../hooks/useDevServerConfig";
 import { useDevServerLogs } from "../hooks/useDevServerLogs";
 import { usePreviewEmbed } from "../hooks/usePreviewEmbed";
 import type { ToastType } from "../hooks/useToast";
@@ -105,80 +104,21 @@ function truncateCommand(command: string): string {
 }
 
 export function DevServerView({ addToast, projectId }: DevServerViewProps) {
-  const devServer = useDevServer(projectId);
   const {
-    config,
-    loading: configLoading,
-    error: configError,
-    selectScript,
-    clearSelection,
-    setPreviewUrlOverride,
-    refresh: refreshConfig,
-  } = useDevServerConfig(projectId);
-
-  const legacyServerState = (devServer.serverState as DevServerState | null | undefined) ?? null;
-  const session = devServer.session ?? (legacyServerState ? normalizeLegacyServerState(legacyServerState) : null);
-  const detectedCommands = devServer.detectedCommands ?? devServer.candidates ?? [];
-  const isLoading = devServer.isLoading ?? devServer.loading ?? configLoading;
-  const error = devServer.error ?? configError ?? null;
-
-  const startServer = useCallback(async (command: string, cwd?: string) => {
-    if (typeof devServer.startServer === "function") {
-      await devServer.startServer(command, cwd);
-      return;
-    }
-
-    if (typeof devServer.start === "function") {
-      await devServer.start({ command, cwd });
-    }
-  }, [devServer]);
-
-  const stopServer = useCallback(async () => {
-    if (typeof devServer.stopServer === "function") {
-      await devServer.stopServer();
-      return;
-    }
-
-    if (typeof devServer.stop === "function") {
-      await devServer.stop();
-    }
-  }, [devServer]);
-
-  const restartServer = useCallback(async () => {
-    if (typeof devServer.restartServer === "function") {
-      await devServer.restartServer();
-      return;
-    }
-
-    if (typeof devServer.restart === "function") {
-      await devServer.restart();
-    }
-  }, [devServer]);
-
-  const detectCommands = useCallback(async () => {
-    if (typeof devServer.detectCommands === "function") {
-      await devServer.detectCommands();
-      return;
-    }
-
-    if (typeof devServer.detect === "function") {
-      await devServer.detect();
-    }
-  }, [devServer]);
-
-  const refresh = useCallback(async () => {
-    if (typeof devServer.refresh === "function") {
-      await devServer.refresh();
-      return;
-    }
-
-    if (typeof devServer.refreshStatus === "function") {
-      await devServer.refreshStatus();
-      return;
-    }
-
-    await refreshConfig();
-  }, [devServer, refreshConfig]);
+    session,
+    sessions,
+    logs,
+    detectedCommands,
+    previewUrl,
+    isLoading,
+    error,
+    startServer,
+    stopServer,
+    restartServer,
+    setPreviewUrl,
+    detectCommands,
+    refresh,
+  } = useDevServer(projectId);
 
   const status = session?.status ?? "stopped";
   const isRunning = status === "running" || status === "starting";
@@ -193,9 +133,8 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
     loadMore: loadMoreLogs,
   } = useDevServerLogs(projectId, Boolean(projectId));
 
-  const manualPreviewUrl = config?.previewUrlOverride ?? legacyServerState?.manualPreviewUrl ?? null;
-  const effectivePreviewUrl = manualPreviewUrl ?? devServer.previewUrl ?? session?.previewUrl ?? null;
-  const selectedSource = config?.selectedSource ?? (session?.config?.cwd ? normalizeCwdToSource(session.config.cwd) : null);
+  const effectivePreviewUrl = previewUrl;
+  const selectedSource = session?.config?.cwd ?? null;
 
   const [showCandidates, setShowCandidates] = useState(true);
   const [commandInput, setCommandInput] = useState("");
@@ -206,15 +145,16 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
   const [previewMode, setPreviewMode] = useState<PreviewMode>("embedded");
 
   const previewEmbedUrl = previewMode === "embedded" ? effectivePreviewUrl : null;
-  const previewEmbed = usePreviewEmbed(previewEmbedUrl);
-  const embedStatus = previewEmbed.embedStatus ?? "unknown";
-  const setEmbedStatus = previewEmbed.setEmbedStatus ?? (() => undefined);
-  const resetEmbedStatus = previewEmbed.resetEmbedStatus ?? (() => undefined);
-  const iframeRef = previewEmbed.iframeRef ?? useRef<HTMLIFrameElement | null>(null);
-  const isEmbedded = previewEmbed.isEmbedded ?? false;
-  const isBlocked = previewEmbed.isBlocked ?? false;
-  const blockReason = previewEmbed.blockReason ?? (previewEmbed as { embedContext?: string | null }).embedContext ?? null;
-  const retry = previewEmbed.retry ?? (() => undefined);
+  const {
+    embedStatus,
+    setEmbedStatus,
+    resetEmbedStatus,
+    iframeRef,
+    isEmbedded,
+    isBlocked,
+    blockReason,
+    retry,
+  } = usePreviewEmbed(previewEmbedUrl);
 
   const [showFallback, setShowFallback] = useState(false);
   const prevStatusRef = useRef(embedStatus);
@@ -272,12 +212,6 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
       addToast(normalizeError(detectError), "error");
     });
   }, [addToast, detectCommands]);
-
-  useEffect(() => {
-    if (config?.selectedScript !== undefined) {
-      setSelectedScript(config?.selectedScript ?? null);
-    }
-  }, [config?.selectedScript]);
 
   useEffect(() => {
     if (selectedScript) {
@@ -366,40 +300,17 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
   }, [addToast]);
 
   const handleSelectCandidate = useCallback((candidate: DetectedDevServerCommand) => {
-    void (async () => {
-      try {
-        if (typeof selectScript === "function") {
-          await selectScript({
-            name: candidate.scriptName,
-            command: candidate.command,
-            source: normalizeCwdToSource(candidate.cwd),
-          });
-        }
-
-        setSelectedScript(candidate.scriptName);
-        setShowCandidates(false);
-        setCommandInput(candidate.command);
-        addToast(`Selected ${candidate.scriptName} script.`, "success");
-      } catch (selectionError) {
-        addToast(normalizeError(selectionError), "error");
-      }
-    })();
-  }, [addToast, selectScript]);
+    setSelectedScript(candidate.scriptName);
+    setShowCandidates(false);
+    setCommandInput(candidate.command);
+    addToast(`Selected ${candidate.scriptName} script.`, "success");
+  }, [addToast]);
 
   const handleClearSelection = useCallback(() => {
-    void (async () => {
-      try {
-        if (typeof clearSelection === "function") {
-          await clearSelection();
-        }
-        setSelectedScript(null);
-        setShowCandidates(true);
-        addToast("Cleared selected dev server script.", "success");
-      } catch (clearError) {
-        addToast(normalizeError(clearError), "error");
-      }
-    })();
-  }, [addToast, clearSelection]);
+    setSelectedScript(null);
+    setShowCandidates(true);
+    addToast("Cleared selected dev server script.", "success");
+  }, [addToast]);
 
   const handleStart = () => {
     const trimmedCommand = commandInput.trim();
@@ -409,6 +320,7 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
     }
 
     const fallbackCwd = normalizeSourceToCwd(selectedSource) ?? ".";
+    const scriptName = selectedCandidate?.scriptName ?? selectedScript ?? "custom";
     const cwd = selectedCandidate?.cwd ?? fallbackCwd;
 
     void runAction(
@@ -432,18 +344,7 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
 
     void runAction(
       "preview",
-      async () => {
-        if (typeof setPreviewUrlOverride === "function") {
-          await setPreviewUrlOverride(nextUrl);
-        }
-        if (typeof devServer.setPreviewUrl === "function") {
-          await devServer.setPreviewUrl(nextUrl);
-          return;
-        }
-        if (typeof devServer.setManualUrl === "function") {
-          await devServer.setManualUrl(nextUrl);
-        }
-      },
+      () => setPreviewUrl(nextUrl),
       nextUrl ? "Preview URL updated." : "Preview URL override cleared.",
     );
   };
@@ -454,7 +355,7 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
     }
   }, [error, refresh]);
 
-  const isManualPreviewOverride = Boolean(manualPreviewUrl);
+  const isManualPreviewOverride = false; // With session model, previewUrl is always auto-detected
 
   const startDisabled = status === "starting" || status === "running" || actionInFlight !== null;
   const stopDisabled = status === "stopped" || actionInFlight !== null;

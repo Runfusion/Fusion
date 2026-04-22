@@ -20,6 +20,30 @@ npm i -g @mariozechner/pi-coding-agent
 pi
 ```
 
+### Optional: Install the Paperclip Runtime Plugin
+
+The Paperclip Runtime Plugin (`fusion-plugin-paperclip-runtime`) provides an alternative runtime adapter for AI agents. It wraps the same `pi` backend but registers as a discoverable plugin runtime, enabling runtime selection at the agent level.
+
+To install the plugin:
+
+```bash
+fn plugin add ./plugins/fusion-plugin-paperclip-runtime
+```
+
+After installation, select the Paperclip runtime for an agent by setting `runtimeHint` in the agent's `runtimeConfig`:
+
+```json
+{
+  "name": "Paperclip Executor",
+  "role": "executor",
+  "runtimeConfig": {
+    "runtimeHint": "paperclip"
+  }
+}
+```
+
+For details on runtime selection, fallback behavior, and constraints, see the [Paperclip Runtime Plugin documentation](../plugins/fusion-plugin-paperclip-runtime/README.md).
+
 ## Install Fusion
 
 Install the published CLI package globally:

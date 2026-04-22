@@ -220,6 +220,80 @@ Fusion uses a dual-scope model settings system with five lanes. Global settings 
 
 ---
 
+## Runtime Selection
+
+Fusion supports multiple agent runtimes through a plugin-based runtime system. The default runtime is `pi` (the built-in runtime backed by the `pi` agent). Additional runtimes can be provided by plugins.
+
+### Available Runtimes
+
+| Runtime ID | Name | Description |
+|------------|------|-------------|
+| `pi` | Default PI Runtime | Built-in runtime using the `pi` agent (default) |
+| `paperclip` | Paperclip Runtime | Plugin-provided runtime (requires `fusion-plugin-paperclip-runtime`) |
+
+### Runtime Resolution Order
+
+When creating an agent session, Fusion resolves the runtime as follows:
+
+1. **No `runtimeHint` configured** → Use default `pi` runtime
+2. **`runtimeHint` is `"pi"` or `"default"`** → Use default `pi` runtime
+3. **`runtimeHint` is a plugin runtime ID** (e.g., `"paperclip"`) → Look up and instantiate the plugin runtime
+4. **Plugin runtime unavailable** → Fall back to default `pi` runtime (with warning log)
+
+### Configuring Runtime Selection
+
+Runtime selection is configured at the **agent level** via `runtimeConfig.runtimeHint`:
+
+```json
+{
+  "name": "Paperclip Executor",
+  "role": "executor",
+  "runtimeConfig": {
+    "runtimeHint": "paperclip"
+  }
+}
+```
+
+**Important:** There is no task-level runtime configuration. Tasks inherit the runtime from their assigned agent's `runtimeConfig`.
+
+### Fallback Behavior
+
+If a configured runtime is unavailable (plugin not installed, not enabled, or factory error), Fusion logs a warning and falls back to the default `pi` runtime:
+
+```
+[runtime-resolver] [executor] Runtime "paperclip" unavailable (not_found), falling back to default pi runtime
+```
+
+The fallback ensures tasks continue executing even if the configured runtime plugin is unavailable.
+
+### Installing Plugin Runtimes
+
+To use a plugin-provided runtime like Paperclip:
+
+1. Install the plugin:
+
+```bash
+fn plugin add ./plugins/fusion-plugin-paperclip-runtime
+```
+
+2. Create an agent with the appropriate `runtimeConfig`:
+
+```json
+{
+  "name": "Paperclip Executor",
+  "role": "executor",
+  "runtimeConfig": {
+    "runtimeHint": "paperclip"
+  }
+}
+```
+
+3. Assign the agent to tasks that should use this runtime.
+
+For more details, see the [Paperclip Runtime Plugin documentation](../plugins/fusion-plugin-paperclip-runtime/README.md).
+
+---
+
 ## Prompt Overrides
 
 Fusion supports fine-grained customization of AI agent prompts through the `promptOverrides` setting. This enables surgical customization of specific prompt segments without replacing entire role prompts (which `agentPrompts` does).
@@ -344,6 +418,34 @@ To clear all overrides, set `promptOverrides` to `null`:
     }
   }
 }
+```
+
+### 4) Agent runtime configuration (example agent config)
+
+Runtime selection is configured at the agent level via `runtimeConfig`. This example shows an agent configured to use the Paperclip runtime:
+
+```json
+{
+  "name": "Paperclip Executor",
+  "role": "executor",
+  "runtimeConfig": {
+    "runtimeHint": "paperclip"
+  }
+}
+```
+
+To create this agent via the API:
+
+```bash
+curl -X POST http://localhost:4040/api/agents \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Paperclip Executor",
+    "role": "executor",
+    "runtimeConfig": {
+      "runtimeHint": "paperclip"
+    }
+  }'
 ```
 
 See also: [Workflow Steps](./workflow-steps.md) for how `scripts` and workflow model overrides are used.

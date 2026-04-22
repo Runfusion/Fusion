@@ -1,15 +1,15 @@
 {
   "id": "fusion-plugin-paperclip-runtime",
   "name": "Paperclip Runtime Plugin",
-  "version": "0.1.0",
-  "description": "Provides Paperclip web access runtime for Fusion AI agents",
+  "version": "1.0.0",
+  "description": "Provides Paperclip runtime for Fusion AI agents",
   "author": "Fusion Team",
   "homepage": "https://github.com/gsxdsm/fusion",
   "fusionVersion": ">=0.1.0",
   "runtime": {
     "runtimeId": "paperclip",
     "name": "Paperclip Runtime",
-    "description": "Web access runtime for AI agents — browse pages and extract content",
-    "version": "0.1.0"
+    "description": "Paperclip-backed AI session using the user's configured pi provider and model",
+    "version": "1.0.0"
   }
 }

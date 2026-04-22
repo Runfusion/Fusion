@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   detectDevServerCommands,
   fetchDevServer,
+  fetchDevServerLogs,
   fetchDevServers,
   getDevServerLogsStreamUrl,
   getDevServerSessionLogsStreamUrl,
@@ -354,24 +355,17 @@ export function useDevServer(projectId?: string): UseDevServerReturn {
           if (contextVersionRef.current !== versionAtStart) {
             return;
           }
-          const payload = parseJson<DevServerSession | { status?: DevServerSession["status"]; pid?: number }>(event.data);
-          // If payload is a full session, use it directly
-          if (payload && "config" in payload) {
-            setSession(payload as DevServerSession);
-            return;
-          }
-          // Otherwise, treat as partial update
-          const partial = payload as { status?: DevServerSession["status"]; pid?: number } | undefined;
-          const nextStatus = partial?.status;
+          const payload = parseJson<{ status?: DevServerSession["status"]; pid?: number }>(event.data);
+          const nextStatus = payload?.status;
           if (nextStatus) {
             setSession((prev) => (prev
               ? {
                 ...prev,
                 status: nextStatus,
-                runtime: partial?.pid
+                runtime: payload.pid
                   ? {
                     ...(prev.runtime ?? { startedAt: new Date().toISOString() }),
-                    pid: partial.pid,
+                    pid: payload.pid,
                   }
                   : prev.runtime,
               }
@@ -650,15 +644,6 @@ export function useDevServer(projectId?: string): UseDevServerReturn {
     await refresh();
   }, [refresh]);
 
-  // Reset helper for tests: incrementing resetVersion signals hook to re-initialize
-  useEffect(() => {
-    const version = resetVersion;
-    return () => {
-      if (resetVersion !== version) {
-        contextVersionRef.current += 1;
-      }
-    };
-  }, []);
   const previewUrl = extractPreviewUrl(session);
   const serverState = session ? { ...session, pid: session.runtime?.pid } : null;
 

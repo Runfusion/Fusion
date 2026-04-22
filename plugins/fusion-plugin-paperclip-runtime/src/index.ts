@@ -1,37 +1,36 @@
 /**
  * Paperclip Runtime Plugin
  *
- * Provides the Paperclip web access runtime for Fusion AI agents.
- * This is a placeholder implementation — full runtime behavior is deferred to FN-2261.
+ * Provides the Paperclip runtime for Fusion AI agents, backed by the user's
+ * configured pi provider and model.
+ *
+ * ## Runtime Capabilities
+ *
+ * This plugin implements the AgentRuntime interface, providing:
+ * - Session creation via createFnAgent
+ * - Prompt with automatic retry and compaction
+ * - Model description extraction
+ * - Session disposal support
  */
 
 import { definePlugin } from "@fusion/plugin-sdk";
+import { PaperclipRuntimeAdapter } from "./runtime-adapter.js";
 import type {
   FusionPlugin,
   PluginRuntimeRegistration,
 } from "@fusion/plugin-sdk";
 
-// ── Runtime Placeholder ────────────────────────────────────────────────────────
+// ── Runtime Registration ─────────────────────────────────────────────────────
 
 /**
- * Deferred implementation error message for Paperclip runtime.
- * This message is thrown when the runtime factory is invoked before
- * full implementation is complete (FN-2261).
- */
-const DEFERRED_ERROR_MESSAGE =
-  "Paperclip runtime implementation is deferred to FN-2261. " +
-  "This is a placeholder plugin — runtime creation is not yet available.";
-
-/**
- * Paperclip runtime factory placeholder.
+ * Paperclip runtime factory.
  *
- * Throws a deterministic error indicating that the full Paperclip runtime
- * implementation has not been completed yet.
+ * Creates a new PaperclipRuntimeAdapter instance when the runtime is resolved.
  *
- * @throws Error with DEFERRED_ERROR_MESSAGE when invoked
+ * @returns Promise resolving to a PaperclipRuntimeAdapter instance
  */
-async function paperclipRuntimeFactory(): Promise<never> {
-  throw new Error(DEFERRED_ERROR_MESSAGE);
+async function paperclipRuntimeFactory(): Promise<PaperclipRuntimeAdapter> {
+  return new PaperclipRuntimeAdapter();
 }
 
 /**
@@ -43,8 +42,8 @@ const paperclipRuntime: PluginRuntimeRegistration = {
     runtimeId: "paperclip",
     name: "Paperclip Runtime",
     description:
-      "Web access runtime for AI agents — browse pages and extract content using headless browser automation",
-    version: "0.1.0",
+      "Paperclip-backed AI session using the user's configured pi provider and model",
+    version: "1.0.0",
   },
   factory: paperclipRuntimeFactory,
 };
@@ -55,8 +54,8 @@ const plugin: FusionPlugin = definePlugin({
   manifest: {
     id: "fusion-plugin-paperclip-runtime",
     name: "Paperclip Runtime Plugin",
-    version: "0.1.0",
-    description: "Provides Paperclip web access runtime for Fusion AI agents",
+    version: "1.0.0",
+    description: "Provides Paperclip runtime for Fusion AI agents",
     author: "Fusion Team",
     homepage: "https://github.com/gsxdsm/fusion",
     fusionVersion: ">=0.1.0",
@@ -64,17 +63,15 @@ const plugin: FusionPlugin = definePlugin({
       runtimeId: "paperclip",
       name: "Paperclip Runtime",
       description:
-        "Web access runtime for AI agents — browse pages and extract content",
-      version: "0.1.0",
+        "Paperclip-backed AI session using the user's configured pi provider and model",
+      version: "1.0.0",
     },
   },
   state: "installed",
   runtime: paperclipRuntime,
   hooks: {
     onLoad: (ctx) => {
-      ctx.logger.info(
-        "Paperclip Runtime Plugin loaded (placeholder — implementation deferred to FN-2261)",
-      );
+      ctx.logger.info("Paperclip Runtime Plugin loaded");
     },
   },
 });
