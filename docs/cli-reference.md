@@ -311,18 +311,26 @@ Import agents from [companies.sh](https://companies.sh) packages. Supports singl
 **Options:**
 | Option | Description |
 |---|---|
-| `--dry-run` | Preview import without creating agents |
+| `--dry-run` | Preview import without creating agents or skill files |
 | `--skip-existing` | Skip agents with names that already exist in Fusion |
 
 **Team hierarchy:**
 When importing a companies.sh package with team structure, the importer preserves manager/report relationships for both fresh and partial imports. Manifest-style manager references such as `ceo`, `../ceo/AGENTS.md`, and already-valid Fusion agent IDs are resolved to actual Fusion `reportsTo` agent IDs before agents are created, and `--skip-existing` reuses matching existing managers when available instead of flattening the org tree.
+
+**Skill imports:**
+When importing from a package directory or archive, the importer also imports any package skill manifests (`skills/*/SKILL.md`). Skills are written to `{project}/skills/imported/{company-slug}/{skill-slug}/SKILL.md`. Existing skill files at the target path are skipped (not overwritten). Single `AGENTS.md` file imports do not include package skills.
+
+The import summary reports:
+- Skills imported (new skills written)
+- Skills skipped (already exist at target path)
+- Skill errors (invalid manifests or write failures)
 
 **Examples:**
 ```bash
 # Import a single agent manifest
 fn agent import ./ceo/AGENTS.md
 
-# Import a full companies.sh package
+# Import a full companies.sh package (includes agents and skills)
 fn agent import ./my-company/
 
 # Import from archive

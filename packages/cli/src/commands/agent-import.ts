@@ -7,7 +7,7 @@
  * @module agent-import
  */
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   AgentStore,
@@ -18,10 +18,138 @@ import {
   AgentCompaniesParseError,
 } from "@fusion/core";
 import type { AgentCreateInput } from "@fusion/core";
+import type { SkillManifest } from "@fusion/core";
+import { stringify as stringifyYaml } from "yaml";
 import { resolveProject } from "../project-context.js";
+
+export interface SkillImportResult {
+  imported: string[];
+  skipped: string[];
+  errors: Array<{ name: string; error: string }>;
+}
 
 const UNSUPPORTED_FORMAT_MESSAGE =
   "Unsupported format. Provide an Agent Companies directory, .tar.gz/.tgz/.zip archive, or AGENTS.md file.";
+
+/**
+ * Convert a string to a safe path segment (slug).
+ * - Lowercase
+ * - Replace spaces with hyphens
+ * - Remove characters that are not alphanumeric, hyphens, or underscores
+ * - Collapse multiple hyphens/underscores to single
+ * - Trim leading/trailing hyphens/underscores
+ * - Fallback to "unnamed" if empty after sanitization
+ */
+function slugifyPathSegment(input: string): string {
+  if (!input || typeof input !== "string") {
+    return "unnamed";
+  }
+  let slug = input
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9\-_]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/_+/g, "_")
+    .replace(/^-+|-+$/g, "")
+    .replace(/^_+|_+$/g, "");
+  if (!slug) {
+    return "unnamed";
+  }
+  return slug.slice(0, 64);
+}
+
+/**
+ * Generate SKILL.md content from a SkillManifest.
+ * Uses the same format as the dashboard/skills adapter.
+ */
+function toSkillMarkdown(skill: SkillManifest): string {
+  const frontmatter: Record<string, unknown> = {
+    name: skill.name,
+    schema: "agentcompanies/v1",
+    kind: "skill",
+  };
+
+  // Copy optional fields when present and valid
+  if (typeof skill.description === "string" && skill.description.length > 0) {
+    frontmatter.description = skill.description;
+  }
+  if (typeof skill.slug === "string" && skill.slug.length > 0) {
+    frontmatter.slug = skill.slug;
+  }
+  if (typeof skill.version === "string" && skill.version.length > 0) {
+    frontmatter.version = skill.version;
+  }
+  if (typeof skill.license === "string" && skill.license.length > 0) {
+    frontmatter.license = skill.license;
+  }
+  if (Array.isArray(skill.authors) && skill.authors.length > 0) {
+    frontmatter.authors = skill.authors.filter((a): a is string => typeof a === "string" && a.length > 0);
+  }
+  if (Array.isArray(skill.tags) && skill.tags.length > 0) {
+    frontmatter.tags = skill.tags.filter((t): t is string => typeof t === "string" && t.length > 0);
+  }
+
+  const body = skill.instructionBody && skill.instructionBody.trim().length > 0
+    ? skill.instructionBody
+    : `# ${skill.name}`;
+
+  const yaml = stringifyYaml(frontmatter, { lineWidth: 0 }).trimEnd();
+  return `---\n${yaml}\n---\n${body}`;
+}
+
+/**
+ * Import skills from a package to the project skills directory.
+ * Skills are written to: {projectPath}/skills/imported/{companySlug}/{skillSlug}/SKILL.md
+ */
+async function importSkillsToProject(
+  projectPath: string,
+  skills: SkillManifest[],
+  companySlug: string | undefined,
+  dryRun: boolean,
+): Promise<SkillImportResult> {
+  const result: SkillImportResult = {
+    imported: [],
+    skipped: [],
+    errors: [],
+  };
+
+  const companyDir = slugifyPathSegment(companySlug ?? "unknown-company");
+  const baseSkillsDir = resolve(projectPath, "skills", "imported", companyDir);
+
+  for (const skill of skills) {
+    // Skip skills without a name
+    if (!skill.name || typeof skill.name !== "string" || skill.name.trim().length === 0) {
+      result.errors.push({ name: "(unnamed)", error: "Skill is missing required 'name' field" });
+      continue;
+    }
+
+    const skillSlug = slugifyPathSegment(skill.name);
+    const skillDir = resolve(baseSkillsDir, skillSlug);
+    const skillPath = resolve(skillDir, "SKILL.md");
+
+    // Check if skill already exists
+    if (existsSync(skillPath)) {
+      result.skipped.push(skill.name);
+      continue;
+    }
+
+    if (dryRun) {
+      // In dry-run mode, just report what would be imported
+      result.imported.push(skill.name);
+      continue;
+    }
+
+    try {
+      mkdirSync(skillDir, { recursive: true });
+      writeFileSync(skillPath, toSkillMarkdown(skill), "utf-8");
+      result.imported.push(skill.name);
+    } catch (err) {
+      result.errors.push({ name: skill.name, error: (err as Error).message });
+    }
+  }
+
+  return result;
+}
 
 /**
  * Get the project path for agent operations.
@@ -52,6 +180,7 @@ function printSummary(
   skipped: string[],
   errors: Array<{ name: string; error: string }>,
   dryRun: boolean,
+  skillResult?: SkillImportResult,
 ): void {
   const prefix = dryRun ? "[DRY RUN] " : "";
   console.log();
@@ -71,6 +200,18 @@ function printSummary(
   if (errors.length > 0) {
     console.log(`  ${prefix}Errors: ${errors.length}`);
     for (const err of errors) {
+      console.log(`    ✗ ${err.name}: ${err.error}`);
+    }
+  }
+  if (skillResult) {
+    console.log(`  ${prefix}Skills: ${skillResult.imported.length} imported, ${skillResult.skipped.length} skipped, ${skillResult.errors.length} errors`);
+    for (const name of skillResult.imported) {
+      console.log(`    ✓ ${name}`);
+    }
+    for (const name of skillResult.skipped) {
+      console.log(`    ○ ${name}`);
+    }
+    for (const err of skillResult.errors) {
       console.log(`    ✗ ${err.name}: ${err.error}`);
     }
   }
@@ -117,6 +258,7 @@ export async function runAgentImport(
   };
 
   let companyName: string | undefined;
+  let companySlug: string | undefined;
   let agentCount = 0;
   let teamCount = 0;
   let importItems: Array<{
@@ -137,6 +279,8 @@ export async function runAgentImport(
     skipped: [],
     errors: [],
   };
+  let skills: SkillManifest[] = [];
+  let isPackageImport = false;
 
   try {
     const sourceStats = statSync(sourcePath);
@@ -144,14 +288,20 @@ export async function runAgentImport(
     if (sourceStats.isDirectory()) {
       const pkg = parseCompanyDirectory(sourcePath);
       companyName = pkg.company?.name;
+      companySlug = pkg.company?.slug;
       agentCount = pkg.agents.length;
       teamCount = pkg.teams.length;
+      skills = pkg.skills ?? [];
+      isPackageImport = true;
       ({ items: importItems, result } = prepareAgentCompaniesImport(pkg, conversionOptions));
     } else if (isArchivePath(sourcePath)) {
       const pkg = await parseCompanyArchive(sourcePath);
       companyName = pkg.company?.name;
+      companySlug = pkg.company?.slug;
       agentCount = pkg.agents.length;
       teamCount = pkg.teams.length;
+      skills = pkg.skills ?? [];
+      isPackageImport = true;
       ({ items: importItems, result } = prepareAgentCompaniesImport(pkg, conversionOptions));
     } else if (sourcePath.endsWith(".md")) {
       const content = readFileSync(sourcePath, "utf-8");
@@ -165,6 +315,8 @@ export async function runAgentImport(
       };
       agentCount = pkg.agents.length;
       teamCount = 0;
+      skills = [];
+      isPackageImport = false;
       ({ items: importItems, result } = prepareAgentCompaniesImport(pkg, conversionOptions));
     } else {
       throw new Error(UNSUPPORTED_FORMAT_MESSAGE);
@@ -191,9 +343,12 @@ export async function runAgentImport(
     return;
   }
 
-  // Dry run: just preview
+  // Dry run: just preview (includes skill preview for package imports)
   if (dryRun) {
-    printSummary(companyName, agentCount, teamCount, result.created, result.skipped, result.errors, true);
+    const skillResult = isPackageImport
+      ? await importSkillsToProject(projectPath, skills, companySlug, true)
+      : undefined;
+    printSummary(companyName, agentCount, teamCount, result.created, result.skipped, result.errors, true, skillResult);
     return;
   }
 
@@ -237,5 +392,10 @@ export async function runAgentImport(
     }
   }
 
-  printSummary(companyName, agentCount, teamCount, created, result.skipped, errors, false);
+  // Import skills for package imports (directory/archive)
+  const skillResult = isPackageImport && skills.length > 0
+    ? await importSkillsToProject(projectPath, skills, companySlug, false)
+    : undefined;
+
+  printSummary(companyName, agentCount, teamCount, created, result.skipped, errors, false, skillResult);
 }
