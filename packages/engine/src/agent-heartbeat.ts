@@ -2003,20 +2003,10 @@ export class HeartbeatTriggerScheduler {
         return;
       }
 
-      // Budget governance: skip timer triggers for over-budget agents
-      try {
-        const budgetStatus = await this.store.getBudgetStatus(agentId);
-        if (budgetStatus.isOverBudget) {
-          heartbeatLog.log(`Agent ${agentId} budget exhausted — timer tick skipped`);
-          return;
-        }
-        if (budgetStatus.isOverThreshold) {
-          heartbeatLog.log(`Agent ${agentId} over budget threshold (${budgetStatus.usagePercent}%) — timer tick skipped`);
-          return;
-        }
-      } catch (budgetErr) {
-        heartbeatLog.warn(`Timer tick budget check failed for ${agentId}: ${budgetErr instanceof Error ? budgetErr.message : String(budgetErr)} — proceeding without budget check`);
-      }
+      // Budget enforcement is handled in HeartbeatMonitor.executeHeartbeat() for timer sources.
+      // The scheduler dispatches the callback regardless of budget status so that executeHeartbeat()
+      // can create explicit run records with budget_exhausted/budget_threshold_exceeded reasons.
+      // This makes timer budget skips observable rather than silent drops.
 
       await this.callback(agentId, "timer", {
         wakeReason: "timer",

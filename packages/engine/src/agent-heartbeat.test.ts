@@ -4367,7 +4367,10 @@ describe("HeartbeatTriggerScheduler", () => {
       expect(callback).not.toHaveBeenCalled();
     });
 
-    it("skips timer tick when agent is over budget", async () => {
+    it("dispatches timer callback even when agent is over budget (budget enforcement in executeHeartbeat)", async () => {
+      // Budget checks have been moved from the scheduler to executeHeartbeat().
+      // The scheduler dispatches the callback so that executeHeartbeat() can create
+      // explicit run records with budget_exhausted/budget_threshold_exceeded reasons.
       (store.getBudgetStatus as ReturnType<typeof vi.fn>).mockResolvedValue(
         createBudgetStatus({ isOverBudget: true, isOverThreshold: true, usagePercent: 100 })
       );
@@ -4375,10 +4378,19 @@ describe("HeartbeatTriggerScheduler", () => {
       scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 5000 });
       await vi.advanceTimersByTimeAsync(5000);
 
-      expect(callback).not.toHaveBeenCalled();
+      // Callback IS called so executeHeartbeat() can create a run record
+      expect(callback).toHaveBeenCalledOnce();
+      expect(callback).toHaveBeenCalledWith("agent-001", "timer", {
+        wakeReason: "timer",
+        triggerDetail: "scheduled",
+        intervalMs: 5000,
+      });
     });
 
-    it("skips timer tick when agent is over threshold", async () => {
+    it("dispatches timer callback even when agent is over threshold (budget enforcement in executeHeartbeat)", async () => {
+      // Budget checks have been moved from the scheduler to executeHeartbeat().
+      // The scheduler dispatches the callback so that executeHeartbeat() can create
+      // explicit run records with budget_exhausted/budget_threshold_exceeded reasons.
       (store.getBudgetStatus as ReturnType<typeof vi.fn>).mockResolvedValue(
         createBudgetStatus({
           budgetLimit: 1000,
@@ -4392,7 +4404,13 @@ describe("HeartbeatTriggerScheduler", () => {
       scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 5000 });
       await vi.advanceTimersByTimeAsync(5000);
 
-      expect(callback).not.toHaveBeenCalled();
+      // Callback IS called so executeHeartbeat() can create a run record
+      expect(callback).toHaveBeenCalledOnce();
+      expect(callback).toHaveBeenCalledWith("agent-001", "timer", {
+        wakeReason: "timer",
+        triggerDetail: "scheduled",
+        intervalMs: 5000,
+      });
     });
 
     it("fires timer tick normally when below threshold", async () => {
