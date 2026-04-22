@@ -37,6 +37,8 @@ export interface PluginManifest {
   dependencies?: string[];
   /** Settings schema for validation */
   settingsSchema?: Record<string, PluginSettingSchema>;
+  /** Optional agent runtime metadata for discovery (runtime factory is in FusionPlugin.runtime) */
+  runtime?: PluginRuntimeManifestMetadata;
 }
 
 // ── Plugin Setting Schema ──────────────────────────────────────────────
@@ -164,12 +166,52 @@ export interface PluginUiSlotDefinition {
   componentPath: string;
 }
 
+// ── Plugin Runtimes ─────────────────────────────────────────────────
+
+/**
+ * Runtime manifest metadata for plugin-provided agent runtimes.
+ * Declares the capabilities and requirements of a runtime.
+ */
+export interface PluginRuntimeManifestMetadata {
+  /** Unique runtime identifier within the plugin (e.g., "code-interpreter", "web-search") */
+  runtimeId: string;
+  /** Human-readable name for the runtime */
+  name: string;
+  /** Short description of what the runtime provides */
+  description?: string;
+  /** Semantic version of the runtime implementation */
+  version?: string;
+}
+
+/**
+ * Factory function for creating a runtime instance.
+ * The factory receives plugin context and returns the runtime handle.
+ *
+ * @param ctx - Plugin context with access to task store, settings, and logging
+ * @returns The runtime instance, or void/null if initialization fails
+ */
+export type PluginRuntimeFactory = (
+  ctx: PluginContext,
+) => Promise<unknown> | unknown;
+
+/**
+ * Runtime registration combining manifest metadata with the factory function.
+ * Plugins declare runtimes by providing both metadata (for discovery) and
+ * a factory function (for instantiation).
+ */
+export interface PluginRuntimeRegistration {
+  /** Runtime metadata for discovery and display */
+  metadata: PluginRuntimeManifestMetadata;
+  /** Factory function that creates the runtime instance */
+  factory: PluginRuntimeFactory;
+}
+
 // ── Fusion Plugin ────────────────────────────────────────────────────
 
 export type PluginState = "installed" | "started" | "stopped" | "error";
 
 /**
- * Loaded plugin instance with all hooks, tools, and routes.
+ * Loaded plugin instance with all hooks, tools, routes, and runtimes.
  */
 export interface FusionPlugin {
   manifest: PluginManifest;
@@ -185,6 +227,8 @@ export interface FusionPlugin {
   tools?: PluginToolDefinition[];
   routes?: PluginRouteDefinition[];
   uiSlots?: PluginUiSlotDefinition[];
+  /** Agent runtime registration for providing custom runtime implementations */
+  runtime?: PluginRuntimeRegistration;
 }
 
 // ── Plugin Installation ───────────────────────────────────────────────
@@ -285,6 +329,36 @@ export function validatePluginManifest(manifest: unknown): { valid: boolean; err
         }
         if (setting.type === "array" && (!setting.itemType || !["string", "number"].includes(setting.itemType as string))) {
           errors.push(`settingsSchema.${key}.itemType is required and must be "string" or "number" when type is array`);
+        }
+      }
+    }
+  }
+
+  // Optional: runtime manifest metadata validation
+  if (m.runtime !== undefined) {
+    if (typeof m.runtime !== "object" || m.runtime === null) {
+      errors.push("runtime must be an object");
+    } else {
+      const runtime = m.runtime as Record<string, unknown>;
+
+      // runtimeId is required
+      if (!runtime.runtimeId || typeof runtime.runtimeId !== "string" || runtime.runtimeId.trim() === "") {
+        errors.push("runtime.runtimeId is required and must be a non-empty string");
+      } else if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(runtime.runtimeId as string)) {
+        errors.push("runtime.runtimeId must be a valid slug (lowercase, alphanumeric, hyphens only, cannot start or end with hyphen)");
+      }
+
+      // name is required
+      if (!runtime.name || typeof runtime.name !== "string" || runtime.name.trim() === "") {
+        errors.push("runtime.name is required and must be a non-empty string");
+      }
+
+      // version is optional but must be valid semver if provided
+      if (runtime.version !== undefined) {
+        if (typeof runtime.version !== "string") {
+          errors.push("runtime.version must be a string");
+        } else if (!/^\d+\.\d+\.\d+$/.test(runtime.version)) {
+          errors.push("runtime.version must be a valid semver string (e.g., 1.0.0)");
         }
       }
     }

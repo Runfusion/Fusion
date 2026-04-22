@@ -1288,6 +1288,229 @@ describe("PluginLoader", () => {
     });
   });
 
+  // ── getPluginRuntimes ─────────────────────────────────────────────
+
+  describe("getPluginRuntimes", () => {
+    it("returns empty array when no plugins loaded", async () => {
+      await pluginStore.init();
+
+      const loader = new PluginLoader({
+        pluginStore,
+        taskStore: mockTaskStore,
+      });
+
+      const runtimes = loader.getPluginRuntimes();
+      expect(runtimes).toEqual([]);
+    });
+
+    it("returns empty array when plugins have no runtime registration", async () => {
+      await pluginStore.init();
+
+      const loader = new PluginLoader({
+        pluginStore,
+        taskStore: mockTaskStore,
+      });
+
+      // Manually add plugin without runtime
+      (loader as any).plugins.set("no-runtime", {
+        manifest: makeManifest({ id: "no-runtime" }),
+        state: "started",
+        hooks: {},
+        tools: [],
+        routes: [],
+      } as FusionPlugin);
+
+      const runtimes = loader.getPluginRuntimes();
+      expect(runtimes).toEqual([]);
+    });
+
+    it("returns runtime registration from single plugin with runtime", async () => {
+      await pluginStore.init();
+
+      const loader = new PluginLoader({
+        pluginStore,
+        taskStore: mockTaskStore,
+      });
+
+      const mockRuntime = {
+        metadata: {
+          runtimeId: "code-interpreter",
+          name: "Code Interpreter",
+          description: "Executes code in a sandbox",
+          version: "1.0.0",
+        },
+        factory: async () => ({ execute: async () => {} }),
+      };
+
+      // Manually add plugin with runtime
+      (loader as any).plugins.set("runtime-plugin", {
+        manifest: makeManifest({ id: "runtime-plugin" }),
+        state: "started",
+        hooks: {},
+        tools: [],
+        routes: [],
+        runtime: mockRuntime,
+      } as FusionPlugin);
+
+      const runtimes = loader.getPluginRuntimes();
+
+      expect(runtimes).toHaveLength(1);
+      expect(runtimes[0].pluginId).toBe("runtime-plugin");
+      expect(runtimes[0].runtime.metadata.runtimeId).toBe("code-interpreter");
+      expect(runtimes[0].runtime.metadata.name).toBe("Code Interpreter");
+      expect(runtimes[0].runtime.metadata.description).toBe("Executes code in a sandbox");
+      expect(runtimes[0].runtime.metadata.version).toBe("1.0.0");
+      expect(typeof runtimes[0].runtime.factory).toBe("function");
+    });
+
+    it("returns runtime registrations from multiple plugins", async () => {
+      await pluginStore.init();
+
+      const loader = new PluginLoader({
+        pluginStore,
+        taskStore: mockTaskStore,
+      });
+
+      const runtimeA = {
+        metadata: {
+          runtimeId: "runtime-a",
+          name: "Runtime A",
+        },
+        factory: async () => {},
+      };
+
+      const runtimeB = {
+        metadata: {
+          runtimeId: "runtime-b",
+          name: "Runtime B",
+          description: "Another runtime",
+          version: "2.0.0",
+        },
+        factory: async () => {},
+      };
+
+      // Manually add plugins with runtimes
+      (loader as any).plugins.set("plugin-a", {
+        manifest: makeManifest({ id: "plugin-a" }),
+        state: "started",
+        hooks: {},
+        tools: [],
+        routes: [],
+        runtime: runtimeA,
+      } as FusionPlugin);
+      (loader as any).plugins.set("plugin-b", {
+        manifest: makeManifest({ id: "plugin-b" }),
+        state: "started",
+        hooks: {},
+        tools: [],
+        routes: [],
+        runtime: runtimeB,
+      } as FusionPlugin);
+
+      const runtimes = loader.getPluginRuntimes();
+
+      expect(runtimes).toHaveLength(2);
+      expect(runtimes.find((r) => r.pluginId === "plugin-a")?.runtime.metadata.runtimeId).toBe("runtime-a");
+      expect(runtimes.find((r) => r.pluginId === "plugin-b")?.runtime.metadata.runtimeId).toBe("runtime-b");
+    });
+
+    it("skips plugins without runtime registration when other plugins have runtimes", async () => {
+      await pluginStore.init();
+
+      const loader = new PluginLoader({
+        pluginStore,
+        taskStore: mockTaskStore,
+      });
+
+      const mockRuntime = {
+        metadata: {
+          runtimeId: "code-interpreter",
+          name: "Code Interpreter",
+        },
+        factory: async () => {},
+      };
+
+      // Manually add plugins - one with runtime, one without
+      (loader as any).plugins.set("plugin-with-runtime", {
+        manifest: makeManifest({ id: "plugin-with-runtime" }),
+        state: "started",
+        hooks: {},
+        tools: [],
+        routes: [],
+        runtime: mockRuntime,
+      } as FusionPlugin);
+      (loader as any).plugins.set("plugin-no-runtime", {
+        manifest: makeManifest({ id: "plugin-no-runtime" }),
+        state: "started",
+        hooks: {},
+        tools: [],
+        routes: [],
+      } as FusionPlugin);
+
+      const runtimes = loader.getPluginRuntimes();
+
+      expect(runtimes).toHaveLength(1);
+      expect(runtimes[0].pluginId).toBe("plugin-with-runtime");
+      expect(runtimes[0].runtime.metadata.runtimeId).toBe("code-interpreter");
+    });
+
+    it("includes both metadata and factory from runtime registration", async () => {
+      await pluginStore.init();
+
+      const loader = new PluginLoader({
+        pluginStore,
+        taskStore: mockTaskStore,
+      });
+
+      const factoryFn = async () => ({ result: "test" });
+      const mockRuntime = {
+        metadata: {
+          runtimeId: "test-runtime",
+          name: "Test Runtime",
+          description: "Test description",
+        },
+        factory: factoryFn,
+      };
+
+      (loader as any).plugins.set("test-plugin", {
+        manifest: makeManifest({ id: "test-plugin" }),
+        state: "started",
+        hooks: {},
+        tools: [],
+        routes: [],
+        runtime: mockRuntime,
+      } as FusionPlugin);
+
+      const runtimes = loader.getPluginRuntimes();
+
+      expect(runtimes).toHaveLength(1);
+      expect(runtimes[0].runtime.metadata).toEqual({
+        runtimeId: "test-runtime",
+        name: "Test Runtime",
+        description: "Test description",
+      });
+      expect(runtimes[0].runtime.factory).toBe(factoryFn);
+    });
+
+    it("returns deterministic empty array when no runtime registrations available", async () => {
+      await pluginStore.init();
+
+      const loader = new PluginLoader({
+        pluginStore,
+        taskStore: mockTaskStore,
+      });
+
+      // Multiple calls return same result
+      const runtimes1 = loader.getPluginRuntimes();
+      const runtimes2 = loader.getPluginRuntimes();
+      const runtimes3 = loader.getPluginRuntimes();
+
+      expect(runtimes1).toEqual([]);
+      expect(runtimes2).toEqual([]);
+      expect(runtimes3).toEqual([]);
+    });
+  });
+
   // ── getLoadedPlugins ───────────────────────────────────────────────
 
   describe("getLoadedPlugins", () => {

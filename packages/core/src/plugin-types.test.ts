@@ -408,6 +408,232 @@ describe("validatePluginManifest", () => {
     });
   });
 
+  // ── Runtime Manifest Metadata ───────────────────────────────────────
+
+  describe("runtime manifest metadata", () => {
+    it("accepts manifest with valid runtime metadata", () => {
+      const manifest = {
+        id: "test",
+        name: "Test",
+        version: "1.0.0",
+        runtime: {
+          runtimeId: "code-interpreter",
+          name: "Code Interpreter",
+          description: "Executes code in a sandbox",
+          version: "1.0.0",
+        },
+      };
+      const result = validatePluginManifest(manifest);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toEqual([]);
+    });
+
+    it("accepts manifest with minimal runtime metadata (only required fields)", () => {
+      const manifest = {
+        id: "test",
+        name: "Test",
+        version: "1.0.0",
+        runtime: {
+          runtimeId: "my-runtime",
+          name: "My Runtime",
+        },
+      };
+      const result = validatePluginManifest(manifest);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toEqual([]);
+    });
+
+    it("accepts manifest without runtime field", () => {
+      const manifest = {
+        id: "test",
+        name: "Test",
+        version: "1.0.0",
+      };
+      const result = validatePluginManifest(manifest);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toEqual([]);
+    });
+
+    it("rejects non-object runtime", () => {
+      const manifest = {
+        id: "test",
+        name: "Test",
+        version: "1.0.0",
+        runtime: "not-an-object",
+      };
+      const result = validatePluginManifest(manifest);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain("runtime must be an object");
+    });
+
+    it("rejects null runtime", () => {
+      const manifest = {
+        id: "test",
+        name: "Test",
+        version: "1.0.0",
+        runtime: null,
+      };
+      const result = validatePluginManifest(manifest);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain("runtime must be an object");
+    });
+
+    it("rejects runtime with missing runtimeId", () => {
+      const manifest = {
+        id: "test",
+        name: "Test",
+        version: "1.0.0",
+        runtime: {
+          name: "My Runtime",
+        },
+      };
+      const result = validatePluginManifest(manifest);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain("runtime.runtimeId is required and must be a non-empty string");
+    });
+
+    it("rejects runtime with empty runtimeId", () => {
+      const manifest = {
+        id: "test",
+        name: "Test",
+        version: "1.0.0",
+        runtime: {
+          runtimeId: "",
+          name: "My Runtime",
+        },
+      };
+      const result = validatePluginManifest(manifest);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain("runtime.runtimeId is required and must be a non-empty string");
+    });
+
+    it("rejects runtime with invalid runtimeId format", () => {
+      const manifest = {
+        id: "test",
+        name: "Test",
+        version: "1.0.0",
+        runtime: {
+          runtimeId: "My-Runtime",
+          name: "My Runtime",
+        },
+      };
+      const result = validatePluginManifest(manifest);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain("runtime.runtimeId must be a valid slug (lowercase, alphanumeric, hyphens only, cannot start or end with hyphen)");
+    });
+
+    it("rejects runtime with uppercase in runtimeId", () => {
+      const manifest = {
+        id: "test",
+        name: "Test",
+        version: "1.0.0",
+        runtime: {
+          runtimeId: "CodeInterpreter",
+          name: "My Runtime",
+        },
+      };
+      const result = validatePluginManifest(manifest);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain("runtime.runtimeId must be a valid slug (lowercase, alphanumeric, hyphens only, cannot start or end with hyphen)");
+    });
+
+    it("rejects runtime with missing name", () => {
+      const manifest = {
+        id: "test",
+        name: "Test",
+        version: "1.0.0",
+        runtime: {
+          runtimeId: "my-runtime",
+        },
+      };
+      const result = validatePluginManifest(manifest);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain("runtime.name is required and must be a non-empty string");
+    });
+
+    it("rejects runtime with empty name", () => {
+      const manifest = {
+        id: "test",
+        name: "Test",
+        version: "1.0.0",
+        runtime: {
+          runtimeId: "my-runtime",
+          name: "",
+        },
+      };
+      const result = validatePluginManifest(manifest);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain("runtime.name is required and must be a non-empty string");
+    });
+
+    it("rejects runtime with invalid version format", () => {
+      const manifest = {
+        id: "test",
+        name: "Test",
+        version: "1.0.0",
+        runtime: {
+          runtimeId: "my-runtime",
+          name: "My Runtime",
+          version: "latest",
+        },
+      };
+      const result = validatePluginManifest(manifest);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain("runtime.version must be a valid semver string (e.g., 1.0.0)");
+    });
+
+    it("rejects runtime with non-string version", () => {
+      const manifest = {
+        id: "test",
+        name: "Test",
+        version: "1.0.0",
+        runtime: {
+          runtimeId: "my-runtime",
+          name: "My Runtime",
+          version: 123,
+        },
+      };
+      const result = validatePluginManifest(manifest);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain("runtime.version must be a string");
+    });
+
+    it("accepts runtime with valid semver version", () => {
+      const manifest = {
+        id: "test",
+        name: "Test",
+        version: "1.0.0",
+        runtime: {
+          runtimeId: "my-runtime",
+          name: "My Runtime",
+          version: "2.1.3",
+        },
+      };
+      const result = validatePluginManifest(manifest);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toEqual([]);
+    });
+
+    it("reports multiple runtime validation errors", () => {
+      const manifest = {
+        id: "test",
+        name: "Test",
+        version: "1.0.0",
+        runtime: {
+          runtimeId: "",
+          name: "",
+          version: "bad",
+        },
+      };
+      const result = validatePluginManifest(manifest);
+      expect(result.valid).toBe(false);
+      expect(result.errors.length).toBeGreaterThanOrEqual(3);
+      expect(result.errors).toContain("runtime.runtimeId is required and must be a non-empty string");
+      expect(result.errors).toContain("runtime.name is required and must be a non-empty string");
+      expect(result.errors).toContain("runtime.version must be a valid semver string (e.g., 1.0.0)");
+    });
+  });
+
   // ── Null/Undefined Input ────────────────────────────────────────────
 
   describe("null/undefined input", () => {
@@ -564,5 +790,204 @@ describe("FusionPlugin with uiSlots", () => {
     };
 
     expect((plugin as any).uiSlots).toBeUndefined();
+  });
+});
+
+// ── FusionPlugin with runtime ──────────────────────────────────────────
+
+describe("FusionPlugin with runtime", () => {
+  it("accepts a FusionPlugin with runtime registration", () => {
+    const plugin = {
+      manifest: { id: "test-plugin", name: "Test Plugin", version: "1.0.0" },
+      state: "started" as const,
+      hooks: {},
+      tools: [],
+      routes: [],
+      runtime: {
+        metadata: {
+          runtimeId: "code-interpreter",
+          name: "Code Interpreter",
+          description: "Executes code in a sandbox",
+          version: "1.0.0",
+        },
+        factory: async () => ({ execute: async () => {} }),
+      },
+    };
+
+    expect(plugin.runtime).toBeDefined();
+    expect(plugin.runtime!.metadata.runtimeId).toBe("code-interpreter");
+    expect(plugin.runtime!.metadata.name).toBe("Code Interpreter");
+    expect(typeof plugin.runtime!.factory).toBe("function");
+  });
+
+  it("accepts a FusionPlugin with minimal runtime registration", () => {
+    const plugin = {
+      manifest: { id: "test-plugin", name: "Test Plugin", version: "1.0.0" },
+      state: "started" as const,
+      hooks: {},
+      tools: [],
+      routes: [],
+      runtime: {
+        metadata: {
+          runtimeId: "my-runtime",
+          name: "My Runtime",
+        },
+        factory: async () => {},
+      },
+    };
+
+    expect(plugin.runtime).toBeDefined();
+    expect(plugin.runtime!.metadata.runtimeId).toBe("my-runtime");
+    expect(plugin.runtime!.metadata.name).toBe("My Runtime");
+  });
+
+  it("accepts a FusionPlugin without runtime field", () => {
+    const plugin = {
+      manifest: { id: "test-plugin", name: "Test Plugin", version: "1.0.0" },
+      state: "started" as const,
+      hooks: {},
+      tools: [],
+      routes: [],
+    };
+
+    expect((plugin as any).runtime).toBeUndefined();
+  });
+
+  it("accepts a FusionPlugin with uiSlots and runtime together", () => {
+    const plugin = {
+      manifest: { id: "test-plugin", name: "Test Plugin", version: "1.0.0" },
+      state: "started" as const,
+      hooks: {},
+      tools: [],
+      routes: [],
+      uiSlots: [
+        {
+          slotId: "task-detail-tab",
+          label: "Task Details",
+          componentPath: "./components/TaskDetailTab.js",
+        },
+      ],
+      runtime: {
+        metadata: {
+          runtimeId: "code-interpreter",
+          name: "Code Interpreter",
+        },
+        factory: async () => {},
+      },
+    };
+
+    expect(plugin.uiSlots).toHaveLength(1);
+    expect(plugin.runtime).toBeDefined();
+    expect(plugin.runtime!.metadata.runtimeId).toBe("code-interpreter");
+  });
+});
+
+// ── PluginRuntimeManifestMetadata ──────────────────────────────────────
+
+describe("PluginRuntimeManifestMetadata", () => {
+  it("accepts a valid PluginRuntimeManifestMetadata with all fields", () => {
+    const metadata = {
+      runtimeId: "code-interpreter",
+      name: "Code Interpreter",
+      description: "Executes code in a sandbox",
+      version: "1.0.0",
+    };
+
+    expect(metadata.runtimeId).toBe("code-interpreter");
+    expect(metadata.name).toBe("Code Interpreter");
+    expect(metadata.description).toBe("Executes code in a sandbox");
+    expect(metadata.version).toBe("1.0.0");
+  });
+
+  it("accepts a PluginRuntimeManifestMetadata without optional fields", () => {
+    const metadata = {
+      runtimeId: "my-runtime",
+      name: "My Runtime",
+    };
+
+    expect(metadata.runtimeId).toBe("my-runtime");
+    expect(metadata.name).toBe("My Runtime");
+    expect((metadata as any).description).toBeUndefined();
+    expect((metadata as any).version).toBeUndefined();
+  });
+
+  it("accepts valid slug format for runtimeId", () => {
+    const validIds = ["a", "a1", "a-b", "code-interpreter", "web-search-v2"];
+    for (const runtimeId of validIds) {
+      const metadata = { runtimeId, name: "Test" };
+      const manifest = {
+        id: "test",
+        name: "Test",
+        version: "1.0.0",
+        runtime: metadata,
+      };
+      const result = validatePluginManifest(manifest);
+      expect(result.valid).toBe(true);
+    }
+  });
+
+  it("rejects invalid slug format for runtimeId", () => {
+    const invalidIds = ["-starts-with-hyphen", "ends-with-hyphen-", "has_underscore", "has space", "UPPERCASE"];
+    for (const runtimeId of invalidIds) {
+      const manifest = {
+        id: "test",
+        name: "Test",
+        version: "1.0.0",
+        runtime: { runtimeId, name: "Test" },
+      };
+      const result = validatePluginManifest(manifest);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.includes("runtimeId"))).toBe(true);
+    }
+  });
+});
+
+// ── PluginRuntimeRegistration ───────────────────────────────────────────
+
+describe("PluginRuntimeRegistration", () => {
+  it("accepts a valid PluginRuntimeRegistration", () => {
+    const registration = {
+      metadata: {
+        runtimeId: "code-interpreter",
+        name: "Code Interpreter",
+        description: "Executes code in a sandbox",
+      },
+      factory: async (ctx: any) => {
+        return {
+          execute: async (code: string) => {
+            return { result: `evaluated: ${code}` };
+          },
+        };
+      },
+    };
+
+    expect(registration.metadata.runtimeId).toBe("code-interpreter");
+    expect(typeof registration.factory).toBe("function");
+  });
+
+  it("accepts synchronous factory function", () => {
+    const registration = {
+      metadata: {
+        runtimeId: "sync-runtime",
+        name: "Sync Runtime",
+      },
+      factory: () => ({ execute: () => {} }),
+    };
+
+    expect(typeof registration.factory).toBe("function");
+  });
+
+  it("factory can return null or void", () => {
+    const registration = {
+      metadata: {
+        runtimeId: "null-runtime",
+        name: "Null Runtime",
+      },
+      factory: async () => {
+        return null;
+      },
+    };
+
+    expect(typeof registration.factory).toBe("function");
   });
 });

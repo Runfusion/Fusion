@@ -11,11 +11,12 @@ A comprehensive guide to creating Fusion plugins that extend the task board with
 5. [Registering Tools](#5-registering-tools)
 6. [Registering Routes](#6-registering-routes)
 7. [Registering UI Slots](#7-registering-ui-slots)
-8. [Plugin Context API Reference](#8-plugin-context-api-reference)
-9. [Plugin Lifecycle States](#9-plugin-lifecycle-states)
-10. [Testing Plugins](#10-testing-plugins)
-11. [Publishing Plugins](#11-publishing-plugins)
-12. [Example Plugins](#12-example-plugins)
+8. [Registering Agent Runtimes](#8-registering-agent-runtimes)
+9. [Plugin Context API Reference](#9-plugin-context-api-reference)
+10. [Plugin Lifecycle States](#10-plugin-lifecycle-states)
+11. [Testing Plugins](#11-testing-plugins)
+12. [Publishing Plugins](#12-publishing-plugins)
+13. [Example Plugins](#13-example-plugins)
 
 ---
 
@@ -79,7 +80,12 @@ const manifest: PluginManifest = {
   homepage: "https://github.com/you/plugin",
   fusionVersion: ">=1.0.0",         // Optional: minimum Fusion version
   dependencies: [],                   // Optional: plugin IDs this depends on
-  settingsSchema: { /* ... */ },    // Optional: configuration schema
+  settingsSchema: { /* ... */ },     // Optional: configuration schema
+  runtime: {                         // Optional: agent runtime metadata
+    runtimeId: "code-interpreter",
+    name: "Code Interpreter",
+    description: "Executes code in a sandbox",
+  },
 };
 ```
 
@@ -96,6 +102,7 @@ const manifest: PluginManifest = {
 | `fusionVersion` | string | No | Minimum Fusion version required |
 | `dependencies` | string[] | No | IDs of plugins this depends on |
 | `settingsSchema` | Record<string, PluginSettingSchema> | No | Configuration schema |
+| `runtime` | PluginRuntimeManifestMetadata | No | Agent runtime metadata for discovery |
 
 ---
 
@@ -475,7 +482,162 @@ export default function CiBadge() {
 
 ---
 
-## 8. Plugin Context API Reference
+## 8. Registering Agent Runtimes
+
+Plugins can provide custom agent runtime implementations that extend the Fusion engine's ability to execute agent sessions. Runtimes are discovered through the plugin discovery pipeline and can be used by the engine to route agent session creation.
+
+### How Runtimes Work
+
+A plugin runtime consists of two parts:
+1. **Runtime Metadata** (in manifest): Declares the runtime's identity for discovery
+2. **Runtime Factory** (in plugin instance): Creates the runtime instance when needed
+
+### Runtime Manifest Metadata
+
+Declare runtime metadata in your plugin's manifest:
+
+```typescript
+import type { PluginManifest } from "@fusion/plugin-sdk";
+
+const manifest: PluginManifest = {
+  id: "my-runtime-plugin",
+  name: "My Runtime Plugin",
+  version: "1.0.0",
+  runtime: {
+    runtimeId: "code-interpreter",
+    name: "Code Interpreter",
+    description: "Executes code in a sandboxed environment",
+    version: "1.0.0",
+  },
+};
+```
+
+### PluginRuntimeManifestMetadata Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `runtimeId` | `string` | Yes | Unique runtime identifier within the plugin (kebab-case slug) |
+| `name` | `string` | Yes | Human-readable name for the runtime |
+| `description` | `string` | No | Short description of what the runtime provides |
+| `version` | `string` | No | Semantic version of the runtime implementation |
+
+### Runtime Factory
+
+The runtime factory is a function that creates the runtime instance:
+
+```typescript
+import type { FusionPlugin, PluginContext } from "@fusion/plugin-sdk";
+
+const plugin: FusionPlugin = {
+  manifest: { /* ... */ },
+  state: "installed",
+  hooks: {},
+  runtime: {
+    metadata: {
+      runtimeId: "code-interpreter",
+      name: "Code Interpreter",
+      description: "Executes code in a sandboxed environment",
+    },
+    factory: async (ctx: PluginContext) => {
+      // Initialize the runtime with plugin context
+      const apiKey = ctx.settings.apiKey as string;
+      
+      return {
+        name: "code-interpreter",
+        version: "1.0.0",
+        async execute(code: string) {
+          // Execute code in sandbox
+          const result = await runSandbox(code, { apiKey });
+          return result;
+        },
+      };
+    },
+  },
+};
+```
+
+### PluginRuntimeFactory Signature
+
+```typescript
+type PluginRuntimeFactory = (ctx: PluginContext) => Promise<unknown> | unknown;
+```
+
+The factory receives `PluginContext` (same as hooks) and should return the runtime instance. The returned instance's structure depends on the runtime's purpose.
+
+### PluginRuntimeRegistration Structure
+
+```typescript
+interface PluginRuntimeRegistration {
+  metadata: PluginRuntimeManifestMetadata;
+  factory: PluginRuntimeFactory;
+}
+```
+
+### Discovery Pipeline
+
+Runtimes are discovered through the plugin discovery pipeline:
+
+1. **PluginLoader** aggregates runtime registrations from all loaded plugins via `getPluginRuntimes()`
+2. **PluginRunner** caches runtime registrations and exposes them via `getPluginRuntimes()`
+
+Both components follow the same pattern as tools, routes, and UI slots.
+
+### Backwards Compatibility
+
+Runtime registration is entirely optional. Plugins that don't declare a `runtime` field:
+- Continue to work unchanged
+- Pass manifest validation
+- Don't affect the runtime discovery pipeline
+
+### Example: Complete Runtime Plugin
+
+```typescript
+import { definePlugin } from "@fusion/plugin-sdk";
+
+export default definePlugin({
+  manifest: {
+    id: "fusion-plugin-code-interpreter",
+    name: "Code Interpreter Plugin",
+    version: "1.0.0",
+    description: "Provides a sandboxed code execution runtime",
+    runtime: {
+      runtimeId: "code-interpreter",
+      name: "Code Interpreter",
+      description: "Executes code in a sandboxed environment",
+      version: "1.0.0",
+    },
+  },
+  state: "installed",
+  hooks: {
+    onLoad: async (ctx) => {
+      ctx.logger.info("Code interpreter runtime plugin loaded");
+    },
+  },
+  runtime: {
+    metadata: {
+      runtimeId: "code-interpreter",
+      name: "Code Interpreter",
+      description: "Executes code in a sandboxed environment",
+      version: "1.0.0",
+    },
+    factory: async (ctx) => {
+      // Runtime initialization
+      return {
+        name: "code-interpreter",
+        version: "1.0.0",
+        async execute(code: string, language: string) {
+          // Sandbox execution logic
+          return { output: `Executed ${language} code`, result: "success" };
+        },
+      };
+    },
+  },
+} satisfies FusionPlugin);
+```
+
+---
+
+## 9. Plugin Context API Reference
 
 The context object is passed to hooks, tools, and route handlers:
 
@@ -528,7 +690,7 @@ hooks: {
 
 ---
 
-## 9. Plugin Lifecycle States
+## 10. Plugin Lifecycle States
 
 Plugins transition through these states:
 
@@ -565,7 +727,7 @@ Any state can transition to:
 
 ---
 
-## 10. Testing Plugins
+## 11. Testing Plugins
 
 Use Vitest for unit testing your plugins:
 
@@ -641,7 +803,7 @@ pnpm test
 
 ---
 
-## 11. Publishing Plugins
+## 12. Publishing Plugins
 
 ### Package Requirements
 
@@ -697,7 +859,7 @@ cp -r fusion-plugin-my-plugin ~/.fusion/plugins/
 
 ---
 
-## 12. Example Plugins
+## 13. Example Plugins
 
 Explore these reference implementations:
 
@@ -794,7 +956,7 @@ export default definePlugin({
     id: "my-full-plugin",
     name: "My Full Plugin",
     version: "1.0.0",
-    description: "A complete example with hooks, tools, routes, and UI slots",
+    description: "A complete example with hooks, tools, routes, UI slots, and runtimes",
     settingsSchema: {
       apiKey: {
         type: "string",

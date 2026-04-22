@@ -20,6 +20,7 @@ import type {
   PluginToolDefinition,
   PluginRouteDefinition,
   PluginUiSlotDefinition,
+  PluginRuntimeRegistration,
   PluginState,
   PluginInstallation,
 } from "./plugin-types.js";
@@ -749,6 +750,20 @@ export class PluginLoader extends EventEmitter<{
       }
     }
     return slots;
+  }
+
+  /**
+   * Get all runtime registrations from loaded plugins.
+   * Returns plugin ownership metadata along with the runtime registration.
+   */
+  getPluginRuntimes(): Array<{ pluginId: string; runtime: PluginRuntimeRegistration }> {
+    const runtimes: Array<{ pluginId: string; runtime: PluginRuntimeRegistration }> = [];
+    for (const [pluginId, plugin] of this.plugins) {
+      if (plugin.runtime) {
+        runtimes.push({ pluginId, runtime: plugin.runtime });
+      }
+    }
+    return runtimes;
   }
 
   /**
