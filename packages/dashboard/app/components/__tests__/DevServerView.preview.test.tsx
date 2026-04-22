@@ -73,19 +73,65 @@ function createConfig(overrides: Partial<DevServerConfig> = {}): DevServerConfig
   };
 }
 
-function createDevServerHookState(overrides: Record<string, unknown> = {}) {
+function legacyStateToSession(legacy: DevServerState) {
   return {
-    candidates: [],
-    serverState: createState(),
+    config: {
+      id: legacy.id ?? "default",
+      name: legacy.name ?? "Dev Server",
+      command: legacy.command ?? "",
+      cwd: legacy.cwd ?? ".",
+    },
+    status: legacy.status,
+    runtime: legacy.pid
+      ? {
+        pid: legacy.pid,
+        startedAt: legacy.startedAt ?? new Date().toISOString(),
+        exitCode: legacy.exitCode ?? undefined,
+        previewUrl: legacy.previewUrl,
+      }
+      : undefined,
+    previewUrl: legacy.previewUrl ?? legacy.detectedUrl ?? legacy.manualUrl ?? null,
+    logHistory: [],
+  };
+}
+
+function createDevServerHookState(overrides: Record<string, unknown> = {}) {
+  const start = (overrides.start as ReturnType<typeof vi.fn> | undefined) ?? vi.fn().mockResolvedValue(undefined);
+  const stop = (overrides.stop as ReturnType<typeof vi.fn> | undefined) ?? vi.fn().mockResolvedValue(undefined);
+  const restart = (overrides.restart as ReturnType<typeof vi.fn> | undefined) ?? vi.fn().mockResolvedValue(undefined);
+  const setPreviewUrl = (overrides.setPreviewUrl as ReturnType<typeof vi.fn> | undefined) ?? vi.fn().mockResolvedValue(undefined);
+  const detect = (overrides.detect as ReturnType<typeof vi.fn> | undefined) ?? vi.fn().mockResolvedValue(undefined);
+  const refresh = (overrides.refresh as ReturnType<typeof vi.fn> | undefined) ?? vi.fn().mockResolvedValue(undefined);
+  const serverState = (overrides.serverState as DevServerState | undefined) ?? createState();
+  const candidates = (overrides.candidates as unknown[] | undefined) ?? [];
+  return {
+    // legacy API (still read by some tests as aliases)
     logs: [],
-    start: vi.fn().mockResolvedValue(undefined),
-    stop: vi.fn().mockResolvedValue(undefined),
-    restart: vi.fn().mockResolvedValue(undefined),
-    setPreviewUrl: vi.fn().mockResolvedValue(undefined),
     loading: false,
     error: null,
-    detect: vi.fn().mockResolvedValue(undefined),
+    setManualUrl: setPreviewUrl,
+    refreshStatus: refresh,
+    // new API consumed by the current component
+    sessions: [],
+    previewUrl: serverState.previewUrl ?? null,
+    isLoading: false,
     ...overrides,
+    // the following must come AFTER `...overrides` so aliases track the
+    // overridden legacy fields.
+    candidates,
+    serverState,
+    start,
+    stop,
+    restart,
+    setPreviewUrl,
+    detect,
+    session: legacyStateToSession(serverState),
+    detectedCommands: candidates,
+    startServer: start,
+    stopServer: stop,
+    restartServer: restart,
+    detectCommands: detect,
+    refresh,
   };
 }
 

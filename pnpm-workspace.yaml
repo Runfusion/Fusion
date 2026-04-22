@@ -1,4 +1,4 @@
 packages:
   - "packages/*"
   - "plugins/examples/*"
-  - "plugins/fusion-plugin-hermes-runtime"
+  - "plugins/fusion-plugin-paperclip-runtime"

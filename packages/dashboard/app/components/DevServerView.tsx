@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ExternalLink, Eye, Loader2, Monitor, Play, RefreshCw, RotateCw, ShieldAlert, Square } from "lucide-react";
-import type { DetectedDevServerCommand, DevServerSession, DevServerState } from "../api";
+import type { DetectedDevServerCommand } from "../api";
 import { useDevServer } from "../hooks/useDevServer";
-import { useDevServerConfig } from "../hooks/useDevServerConfig";
 import { useDevServerLogs } from "../hooks/useDevServerLogs";
 import { usePreviewEmbed } from "../hooks/usePreviewEmbed";
 import type { ToastType } from "../hooks/useToast";
@@ -35,32 +34,6 @@ function normalizeError(error: unknown): string {
 
 function normalizeCwdToSource(cwd: string): string {
   return cwd === "." ? "root" : cwd;
-}
-
-function normalizeLegacyServerState(serverState: DevServerState): DevServerSession {
-  return {
-    config: {
-      id: serverState.id ?? "default",
-      name: serverState.name ?? "Dev Server",
-      command: serverState.command ?? "",
-      cwd: serverState.cwd ?? ".",
-    },
-    status: serverState.status as DevServerSession["status"],
-    runtime: serverState.pid
-      ? {
-        pid: serverState.pid,
-        startedAt: serverState.startedAt ?? new Date().toISOString(),
-        exitCode: serverState.exitCode ?? undefined,
-        previewUrl: serverState.previewUrl,
-      }
-      : undefined,
-    previewUrl: serverState.previewUrl ?? serverState.detectedUrl ?? serverState.manualUrl ?? undefined,
-    logHistory: (serverState.logs ?? []).map((line) => ({
-      timestamp: new Date().toISOString(),
-      stream: line.startsWith("[stderr]") ? "stderr" as const : "stdout" as const,
-      text: line.replace(/^\[stderr\]\s*/, ""),
-    })),
-  };
 }
 
 function normalizeSourceToCwd(source: string | null | undefined): string | null {
@@ -105,33 +78,21 @@ function truncateCommand(command: string): string {
 }
 
 export function DevServerView({ addToast, projectId }: DevServerViewProps) {
-  const devServerState = useDevServer(projectId);
-
-  const legacyServerState = (devServerState.serverState as DevServerState | null | undefined) ?? null;
-  const session = devServerState.session
-    ?? (legacyServerState ? normalizeLegacyServerState(legacyServerState) : null);
-  const detectedCommands = devServerState.detectedCommands ?? devServerState.candidates ?? [];
-  const previewUrl = devServerState.previewUrl ?? session?.previewUrl ?? legacyServerState?.previewUrl ?? null;
-  const error = devServerState.error ?? null;
-  const startServer = devServerState.startServer
-    ?? (async (command: string, cwd?: string) => devServerState.start(command, cwd));
-  const stopServer = devServerState.stopServer ?? devServerState.stop;
-  const restartServer = devServerState.restartServer ?? devServerState.restart;
-  const setPreviewUrl = devServerState.setPreviewUrl ?? devServerState.setManualUrl;
-  const detectCommands = devServerState.detectCommands ?? devServerState.detect;
-  const refresh = devServerState.refresh ?? devServerState.refreshStatus;
-
   const {
-    config,
-    loading: configLoading,
-    selectScript,
-    clearSelection,
-    setPreviewUrlOverride,
-  } = useDevServerConfig(projectId);
-
-  const manualPreviewUrlOverride = config?.previewUrlOverride ?? legacyServerState?.manualPreviewUrl ?? null;
-  const effectivePreviewUrl = manualPreviewUrlOverride ?? previewUrl;
-  const isLoading = (devServerState.isLoading ?? devServerState.loading ?? false) || configLoading;
+    session,
+    sessions,
+    logs,
+    detectedCommands,
+    previewUrl,
+    isLoading,
+    error,
+    startServer,
+    stopServer,
+    restartServer,
+    setPreviewUrl,
+    detectCommands,
+    refresh,
+  } = useDevServer(projectId);
 
   const status = session?.status ?? "stopped";
   const isRunning = status === "running" || status === "starting";
@@ -146,26 +107,28 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
     loadMore: loadMoreLogs,
   } = useDevServerLogs(projectId, Boolean(projectId));
 
-  const selectedSource = config?.selectedSource ?? (session?.config?.cwd ? normalizeCwdToSource(session.config.cwd) : null);
+  const effectivePreviewUrl = previewUrl;
+  const selectedSource = session?.config?.cwd ?? null;
 
   const [showCandidates, setShowCandidates] = useState(true);
   const [commandInput, setCommandInput] = useState("");
   const [previewInput, setPreviewInput] = useState("");
-  const [selectedScript, setSelectedScript] = useState<string | null>(config?.selectedScript ?? null);
+  const [selectedScript, setSelectedScript] = useState<string | null>(null);
   const [actionInFlight, setActionInFlight] = useState<"start" | "stop" | "restart" | "preview" | null>(null);
 
   const [previewMode, setPreviewMode] = useState<PreviewMode>("embedded");
 
   const previewEmbedUrl = previewMode === "embedded" ? effectivePreviewUrl : null;
-  const previewEmbedState = usePreviewEmbed(previewEmbedUrl);
-  const embedStatus = previewEmbedState.embedStatus;
-  const setEmbedStatus = previewEmbedState.setEmbedStatus;
-  const resetEmbedStatus = previewEmbedState.resetEmbedStatus ?? (previewEmbedState as { resetEmbed?: () => void }).resetEmbed ?? (() => {});
-  const iframeRef = previewEmbedState.iframeRef;
-  const isEmbedded = previewEmbedState.isEmbedded;
-  const isBlocked = previewEmbedState.isBlocked;
-  const blockReason = previewEmbedState.blockReason ?? previewEmbedState.embedContext ?? null;
-  const retry = previewEmbedState.retry ?? (() => resetEmbedStatus());
+  const {
+    embedStatus,
+    setEmbedStatus,
+    resetEmbedStatus,
+    iframeRef,
+    isEmbedded,
+    isBlocked,
+    blockReason,
+    retry,
+  } = usePreviewEmbed(previewEmbedUrl);
 
   const [showFallback, setShowFallback] = useState(false);
   const prevStatusRef = useRef(embedStatus);
@@ -187,10 +150,6 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
   useEffect(() => {
     setShowFallback(false);
   }, [effectivePreviewUrl]);
-
-  useEffect(() => {
-    setSelectedScript(config?.selectedScript ?? null);
-  }, [config?.selectedScript]);
 
   const selectedCandidate = useMemo(() => {
     if (!selectedScript) {
@@ -318,28 +277,14 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
     setSelectedScript(candidate.scriptName);
     setShowCandidates(false);
     setCommandInput(candidate.command);
-
-    void selectScript({
-      name: candidate.scriptName,
-      command: candidate.command,
-      source: normalizeCwdToSource(candidate.cwd),
-    }).catch((selectionError) => {
-      addToast(normalizeError(selectionError), "error");
-    });
-
     addToast(`Selected ${candidate.scriptName} script.`, "success");
-  }, [addToast, selectScript]);
+  }, [addToast]);
 
   const handleClearSelection = useCallback(() => {
     setSelectedScript(null);
     setShowCandidates(true);
-
-    void clearSelection().catch((selectionError) => {
-      addToast(normalizeError(selectionError), "error");
-    });
-
     addToast("Cleared selected dev server script.", "success");
-  }, [addToast, clearSelection]);
+  }, [addToast]);
 
   const handleStart = () => {
     const trimmedCommand = commandInput.trim();
@@ -373,10 +318,7 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
 
     void runAction(
       "preview",
-      async () => {
-        await setPreviewUrlOverride(nextUrl);
-        await setPreviewUrl(nextUrl);
-      },
+      () => setPreviewUrl(nextUrl),
       nextUrl ? "Preview URL updated." : "Preview URL override cleared.",
     );
   };
@@ -387,7 +329,7 @@ export function DevServerView({ addToast, projectId }: DevServerViewProps) {
     }
   }, [error, refresh]);
 
-  const isManualPreviewOverride = Boolean(manualPreviewUrlOverride);
+  const isManualPreviewOverride = false; // With session model, previewUrl is always auto-detected
 
   const startDisabled = status === "starting" || status === "running" || actionInFlight !== null;
   const stopDisabled = status === "stopped" || actionInFlight !== null;

@@ -9,18 +9,12 @@ import { PaperclipRuntimeAdapter } from "../runtime-adapter.js";
 
 // ── Mock Modules ────────────────────────────────────────────────────────────────
 
-// Mock @fusion/engine for createFnAgent and promptWithFallback
 const mockCreateFnAgent = vi.fn();
 const mockPromptWithFallback = vi.fn();
 
-vi.mock("@fusion/engine", () => ({
+vi.mock("../../../../packages/engine/src/pi.js", () => ({
   createFnAgent: mockCreateFnAgent,
   promptWithFallback: mockPromptWithFallback,
-}));
-
-// Mock the relative import of describeModel from pi.ts
-// This uses require() in the adapter, so we mock the entire module
-vi.mock("../../engine/src/pi.js", () => ({
   describeModel: vi.fn().mockReturnValue("mock/anthropic-claude"),
 }));
 
@@ -169,7 +163,7 @@ describe("PaperclipRuntimeAdapter", () => {
   describe("describeModel", () => {
     it("should return model description from pi describeModel", () => {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { describeModel } = require("../../engine/src/pi.js");
+      const { describeModel } = require("../../../../packages/engine/src/pi.js");
 
       const mockSession = { model: { provider: "anthropic", id: "claude-sonnet-4-5" } };
       const result = adapter.describeModel(mockSession as any);

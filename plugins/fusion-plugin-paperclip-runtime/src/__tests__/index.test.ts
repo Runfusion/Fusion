@@ -52,13 +52,9 @@ describe("paperclip-runtime plugin", () => {
 
   describe("runtime factory invocation", () => {
     beforeEach(() => {
-      // Mock @fusion/engine for createFnAgent
-      vi.mock("@fusion/engine", () => ({
+      vi.mock("../../../../packages/engine/src/pi.js", () => ({
         createFnAgent: vi.fn().mockResolvedValue({ session: {} }),
         promptWithFallback: vi.fn(),
-      }));
-      // Mock describeModel
-      vi.mock("../../engine/src/pi.js", () => ({
         describeModel: vi.fn().mockReturnValue("mock/model"),
       }));
     });
@@ -73,7 +69,7 @@ describe("paperclip-runtime plugin", () => {
     });
 
     it("should return an adapter with correct id and name", async () => {
-      const runtime = await plugin.runtime!.factory({} as any);
+      const runtime = (await plugin.runtime!.factory({} as any)) as PaperclipRuntimeAdapter;
       expect(runtime.id).toBe("paperclip");
       expect(runtime.name).toBe("Paperclip Runtime");
     });

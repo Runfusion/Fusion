@@ -30,8 +30,12 @@
  * ```
  */
 
-import type { AgentRuntime, AgentRuntimeOptions, AgentSessionResult } from "./types.js";
-import type { AgentSession } from "@mariozechner/pi-coding-agent";
+import type {
+  AgentRuntime,
+  AgentRuntimeOptions,
+  AgentSession,
+  AgentSessionResult,
+} from "./types.js";
 
 // ── describeModel (from pi.ts, not re-exported from @fusion/engine) ─────────────
 //
@@ -40,8 +44,16 @@ import type { AgentSession } from "@mariozechner/pi-coding-agent";
 // This is acceptable within the monorepo workspace. External plugins would need a
 // different approach (e.g., the engine could export it publicly in the future).
 //
+type PiModule = {
+  createFnAgent: (options: unknown) => Promise<AgentSessionResult>;
+  promptWithFallback: (session: unknown, prompt: string, options?: unknown) => Promise<void>;
+  describeModel: (session: unknown) => string;
+};
+
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { describeModel: getModelDescription } = require("../../engine/src/pi.js");
+const loadPiModule = (): PiModule => require("../../../packages/engine/src/pi.js") as PiModule;
+
+const { describeModel: getModelDescription } = loadPiModule();
 
 /**
  * Paperclip runtime adapter implementing the Fusion AgentRuntime interface.
@@ -69,7 +81,7 @@ export class PaperclipRuntimeAdapter implements AgentRuntime {
    * @returns Promise resolving to the session result with session and optional sessionFile
    */
   async createSession(options: AgentRuntimeOptions): Promise<AgentSessionResult> {
-    const { createFnAgent } = await import("@fusion/engine");
+    const { createFnAgent } = loadPiModule();
     return createFnAgent({
       cwd: options.cwd,
       systemPrompt: options.systemPrompt,
@@ -103,7 +115,7 @@ export class PaperclipRuntimeAdapter implements AgentRuntime {
    * @param options - Optional prompt options (e.g., images for vision)
    */
   async promptWithFallback(session: AgentSession, prompt: string, options?: unknown): Promise<void> {
-    const { promptWithFallback: pwf } = await import("@fusion/engine");
+    const { promptWithFallback: pwf } = loadPiModule();
     return pwf(session, prompt, options);
   }
 

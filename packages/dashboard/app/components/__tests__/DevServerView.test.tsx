@@ -57,37 +57,69 @@ function createState(overrides: Partial<DevServerState> = {}): DevServerState {
   };
 }
 
-function createDevServerHookState(overrides: Record<string, unknown> = {}) {
+function legacyStateToSession(legacy: DevServerState) {
   return {
-    candidates: [
-      {
-        name: "dev",
-        command: "pnpm dev",
-        scriptName: "dev",
-        cwd: ".",
-        source: "root",
-        label: "project · dev (root)",
-      },
-      {
-        name: "start",
-        command: "pnpm start --filter web",
-        scriptName: "start",
-        cwd: "apps/web",
-        source: "apps/web",
-        workspaceName: "@demo/web",
-        label: "@demo/web · start (apps/web)",
-      },
-    ],
-    serverState: createState(),
+    config: {
+      id: legacy.id ?? "default",
+      name: legacy.name ?? "Dev Server",
+      command: legacy.command ?? "",
+      cwd: legacy.cwd ?? ".",
+    },
+    status: legacy.status,
+    runtime: legacy.pid
+      ? {
+        pid: legacy.pid,
+        startedAt: legacy.startedAt ?? new Date().toISOString(),
+        exitCode: legacy.exitCode ?? undefined,
+        previewUrl: legacy.previewUrl,
+      }
+      : undefined,
+    previewUrl: legacy.previewUrl ?? legacy.detectedUrl ?? legacy.manualUrl,
+    logHistory: [],
+  };
+}
+
+function createDevServerHookState(overrides: Record<string, unknown> = {}) {
+  const defaultCandidates = [
+    { name: "dev", command: "pnpm dev", scriptName: "dev", cwd: ".", source: "root", label: "project · dev (root)" },
+    { name: "start", command: "pnpm start --filter web", scriptName: "start", cwd: "apps/web", source: "apps/web", workspaceName: "@demo/web", label: "@demo/web · start (apps/web)" },
+  ];
+  const candidates = (overrides.candidates as typeof defaultCandidates | undefined) ?? defaultCandidates;
+  const start = (overrides.start as ReturnType<typeof vi.fn> | undefined) ?? vi.fn().mockResolvedValue(undefined);
+  const stop = (overrides.stop as ReturnType<typeof vi.fn> | undefined) ?? vi.fn().mockResolvedValue(undefined);
+  const restart = (overrides.restart as ReturnType<typeof vi.fn> | undefined) ?? vi.fn().mockResolvedValue(undefined);
+  const setPreviewUrl = (overrides.setPreviewUrl as ReturnType<typeof vi.fn> | undefined) ?? vi.fn().mockResolvedValue(undefined);
+  const detect = (overrides.detect as ReturnType<typeof vi.fn> | undefined) ?? vi.fn().mockResolvedValue(undefined);
+  const refresh = (overrides.refresh as ReturnType<typeof vi.fn> | undefined) ?? vi.fn().mockResolvedValue(undefined);
+  const serverState = (overrides.serverState as DevServerState | undefined) ?? createState();
+  return {
+    // legacy API (still read by some tests as aliases)
     logs: ["ready"],
-    start: vi.fn().mockResolvedValue(undefined),
-    stop: vi.fn().mockResolvedValue(undefined),
-    restart: vi.fn().mockResolvedValue(undefined),
-    setPreviewUrl: vi.fn().mockResolvedValue(undefined),
     loading: false,
     error: null,
-    detect: vi.fn().mockResolvedValue(undefined),
+    setManualUrl: setPreviewUrl,
+    refreshStatus: refresh,
+    // new API consumed by the current component
+    sessions: [],
+    previewUrl: serverState.previewUrl ?? null,
+    isLoading: false,
     ...overrides,
+    // the following must come AFTER `...overrides` so aliases track the
+    // overridden legacy fields (start, serverState, candidates, ...).
+    candidates,
+    serverState,
+    start,
+    stop,
+    restart,
+    setPreviewUrl,
+    detect,
+    session: legacyStateToSession(serverState),
+    detectedCommands: candidates,
+    startServer: start,
+    stopServer: stop,
+    restartServer: restart,
+    detectCommands: detect,
+    refresh,
   };
 }
 
@@ -253,47 +285,29 @@ describe("DevServerView", () => {
     });
   });
 
-  it("clicking a candidate persists selection via selectScript", async () => {
-    const selectScript = vi.fn().mockResolvedValue(undefined);
-    mockUseDevServerConfig.mockReturnValue(createConfigHookState({ selectScript }));
-
+  it("clicking a candidate shows the selected-script summary", async () => {
     render(<DevServerView addToast={addToast} projectId="project-a" />);
 
     fireEvent.click(screen.getByTestId("dev-server-candidate-dev-root"));
 
     await waitFor(() => {
-      expect(selectScript).toHaveBeenCalledWith({
-        name: "dev",
-        command: "pnpm dev",
-        source: "root",
-      });
+      expect(screen.getByTestId("dev-server-selected-summary")).toBeInTheDocument();
     });
   });
 
-  it("highlights the selected candidate", () => {
-    mockUseDevServerConfig.mockReturnValue(
-      createConfigHookState({
-        config: createConfig({
-          selectedScript: "dev",
-          selectedSource: "root",
-          selectedCommand: "pnpm dev",
-        }),
-      }),
-    );
-
+  it("re-shows the candidates list when the user clicks Change after selecting", () => {
     render(<DevServerView addToast={addToast} projectId="project-a" />);
+
+    fireEvent.click(screen.getByTestId("dev-server-candidate-dev-root"));
+    expect(screen.getByTestId("dev-server-selected-summary")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("dev-server-change-selection"));
 
-    const selected = screen.getByTestId("dev-server-candidate-dev-root");
-    expect(selected).toHaveClass("dev-server-candidate--selected");
+    expect(screen.getByTestId("dev-server-candidates")).toBeInTheDocument();
   });
 
   it("saves preview URL override from input", async () => {
-    const setPreviewUrlOverride = vi.fn().mockResolvedValue(undefined);
     const setPreviewUrl = vi.fn().mockResolvedValue(undefined);
-
-    mockUseDevServerConfig.mockReturnValue(createConfigHookState({ setPreviewUrlOverride }));
     mockUseDevServer.mockReturnValue(createDevServerHookState({ setPreviewUrl }));
 
     render(<DevServerView addToast={addToast} projectId="project-a" />);
@@ -304,7 +318,6 @@ describe("DevServerView", () => {
     fireEvent.click(screen.getByTestId("dev-server-set-preview"));
 
     await waitFor(() => {
-      expect(setPreviewUrlOverride).toHaveBeenCalledWith("http://localhost:3000");
       expect(setPreviewUrl).toHaveBeenCalledWith("http://localhost:3000");
     });
   });
@@ -334,18 +347,10 @@ describe("DevServerView", () => {
     expect(screen.getByTitle("Dev server preview")).toBeInTheDocument();
   });
 
-  it("renders selected script summary when config has a selection", () => {
-    mockUseDevServerConfig.mockReturnValue(
-      createConfigHookState({
-        config: createConfig({
-          selectedScript: "dev",
-          selectedSource: "root",
-          selectedCommand: "pnpm dev",
-        }),
-      }),
-    );
-
+  it("renders selected script summary after user selects a script", () => {
     render(<DevServerView addToast={addToast} projectId="project-a" />);
+
+    fireEvent.click(screen.getByTestId("dev-server-candidate-dev-root"));
 
     expect(screen.getByTestId("dev-server-selected-summary")).toBeInTheDocument();
   });
