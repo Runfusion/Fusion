@@ -3004,7 +3004,8 @@ async function hasEnabledPostMergeWorkflowSteps(
       const ws = await store.getWorkflowStep(wsId);
       if (!ws) continue;
       const stepPhase = ws.phase || "pre-merge";
-      if (stepPhase === "post-merge") {
+      // readonly review steps always run pre-merge to reuse the coding worktree — see FN-2185 post-mortem.
+      if (stepPhase === "post-merge" && ws.toolMode !== "readonly") {
         return true;
       }
     } catch (err: unknown) {
@@ -3045,8 +3046,9 @@ async function runPostMergeWorkflowSteps(
     // Normalize legacy steps: undefined phase → "pre-merge"
     const stepPhase = ws.phase || "pre-merge";
 
-    // Only run post-merge steps here
-    if (stepPhase !== "post-merge") continue;
+    // Only run post-merge steps here.
+    // readonly review steps always run pre-merge to reuse the coding worktree — see FN-2185 post-mortem.
+    if (stepPhase !== "post-merge" || ws.toolMode === "readonly") continue;
 
     // Normalize legacy steps without mode to prompt-mode
     const stepMode: "prompt" | "script" = ws.mode || "prompt";

@@ -3320,8 +3320,9 @@ ${failureFeedback}
       // Normalize legacy steps: undefined phase → "pre-merge"
       const stepPhase = ws.phase || "pre-merge";
 
-      // Skip post-merge steps — those run in the merger after merge
-      if (stepPhase === "post-merge") continue;
+      // readonly review steps always run pre-merge to reuse the coding worktree — see FN-2185 post-mortem.
+      // Skip non-readonly post-merge steps — those run in the merger after merge.
+      if (stepPhase === "post-merge" && ws.toolMode !== "readonly") continue;
 
       // Normalize legacy steps without mode to prompt-mode
       const stepMode: "prompt" | "script" = ws.mode || "prompt";
@@ -3794,11 +3795,35 @@ and show an appropriate message to the user.\`
       const cmd = startPoint
         ? `git worktree add -b "${branchToCreate}" "${path}" "${startPoint}"`
         : `git worktree add -b "${branchToCreate}" "${path}"`;
-      await execAsync(cmd, { cwd: this.rootDir });
+      try {
+        await execAsync(cmd, { cwd: this.rootDir });
+      } catch (err) {
+        // Remove any partial directory left behind so the invariant holds:
+        // "if .worktrees/<slug> exists on disk, it is a fully registered git worktree."
+        try {
+          await execAsync(`rm -rf "${path}"`, { cwd: this.rootDir });
+        } catch {
+          // best-effort cleanup; log but don't mask the original error
+          executorLog.log(`Warning: failed to remove partial worktree directory after creation failure: ${path}`);
+        }
+        throw err;
+      }
     };
 
     const createFromExistingBranch = async () => {
-      await execAsync(`git worktree add "${path}" "${branch}"`, { cwd: this.rootDir });
+      try {
+        await execAsync(`git worktree add "${path}" "${branch}"`, { cwd: this.rootDir });
+      } catch (err) {
+        // Remove any partial directory left behind so the invariant holds:
+        // "if .worktrees/<slug> exists on disk, it is a fully registered git worktree."
+        try {
+          await execAsync(`rm -rf "${path}"`, { cwd: this.rootDir });
+        } catch {
+          // best-effort cleanup; log but don't mask the original error
+          executorLog.log(`Warning: failed to remove partial worktree directory after creation failure: ${path}`);
+        }
+        throw err;
+      }
     };
 
     try {

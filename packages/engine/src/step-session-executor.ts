@@ -1139,10 +1139,22 @@ export class StepSessionExecutor {
 
     stepExecLog.log(`Creating worktree for step ${stepIndex}: ${worktreePath} (branch: ${branchName})`);
 
-    await execAsync(
-      `git worktree add -b "${branchName}" "${worktreePath}" HEAD`,
-      { cwd: this.options.worktreePath },
-    );
+    try {
+      await execAsync(
+        `git worktree add -b "${branchName}" "${worktreePath}" HEAD`,
+        { cwd: this.options.worktreePath },
+      );
+    } catch (err) {
+      // Remove any partial directory left behind so the invariant holds:
+      // "if .worktrees/<slug> exists on disk, it is a fully registered git worktree."
+      try {
+        await execAsync(`rm -rf "${worktreePath}"`, { cwd: rootDir });
+      } catch {
+        // best-effort cleanup; log but don't mask the original error
+        stepExecLog.log(`Warning: failed to remove partial worktree directory after creation failure: ${worktreePath}`);
+      }
+      throw err;
+    }
 
     this.parallelWorktrees.set(stepIndex, worktreePath);
     this.parallelBranches.set(stepIndex, branchName);

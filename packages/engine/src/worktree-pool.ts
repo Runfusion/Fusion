@@ -1,6 +1,6 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, rmSync } from "node:fs";
 import { join, relative, resolve, isAbsolute } from "node:path";
 import type { Column, TaskStore } from "@fusion/core";
 import { worktreePoolLog } from "./logger.js";
@@ -353,6 +353,101 @@ export async function cleanupOrphanedWorktrees(rootDir: string, store: TaskStore
   }
 
   return cleaned;
+}
+
+/**
+ * Remove "half-initialized" worktree directories — directories that exist under
+ * `<projectRoot>/.worktrees/` on disk but were never fully registered with git
+ * (i.e., `git worktree add` never completed successfully for them).
+ *
+ * This is the housekeeping path; it runs once at engine startup and is safe to
+ * call repeatedly.  The hot path (`assertValidWorktreeSession`) is deliberately
+ * left untouched.
+ *
+ * Safety invariants enforced before any removal:
+ * - Only removes direct children of `<projectRoot>/.worktrees/` — never the
+ *   project root itself, a parent, or an arbitrary path.
+ * - Skips symlinks (only removes real directories).
+ * - Never removes a directory that is a registered git worktree.
+ * - Never removes a directory that has a valid `.git` file pointing to an
+ *   existing gitdir (belt-and-suspenders: git would list it anyway, but guards
+ *   against stale porcelain output on broken repos).
+ *
+ * @param projectRoot - Absolute path to the project root (parent of `.worktrees/`)
+ * @returns Number of orphan directories removed
+ */
+export async function reapOrphanWorktrees(projectRoot: string): Promise<number> {
+  const worktreesDir = join(projectRoot, ".worktrees");
+
+  if (!existsSync(worktreesDir)) {
+    return 0;
+  }
+
+  // List direct children of .worktrees/
+  let entries: { name: string; fullPath: string }[];
+  try {
+    entries = readdirSync(worktreesDir, { withFileTypes: true })
+      .filter((e) => {
+        // Only real directories — never symlinks
+        if (!e.isDirectory()) return false;
+        try {
+          return lstatSync(join(worktreesDir, e.name)).isDirectory() && !lstatSync(join(worktreesDir, e.name)).isSymbolicLink();
+        } catch {
+          return false;
+        }
+      })
+      .map((e) => ({ name: e.name, fullPath: join(worktreesDir, e.name) }));
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    worktreePoolLog.warn(`reapOrphanWorktrees: failed to read .worktrees/ — ${msg}`);
+    return 0;
+  }
+
+  if (entries.length === 0) return 0;
+
+  // Get the set of paths registered with git
+  const registered = await getRegisteredWorktreePaths(projectRoot);
+
+  let removed = 0;
+  for (const { name, fullPath } of entries) {
+    const resolvedFull = resolve(fullPath);
+
+    // Safety: only operate on paths directly under .worktrees/
+    const rel = relative(resolve(worktreesDir), resolvedFull);
+    if (!rel || rel.startsWith("..") || isAbsolute(rel)) {
+      worktreePoolLog.warn(`reapOrphanWorktrees: skipping out-of-bounds path ${fullPath}`);
+      continue;
+    }
+
+    // Skip registered worktrees — those are managed by the normal lifecycle
+    if (registered.has(resolvedFull)) {
+      continue;
+    }
+
+    // Belt-and-suspenders: skip if a .git file exists AND points to an existing gitdir.
+    // This guards against races where git registered the worktree between our list
+    // call and now, or against a broken repo whose porcelain is unreliable.
+    const dotGit = join(resolvedFull, ".git");
+    if (existsSync(dotGit)) {
+      // If there's a .git file/dir, don't touch it — assertValidWorktreeSession
+      // will handle it on the next agent start.
+      worktreePoolLog.log(`reapOrphanWorktrees: skipping ${name} (has .git entry but not in registered list — may be partially registered)`);
+      continue;
+    }
+
+    // This directory is on disk but has no .git entry and is not a registered
+    // worktree — it is a half-initialized orphan.  Remove it.
+    try {
+      rmSync(resolvedFull, { recursive: true, force: true });
+      worktreePoolLog.log(`reapOrphanWorktrees: removed half-initialized orphan ${name}`);
+      removed++;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      worktreePoolLog.warn(`reapOrphanWorktrees: failed to remove ${name} — ${msg}`);
+    }
+  }
+
+  return removed;
 }
 
 /** Columns where the merger handles branch cleanup — skip these during orphan scanning. */

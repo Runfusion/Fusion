@@ -246,7 +246,36 @@ After writing the PROMPT.md, call \`review_spec()\` to get an independent qualit
 You MUST call \`review_spec()\` after writing the PROMPT.md. Do not finish without getting an APPROVE verdict.
 
 ## Output
-Write the PROMPT.md directly using the write tool, then call \`review_spec()\` for review.`;
+Write the PROMPT.md directly using the write tool, then call \`review_spec()\` for review.
+
+## Frontend UX Criteria Injection
+
+<!-- UX criteria mirror the "frontend-ux-design" reviewer persona in packages/core/src/types.ts — keep them aligned. -->
+
+If the derived **File Scope** touches any of the following paths:
+- \`packages/dashboard/**\`
+- \`packages/*/app/components/**\`
+- \`packages/*/app/hooks/**\`
+- Any \`*.css\` or \`*.tsx\` file inside a dashboard-like package
+
+…then **PREPEND** a \`## Frontend UX Criteria\` section to the generated PROMPT.md, placed immediately after the \`## Mission\` section.
+
+Use this exact checklist (keep it verbatim — do not expand or reorder):
+
+\`\`\`markdown
+## Frontend UX Criteria
+
+- [ ] **Design tokens only** — no hardcoded \`px\` values except \`0\`, no hardcoded hex/rgb colors; use CSS custom properties (\`--color-*\`, \`--spacing-*\`, etc.)
+- [ ] **Icon sizing** — match the surrounding component's icon size convention (default lucide size unless the local pattern already uses an explicit \`size={N}\`)
+- [ ] **Semantic color tokens for status** — use \`--color-error\` for stderr/error states, \`--color-warning\` for starting/pending states; never hardcode status colors
+- [ ] **Component reuse** — reach for existing classes (\`.btn\`, \`.btn-icon\`, \`.card\`, \`.input\`) before writing one-off styles
+- [ ] **Responsive scaffolding** — add \`@media (max-width: 768px)\` overrides for any new layout; verify mobile usability
+- [ ] **Single canonical nav destination** — each route must appear in exactly one of: Header primary nav, Header overflow menu, or MobileNavBar More; no duplicates across all three
+- [ ] **Status-indicator dot convention** — use the existing \`.status-dot\` pattern (size, border, animation) rather than custom dot styling
+- [ ] **Visual hierarchy preserved** — new elements must not disrupt heading levels, content flow, or information architecture established in the surrounding page
+\`\`\`
+
+Only inject this section when the task genuinely touches frontend UI. Omit it for backend-only, config-only, or documentation-only tasks.`;
 
 export interface TriageProcessorOptions {
   pollIntervalMs?: number;

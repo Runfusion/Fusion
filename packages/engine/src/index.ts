@@ -32,7 +32,7 @@ export {
   resolveAgentInstructions,
   buildSystemPromptWithInstructions,
 } from "./agent-instructions.js";
-export { WorktreePool, scanIdleWorktrees, cleanupOrphanedWorktrees } from "./worktree-pool.js";
+export { WorktreePool, scanIdleWorktrees, cleanupOrphanedWorktrees, reapOrphanWorktrees } from "./worktree-pool.js";
 export { createLogger, type Logger } from "./logger.js";
 export { isUsageLimitError, UsageLimitPauser } from "./usage-limit-detector.js";
 export { withRateLimitRetry } from "./rate-limit-retry.js";

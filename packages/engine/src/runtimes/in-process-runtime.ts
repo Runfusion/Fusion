@@ -171,10 +171,28 @@ export class InProcessRuntime
       runtimeLog.log(`PluginRunner initialized`);
 
       // 3. Initialize WorktreePool
+
+      // Reap half-initialized orphan worktree directories before doing anything
+      // else with the pool.  These are directories under .worktrees/ that exist
+      // on disk but were never fully registered with git (e.g. the process was
+      // killed between `mkdir` and `git worktree add`).  Removing them here
+      // ensures scanIdleWorktrees / rehydrate never sees broken entries, and
+      // prevents assertValidWorktreeSession from permanently blocking retries.
+      const { reapOrphanWorktrees, scanIdleWorktrees } = await import("../worktree-pool.js");
+      try {
+        const reaped = await reapOrphanWorktrees(this.config.workingDirectory);
+        if (reaped > 0) {
+          runtimeLog.log(`Reaped ${reaped} half-initialized orphan worktree(s) on startup`);
+        }
+      } catch (err: unknown) {
+        // Non-fatal — log and continue; a missed orphan is better than a failed start.
+        const msg = err instanceof Error ? err.message : String(err);
+        runtimeLog.warn(`reapOrphanWorktrees failed (continuing): ${msg}`);
+      }
+
       this.worktreePool = new WorktreePool();
 
       // Rehydrate pool from disk state (idle worktrees)
-      const { scanIdleWorktrees } = await import("../worktree-pool.js");
       const idleWorktrees = await scanIdleWorktrees(
         this.config.workingDirectory,
         this.taskStore
