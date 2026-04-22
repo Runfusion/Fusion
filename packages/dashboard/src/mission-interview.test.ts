@@ -28,9 +28,12 @@ import {
   RateLimitError,
   SessionNotFoundError,
   submitMissionInterviewResponse,
-  __getMissionInterviewDiagnostics,
-  __setMissionInterviewDiagnostics,
 } from "./mission-interview.js";
+import {
+  setDiagnosticsSink,
+  resetDiagnosticsSink,
+} from "./ai-session-diagnostics.js";
+import type { LogEntry } from "./ai-session-diagnostics.js";
 import { EventEmitter } from "node:events";
 import type { AiSessionRow } from "./ai-session-store.js";
 
@@ -257,13 +260,10 @@ describe("mission-interview module", () => {
       store.rows.set(goodRow.id, goodRow);
       store.rows.set(badRow.id, badRow);
 
-      const loggedErrors: Array<{ message: string; args: unknown[] }> = [];
-      __setMissionInterviewDiagnostics({
-        log: vi.fn(),
-        warn: vi.fn(),
-        error: (message: string, ...args: unknown[]) => {
-          loggedErrors.push({ message, args });
-        },
+      // Capture structured diagnostics via shared helper sink
+      const loggedEntries: LogEntry[] = [];
+      setDiagnosticsSink((level, scope, message, context) => {
+        loggedEntries.push({ level, scope, message, context, timestamp: new Date() });
       });
 
       const rehydrated = rehydrateFromStore(store as any);
@@ -271,10 +271,20 @@ describe("mission-interview module", () => {
       expect(rehydrated).toBe(1);
       expect(getMissionInterviewSession(goodRow.id)).toBeDefined();
       expect(getMissionInterviewSession(badRow.id)).toBeUndefined();
-      expect(loggedErrors).toContainEqual({
-        message: `Failed to rehydrate session ${badRow.id}:`,
-        args: [expect.any(Error)],
-      });
+      // Assert structured diagnostic record
+      expect(loggedEntries).toContainEqual(
+        expect.objectContaining({
+          level: "error",
+          scope: "mission-interview",
+          message: "Failed to rehydrate session",
+          context: expect.objectContaining({
+            sessionId: badRow.id,
+            operation: "rehydrate",
+          }),
+        })
+      );
+
+      resetDiagnosticsSink();
     });
 
     it("falls through to SQLite when in-memory session is missing", () => {
@@ -531,13 +541,10 @@ describe("mission-interview module", () => {
     });
 
     it("logs error diagnostic when broadcast callback throws", () => {
-      const loggedErrors: Array<{ message: string; args: unknown[] }> = [];
-      __setMissionInterviewDiagnostics({
-        log: vi.fn(),
-        warn: vi.fn(),
-        error: (message: string, ...args: unknown[]) => {
-          loggedErrors.push({ message, args });
-        },
+      // Capture structured diagnostics via shared helper sink
+      const loggedEntries: LogEntry[] = [];
+      setDiagnosticsSink((level, scope, message, context) => {
+        loggedEntries.push({ level, scope, message, context, timestamp: new Date() });
       });
 
       const throwingCallback = vi.fn(() => {
@@ -551,10 +558,20 @@ describe("mission-interview module", () => {
       ).not.toThrow();
 
       expect(throwingCallback).toHaveBeenCalledTimes(1);
-      expect(loggedErrors).toContainEqual({
-        message: "Error broadcasting to client for session session-error-callback:",
-        args: [expect.any(Error)],
-      });
+      // Assert structured diagnostic record
+      expect(loggedEntries).toContainEqual(
+        expect.objectContaining({
+          level: "error",
+          scope: "mission-interview",
+          message: "Error broadcasting to client",
+          context: expect.objectContaining({
+            sessionId: "session-error-callback",
+            operation: "broadcast",
+          }),
+        })
+      );
+
+      resetDiagnosticsSink();
     });
   });
 
@@ -595,61 +612,79 @@ describe("mission-interview module", () => {
     });
 
     it("logs error diagnostic when no JSON candidate found before throwing", () => {
-      const loggedErrors: Array<{ message: string; args: unknown[] }> = [];
-      __setMissionInterviewDiagnostics({
-        log: vi.fn(),
-        warn: vi.fn(),
-        error: (message: string, ...args: unknown[]) => {
-          loggedErrors.push({ message, args });
-        },
+      // Capture structured diagnostics via shared helper sink
+      const loggedEntries: LogEntry[] = [];
+      setDiagnosticsSink((level, scope, message, context) => {
+        loggedEntries.push({ level, scope, message, context, timestamp: new Date() });
       });
 
       const input = "I'm not sure what to ask about this project.";
       expect(() => parseMissionAgentResponse(input)).toThrow("no valid JSON");
 
-      expect(loggedErrors).toContainEqual({
-        message: "No JSON candidate found in agent response:",
-        args: [expect.stringContaining("I'm not sure")],
-      });
+      expect(loggedEntries).toContainEqual(
+        expect.objectContaining({
+          level: "error",
+          scope: "mission-interview",
+          message: "No JSON candidate found in agent response",
+          context: expect.objectContaining({
+            inputSnippet: expect.stringContaining("I'm not sure"),
+            operation: "parse-json",
+          }),
+        })
+      );
+
+      resetDiagnosticsSink();
     });
 
     it("logs error diagnostic when repair also fails before throwing", () => {
-      const loggedErrors: Array<{ message: string; args: unknown[] }> = [];
-      __setMissionInterviewDiagnostics({
-        log: vi.fn(),
-        warn: vi.fn(),
-        error: (message: string, ...args: unknown[]) => {
-          loggedErrors.push({ message, args });
-        },
+      // Capture structured diagnostics via shared helper sink
+      const loggedEntries: LogEntry[] = [];
+      setDiagnosticsSink((level, scope, message, context) => {
+        loggedEntries.push({ level, scope, message, context, timestamp: new Date() });
       });
 
       // Invalid JSON that repair cannot fix
       const input = '{"type":"question","data":{"id":q-1,"question":"What is this?"}';
       expect(() => parseMissionAgentResponse(input)).toThrow("Failed to parse AI response");
 
-      expect(loggedErrors).toContainEqual({
-        message: "Failed to parse agent response:",
-        args: [expect.stringContaining('{"type":"question"')],
-      });
+      expect(loggedEntries).toContainEqual(
+        expect.objectContaining({
+          level: "error",
+          scope: "mission-interview",
+          message: "Failed to parse agent response (repair also failed)",
+          context: expect.objectContaining({
+            inputSnippet: expect.stringContaining('{"type":"question"'),
+            operation: "parse-json-repair",
+          }),
+        })
+      );
+
+      resetDiagnosticsSink();
     });
 
     it("logs error diagnostic for invalid response structure before throwing", () => {
-      const loggedErrors: Array<{ message: string; args: unknown[] }> = [];
-      __setMissionInterviewDiagnostics({
-        log: vi.fn(),
-        warn: vi.fn(),
-        error: (message: string, ...args: unknown[]) => {
-          loggedErrors.push({ message, args });
-        },
+      // Capture structured diagnostics via shared helper sink
+      const loggedEntries: LogEntry[] = [];
+      setDiagnosticsSink((level, scope, message, context) => {
+        loggedEntries.push({ level, scope, message, context, timestamp: new Date() });
       });
 
       const input = '{"type":"unknown","data":null}';
       expect(() => parseMissionAgentResponse(input)).toThrow("invalid response structure");
 
-      expect(loggedErrors).toContainEqual({
-        message: "Invalid response structure:",
-        args: [expect.stringContaining('"type":"unknown"')],
-      });
+      expect(loggedEntries).toContainEqual(
+        expect.objectContaining({
+          level: "error",
+          scope: "mission-interview",
+          message: "Invalid response structure from AI",
+          context: expect.objectContaining({
+            parsedSnippet: expect.stringContaining('"type":"unknown"'),
+            operation: "parse-validate",
+          }),
+        })
+      );
+
+      resetDiagnosticsSink();
     });
   });
 

@@ -16,6 +16,11 @@ import type { AiSessionRow } from "./ai-session-store.js";
 // @ts-expect-error Vite raw loader import for source-level utility tests
 import subtaskBreakdownSource from "./subtask-breakdown.ts?raw";
 import {
+  setDiagnosticsSink,
+  resetDiagnosticsSink,
+} from "./ai-session-diagnostics.js";
+import type { LogEntry } from "./ai-session-diagnostics.js";
+import {
   __resetSubtaskBreakdownState,
   cancelSubtaskSession,
   cleanupSubtaskSession,
@@ -27,8 +32,6 @@ import {
   InvalidSessionStateError,
   setAiSessionStore,
   SubtaskStreamManager,
-  __getSubtaskBreakdownDiagnostics,
-  __setSubtaskBreakdownDiagnostics,
 } from "./subtask-breakdown.js";
 
 const UUID_REGEX =
@@ -755,6 +758,38 @@ describe("subtask session rehydration", () => {
     expect(getSubtaskSession(planningRow.id)).toBeUndefined();
   });
 
+  it("returns 0 and logs diagnostic when listRecoverable throws", () => {
+    const store = new MockAiSessionStore();
+    // Override listRecoverable to throw
+    vi.spyOn(store, "listRecoverable").mockImplementation(() => {
+      throw new Error("Database connection failed");
+    });
+
+    // Capture structured diagnostics via shared helper sink
+    const loggedEntries: LogEntry[] = [];
+    setDiagnosticsSink((level, scope, message, context) => {
+      loggedEntries.push({ level, scope, message, context, timestamp: new Date() });
+    });
+
+    const rehydrated = rehydrateFromStore(store as any);
+
+    // Non-fatal: returns 0 and continues
+    expect(rehydrated).toBe(0);
+    // Assert structured diagnostic record
+    expect(loggedEntries).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        scope: "subtask-breakdown",
+        message: "Failed to list recoverable sessions",
+        context: expect.objectContaining({
+          operation: "list-recoverable",
+        }),
+      })
+    );
+
+    resetDiagnosticsSink();
+  });
+
   it("skips corrupted rows and continues with valid rows", () => {
     const store = new MockAiSessionStore();
     const goodRow = buildSubtaskRow({ id: "subtask-good", status: "generating" });
@@ -767,13 +802,10 @@ describe("subtask session rehydration", () => {
     store.rows.set(goodRow.id, goodRow);
     store.rows.set(badRow.id, badRow);
 
-    const loggedErrors: Array<{ message: string; args: unknown[] }> = [];
-    __setSubtaskBreakdownDiagnostics({
-      log: vi.fn(),
-      warn: vi.fn(),
-      error: (message: string, ...args: unknown[]) => {
-        loggedErrors.push({ message, args });
-      },
+    // Capture structured diagnostics via shared helper sink
+    const loggedEntries: LogEntry[] = [];
+    setDiagnosticsSink((level, scope, message, context) => {
+      loggedEntries.push({ level, scope, message, context, timestamp: new Date() });
     });
 
     const rehydrated = rehydrateFromStore(store as any);
@@ -781,10 +813,20 @@ describe("subtask session rehydration", () => {
     expect(rehydrated).toBe(1);
     expect(getSubtaskSession(goodRow.id)).toBeDefined();
     expect(getSubtaskSession(badRow.id)).toBeUndefined();
-    expect(loggedErrors).toContainEqual({
-      message: `Failed to rehydrate session ${badRow.id}:`,
-      args: [expect.any(Error)],
-    });
+    // Assert structured diagnostic record
+    expect(loggedEntries).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        scope: "subtask-breakdown",
+        message: "Failed to rehydrate session",
+        context: expect.objectContaining({
+          sessionId: badRow.id,
+          operation: "rehydrate",
+        }),
+      })
+    );
+
+    resetDiagnosticsSink();
   });
 
   it("falls through to SQLite when session is missing in memory", () => {
@@ -836,22 +878,29 @@ describe("subtask session rehydration", () => {
     store.rows.set(badRow.id, badRow);
     setAiSessionStore(store as any);
 
-    const loggedErrors: Array<{ message: string; args: unknown[] }> = [];
-    __setSubtaskBreakdownDiagnostics({
-      log: vi.fn(),
-      warn: vi.fn(),
-      error: (message: string, ...args: unknown[]) => {
-        loggedErrors.push({ message, args });
-      },
+    // Capture structured diagnostics via shared helper sink
+    const loggedEntries: LogEntry[] = [];
+    setDiagnosticsSink((level, scope, message, context) => {
+      loggedEntries.push({ level, scope, message, context, timestamp: new Date() });
     });
 
     const session = getSubtaskSession(badRow.id);
 
     expect(session).toBeUndefined();
-    expect(loggedErrors).toContainEqual({
-      message: `Failed to restore session ${badRow.id} from SQLite:`,
-      args: [expect.any(Error)],
-    });
+    // Assert structured diagnostic record includes sessionId
+    expect(loggedEntries).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        scope: "subtask-breakdown",
+        message: "Failed to restore session from SQLite",
+        context: expect.objectContaining({
+          sessionId: badRow.id,
+          operation: "restore",
+        }),
+      })
+    );
+
+    resetDiagnosticsSink();
   });
 });
 

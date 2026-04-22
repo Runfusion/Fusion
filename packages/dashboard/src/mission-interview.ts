@@ -21,6 +21,11 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { AiSessionStore, AiSessionRow } from "./ai-session-store.js";
 import { SessionEventBuffer, type SessionBufferedEvent } from "./sse-buffer.js";
+import {
+  createSessionDiagnostics,
+  resetDiagnosticsSink,
+  nonfatal,
+} from "./ai-session-diagnostics.js";
 
 // Dynamic import for @fusion/engine to avoid resolution issues in test environment
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -29,64 +34,35 @@ type AgentResult = any;
 let createFnAgent: any;
 
 /**
- * Diagnostics logger for the mission-interview module.
- * Provides consistent [mission-interview] prefixed output with test-injectable handlers.
- * Mirrors the pattern established in planning.ts (FN-2225).
+ * Shared diagnostics helper for the mission-interview module.
+ * Uses the shared ai-session-diagnostics helper for consistent scoped logging.
+ * @see ai-session-diagnostics.ts for the shared contract
  */
-interface DiagnosticsLogger {
-  log(message: string, ...args: unknown[]): void;
-  warn(message: string, ...args: unknown[]): void;
-  error(message: string, ...args: unknown[]): void;
-}
-
-const defaultDiagnostics: DiagnosticsLogger = {
-  log(message: string, ...args: unknown[]) {
-    console.log(`[mission-interview] ${message}`, ...args);
-  },
-  warn(message: string, ...args: unknown[]) {
-    console.warn(`[mission-interview] ${message}`, ...args);
-  },
-  error(message: string, ...args: unknown[]) {
-    console.error(`[mission-interview] ${message}`, ...args);
-  },
-};
-
-let _diagnostics: DiagnosticsLogger = defaultDiagnostics;
+const diagnostics = createSessionDiagnostics("mission-interview");
 
 /**
- * Get the current diagnostics logger.
+ * Get the current diagnostics logger (for backward compatibility).
  * @internal - exposed for test hook
  */
-export function __getMissionInterviewDiagnostics(): DiagnosticsLogger {
-  return _diagnostics;
+export function __getMissionInterviewDiagnostics() {
+  return diagnostics;
 }
 
 /**
- * Inject a diagnostics logger (test-only).
- * When a logger is injected, all mission-interview module diagnostics route through it.
+ * Inject a diagnostics sink (test-only).
+ * Delegates to the shared ai-session-diagnostics sink.
+ * When a sink is injected, all mission-interview module diagnostics route through it.
  * This allows tests to assert on diagnostics without global console spies.
  * @internal - exposed for test hook
  */
-export function __setMissionInterviewDiagnostics(diagnostics: DiagnosticsLogger | null): void {
-  _diagnostics = diagnostics ?? defaultDiagnostics;
+export function __setMissionInterviewDiagnostics(_logger: unknown): void {
+  // For backward compatibility, we keep this function but it now delegates
+  // to the shared helper's sink mechanism. The actual sink injection
+  // should use setDiagnosticsSink() from ai-session-diagnostics.
+  if (_logger === null) {
+    resetDiagnosticsSink();
+  }
 }
-
-/**
- * Shared diagnostics helper used throughout the mission-interview module.
- * Routes all informational, warning, and error diagnostics through the current logger.
- * Mirrors the pattern from planning.ts (FN-2225).
- */
-const diagnostics: DiagnosticsLogger = {
-  log(message: string, ...args: unknown[]) {
-    _diagnostics.log(message, ...args);
-  },
-  warn(message: string, ...args: unknown[]) {
-    _diagnostics.warn(message, ...args);
-  },
-  error(message: string, ...args: unknown[]) {
-    _diagnostics.error(message, ...args);
-  },
-};
 
 async function initEngine() {
   if (!createFnAgent) {
@@ -422,7 +398,7 @@ export function rehydrateFromStore(store: AiSessionStore): number {
   try {
     rows = store.listRecoverable().filter((row) => row.type === "mission_interview");
   } catch (error) {
-    diagnostics.error("Failed to list recoverable sessions:", error);
+    diagnostics.errorFromException("Failed to list recoverable sessions", error, { operation: "list-recoverable" });
     return 0;
   }
 
@@ -433,7 +409,7 @@ export function rehydrateFromStore(store: AiSessionStore): number {
       sessions.set(session.id, session);
       rehydrated += 1;
     } catch (error) {
-      diagnostics.error(`Failed to rehydrate session ${row.id}:`, error);
+      diagnostics.errorFromException("Failed to rehydrate session", error, { sessionId: row.id, operation: "rehydrate" });
     }
   }
 
@@ -502,11 +478,12 @@ export class MissionInterviewStreamManager extends EventEmitter {
     if (!callbacks) return eventId;
 
     for (const callback of callbacks) {
-      try {
-        callback(event, eventId);
-      } catch (err) {
-        diagnostics.error(`Error broadcasting to client for session ${sessionId}:`, err);
-      }
+      nonfatal(
+        () => callback(event, eventId),
+        diagnostics,
+        "Error broadcasting to client",
+        { sessionId, operation: "broadcast" }
+      );
     }
 
     return eventId;
@@ -676,7 +653,7 @@ export function parseMissionAgentResponse(text: string): MissionInterviewRespons
   const candidate = extractJsonCandidate(text);
 
   if (!candidate) {
-    diagnostics.error("No JSON candidate found in agent response:", text.slice(0, 500));
+    diagnostics.error("No JSON candidate found in agent response", { inputSnippet: text.slice(0, 500), operation: "parse-json" });
     throw new Error("AI returned no valid JSON. Please try again.");
   }
 
@@ -688,7 +665,7 @@ export function parseMissionAgentResponse(text: string): MissionInterviewRespons
       const repaired = repairJson(candidate);
       parsed = JSON.parse(repaired);
     } catch (repairErr) {
-      diagnostics.error("Failed to parse agent response:", candidate.slice(0, 500));
+      diagnostics.error("Failed to parse agent response (repair also failed)", { inputSnippet: candidate.slice(0, 500), operation: "parse-json-repair" });
       throw new Error(
         `Failed to parse AI response: ${repairErr instanceof Error ? repairErr.message : "Unknown error"}. Please try again.`
       );
@@ -713,7 +690,7 @@ export function parseMissionAgentResponse(text: string): MissionInterviewRespons
     }
   }
 
-  diagnostics.error("Invalid response structure:", JSON.stringify(parsed).slice(0, 500));
+  diagnostics.error("Invalid response structure from AI", { parsedSnippet: JSON.stringify(parsed).slice(0, 500), operation: "parse-validate" });
   throw new Error("AI returned an invalid response structure. Please try again.");
 }
 
@@ -768,11 +745,12 @@ function disposeMissionAgentForRetry(session: MissionInterviewSession): void {
     return;
   }
 
-  try {
-    session.agent.session.dispose?.();
-  } catch (error) {
-    diagnostics.error(`Error disposing agent for retry in session ${session.id}:`, error);
-  }
+  nonfatal(
+    () => session.agent.session.dispose?.(),
+    diagnostics,
+    "Error disposing agent for retry",
+    { sessionId: session.id, operation: "dispose-retry" }
+  );
 
   session.agent = undefined;
 }
@@ -798,7 +776,7 @@ async function initializeAgent(
     );
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : "Failed to initialize AI agent";
-    diagnostics.error(`Agent initialization error for session ${session.id}:`, err);
+    diagnostics.errorFromException("Agent initialization error for session", err, { sessionId: session.id, operation: "initialize-agent" });
     session.error = errorMessage;
     session.updatedAt = new Date();
     persistMissionSession(session, "error", errorMessage);
@@ -952,7 +930,8 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
 
         if (attempt < MAX_PARSE_RETRIES) {
           diagnostics.warn(
-            `Parse attempt ${attempt + 1} failed for session ${session.id}, requesting reformat`
+            "Parse attempt failed, requesting reformat",
+            { sessionId: session.id, attempt: attempt + 1, operation: "parse-retry" }
           );
           try {
             session.thinkingOutput = "";
@@ -980,7 +959,7 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
             }
             responseText = retryText;
           } catch (retryErr) {
-            diagnostics.error(`Retry prompt failed for session ${session.id}:`, retryErr);
+            diagnostics.errorFromException("Retry prompt failed for session", retryErr, { sessionId: session.id, operation: "retry-prompt" });
             break;
           }
         }
@@ -989,7 +968,10 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
 
     if (!parsed) {
       const errorMsg = `${lastError?.message || "Failed to parse AI response"} You can try responding again or start a new session.`;
-      diagnostics.error(`All parse attempts exhausted for session ${session.id}:`, errorMsg);
+      diagnostics.error(
+        "All parse attempts exhausted for session",
+        { sessionId: session.id, message: errorMsg, operation: "parse-exhausted" }
+      );
       session.error = errorMsg;
       session.updatedAt = new Date();
       persistMissionSession(session, "error", errorMsg);
@@ -1024,7 +1006,7 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : "AI processing failed";
-    diagnostics.error(`Agent conversation error for session ${session.id}:`, err);
+    diagnostics.errorFromException("Agent conversation error for session", err, { sessionId: session.id, operation: "conversation" });
     session.error = errorMessage;
     session.updatedAt = new Date();
     persistMissionSession(session, "error", errorMessage);
@@ -1078,7 +1060,7 @@ export async function createMissionInterviewSession(
 
   // Initialize AI agent in background
   initializeAgent(session, rootDir, promptOverrides).catch((err) => {
-    diagnostics.error(`Failed to initialize agent for session ${sessionId}:`, err);
+    diagnostics.errorFromException("Failed to initialize agent for session", err, { sessionId, operation: "initialize-agent" });
     persistMissionSession(session, "error", err.message || "Failed to initialize AI agent");
     missionInterviewStreamManager.broadcast(sessionId, {
       type: "error",
@@ -1219,7 +1201,7 @@ export function getMissionInterviewSession(sessionId: string): MissionInterviewS
     sessions.set(restored.id, restored);
     return restored;
   } catch (error) {
-    diagnostics.error(`Failed to restore session ${sessionId} from SQLite:`, error);
+    diagnostics.errorFromException("Failed to restore session from SQLite", error, { sessionId, operation: "restore" });
     return undefined;
   }
 }
@@ -1250,8 +1232,8 @@ export function __resetMissionInterviewState(): void {
   _aiSessionDeletedListener = undefined;
   _aiSessionStore = undefined;
 
-  // Reset diagnostics logger to default
-  __setMissionInterviewDiagnostics(null);
+  // Reset diagnostics sink to default
+  resetDiagnosticsSink();
 }
 
 // ── Custom Errors ───────────────────────────────────────────────────────────

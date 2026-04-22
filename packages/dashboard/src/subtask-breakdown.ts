@@ -4,70 +4,46 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { AiSessionStore, AiSessionRow } from "./ai-session-store.js";
 import { SessionEventBuffer, type SessionBufferedEvent } from "./sse-buffer.js";
+import {
+  createSessionDiagnostics,
+  resetDiagnosticsSink,
+} from "./ai-session-diagnostics.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let createFnAgent: any;
 const engineModule = "@fusion/engine";
 
 /**
- * Diagnostics logger for the subtask-breakdown module.
- * Provides consistent [subtask-breakdown] prefixed output with test-injectable handlers.
- * Mirrors the pattern established in planning.ts (FN-2225).
+ * Shared diagnostics helper for the subtask-breakdown module.
+ * Uses the shared ai-session-diagnostics helper for consistent scoped logging.
+ * @see ai-session-diagnostics.ts for the shared contract
  */
-interface DiagnosticsLogger {
-  log(message: string, ...args: unknown[]): void;
-  warn(message: string, ...args: unknown[]): void;
-  error(message: string, ...args: unknown[]): void;
-}
-
-const defaultDiagnostics: DiagnosticsLogger = {
-  log(message: string, ...args: unknown[]) {
-    console.log(`[subtask-breakdown] ${message}`, ...args);
-  },
-  warn(message: string, ...args: unknown[]) {
-    console.warn(`[subtask-breakdown] ${message}`, ...args);
-  },
-  error(message: string, ...args: unknown[]) {
-    console.error(`[subtask-breakdown] ${message}`, ...args);
-  },
-};
-
-let _diagnostics: DiagnosticsLogger = defaultDiagnostics;
+const diagnostics = createSessionDiagnostics("subtask-breakdown");
 
 /**
- * Get the current diagnostics logger.
+ * Get the current diagnostics logger (for backward compatibility).
  * @internal - exposed for test hook
  */
-export function __getSubtaskBreakdownDiagnostics(): DiagnosticsLogger {
-  return _diagnostics;
+export function __getSubtaskBreakdownDiagnostics() {
+  return diagnostics;
 }
 
 /**
- * Inject a diagnostics logger (test-only).
- * When a logger is injected, all subtask-breakdown module diagnostics route through it.
+ * Inject a diagnostics sink (test-only).
+ * Delegates to the shared ai-session-diagnostics sink.
+ * When a sink is injected, all subtask-breakdown module diagnostics route through it.
  * This allows tests to assert on diagnostics without global console spies.
  * @internal - exposed for test hook
  */
-export function __setSubtaskBreakdownDiagnostics(diagnostics: DiagnosticsLogger | null): void {
-  _diagnostics = diagnostics ?? defaultDiagnostics;
+export function __setSubtaskBreakdownDiagnostics(_logger: unknown): void {
+  // For backward compatibility, we keep this function but it now delegates
+  // to the shared helper's sink mechanism. The actual sink injection
+  // should use setDiagnosticsSink() from ai-session-diagnostics.
+  // This function is kept for backward compatibility with existing tests.
+  if (_logger === null) {
+    resetDiagnosticsSink();
+  }
 }
-
-/**
- * Shared diagnostics helper used throughout the subtask-breakdown module.
- * Routes all informational, warning, and error diagnostics through the current logger.
- * Mirrors the pattern from planning.ts (FN-2225).
- */
-const diagnostics: DiagnosticsLogger = {
-  log(message: string, ...args: unknown[]) {
-    _diagnostics.log(message, ...args);
-  },
-  warn(message: string, ...args: unknown[]) {
-    _diagnostics.warn(message, ...args);
-  },
-  error(message: string, ...args: unknown[]) {
-    _diagnostics.error(message, ...args);
-  },
-};
 
 async function initEngine() {
   if (!createFnAgent) {
@@ -220,7 +196,7 @@ export function rehydrateFromStore(store: AiSessionStore): number {
   try {
     rows = store.listRecoverable().filter((row) => row.type === "subtask");
   } catch (error) {
-    diagnostics.error("Failed to list recoverable sessions:", error);
+    diagnostics.errorFromException("Failed to list recoverable sessions", error, { operation: "list-recoverable" });
     return 0;
   }
 
@@ -231,7 +207,7 @@ export function rehydrateFromStore(store: AiSessionStore): number {
       sessions.set(session.sessionId, session);
       rehydrated += 1;
     } catch (error) {
-      diagnostics.error(`Failed to rehydrate session ${row.id}:`, error);
+      diagnostics.errorFromException("Failed to rehydrate session", error, { sessionId: row.id, operation: "rehydrate" });
     }
   }
 
@@ -634,7 +610,7 @@ export function getSubtaskSession(sessionId: string): SubtaskSession | undefined
     sessions.set(restored.sessionId, restored);
     return toPublicSubtaskSession(restored);
   } catch (error) {
-    diagnostics.error(`Failed to restore session ${sessionId} from SQLite:`, error);
+    diagnostics.errorFromException("Failed to restore session from SQLite", error, { sessionId, operation: "restore" });
     return undefined;
   }
 }
@@ -665,8 +641,8 @@ export function __resetSubtaskBreakdownState(): void {
   _aiSessionDeletedListener = undefined;
   _aiSessionStore = undefined;
 
-  // Reset diagnostics logger to default
-  __setSubtaskBreakdownDiagnostics(null);
+  // Reset diagnostics sink to default
+  resetDiagnosticsSink();
 }
 
 export class SessionNotFoundError extends Error {

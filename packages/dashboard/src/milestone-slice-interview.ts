@@ -24,6 +24,11 @@ import {
   extractJsonCandidate,
   repairJson,
 } from "./mission-interview.js";
+import {
+  createSessionDiagnostics,
+  resetDiagnosticsSink,
+  nonfatal,
+} from "./ai-session-diagnostics.js";
 
 // Re-export JSON parsing utilities from mission-interview for external consumers
 export {
@@ -33,6 +38,13 @@ export {
 } from "./mission-interview.js";
 
 /**
+ * Shared diagnostics helper for the milestone-slice-interview module.
+ * Uses the shared ai-session-diagnostics helper for consistent scoped logging.
+ * @see ai-session-diagnostics.ts for the shared contract
+ */
+const diagnostics = createSessionDiagnostics("milestone-slice-interview");
+
+/**
  * Parse a target interview response (milestone or slice) from the AI agent.
  * Validates the response structure and extracts the typed data.
  */
@@ -40,7 +52,7 @@ function parseTargetInterviewResponseImpl(text: string): TargetInterviewResponse
   const candidate = extractJsonCandidate(text);
 
   if (!candidate) {
-    console.error("[milestone-slice-interview] No JSON candidate found in agent response:", text.slice(0, 500));
+    diagnostics.error("No JSON candidate found in agent response", { inputSnippet: text.slice(0, 500), operation: "parse-json" });
     throw new Error("AI returned no valid JSON. Please try again.");
   }
 
@@ -52,7 +64,7 @@ function parseTargetInterviewResponseImpl(text: string): TargetInterviewResponse
       const repaired = repairJson(candidate);
       parsed = JSON.parse(repaired);
     } catch (repairErr) {
-      console.error("[milestone-slice-interview] Failed to parse agent response:", candidate.slice(0, 500));
+      diagnostics.error("Failed to parse agent response (repair also failed)", { inputSnippet: candidate.slice(0, 500), operation: "parse-json-repair" });
       throw new Error(
         `Failed to parse AI response: ${repairErr instanceof Error ? repairErr.message : "Unknown error"}. Please try again.`
       );
@@ -75,7 +87,7 @@ function parseTargetInterviewResponseImpl(text: string): TargetInterviewResponse
     }
   }
 
-  console.error("[milestone-slice-interview] Invalid response structure:", JSON.stringify(parsed).slice(0, 500));
+  diagnostics.error("Invalid response structure from AI", { parsedSnippet: JSON.stringify(parsed).slice(0, 500), operation: "parse-validate" });
   throw new Error("AI returned an invalid response structure. Please try again.");
 }
 
@@ -461,7 +473,7 @@ export function rehydrateFromStore(store: AiSessionStore): number {
       (row) => row.type === "milestone_interview" || row.type === "slice_interview"
     );
   } catch (error) {
-    console.error("[milestone-slice-interview] Failed to list recoverable sessions:", error);
+    diagnostics.errorFromException("Failed to list recoverable sessions", error, { operation: "list-recoverable" });
     return 0;
   }
 
@@ -472,7 +484,7 @@ export function rehydrateFromStore(store: AiSessionStore): number {
       sessions.set(session.id, session);
       rehydrated += 1;
     } catch (error) {
-      console.error(`[milestone-slice-interview] Failed to rehydrate session ${row.id}:`, error);
+      diagnostics.errorFromException("Failed to rehydrate session", error, { sessionId: row.id, operation: "rehydrate" });
     }
   }
 
@@ -541,11 +553,12 @@ export class MilestoneSliceInterviewStreamManager extends EventEmitter {
     if (!callbacks) return eventId;
 
     for (const callback of callbacks) {
-      try {
-        callback(event, eventId);
-      } catch (err) {
-        console.error(`[milestone-slice-interview] Error broadcasting to client for session ${sessionId}:`, err);
-      }
+      nonfatal(
+        () => callback(event, eventId),
+        diagnostics,
+        "Error broadcasting to client",
+        { sessionId, operation: "broadcast" }
+      );
     }
 
     return eventId;
@@ -657,11 +670,12 @@ function disposeAgentForRetry(session: TargetInterviewSession): void {
     return;
   }
 
-  try {
-    session.agent.session.dispose?.();
-  } catch (error) {
-    console.error(`[milestone-slice-interview] Error disposing agent for retry in session ${session.id}:`, error);
-  }
+  nonfatal(
+    () => session.agent.session.dispose?.(),
+    diagnostics,
+    "Error disposing agent for retry",
+    { sessionId: session.id, operation: "dispose-retry" }
+  );
 
   session.agent = undefined;
 }
@@ -770,7 +784,7 @@ async function initializeAgent(session: TargetInterviewSession, rootDir: string)
     );
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : "Failed to initialize AI agent";
-    console.error(`[milestone-slice-interview] Agent initialization error for session ${session.id}:`, err);
+    diagnostics.errorFromException("Agent initialization error for session", err, { sessionId: session.id, operation: "initialize-agent" });
     session.error = errorMessage;
     session.updatedAt = new Date();
     persistSession(session, "error", errorMessage);
@@ -828,8 +842,9 @@ async function continueAgentConversation(session: TargetInterviewSession, messag
         lastError = err instanceof Error ? err : new Error(String(err));
 
         if (attempt < MAX_PARSE_RETRIES) {
-          console.warn(
-            `[milestone-slice-interview] Parse attempt ${attempt + 1} failed for session ${session.id}, requesting reformat`
+          diagnostics.warn(
+            "Parse attempt failed, requesting reformat",
+            { sessionId: session.id, attempt: attempt + 1, operation: "parse-retry" }
           );
           try {
             session.thinkingOutput = "";
@@ -857,7 +872,7 @@ async function continueAgentConversation(session: TargetInterviewSession, messag
             }
             responseText = retryText;
           } catch (retryErr) {
-            console.error(`[milestone-slice-interview] Retry prompt failed for session ${session.id}:`, retryErr);
+            diagnostics.errorFromException("Retry prompt failed for session", retryErr, { sessionId: session.id, operation: "retry-prompt" });
             break;
           }
         }
@@ -866,7 +881,10 @@ async function continueAgentConversation(session: TargetInterviewSession, messag
 
     if (!parsed) {
       const errorMsg = `${lastError?.message || "Failed to parse AI response"} You can try responding again or start a new session.`;
-      console.error(`[milestone-slice-interview] All parse attempts exhausted for session ${session.id}:`, errorMsg);
+      diagnostics.error(
+        "All parse attempts exhausted for session",
+        { sessionId: session.id, message: errorMsg, operation: "parse-exhausted" }
+      );
       session.error = errorMsg;
       session.updatedAt = new Date();
       persistSession(session, "error", errorMsg);
@@ -901,7 +919,7 @@ async function continueAgentConversation(session: TargetInterviewSession, messag
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : "AI processing failed";
-    console.error(`[milestone-slice-interview] Agent conversation error for session ${session.id}:`, err);
+    diagnostics.errorFromException("Agent conversation error for session", err, { sessionId: session.id, operation: "conversation" });
     session.error = errorMessage;
     session.updatedAt = new Date();
     persistSession(session, "error", errorMessage);
@@ -955,7 +973,7 @@ export async function createTargetInterviewSession(
 
   // Initialize AI agent in background
   initializeAgent(session, rootDir).catch((err) => {
-    console.error(`[milestone-slice-interview] Failed to initialize agent for session ${sessionId}:`, err);
+    diagnostics.errorFromException("Failed to initialize agent for session", err, { sessionId, operation: "initialize-agent" });
     persistSession(session, "error", err.message || "Failed to initialize AI agent");
     milestoneSliceInterviewStreamManager.broadcast(sessionId, {
       type: "error",
@@ -1104,7 +1122,7 @@ export function getTargetInterviewSession(sessionId: string): TargetInterviewSes
     sessions.set(restored.id, restored);
     return restored;
   } catch (error) {
-    console.error(`[milestone-slice-interview] Failed to restore session ${sessionId} from SQLite:`, error);
+    diagnostics.errorFromException("Failed to restore session from SQLite", error, { sessionId, operation: "restore" });
     return undefined;
   }
 }
@@ -1267,4 +1285,7 @@ export function __resetMilestoneSliceInterviewState(): void {
   }
   _aiSessionDeletedListener = undefined;
   _aiSessionStore = undefined;
+
+  // Reset diagnostics sink to default
+  resetDiagnosticsSink();
 }
