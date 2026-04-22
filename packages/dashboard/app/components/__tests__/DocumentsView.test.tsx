@@ -296,4 +296,131 @@ describe("DocumentsView", () => {
     expect(await screen.findByText("cannot read file")).toBeInTheDocument();
     expect(addToast).toHaveBeenCalledWith("cannot read file", "error");
   });
+
+  it("project file preview defaults to raw text mode", async () => {
+    mockFetchWorkspaceFileContent.mockResolvedValue({
+      content: "# Hello\n\nThis is **bold**",
+      mtime: "2026-04-19T12:00:00.000Z",
+      size: 28,
+    });
+
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open README.md" }));
+
+    await waitFor(() => {
+      expect(mockFetchWorkspaceFileContent).toHaveBeenCalled();
+    });
+
+    // Should show raw text by default
+    expect(screen.getByText(/# Hello/)).toBeInTheDocument();
+    expect(screen.getByText(/\*\*bold\*\*/)).toBeInTheDocument();
+  });
+
+  it("project file preview can toggle to markdown mode", async () => {
+    mockFetchWorkspaceFileContent.mockResolvedValue({
+      content: "# Hello\n\nThis is **bold**",
+      mtime: "2026-04-19T12:00:00.000Z",
+      size: 28,
+    });
+
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open README.md" }));
+
+    await waitFor(() => {
+      expect(mockFetchWorkspaceFileContent).toHaveBeenCalled();
+    });
+
+    // Toggle button should exist with raw mode
+    const toggleBtn = screen.getByRole("button", { name: /switch to markdown/i });
+    expect(toggleBtn).toHaveAttribute("aria-pressed", "false");
+
+    // Click to toggle
+    fireEvent.click(toggleBtn);
+
+    // Should now be in markdown mode
+    expect(screen.getByRole("button", { name: /switch to plain text/i })).toHaveAttribute("aria-pressed", "true");
+    // Bold text should be rendered as <strong>
+    const strongEl = await screen.findByText("bold");
+    expect(strongEl.tagName).toBe("STRONG");
+  });
+
+  it("project file markdown toggle state is independent from task document toggles", async () => {
+    // Set up project files with markdown content
+    mockFetchWorkspaceFileContent.mockResolvedValue({
+      content: "# Project README",
+      mtime: "2026-04-19T12:00:00.000Z",
+      size: 18,
+    });
+
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+
+    // Toggle project file to markdown mode
+    fireEvent.click(screen.getByRole("button", { name: "Open README.md" }));
+    await waitFor(() => {
+      expect(mockFetchWorkspaceFileContent).toHaveBeenCalled();
+    });
+
+    const projectToggle = screen.getByRole("button", { name: /switch to markdown/i });
+    fireEvent.click(projectToggle);
+
+    // Switch to tasks tab
+    fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
+    await waitFor(() => {
+      expect(screen.getByText("KB-001")).toBeInTheDocument();
+    });
+
+    // Expand a task group
+    fireEvent.click(screen.getByRole("button", { name: /expand documents for task KB-001/i }));
+
+    // Expand the document card
+    const expandBtn = screen.getByRole("button", { name: /expand content/i });
+    fireEvent.click(expandBtn);
+
+    // Task document toggle should default to raw (not influenced by project toggle)
+    const taskToggle = screen.getByRole("button", { name: /switch to markdown/i });
+    expect(taskToggle).toHaveAttribute("aria-pressed", "false");
+
+    // Toggle task document
+    fireEvent.click(taskToggle);
+    expect(screen.getByRole("button", { name: /switch to plain text/i })).toHaveAttribute("aria-pressed", "true");
+
+    // Switch back to project - project toggle should still be on
+    fireEvent.click(screen.getByRole("tab", { name: /show project markdown files/i }));
+    expect(screen.getByRole("button", { name: /switch to plain text/i })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("task document cards support markdown toggle when expanded", async () => {
+    mockUseProjectMarkdownFiles.mockReturnValue({
+      files: [],
+      loading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+    });
+
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /show task documents/i })).toHaveAttribute("aria-selected", "true");
+    });
+
+    // Expand task group
+    fireEvent.click(screen.getByRole("button", { name: /expand documents for task KB-001/i }));
+
+    // Expand the document card
+    const expandBtn = screen.getByRole("button", { name: /expand content/i });
+    fireEvent.click(expandBtn);
+
+    // Should show raw text by default
+    expect(screen.getByText("Alpha document content")).toBeInTheDocument();
+
+    // Toggle should exist
+    const toggleBtn = screen.getByRole("button", { name: /switch to markdown/i });
+    expect(toggleBtn).toHaveAttribute("aria-pressed", "false");
+
+    // Click to toggle to markdown mode
+    fireEvent.click(toggleBtn);
+    expect(screen.getByRole("button", { name: /switch to plain text/i })).toHaveAttribute("aria-pressed", "true");
+  });
 });

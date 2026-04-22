@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { FileText, ChevronDown, ChevronUp, Plus, Trash2, History, X } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { Task, TaskDocument, TaskDocumentRevision } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import {
@@ -54,6 +56,7 @@ export function TaskDocumentsTab({
   const [saving, setSaving] = useState(false);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [renderMarkdown, setRenderMarkdown] = useState(false);
 
   const loadDocuments = useCallback(async () => {
     try {
@@ -78,6 +81,7 @@ export function TaskDocumentsTab({
       setEditContent("");
       setShowHistory(null);
       setRevisions([]);
+      setRenderMarkdown(false);
     } else {
       setExpandedDocKey(doc.key);
       setExpandedContent(doc.content);
@@ -85,6 +89,7 @@ export function TaskDocumentsTab({
       setEditContent("");
       setShowHistory(null);
       setRevisions([]);
+      setRenderMarkdown(false);
     }
   }
 
@@ -289,8 +294,27 @@ export function TaskDocumentsTab({
               {/* Expanded Content View */}
               {expandedDocKey === doc.key && editingDocKey !== doc.key && (
                 <>
+                  <div className="task-document-content-header">
+                    <button
+                      className="btn btn-sm document-mode-toggle"
+                      onClick={() => setRenderMarkdown((prev) => !prev)}
+                      aria-label={renderMarkdown ? "Switch to plain text" : "Switch to markdown"}
+                      aria-pressed={renderMarkdown}
+                      title={renderMarkdown ? "Switch to plain text" : "Switch to markdown"}
+                    >
+                      {renderMarkdown ? "Markdown" : "Plain"}
+                    </button>
+                  </div>
                   <div className="task-document-content">
-                    <pre className="task-document-content-text">{expandedContent}</pre>
+                    {renderMarkdown ? (
+                      <div className="task-document-content-markdown">
+                        <div className="markdown-body">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{expandedContent}</ReactMarkdown>
+                        </div>
+                      </div>
+                    ) : (
+                      <pre className="task-document-content-text">{expandedContent}</pre>
+                    )}
                   </div>
 
                   {/* Revision History */}

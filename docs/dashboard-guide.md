@@ -86,8 +86,18 @@ Features:
 - Search documents across tasks
 - Open project markdown files with inline preview
 - Jump directly from a document group to the owning task detail modal
+- Toggle between raw text and rendered markdown using the **Markdown/Plain** button
 
 ![Documents view](./screenshots/documents-view.png)
+
+### Markdown Rendering
+
+Documents view supports toggling between raw text and formatted markdown when viewing document content:
+
+- **Raw mode** (default): Shows markdown syntax as plain text (e.g., `**bold**`)
+- **Markdown mode**: Renders markdown with proper formatting (e.g., **bold**, headings, lists, tables)
+
+The toggle button is accessible with `aria-pressed` for screen readers. Toggle state is scoped per-document, so switching between documents resets the view to raw mode.
 
 ### File Browser and Editor Tools
 

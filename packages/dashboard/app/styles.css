@@ -7018,6 +7018,12 @@ input[type="range"]:focus-visible {
     min-height: 36px;
   }
 
+  /* Document mode toggle: ensure adequate touch target on mobile */
+  .document-mode-toggle {
+    min-width: 36px;
+    min-height: 36px;
+  }
+
   /* Board: flex layout with single horizontal scroll + snap */
   .board {
     display: flex;
@@ -27664,6 +27670,13 @@ html .column.drag-over * {
   width: min(100%, 880px);
 }
 
+.documents-content-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
 .documents-file-path-header {
   margin: 0;
   padding: var(--space-sm) var(--space-md);
@@ -27674,9 +27687,19 @@ html .column.drag-over * {
   font-family: var(--font-mono);
   font-size: 12px;
   word-break: break-word;
+  flex: 1;
 }
 
 .documents-content-viewer-text {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: var(--space-md);
+  min-height: 220px;
+}
+
+/* Container chrome only; markdown styles delegated to .markdown-body */
+.documents-content-markdown {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
@@ -27862,6 +27885,51 @@ html .column.drag-over * {
 
 .document-card-expand-btn:hover {
   color: var(--text);
+}
+
+.document-card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.document-mode-toggle {
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: var(--transition-fast);
+  line-height: 1;
+}
+
+.document-mode-toggle:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.document-mode-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.document-mode-toggle[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border-color: var(--accent);
+}
+
+.document-card-content-markdown {
+  /* Container chrome only; markdown styles delegated to .markdown-body */
+}
+
+.document-card-content-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-sm);
 }
 
 .document-card-meta {
@@ -34609,6 +34677,16 @@ html .column.drag-over * {
   font-family: inherit;
   font-size: 0.875rem;
   line-height: 1.6;
+}
+
+.task-document-content-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-sm);
+}
+
+.task-document-content-markdown {
+  /* Container chrome only; markdown styles delegated to .markdown-body */
 }
 
 .task-document-edit-form {

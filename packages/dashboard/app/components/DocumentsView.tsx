@@ -1,5 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef, type ChangeEvent } from "react";
 import { ArrowLeft, FileText, ChevronDown, ChevronUp, ChevronRight, RefreshCw, Search, X } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { TaskDocumentWithTask, TaskDetail } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { fetchTaskDetail, fetchWorkspaceFileContent, type MarkdownFileEntry } from "../api";
@@ -18,6 +20,8 @@ export interface DocumentsViewProps {
 
 interface DocumentCardProps {
   document: TaskDocumentWithTask;
+  renderMarkdown: boolean;
+  onToggleMarkdown: () => void;
 }
 
 interface TaskGroupProps {
@@ -25,6 +29,8 @@ interface TaskGroupProps {
   taskTitle?: string;
   documents: TaskDocumentWithTask[];
   onOpenTask: (taskId: string) => void;
+  renderMarkdownStates: Map<string, boolean>;
+  onToggleMarkdown: (docId: string) => void;
 }
 
 function formatTimestamp(iso?: string): string {
@@ -49,7 +55,7 @@ function getContentPreview(content: string, maxLength: number = 200): string {
   return `${content.substring(0, maxLength)}…`;
 }
 
-function DocumentCard({ document }: DocumentCardProps) {
+function DocumentCard({ document, renderMarkdown, onToggleMarkdown }: DocumentCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   const preview = getContentPreview(document.content);
@@ -63,14 +69,16 @@ function DocumentCard({ document }: DocumentCardProps) {
           <span className="document-card-key-text">{document.key}</span>
           <span className="document-card-revision-badge">v{document.revision}</span>
         </div>
-        <button
-          className="btn btn-sm document-card-expand-btn"
-          onClick={() => setExpanded((current) => !current)}
-          title={expanded ? "Collapse" : "Expand"}
-          aria-label={expanded ? "Collapse content" : "Expand content"}
-        >
-          {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-        </button>
+        <div className="document-card-actions">
+          <button
+            className="btn btn-sm document-card-expand-btn"
+            onClick={() => setExpanded((current) => !current)}
+            title={expanded ? "Collapse" : "Expand"}
+            aria-label={expanded ? "Collapse content" : "Expand content"}
+          >
+            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+        </div>
       </div>
 
       <div className="document-card-meta">
@@ -81,7 +89,28 @@ function DocumentCard({ document }: DocumentCardProps) {
 
       <div className={`document-card-content${expanded ? " document-card-content--expanded" : ""}`}>
         {expanded ? (
-          <pre className="document-card-content-text">{document.content}</pre>
+          <>
+            <div className="document-card-content-header">
+              <button
+                className="btn btn-sm document-mode-toggle"
+                onClick={onToggleMarkdown}
+                aria-label={renderMarkdown ? "Switch to plain text" : "Switch to markdown"}
+                aria-pressed={renderMarkdown}
+                title={renderMarkdown ? "Switch to plain text" : "Switch to markdown"}
+              >
+                {renderMarkdown ? "Markdown" : "Plain"}
+              </button>
+            </div>
+            {renderMarkdown ? (
+              <div className="document-card-content-markdown">
+                <div className="markdown-body">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{document.content}</ReactMarkdown>
+                </div>
+              </div>
+            ) : (
+              <pre className="document-card-content-text">{document.content}</pre>
+            )}
+          </>
         ) : (
           <p className="document-card-preview">{preview}</p>
         )}
@@ -93,7 +122,7 @@ function DocumentCard({ document }: DocumentCardProps) {
   );
 }
 
-function TaskGroup({ taskId, taskTitle, documents, onOpenTask }: TaskGroupProps) {
+function TaskGroup({ taskId, taskTitle, documents, onOpenTask, renderMarkdownStates, onToggleMarkdown }: TaskGroupProps) {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -129,6 +158,8 @@ function TaskGroup({ taskId, taskTitle, documents, onOpenTask }: TaskGroupProps)
             <DocumentCard
               key={doc.id}
               document={doc}
+              renderMarkdown={renderMarkdownStates.get(doc.id) ?? false}
+              onToggleMarkdown={() => onToggleMarkdown(doc.id)}
             />
           ))}
         </div>
@@ -147,6 +178,10 @@ export function DocumentsView({ projectId, addToast, onOpenDetail }: DocumentsVi
   const [isMobile, setIsMobile] = useState(false);
   const requestIdRef = useRef(0);
   const initialTabSetRef = useRef(false);
+  // Markdown render toggle for project file preview
+  const [renderProjectMarkdown, setRenderProjectMarkdown] = useState(false);
+  // Markdown render toggles per task document card (scoped by doc ID)
+  const [taskDocMarkdownStates, setTaskDocMarkdownStates] = useState<Map<string, boolean>>(new Map());
 
   const taskSearchQuery = activeTab === "tasks" ? searchQuery.trim() : "";
 
@@ -188,6 +223,8 @@ export function DocumentsView({ projectId, addToast, onOpenDetail }: DocumentsVi
     setFileContent(null);
     setFileError(null);
     setFileLoading(false);
+    setRenderProjectMarkdown(false);
+    setTaskDocMarkdownStates(new Map());
   }, [projectId]);
 
   useEffect(() => {
@@ -308,6 +345,15 @@ export function DocumentsView({ projectId, addToast, onOpenDetail }: DocumentsVi
     setFileContent(null);
     setFileError(null);
     setFileLoading(false);
+  }, []);
+
+  const handleToggleTaskDocMarkdown = useCallback((docId: string) => {
+    setTaskDocMarkdownStates((prev) => {
+      const next = new Map(prev);
+      const current = next.get(docId) ?? false;
+      next.set(docId, !current);
+      return next;
+    });
   }, []);
 
   const activeError = activeTab === "project" ? projectFilesError : documentsError;
@@ -456,11 +502,28 @@ export function DocumentsView({ projectId, addToast, onOpenDetail }: DocumentsVi
                     </div>
                   ) : (
                     <div className="documents-content-viewer">
-                      <p className="documents-file-path-header">{selectedFile.path}</p>
+                      <div className="documents-content-header">
+                        <p className="documents-file-path-header">{selectedFile.path}</p>
+                        <button
+                          className="btn btn-sm document-mode-toggle"
+                          onClick={() => setRenderProjectMarkdown((prev) => !prev)}
+                          aria-label={renderProjectMarkdown ? "Switch to plain text" : "Switch to markdown"}
+                          aria-pressed={renderProjectMarkdown}
+                          title={renderProjectMarkdown ? "Switch to plain text" : "Switch to markdown"}
+                        >
+                          {renderProjectMarkdown ? "Markdown" : "Plain"}
+                        </button>
+                      </div>
                       {fileLoading ? (
                         <p className="documents-content-state">Loading file content…</p>
                       ) : fileError ? (
                         <p className="documents-content-state documents-content-state--error">{fileError}</p>
+                      ) : renderProjectMarkdown ? (
+                        <div className="documents-content-markdown">
+                          <div className="markdown-body">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{fileContent ?? ""}</ReactMarkdown>
+                          </div>
+                        </div>
                       ) : (
                         <pre className="document-card-content-text documents-content-viewer-text">{fileContent ?? ""}</pre>
                       )}
@@ -498,6 +561,8 @@ export function DocumentsView({ projectId, addToast, onOpenDetail }: DocumentsVi
                   taskTitle={taskTitle}
                   documents={taskDocs}
                   onOpenTask={handleOpenTask}
+                  renderMarkdownStates={taskDocMarkdownStates}
+                  onToggleMarkdown={handleToggleTaskDocMarkdown}
                 />
               ))}
             </div>
