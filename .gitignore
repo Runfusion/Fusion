@@ -1,3 +1,8 @@
+# Environment files (may contain secrets — FUSION_DAEMON_TOKEN, etc.)
+.env
+.env.local
+.env.*.local
+
 # Dependencies
 node_modules/
 

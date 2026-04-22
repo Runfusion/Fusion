@@ -392,8 +392,12 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   }));
 
   // Daemon mode: bearer token authentication middleware
-  // Auth is enabled when daemon option is provided OR FUSION_DAEMON_TOKEN env var is set
-  // The middleware itself exempts /api/health for liveness probes
+  // Auth is enabled when daemon option is provided OR FUSION_DAEMON_TOKEN env var is set.
+  // The middleware exempts /api/health and everything outside /api/ — the SPA shell
+  // (index.html + built assets) is public so the browser can load the frontend JS
+  // that then captures ?token= from the URL and injects a Bearer header on every
+  // /api/* call. WebSocket upgrades are gated separately in setupTerminalWebSocket /
+  // setupBadgeWebSocket.
   const daemonToken = options?.daemon?.token ?? process.env.FUSION_DAEMON_TOKEN;
   if (daemonToken) {
     app.use(createAuthMiddleware(daemonToken));

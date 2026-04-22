@@ -20,6 +20,17 @@ export const TOKEN_QUERY_PARAM = "fn_token";
 const EXEMPT_PATHS = ["/api/health"];
 
 /**
+ * Only /api/* paths are gated by this middleware. The SPA shell (index.html,
+ * /assets/*, favicon, etc.) must load unauthenticated so the frontend JS can
+ * run, read ?token= off the URL, and start injecting Bearer headers on API
+ * calls. Without this exemption the browser gets 401 on the very first GET /
+ * and never gets a chance to capture the token.
+ */
+function isApiPath(path: string): boolean {
+  return path === "/api" || path.startsWith("/api/");
+}
+
+/**
  * Check if daemon auth should be active.
  * Auth is enabled when FUSION_DAEMON_TOKEN env var is set OR daemon options are provided.
  */
@@ -133,7 +144,13 @@ export function createAuthMiddleware(token: string) {
   };
 
   return function authMiddleware(req: Request, res: Response, next: NextFunction): void {
-    // Always allow exempt paths
+    // The SPA shell and static assets are public — only /api/* is gated.
+    if (!isApiPath(req.path)) {
+      next();
+      return;
+    }
+
+    // Always allow exempt paths (liveness probes)
     if (isExemptPath(req.path)) {
       next();
       return;
