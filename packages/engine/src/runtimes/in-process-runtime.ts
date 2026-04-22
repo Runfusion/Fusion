@@ -11,6 +11,7 @@ import type {
   MessageStore,
   RoutineStore,
 } from "@fusion/core";
+import { isEphemeralAgent } from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
 import { TaskExecutor, type TaskExecutorOptions } from "../executor.js";
 import { WorktreePool } from "../worktree-pool.js";
@@ -99,6 +100,12 @@ export class InProcessRuntime
   private concurrencyChangedListener?: (state: { globalMaxConcurrent: number }) => void;
   private agentCreatedListener?: (agent: import("@fusion/core").Agent) => void;
   private agentUpdatedListener?: (agent: import("@fusion/core").Agent, previousState?: import("@fusion/core").AgentState) => void;
+  /** Set of agent IDs with scheduled ephemeral cleanup (prevents duplicate deletion) */
+  private pendingEphemeralDeletions = new Set<string>();
+  /** Map of agent IDs to their cleanup timer IDs */
+  private ephemeralCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Listener for agent:stateChanged events to clean up terminated ephemeral agents */
+  private ephemeralTerminationListener?: (agentId: string, from: import("@fusion/core").AgentState, to: import("@fusion/core").AgentState) => void;
 
   /**
    * @param config - Runtime configuration
@@ -514,6 +521,46 @@ export class InProcessRuntime
         };
         this.agentStore.on("agent:updated", this.agentUpdatedListener);
 
+        // Listen for agent state transitions to clean up terminated ephemeral agents.
+        // This catches cases where ephemeral agents (task-workers, spawned children) are
+        // terminated by HeartbeatMonitor or other pathways outside of onComplete/onError callbacks.
+        // Non-fatal: cleanup failures are warned and do not throw.
+        this.ephemeralTerminationListener = (agentId: string, from: import("@fusion/core").AgentState, to: import("@fusion/core").AgentState) => {
+          if (to !== "terminated") return;
+          // Skip if already terminated (avoid re-scheduling)
+          if (from === "terminated") return;
+
+          // Check if already scheduled for deletion (e.g., by onComplete/onError callback)
+          if (this.pendingEphemeralDeletions.has(agentId)) return;
+
+          // Get the agent to check ephemeral status
+          void (async () => {
+            try {
+              const agent = await this.agentStore?.getAgent(agentId);
+              if (!agent) return;
+              if (!isEphemeralAgent(agent)) return;
+
+              // Schedule deletion after delay so UI can observe terminal state
+              this.pendingEphemeralDeletions.add(agentId);
+              const timerId = setTimeout(async () => {
+                this.ephemeralCleanupTimers.delete(agentId);
+                this.pendingEphemeralDeletions.delete(agentId);
+                try {
+                  await this.agentStore?.deleteAgent(agentId);
+                } catch (err: unknown) {
+                  const msg = err instanceof Error ? err.message : String(err);
+                  runtimeLog.warn(`Failed to delete ephemeral agent ${agentId} after termination: ${msg}`);
+                }
+              }, 5000);
+              this.ephemeralCleanupTimers.set(agentId, timerId);
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : String(err);
+              runtimeLog.warn(`Failed to process termination event for agent ${agentId}: ${msg}`);
+            }
+          })();
+        };
+        this.agentStore.on("agent:stateChanged", this.ephemeralTerminationListener);
+
         // Register existing agents with heartbeat monitoring not explicitly disabled
         // Agents without explicit heartbeat config will use the default 3600-second interval (1 hour)
         try {
@@ -730,6 +777,18 @@ export class InProcessRuntime
         this.agentUpdatedListener = undefined;
         runtimeLog.log("AgentStore agent:updated listener removed");
       }
+      if (this.ephemeralTerminationListener && this.agentStore) {
+        this.agentStore.off("agent:stateChanged", this.ephemeralTerminationListener);
+        this.ephemeralTerminationListener = undefined;
+        runtimeLog.log("AgentStore agent:stateChanged listener removed");
+      }
+      // Clear any pending ephemeral cleanup timers to prevent leaks during shutdown
+      for (const [agentId, timerId] of this.ephemeralCleanupTimers) {
+        clearTimeout(timerId);
+        runtimeLog.log(`Cleared pending cleanup timer for ephemeral agent ${agentId}`);
+      }
+      this.ephemeralCleanupTimers.clear();
+      this.pendingEphemeralDeletions.clear();
 
       // 4. Stop trigger scheduler
       if (this.triggerScheduler) {

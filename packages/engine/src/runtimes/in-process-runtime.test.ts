@@ -912,4 +912,252 @@ describe("InProcessRuntime", () => {
       expect(scheduler!.getRegisteredAgents()).not.toContain(agent2.id);
     });
   });
+
+  describe("ephemeral termination cleanup", () => {
+    it("auto-deletes ephemeral agent when it transitions to terminated via agent:stateChanged", async () => {
+      vi.useFakeTimers();
+
+      try {
+        await runtime.start();
+
+        const store = getAgentStore(runtime);
+        const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockResolvedValue(undefined);
+
+        // Create an ephemeral task-worker agent
+        const agent = await store.createAgent({
+          name: "executor-FN-TERM-1",
+          role: "executor",
+          metadata: {
+            agentKind: "task-worker",
+            taskWorker: true,
+            managedBy: "task-executor",
+          },
+          runtimeConfig: { enabled: false },
+        });
+
+        // Verify agent exists
+        let agents = await store.listAgents({ includeEphemeral: true });
+        expect(agents.some((a: Agent) => a.id === agent.id)).toBe(true);
+
+        // Emit agent:stateChanged event to trigger termination
+        store.emit("agent:stateChanged", agent.id, "running", "terminated");
+
+        // Wait for async handler
+        await vi.advanceTimersByTimeAsync(0);
+
+        // Verify deleteAgent was NOT called immediately (needs 5s delay)
+        expect(deleteAgentSpy).not.toHaveBeenCalled();
+
+        // Advance timers by 5 seconds
+        await vi.advanceTimersByTimeAsync(5000);
+
+        // Now deleteAgent should have been called
+        expect(deleteAgentSpy).toHaveBeenCalledTimes(1);
+        expect(deleteAgentSpy).toHaveBeenCalledWith(agent.id);
+
+        // Note: We verified deleteAgent was called, which is the key behavior.
+        // The actual removal from listAgents depends on the real AgentStore implementation.
+      } finally {
+        vi.useRealTimers();
+      }
+    }, 30000);
+
+    it("does not auto-delete non-ephemeral agent when it transitions to terminated", async () => {
+      vi.useFakeTimers();
+
+      try {
+        await runtime.start();
+
+        const store = getAgentStore(runtime);
+        const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockResolvedValue(undefined);
+
+        // Create a non-ephemeral user-managed agent
+        const agent = await store.createAgent({
+          name: "user-managed-agent",
+          role: "executor",
+          // No ephemeral metadata
+          runtimeConfig: { enabled: true },
+        });
+
+        // Verify agent exists
+        let agents = await store.listAgents();
+        expect(agents.some((a: Agent) => a.id === agent.id)).toBe(true);
+
+        // Emit agent:stateChanged event to trigger termination
+        store.emit("agent:stateChanged", agent.id, "active", "terminated");
+
+        // Wait for async handler
+        await vi.advanceTimersByTimeAsync(0);
+
+        // Advance timers to ensure cleanup would have run
+        await vi.advanceTimersByTimeAsync(5000);
+
+        // deleteAgent should NOT have been called for non-ephemeral agent
+        expect(deleteAgentSpy).not.toHaveBeenCalled();
+
+        // Agent should still exist
+        agents = await store.listAgents();
+        expect(agents.some((a: Agent) => a.id === agent.id)).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    }, 30000);
+
+    it("does not schedule duplicate deletion when termination event fires multiple times", async () => {
+      vi.useFakeTimers();
+
+      try {
+        await runtime.start();
+
+        const store = getAgentStore(runtime);
+        const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockResolvedValue(undefined);
+
+        // Create an ephemeral task-worker agent
+        const agent = await store.createAgent({
+          name: "executor-FN-DUP-1",
+          role: "executor",
+          metadata: {
+            agentKind: "task-worker",
+            taskWorker: true,
+            managedBy: "task-executor",
+          },
+          runtimeConfig: { enabled: false },
+        });
+
+        // Emit termination event multiple times
+        store.emit("agent:stateChanged", agent.id, "running", "terminated");
+        store.emit("agent:stateChanged", agent.id, "terminated", "terminated"); // Already terminated
+
+        // Wait for async handlers
+        await vi.advanceTimersByTimeAsync(0);
+
+        // Advance timers by 5 seconds
+        await vi.advanceTimersByTimeAsync(5000);
+
+        // deleteAgent should have been called only once (deduplicated)
+        expect(deleteAgentSpy).toHaveBeenCalledTimes(1);
+        expect(deleteAgentSpy).toHaveBeenCalledWith(agent.id);
+      } finally {
+        vi.useRealTimers();
+      }
+    }, 30000);
+
+    it("warns on cleanup failure but does not throw", async () => {
+      vi.useFakeTimers();
+      const warnSpy = vi.spyOn(runtimeLog, "warn");
+
+      try {
+        await runtime.start();
+
+        const store = getAgentStore(runtime);
+        const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockRejectedValue(new Error("delete failed"));
+
+        // Create an ephemeral agent
+        const agent = await store.createAgent({
+          name: "executor-FN-WARN-1",
+          role: "executor",
+          metadata: {
+            agentKind: "task-worker",
+          },
+          runtimeConfig: { enabled: false },
+        });
+
+        // Emit termination event
+        store.emit("agent:stateChanged", agent.id, "running", "terminated");
+
+        // Wait for async handler
+        await vi.advanceTimersByTimeAsync(0);
+
+        // Advance timers to trigger deletion
+        await vi.advanceTimersByTimeAsync(5000);
+
+        // Should have logged a warning with concatenated message
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining("Failed to delete ephemeral agent"),
+        );
+        // The warning message is a single concatenated string: "Failed to delete ephemeral agent {agentId} after termination: {error}"
+
+        // Should have attempted deletion
+        expect(deleteAgentSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        warnSpy.mockRestore();
+        vi.useRealTimers();
+      }
+    }, 30000);
+
+    it("clears pending timers on runtime stop", async () => {
+      vi.useFakeTimers();
+
+      try {
+        await runtime.start();
+
+        const store = getAgentStore(runtime);
+        const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockResolvedValue(undefined);
+
+        // Create an ephemeral agent
+        const agent = await store.createAgent({
+          name: "executor-FN-STOP-1",
+          role: "executor",
+          metadata: {
+            taskWorker: true,
+          },
+          runtimeConfig: { enabled: false },
+        });
+
+        // Emit termination event
+        store.emit("agent:stateChanged", agent.id, "running", "terminated");
+
+        // Wait for async handler
+        await vi.advanceTimersByTimeAsync(0);
+
+        // Stop runtime before timer fires
+        await runtime.stop();
+
+        // Advance timers - deletion should NOT happen because timer was cleared
+        await vi.advanceTimersByTimeAsync(5000);
+
+        // deleteAgent should NOT have been called (timer was cleared)
+        expect(deleteAgentSpy).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    }, 30000);
+
+    it("handles spawned ephemeral agents (type=spawned) correctly", async () => {
+      vi.useFakeTimers();
+
+      try {
+        await runtime.start();
+
+        const store = getAgentStore(runtime);
+        const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockResolvedValue(undefined);
+
+        // Create a spawned child agent (type=spawned is ephemeral)
+        const agent = await store.createAgent({
+          name: "child-agent-001",
+          role: "executor",
+          metadata: {
+            type: "spawned",
+            parentTaskId: "FN-PARENT",
+          },
+          runtimeConfig: { enabled: false },
+        });
+
+        // Emit termination event
+        store.emit("agent:stateChanged", agent.id, "running", "terminated");
+
+        // Wait for async handler
+        await vi.advanceTimersByTimeAsync(0);
+
+        // Advance timers by 5 seconds
+        await vi.advanceTimersByTimeAsync(5000);
+
+        // deleteAgent should have been called for spawned ephemeral agent
+        expect(deleteAgentSpy).toHaveBeenCalledTimes(1);
+        expect(deleteAgentSpy).toHaveBeenCalledWith(agent.id);
+      } finally {
+        vi.useRealTimers();
+      }
+    }, 30000);
+  });
 });

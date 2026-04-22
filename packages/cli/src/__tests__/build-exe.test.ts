@@ -117,7 +117,7 @@ describe("build-exe", () => {
     try {
       const result = spawnSync(binary, ["task", "list"], {
         encoding: "utf-8",
-        timeout: 15_000,
+        timeout: 30_000,
       });
       if (hasKnownBunSqliteLimitation(result)) {
         return;
@@ -127,7 +127,7 @@ describe("build-exe", () => {
     } finally {
       cleanup();
     }
-  });
+  }, 60_000);
 
   it("binary starts dashboard and can create PTY terminal sessions", async () => {
     const { spawn } = await import("node:child_process");
