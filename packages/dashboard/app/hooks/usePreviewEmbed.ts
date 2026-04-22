@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 export type EmbedStatus = "unknown" | "loading" | "embedded" | "blocked" | "error";
 export type EmbedDetectionMethod = "auto" | "manual" | null;
@@ -19,15 +19,10 @@ interface UsePreviewEmbedResult {
   // Extended API for direct status control (backward compatibility)
   setEmbedStatus: (status: EmbedStatus) => void;
   retry: () => void;
-  // Legacy aliases for backward compatibility
+  // Legacy alias for backward compatibility
   embedContext: string | null;
   handleIframeLoad: () => void;
   handleIframeError: () => void;
-  isEmbedded: boolean;
-  isBlocked: boolean;
-  blockReason: string | null;
-  /** @deprecated Use blockReason instead */
-  embedContext: string | null;
 }
 
 const DEFAULT_LOAD_TIMEOUT_MS = 10_000;
@@ -49,14 +44,14 @@ function getContextForStatus(status: EmbedStatus): string | null {
 }
 
 export function usePreviewEmbed(url: string | null, options: UsePreviewEmbedOptions = {}): UsePreviewEmbedResult {
-  const { loadTimeoutMs = 10000, detectionMethod: initialDetectionMethod = null } = options;
+  const { loadTimeoutMs = DEFAULT_LOAD_TIMEOUT_MS, detectionMethod: initialDetectionMethod = null } = options;
 
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const timeoutRef = useRef<number | null>(null);
 
   const [embedStatus, setEmbedStatusState] = useState<EmbedStatus>("unknown");
   const [blockReason, setBlockReason] = useState<string | null>(null);
-  const [detectionMethod, setDetectionMethod] = useState<EmbedDetectionMethod>(initialDetectionMethod);
+  const [detectionMethod] = useState<EmbedDetectionMethod>(initialDetectionMethod);
 
   const clearLoadingTimeout = useCallback(() => {
     if (timeoutRef.current !== null) {
@@ -65,15 +60,48 @@ export function usePreviewEmbed(url: string | null, options: UsePreviewEmbedOpti
     }
   }, []);
 
-  const setEmbedStatus = useCallback((status: EmbedStatus) => {
-    setEmbedStatusState(status);
-    setBlockReason(defaultContextForStatus(status));
-  }, []);
+  const setEmbedStatus = useCallback(
+    (status: EmbedStatus) => {
+      clearLoadingTimeout();
+      setEmbedStatusState(status);
+      setBlockReason(getContextForStatus(status));
+    },
+    [clearLoadingTimeout],
+  );
 
-  const setBlockedByTimeout = useCallback(() => {
-    setEmbedStatusState("blocked");
-    setBlockReason(TIMEOUT_CONTEXT);
-  }, []);
+  const resetEmbedStatus = useCallback(() => {
+    clearLoadingTimeout();
+    setEmbedStatusState("unknown");
+    setBlockReason(null);
+  }, [clearLoadingTimeout]);
+
+  const retry = useCallback(() => {
+    resetEmbedStatus();
+  }, [resetEmbedStatus]);
+
+  const handleIframeLoad = useCallback(() => {
+    const iframeEl = iframeRef.current;
+    if (!iframeEl) {
+      setEmbedStatus("embedded");
+      return;
+    }
+
+    try {
+      const frameHref = iframeEl.contentWindow?.location?.href;
+      if (frameHref === "about:blank" && iframeEl.src !== "about:blank") {
+        setEmbedStatus("blocked");
+        return;
+      }
+    } catch {
+      // Cross-origin access can throw; assume successful embed.
+    }
+
+    setEmbedStatus("embedded");
+  }, [setEmbedStatus]);
+
+  const handleIframeError = useCallback(() => {
+    setEmbedStatus("error");
+  }, [setEmbedStatus]);
 
   useEffect(() => {
     clearLoadingTimeout();
@@ -103,91 +131,33 @@ export function usePreviewEmbed(url: string | null, options: UsePreviewEmbedOpti
   }, [clearLoadingTimeout, url]);
 
   useEffect(() => {
-    if (embedStatus !== "loading") {
+    if (!url || embedStatus !== "loading") {
       clearLoadingTimeout();
       return;
     }
 
-    const timer = setTimeout(() => {
+    const timer = window.setTimeout(() => {
       timeoutRef.current = null;
-      setBlockedByTimeout();
+      setEmbedStatusState("blocked");
+      setBlockReason(TIMEOUT_CONTEXT);
     }, loadTimeoutMs);
 
     timeoutRef.current = timer;
 
     return () => {
-      clearTimeout(timer);
+      window.clearTimeout(timer);
       if (timeoutRef.current === timer) {
         timeoutRef.current = null;
       }
     };
-  }, [clearLoadingTimeout, embedStatus, loadTimeoutMs, setBlockedByTimeout]);
-
-  const handleIframeLoad = useCallback(() => {
-    const iframeEl = iframeRef.current;
-    if (!iframeEl) {
-      setEmbedStatus("embedded");
-      return;
-    }
-
-    try {
-      const frameHref = iframeEl.contentWindow?.location?.href;
-      if (frameHref === "about:blank" && iframeEl.src !== "about:blank") {
-        setEmbedStatus("blocked");
-        return;
-      }
-    } catch {
-      // Cross-origin access can throw; assume successful embed.
-    }
-
-    setEmbedStatus("embedded");
-  }, [setEmbedStatus]);
-
-  const handleIframeError = useCallback(() => {
-    setEmbedStatus("error");
-  }, [setEmbedStatus]);
-
-  useEffect(() => {
-    clearLoadingTimeout();
-    setEmbedStatusState("unknown");
-    setBlockReason(null);
-  }, [clearLoadingTimeout]);
-
-    if (!url) {
-      setEmbedStatusState("unknown");
-      setEmbedContext(null);
-      return;
-    }
-
-    setEmbedStatusState("loading");
-    setEmbedContext(null);
-  }, [clearLoadingTimeout, url]);
-
-  useEffect(() => {
-    clearLoadingTimeout();
-    setEmbedStatusState("unknown");
-    setBlockReason(null);
-  }, [clearLoadingTimeout]);
-
-    if (!url || embedStatus !== "loading") {
-      return;
-    }
-
-    timeoutRef.current = window.setTimeout(() => {
-      setEmbedStatusState("blocked");
-      setEmbedContext(TIMEOUT_CONTEXT);
-      timeoutRef.current = null;
-    }, loadTimeoutMs);
-
-    return clearLoadingTimeout;
   }, [clearLoadingTimeout, embedStatus, loadTimeoutMs, url]);
 
-  useEffect(() => clearLoadingTimeout, [clearLoadingTimeout]);
+  useEffect(() => {
+    return clearLoadingTimeout;
+  }, [clearLoadingTimeout]);
 
   const isEmbedded = embedStatus === "embedded";
   const isBlocked = embedStatus === "blocked" || embedStatus === "error";
-
-  const blockReason = useMemo(() => embedContext, [embedContext]);
 
   return {
     embedStatus,
@@ -197,16 +167,10 @@ export function usePreviewEmbed(url: string | null, options: UsePreviewEmbedOpti
     detectionMethod,
     iframeRef,
     resetEmbedStatus,
-    // Legacy aliases
     setEmbedStatus,
-    embedContext: blockReason, // Alias for backward compatibility
     retry,
-    iframeRef,
+    embedContext: blockReason,
     handleIframeLoad,
     handleIframeError,
-    isEmbedded,
-    isBlocked,
-    blockReason,
-    embedContext,
   };
 }
