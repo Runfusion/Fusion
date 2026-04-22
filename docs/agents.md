@@ -105,7 +105,7 @@ The `runtimeConfig` field on agents supports the following options:
 | `heartbeatIntervalMs` | `number` | — | How often the agent should wake up for heartbeat checks (ms) |
 | `heartbeatTimeoutMs` | `number` | — | Time without heartbeat before agent is considered unresponsive (ms) |
 | `maxConcurrentRuns` | `number` | `1` | Max concurrent heartbeat runs for this agent |
-| `messageResponseMode` | `"immediate" \| "on-heartbeat"` | `"immediate"` | How the agent responds to messages |
+| `messageResponseMode` | `"immediate" \| "on-heartbeat"` | `"immediate"` | Whether agent wakes immediately on message (immediate) or processes during heartbeat (on-heartbeat). See [Heartbeat Run Mailbox Checking](#heartbeat-run-mailbox-checking) |
 | `modelProvider` | `string` | — | AI provider override for heartbeat session |
 | `modelId` | `string` | — | AI model ID override for heartbeat session |
 | `budgetConfig` | `AgentBudgetConfig` | — | Token budget governance settings |
@@ -283,6 +283,37 @@ fn message read MSG-123
 fn message delete MSG-123
 fn agent mailbox AGENT-001
 ```
+
+## Heartbeat Run Mailbox Checking
+
+When messaging tools are enabled for an agent, heartbeat runs check for unread mailbox messages during execution regardless of the trigger type. This ensures agents can see and respond to incoming messages without needing an explicit wake-on-message trigger.
+
+### How It Works
+
+1. **Message Prefetch**: When `messageStore` is available, heartbeat runs fetch up to 10 unread inbox messages for the agent
+2. **Prompt Injection**: Pending messages are injected into the execution prompt with sender and timestamp information
+3. **Mark as Read**: After successful heartbeat completion, messages are marked as read
+4. **Failed Runs**: If the heartbeat execution fails, messages remain unread for retry on the next run
+
+### Message Response Modes
+
+The `messageResponseMode` runtime configuration controls when agents are triggered by incoming messages:
+
+| Mode | Behavior |
+|------|----------|
+| `immediate` | Agent wakes immediately when a message arrives (via hook callback) |
+| `on-heartbeat` | Agent processes messages during normal heartbeat runs only |
+
+**Important**: Both modes include messages in the execution prompt. The `immediate` mode additionally triggers an immediate heartbeat run when a message arrives, while `on-heartbeat` relies on the agent's next scheduled heartbeat.
+
+### Message Visibility
+
+- **Timer-triggered runs**: Check mailbox and include pending messages
+- **Assignment-triggered runs**: Check mailbox and include pending messages
+- **On-demand runs**: Check mailbox and include pending messages
+- **Wake-on-message triggers**: Check mailbox and include pending messages (same as other triggers, but triggered immediately)
+
+This ensures inter-agent and user-to-agent communication is visible to agents on each run, avoiding stale coordination, missed instructions, and delayed responses.
 
 ## Agent Spawning
 

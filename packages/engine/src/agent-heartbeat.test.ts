@@ -1671,6 +1671,58 @@ describe("HeartbeatMonitor", () => {
         expect(toolNames).not.toContain("send_message");
         expect(toolNames).not.toContain("read_messages");
       });
+
+      it("identity agent without task fetches messages and includes them in prompt for timer trigger", async () => {
+        const store = createStoreWithAgentForExec({ taskId: undefined, soul: "I am a coordinator" });
+        const mockSession = createMockAgentSession();
+        mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
+
+        const messages = [
+          createMessage({
+            id: "msg-notask-1",
+            fromId: "user-1",
+            content: "Please check the task board",
+          }),
+          createMessage({
+            id: "msg-notask-2",
+            fromId: "agent-5",
+            content: "Delegating FN-100 to you",
+          }),
+        ];
+
+        const messageStore = {
+          setMessageToAgentHook: vi.fn(),
+          getInbox: vi.fn().mockReturnValue(messages),
+          markAllAsRead: vi.fn(),
+        } as unknown as MessageStore;
+
+        const monitor = new HeartbeatMonitor({
+          store,
+          messageStore,
+          taskStore: mockTaskStore,
+          rootDir: "/tmp",
+        });
+
+        const result = await monitor.executeHeartbeat({
+          agentId: "agent-001",
+          source: "timer",
+          triggerDetail: "scheduled",
+        });
+
+        expect(result.status).toBe("completed");
+        // Messages should be fetched for no-task runs too
+        expect(messageStore.getInbox).toHaveBeenCalledWith("agent-001", "agent", { read: false, limit: 10 });
+        // Messages should be marked as read after successful execution
+        expect(messageStore.markAllAsRead).toHaveBeenCalledWith("agent-001", "agent");
+
+        // Verify execution prompt included the messages
+        const promptCalls = mockSession.prompt.mock.calls;
+        expect(promptCalls.length).toBeGreaterThan(0);
+        const executionPrompt = promptCalls[promptCalls.length - 1][0];
+        expect(executionPrompt).toContain("Pending Messages:");
+        expect(executionPrompt).toContain("Please check the task board");
+        expect(executionPrompt).toContain("Delegating FN-100 to you");
+      });
     });
 
     describe("blocked-task dedup", () => {
@@ -2087,14 +2139,22 @@ describe("HeartbeatMonitor", () => {
         expect(messageStore.markAllAsRead).not.toHaveBeenCalled();
       });
 
-      it("does not fetch messages when not wake-on-message trigger", async () => {
+      it("fetches messages for timer-triggered runs when messageStore is available", async () => {
         const store = createStoreWithAgentForExec();
         const mockSession = createMockAgentSession();
         mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
 
+        const messages = [
+          createMessage({
+            id: "msg-1",
+            fromId: "agent-2",
+            content: "Reminder about task FN-001",
+          }),
+        ];
+
         const messageStore = {
           setMessageToAgentHook: vi.fn(),
-          getInbox: vi.fn(),
+          getInbox: vi.fn().mockReturnValue(messages),
           markAllAsRead: vi.fn(),
         } as unknown as MessageStore;
 
@@ -2105,15 +2165,159 @@ describe("HeartbeatMonitor", () => {
           rootDir: "/tmp",
         });
 
-        // Use a regular trigger (not wake-on-message)
-        await monitor.executeHeartbeat({
+        // Use a timer trigger (not wake-on-message)
+        const result = await monitor.executeHeartbeat({
           agentId: "agent-001",
           source: "timer",
           triggerDetail: "scheduled",
         });
 
-        expect(messageStore.getInbox).not.toHaveBeenCalled();
-        expect(messageStore.markAllAsRead).not.toHaveBeenCalled();
+        expect(result.status).toBe("completed");
+        // Messages should be fetched even for timer triggers
+        expect(messageStore.getInbox).toHaveBeenCalledWith("agent-001", "agent", { read: false, limit: 10 });
+        // Messages should be marked as read after successful execution
+        expect(messageStore.markAllAsRead).toHaveBeenCalledWith("agent-001", "agent");
+
+        // Verify execution prompt included the messages
+        const promptCalls = mockSession.prompt.mock.calls;
+        expect(promptCalls.length).toBeGreaterThan(0);
+        const executionPrompt = promptCalls[promptCalls.length - 1][0];
+        expect(executionPrompt).toContain("Pending Messages:");
+        expect(executionPrompt).toContain("Reminder about task FN-001");
+      });
+
+      it("fetches messages for assignment-triggered runs when messageStore is available", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
+
+        const messages = [
+          createMessage({
+            id: "msg-assign-1",
+            fromId: "user-1",
+            content: "Please work on this task",
+          }),
+        ];
+
+        const messageStore = {
+          setMessageToAgentHook: vi.fn(),
+          getInbox: vi.fn().mockReturnValue(messages),
+          markAllAsRead: vi.fn(),
+        } as unknown as MessageStore;
+
+        const monitor = new HeartbeatMonitor({
+          store,
+          messageStore,
+          taskStore: mockTaskStore,
+          rootDir: "/tmp",
+        });
+
+        // Use an assignment trigger
+        const result = await monitor.executeHeartbeat({
+          agentId: "agent-001",
+          source: "assignment",
+          triggerDetail: "task-assigned",
+        });
+
+        expect(result.status).toBe("completed");
+        expect(messageStore.getInbox).toHaveBeenCalledWith("agent-001", "agent", { read: false, limit: 10 });
+        expect(messageStore.markAllAsRead).toHaveBeenCalledWith("agent-001", "agent");
+
+        // Verify execution prompt included the messages
+        const promptCalls = mockSession.prompt.mock.calls;
+        expect(promptCalls.length).toBeGreaterThan(0);
+        const executionPrompt = promptCalls[promptCalls.length - 1][0];
+        expect(executionPrompt).toContain("Pending Messages:");
+        expect(executionPrompt).toContain("Please work on this task");
+      });
+
+      it("fetches messages for on-demand runs without wake-on-message trigger", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
+
+        const messages = [
+          createMessage({
+            id: "msg-od-1",
+            fromId: "agent-3",
+            content: "Status update: task FN-002 is complete",
+          }),
+        ];
+
+        const messageStore = {
+          setMessageToAgentHook: vi.fn(),
+          getInbox: vi.fn().mockReturnValue(messages),
+          markAllAsRead: vi.fn(),
+        } as unknown as MessageStore;
+
+        const monitor = new HeartbeatMonitor({
+          store,
+          messageStore,
+          taskStore: mockTaskStore,
+          rootDir: "/tmp",
+        });
+
+        // Use on-demand trigger without wake-on-message
+        const result = await monitor.executeHeartbeat({
+          agentId: "agent-001",
+          source: "on_demand",
+          triggerDetail: "manual",
+        });
+
+        expect(result.status).toBe("completed");
+        expect(messageStore.getInbox).toHaveBeenCalledWith("agent-001", "agent", { read: false, limit: 10 });
+        expect(messageStore.markAllAsRead).toHaveBeenCalledWith("agent-001", "agent");
+
+        // Verify execution prompt included the messages
+        const promptCalls = mockSession.prompt.mock.calls;
+        expect(promptCalls.length).toBeGreaterThan(0);
+        const executionPrompt = promptCalls[promptCalls.length - 1][0];
+        expect(executionPrompt).toContain("Pending Messages:");
+        expect(executionPrompt).toContain("Status update: task FN-002 is complete");
+      });
+
+      it("still fetches messages for wake-on-message triggers", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
+
+        const messages = [
+          createMessage({
+            id: "msg-wom-1",
+            fromId: "agent-2",
+            content: "Hello from agent-2",
+          }),
+        ];
+
+        const messageStore = {
+          setMessageToAgentHook: vi.fn(),
+          getInbox: vi.fn().mockReturnValue(messages),
+          markAllAsRead: vi.fn(),
+        } as unknown as MessageStore;
+
+        const monitor = new HeartbeatMonitor({
+          store,
+          messageStore,
+          taskStore: mockTaskStore,
+          rootDir: "/tmp",
+        });
+
+        const result = await monitor.executeHeartbeat({
+          agentId: "agent-001",
+          source: "on_demand",
+          triggerDetail: "wake-on-message",
+        });
+
+        expect(result.status).toBe("completed");
+        expect(messageStore.getInbox).toHaveBeenCalledWith("agent-001", "agent", { read: false, limit: 10 });
+        expect(messageStore.markAllAsRead).toHaveBeenCalledWith("agent-001", "agent");
+
+        // Verify execution prompt included the messages
+        const promptCalls = mockSession.prompt.mock.calls;
+        expect(promptCalls.length).toBeGreaterThan(0);
+        const executionPrompt = promptCalls[promptCalls.length - 1][0];
+        expect(executionPrompt).toContain("Pending Messages:");
+        expect(executionPrompt).toContain("Hello from agent-2");
       });
 
       describe("end-to-end agent-to-agent message flow", () => {

@@ -928,7 +928,7 @@ export function Header({
           >
             <Mail size={16} />
             {mailboxUnreadCount > 0 && (
-              <span className="btn-icon-indicator" data-testid="header-mailbox-badge">
+              <span className="header-badge" data-testid="header-mailbox-badge">
                 {mailboxUnreadCount > 9 ? "9+" : mailboxUnreadCount}
               </span>
             )}

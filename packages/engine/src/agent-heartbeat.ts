@@ -1171,12 +1171,12 @@ export class HeartbeatMonitor {
 
           if (isNoTaskRun) {
             // No-task heartbeat: agent has identity but no assigned task
-            // Fetch unread messages when woken by message trigger
-            if (triggerDetail === "wake-on-message" && this.messageStore) {
+            // Fetch unread messages when messageStore is available (for all trigger types)
+            if (this.messageStore) {
               try {
                 pendingMessages = this.messageStore.getInbox(agentId, "agent", { read: false, limit: 10 });
               } catch (inboxErr) {
-                heartbeatLog.warn(`Failed to fetch inbox messages for ${agentId} during wake-on-message: ${inboxErr instanceof Error ? inboxErr.message : String(inboxErr)}`);
+                heartbeatLog.warn(`Failed to fetch inbox messages for ${agentId}: ${inboxErr instanceof Error ? inboxErr.message : String(inboxErr)}`);
               }
             }
 
@@ -1226,12 +1226,12 @@ export class HeartbeatMonitor {
             // Task-scoped heartbeat: agent has an assigned task
             const taskTitle = taskDetail!.title ?? taskDetail!.description.slice(0, 100);
 
-            // Fetch unread messages when woken by message trigger
-            if (triggerDetail === "wake-on-message" && this.messageStore) {
+            // Fetch unread messages when messageStore is available (for all trigger types)
+            if (this.messageStore) {
               try {
                 pendingMessages = this.messageStore.getInbox(agentId, "agent", { read: false, limit: 10 });
               } catch (inboxErr) {
-                heartbeatLog.warn(`Failed to fetch inbox messages for ${agentId} during wake-on-message: ${inboxErr instanceof Error ? inboxErr.message : String(inboxErr)}`);
+                heartbeatLog.warn(`Failed to fetch inbox messages for ${agentId}: ${inboxErr instanceof Error ? inboxErr.message : String(inboxErr)}`);
               }
             }
 

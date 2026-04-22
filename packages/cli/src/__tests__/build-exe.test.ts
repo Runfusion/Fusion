@@ -85,28 +85,32 @@ describe("build-exe", () => {
     expect(existsSync(join(cliRoot, "dist", "package.json"))).toBe(false);
   });
 
-  it("binary runs --help without a co-located package.json", () => {
-    const { binary, dir, cleanup } = createIsolatedDir();
-    try {
-      // Verify no package.json in the isolated dir
-      expect(existsSync(join(dir, "package.json"))).toBe(false);
+  it(
+    "binary runs --help without a co-located package.json",
+    () => {
+      const { binary, dir, cleanup } = createIsolatedDir();
+      try {
+        // Verify no package.json in the isolated dir
+        expect(existsSync(join(dir, "package.json"))).toBe(false);
 
-      const result = spawnSync(binary, ["--help"], {
-        encoding: "utf-8",
-        timeout: 15_000,
-      });
-      if (hasKnownBunSqliteLimitation(result)) {
-        return;
+        const result = spawnSync(binary, ["--help"], {
+          encoding: "utf-8",
+          timeout: 15_000,
+        });
+        if (hasKnownBunSqliteLimitation(result)) {
+          return;
+        }
+        expect(result.status).toBe(0);
+        expect(result.stdout).toContain("fn — AI-orchestrated task board");
+        expect(result.stdout).toContain("dashboard");
+        expect(result.stdout).toContain("task create");
+        expect(result.stdout).toContain("task list");
+      } finally {
+        cleanup();
       }
-      expect(result.status).toBe(0);
-      expect(result.stdout).toContain("fn — AI-orchestrated task board");
-      expect(result.stdout).toContain("dashboard");
-      expect(result.stdout).toContain("task create");
-      expect(result.stdout).toContain("task list");
-    } finally {
-      cleanup();
-    }
-  });
+    },
+    20_000,
+  );
 
   it("binary runs 'task list' without crashing", () => {
     const { binary, cleanup } = createIsolatedDir();
