@@ -35,6 +35,66 @@ let createFnAgent: any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let buildAgentChatPromptFn: any;
 
+/**
+ * Diagnostics logger for the chat module.
+ * Provides consistent [chat] prefixed output with test-injectable handlers.
+ * Mirrors the pattern established in planning.ts (FN-2225).
+ */
+interface DiagnosticsLogger {
+  log(message: string, ...args: unknown[]): void;
+  warn(message: string, ...args: unknown[]): void;
+  error(message: string, ...args: unknown[]): void;
+}
+
+const defaultDiagnostics: DiagnosticsLogger = {
+  log(message: string, ...args: unknown[]) {
+    console.log(`[chat] ${message}`, ...args);
+  },
+  warn(message: string, ...args: unknown[]) {
+    console.warn(`[chat] ${message}`, ...args);
+  },
+  error(message: string, ...args: unknown[]) {
+    console.error(`[chat] ${message}`, ...args);
+  },
+};
+
+let _diagnostics: DiagnosticsLogger = defaultDiagnostics;
+
+/**
+ * Get the current diagnostics logger.
+ * @internal - exposed for test hook
+ */
+export function __getChatDiagnostics(): DiagnosticsLogger {
+  return _diagnostics;
+}
+
+/**
+ * Inject a diagnostics logger (test-only).
+ * When a logger is injected, all chat module diagnostics route through it.
+ * This allows tests to assert on diagnostics without global console spies.
+ * @internal - exposed for test hook
+ */
+export function __setChatDiagnostics(diagnostics: DiagnosticsLogger | null): void {
+  _diagnostics = diagnostics ?? defaultDiagnostics;
+}
+
+/**
+ * Shared diagnostics helper used throughout the chat module.
+ * Routes all informational, warning, and error diagnostics through the current logger.
+ * Mirrors the pattern from planning.ts (FN-2225).
+ */
+const diagnostics: DiagnosticsLogger = {
+  log(message: string, ...args: unknown[]) {
+    _diagnostics.log(message, ...args);
+  },
+  warn(message: string, ...args: unknown[]) {
+    _diagnostics.warn(message, ...args);
+  },
+  error(message: string, ...args: unknown[]) {
+    _diagnostics.error(message, ...args);
+  },
+};
+
 // Initialize the import (this runs in actual server, mocked in tests)
 async function initEngine() {
   if (!createFnAgent || !buildAgentChatPromptFn) {
@@ -263,7 +323,7 @@ export class ChatStreamManager extends EventEmitter {
       try {
         callback(event, eventId);
       } catch (err) {
-        console.error(`[chat] Error broadcasting to client for session ${sessionId}:`, err);
+        diagnostics.error(`Error broadcasting to client for session ${sessionId}:`, err);
       }
     }
 
@@ -395,7 +455,7 @@ export class ChatManager {
       return await this.agentStore.listAgents();
     } catch (agentListError) {
       const message = agentListError instanceof Error ? agentListError.message : String(agentListError);
-      console.warn(`[chat] Failed to list agents for mention parsing: ${message}`);
+      diagnostics.warn(`Failed to list agents for mention parsing: ${message}`);
       return [];
     }
   }
@@ -605,7 +665,7 @@ export class ChatManager {
           agent = await this.agentStore.getAgent(session.agentId);
         } catch (agentLoadError) {
           const message = agentLoadError instanceof Error ? agentLoadError.message : String(agentLoadError);
-          console.warn(`[chat] Failed to load agent context for ${session.agentId}: ${message}`);
+          diagnostics.warn(`Failed to load agent context for ${session.agentId}: ${message}`);
         }
       }
 
@@ -620,7 +680,7 @@ export class ChatManager {
           });
         } catch (promptBuildError) {
           const message = promptBuildError instanceof Error ? promptBuildError.message : String(promptBuildError);
-          console.warn(`[chat] Failed to build enriched system prompt for ${agent.id}: ${message}`);
+          diagnostics.warn(`Failed to build enriched system prompt for ${agent.id}: ${message}`);
         }
       }
 
@@ -771,7 +831,7 @@ export class ChatManager {
       }
 
       const errorMessage = err instanceof Error ? err.message : "AI processing failed";
-      console.error(`[chat] Error in sendMessage for session ${sessionId}:`, err);
+      diagnostics.error(`Error in sendMessage for session ${sessionId}:`, err);
 
       if (accumulatedText || accumulatedThinking || toolCallsAccum.length > 0) {
         try {
@@ -785,7 +845,7 @@ export class ChatManager {
             },
           });
         } catch (persistErr) {
-          console.error(`[chat] Failed to persist partial response for session ${sessionId}:`, persistErr);
+          diagnostics.error(`Failed to persist partial response for session ${sessionId}:`, persistErr);
         }
       }
 
@@ -801,7 +861,7 @@ export class ChatManager {
         try {
           agentResult.session.dispose?.();
         } catch (err) {
-          console.error(`[chat] Error disposing agent session:`, err);
+          diagnostics.error(`Error disposing agent session:`, err);
         }
       }
     }
@@ -819,7 +879,7 @@ export class ChatManager {
       try {
         entry.agentResult.session.dispose?.();
       } catch (err) {
-        console.error(`[chat] Error disposing agent session during cancellation:`, err);
+        diagnostics.error(`Error disposing agent session during cancellation:`, err);
       }
     }
 
@@ -856,4 +916,7 @@ export function __resetChatState(): void {
   rateLimits.clear();
   engineReady = undefined;
   buildAgentChatPromptFn = undefined;
+
+  // Reset diagnostics logger to default
+  __setChatDiagnostics(null);
 }

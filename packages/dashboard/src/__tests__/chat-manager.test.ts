@@ -10,6 +10,8 @@ import {
   __setCreateFnAgent,
   __resetChatState,
   chatStreamManager,
+  __getChatDiagnostics,
+  __setChatDiagnostics,
 } from "../chat.js";
 
 // ── Mock Setup ──────────────────────────────────────────────────────────────
@@ -989,5 +991,166 @@ describe("ChatManager.sendMessage", () => {
     await chatManager.sendMessage("chat-001", "Hello");
 
     expect((chatManager as any).activeGenerations.has("chat-001")).toBe(false);
+  });
+});
+
+describe("ChatManager diagnostics", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetChatState();
+
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-001",
+      agentId: "agent-001",
+      status: "active",
+    });
+    mockChatStore.addMessage.mockReturnValue({
+      id: "msg-001",
+      sessionId: "chat-001",
+      role: "assistant",
+      content: "",
+    });
+    mockChatStore.getMessages.mockReturnValue([]);
+    mockAgentStore.init.mockResolvedValue(undefined);
+    mockAgentStore.getAgent.mockResolvedValue({
+      id: "agent-001",
+      name: "Avery",
+      role: "executor",
+      soul: "Be calm and precise.",
+    });
+    mockAgentStore.listAgents.mockResolvedValue([]);
+    __setBuildAgentChatPrompt(async ({ basePrompt }: any) => basePrompt);
+  });
+
+  it("logs error diagnostic when broadcast callback throws", () => {
+    const loggedErrors: Array<{ message: string; args: unknown[] }> = [];
+    __setChatDiagnostics({
+      log: vi.fn(),
+      warn: vi.fn(),
+      error: (message: string, ...args: unknown[]) => {
+        loggedErrors.push({ message, args });
+      },
+    });
+
+    const throwingCallback = vi.fn(() => {
+      throw new Error("Broadcast callback failed");
+    });
+    chatStreamManager.subscribe("chat-001", throwingCallback);
+
+    expect(() =>
+      chatStreamManager.broadcast("chat-001", { type: "thinking", data: "test" })
+    ).not.toThrow();
+
+    expect(throwingCallback).toHaveBeenCalledTimes(1);
+    expect(loggedErrors).toContainEqual({
+      message: "Error broadcasting to client for session chat-001:",
+      args: [expect.any(Error)],
+    });
+  });
+
+  it("logs error diagnostic when sendMessage encounters AI processing failure", async () => {
+    const loggedErrors: Array<{ message: string; args: unknown[] }> = [];
+    __setChatDiagnostics({
+      log: vi.fn(),
+      warn: vi.fn(),
+      error: (message: string, ...args: unknown[]) => {
+        loggedErrors.push({ message, args });
+      },
+    });
+
+    __setCreateFnAgent(async () => {
+      return {
+        session: {
+          prompt: vi.fn().mockRejectedValue(new Error("AI processing failed")),
+          dispose: vi.fn(),
+          state: { messages: [] },
+        },
+      };
+    });
+
+    const chatManager = createChatManager();
+    await chatManager.sendMessage("chat-001", "Hello");
+
+    expect(loggedErrors).toContainEqual({
+      message: "Error in sendMessage for session chat-001:",
+      args: [expect.any(Error)],
+    });
+  });
+
+  it("logs error diagnostic when dispose fails during cancellation", () => {
+    const loggedErrors: Array<{ message: string; args: unknown[] }> = [];
+    __setChatDiagnostics({
+      log: vi.fn(),
+      warn: vi.fn(),
+      error: (message: string, ...args: unknown[]) => {
+        loggedErrors.push({ message, args });
+      },
+    });
+
+    const disposeSpy = vi.fn().mockImplementation(() => {
+      throw new Error("Dispose failed");
+    });
+
+    __setCreateFnAgent(async () => {
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: disposeSpy,
+          state: {
+            messages: [{ role: "assistant", content: "Done" }],
+          },
+        },
+      };
+    });
+
+    const chatManager = createChatManager();
+    // Set up an active generation manually
+    const abortController = new AbortController();
+    (chatManager as any).activeGenerations.set("chat-001", {
+      abortController,
+      agentResult: { session: { dispose: disposeSpy } },
+    });
+
+    chatManager.cancelGeneration("chat-001");
+
+    expect(loggedErrors).toContainEqual({
+      message: "Error disposing agent session during cancellation:",
+      args: [expect.any(Error)],
+    });
+  });
+
+  it("logs error diagnostic when dispose fails after successful sendMessage", async () => {
+    const loggedErrors: Array<{ message: string; args: unknown[] }> = [];
+    __setChatDiagnostics({
+      log: vi.fn(),
+      warn: vi.fn(),
+      error: (message: string, ...args: unknown[]) => {
+        loggedErrors.push({ message, args });
+      },
+    });
+
+    const disposeSpy = vi.fn().mockImplementation(() => {
+      throw new Error("Dispose failed");
+    });
+
+    __setCreateFnAgent(async () => {
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: disposeSpy,
+          state: {
+            messages: [{ role: "assistant", content: "Done" }],
+          },
+        },
+      };
+    });
+
+    const chatManager = createChatManager();
+    await chatManager.sendMessage("chat-001", "Hello");
+
+    expect(loggedErrors).toContainEqual({
+      message: "Error disposing agent session:",
+      args: [expect.any(Error)],
+    });
   });
 });

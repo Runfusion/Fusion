@@ -9,6 +9,66 @@ import { SessionEventBuffer, type SessionBufferedEvent } from "./sse-buffer.js";
 let createFnAgent: any;
 const engineModule = "@fusion/engine";
 
+/**
+ * Diagnostics logger for the subtask-breakdown module.
+ * Provides consistent [subtask-breakdown] prefixed output with test-injectable handlers.
+ * Mirrors the pattern established in planning.ts (FN-2225).
+ */
+interface DiagnosticsLogger {
+  log(message: string, ...args: unknown[]): void;
+  warn(message: string, ...args: unknown[]): void;
+  error(message: string, ...args: unknown[]): void;
+}
+
+const defaultDiagnostics: DiagnosticsLogger = {
+  log(message: string, ...args: unknown[]) {
+    console.log(`[subtask-breakdown] ${message}`, ...args);
+  },
+  warn(message: string, ...args: unknown[]) {
+    console.warn(`[subtask-breakdown] ${message}`, ...args);
+  },
+  error(message: string, ...args: unknown[]) {
+    console.error(`[subtask-breakdown] ${message}`, ...args);
+  },
+};
+
+let _diagnostics: DiagnosticsLogger = defaultDiagnostics;
+
+/**
+ * Get the current diagnostics logger.
+ * @internal - exposed for test hook
+ */
+export function __getSubtaskBreakdownDiagnostics(): DiagnosticsLogger {
+  return _diagnostics;
+}
+
+/**
+ * Inject a diagnostics logger (test-only).
+ * When a logger is injected, all subtask-breakdown module diagnostics route through it.
+ * This allows tests to assert on diagnostics without global console spies.
+ * @internal - exposed for test hook
+ */
+export function __setSubtaskBreakdownDiagnostics(diagnostics: DiagnosticsLogger | null): void {
+  _diagnostics = diagnostics ?? defaultDiagnostics;
+}
+
+/**
+ * Shared diagnostics helper used throughout the subtask-breakdown module.
+ * Routes all informational, warning, and error diagnostics through the current logger.
+ * Mirrors the pattern from planning.ts (FN-2225).
+ */
+const diagnostics: DiagnosticsLogger = {
+  log(message: string, ...args: unknown[]) {
+    _diagnostics.log(message, ...args);
+  },
+  warn(message: string, ...args: unknown[]) {
+    _diagnostics.warn(message, ...args);
+  },
+  error(message: string, ...args: unknown[]) {
+    _diagnostics.error(message, ...args);
+  },
+};
+
 async function initEngine() {
   if (!createFnAgent) {
     try {
@@ -160,7 +220,7 @@ export function rehydrateFromStore(store: AiSessionStore): number {
   try {
     rows = store.listRecoverable().filter((row) => row.type === "subtask");
   } catch (error) {
-    console.error("[subtask-breakdown] Failed to list recoverable sessions:", error);
+    diagnostics.error("Failed to list recoverable sessions:", error);
     return 0;
   }
 
@@ -171,7 +231,7 @@ export function rehydrateFromStore(store: AiSessionStore): number {
       sessions.set(session.sessionId, session);
       rehydrated += 1;
     } catch (error) {
-      console.error(`[subtask-breakdown] Failed to rehydrate session ${row.id}:`, error);
+      diagnostics.error(`Failed to rehydrate session ${row.id}:`, error);
     }
   }
 
@@ -574,7 +634,7 @@ export function getSubtaskSession(sessionId: string): SubtaskSession | undefined
     sessions.set(restored.sessionId, restored);
     return toPublicSubtaskSession(restored);
   } catch (error) {
-    console.error(`[subtask-breakdown] Failed to restore session ${sessionId} from SQLite:`, error);
+    diagnostics.error(`Failed to restore session ${sessionId} from SQLite:`, error);
     return undefined;
   }
 }
@@ -604,6 +664,9 @@ export function __resetSubtaskBreakdownState(): void {
   }
   _aiSessionDeletedListener = undefined;
   _aiSessionStore = undefined;
+
+  // Reset diagnostics logger to default
+  __setSubtaskBreakdownDiagnostics(null);
 }
 
 export class SessionNotFoundError extends Error {

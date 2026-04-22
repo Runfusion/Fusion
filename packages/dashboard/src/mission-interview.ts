@@ -28,6 +28,66 @@ type AgentResult = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let createFnAgent: any;
 
+/**
+ * Diagnostics logger for the mission-interview module.
+ * Provides consistent [mission-interview] prefixed output with test-injectable handlers.
+ * Mirrors the pattern established in planning.ts (FN-2225).
+ */
+interface DiagnosticsLogger {
+  log(message: string, ...args: unknown[]): void;
+  warn(message: string, ...args: unknown[]): void;
+  error(message: string, ...args: unknown[]): void;
+}
+
+const defaultDiagnostics: DiagnosticsLogger = {
+  log(message: string, ...args: unknown[]) {
+    console.log(`[mission-interview] ${message}`, ...args);
+  },
+  warn(message: string, ...args: unknown[]) {
+    console.warn(`[mission-interview] ${message}`, ...args);
+  },
+  error(message: string, ...args: unknown[]) {
+    console.error(`[mission-interview] ${message}`, ...args);
+  },
+};
+
+let _diagnostics: DiagnosticsLogger = defaultDiagnostics;
+
+/**
+ * Get the current diagnostics logger.
+ * @internal - exposed for test hook
+ */
+export function __getMissionInterviewDiagnostics(): DiagnosticsLogger {
+  return _diagnostics;
+}
+
+/**
+ * Inject a diagnostics logger (test-only).
+ * When a logger is injected, all mission-interview module diagnostics route through it.
+ * This allows tests to assert on diagnostics without global console spies.
+ * @internal - exposed for test hook
+ */
+export function __setMissionInterviewDiagnostics(diagnostics: DiagnosticsLogger | null): void {
+  _diagnostics = diagnostics ?? defaultDiagnostics;
+}
+
+/**
+ * Shared diagnostics helper used throughout the mission-interview module.
+ * Routes all informational, warning, and error diagnostics through the current logger.
+ * Mirrors the pattern from planning.ts (FN-2225).
+ */
+const diagnostics: DiagnosticsLogger = {
+  log(message: string, ...args: unknown[]) {
+    _diagnostics.log(message, ...args);
+  },
+  warn(message: string, ...args: unknown[]) {
+    _diagnostics.warn(message, ...args);
+  },
+  error(message: string, ...args: unknown[]) {
+    _diagnostics.error(message, ...args);
+  },
+};
+
 async function initEngine() {
   if (!createFnAgent) {
     try {
@@ -362,7 +422,7 @@ export function rehydrateFromStore(store: AiSessionStore): number {
   try {
     rows = store.listRecoverable().filter((row) => row.type === "mission_interview");
   } catch (error) {
-    console.error("[mission-interview] Failed to list recoverable sessions:", error);
+    diagnostics.error("Failed to list recoverable sessions:", error);
     return 0;
   }
 
@@ -373,7 +433,7 @@ export function rehydrateFromStore(store: AiSessionStore): number {
       sessions.set(session.id, session);
       rehydrated += 1;
     } catch (error) {
-      console.error(`[mission-interview] Failed to rehydrate session ${row.id}:`, error);
+      diagnostics.error(`Failed to rehydrate session ${row.id}:`, error);
     }
   }
 
@@ -445,7 +505,7 @@ export class MissionInterviewStreamManager extends EventEmitter {
       try {
         callback(event, eventId);
       } catch (err) {
-        console.error(`[mission-interview] Error broadcasting to client for session ${sessionId}:`, err);
+        diagnostics.error(`Error broadcasting to client for session ${sessionId}:`, err);
       }
     }
 
@@ -616,7 +676,7 @@ export function parseMissionAgentResponse(text: string): MissionInterviewRespons
   const candidate = extractJsonCandidate(text);
 
   if (!candidate) {
-    console.error("[mission-interview] No JSON candidate found in agent response:", text.slice(0, 500));
+    diagnostics.error("No JSON candidate found in agent response:", text.slice(0, 500));
     throw new Error("AI returned no valid JSON. Please try again.");
   }
 
@@ -628,7 +688,7 @@ export function parseMissionAgentResponse(text: string): MissionInterviewRespons
       const repaired = repairJson(candidate);
       parsed = JSON.parse(repaired);
     } catch (repairErr) {
-      console.error("[mission-interview] Failed to parse agent response:", candidate.slice(0, 500));
+      diagnostics.error("Failed to parse agent response:", candidate.slice(0, 500));
       throw new Error(
         `Failed to parse AI response: ${repairErr instanceof Error ? repairErr.message : "Unknown error"}. Please try again.`
       );
@@ -653,7 +713,7 @@ export function parseMissionAgentResponse(text: string): MissionInterviewRespons
     }
   }
 
-  console.error("[mission-interview] Invalid response structure:", JSON.stringify(parsed).slice(0, 500));
+  diagnostics.error("Invalid response structure:", JSON.stringify(parsed).slice(0, 500));
   throw new Error("AI returned an invalid response structure. Please try again.");
 }
 
@@ -711,7 +771,7 @@ function disposeMissionAgentForRetry(session: MissionInterviewSession): void {
   try {
     session.agent.session.dispose?.();
   } catch (error) {
-    console.error(`[mission-interview] Error disposing agent for retry in session ${session.id}:`, error);
+    diagnostics.error(`Error disposing agent for retry in session ${session.id}:`, error);
   }
 
   session.agent = undefined;
@@ -738,7 +798,7 @@ async function initializeAgent(
     );
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : "Failed to initialize AI agent";
-    console.error(`[mission-interview] Agent initialization error for session ${session.id}:`, err);
+    diagnostics.error(`Agent initialization error for session ${session.id}:`, err);
     session.error = errorMessage;
     session.updatedAt = new Date();
     persistMissionSession(session, "error", errorMessage);
@@ -891,8 +951,8 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
         lastError = err instanceof Error ? err : new Error(String(err));
 
         if (attempt < MAX_PARSE_RETRIES) {
-          console.warn(
-            `[mission-interview] Parse attempt ${attempt + 1} failed for session ${session.id}, requesting reformat`
+          diagnostics.warn(
+            `Parse attempt ${attempt + 1} failed for session ${session.id}, requesting reformat`
           );
           try {
             session.thinkingOutput = "";
@@ -920,7 +980,7 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
             }
             responseText = retryText;
           } catch (retryErr) {
-            console.error(`[mission-interview] Retry prompt failed for session ${session.id}:`, retryErr);
+            diagnostics.error(`Retry prompt failed for session ${session.id}:`, retryErr);
             break;
           }
         }
@@ -929,7 +989,7 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
 
     if (!parsed) {
       const errorMsg = `${lastError?.message || "Failed to parse AI response"} You can try responding again or start a new session.`;
-      console.error(`[mission-interview] All parse attempts exhausted for session ${session.id}:`, errorMsg);
+      diagnostics.error(`All parse attempts exhausted for session ${session.id}:`, errorMsg);
       session.error = errorMsg;
       session.updatedAt = new Date();
       persistMissionSession(session, "error", errorMsg);
@@ -964,7 +1024,7 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : "AI processing failed";
-    console.error(`[mission-interview] Agent conversation error for session ${session.id}:`, err);
+    diagnostics.error(`Agent conversation error for session ${session.id}:`, err);
     session.error = errorMessage;
     session.updatedAt = new Date();
     persistMissionSession(session, "error", errorMessage);
@@ -1018,7 +1078,7 @@ export async function createMissionInterviewSession(
 
   // Initialize AI agent in background
   initializeAgent(session, rootDir, promptOverrides).catch((err) => {
-    console.error(`[mission-interview] Failed to initialize agent for session ${sessionId}:`, err);
+    diagnostics.error(`Failed to initialize agent for session ${sessionId}:`, err);
     persistMissionSession(session, "error", err.message || "Failed to initialize AI agent");
     missionInterviewStreamManager.broadcast(sessionId, {
       type: "error",
@@ -1159,7 +1219,7 @@ export function getMissionInterviewSession(sessionId: string): MissionInterviewS
     sessions.set(restored.id, restored);
     return restored;
   } catch (error) {
-    console.error(`[mission-interview] Failed to restore session ${sessionId} from SQLite:`, error);
+    diagnostics.error(`Failed to restore session ${sessionId} from SQLite:`, error);
     return undefined;
   }
 }
@@ -1189,6 +1249,9 @@ export function __resetMissionInterviewState(): void {
   }
   _aiSessionDeletedListener = undefined;
   _aiSessionStore = undefined;
+
+  // Reset diagnostics logger to default
+  __setMissionInterviewDiagnostics(null);
 }
 
 // ── Custom Errors ───────────────────────────────────────────────────────────

@@ -28,6 +28,8 @@ import {
   RateLimitError,
   SessionNotFoundError,
   submitMissionInterviewResponse,
+  __getMissionInterviewDiagnostics,
+  __setMissionInterviewDiagnostics,
 } from "./mission-interview.js";
 import { EventEmitter } from "node:events";
 import type { AiSessionRow } from "./ai-session-store.js";
@@ -255,18 +257,24 @@ describe("mission-interview module", () => {
       store.rows.set(goodRow.id, goodRow);
       store.rows.set(badRow.id, badRow);
 
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const loggedErrors: Array<{ message: string; args: unknown[] }> = [];
+      __setMissionInterviewDiagnostics({
+        log: vi.fn(),
+        warn: vi.fn(),
+        error: (message: string, ...args: unknown[]) => {
+          loggedErrors.push({ message, args });
+        },
+      });
 
       const rehydrated = rehydrateFromStore(store as any);
 
       expect(rehydrated).toBe(1);
       expect(getMissionInterviewSession(goodRow.id)).toBeDefined();
       expect(getMissionInterviewSession(badRow.id)).toBeUndefined();
-      expect(errorSpy).toHaveBeenCalledWith(
-        `[mission-interview] Failed to rehydrate session ${badRow.id}:`,
-        expect.any(Error),
-      );
-      errorSpy.mockRestore();
+      expect(loggedErrors).toContainEqual({
+        message: `Failed to rehydrate session ${badRow.id}:`,
+        args: [expect.any(Error)],
+      });
     });
 
     it("falls through to SQLite when in-memory session is missing", () => {
@@ -521,6 +529,33 @@ describe("mission-interview module", () => {
       missionInterviewStreamManager.cleanupSession(sessionId);
       expect(missionInterviewStreamManager.getBufferedEvents(sessionId, 0)).toEqual([]);
     });
+
+    it("logs error diagnostic when broadcast callback throws", () => {
+      const loggedErrors: Array<{ message: string; args: unknown[] }> = [];
+      __setMissionInterviewDiagnostics({
+        log: vi.fn(),
+        warn: vi.fn(),
+        error: (message: string, ...args: unknown[]) => {
+          loggedErrors.push({ message, args });
+        },
+      });
+
+      const throwingCallback = vi.fn(() => {
+        throw new Error("Callback failed");
+      });
+      missionInterviewStreamManager.subscribe("session-error-callback", throwingCallback);
+
+      // Should not throw, but should log the error
+      expect(() =>
+        missionInterviewStreamManager.broadcast("session-error-callback", { type: "thinking", data: "test" })
+      ).not.toThrow();
+
+      expect(throwingCallback).toHaveBeenCalledTimes(1);
+      expect(loggedErrors).toContainEqual({
+        message: "Error broadcasting to client for session session-error-callback:",
+        args: [expect.any(Error)],
+      });
+    });
   });
 
   describe("response parsing", () => {
@@ -557,6 +592,64 @@ describe("mission-interview module", () => {
       expect(() =>
         parseMissionAgentResponse(JSON.stringify({ type: "unknown", data: null })),
       ).toThrow("invalid response structure");
+    });
+
+    it("logs error diagnostic when no JSON candidate found before throwing", () => {
+      const loggedErrors: Array<{ message: string; args: unknown[] }> = [];
+      __setMissionInterviewDiagnostics({
+        log: vi.fn(),
+        warn: vi.fn(),
+        error: (message: string, ...args: unknown[]) => {
+          loggedErrors.push({ message, args });
+        },
+      });
+
+      const input = "I'm not sure what to ask about this project.";
+      expect(() => parseMissionAgentResponse(input)).toThrow("no valid JSON");
+
+      expect(loggedErrors).toContainEqual({
+        message: "No JSON candidate found in agent response:",
+        args: [expect.stringContaining("I'm not sure")],
+      });
+    });
+
+    it("logs error diagnostic when repair also fails before throwing", () => {
+      const loggedErrors: Array<{ message: string; args: unknown[] }> = [];
+      __setMissionInterviewDiagnostics({
+        log: vi.fn(),
+        warn: vi.fn(),
+        error: (message: string, ...args: unknown[]) => {
+          loggedErrors.push({ message, args });
+        },
+      });
+
+      // Invalid JSON that repair cannot fix
+      const input = '{"type":"question","data":{"id":q-1,"question":"What is this?"}';
+      expect(() => parseMissionAgentResponse(input)).toThrow("Failed to parse AI response");
+
+      expect(loggedErrors).toContainEqual({
+        message: "Failed to parse agent response:",
+        args: [expect.stringContaining('{"type":"question"')],
+      });
+    });
+
+    it("logs error diagnostic for invalid response structure before throwing", () => {
+      const loggedErrors: Array<{ message: string; args: unknown[] }> = [];
+      __setMissionInterviewDiagnostics({
+        log: vi.fn(),
+        warn: vi.fn(),
+        error: (message: string, ...args: unknown[]) => {
+          loggedErrors.push({ message, args });
+        },
+      });
+
+      const input = '{"type":"unknown","data":null}';
+      expect(() => parseMissionAgentResponse(input)).toThrow("invalid response structure");
+
+      expect(loggedErrors).toContainEqual({
+        message: "Invalid response structure:",
+        args: [expect.stringContaining('"type":"unknown"')],
+      });
     });
   });
 

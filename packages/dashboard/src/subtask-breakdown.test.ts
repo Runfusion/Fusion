@@ -27,6 +27,8 @@ import {
   InvalidSessionStateError,
   setAiSessionStore,
   SubtaskStreamManager,
+  __getSubtaskBreakdownDiagnostics,
+  __setSubtaskBreakdownDiagnostics,
 } from "./subtask-breakdown.js";
 
 const UUID_REGEX =
@@ -765,17 +767,24 @@ describe("subtask session rehydration", () => {
     store.rows.set(goodRow.id, goodRow);
     store.rows.set(badRow.id, badRow);
 
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const loggedErrors: Array<{ message: string; args: unknown[] }> = [];
+    __setSubtaskBreakdownDiagnostics({
+      log: vi.fn(),
+      warn: vi.fn(),
+      error: (message: string, ...args: unknown[]) => {
+        loggedErrors.push({ message, args });
+      },
+    });
 
     const rehydrated = rehydrateFromStore(store as any);
 
     expect(rehydrated).toBe(1);
     expect(getSubtaskSession(goodRow.id)).toBeDefined();
     expect(getSubtaskSession(badRow.id)).toBeUndefined();
-    expect(errorSpy).toHaveBeenCalledWith(
-      `[subtask-breakdown] Failed to rehydrate session ${badRow.id}:`,
-      expect.any(Error),
-    );
+    expect(loggedErrors).toContainEqual({
+      message: `Failed to rehydrate session ${badRow.id}:`,
+      args: [expect.any(Error)],
+    });
   });
 
   it("falls through to SQLite when session is missing in memory", () => {
@@ -814,6 +823,35 @@ describe("subtask session rehydration", () => {
 
     expect(session?.initialDescription).toBe("Break this task down");
     expect(getSpy).not.toHaveBeenCalled();
+  });
+
+  it("logs error diagnostic when SQLite restore fails for corrupted row", () => {
+    const store = new MockAiSessionStore();
+    // Use corrupted result field (which is parsed in buildSubtaskSessionFromRow)
+    const badRow = buildSubtaskRow({
+      id: "subtask-restore-bad",
+      status: "generating",
+      result: "{bad-json",
+    });
+    store.rows.set(badRow.id, badRow);
+    setAiSessionStore(store as any);
+
+    const loggedErrors: Array<{ message: string; args: unknown[] }> = [];
+    __setSubtaskBreakdownDiagnostics({
+      log: vi.fn(),
+      warn: vi.fn(),
+      error: (message: string, ...args: unknown[]) => {
+        loggedErrors.push({ message, args });
+      },
+    });
+
+    const session = getSubtaskSession(badRow.id);
+
+    expect(session).toBeUndefined();
+    expect(loggedErrors).toContainEqual({
+      message: `Failed to restore session ${badRow.id} from SQLite:`,
+      args: [expect.any(Error)],
+    });
   });
 });
 
