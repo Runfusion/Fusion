@@ -2,9 +2,13 @@
 
 AI-orchestrated task board — specify, execute, and deliver tasks automatically.
 
+MIT licensed.
+
 Like Trello, but your tasks get specified, executed, and delivered by AI — powered by [pi](https://github.com/badlogic/pi-mono).
 
-![Fusion kanban dashboard](demo/screenshot.png)
+![Fusion dashboard board](demo/screenshot.png)
+
+_Fusion dashboard board view_
 
 Fusion is built on the great work of [dustinbyrne/kb](https://github.com/dustinbyrne/kb).
 
@@ -30,22 +34,18 @@ For Docker deployment, see [docs/docker.md](./docs/docker.md).
 
 ## Quick Start
 
-1. **Install:**
-   ```bash
-   npm i -g @gsxdsm/fusion
-   ```
+Start the local dashboard:
 
-2. **Initialize (or just start the dashboard):**
-   ```bash
-   fn dashboard
-   ```
+```bash
+pnpm dev dashboard
+```
 
-3. **Click the `Open:` URL** printed in the terminal. It embeds a bearer token
-   (`http://localhost:4040/?token=fn_...`) that the browser captures to
-   `localStorage` on first visit and reuses automatically thereafter. See
-   [CLI reference → fn dashboard → Authentication](./docs/cli-reference.md#fn-dashboard)
-   for how to pin a stable token via `FUSION_DASHBOARD_TOKEN` or opt out with
-   `--no-auth`.
+Then click the `Open:` URL printed in the terminal. It embeds a bearer token
+(`http://localhost:4040/?token=fn_...`) that the browser captures to
+`localStorage` on first visit and reuses automatically thereafter. See
+[CLI reference → fn dashboard → Authentication](./docs/cli-reference.md#fn-dashboard)
+for how to pin a stable token via `FUSION_DASHBOARD_TOKEN` or opt out with
+`--no-auth`.
 
 ### First-run Setup
 
@@ -57,29 +57,9 @@ On first launch, Fusion automatically opens the **onboarding wizard** with three
 
 The wizard is **dismissible and non-blocking** — click **Skip for now** to dismiss it and use the dashboard immediately. You can also re-trigger onboarding later from **Settings → Authentication → Reopen onboarding guide**.
 
-### Prerequisites
-
-The AI engine uses [pi](https://github.com/badlogic/pi-mono) under the hood:
-
-1. `npm i -g @mariozechner/pi-coding-agent`
-2. Run `pi` and use `/login`, or set `ANTHROPIC_API_KEY`
-
-Fusion reuses your existing pi authentication.
-
 ### Mobile
 
 For Capacitor + PWA workflow, see [MOBILE.md](./MOBILE.md).
-
-## Mailbox
-
-Fusion includes a **Mailbox** feature for async messaging between users and agents. Unlike the realtime chat view, Mailbox provides email-like asynchronous messaging:
-
-- **Inbox** — View messages grouped by conversation with unread indicators
-- **Outbox** — Track sent messages
-- **Agents** — Send messages directly to agents
-- **Unread Badge** — Header shows unread count without opening Mailbox
-
-Navigate to Mailbox via the header view toggle or mobile bottom nav tab.
 
 ## Workflow
 
@@ -129,7 +109,7 @@ In **Triage**, an AI agent reads your project, understands context, and writes a
 - **Workflow Steps** — Configurable quality gates (pre-merge: blocks merge; post-merge: informational)
 - **GitHub Integration** — Import issues, create PRs, real-time PR/issue badges
 - **Dashboard** — Real-time kanban board, agent management, terminal, git manager, mission planner
-- **Missions** — Hierarchical planning (Mission → Milestone → Slice → Feature → Task) with autopilot, validation contracts, fix-feature retries, and blocked-handoff semantics for systematic feature delivery. See [Factory Operating Model](./docs/missions.md#factory-operating-model) for the full validation-contract lifecycle.
+- **Missions** — Hierarchical planning (Mission → Milestone → Slice → Feature → Task) with autopilot, validation contracts, fix-feature retries, and blocked-handoff semantics for systematic feature delivery.
 - **Multi-Project** — Manage multiple projects from a single installation with project isolation
 - **Inter-Agent Messaging** — Built-in messaging for coordination between agents and users
 
