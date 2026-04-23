@@ -18,6 +18,7 @@ import { CentralCore } from "./central-core.js";
 import { getTaskMergeBlocker } from "./task-merge.js";
 import { ensureMemoryFileWithBackend } from "./project-memory.js";
 import { runCommandAsync } from "./run-command.js";
+import { createLogger } from "./logger.js";
 
 /**
  * Legacy backup directory default value from the old .kb storage structure.
@@ -30,6 +31,7 @@ const TASK_ACTIVITY_LOG_ENTRY_LIMIT = 1_000;
 const TASK_ACTIVITY_LOG_OUTCOME_LIMIT = 4_000;
 const ARCHIVE_AGENT_LOG_SNAPSHOT_LIMIT = 25;
 const ARCHIVE_AGENT_LOG_SNIPPET_LIMIT = 160;
+const storeLog = createLogger("task-store");
 
 /**
  * Reject branch names that would be unsafe to interpolate into a shell command.
@@ -839,55 +841,59 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   private setupActivityLogListeners(): void {
     // Task created
     this.on("task:created", (task) => {
-      this.recordActivity({
-        type: "task:created",
-        taskId: task.id,
-        taskTitle: task.title,
-        details: `Task ${task.id} created${task.title ? `: ${task.title}` : ""}`,
-      }).catch(() => {
-        // Best-effort: ignore recording errors
-      });
+      this.recordActivityFromListener(
+        {
+          type: "task:created",
+          taskId: task.id,
+          taskTitle: task.title,
+          details: `Task ${task.id} created${task.title ? `: ${task.title}` : ""}`,
+        },
+        "task:created",
+      );
     });
 
     // Task moved
     this.on("task:moved", (data) => {
-      this.recordActivity({
-        type: "task:moved",
-        taskId: data.task.id,
-        taskTitle: data.task.title,
-        details: `Task ${data.task.id} moved: ${data.from} → ${data.to}`,
-        metadata: { from: data.from, to: data.to },
-      }).catch(() => {
-        // Best-effort: ignore recording errors
-      });
+      this.recordActivityFromListener(
+        {
+          type: "task:moved",
+          taskId: data.task.id,
+          taskTitle: data.task.title,
+          details: `Task ${data.task.id} moved: ${data.from} → ${data.to}`,
+          metadata: { from: data.from, to: data.to },
+        },
+        "task:moved",
+      );
     });
 
     // Task merged
     this.on("task:merged", (result) => {
       const status = result.merged ? "successfully merged" : "merge attempted";
-      this.recordActivity({
-        type: "task:merged",
-        taskId: result.task.id,
-        taskTitle: result.task.title,
-        details: `Task ${result.task.id} ${status} to main`,
-        metadata: { merged: result.merged, branch: result.branch },
-      }).catch(() => {
-        // Best-effort: ignore recording errors
-      });
+      this.recordActivityFromListener(
+        {
+          type: "task:merged",
+          taskId: result.task.id,
+          taskTitle: result.task.title,
+          details: `Task ${result.task.id} ${status} to main`,
+          metadata: { merged: result.merged, branch: result.branch },
+        },
+        "task:merged",
+      );
     });
 
     // Task updated (check for failures)
     this.on("task:updated", (task) => {
       if (task.status === "failed") {
-        this.recordActivity({
-          type: "task:failed",
-          taskId: task.id,
-          taskTitle: task.title,
-          details: `Task ${task.id} failed${task.error ? `: ${task.error}` : ""}`,
-          metadata: task.error ? { error: task.error } : undefined,
-        }).catch(() => {
-          // Best-effort: ignore recording errors
-        });
+        this.recordActivityFromListener(
+          {
+            type: "task:failed",
+            taskId: task.id,
+            taskTitle: task.title,
+            details: `Task ${task.id} failed${task.error ? `: ${task.error}` : ""}`,
+            metadata: task.error ? { error: task.error } : undefined,
+          },
+          "task:updated",
+        );
       }
     });
 
@@ -908,25 +914,41 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
 
       if (importantChanges.length > 0) {
-        this.recordActivity({
-          type: "settings:updated",
-          details: `Settings updated: ${importantChanges.join(", ")}`,
-          metadata: { changes: importantChanges },
-        }).catch(() => {
-          // Best-effort: ignore recording errors
-        });
+        this.recordActivityFromListener(
+          {
+            type: "settings:updated",
+            details: `Settings updated: ${importantChanges.join(", ")}`,
+            metadata: { changes: importantChanges },
+          },
+          "settings:updated",
+        );
       }
     });
 
     // Task deleted
     this.on("task:deleted", (task) => {
-      this.recordActivity({
-        type: "task:deleted",
-        taskId: task.id,
-        taskTitle: task.title,
-        details: `Task ${task.id} deleted${task.title ? `: ${task.title}` : ""}`,
-      }).catch(() => {
-        // Best-effort: ignore recording errors
+      this.recordActivityFromListener(
+        {
+          type: "task:deleted",
+          taskId: task.id,
+          taskTitle: task.title,
+          details: `Task ${task.id} deleted${task.title ? `: ${task.title}` : ""}`,
+        },
+        "task:deleted",
+      );
+    });
+  }
+
+  private recordActivityFromListener(
+    entry: Omit<ActivityLogEntry, "id" | "timestamp">,
+    sourceEvent: string,
+  ): void {
+    this.recordActivity(entry).catch((err) => {
+      storeLog.warn("Activity logging listener failed", {
+        sourceEvent,
+        type: entry.type,
+        taskId: entry.taskId,
+        error: err instanceof Error ? err.message : String(err),
       });
     });
   }
@@ -1616,8 +1638,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         if (defaultOnSteps.length > 0) {
           resolvedWorkflowSteps = defaultOnSteps;
         }
-      } catch {
+      } catch (err) {
         // Non-fatal: default-on resolution is best-effort
+        storeLog.warn("Failed to auto-apply default workflow steps during task creation", {
+          error: err instanceof Error ? err.message : String(err),
+          descriptionLength: input.description.length,
+        });
       }
     } else if (input.enabledWorkflowSteps.length === 0) {
       // Explicitly empty array — user intentionally selected no steps
@@ -1642,15 +1668,27 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
             }
           }
         } catch (err) {
-          // Log warning but don't crash
-          const errorMsg = err instanceof Error ? err.message : String(err);
           const autoEnabled = options?.settings?.autoSummarizeTitles === true;
-          console.warn(
-            `[TaskStore] Title summarization failed for task ${id}: ${errorMsg}` +
-            ` (desc length: ${input.description.length}, auto-summarize: ${autoEnabled})`
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          storeLog.warn(
+            `Title summarization failed for task ${id}: ${errorMessage} (desc length: ${input.description.length}, auto-summarize: ${autoEnabled})`,
+            {
+              taskId: id,
+              descriptionLength: input.description.length,
+              autoSummarizeEnabled: autoEnabled,
+              error: errorMessage,
+            },
           );
         }
-      }).catch(() => {}); // Prevent unhandled rejection
+      }).catch((err) => {
+        const autoEnabled = options?.settings?.autoSummarizeTitles === true;
+        storeLog.error("Unexpected title summarization promise-chain failure", {
+          taskId: id,
+          descriptionLength: input.description.length,
+          autoSummarizeEnabled: autoEnabled,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
     }
 
     return task;
@@ -3485,11 +3523,18 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       this.watcher = watch(this.tasksDir, { recursive: true }, (_event, _filename) => {
         // No-op - we use polling now, but keep watcher for API compat
       });
-      this.watcher.on("error", () => {
-        // Ignore errors
+      this.watcher.on("error", (err) => {
+        storeLog.warn("fs.watch emitted an error; polling will continue", {
+          error: err instanceof Error ? err.message : String(err),
+          tasksDir: this.tasksDir,
+        });
       });
-    } catch {
+    } catch (err) {
       // fs.watch may not be available - that's fine
+      storeLog.warn("fs.watch unavailable; falling back to polling-only updates", {
+        error: err instanceof Error ? err.message : String(err),
+        tasksDir: this.tasksDir,
+      });
     }
 
     // Poll for changes every second
@@ -3564,10 +3609,17 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
       const elapsed = Date.now() - startTime;
       if (elapsed > 100) {
-        console.warn(`[TaskStore] checkForChanges took ${elapsed}ms — event loop may have been blocked`);
+        storeLog.warn("checkForChanges took longer than expected", {
+          elapsedMs: elapsed,
+          thresholdMs: 100,
+        });
       }
-    } catch {
-      // Ignore polling errors
+    } catch (err) {
+      storeLog.warn("checkForChanges poll cycle failed", {
+        lastKnownModified: this.lastKnownModified,
+        lastPollTime: this.lastPollTime,
+        error: err instanceof Error ? err.message : String(err),
+      });
     } finally {
       this.pollingInProgress = false;
     }
@@ -5191,7 +5243,15 @@ ${notificationsSection}`;
       this.db.bumpLastModified();
     } catch (err) {
       // Best-effort: log errors but don't break operations
-      console.error("Failed to record activity:", err);
+      storeLog.error("Failed to record activity", {
+        id: fullEntry.id,
+        type: fullEntry.type,
+        taskId: fullEntry.taskId,
+        taskTitle: fullEntry.taskTitle,
+        detailsLength: fullEntry.details.length,
+        hasMetadata: fullEntry.metadata !== undefined,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     return fullEntry;
