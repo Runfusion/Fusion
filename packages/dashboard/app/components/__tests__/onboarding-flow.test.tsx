@@ -727,6 +727,29 @@ describe("onboarding flow integration", () => {
 
       expect(screen.getByText("Requires GitHub connection")).toBeInTheDocument();
     });
+
+    it("skip warnings: gh CLI auth marks GitHub as ready in summary and hides connection-required note", async () => {
+      mockFetchAuthStatus.mockResolvedValue({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+        ],
+        ghCli: { available: true, authenticated: true },
+      });
+
+      const renderResult = renderModal();
+
+      await advanceThroughSteps(renderResult, ["next", "next"]);
+
+      await waitFor(() => {
+        expect(screen.getByText("Create Your First Task")).toBeInTheDocument();
+      });
+
+      const readinessSummary = screen.getByTestId("readiness-summary");
+      const githubItem = within(readinessSummary).getByText("GitHub").closest(".onboarding-readiness-item");
+      expect(githubItem).toHaveAttribute("data-status", "connected");
+      expect(screen.getByText("Connected via GitHub CLI — imports and PR tracking are available")).toBeInTheDocument();
+      expect(screen.queryByText("Requires GitHub connection")).toBeNull();
+    });
   });
 
   describe("task creation flow", () => {

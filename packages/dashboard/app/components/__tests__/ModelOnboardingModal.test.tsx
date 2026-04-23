@@ -942,12 +942,12 @@ describe("ModelOnboardingModal", () => {
   });
 
   describe("GitHub step", () => {
-    it("GitHub step shows fallback when no GitHub provider", async () => {
+    it("GitHub step shows OAuth setup fallback when neither OAuth nor gh CLI auth is available", async () => {
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
 
       await navigateToGitHubStep();
 
-      expect(screen.getByText(/GitHub integration isn't set up yet/)).toBeTruthy();
+      expect(screen.getByText(/GitHub OAuth isn't connected yet/)).toBeTruthy();
       expect(screen.getByText(/Settings → Authentication/)).toBeTruthy();
       expect(screen.getByRole("button", { name: "Continue without GitHub →" })).toBeTruthy();
     });
@@ -1002,6 +1002,21 @@ describe("ModelOnboardingModal", () => {
       expect(screen.queryByTestId("onboarding-github-connect-cta")).toBeNull();
     });
 
+    it("GitHub step explains gh CLI auth when OAuth provider is absent", async () => {
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [],
+        ghCli: { available: true, authenticated: true },
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+      await navigateToGitHubStep();
+
+      expect(screen.getByText(/GitHub CLI is already authenticated/)).toBeTruthy();
+      expect(screen.getByText(/OAuth integration in Settings → Authentication is optional/)).toBeTruthy();
+      expect(screen.queryByTestId("onboarding-github-connect-cta")).toBeNull();
+    });
+
     describe("GitHub connection status feedback", () => {
       it("shows connected status with success feedback", async () => {
         mockFetchAuthStatus.mockResolvedValueOnce({
@@ -1017,7 +1032,25 @@ describe("ModelOnboardingModal", () => {
         const badge = screen.getByTestId("github-status-badge");
         expect(badge).toHaveTextContent("✓ Connected");
         expect(badge).toHaveClass("connected");
-        expect(screen.getByText("GitHub is connected. You can import issues and track pull requests.")).toBeTruthy();
+        expect(screen.getByText("GitHub OAuth is connected. You can import issues and track pull requests.")).toBeTruthy();
+      });
+
+      it("shows connected feedback when gh CLI is authenticated without GitHub OAuth", async () => {
+        mockFetchAuthStatus.mockResolvedValueOnce({
+          providers: [
+            { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
+          ],
+          ghCli: { available: true, authenticated: true },
+        });
+
+        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+
+        await navigateToGitHubStep();
+
+        const badge = screen.getByTestId("github-status-badge");
+        expect(badge).toHaveTextContent("✓ Connected");
+        expect(badge).toHaveClass("connected");
+        expect(screen.getByText(/GitHub CLI is authenticated/)).toBeTruthy();
       });
 
       it("shows not-connected status and keeps default helper text", async () => {

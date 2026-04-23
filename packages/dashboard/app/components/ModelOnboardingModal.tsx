@@ -439,6 +439,11 @@ export type ProviderConnectionStatus = "connected" | "not-connected" | "skipped"
 /** GitHub-specific status variants for richer connection feedback */
 type GitHubConnectionStatus = "connected" | "failed" | "pending" | "skipped" | "not-connected";
 
+interface GhCliStatus {
+  available: boolean;
+  authenticated: boolean;
+}
+
 /** Maximum number of poll cycles before timing out (150 × 2s = 5 minutes) */
 const MAX_POLL_CYCLES = 150;
 
@@ -477,6 +482,7 @@ export function ModelOnboardingModal({
   const [taskCreationError, setTaskCreationError] = useState<string | null>(null);
   const [inlineCreatedTask, setInlineCreatedTask] = useState<Task | null>(null);
   const [authProviders, setAuthProviders] = useState<AuthProvider[]>([]);
+  const [ghCliStatus, setGhCliStatus] = useState<GhCliStatus | undefined>(undefined);
   const [authLoading, setAuthLoading] = useState(true);
   const [authActionInProgress, setAuthActionInProgress] = useState<string | null>(null);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
@@ -583,8 +589,9 @@ export function ModelOnboardingModal({
   // Load auth providers
   const loadAuthStatus = useCallback(async () => {
     try {
-      const { providers } = await fetchAuthStatus();
+      const { providers, ghCli } = await fetchAuthStatus();
       setAuthProviders(providers);
+      setGhCliStatus(ghCli);
       // Remove from skippedProviders when a provider becomes authenticated
       setSkippedProviders((prev) => {
         const updated = { ...prev };
@@ -609,10 +616,14 @@ export function ModelOnboardingModal({
     aiSetupReturnRef.current = step !== "ai-setup";
   }, [step, loadAuthStatus]);
 
-  // Check if GitHub provider is configured and currently authenticated
+  // OAuth status for the GitHub provider (used for OAuth-specific controls like Connect/Disconnect).
   const githubProvider = authProviders.find((p) => p.id === "github");
   const hasGithubProvider = !!githubProvider;
   const isGithubAuthenticated = githubProvider?.authenticated ?? false;
+  const isGithubCliAuthenticated = ghCliStatus?.authenticated ?? false;
+  // Effective GitHub readiness (matches useSetupReadiness): OAuth OR authenticated gh CLI session.
+  const isGitHubReady = isGithubAuthenticated || isGithubCliAuthenticated;
+  const isGitHubReadyViaCli = !isGithubAuthenticated && isGithubCliAuthenticated;
 
   // Get provider connection status for UI display
   const getProviderStatus = useCallback((provider: AuthProvider): ProviderConnectionStatus => {
@@ -651,7 +662,7 @@ export function ModelOnboardingModal({
   }
 
   const getGitHubStatus = useCallback((): GitHubConnectionStatus => {
-    if (isGithubAuthenticated) {
+    if (isGitHubReady) {
       return "connected";
     }
 
@@ -667,7 +678,7 @@ export function ModelOnboardingModal({
     }
 
     return "not-connected";
-  }, [isGithubAuthenticated, loginOutcomes, isGithubSkipped]);
+  }, [isGitHubReady, loginOutcomes, isGithubSkipped]);
 
   function GitHubStatusBadge({ status }: { status: GitHubConnectionStatus }) {
     const config: Record<GitHubConnectionStatus, { text: string; className: string }> = {
@@ -883,8 +894,9 @@ export function ModelOnboardingModal({
           }
 
           try {
-            const { providers } = await fetchAuthStatus();
+            const { providers, ghCli } = await fetchAuthStatus();
             setAuthProviders(providers);
+            setGhCliStatus(ghCli);
             const provider = providers.find((p) => p.id === providerId);
             if (provider?.authenticated) {
               if (pollIntervalRef.current) {
@@ -1328,11 +1340,13 @@ export function ModelOnboardingModal({
     });
   }
 
-  if (isGithubAuthenticated) {
+  if (isGitHubReady) {
     readinessItems.push({
       label: "GitHub",
       status: "connected",
-      detail: "Issues and PRs can be imported",
+      detail: isGitHubReadyViaCli
+        ? "Connected via GitHub CLI — imports and PR tracking are available"
+        : "Issues and PRs can be imported",
     });
   } else if (!hasGithubProvider || isGithubSkipped) {
     readinessItems.push({
@@ -1758,10 +1772,18 @@ export function ModelOnboardingModal({
               {!hasGithubProvider ? (
                 <div className="model-onboarding-github-optional">
                   <GitPullRequest size={48} className="optional-icon" />
-                  <p>
-                    GitHub integration isn't set up yet. You can enable it later
-                    in Settings → Authentication.
-                  </p>
+                  {isGitHubReadyViaCli ? (
+                    <p>
+                      GitHub CLI is already authenticated, so imports and PR tracking work now.
+                      OAuth integration in Settings → Authentication is optional and only controls
+                      dashboard-managed connect/disconnect.
+                    </p>
+                  ) : (
+                    <p>
+                      GitHub OAuth isn&apos;t connected yet. You can set it up in Settings → Authentication,
+                      or continue now and connect later.
+                    </p>
+                  )}
                   <button
                     className="btn btn-primary btn-sm"
                     onClick={() => setStep("first-task")}
@@ -1825,7 +1847,9 @@ export function ModelOnboardingModal({
 
                   {githubStatus === "connected" && (
                     <div className="onboarding-github-feedback onboarding-github-feedback--success">
-                      GitHub is connected. You can import issues and track pull requests.
+                      {isGitHubReadyViaCli
+                        ? "GitHub CLI is authenticated. Imports and pull request tracking are available. Connect OAuth in Settings → Authentication if you want dashboard-managed sign-in controls."
+                        : "GitHub OAuth is connected. You can import issues and track pull requests."}
                     </div>
                   )}
 
@@ -1984,7 +2008,7 @@ export function ModelOnboardingModal({
                     </button>
 
                     <button
-                      className={`onboarding-cta-card${!isGithubAuthenticated ? " onboarding-cta-card--disabled" : ""}`}
+                      className={`onboarding-cta-card${!isGitHubReady ? " onboarding-cta-card--disabled" : ""}`}
                       data-testid="cta-github-import"
                       onClick={handleOpenGitHubImport}
                       disabled={saving}
@@ -1995,7 +2019,7 @@ export function ModelOnboardingModal({
                       <div className="cta-content">
                         <strong>Import from GitHub</strong>
                         <span>Turn GitHub issues into tasks you can track here</span>
-                        {!isGithubAuthenticated && (
+                        {!isGitHubReady && (
                           <small className="onboarding-cta-note">Requires GitHub connection</small>
                         )}
                       </div>
