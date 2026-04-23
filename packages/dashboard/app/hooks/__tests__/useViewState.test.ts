@@ -165,6 +165,30 @@ describe("useViewState", () => {
     vi.useRealTimers();
   });
 
+  it("does NOT call openSetupWizard when projects exist even if no current project selected", async () => {
+    vi.useFakeTimers();
+    const openSetupWizard = vi.fn();
+
+    renderHook(() =>
+      useViewState(
+        createOptions({
+          projectsLength: 3, // Projects exist
+          currentProject: null, // But none selected yet
+          openSetupWizard,
+        }),
+      ),
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+
+    // Should NOT open setup wizard when projects already exist
+    // The dashboard should show overview mode to let user pick a project
+    expect(openSetupWizard).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
   // ── Insights view persistence ─────────────────────────────────────
 
   it("reads saved insights taskView from scoped localStorage on init", async () => {

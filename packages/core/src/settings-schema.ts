@@ -47,6 +47,9 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   settingsSyncAuth: false,
   settingsSyncInterval: 900000,
   settingsSyncConflictResolution: "last-write-wins",
+  // Dashboard session state (persisted to global settings for PWA/offline restore)
+  dashboardCurrentNodeId: undefined,
+  dashboardCurrentProjectIdByNode: undefined,
 } satisfies CompleteSettings<GlobalSettings>;
 
 /** Default values for project-level settings. */

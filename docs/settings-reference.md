@@ -63,6 +63,8 @@ Defaults from `DEFAULT_GLOBAL_SETTINGS`; key scope from `GLOBAL_SETTINGS_KEYS`.
 | `settingsSyncAuth` | `boolean` | `false` | Include model auth credentials in settings sync operations. |
 | `settingsSyncInterval` | `number` | `900000` | Automatic sync interval in ms. Valid values: `300000`, `900000`, `1800000`, `3600000`. |
 | `settingsSyncConflictResolution` | `"last-write-wins" \| "always-ask" \| "keep-local" \| "keep-remote"` | `"last-write-wins"` | Conflict strategy for divergent synced settings. |
+| `dashboardCurrentNodeId` | `string` | `undefined` | Currently selected dashboard node ID. Restores the last-viewed node on fresh browser/PWA sessions. `undefined` means viewing the local node. |
+| `dashboardCurrentProjectIdByNode` | `Record<string, string>` | `undefined` | Map of node ID to last-selected project ID. Use key `"local"` for the local node. Persists project context across browser restarts and PWA sessions. |
 
 ---
 

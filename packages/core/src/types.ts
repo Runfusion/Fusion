@@ -1027,6 +1027,16 @@ export interface GlobalSettings {
    *  - "keep-remote": Accept the remote version on conflict
    *  Default: "last-write-wins". */
   settingsSyncConflictResolution?: "last-write-wins" | "always-ask" | "keep-local" | "keep-remote";
+  /** Currently selected dashboard node ID. Used to restore the last-viewed node
+   *  on fresh browser/PWA sessions. Null or undefined means viewing the local node.
+   *  Persisted to global settings so it survives across browser restarts. */
+  dashboardCurrentNodeId?: string;
+  /** Map of node ID to the last-selected project ID for that node.
+   *  The key is the node ID (use `"local"` for the local node).
+   *  Persisted to global settings so project context is restored on fresh sessions.
+   *  Clear individual entries by setting them to `undefined` (omitting from update).
+   *  Clearing all entries returns the dashboard to overview mode. */
+  dashboardCurrentProjectIdByNode?: Record<string, string>;
 }
 
 /**

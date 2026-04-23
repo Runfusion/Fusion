@@ -3,6 +3,14 @@ import { renderHook, waitFor, act } from "@testing-library/react";
 import { useCurrentProject } from "./useCurrentProject";
 import type { ProjectInfo } from "../api";
 
+// Mock the API functions
+vi.mock("../api", () => ({
+  fetchGlobalSettings: vi.fn(),
+  updateGlobalSettings: vi.fn(),
+}));
+
+import { fetchGlobalSettings, updateGlobalSettings } from "../api";
+
 describe("useCurrentProject", () => {
   const mockProjects: ProjectInfo[] = [
     {
@@ -28,6 +36,9 @@ describe("useCurrentProject", () => {
   beforeEach(() => {
     localStorage.clear();
     vi.clearAllMocks();
+    // Default mock implementations
+    (fetchGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    (updateGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({});
   });
 
   afterEach(() => {
@@ -57,8 +68,10 @@ describe("useCurrentProject", () => {
     });
   });
 
-  it("loads saved project from localStorage", async () => {
-    localStorage.setItem("kb-dashboard-current-project", JSON.stringify(mockProjects[0]));
+  it("loads saved project from global settings", async () => {
+    (fetchGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      dashboardCurrentProjectIdByNode: { local: "proj_1" },
+    });
 
     const { result } = renderHook(() => useCurrentProject(mockProjects));
 
@@ -66,9 +79,26 @@ describe("useCurrentProject", () => {
       expect(result.current.loading).toBe(false);
     });
 
-    // After validation, it should have the saved project
+    // After hydration, it should have the saved project
     await waitFor(() => {
-      expect(result.current.currentProject).not.toBeNull();
+      expect(result.current.currentProject?.id).toBe("proj_1");
+    });
+  });
+
+  it("loads saved project for specific node ID", async () => {
+    (fetchGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      dashboardCurrentProjectIdByNode: { "node-123": "proj_2" },
+    });
+
+    const { result } = renderHook(() => useCurrentProject(mockProjects, { nodeId: "node-123" }));
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    // Should load proj_2 for node-123
+    await waitFor(() => {
+      expect(result.current.currentProject?.id).toBe("proj_2");
     });
   });
 
@@ -85,18 +115,10 @@ describe("useCurrentProject", () => {
     });
   });
 
-  it("clears selection when project no longer exists", async () => {
-    const unregisteredProject: ProjectInfo = {
-      id: "proj_old",
-      name: "Old Project",
-      path: "/old/path",
-      status: "active",
-      isolationMode: "in-process",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-    };
-
-    localStorage.setItem("kb-dashboard-current-project", JSON.stringify(unregisteredProject));
+  it("clears selection when project no longer exists and defaults to first active", async () => {
+    (fetchGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      dashboardCurrentProjectIdByNode: { local: "proj_old" },
+    });
 
     const { result } = renderHook(() => useCurrentProject(mockProjects));
 
@@ -108,9 +130,16 @@ describe("useCurrentProject", () => {
     await waitFor(() => {
       expect(result.current.currentProject?.id).toBe("proj_1");
     });
+
+    // Should persist the new selection
+    expect(updateGlobalSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dashboardCurrentProjectIdByNode: { local: "proj_1" },
+      }),
+    );
   });
 
-  it("setCurrentProject updates selection and saves to localStorage", async () => {
+  it("setCurrentProject updates selection and persists to global settings", async () => {
     const { result } = renderHook(() => useCurrentProject(mockProjects));
 
     await waitFor(() => {
@@ -122,11 +151,35 @@ describe("useCurrentProject", () => {
     });
 
     expect(result.current.currentProject?.id).toBe("proj_2");
-    expect(localStorage.getItem("kb-dashboard-current-project")).toContain("proj_2");
+    expect(updateGlobalSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dashboardCurrentProjectIdByNode: { local: "proj_2" },
+      }),
+    );
   });
 
-  it("clearCurrentProject removes selection and re-defaults when projects available", async () => {
-    localStorage.setItem("kb-dashboard-current-project", JSON.stringify(mockProjects[1]));
+  it("setCurrentProject uses node ID as key when provided", async () => {
+    const { result } = renderHook(() => useCurrentProject(mockProjects, { nodeId: "node-456" }));
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    act(() => {
+      result.current.setCurrentProject(mockProjects[1]);
+    });
+
+    expect(updateGlobalSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dashboardCurrentProjectIdByNode: { "node-456": "proj_2" },
+      }),
+    );
+  });
+
+  it("clearCurrentProject removes selection and does not auto-select", async () => {
+    (fetchGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      dashboardCurrentProjectIdByNode: { local: "proj_1" },
+    });
 
     const { result } = renderHook(() => useCurrentProject(mockProjects));
 
@@ -134,9 +187,9 @@ describe("useCurrentProject", () => {
       expect(result.current.loading).toBe(false);
     });
 
-    // After loading, we should have proj_2 from localStorage
+    // After loading, we should have proj_1
     await waitFor(() => {
-      expect(result.current.currentProject?.id).toBe("proj_2");
+      expect(result.current.currentProject?.id).toBe("proj_1");
     });
 
     act(() => {
@@ -148,16 +201,31 @@ describe("useCurrentProject", () => {
       expect(result.current.currentProject).toBeNull();
     });
 
-    // localStorage should be cleared
-    expect(localStorage.getItem("kb-dashboard-current-project")).toBeNull();
+    // Should persist the clear (remove the key)
+    expect(updateGlobalSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dashboardCurrentProjectIdByNode: {},
+      }),
+    );
   });
 
-  it("handles localStorage errors gracefully", async () => {
-    // Mock localStorage to throw
-    const originalSetItem = localStorage.setItem;
-    localStorage.setItem = vi.fn(() => {
-      throw new Error("Storage error");
+  it("handles global settings fetch failure gracefully", async () => {
+    (fetchGlobalSettings as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Network error"));
+
+    const { result } = renderHook(() => useCurrentProject(mockProjects));
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
     });
+
+    // Should fall back to default behavior (first active project)
+    await waitFor(() => {
+      expect(result.current.currentProject?.id).toBe("proj_1");
+    });
+  });
+
+  it("handles global settings update failure gracefully", async () => {
+    (updateGlobalSettings as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Network error"));
 
     const { result } = renderHook(() => useCurrentProject(mockProjects));
 
@@ -166,13 +234,34 @@ describe("useCurrentProject", () => {
     });
 
     act(() => {
-      result.current.setCurrentProject(mockProjects[0]);
+      result.current.setCurrentProject(mockProjects[1]);
     });
 
-    // Should still update state even if localStorage fails
-    expect(result.current.currentProject?.id).toBe("proj_1");
+    // Should still update state even if persistence fails
+    expect(result.current.currentProject?.id).toBe("proj_2");
+  });
 
-    // Restore
-    localStorage.setItem = originalSetItem;
+  it("migrates legacy localStorage to global settings", async () => {
+    // Set up legacy localStorage
+    localStorage.setItem("kb-dashboard-current-project", JSON.stringify(mockProjects[0]));
+    (fetchGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({});
+
+    const { result } = renderHook(() => useCurrentProject(mockProjects));
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    // Should load from legacy localStorage
+    await waitFor(() => {
+      expect(result.current.currentProject?.id).toBe("proj_1");
+    });
+
+    // Should migrate to global settings
+    expect(updateGlobalSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dashboardCurrentProjectIdByNode: { local: "proj_1" },
+      }),
+    );
   });
 });

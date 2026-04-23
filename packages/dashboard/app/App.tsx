@@ -64,19 +64,36 @@ function AppInner() {
   // Project management hooks - MUST be called before any conditional logic
   const { projects, loading: projectsLoading, error: projectsError, refresh: refreshProjects, register: registerProject, update: updateProjectHook, unregister: unregisterProjectHook } = useProjects();
   const { nodes } = useNodes();
-  const { currentProject, setCurrentProject, clearCurrentProject, loading: currentProjectLoading } = useCurrentProject(projects);
+
+  // Node context for local/remote node switching - must be called before useCurrentProject
+  const { currentNode, currentNodeId, isRemote, setCurrentNode, clearCurrentNode } = useNodeContext();
+
+  // Current project with node-aware persistence
+  const { currentProject, setCurrentProject, clearCurrentProject, loading: currentProjectLoading } = useCurrentProject(projects, { nodeId: currentNodeId });
+
   const {
     hasAiProvider,
     hasGithub,
     loading: setupReadinessLoading,
     hasWarnings,
   } = useSetupReadiness(currentProject?.id);
-
-  // Node context for local/remote node switching
-  const { currentNode, currentNodeId, isRemote, setCurrentNode, clearCurrentNode } = useNodeContext();
   
-  // Sync node context with useNodes() results - fall back to local if selected node is missing
+  // Sync node context with useNodes() results:
+  // - Resolve saved node ID to full NodeConfig when nodes list loads
+  // - Fall back to local if selected node is missing or deleted
   useEffect(() => {
+    // If we have a saved node ID but no currentNode yet (initial hydration),
+    // resolve it from the nodes list
+    if (currentNodeId && !currentNode && nodes.length > 0) {
+      const foundNode = nodes.find((n) => n.id === currentNodeId);
+      if (foundNode) {
+        setCurrentNode(foundNode);
+        return;
+      }
+    }
+    
+    // If we have a currentNode but the saved ID no longer exists in nodes list,
+    // fall back to local view
     if (currentNodeId && nodes.length > 0) {
       const nodeExists = nodes.some((n) => n.id === currentNodeId);
       if (!nodeExists) {
@@ -84,7 +101,7 @@ function AppInner() {
         clearCurrentNode();
       }
     }
-  }, [currentNodeId, nodes, clearCurrentNode]);
+  }, [currentNodeId, currentNode, nodes, setCurrentNode, clearCurrentNode]);
   
   // Search query state - must be defined before useTasks
   const [searchQuery, setSearchQuery] = useState("");
