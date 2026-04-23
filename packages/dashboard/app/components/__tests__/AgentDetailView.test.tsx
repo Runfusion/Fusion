@@ -9,6 +9,7 @@ import { DEFAULT_HEARTBEAT_INTERVAL_MS } from "../../utils/heartbeatIntervals";
 // Mock the API functions
 vi.mock("../../api", () => ({
   fetchAgent: vi.fn(),
+  fetchAgents: vi.fn(),
   updateAgent: vi.fn(),
   updateAgentState: vi.fn(),
   deleteAgent: vi.fn(),
@@ -87,9 +88,10 @@ vi.mock("../SkillMultiselect", () => ({
   ),
 }));
 
-import { fetchAgent, updateAgent, updateAgentState, fetchAgentChildren, fetchAgentRunLogs, fetchAgentRuns, fetchAgentRunDetail, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchDiscoveredSkills, fetchModels, fetchAgentLogsWithMeta } from "../../api";
+import { fetchAgent, fetchAgents, updateAgent, updateAgentState, fetchAgentChildren, fetchAgentRunLogs, fetchAgentRuns, fetchAgentRunDetail, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchDiscoveredSkills, fetchModels, fetchAgentLogsWithMeta } from "../../api";
 
 const mockFetchAgent = vi.mocked(fetchAgent);
+const mockFetchAgents = vi.mocked(fetchAgents);
 const mockUpdateAgent = vi.mocked(updateAgent);
 const mockUpdateAgentState = vi.mocked(updateAgentState);
 const mockFetchAgentChildren = vi.mocked(fetchAgentChildren);
@@ -157,6 +159,11 @@ describe("AgentDetailView", () => {
     vi.clearAllMocks();
     const mockAgent = createMockAgent();
     mockFetchAgent.mockResolvedValue(mockAgent);
+    mockFetchAgents.mockResolvedValue([
+      { id: "agent-001", name: "Test Agent", role: "executor", state: "active", metadata: {} },
+      { id: "agent-002", name: "Manager Agent", role: "reviewer", state: "active", metadata: {} },
+      { id: "agent-003", name: "Director Agent", role: "triage", state: "active", metadata: {} },
+    ] as any);
     mockUpdateAgentState.mockResolvedValue(createMockAgent({ state: "paused" }));
     mockUpdateAgent.mockResolvedValue(createMockAgent() as any);
     // Default: return runs from mock agent
@@ -997,6 +1004,121 @@ describe("AgentDetailView", () => {
         expect(screen.getByLabelText("Max Retries")).toBeInTheDocument();
         expect(screen.getByLabelText("Task Timeout (ms)")).toBeInTheDocument();
         expect(screen.getByLabelText("Log Level")).toBeInTheDocument();
+      });
+    });
+
+    it("renders Reports To as a manager dropdown sourced from fetched agents", async () => {
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />,
+      );
+
+      await navigateToSettings(user);
+
+      await waitFor(() => {
+        expect(mockFetchAgents).toHaveBeenCalledWith(undefined, undefined);
+      });
+
+      const reportsToSelect = await screen.findByLabelText("Reports To") as HTMLSelectElement;
+      expect(reportsToSelect.tagName).toBe("SELECT");
+
+      const optionValues = Array.from(reportsToSelect.options).map((option) => option.value);
+      expect(optionValues).toContain("");
+      expect(optionValues).toContain("agent-002");
+      expect(optionValues).toContain("agent-003");
+      expect(optionValues).not.toContain("agent-001");
+    });
+
+    it("shows existing reportsTo value as selected manager", async () => {
+      mockFetchAgent.mockResolvedValue(createMockAgent({ reportsTo: "agent-003" } as any));
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />,
+      );
+
+      await navigateToSettings(user);
+
+      const reportsToSelect = await screen.findByLabelText("Reports To") as HTMLSelectElement;
+      expect(reportsToSelect.value).toBe("agent-003");
+    });
+
+    it("preserves unknown reportsTo ids in dropdown until changed", async () => {
+      mockFetchAgent.mockResolvedValue(createMockAgent({ reportsTo: "agent-missing" } as any));
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />,
+      );
+
+      await navigateToSettings(user);
+
+      const reportsToSelect = await screen.findByLabelText("Reports To") as HTMLSelectElement;
+      expect(reportsToSelect.value).toBe("agent-missing");
+      expect(screen.getByRole("option", { name: "Unknown manager (agent-missing)" })).toBeInTheDocument();
+    });
+
+    it("saves selected manager id via updateAgent reportsTo", async () => {
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />,
+      );
+
+      await navigateToSettings(user);
+
+      const reportsToSelect = await screen.findByLabelText("Reports To");
+      await user.selectOptions(reportsToSelect, "agent-003");
+      await user.click(screen.getByText("Save Settings"));
+
+      await waitFor(() => {
+        expect(mockUpdateAgent).toHaveBeenCalledWith(
+          "agent-001",
+          expect.objectContaining({ reportsTo: "agent-003" }),
+          undefined,
+        );
+      });
+    });
+
+    it("clears reportsTo when selecting No manager", async () => {
+      mockFetchAgent.mockResolvedValue(createMockAgent({ reportsTo: "agent-002" } as any));
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />,
+      );
+
+      await navigateToSettings(user);
+
+      const reportsToSelect = await screen.findByLabelText("Reports To");
+      await user.selectOptions(reportsToSelect, "");
+      await user.click(screen.getByText("Save Settings"));
+
+      await waitFor(() => {
+        expect(mockUpdateAgent).toHaveBeenCalledWith(
+          "agent-001",
+          expect.objectContaining({ reportsTo: undefined }),
+          undefined,
+        );
       });
     });
 

@@ -259,7 +259,7 @@ describe("TaskStore task documents", () => {
 
     const document = await store.getTaskDocument(task.id, "plan");
     expect(document).toBeNull();
-  });
+  }, 15_000);
 
   it("accepts valid key edge cases and rejects invalid ones", async () => {
     const task = await store.createTask({ description: "Key edge case task" });

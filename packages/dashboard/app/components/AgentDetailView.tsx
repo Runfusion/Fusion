@@ -8,7 +8,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { AgentDetail, AgentState, AgentHeartbeatRun, AgentBudgetStatus, ModelInfo, MemoryFileInfo } from "../api";
-import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels } from "../api";
+import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels, fetchAgents } from "../api";
 import type { Agent } from "../api";
 import type { AgentLogEntry, Task } from "@fusion/core";
 import { AgentLogViewer } from "./AgentLogViewer";
@@ -2705,6 +2705,8 @@ function ConfigTab({
   const [titleValue, setTitleValue] = useState(agent.title ?? "");
   const [iconValue, setIconValue] = useState(agent.icon ?? "");
   const [reportsToValue, setReportsToValue] = useState(agent.reportsTo ?? "");
+  const [managerOptions, setManagerOptions] = useState<Agent[]>([]);
+  const [isLoadingManagers, setIsLoadingManagers] = useState(false);
 
   // Local form state initialised from agent.metadata
   const [formValues, setFormValues] = useState<Record<string, string>>(() => {
@@ -2757,6 +2759,40 @@ function ConfigTab({
     return "";
   })();
   const [modelValue, setModelValue] = useState(initialModelValue);
+
+  const managerSelection = reportsToValue.trim();
+  const availableManagers = useMemo(
+    () => managerOptions.filter((candidate) => candidate.id !== agent.id),
+    [managerOptions, agent.id],
+  );
+  const hasMissingManagerSelection = !!managerSelection
+    && !availableManagers.some((candidate) => candidate.id === managerSelection);
+
+  // Load candidate managers for reports-to dropdown
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoadingManagers(true);
+
+    fetchAgents(undefined, projectId)
+      .then((agents) => {
+        if (cancelled) return;
+        setManagerOptions(agents);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setManagerOptions([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingManagers(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
 
   // Load available models on mount
   useEffect(() => {
@@ -3210,14 +3246,23 @@ function ConfigTab({
 
           <div className="config-field">
             <label htmlFor="agent-reports-to">Reports To</label>
-            <input
+            <select
               id="agent-reports-to"
-              type="text"
-              className="input"
-              placeholder="e.g. agent-001"
+              className="select"
               value={reportsToValue}
               onChange={(e) => setReportsToValue(e.target.value)}
-            />
+              disabled={isLoadingManagers}
+            >
+              <option value="">No manager</option>
+              {hasMissingManagerSelection && (
+                <option value={managerSelection}>Unknown manager ({managerSelection})</option>
+              )}
+              {availableManagers.map((manager) => (
+                <option key={manager.id} value={manager.id}>
+                  {manager.name} ({manager.id})
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       </div>
