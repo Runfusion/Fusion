@@ -280,6 +280,28 @@ function shouldScheduleAiSessionCleanup(): boolean {
   return process.env.NODE_ENV !== "test";
 }
 
+function normalizeErrorForLog(err: unknown): {
+  error: string;
+  errorName?: string;
+  errorMessage: string;
+  errorStack?: string;
+} {
+  if (err instanceof Error) {
+    return {
+      error: err.message,
+      errorName: err.name,
+      errorMessage: err.message,
+      errorStack: err.stack,
+    };
+  }
+
+  const fallback = String(err);
+  return {
+    error: fallback,
+    errorMessage: fallback,
+  };
+}
+
 /**
  * Resolve TLS credentials from environment variables, if configured.
  *
@@ -681,9 +703,14 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   const totalRehydrated =
     planningRehydratedCount + subtaskRehydratedCount + missionRehydratedCount + milestoneSliceRehydratedCount;
   if (totalRehydrated > 0) {
-    runtimeLogger.info(
-      `Rehydrated ${planningRehydratedCount} planning, ${subtaskRehydratedCount} subtask, ${missionRehydratedCount} mission, ${milestoneSliceRehydratedCount} milestone/slice sessions from SQLite`,
-    );
+    runtimeLogger.info("AI session rehydrate summary", {
+      message: "Rehydrated AI sessions from SQLite",
+      planningRehydratedCount,
+      subtaskRehydratedCount,
+      missionRehydratedCount,
+      milestoneSliceRehydratedCount,
+      totalRehydrated,
+    });
   }
 
   // Create AgentStore for chat prompt enrichment (initialized lazily by ChatManager)
@@ -694,9 +721,14 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
 
   const runAiSessionCleanup = (maxAgeMs: number, source: "initial" | "scheduled") => {
     const result = aiSessionStore.cleanupStaleSessions(maxAgeMs);
-    runtimeLogger.info(
-      `AI session cleanup (${source}): removed ${result.terminalDeleted} terminal, ${result.orphanedDeleted} orphaned sessions`,
-    );
+    runtimeLogger.info("AI session cleanup summary", {
+      message: "Removed stale AI sessions",
+      source,
+      ttlMs: maxAgeMs,
+      terminalDeleted: result.terminalDeleted,
+      orphanedDeleted: result.orphanedDeleted,
+      totalDeleted: result.totalDeleted,
+    });
     return result;
   };
 
@@ -706,8 +738,12 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       try {
         runAiSessionCleanup(maxAgeMs, "scheduled");
       } catch (err) {
-        runtimeLogger.error("Scheduled AI session cleanup failed", {
-          error: err instanceof Error ? err.message : String(err),
+        runtimeLogger.error("AI session cleanup failed", {
+          message: "Scheduled AI session cleanup failed",
+          source: "scheduled",
+          ttlMs: maxAgeMs,
+          cleanupIntervalMs,
+          ...normalizeErrorForLog(err),
         });
       }
     }, cleanupIntervalMs);
@@ -736,23 +772,32 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
           void Promise.resolve()
             .then(() => runAiSessionCleanup(ttlMs, "initial"))
             .catch((err) => {
-              runtimeLogger.error("Initial AI session cleanup failed", {
-                error: err instanceof Error ? err.message : String(err),
+              runtimeLogger.error("AI session cleanup failed", {
+                message: "Initial AI session cleanup failed",
+                source: "initial",
+                ttlMs,
+                ...normalizeErrorForLog(err),
               });
             });
 
           scheduleAiSessionCleanup(cleanupIntervalMs, ttlMs);
         })
         .catch((err) => {
-          runtimeLogger.warn("Failed to load settings for AI session cleanup; using defaults", {
-            error: err instanceof Error ? err.message : String(err),
+          runtimeLogger.warn("AI session cleanup settings fallback", {
+            message: "Failed to load settings for AI session cleanup; using defaults",
+            fallbackTtlMs: DEFAULT_AI_SESSION_TTL_MS,
+            fallbackCleanupIntervalMs: DEFAULT_AI_SESSION_CLEANUP_INTERVAL_MS,
+            ...normalizeErrorForLog(err),
           });
 
           void Promise.resolve()
             .then(() => runAiSessionCleanup(DEFAULT_AI_SESSION_TTL_MS, "initial"))
             .catch((cleanupErr) => {
-              runtimeLogger.error("Initial AI session cleanup failed", {
-                error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+              runtimeLogger.error("AI session cleanup failed", {
+                message: "Initial AI session cleanup failed",
+                source: "initial",
+                ttlMs: DEFAULT_AI_SESSION_TTL_MS,
+                ...normalizeErrorForLog(cleanupErr),
               });
             });
 
@@ -765,8 +810,11 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       void Promise.resolve()
         .then(() => runAiSessionCleanup(DEFAULT_AI_SESSION_TTL_MS, "initial"))
         .catch((err) => {
-          runtimeLogger.error("Initial AI session cleanup failed", {
-            error: err instanceof Error ? err.message : String(err),
+          runtimeLogger.error("AI session cleanup failed", {
+            message: "Initial AI session cleanup failed",
+            source: "initial",
+            ttlMs: DEFAULT_AI_SESSION_TTL_MS,
+            ...normalizeErrorForLog(err),
           });
         });
 
@@ -867,8 +915,10 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       clearAiSessionCleanupInterval();
       aiSessionStore.stopScheduledCleanup();
       void stopAllDevServers().catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        runtimeLogger.warn(`Failed to shutdown dev-server managers: ${message}`);
+        runtimeLogger.warn("Failed to shutdown dev-server managers", {
+          message: "Failed to shutdown dev-server managers",
+          ...normalizeErrorForLog(error),
+        });
       });
     });
 

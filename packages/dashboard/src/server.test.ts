@@ -93,6 +93,165 @@ async function REQUEST(
   return performRequest(app, method, path, body, headers);
 }
 
+async function flushStartupCleanupTasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+describe("createServer AI session startup cleanup diagnostics", () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    process.env.NODE_ENV = "development";
+  });
+
+  afterEach(() => {
+    process.env.NODE_ENV = originalNodeEnv;
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function createRuntimeLoggerMock() {
+    const logger = {
+      scope: "server",
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      child: vi.fn(),
+    };
+    logger.child.mockReturnValue(logger);
+    return logger;
+  }
+
+  function createAiSessionStoreMock(overrides: Record<string, unknown> = {}) {
+    return {
+      on: vi.fn(),
+      off: vi.fn(),
+      recoverStaleSessions: vi.fn(),
+      listRecoverable: vi.fn().mockReturnValue([]),
+      cleanupStaleSessions: vi.fn().mockReturnValue({
+        terminalDeleted: 0,
+        orphanedDeleted: 0,
+        totalDeleted: 0,
+      }),
+      stopScheduledCleanup: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  it("logs structured startup cleanup summary on success", async () => {
+    const runtimeLogger = createRuntimeLoggerMock();
+    const aiSessionStore = createAiSessionStoreMock({
+      cleanupStaleSessions: vi.fn().mockReturnValue({
+        terminalDeleted: 2,
+        orphanedDeleted: 1,
+        totalDeleted: 3,
+      }),
+    });
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        aiSessionTtlMs: 700_000,
+        aiSessionCleanupIntervalMs: 120_000,
+      }),
+    });
+
+    createServer(store, {
+      runtimeLogger: runtimeLogger as any,
+      aiSessionStore: aiSessionStore as any,
+      headless: true,
+    });
+
+    await flushStartupCleanupTasks();
+
+    expect(aiSessionStore.cleanupStaleSessions).toHaveBeenCalledWith(700_000);
+    expect(runtimeLogger.info).toHaveBeenCalledWith(
+      "AI session cleanup summary",
+      expect.objectContaining({
+        message: "Removed stale AI sessions",
+        source: "initial",
+        ttlMs: 700_000,
+        terminalDeleted: 2,
+        orphanedDeleted: 1,
+        totalDeleted: 3,
+      }),
+    );
+  });
+
+  it("logs structured startup cleanup failure and keeps server creation non-fatal", async () => {
+    const runtimeLogger = createRuntimeLoggerMock();
+    const aiSessionStore = createAiSessionStoreMock({
+      cleanupStaleSessions: vi.fn().mockImplementation(() => {
+        throw new Error("cleanup exploded");
+      }),
+    });
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        aiSessionTtlMs: 900_000,
+        aiSessionCleanupIntervalMs: 180_000,
+      }),
+    });
+
+    const app = createServer(store, {
+      runtimeLogger: runtimeLogger as any,
+      aiSessionStore: aiSessionStore as any,
+      headless: true,
+    });
+
+    await flushStartupCleanupTasks();
+
+    expect(app).toBeDefined();
+    expect(runtimeLogger.error).toHaveBeenCalledWith(
+      "AI session cleanup failed",
+      expect.objectContaining({
+        message: "Initial AI session cleanup failed",
+        source: "initial",
+        ttlMs: 900_000,
+        errorName: "Error",
+        errorMessage: "cleanup exploded",
+        error: "cleanup exploded",
+      }),
+    );
+  });
+
+  it("logs structured settings fallback warning and continues with default cleanup values", async () => {
+    const runtimeLogger = createRuntimeLoggerMock();
+    const aiSessionStore = createAiSessionStoreMock({
+      cleanupStaleSessions: vi.fn().mockReturnValue({
+        terminalDeleted: 1,
+        orphanedDeleted: 0,
+        totalDeleted: 1,
+      }),
+    });
+    const store = createMockStore({
+      getSettings: vi.fn().mockRejectedValue(new Error("settings unavailable")),
+    });
+
+    const app = createServer(store, {
+      runtimeLogger: runtimeLogger as any,
+      aiSessionStore: aiSessionStore as any,
+      headless: true,
+    });
+
+    await flushStartupCleanupTasks();
+
+    expect(app).toBeDefined();
+    expect(runtimeLogger.warn).toHaveBeenCalledWith(
+      "AI session cleanup settings fallback",
+      expect.objectContaining({
+        message: "Failed to load settings for AI session cleanup; using defaults",
+        fallbackTtlMs: 7 * 24 * 60 * 60 * 1000,
+        fallbackCleanupIntervalMs: 6 * 60 * 60 * 1000,
+        errorName: "Error",
+        errorMessage: "settings unavailable",
+        error: "settings unavailable",
+      }),
+    );
+    expect(aiSessionStore.cleanupStaleSessions).toHaveBeenCalledWith(7 * 24 * 60 * 60 * 1000);
+  });
+});
+
 describe("createServer health and headless mode", () => {
   it("returns liveness payload from /api/health", async () => {
     const store = createMockStore();
