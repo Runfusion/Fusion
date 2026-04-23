@@ -96,6 +96,8 @@ export const DEFAULT_PROJECT_SETTINGS = {
   defaultPresetBySize: {},
   autoResolveConflicts: true,
   smartConflictResolution: true,
+  worktreeRebaseBeforeMerge: true,
+  worktreeRebaseRemote: "",
   strictScopeEnforcement: false,
   buildRetryCount: 0,
   verificationFixRetries: 1,

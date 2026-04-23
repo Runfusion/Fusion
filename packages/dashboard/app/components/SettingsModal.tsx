@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Globe, Folder } from "lucide-react";
 import { THINKING_LEVELS, PROMPT_KEY_CATALOG, isGlobalSettingsKey, isProjectSettingsKey } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent, PromptKey, AgentPromptsConfig } from "@fusion/core";
-import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval } from "../api";
-import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData, MemoryBackendCapabilities, MemoryFileInfo, MemoryRetrievalTestResult } from "../api";
+import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, fetchGitRemotesDetailed } from "../api";
+import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData, MemoryBackendCapabilities, MemoryFileInfo, MemoryRetrievalTestResult, GitRemoteDetailed } from "../api";
 import { useMemoryBackendStatus } from "../hooks/useMemoryBackendStatus";
 import type { ToastType } from "../hooks/useToast";
 import { ThemeSelector } from "./ThemeSelector";
@@ -188,6 +188,9 @@ export function SettingsModal({
   const [memoryContent, setMemoryContent] = useState("");
   const [memoryLoading, setMemoryLoading] = useState(false);
   const [memoryDirty, setMemoryDirty] = useState(false);
+  // Git remotes for the worktree rebase dropdown. Loaded lazily; empty list
+  // is a valid state (fresh repo, no remotes configured yet).
+  const [gitRemotes, setGitRemotes] = useState<GitRemoteDetailed[]>([]);
   const [memoryFiles, setMemoryFiles] = useState<MemoryFileInfo[]>([]);
   const [selectedMemoryPath, setSelectedMemoryPath] = useState(DEFAULT_MEMORY_EDITOR_PATH);
   const [memoryTestQuery, setMemoryTestQuery] = useState("");
@@ -301,6 +304,16 @@ export function SettingsModal({
         .catch(() => setBackupInfo(null))
         .finally(() => setBackupLoading(false));
     }
+  }, [activeSection, projectId]);
+
+  // Lazy-load git remotes for the rebase-remote dropdown when the Worktrees
+  // section becomes visible. Failure is non-fatal: the dropdown falls back
+  // to just "Use git default".
+  useEffect(() => {
+    if (activeSection !== "worktrees") return;
+    fetchGitRemotesDetailed(projectId)
+      .then((remotes) => setGitRemotes(remotes))
+      .catch(() => setGitRemotes([]));
   }, [activeSection, projectId]);
 
   useEffect(() => {
@@ -2053,6 +2066,42 @@ export function SettingsModal({
                   : "How to name fresh worktree directories. Only applies when recycling is off."}
               </small>
             </div>
+            <div className="form-group">
+              <label htmlFor="worktreeRebaseBeforeMerge" className="checkbox-label">
+                <input
+                  id="worktreeRebaseBeforeMerge"
+                  type="checkbox"
+                  checked={form.worktreeRebaseBeforeMerge !== false}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, worktreeRebaseBeforeMerge: e.target.checked }))
+                  }
+                />
+                Rebase from remote before merge
+              </label>
+              <small>When enabled, the merger fetches from the configured remote and rebases the task branch onto the latest default-branch tip before merging — catching concurrent pushes from other collaborators or fusion workers. Any conflicts the rebase surfaces flow into the existing smart/AI resolve pipeline.</small>
+            </div>
+            {form.worktreeRebaseBeforeMerge !== false && (
+              <div className="form-group">
+                <label htmlFor="worktreeRebaseRemote">Rebase Remote</label>
+                <select
+                  id="worktreeRebaseRemote"
+                  value={form.worktreeRebaseRemote ?? ""}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, worktreeRebaseRemote: e.target.value || undefined }))
+                  }
+                >
+                  <option value="">Use git default</option>
+                  {gitRemotes.map((remote) => (
+                    <option key={remote.name} value={remote.name}>
+                      {remote.name} ({remote.fetchUrl})
+                    </option>
+                  ))}
+                </select>
+                <small>
+                  Which remote to fetch for the pre-merge rebase. "Use git default" falls back to the remote configured for the default branch (typically <code>origin</code>).
+                </small>
+              </div>
+            )}
           </>
         );
       case "commands":

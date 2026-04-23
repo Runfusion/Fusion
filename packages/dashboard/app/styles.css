@@ -21409,7 +21409,7 @@ html .column.drag-over * {
   flex-direction: column;
   max-width: 540px;
   width: 100%;
-  max-height: min(720px, calc(100dvh - (var(--space-2xl) * 2)));
+  max-height: min(720px, calc(100dvh - var(--overlay-padding-top, 10vh) - var(--space-lg)));
   animation: slideUp var(--transition-normal) ease-out;
   overflow: hidden;
 }
@@ -26623,8 +26623,12 @@ html .column.drag-over * {
 }
 
 .agent-heartbeat-last,
+.agent-heartbeat-next,
 .agent-heartbeat-saving {
   font-size: var(--space-md);
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
 }
 
 .agent-card-actions {

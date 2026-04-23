@@ -1823,6 +1823,98 @@ export async function aiMergeTask(
     }
   }
 
+  // 3c. Pre-merge remote rebase.
+  //
+  // When another collaborator (or another fusion worker on a different
+  // machine) pushes to the remote while our task branch is in flight, the
+  // merge would otherwise surface as a conflict. Rebasing the task branch
+  // onto the latest remote tip beforehand turns most of those into trivial
+  // fast-forwards. When conflicts do appear the existing smart/AI resolve
+  // flow (Attempts 1–3 below) picks them up just like normal merge
+  // conflicts — the caller doesn't need to distinguish.
+  //
+  // Controlled by `settings.worktreeRebaseBeforeMerge` (default true) and
+  // `settings.worktreeRebaseRemote` (empty → use repo's default remote).
+  if (settings.worktreeRebaseBeforeMerge !== false) {
+    try {
+      // Resolve which remote to fetch. An explicit setting wins; otherwise
+      // the repo's configured default (branch.<main>.remote) or the sole
+      // remote if there's exactly one.
+      let remote = settings.worktreeRebaseRemote?.trim();
+      if (!remote) {
+        try {
+          const { stdout: mainBranchOut } = await execAsync(
+            "git rev-parse --abbrev-ref HEAD",
+            { cwd: rootDir, encoding: "utf-8" },
+          );
+          const mainBranch = mainBranchOut.trim();
+          const { stdout: configuredRemote } = await execAsync(
+            `git config --get branch.${mainBranch}.remote`,
+            { cwd: rootDir, encoding: "utf-8" },
+          ).catch(() => ({ stdout: "" }));
+          remote = configuredRemote.trim();
+        } catch {
+          // Fall through to listing remotes below.
+        }
+      }
+      if (!remote) {
+        try {
+          const { stdout: remotesOut } = await execAsync("git remote", {
+            cwd: rootDir,
+            encoding: "utf-8",
+          });
+          const remotes = remotesOut.trim().split(/\s+/).filter(Boolean);
+          if (remotes.length === 1) {
+            remote = remotes[0];
+          } else if (remotes.includes("origin")) {
+            remote = "origin";
+          }
+        } catch {
+          // Ignore — we'll skip the rebase if no remote is resolvable.
+        }
+      }
+
+      if (!remote) {
+        mergerLog.log(`${taskId}: no remote resolvable — skipping pre-merge rebase`);
+      } else {
+        mergerLog.log(`${taskId}: fetching ${remote} before merge`);
+        await execAsync(`git fetch "${remote}"`, { cwd: rootDir });
+
+        // Rebase the task branch onto the freshly-fetched remote main.
+        // Use a worktree-scoped checkout of the task branch, rebase, then
+        // return rootDir to the main branch so the subsequent merge starts
+        // from the expected state. If rebase fails we log and fall through
+        // — aiMergeTask's attempt cascade still has a chance to succeed.
+        try {
+          const { stdout: mainBranchOut } = await execAsync(
+            "git rev-parse --abbrev-ref HEAD",
+            { cwd: rootDir, encoding: "utf-8" },
+          );
+          const mainBranch = mainBranchOut.trim();
+          const remoteRef = `${remote}/${mainBranch}`;
+
+          // Rebase in the task's worktree (so the rootDir's HEAD isn't
+          // disturbed). This is the same worktree the executor used.
+          if (worktreePath) {
+            await execAsync(`git rebase "${remoteRef}"`, { cwd: worktreePath });
+            mergerLog.log(`${taskId}: rebased ${branch} onto ${remoteRef}`);
+          } else {
+            mergerLog.warn(`${taskId}: no worktreePath — skipping task branch rebase`);
+          }
+        } catch (rebaseErr) {
+          const msg = rebaseErr instanceof Error ? rebaseErr.message : String(rebaseErr);
+          mergerLog.warn(`${taskId}: pre-merge rebase failed (${msg}) — aborting rebase and falling through to smart/AI merge`);
+          if (worktreePath) {
+            await execAsync("git rebase --abort", { cwd: worktreePath }).catch(() => {});
+          }
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      mergerLog.warn(`${taskId}: pre-merge rebase pipeline failed (${msg}) — proceeding without rebase`);
+    }
+  }
+
   // 4. Gather context for the agent (used in all attempts)
   let commitLog = "";
   let diffStat = "";

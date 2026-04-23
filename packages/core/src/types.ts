@@ -1203,6 +1203,19 @@ export interface ProjectSettings {
    *  lock files (ours), generated files (theirs), and trivial whitespace conflicts
    *  without spawning an AI agent. Default: true. */
   smartConflictResolution?: boolean;
+  /** When true, the merger fetches the remote and rebases the task branch
+   *  onto the latest `<remote>/<defaultBranch>` before attempting to merge
+   *  it back into the main branch. This catches upstream changes from
+   *  other collaborators (or from a running fusion worker on another host)
+   *  before they become a merge conflict. Auto-resolve still runs on any
+   *  conflicts the rebase surfaces, so most of the time this is invisible.
+   *  Default: true. */
+  worktreeRebaseBeforeMerge?: boolean;
+  /** Git remote to fetch from for the pre-merge rebase. When unset or empty,
+   *  the merger resolves the default remote from the repo's configuration
+   *  (typically `origin`). Exposed as a dropdown in the dashboard's
+   *  Worktrees settings. */
+  worktreeRebaseRemote?: string;
   /** When true, out-of-scope file changes block merge instead of just logging warnings.
    *  Useful for teams that want strict enforcement of declared File Scope.
    *  Default: false (soft guardrail — warnings only). */
