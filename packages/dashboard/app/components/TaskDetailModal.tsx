@@ -186,7 +186,7 @@ interface TaskDetailModalProps {
   onDuplicateTask?: (id: string) => Promise<Task>;
   onTaskUpdated?: (task: Task) => void;
   addToast: (message: string, type?: ToastType) => void;
-  githubTokenConfigured?: boolean;
+  prAuthAvailable?: boolean;
   /** Open the modal with this tab active instead of "definition" */
   initialTab?: TabId;
 }
@@ -225,7 +225,7 @@ export function TaskDetailModal({
   onDuplicateTask,
   onTaskUpdated,
   addToast,
-  githubTokenConfigured,
+  prAuthAvailable,
   initialTab = "definition",
 }: TaskDetailModalProps) {
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);
@@ -1669,7 +1669,7 @@ export function TaskDetailModal({
               prInfo={task.prInfo}
               automationStatus={task.status ?? null}
               autoMerge={settings?.autoMerge ?? false}
-              hasGitHubToken={githubTokenConfigured ?? false}
+              prAuthAvailable={prAuthAvailable ?? false}
               onPrCreated={(prInfo) => {
                 // Update task locally to show new PR
                 (task as TaskDetail).prInfo = prInfo;

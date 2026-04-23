@@ -256,7 +256,7 @@ function AppInner() {
     enginePaused,
     taskStuckTimeoutMs,
     showQuickChatFAB,
-    githubTokenConfigured,
+    prAuthAvailable,
     experimentalFeatures,
     insightsEnabled,
     roadmapEnabled,
@@ -815,7 +815,7 @@ function AppInner() {
         }}
         taskOperations={{ moveTask, deleteTask, mergeTask, retryTask, duplicateTask }}
         deepLink={{ handleDetailClose }}
-        settings={{ githubTokenConfigured, themeMode, colorTheme, setThemeMode, setColorTheme }}
+        settings={{ prAuthAvailable, themeMode, colorTheme, setThemeMode, setColorTheme }}
         onSettingsClose={() => {
           modalManager.closeSettings();
           void refreshAppSettings();

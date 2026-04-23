@@ -26,7 +26,7 @@ describe("useAppSettings", () => {
       autoMerge: false,
       globalPause: true,
       enginePaused: false,
-      githubTokenConfigured: true,
+      prAuthAvailable: true,
       taskStuckTimeoutMs: 600000,
       showQuickChatFAB: false,
     } as never);
@@ -43,7 +43,7 @@ describe("useAppSettings", () => {
       expect(result.current.autoMerge).toBe(false);
       expect(result.current.globalPaused).toBe(true);
       expect(result.current.enginePaused).toBe(false);
-      expect(result.current.githubTokenConfigured).toBe(true);
+      expect(result.current.prAuthAvailable).toBe(true);
       expect(result.current.taskStuckTimeoutMs).toBe(600000);
       expect(result.current.showQuickChatFAB).toBe(false);
     });
@@ -92,7 +92,7 @@ describe("useAppSettings", () => {
       autoMerge: false,
       globalPause: false,
       enginePaused: false,
-      githubTokenConfigured: true,
+      prAuthAvailable: true,
       taskStuckTimeoutMs: 600000,
       showQuickChatFAB: false,
     } as never);
@@ -127,7 +127,7 @@ describe("useAppSettings", () => {
       autoMerge: false,
       globalPause: true,
       enginePaused: false,
-      githubTokenConfigured: true,
+      prAuthAvailable: true,
       taskStuckTimeoutMs: 600000,
       showQuickChatFAB: true,
     } as never);

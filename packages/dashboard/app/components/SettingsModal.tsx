@@ -813,7 +813,7 @@ export function SettingsModal({
       // This prevents inherited effective values from being persisted as explicit overrides.
       const projectPatch: Partial<Settings> = {};
       for (const [key, value] of Object.entries(payload)) {
-        if (key === "githubTokenConfigured") continue; // server-only field
+        if (key === "githubTokenConfigured" || key === "prAuthAvailable") continue; // server-only fields
         if (!isProjectSettingsKey(key)) continue;
 
         // Get the initial project-scoped value (null if not set)

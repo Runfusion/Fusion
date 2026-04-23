@@ -2391,10 +2391,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettingsFast();
+      const prAuthAvailable = (isGhAvailable() && isGhAuthenticated()) || Boolean(githubToken);
       // Inject server-side configuration flags
       res.json({
         ...settings,
-        githubTokenConfigured: Boolean(githubToken),
+        prAuthAvailable,
       });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -2410,7 +2411,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Strip server-owned fields that should never be persisted to config.json.
       // These are computed server-side and injected only on GET /settings.
        
-      const { githubTokenConfigured, ...clientSettings } = req.body;
+      const { githubTokenConfigured, prAuthAvailable, ...clientSettings } = req.body;
 
       // Reject global-only fields with a helpful error pointing to the correct endpoint
       const globalKeySet = new Set<string>(GLOBAL_SETTINGS_KEYS);
@@ -3301,7 +3302,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   /**
    * GET /api/settings/global
    * Returns the global (user-level) settings from ~/.fusion/settings.json.
-   * Does NOT include computed/server-only fields like githubTokenConfigured.
+   * Does NOT include computed/server-only fields like prAuthAvailable.
    */
   router.get("/settings/global", async (_req, res) => {
     try {

@@ -870,7 +870,7 @@ export interface TaskCreateInput {
 // global values. This is the type returned by `TaskStore.getSettings()` and
 // used by most consumers.
 //
-// Computed/server-only fields (like `githubTokenConfigured`) live only on
+// Computed/server-only fields (like `prAuthAvailable`) live only on
 // `Settings` and are injected at read time by the API layer.
 
 /** Settings scope discriminator for UI and validation. */
@@ -1462,13 +1462,13 @@ export interface ProjectSettings {
  * This is the primary type returned by `TaskStore.getSettings()` and used
  * by most consumers. Project settings override global settings.
  *
- * Also includes computed/server-only fields like `githubTokenConfigured`
+ * Also includes computed/server-only fields like `prAuthAvailable`
  * that are injected at read time by the API layer.
  */
 export interface Settings extends GlobalSettings, ProjectSettings {
-  /** Whether GitHub token is configured for PR operations (read-only, set by server).
-   *  When false, PR creation features are disabled in the UI. */
-  githubTokenConfigured?: boolean;
+  /** Whether PR authentication is currently available (read-only, set by server).
+   *  True when authenticated gh CLI access is available or token fallback exists. */
+  prAuthAvailable?: boolean;
   /** Index signature for dynamic settings access */
   [key: string]: unknown;
 }

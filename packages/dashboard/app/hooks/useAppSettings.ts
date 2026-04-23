@@ -12,7 +12,7 @@ export interface UseAppSettingsResult {
   enginePaused: boolean;
   taskStuckTimeoutMs: number | undefined;
   showQuickChatFAB: boolean;
-  githubTokenConfigured: boolean;
+  prAuthAvailable: boolean;
   experimentalFeatures: Record<string, boolean>;
   insightsEnabled: boolean;
   roadmapEnabled: boolean;
@@ -37,7 +37,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [enginePaused, setEnginePaused] = useState(false);
   const [taskStuckTimeoutMs, setTaskStuckTimeoutMs] = useState<number | undefined>(undefined);
   const [showQuickChatFAB, setShowQuickChatFAB] = useState(false);
-  const [githubTokenConfigured, setGithubTokenConfigured] = useState(false);
+  const [prAuthAvailable, setPrAuthAvailable] = useState(false);
   const [experimentalFeatures, setExperimentalFeatures] = useState<Record<string, boolean>>({});
   const [insightsEnabled, setInsightsEnabled] = useState(false);
   const [roadmapEnabled, setRoadmapEnabled] = useState(false);
@@ -64,7 +64,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
       setAutoMerge(Boolean(settings.autoMerge));
       setGlobalPaused(Boolean(settings.globalPause));
       setEnginePaused(Boolean(settings.enginePaused));
-      setGithubTokenConfigured(Boolean(settings.githubTokenConfigured));
+      setPrAuthAvailable(Boolean(settings.prAuthAvailable));
       setTaskStuckTimeoutMs(settings.taskStuckTimeoutMs);
       setShowQuickChatFAB(settings.showQuickChatFAB === true);
       setExperimentalFeatures(settings.experimentalFeatures ?? {});
@@ -138,7 +138,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     enginePaused,
     taskStuckTimeoutMs,
     showQuickChatFAB,
-    githubTokenConfigured,
+    prAuthAvailable,
     experimentalFeatures,
     insightsEnabled,
     roadmapEnabled,

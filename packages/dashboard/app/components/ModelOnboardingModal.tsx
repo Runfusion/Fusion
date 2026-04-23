@@ -2137,7 +2137,7 @@ interface AppModalsProps {
     handleDetailClose: () => void;
   };
   settings: {
-    githubTokenConfigured: boolean;
+    prAuthAvailable: boolean;
     themeMode: ThemeMode;
     colorTheme: ColorTheme;
     setThemeMode: (mode: ThemeMode) => void;
@@ -2192,7 +2192,7 @@ export function AppModals({
             onDuplicateTask={taskOperations.duplicateTask}
             onTaskUpdated={modalManager.updateDetailTask}
             addToast={addToast}
-            githubTokenConfigured={settings.githubTokenConfigured}
+            prAuthAvailable={settings.prAuthAvailable}
             initialTab={modalManager.detailTaskInitialTab}
           />
         </ModalErrorBoundary>

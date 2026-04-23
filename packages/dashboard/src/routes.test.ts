@@ -35,6 +35,7 @@ vi.mock("@fusion/core", async () => {
   const actual = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
   return {
     ...actual,
+    isGhAvailable: vi.fn(),
     isGhAuthenticated: vi.fn(),
     isQmdAvailable: vi.fn().mockResolvedValue(false),
     CentralCore: vi.fn().mockImplementation(() => ({
@@ -84,8 +85,9 @@ vi.mock("@fusion/engine", () => ({
   },
 }));
 
-import { isGhAuthenticated } from "@fusion/core";
+import { isGhAvailable, isGhAuthenticated } from "@fusion/core";
 
+const mockIsGhAvailable = vi.mocked(isGhAvailable);
 const mockIsGhAuthenticated = vi.mocked(isGhAuthenticated);
 
 function createMockGlobalSettingsStore() {
@@ -12269,6 +12271,8 @@ describe("GET /settings", () => {
 
   beforeEach(() => {
     store = createMockStore();
+    mockIsGhAvailable.mockReturnValue(false);
+    mockIsGhAuthenticated.mockReturnValue(false);
   });
 
   function buildApp() {
@@ -12290,16 +12294,33 @@ describe("GET /settings", () => {
     expect(res.body.pollIntervalMs).toBe(DEFAULT_SETTINGS.pollIntervalMs);
   });
 
-  it("injects githubTokenConfigured as true when token is configured", async () => {
+  it("injects prAuthAvailable as true when gh is available and authenticated", async () => {
+    mockIsGhAvailable.mockReturnValue(true);
+    mockIsGhAuthenticated.mockReturnValue(true);
+    (store.getSettingsFast as ReturnType<typeof vi.fn>).mockResolvedValue(DEFAULT_SETTINGS);
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store)); // no githubToken option
+
+    const res = await GET(app, "/api/settings");
+
+    expect(res.status).toBe(200);
+    expect(res.body.prAuthAvailable).toBe(true);
+    expect(res.body.githubTokenConfigured).toBeUndefined();
+  });
+
+  it("injects prAuthAvailable as true when token fallback is configured", async () => {
     (store.getSettingsFast as ReturnType<typeof vi.fn>).mockResolvedValue(DEFAULT_SETTINGS);
 
     const res = await GET(buildApp(), "/api/settings");
 
     expect(res.status).toBe(200);
-    expect(res.body.githubTokenConfigured).toBe(true);
+    expect(res.body.prAuthAvailable).toBe(true);
+    expect(res.body.githubTokenConfigured).toBeUndefined();
   });
 
-  it("injects githubTokenConfigured as false when no token", async () => {
+  it("injects prAuthAvailable as false when neither gh auth nor token fallback is available", async () => {
     const app = express();
     app.use(express.json());
     app.use("/api", createApiRoutes(store)); // no githubToken option
@@ -12309,7 +12330,8 @@ describe("GET /settings", () => {
     const res = await GET(app, "/api/settings");
 
     expect(res.status).toBe(200);
-    expect(res.body.githubTokenConfigured).toBe(false);
+    expect(res.body.prAuthAvailable).toBe(false);
+    expect(res.body.githubTokenConfigured).toBeUndefined();
   });
 
   it("returns 500 on store error", async () => {
@@ -12352,7 +12374,7 @@ describe("PUT /settings", () => {
     expect(store.updateSettings).toHaveBeenCalledWith({ maxConcurrent: 8 });
   });
 
-  it("strips server-owned fields (githubTokenConfigured) before calling store.updateSettings", async () => {
+  it("strips server-owned fields before calling store.updateSettings", async () => {
     const updatedSettings = { ...DEFAULT_SETTINGS, maxConcurrent: 4 };
     (store.updateSettings as ReturnType<typeof vi.fn>).mockResolvedValue(updatedSettings);
 
@@ -12360,12 +12382,12 @@ describe("PUT /settings", () => {
       buildApp(),
       "PUT",
       "/api/settings",
-      JSON.stringify({ maxConcurrent: 4, githubTokenConfigured: true }),
+      JSON.stringify({ maxConcurrent: 4, githubTokenConfigured: true, prAuthAvailable: true }),
       { "Content-Type": "application/json" },
     );
 
     expect(res.status).toBe(200);
-    // The server should strip githubTokenConfigured before passing to store
+    // The server should strip server-computed fields before passing to store
     expect(store.updateSettings).toHaveBeenCalledWith({ maxConcurrent: 4 });
   });
 
@@ -12373,12 +12395,11 @@ describe("PUT /settings", () => {
     const updatedSettings = { ...DEFAULT_SETTINGS, maxWorktrees: 10 };
     (store.updateSettings as ReturnType<typeof vi.fn>).mockResolvedValue(updatedSettings);
 
-    // Currently only githubTokenConfigured is server-owned
     const res = await REQUEST(
       buildApp(),
       "PUT",
       "/api/settings",
-      JSON.stringify({ maxWorktrees: 10, githubTokenConfigured: true }),
+      JSON.stringify({ maxWorktrees: 10, githubTokenConfigured: true, prAuthAvailable: true }),
       { "Content-Type": "application/json" },
     );
 

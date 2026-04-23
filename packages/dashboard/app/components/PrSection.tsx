@@ -10,7 +10,7 @@ interface PrSectionProps {
   prInfo?: PrInfo;
   automationStatus?: string | null;
   autoMerge?: boolean;
-  hasGitHubToken: boolean;
+  prAuthAvailable: boolean;
   onPrCreated: (prInfo: PrInfo) => void;
   onPrUpdated: (prInfo: PrInfo) => void;
   addToast: (message: string, type?: ToastType) => void;
@@ -28,7 +28,7 @@ export function PrSection({
   prInfo,
   automationStatus,
   autoMerge = false,
-  hasGitHubToken,
+  prAuthAvailable,
   onPrCreated,
   onPrUpdated,
   addToast,
@@ -161,15 +161,15 @@ export function PrSection({
         <button
           className="btn btn-primary btn-sm"
           onClick={() => setShowCreateForm(true)}
-          disabled={!hasGitHubToken}
-          title={hasGitHubToken ? "Create a PR for this task" : "GitHub token not configured"}
+          disabled={!prAuthAvailable}
+          title={prAuthAvailable ? "Create a PR for this task" : "PR auth unavailable — run 'gh auth login'"}
         >
           <Plus size={14} className="pr-section-icon--sm" />
           Create PR
         </button>
-        {!hasGitHubToken && (
+        {!prAuthAvailable && (
           <div className="pr-hint pr-hint--subtle">
-            Set GITHUB_TOKEN env var to enable PR creation
+            Run <code>gh auth login</code> to enable PR creation.
           </div>
         )}
       </div>

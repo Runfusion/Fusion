@@ -174,7 +174,7 @@ describe("AppModals", () => {
 
   const mockToasts: Toast[] = [];
   const mockSettings = {
-    githubTokenConfigured: false,
+    prAuthAvailable: false,
     themeMode: "dark" as const,
     colorTheme: "default" as const,
     setThemeMode: vi.fn(),

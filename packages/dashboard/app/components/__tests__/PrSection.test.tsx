@@ -31,11 +31,11 @@ describe("PrSection", () => {
   });
 
   describe("when task has no PR", () => {
-    it("shows create PR button when GitHub token is available", () => {
+    it("shows create PR button when PR auth is available", () => {
       render(
         <PrSection
           taskId="FN-001"
-          hasGitHubToken={true}
+          prAuthAvailable={true}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
           addToast={mockAddToast}
@@ -45,11 +45,11 @@ describe("PrSection", () => {
       expect(screen.getByText("Create PR")).toBeDefined();
     });
 
-    it("shows disabled button and hint when GitHub token is missing", () => {
+    it("shows disabled button and hint when PR auth is unavailable", () => {
       render(
         <PrSection
           taskId="FN-001"
-          hasGitHubToken={false}
+          prAuthAvailable={false}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
           addToast={mockAddToast}
@@ -58,14 +58,15 @@ describe("PrSection", () => {
 
       const button = screen.getByText("Create PR") as HTMLButtonElement;
       expect(button.disabled).toBe(true);
-      expect(screen.getByText(/GITHUB_TOKEN env var/i)).toBeDefined();
+      expect(button.title).toContain("gh auth login");
+      expect(screen.getByText(/gh auth login/i)).toBeDefined();
     });
 
     it("shows create form when clicking create button", () => {
       render(
         <PrSection
           taskId="FN-001"
-          hasGitHubToken={true}
+          prAuthAvailable={true}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
           addToast={mockAddToast}
@@ -83,7 +84,7 @@ describe("PrSection", () => {
       render(
         <PrSection
           taskId="FN-001"
-          hasGitHubToken={true}
+          prAuthAvailable={true}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
           addToast={mockAddToast}
@@ -102,7 +103,7 @@ describe("PrSection", () => {
       render(
         <PrSection
           taskId="FN-001"
-          hasGitHubToken={true}
+          prAuthAvailable={true}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
           addToast={mockAddToast}
@@ -132,7 +133,7 @@ describe("PrSection", () => {
       render(
         <PrSection
           taskId="FN-001"
-          hasGitHubToken={true}
+          prAuthAvailable={true}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
           addToast={mockAddToast}
@@ -157,7 +158,7 @@ describe("PrSection", () => {
         <PrSection
           taskId="FN-001"
           autoMerge={true}
-          hasGitHubToken={true}
+          prAuthAvailable={true}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
           addToast={mockAddToast}
@@ -165,23 +166,23 @@ describe("PrSection", () => {
       );
 
       expect(screen.queryByRole("button", { name: "Create PR" })).toBeNull();
-      expect(screen.queryByText(/GITHUB_TOKEN env var/i)).toBeNull();
+      expect(screen.queryByText(/gh auth login/i)).toBeNull();
       expect(screen.getByText("Auto-merge will handle this task automatically.")).toBeDefined();
     });
 
-    it("does not show GitHub token hint when auto-merge is enabled and token is missing", () => {
+    it("does not show PR auth hint when auto-merge is enabled and PR auth is unavailable", () => {
       render(
         <PrSection
           taskId="FN-001"
           autoMerge={true}
-          hasGitHubToken={false}
+          prAuthAvailable={false}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
           addToast={mockAddToast}
         />
       );
 
-      expect(screen.queryByText(/GITHUB_TOKEN env var/i)).toBeNull();
+      expect(screen.queryByText(/gh auth login/i)).toBeNull();
       expect(screen.getByText("Auto-merge will handle this task automatically.")).toBeDefined();
     });
 
@@ -191,7 +192,7 @@ describe("PrSection", () => {
           taskId="FN-001"
           autoMerge={true}
           automationStatus="creating-pr"
-          hasGitHubToken={false}
+          prAuthAvailable={false}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
           addToast={mockAddToast}
@@ -208,7 +209,7 @@ describe("PrSection", () => {
         <PrSection
           taskId="FN-001"
           autoMerge={false}
-          hasGitHubToken={false}
+          prAuthAvailable={false}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
           addToast={mockAddToast}
@@ -216,7 +217,7 @@ describe("PrSection", () => {
       );
 
       expect(screen.getByRole("button", { name: "Create PR" })).toBeDefined();
-      expect(screen.getByText(/GITHUB_TOKEN env var/i)).toBeDefined();
+      expect(screen.getByText(/gh auth login/i)).toBeDefined();
       expect(screen.queryByText("Auto-merge will handle this task automatically.")).toBeNull();
     });
   });
@@ -227,7 +228,7 @@ describe("PrSection", () => {
         <PrSection
           taskId="FN-001"
           prInfo={mockPrInfo}
-          hasGitHubToken={true}
+          prAuthAvailable={true}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
           addToast={mockAddToast}
@@ -245,7 +246,7 @@ describe("PrSection", () => {
         <PrSection
           taskId="FN-001"
           prInfo={{ ...mockPrInfo, status: "merged" }}
-          hasGitHubToken={true}
+          prAuthAvailable={true}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
           addToast={mockAddToast}
@@ -261,7 +262,7 @@ describe("PrSection", () => {
         <PrSection
           taskId="FN-001"
           prInfo={{ ...mockPrInfo, status: "closed" }}
-          hasGitHubToken={true}
+          prAuthAvailable={true}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
           addToast={mockAddToast}
@@ -276,7 +277,7 @@ describe("PrSection", () => {
         <PrSection
           taskId="FN-001"
           prInfo={{ ...mockPrInfo, commentCount: 5 }}
-          hasGitHubToken={true}
+          prAuthAvailable={true}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
           addToast={mockAddToast}
@@ -302,7 +303,7 @@ describe("PrSection", () => {
         <PrSection
           taskId="FN-001"
           prInfo={mockPrInfo}
-          hasGitHubToken={true}
+          prAuthAvailable={true}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
           addToast={mockAddToast}
@@ -327,7 +328,7 @@ describe("PrSection", () => {
         <PrSection
           taskId="FN-001"
           prInfo={mockPrInfo}
-          hasGitHubToken={true}
+          prAuthAvailable={true}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
           addToast={mockAddToast}
@@ -347,7 +348,7 @@ describe("PrSection", () => {
         <PrSection
           taskId="FN-001"
           automationStatus="creating-pr"
-          hasGitHubToken={true}
+          prAuthAvailable={true}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
           addToast={mockAddToast}
@@ -373,7 +374,7 @@ describe("PrSection", () => {
           taskId="FN-001"
           prInfo={mockPrInfo}
           automationStatus="awaiting-pr-checks"
-          hasGitHubToken={true}
+          prAuthAvailable={true}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
           addToast={mockAddToast}
