@@ -16,6 +16,7 @@
   "scripts": {
     "dev": "node scripts/dev-with-memory.mjs",
     "dev:ui": "pnpm --filter @fusion/dashboard dev",
+    "dev:hmr": "node scripts/dev-hmr.mjs",
     "lint": "eslint .",
     "build": "pnpm -r build",
     "build:exe": "pnpm build && pnpm --filter @runfusion/fusion build:exe",
