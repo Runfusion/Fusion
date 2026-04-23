@@ -1,5 +1,14 @@
 # @runfusion/fusion
 
+## 0.0.3
+
+### Patch Changes
+
+- 1fc72d1: Improve the dashboard agents list views with shared empty-state actions, token-based state styling, and clearer board/tree/org-chart presentation.
+- 46b8032: Make `fn agent import` import package skills alongside agents when importing from directory or archive sources. Skills are written to `{project}/skills/imported/{company-slug}/{skill-slug}/SKILL.md` with proper frontmatter formatting. Existing skill files are skipped rather than overwritten. Single AGENTS.md file imports do not include package skills.
+- c1bc5b9: Fix CLI merge regressions in test/build verification: restore gh-cli test alias resolution, ensure daemon ignores invalid env tokens, and restore required changeset config.
+- 06704cf: Fix the setup wizard directory browser and make terminal session startup more resilient.
+
 ## 0.0.2
 
 ### Patch Changes

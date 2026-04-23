@@ -1,6 +1,6 @@
 {
   "name": "runfusion.ai",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "license": "MIT",
   "description": "Launch Fusion with `npx runfusion.ai` — tiny alias for @runfusion/fusion.",
   "homepage": "https://runfusion.ai",
