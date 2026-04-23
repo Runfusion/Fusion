@@ -35852,7 +35852,8 @@ html .column.drag-over * {
   font-size: 0.85rem;
 }
 
-.settings-section-heading {
+/* Plugin detail headings don't need extra margin (they're inside a tight card layout) */
+.plugin-settings-form .settings-section-heading {
   margin: 0;
 }
 
