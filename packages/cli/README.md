@@ -23,8 +23,10 @@
 **Zero install, straight from npm:**
 
 ```bash
-npx @runfusion/fusion dashboard
+npx runfusion.ai
 ```
+
+Boots the dashboard. Subcommands forward through (`npx runfusion.ai task list`, etc). Long form: `npx @runfusion/fusion dashboard`.
 
 **One-line installer** (macOS & Linux — auto-picks Homebrew, falls back to npm):
 

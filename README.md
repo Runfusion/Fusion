@@ -222,8 +222,10 @@ npx companies.sh add paperclipai/companies/gstack
 **Zero install, straight from npm:**
 
 ```bash
-npx @runfusion/fusion dashboard
+npx runfusion.ai
 ```
+
+That launches the dashboard. Subcommands forward through: `npx runfusion.ai task create "fix X"`, `npx runfusion.ai --help`, etc. (Or verbosely: `npx @runfusion/fusion dashboard`.)
 
 **One-line installer** (macOS & Linux — auto-picks Homebrew, falls back to npm):
 
