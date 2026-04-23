@@ -1157,17 +1157,19 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
 
       {/* Thread */}
       <div className="chat-thread">
-        {/* Header */}
-        <div className="chat-thread-header">
-          {isMobile && (
-            <button className="btn-icon" onClick={handleBack} data-testid="chat-back-btn">
-              <ChevronLeft size={16} />
-            </button>
-          )}
-          <Bot size={16} />
-          <span className="chat-thread-header-title">{threadHeaderTitle}</span>
-          {showThreadHeaderModelTag && <span className="chat-model-tag">{activeModelTag}</span>}
-        </div>
+        {/* Header - always rendered in desktop/tablet, only rendered in mobile when viewing a thread */}
+        {(activeSession || !isMobile) && (
+          <div className="chat-thread-header">
+            {isMobile && activeSession && (
+              <button className="btn-icon" onClick={handleBack} data-testid="chat-back-btn">
+                <ChevronLeft size={16} />
+              </button>
+            )}
+            <Bot size={16} />
+            <span className="chat-thread-header-title">{threadHeaderTitle}</span>
+            {showThreadHeaderModelTag && <span className="chat-model-tag">{activeModelTag}</span>}
+          </div>
+        )}
 
         {/* Messages */}
         <div className="chat-messages" ref={messagesContainerRef}>

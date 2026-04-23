@@ -4465,6 +4465,333 @@ describe("HeartbeatTriggerScheduler", () => {
     });
   });
 
+  // ── FN-2289 Regression: Idle-state timer persistence ─────────────────────────────────────
+  // These tests verify the fix for the defect where agent timers were unintentionally cleared
+  // when agents transitioned to "idle" state. The isTickableState() function must include "idle"
+  // as a valid state so that timers remain armed for agents between tasks.
+  describe("FN-2289: idle-state timer persistence", () => {
+    let eventStore: EventEmitter & {
+      getAgent: ReturnType<typeof vi.fn>;
+      getActiveHeartbeatRun: ReturnType<typeof vi.fn>;
+      getBudgetStatus: ReturnType<typeof vi.fn>;
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+
+      eventStore = Object.assign(new EventEmitter(), {
+        getAgent: vi.fn().mockImplementation((agentId: string) => ({
+          id: agentId,
+          name: `Agent ${agentId}`,
+          role: "executor" as const,
+          state: "active" as const,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          metadata: {},
+        })),
+        getActiveHeartbeatRun: vi.fn().mockResolvedValue(null),
+        getBudgetStatus: vi.fn().mockResolvedValue(createBudgetStatus()),
+      });
+
+      scheduler = new HeartbeatTriggerScheduler(eventStore as unknown as AgentStore, callback);
+      scheduler.start();
+    });
+
+    afterEach(() => {
+      scheduler?.stop();
+      vi.useRealTimers();
+    });
+
+    it("timer remains armed when agent transitions to idle state (regression test for FN-2289)", async () => {
+      // Register agent with active state
+      scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 5000 });
+      expect(scheduler.getRegisteredAgents()).toContain("agent-001");
+
+      // Simulate agent transitioning to idle state
+      (eventStore.getAgent as ReturnType<typeof vi.fn>).mockImplementation((agentId: string) => ({
+        id: agentId,
+        name: `Agent ${agentId}`,
+        role: "executor" as const,
+        state: "idle" as const, // Agent is now idle
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+      }));
+      eventStore.emit("agent:updated", { id: "agent-001", state: "idle", metadata: {} } as import("@fusion/core").Agent);
+
+      // Timer should still be registered
+      expect(scheduler.getRegisteredAgents()).toContain("agent-001");
+
+      // Timer should fire for idle agent
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(callback).toHaveBeenCalledOnce();
+      expect(callback).toHaveBeenCalledWith("agent-001", "timer", {
+        wakeReason: "timer",
+        triggerDetail: "scheduled",
+        intervalMs: 5000,
+      });
+    });
+
+    it("timer fires correctly for idle agent at scheduled interval", async () => {
+      scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 10000 });
+      expect(scheduler.getRegisteredAgents()).toContain("agent-001");
+
+      // Update agent to idle state
+      (eventStore.getAgent as ReturnType<typeof vi.fn>).mockImplementation((agentId: string) => ({
+        id: agentId,
+        name: `Agent ${agentId}`,
+        role: "executor" as const,
+        state: "idle" as const,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+      }));
+      eventStore.emit("agent:updated", { id: "agent-001", state: "idle", metadata: {} } as import("@fusion/core").Agent);
+
+      // Timer should still be armed
+      expect(scheduler.getRegisteredAgents()).toContain("agent-001");
+
+      // Advance time and verify multiple fires
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(callback).toHaveBeenCalledTimes(3);
+    });
+
+    it("timer fires for agent transitioning from idle back to active", async () => {
+      // Start with idle state
+      (eventStore.getAgent as ReturnType<typeof vi.fn>).mockImplementation((agentId: string) => ({
+        id: agentId,
+        name: `Agent ${agentId}`,
+        role: "executor" as const,
+        state: "idle" as const,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+      }));
+      scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 5000 });
+
+      // Timer should be armed even for idle agent
+      expect(scheduler.getRegisteredAgents()).toContain("agent-001");
+
+      // Advance time - timer should fire
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(callback).toHaveBeenCalledOnce();
+    });
+
+    it("idle agent receives timer trigger with correct context", async () => {
+      scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 15000 });
+
+      // Update to idle state
+      (eventStore.getAgent as ReturnType<typeof vi.fn>).mockImplementation((agentId: string) => ({
+        id: agentId,
+        name: `Agent ${agentId}`,
+        role: "executor" as const,
+        state: "idle" as const,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+      }));
+      eventStore.emit("agent:updated", { id: "agent-001", state: "idle", metadata: {} } as import("@fusion/core").Agent);
+
+      await vi.advanceTimersByTimeAsync(15000);
+
+      expect(callback).toHaveBeenCalledWith("agent-001", "timer", expect.objectContaining({
+        wakeReason: "timer",
+        triggerDetail: "scheduled",
+        intervalMs: 15000,
+      }));
+    });
+
+    it("timer is still armed after multiple idle state transitions", async () => {
+      scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 10000 });
+
+      // First transition to idle
+      (eventStore.getAgent as ReturnType<typeof vi.fn>).mockImplementation((agentId: string) => ({
+        id: agentId,
+        name: `Agent ${agentId}`,
+        role: "executor" as const,
+        state: "idle" as const,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+      }));
+      eventStore.emit("agent:updated", { id: "agent-001", state: "idle", metadata: {} } as import("@fusion/core").Agent);
+
+      // Second transition (still idle, but emit update)
+      eventStore.emit("agent:updated", { id: "agent-001", state: "idle", metadata: {} } as import("@fusion/core").Agent);
+
+      // Third transition back to active
+      (eventStore.getAgent as ReturnType<typeof vi.fn>).mockImplementation((agentId: string) => ({
+        id: agentId,
+        name: `Agent ${agentId}`,
+        role: "executor" as const,
+        state: "active" as const,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+      }));
+      eventStore.emit("agent:updated", { id: "agent-001", state: "active", metadata: {} } as import("@fusion/core").Agent);
+
+      // Timer should still be registered through all transitions
+      expect(scheduler.getRegisteredAgents()).toContain("agent-001");
+
+      // Timer should fire
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(callback).toHaveBeenCalledOnce();
+    });
+
+    it("timer fires for running agent (pre-existing behavior)", async () => {
+      scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 5000 });
+
+      // Update to running state
+      (eventStore.getAgent as ReturnType<typeof vi.fn>).mockImplementation((agentId: string) => ({
+        id: agentId,
+        name: `Agent ${agentId}`,
+        role: "executor" as const,
+        state: "running" as const,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+      }));
+      eventStore.emit("agent:updated", { id: "agent-001", state: "running", metadata: {} } as import("@fusion/core").Agent);
+
+      expect(scheduler.getRegisteredAgents()).toContain("agent-001");
+
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(callback).toHaveBeenCalledOnce();
+    });
+
+    it("timer is unregistered when agent becomes terminated (should clear timer)", async () => {
+      scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 5000 });
+      expect(scheduler.getRegisteredAgents()).toContain("agent-001");
+
+      // Update to terminated state
+      (eventStore.getAgent as ReturnType<typeof vi.fn>).mockImplementation((agentId: string) => ({
+        id: agentId,
+        name: `Agent ${agentId}`,
+        role: "executor" as const,
+        state: "terminated" as const,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+      }));
+      eventStore.emit("agent:updated", { id: "agent-001", state: "terminated", metadata: {} } as import("@fusion/core").Agent);
+
+      // Timer should be cleared for terminated agents
+      expect(scheduler.getRegisteredAgents()).not.toContain("agent-001");
+
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(callback).not.toHaveBeenCalled();
+    });
+
+    it("timer is unregistered when agent becomes error state (should clear timer)", async () => {
+      scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 5000 });
+      expect(scheduler.getRegisteredAgents()).toContain("agent-001");
+
+      // Update to error state
+      (eventStore.getAgent as ReturnType<typeof vi.fn>).mockImplementation((agentId: string) => ({
+        id: agentId,
+        name: `Agent ${agentId}`,
+        role: "executor" as const,
+        state: "error" as const,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+      }));
+      eventStore.emit("agent:updated", { id: "agent-001", state: "error", metadata: {} } as import("@fusion/core").Agent);
+
+      // Timer should be cleared for error agents
+      expect(scheduler.getRegisteredAgents()).not.toContain("agent-001");
+
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(callback).not.toHaveBeenCalled();
+    });
+
+    it("timer is unregistered when agent becomes paused state (should clear timer)", async () => {
+      scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 5000 });
+      expect(scheduler.getRegisteredAgents()).toContain("agent-001");
+
+      // Update to paused state
+      (eventStore.getAgent as ReturnType<typeof vi.fn>).mockImplementation((agentId: string) => ({
+        id: agentId,
+        name: `Agent ${agentId}`,
+        role: "executor" as const,
+        state: "paused" as const,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+      }));
+      eventStore.emit("agent:updated", { id: "agent-001", state: "paused", metadata: {} } as import("@fusion/core").Agent);
+
+      // Timer should be cleared for paused agents
+      expect(scheduler.getRegisteredAgents()).not.toContain("agent-001");
+
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(callback).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── FN-2289 Regression: Multiplier stability across re-registration ─────────────────────
+  describe("FN-2289: multiplier stability across re-registration", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      scheduler?.stop();
+      vi.useRealTimers();
+    });
+
+    it("multiplier-adjusted interval remains stable when re-registering", async () => {
+      const taskStore = {
+        getSettings: vi.fn().mockResolvedValue({ heartbeatMultiplier: 0.5 }),
+      } as unknown as TaskStore;
+
+      scheduler = new HeartbeatTriggerScheduler(store, callback, taskStore);
+      scheduler.start();
+
+      // First registration with multiplier 0.5 -> effective interval 5000ms
+      scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 10000 });
+      await vi.advanceTimersByTimeAsync(100); // Allow pending async operations to complete
+
+      // Re-register (simulating settings change or config update)
+      scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 10000 });
+      await vi.advanceTimersByTimeAsync(100);
+
+      // Timer should still fire at the multiplied interval (5000ms)
+      // The timer was set up immediately, so we need to ensure we advance past 5000ms total
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(callback).toHaveBeenCalledOnce();
+    });
+
+    it("async multiplier registration does not stale-overwrite newer registration", async () => {
+      const taskStore = {
+        getSettings: vi.fn().mockResolvedValue({ heartbeatMultiplier: 2.0 }),
+      } as unknown as TaskStore;
+
+      scheduler = new HeartbeatTriggerScheduler(store, callback, taskStore);
+      scheduler.start();
+
+      // Register with multiplier 2.0 -> effective interval 20000ms
+      scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 10000 });
+      await Promise.resolve();
+
+      // Immediately re-register before async multiplier completes
+      scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 10000 });
+
+      // Timer should still be registered
+      expect(scheduler.getRegisteredAgents()).toContain("agent-001");
+
+      // Advance time past the original interval (10s) but before multiplied (20s)
+      // If stale-overwrite happens, callback would be called at 10s instead of 20s
+      await vi.advanceTimersByTimeAsync(15000);
+      expect(callback).not.toHaveBeenCalled();
+
+      // Timer should fire at 20s (correct multiplied interval)
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(callback).toHaveBeenCalledOnce();
+    });
+  });
+
   describe("assignment watching", () => {
     let eventStore: EventEmitter & {
       getActiveHeartbeatRun: ReturnType<typeof vi.fn>;

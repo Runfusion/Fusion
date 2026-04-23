@@ -1744,6 +1744,149 @@ describe("ChatView sidebar structure", () => {
   });
 });
 
+describe("ChatView mobile behavior", () => {
+  function ensureMatchMedia() {
+    if (!window.matchMedia) {
+      Object.defineProperty(window, "matchMedia", {
+        writable: true,
+        value: vi.fn(),
+      });
+    }
+  }
+
+  function mockMobileViewport() {
+    ensureMatchMedia();
+    Object.defineProperty(window, "innerWidth", { value: 375, configurable: true });
+    return vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+      matches: query === "(max-width: 768px)",
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+  }
+
+  function mockDesktopViewport() {
+    ensureMatchMedia();
+    Object.defineProperty(window, "innerWidth", { value: 1280, configurable: true });
+    return vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+  }
+
+  it("mobile mode: does not render thread header when no active session (list view)", () => {
+    const restoreMatchMedia = mockMobileViewport();
+    try {
+      setupMockChat({
+        sessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" }],
+        filteredSessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" }],
+        activeSession: null,
+      });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      // Thread header should not be rendered when there's no active session
+      expect(document.querySelector(".chat-thread-header")).not.toBeInTheDocument();
+      // Back button should not be visible
+      expect(screen.queryByTestId("chat-back-btn")).not.toBeInTheDocument();
+    } finally {
+      restoreMatchMedia();
+    }
+  });
+
+  it("mobile mode: renders thread header with back button when session is active", () => {
+    const restoreMatchMedia = mockMobileViewport();
+    try {
+      setupMockChat({
+        activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
+        messages: [{ id: "msg-001", sessionId: "session-001", role: "assistant", content: "Hello", createdAt: "2026-04-08T00:00:00.000Z" }],
+      });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      // Thread header should be rendered when there's an active session
+      expect(document.querySelector(".chat-thread-header")).toBeInTheDocument();
+      // Back button should be visible in mobile thread view
+      expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument();
+    } finally {
+      restoreMatchMedia();
+    }
+  });
+
+  it("mobile mode: tapping back button calls selectSession with empty string to return to list", async () => {
+    const restoreMatchMedia = mockMobileViewport();
+    const selectSession = vi.fn();
+    try {
+      setupMockChat({
+        activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
+        messages: [{ id: "msg-001", sessionId: "session-001", role: "assistant", content: "Hello", createdAt: "2026-04-08T00:00:00.000Z" }],
+        selectSession,
+      });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const backBtn = screen.getByTestId("chat-back-btn");
+      await userEvent.click(backBtn);
+
+      // Back button should trigger selectSession("") to return to list view
+      expect(selectSession).toHaveBeenCalledWith("");
+    } finally {
+      restoreMatchMedia();
+    }
+  });
+
+  it("desktop mode: renders thread header even without active session (shows empty state)", () => {
+    const restoreMatchMedia = mockDesktopViewport();
+    try {
+      setupMockChat({
+        sessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" }],
+        filteredSessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" }],
+        activeSession: null,
+      });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      // Desktop mode: thread header should always be visible (even in empty state)
+      expect(document.querySelector(".chat-thread-header")).toBeInTheDocument();
+      // Back button should not be visible in desktop mode
+      expect(screen.queryByTestId("chat-back-btn")).not.toBeInTheDocument();
+      // Should show empty state
+      expect(screen.getByText("Start a new conversation")).toBeInTheDocument();
+    } finally {
+      restoreMatchMedia();
+    }
+  });
+
+  it("desktop mode: thread header is visible with active session", () => {
+    const restoreMatchMedia = mockDesktopViewport();
+    try {
+      setupMockChat({
+        activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
+        messages: [{ id: "msg-001", sessionId: "session-001", role: "assistant", content: "Hello", createdAt: "2026-04-08T00:00:00.000Z" }],
+      });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      // Desktop mode: thread header should always be visible
+      expect(document.querySelector(".chat-thread-header")).toBeInTheDocument();
+      // Back button should not be visible in desktop mode
+      expect(screen.queryByTestId("chat-back-btn")).not.toBeInTheDocument();
+    } finally {
+      restoreMatchMedia();
+    }
+  });
+});
+
 describe("ChatView mobile CSS contract", () => {
   const css = fs.readFileSync(stylesPath, "utf-8");
 

@@ -1667,9 +1667,19 @@ interface AgentTimer {
 /**
  * True when an agent's state indicates it should be ticking right now.
  * Heartbeats track liveness while the agent is meant to be doing work.
+ * 
+ * States where timers should remain armed:
+ * - "active" — Agent is working
+ * - "running" — Agent has an active heartbeat run
+ * - "idle" — Agent is between tasks, waiting for work (FN-2289 fix)
+ * 
+ * States where timers should be cleared:
+ * - "terminated" — Agent has completed/failed
+ * - "error" — Agent encountered an error
+ * - "paused" — Agent is paused by budget exhaustion or manual action
  */
 function isTickableState(state: Agent["state"]): boolean {
-  return state === "active" || state === "running";
+  return state === "active" || state === "running" || state === "idle";
 }
 
 /**

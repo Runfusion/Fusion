@@ -395,6 +395,26 @@ Heartbeat runs from the Agents panel run on a **separate control-plane lane** th
 | HeartbeatTriggerScheduler | Utility/control plane | **NOT** semaphore-gated |
 | CronRunner | Utility/control plane | **NOT** semaphore-gated |
 
+### Timer State Lifecycle (FN-2289)
+
+Heartbeat timers are armed for agents in valid working states and remain armed across state transitions:
+
+**States where timers remain armed:**
+- `active` — Agent is actively working on a task
+- `running` — Agent has an active heartbeat run in progress
+- `idle` — Agent is between tasks, waiting for work
+
+**States where timers are cleared:**
+- `terminated` — Agent has completed or been stopped
+- `error` — Agent encountered an unrecoverable error
+- `paused` — Agent is paused (e.g., by budget exhaustion or manual action)
+
+**Key behaviors:**
+- Timers remain armed when agents transition between `active`, `running`, and `idle` states
+- This ensures heartbeat cadence is maintained even when agents complete tasks and await new assignments
+- Ephemeral/task-worker agents are never armed with timers (managed directly by TaskExecutor)
+- The `runtimeConfig.enabled` flag is respected for disabling heartbeat monitoring entirely
+
 ## Dashboard Health Status
 
 The dashboard displays agent health status in AgentsView, AgentListModal, and AgentDetailView using a centralized health evaluation utility (`packages/dashboard/app/utils/agentHealth.ts`).
