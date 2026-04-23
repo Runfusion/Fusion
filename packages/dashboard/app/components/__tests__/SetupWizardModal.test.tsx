@@ -66,6 +66,12 @@ describe("SetupWizardModal", () => {
 
     expect(screen.getByText("Welcome to Fusion")).toBeDefined();
     expect(screen.getByText(/Let's set up your first project/)).toBeDefined();
+    expect(screen.getByLabelText("Fusion logo")).toBeDefined();
+    expect(screen.getByText("Advanced settings")).toBeDefined();
+    expect(screen.getByRole("link", { name: "Need help?" })).toHaveAttribute(
+      "href",
+      "https://github.com/runfusion/fusion/discussions"
+    );
   });
 
   it("has DirectoryPicker for path selection", () => {
@@ -202,7 +208,7 @@ describe("SetupWizardModal", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("renders isolation mode radio cards", () => {
+  it("reveals advanced settings on demand", () => {
     render(
       <SetupWizardModal
         onProjectRegistered={vi.fn()}
@@ -210,6 +216,12 @@ describe("SetupWizardModal", () => {
       />
     );
 
+    expect(screen.queryByText("Runtime Node")).toBeNull();
+    expect(screen.queryByText("In-Process")).toBeNull();
+
+    fireEvent.click(screen.getByText("Advanced settings"));
+
+    expect(screen.getByText("Runtime Node")).toBeDefined();
     expect(screen.getByText("In-Process")).toBeDefined();
     expect(screen.getByText("Child-Process")).toBeDefined();
     expect(screen.getByText("Recommended")).toBeDefined();
@@ -222,6 +234,8 @@ describe("SetupWizardModal", () => {
         onClose={vi.fn()}
       />
     );
+
+    fireEvent.click(screen.getByText("Advanced settings"));
 
     // Initially in-process is selected
     const inProcessRadio = screen.getByDisplayValue("in-process") as HTMLInputElement;
@@ -274,6 +288,8 @@ describe("SetupWizardModal", () => {
         />
       );
 
+      fireEvent.click(screen.getByText("Advanced settings"));
+
       expect(screen.getByText("Runtime Node")).toBeDefined();
       const select = screen.getByRole("combobox") as HTMLSelectElement;
       expect(select.value).toBe("");
@@ -315,6 +331,8 @@ describe("SetupWizardModal", () => {
           onClose={vi.fn()}
         />
       );
+
+      fireEvent.click(screen.getByText("Advanced settings"));
 
       // Select the remote node
       const select = screen.getByRole("combobox") as HTMLSelectElement;
@@ -372,6 +390,8 @@ describe("SetupWizardModal", () => {
           onClose={vi.fn()}
         />
       );
+
+      fireEvent.click(screen.getByText("Advanced settings"));
 
       // Local node is selected by default (empty value)
       const select = screen.getByRole("combobox") as HTMLSelectElement;

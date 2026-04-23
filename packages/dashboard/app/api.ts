@@ -65,7 +65,7 @@ import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 import type { ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult } from "@fusion/core";
 import type { DiscoveredSkill, CatalogEntry, CatalogFetchResult, ToggleSkillResult, SkillContent, SkillFileEntry } from "@fusion/dashboard";
 import type { MilestoneValidationTelemetry } from "./components/mission-types";
-import { appendTokenQuery, withTokenHeader } from "./auth";
+import { appendTokenQuery, getAuthToken, withTokenHeader } from "./auth";
 
 // Re-export skills types for use by hooks and components
 export type { DiscoveredSkill, CatalogEntry, CatalogFetchResult, ToggleSkillResult, SkillContent, SkillFileEntry };
@@ -81,9 +81,30 @@ function buildApiUrl(path: string): string {
 
 export async function api<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
   const url = buildApiUrl(path);
+  const token = getAuthToken();
+  const headers = (() => {
+    if (token) {
+      const authenticatedHeaders = new Headers(opts.headers ?? {});
+      if (!authenticatedHeaders.has("Content-Type")) {
+        authenticatedHeaders.set("Content-Type", "application/json");
+      }
+      return withTokenHeader(authenticatedHeaders);
+    }
+
+    if (!opts.headers) {
+      return { "Content-Type": "application/json" };
+    }
+
+    const defaultHeaders = new Headers(opts.headers);
+    if (!defaultHeaders.has("Content-Type")) {
+      defaultHeaders.set("Content-Type", "application/json");
+    }
+    return Object.fromEntries(defaultHeaders.entries());
+  })();
+
   const res = await fetch(url, {
-    headers: { "Content-Type": "application/json" },
     ...opts,
+    headers,
   });
 
   // Handle successful 204 No Content responses (e.g., DELETE, reorder)
@@ -4477,16 +4498,17 @@ export function browseDirectory(
   nodeId?: string,
   localNodeId?: string,
 ): Promise<BrowseDirectoryResult> {
+  const effectiveNodeId = nodeId && nodeId !== localNodeId ? nodeId : undefined;
   const params = new URLSearchParams();
   if (path) params.set("path", path);
   if (showHidden) params.set("showHidden", "true");
-  if (nodeId) params.set("nodeId", nodeId);
+  if (effectiveNodeId) params.set("nodeId", effectiveNodeId);
+  const token = getAuthToken();
+  if (token) {
+    params.set("fn_token", token);
+  }
   const qs = params.toString();
   const fullPath = `/browse-directory${qs ? `?${qs}` : ""}`;
-  // If nodeId is for a remote node, route through proxy
-  if (nodeId && nodeId !== localNodeId) {
-    return proxyApi<BrowseDirectoryResult>(fullPath, { nodeId, localNodeId });
-  }
   return api<BrowseDirectoryResult>(fullPath);
 }
 

@@ -303,8 +303,8 @@ describe("browseDirectory API function", () => {
     await browseDirectory("/home", false, "node-remote-1", "node-local-1");
 
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("/api/proxy/node-remote-1/browse-directory"),
-      expect.any(Object)
+      expect.stringContaining("/api/browse-directory?path=%2Fhome&nodeId=node-remote-1"),
+      expect.any(Object),
     );
   });
 

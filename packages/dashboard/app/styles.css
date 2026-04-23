@@ -21195,6 +21195,15 @@ html .column.drag-over * {
   border-color: var(--text-dim);
 }
 
+.directory-picker-browse-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.directory-picker-browse-btn:active {
+  transform: scale(0.97);
+}
+
 .directory-picker-browser {
   display: flex;
   flex-direction: column;
@@ -21398,7 +21407,9 @@ html .column.drag-over * {
 .setup-wizard-modal {
   max-width: 540px;
   width: 100%;
+  max-height: min(720px, calc(100dvh - (var(--space-2xl) * 2)));
   animation: slideUp var(--transition-normal) ease-out;
+  overflow: hidden;
 }
 
 @keyframes slideUp {
@@ -21417,17 +21428,51 @@ html .column.drag-over * {
   align-items: center;
   justify-content: space-between;
   padding: var(--space-xl) var(--space-xl) 0;
+  gap: var(--space-md);
+  flex-shrink: 0;
+}
+
+.setup-wizard-heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.setup-wizard-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--logo-accent);
+}
+
+.setup-wizard-brand-logo {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.setup-wizard-brand-name {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1;
 }
 
 .setup-wizard-title {
-  font-size: 22px;
-  font-weight: 700;
+  font-size: 24px;
+  font-weight: 800;
   color: var(--text);
   margin: 0;
+  line-height: 1.1;
 }
 
 .setup-wizard-content {
-  padding: var(--space-lg) var(--space-xl);
+  padding: var(--space-md) var(--space-xl);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .setup-wizard-manual {
@@ -21441,7 +21486,7 @@ html .column.drag-over * {
   justify-content: center;
   width: 64px;
   height: 64px;
-  background: rgba(88, 166, 255, 0.1);
+  background: color-mix(in srgb, var(--todo) 10%, transparent);
   border-radius: var(--radius-lg);
   color: var(--todo);
   margin-bottom: var(--space-lg);
@@ -21463,7 +21508,7 @@ html .column.drag-over * {
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
-  margin-bottom: 6px;
+  margin-bottom: var(--space-xs);
 }
 
 .setup-wizard-manual .form-group input,
@@ -21482,7 +21527,7 @@ html .column.drag-over * {
 .setup-wizard-manual .form-group select:focus {
   outline: none;
   border-color: var(--todo);
-  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+  box-shadow: var(--focus-ring);
 }
 
 .setup-wizard-manual .form-hint {
@@ -21495,6 +21540,61 @@ html .column.drag-over * {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
+}
+
+.setup-wizard-advanced {
+  margin-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-lg);
+}
+
+.setup-wizard-advanced-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) 0;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.setup-wizard-advanced-toggle:hover {
+  color: var(--logo-accent);
+}
+
+.setup-wizard-advanced-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
+.setup-wizard-advanced-toggle[aria-expanded="true"] .setup-wizard-advanced-chevron {
+  transform: rotate(90deg);
+}
+
+.setup-wizard-advanced-chevron {
+  flex-shrink: 0;
+  transition: transform var(--transition-fast);
+}
+
+.setup-wizard-advanced-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.setup-wizard-advanced-panel .form-group:last-child {
+  margin-bottom: 0;
 }
 
 .setup-wizard-isolation-option {
@@ -21517,7 +21617,7 @@ html .column.drag-over * {
 }
 
 .setup-wizard-isolation-option.selected {
-  background: rgba(88, 166, 255, 0.05);
+  background: color-mix(in srgb, var(--todo) 5%, transparent);
   border-color: var(--todo);
   box-shadow: 0 0 0 1px var(--todo);
 }
@@ -21553,8 +21653,8 @@ html .column.drag-over * {
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: var(--space-md);
-  padding: var(--space-xl) 0;
+  gap: var(--space-sm);
+  padding: var(--space-lg) 0;
 }
 
 .setup-wizard-complete .success-icon {
@@ -21577,8 +21677,13 @@ html .column.drag-over * {
 
 .setup-wizard-footer {
   display: flex;
+  align-items: center;
+  gap: var(--space-sm);
   justify-content: flex-end;
-  padding: 0 var(--space-xl) var(--space-xl);
+  padding: var(--space-md) var(--space-xl) var(--space-lg);
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
 }
 
 .setup-wizard-footer .btn-primary {
@@ -21590,23 +21695,42 @@ html .column.drag-over * {
   font-weight: 600;
 }
 
+.setup-wizard-help-link {
+  margin-right: auto;
+  text-decoration: none;
+}
+
 .setup-wizard-footer .btn-primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
 @media (max-width: 768px) {
+  .setup-wizard-overlay {
+    padding:
+      max(var(--space-md), env(safe-area-inset-top, 0px))
+      max(var(--space-md), env(safe-area-inset-right, 0px))
+      max(var(--space-md), env(safe-area-inset-bottom, 0px))
+      max(var(--space-md), env(safe-area-inset-left, 0px));
+  }
+
   .setup-wizard-modal {
     max-width: 100%;
-    border-radius: 0;
+    width: 100%;
+    max-height: calc(100dvh - max(var(--space-2xl), env(safe-area-inset-top, 0px)) - max(var(--space-2xl), env(safe-area-inset-bottom, 0px)));
+    border-radius: var(--radius-lg);
   }
 
   .setup-wizard-header {
     padding: var(--space-md) var(--space-md) 0;
   }
 
+  .setup-wizard-brand-name {
+    font-size: 20px;
+  }
+
   .setup-wizard-title {
-    font-size: 18px;
+    font-size: 21px;
   }
 
   .setup-wizard-content {
@@ -21621,11 +21745,24 @@ html .column.drag-over * {
     padding: var(--space-sm) var(--space-md);
   }
 
+  .setup-wizard-advanced-panel {
+    padding: var(--space-sm);
+  }
+
   .setup-wizard-footer {
-    padding: 0 var(--space-md) var(--space-md);
+    padding:
+      var(--space-sm)
+      var(--space-md)
+      max(var(--space-md), env(safe-area-inset-bottom, 0px));
   }
 
   .setup-wizard-footer .btn-primary {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .setup-wizard-help-link {
+    margin-right: 0;
     width: 100%;
     justify-content: center;
   }
@@ -39176,4 +39313,3 @@ html .column.drag-over * {
     min-height: calc(var(--space-lg) + var(--space-lg) + var(--space-xs));
   }
 }
-

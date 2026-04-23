@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { X, Loader2, Sparkles, CheckCircle } from "lucide-react";
+import { X, Loader2, Sparkles, CheckCircle, ChevronRight } from "lucide-react";
 import type { ProjectInfo, ProjectCreateInput } from "../api";
 import { registerProject } from "../api";
 import { DirectoryPicker } from "./DirectoryPicker";
@@ -35,6 +35,7 @@ export function SetupWizardModal({
   onProjectRegistered,
   onClose,
 }: SetupWizardModalProps) {
+  const helpUrl = "https://github.com/runfusion/fusion/discussions";
   const [isOpen, setIsOpen] = useState(true);
   const [state, setState] = useState<WizardState>({
     step: "manual",
@@ -45,6 +46,7 @@ export function SetupWizardModal({
     isRegistering: false,
     error: null,
   });
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
 
   const { nodes, loading: nodesLoading } = useNodes();
   const localNodeId = nodes.find((n) => n.type === "local")?.id;
@@ -98,14 +100,40 @@ export function SetupWizardModal({
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay open" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
+    <div className="modal-overlay open setup-wizard-overlay" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
       <div className="modal setup-wizard-modal">
         {/* Header */}
         <div className="setup-wizard-header">
-          <h2 id="wizard-title" className="setup-wizard-title">
-            {state.step === "manual" && "Welcome to Fusion"}
-            {state.step === "complete" && "Setup Complete!"}
-          </h2>
+          <div className="setup-wizard-heading">
+            <div className="setup-wizard-brand" aria-label="Fusion">
+              <svg
+                className="setup-wizard-brand-logo"
+                width={28}
+                height={28}
+                viewBox="0 0 128 128"
+                fill="none"
+                aria-label="Fusion logo"
+                role="img"
+              >
+                <circle
+                  cx="64"
+                  cy="64"
+                  r="52"
+                  stroke="currentColor"
+                  strokeWidth="8"
+                />
+                <path
+                  d="M26 101C44 82 62 64 82 45C90 37 98 30 104 24C96 35 89 47 81 60C70 79 57 95 43 108C38 112 32 108 26 101Z"
+                  fill="currentColor"
+                />
+              </svg>
+              <span className="setup-wizard-brand-name">Fusion</span>
+            </div>
+            <h2 id="wizard-title" className="setup-wizard-title">
+              {state.step === "manual" && "Welcome to Fusion"}
+              {state.step === "complete" && "Setup Complete!"}
+            </h2>
+          </div>
           {state.step !== "complete" && (
             <button
               className="modal-close"
@@ -128,25 +156,6 @@ export function SetupWizardModal({
               <p className="welcome-text">
                 Let&apos;s set up your first project. Browse to your project directory or type the path manually.
               </p>
-
-              {/* Node selector */}
-              <div className="form-group">
-                <div className="project-node-selector">
-                  <span className="project-node-selector__label">Runtime Node</span>
-                  <select
-                    value={state.manualNodeId}
-                    onChange={(e) => setState((prev) => ({ ...prev, manualNodeId: e.target.value }))}
-                    disabled={nodesLoading || state.isRegistering}
-                  >
-                    <option value="">Local node</option>
-                    {nodes.map((node) => (
-                      <option key={node.id} value={node.id}>
-                        {node.name} ({node.type})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
 
               <div className="form-group">
                 <label htmlFor="project-path">Project Directory</label>
@@ -175,45 +184,78 @@ export function SetupWizardModal({
                 />
               </div>
 
-              <div className="form-group">
-                <label>Isolation Mode</label>
-                <div className="setup-wizard-isolation-options">
-                  <label
-                    className={`setup-wizard-isolation-option${state.manualIsolationMode === "in-process" ? " selected" : ""}`}
-                  >
-                    <input
-                      type="radio"
-                      name="isolation-mode"
-                      value="in-process"
-                      checked={state.manualIsolationMode === "in-process"}
-                      onChange={() =>
-                        setState((prev) => ({ ...prev, manualIsolationMode: "in-process" }))
-                      }
-                    />
-                    <div className="setup-wizard-isolation-option-content">
-                      <strong>In-Process</strong>
-                      <span>Lower overhead, shared memory. Best for most projects.</span>
-                      <span className="wizard-option-recommended">Recommended</span>
+              <div className="setup-wizard-advanced">
+                <button
+                  type="button"
+                  className="setup-wizard-advanced-toggle"
+                  aria-expanded={showAdvancedSettings}
+                  onClick={() => setShowAdvancedSettings((prev) => !prev)}
+                >
+                  <ChevronRight size={16} className="setup-wizard-advanced-chevron" />
+                  <span>Advanced settings</span>
+                </button>
+                {showAdvancedSettings && (
+                  <div className="setup-wizard-advanced-panel">
+                    <div className="form-group">
+                      <div className="project-node-selector">
+                        <span className="project-node-selector__label">Runtime Node</span>
+                        <select
+                          value={state.manualNodeId}
+                          onChange={(e) => setState((prev) => ({ ...prev, manualNodeId: e.target.value }))}
+                          disabled={nodesLoading || state.isRegistering}
+                        >
+                          <option value="">Local node</option>
+                          {nodes.map((node) => (
+                            <option key={node.id} value={node.id}>
+                              {node.name} ({node.type})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
-                  </label>
-                  <label
-                    className={`setup-wizard-isolation-option${state.manualIsolationMode === "child-process" ? " selected" : ""}`}
-                  >
-                    <input
-                      type="radio"
-                      name="isolation-mode"
-                      value="child-process"
-                      checked={state.manualIsolationMode === "child-process"}
-                      onChange={() =>
-                        setState((prev) => ({ ...prev, manualIsolationMode: "child-process" }))
-                      }
-                    />
-                    <div className="setup-wizard-isolation-option-content">
-                      <strong>Child-Process</strong>
-                      <span>Isolated execution with crash containment.</span>
+
+                    <div className="form-group">
+                      <label>Isolation Mode</label>
+                      <div className="setup-wizard-isolation-options">
+                        <label
+                          className={`setup-wizard-isolation-option${state.manualIsolationMode === "in-process" ? " selected" : ""}`}
+                        >
+                          <input
+                            type="radio"
+                            name="isolation-mode"
+                            value="in-process"
+                            checked={state.manualIsolationMode === "in-process"}
+                            onChange={() =>
+                              setState((prev) => ({ ...prev, manualIsolationMode: "in-process" }))
+                            }
+                          />
+                          <div className="setup-wizard-isolation-option-content">
+                            <strong>In-Process</strong>
+                            <span>Lower overhead, shared memory. Best for most projects.</span>
+                            <span className="wizard-option-recommended">Recommended</span>
+                          </div>
+                        </label>
+                        <label
+                          className={`setup-wizard-isolation-option${state.manualIsolationMode === "child-process" ? " selected" : ""}`}
+                        >
+                          <input
+                            type="radio"
+                            name="isolation-mode"
+                            value="child-process"
+                            checked={state.manualIsolationMode === "child-process"}
+                            onChange={() =>
+                              setState((prev) => ({ ...prev, manualIsolationMode: "child-process" }))
+                            }
+                          />
+                          <div className="setup-wizard-isolation-option-content">
+                            <strong>Child-Process</strong>
+                            <span>Isolated execution with crash containment.</span>
+                          </div>
+                        </label>
+                      </div>
                     </div>
-                  </label>
-                </div>
+                  </div>
+                )}
               </div>
 
               {state.error && (
@@ -227,6 +269,10 @@ export function SetupWizardModal({
           {/* Complete Step */}
           {state.step === "complete" && (
             <div className="setup-wizard-complete">
+              <div className="setup-wizard-success-streak" aria-hidden="true">
+                <div className="setup-wizard-success-streak-core" />
+                <div className="setup-wizard-success-streak-glow" />
+              </div>
               <CheckCircle size={64} className="success-icon" />
               <h3>All Set!</h3>
               <p>Your project has been registered successfully.</p>
@@ -237,9 +283,17 @@ export function SetupWizardModal({
 
         {/* Footer */}
         <div className="setup-wizard-footer">
+          <a
+            className="btn setup-wizard-help-link"
+            href={helpUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Need help?
+          </a>
           {state.step === "manual" && (
             <button
-              className="btn-primary"
+              className="btn btn-primary"
               onClick={handleManualRegister}
               disabled={state.isRegistering || !state.manualPath || !state.manualName}
             >
@@ -255,7 +309,7 @@ export function SetupWizardModal({
           )}
 
           {state.step === "complete" && (
-            <button className="btn-primary" onClick={handleClose}>
+            <button className="btn btn-primary" onClick={handleClose}>
               <CheckCircle size={16} />
               <span>Get Started</span>
             </button>

@@ -15028,7 +15028,7 @@ async function persistImportedSkills(
       // Node-aware proxying: route to remote node if nodeId is provided and not local
       if (nodeId) {
         const { CentralCore } = await import("@fusion/core");
-        const central = new CentralCore();
+        const central = new CentralCore(store.getFusionDir());
         await central.init();
 
         const localNodes = await central.listNodes();
@@ -15062,6 +15062,10 @@ async function persistImportedSkills(
               headers,
               signal: AbortSignal.timeout(30000),
             });
+
+            if (proxyRes.status === 401 && !node.apiKey) {
+              throw unauthorized("Remote node rejected directory browse request. Configure an apiKey for that node in Fusion settings.");
+            }
 
             const body = Buffer.from(await proxyRes.arrayBuffer());
             // Filter hop-by-hop headers
