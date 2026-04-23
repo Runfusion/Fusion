@@ -10,7 +10,7 @@ import type { IPty, IPtyForkOptions, IWindowsPtyForkOptions } from "node-pty";
 import { EventEmitter } from "events";
 import * as os from "os";
 import * as path from "path";
-import { existsSync } from "node:fs";
+import { existsSync, chmodSync } from "node:fs";
 import { join, dirname } from "node:path";
 
 // Detect if we're running as a Bun-compiled binary
@@ -29,13 +29,68 @@ let ptyLoadError: Error | null = null;
  * (when terminal is first used). This is acceptable as it only executes once per
  * service lifetime, not per-request.
  */
-function findStagedNativeDir(): string | null {
+function getNativePrebuildName(): string {
   const platform = process.platform === "darwin" ? "darwin" :
                    process.platform === "linux" ? "linux" :
                    process.platform === "win32" ? "win32" : "unknown";
   const arch = process.arch === "arm64" ? "arm64" :
                process.arch === "x64" ? "x64" : "unknown";
-  const prebuildName = `${platform}-${arch}`;
+  return `${platform}-${arch}`;
+}
+
+function findInstalledNodePtyNativeDir(): string | null {
+  try {
+    const packageJsonPath = require.resolve("node-pty/package.json");
+    const nativeDir = join(dirname(packageJsonPath), "prebuilds", getNativePrebuildName());
+    return existsSync(join(nativeDir, "pty.node")) ? nativeDir : null;
+  } catch {
+    return null;
+  }
+}
+
+function ensureNodePtyNativePermissions(): void {
+  if (process.platform === "win32") {
+    return;
+  }
+
+  const candidateDirs = new Set<string>();
+  const envNativeDir = process.env.NODE_PTY_SPAWN_HELPER_DIR || process.env.FUSION_NATIVE_ASSETS_PATH;
+  if (envNativeDir) {
+    candidateDirs.add(envNativeDir);
+  }
+
+  const stagedNativeDir = findStagedNativeDir();
+  if (stagedNativeDir) {
+    candidateDirs.add(stagedNativeDir);
+  }
+
+  const installedNativeDir = findInstalledNodePtyNativeDir();
+  if (installedNativeDir) {
+    candidateDirs.add(installedNativeDir);
+  }
+
+  for (const nativeDir of candidateDirs) {
+    const helperPath = join(nativeDir, "spawn-helper");
+    const nativeModulePath = join(nativeDir, "pty.node");
+
+    try {
+      if (existsSync(helperPath)) {
+        chmodSync(helperPath, 0o755);
+      }
+      if (existsSync(nativeModulePath)) {
+        chmodSync(nativeModulePath, 0o755);
+      }
+    } catch (err) {
+      console.warn("[terminal] Failed to repair node-pty native permissions:", {
+        nativeDir,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+}
+
+function findStagedNativeDir(): string | null {
+  const prebuildName = getNativePrebuildName();
 
   // Check FUSION_RUNTIME_DIR env var first
   if (process.env.FUSION_RUNTIME_DIR) {
@@ -93,6 +148,8 @@ async function loadPtyModule(): Promise<typeof import("node-pty")> {
   }
 
   try {
+    ensureNodePtyNativePermissions();
+
     // Standard import path - the native-patch setup should have created
     // the necessary symlink structure for node-pty to find the module
     const mod = await import("node-pty");

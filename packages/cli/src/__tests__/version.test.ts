@@ -5,9 +5,10 @@ import { join } from "node:path";
 const repoRoot = join(import.meta.dirname!, "..", "..", "..", "..");
 
 describe("Changeset configuration", () => {
-  // Note: .changeset directory was intentionally removed to stop tracking local-only artifacts (FN-LOCAL).
-  // These tests are skipped as the changeset files are no longer present.
-  it.skip("should have a valid .changeset/config.json", () => {
+  // Release guardrail: These tests protect the @runfusion/fusion release pipeline
+  // by ensuring changeset configuration required for npm publishing remains intact.
+  // If these tests fail, the automated release workflow will break.
+  it("should have a valid .changeset/config.json", () => {
     const configPath = join(repoRoot, ".changeset", "config.json");
     expect(existsSync(configPath)).toBe(true);
 
@@ -16,13 +17,14 @@ describe("Changeset configuration", () => {
     expect(typeof config).toBe("object");
   });
 
-  it.skip("should have baseBranch set to main", () => {
+  it("should have baseBranch set to 'main' for the default branch", () => {
     const configPath = join(repoRoot, ".changeset", "config.json");
     const config = JSON.parse(readFileSync(configPath, "utf-8"));
     expect(config.baseBranch).toBe("main");
   });
 
-  it.skip("should have changeset scripts in root package.json", () => {
+  it("should have changeset scripts in root package.json", () => {
+    // These scripts drive the changesets CLI workflow: changeset (add), version (bump), release:version (apply)
     const pkgPath = join(repoRoot, "package.json");
     const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
 
@@ -31,7 +33,7 @@ describe("Changeset configuration", () => {
     expect(pkg.scripts["release:version"]).toBe("changeset version");
   });
 
-  it("should have .github/workflows/version.yml with expected content", () => {
+  it("should have .github/workflows/version.yml configured for manual releases", () => {
     const workflowPath = join(
       repoRoot,
       ".github",
@@ -41,7 +43,9 @@ describe("Changeset configuration", () => {
     expect(existsSync(workflowPath)).toBe(true);
 
     const content = readFileSync(workflowPath, "utf-8");
+    // Guardrail: workflow must use changesets/action for npm publishing
     expect(content).toContain("changesets/action");
+    // Guardrail: workflow must be manually triggered (auto-trigger disabled for safety)
     expect(content).toContain("workflow_dispatch");
     expect(content).toContain("Auto-trigger disabled");
   });

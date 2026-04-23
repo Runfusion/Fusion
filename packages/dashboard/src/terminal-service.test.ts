@@ -27,6 +27,7 @@ vi.mock("node:fs", async (importOriginal) => {
   return {
     ...actual,
     existsSync: vi.fn(() => true),
+    chmodSync: vi.fn(),
   };
 });
 
@@ -80,6 +81,21 @@ describe("TerminalService", () => {
         code: "invalid_shell",
         error: "Shell not allowed. Please use a supported shell (bash, zsh, sh, cmd, powershell).",
       });
+    });
+
+    it("repairs env-provided node-pty native permissions before spawn", async () => {
+      process.env.NODE_PTY_SPAWN_HELPER_DIR = "/native-assets";
+
+      const fs = await import("node:fs");
+      const chmodSyncMock = vi.mocked(fs.chmodSync);
+
+      const result = await service.createSession();
+
+      expect(result.success).toBe(true);
+      expect(chmodSyncMock).toHaveBeenCalledWith("/native-assets/spawn-helper", 0o755);
+      expect(chmodSyncMock).toHaveBeenCalledWith("/native-assets/pty.node", 0o755);
+
+      delete process.env.NODE_PTY_SPAWN_HELPER_DIR;
     });
   });
 

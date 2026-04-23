@@ -56,7 +56,7 @@ function getStateBadgeClass(state: AgentState): string {
   }
 }
 
-function getStateCardClass(prefix: "agent-card", state: AgentState): string {
+function getStateCardClass(prefix: "agent-card" | "agent-board-card", state: AgentState): string {
   switch (state) {
     case "running":
       return `${prefix}--running`;
@@ -253,18 +253,17 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
   const [isImporting, setIsImporting] = useState(false);
   const [filterState, setFilterState] = useState<AgentState | "all">("all");
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [agentView, setAgentView] = useState<"list" | "tree" | "org">(() => {
+  const [agentView, setAgentView] = useState<"list" | "board" | "tree" | "org">(() => {
     if (typeof window === "undefined") return "list";
     const saved = getScopedItem("fn-agent-view", projectId);
-    // "board" is a retired option — migrate any persisted preference to "list".
-    return (saved === "list" || saved === "tree" || saved === "org") ? saved : "list";
+    return (saved === "list" || saved === "board" || saved === "tree" || saved === "org") ? saved : "list";
   });
   const [orgTree, setOrgTree] = useState<OrgTreeNode[]>([]);
   const [isOrgTreeLoading, setIsOrgTreeLoading] = useState(false);
 
   useEffect(() => {
     const saved = getScopedItem("fn-agent-view", projectId);
-    if (saved === "list" || saved === "tree" || saved === "org") {
+    if (saved === "list" || saved === "board" || saved === "tree" || saved === "org") {
       setAgentView(saved);
       return;
     }
@@ -517,6 +516,15 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
               <List size={16} />
             </button>
             <button
+              className={`view-toggle-btn${agentView === "board" ? " active" : ""}`}
+              onClick={() => setAgentView("board")}
+              title="Board view"
+              aria-label="Board view"
+              aria-pressed={agentView === "board"}
+            >
+              <Activity size={16} />
+            </button>
+            <button
               className={`view-toggle-btn${agentView === "tree" ? " active" : ""}`}
               onClick={() => setAgentView("tree")}
               title="Tree view"
@@ -658,6 +666,40 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
                   getSkillBadges={getSkillBadges}
                 />
               ))
+            )}
+          </div>
+        ) : agentView === "board" ? (
+          <div className="agent-board">
+            {displayAgents.length === 0 ? (
+              <AgentEmptyState onCtaClick={() => setIsCreating(true)} />
+            ) : (
+              displayAgents.map((agent) => {
+                const health = getHealthStatus(agent);
+                const stateBadgeClass = getStateBadgeClass(agent.state);
+                const stateCardClass = getStateCardClass("agent-board-card", agent.state);
+                return (
+                  <div key={agent.id} className={`agent-board-card ${stateCardClass}`}>
+                    <div
+                      className="agent-board-clickable"
+                      onClick={() => setSelectedAgentId(agent.id)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => e.key === "Enter" && setSelectedAgentId(agent.id)}
+                    >
+                      <div className="agent-board-header">
+                        <span className="agent-board-icon">{getRoleIcon(agent.role)}</span>
+                        <span className="agent-board-badge badge text-secondary">{getRoleLabel(agent.role)}</span>
+                        <span className={`agent-board-badge badge ${stateBadgeClass}`}>{agent.state}</span>
+                      </div>
+                      <div className="agent-board-name">{agent.name}</div>
+                      <div className="agent-board-id">{agent.id}</div>
+                      <div className="agent-board-health" style={{ color: health.color }} title={health.label}>
+                        {health.icon}{!health.stateDerived && ` ${health.label}`}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
             )}
           </div>
         ) : (
