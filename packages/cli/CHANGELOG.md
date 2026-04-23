@@ -1,5 +1,12 @@
 # @runfusion/fusion
 
+## 0.0.2
+
+### Patch Changes
+
+- Add `fusion` bin alias so `npx @runfusion/fusion` resolves to the CLI
+  (the `fn` command is still available and unchanged).
+
 ## 0.0.1
 
 ### Initial release

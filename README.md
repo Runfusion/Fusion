@@ -119,15 +119,31 @@ Tasks with dependencies are processed sequentially. Independent tasks run in par
 
 ---
 
-## Runs everywhere. One board.
+## Multi-node. One board. Every platform.
 
 <div align="center">
 
 <img src="./demo/assets/fusion-mesh.gif" alt="Fusion mesh: laptop, Mac mini, Linux server, cloud VM, phone — all synced" width="820" />
 
+<br />
+
+![macOS](https://img.shields.io/badge/macOS-000000?style=for-the-badge&logo=apple&logoColor=white)
+![Windows](https://img.shields.io/badge/Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)
+![Web](https://img.shields.io/badge/Web-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white)
+![iOS](https://img.shields.io/badge/iOS-000000?style=for-the-badge&logo=apple&logoColor=white)
+![Android](https://img.shields.io/badge/Android-3DDC84?style=for-the-badge&logo=android&logoColor=white)
+
 </div>
 
-Laptop, Mac mini, Linux server, cloud VM, phone — every node is a peer. Your task state, agents, logs, and diffs stay synchronized across the mesh. Desktop (macOS Intel/Apple Silicon, Windows 10/11, Linux), mobile (iOS/iPadOS, Android), or any browser.
+Laptop, Mac mini, Linux server, cloud VM, phone — every node is a peer. Your task state, agents, logs, and diffs stay synchronized across the mesh. The same Fusion ships as:
+
+- 🖥️ **Desktop app** — Electron for **macOS** (Intel + Apple Silicon), **Windows** 10/11, and **Linux**
+- 📱 **Mobile app** — Capacitor for **iOS/iPadOS** and **Android** ([MOBILE.md](./MOBILE.md))
+- 🌐 **Web dashboard** — any modern browser, served from the `fn dashboard` daemon
+- 🔌 **CLI** — `fn` binary + pi extension for terminal-first workflows
+
+Start the daemon on any node, connect your other devices, and the board follows you everywhere.
 
 ---
 
@@ -147,7 +163,65 @@ npx companies.sh add paperclipai/companies/gstack
 
 ---
 
+## Ecosystem integrations
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+<div align="center">
+  <img src="./demo/assets/pi-logo.svg" alt="pi" height="56" />
+
+  ### [pi](https://github.com/badlogic/pi-mono) <sub>`experimental`</sub>
+
+</div>
+
+Fusion runs on top of **pi** — a minimal, hackable coding-agent runtime. Install Fusion as a pi extension and get native tools (`fn_task_create`, `fn_task_list`, `fn_task_show`, …) plus a `/fn` command to start the dashboard straight from a pi session.
+
+```bash
+pi install npm:@runfusion/fusion
+```
+
+</td>
+<td width="50%" valign="top">
+
+<div align="center">
+  <img src="./demo/assets/hermes-logo.svg" alt="Hermes" height="56" />
+
+  ### [Hermes](https://github.com/paperclipai) <sub>`experimental`</sub>
+
+</div>
+
+Fusion speaks **Hermes**, the open agent-company protocol from [Paperclip](https://github.com/paperclipai). Import a prebuilt team from `companies.sh` and let its agents coordinate over Fusion's mailbox, missions, and workflow gates for weeks of autonomous work.
+
+```bash
+npx companies.sh add paperclipai/companies/gstack
+```
+
+</td>
+</tr>
+</table>
+
+> Both integrations are **experimental** — APIs and wire formats may shift between minor releases.
+
+---
+
 ## Quick start
+
+Zero-install, straight from npm:
+
+```bash
+npx @runfusion/fusion dashboard
+```
+
+Or install globally:
+
+```bash
+npm install -g @runfusion/fusion
+fn dashboard                # or: fusion dashboard
+```
+
+Or from a clone:
 
 ```bash
 pnpm dev dashboard

@@ -1,6 +1,6 @@
 {
   "name": "@runfusion/fusion",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "license": "MIT",
   "description": "Fusion CLI: HTTP API server, daemon, dashboard launcher, and task tooling for the Fusion AI coding agent.",
   "homepage": "https://github.com/Runfusion/Fusion#readme",
@@ -12,7 +12,8 @@
     "pi-package"
   ],
   "bin": {
-    "fn": "./dist/bin.js"
+    "fn": "./dist/bin.js",
+    "fusion": "./dist/bin.js"
   },
   "pi": {
     "extensions": [

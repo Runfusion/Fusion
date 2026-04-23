@@ -20,23 +20,28 @@
 
 ## Install
 
-As a [pi](https://github.com/badlogic/pi-mono) extension:
+Zero install, straight from npm:
+
+```bash
+npx @runfusion/fusion dashboard
+```
+
+Globally:
+
+```bash
+npm install -g @runfusion/fusion
+fn dashboard              # or: fusion dashboard
+```
+
+As a [pi](https://github.com/badlogic/pi-mono) extension (bundled skill + `/fn` command):
 
 ```bash
 pi install npm:@runfusion/fusion
 ```
 
-Or globally via npm:
-
-```bash
-npm install -g @runfusion/fusion
-```
-
-The package includes a bundled **Fusion skill** that lets AI agents discover and use Fusion tools automatically.
-
 ## Launch the dashboard
 
-Run `/fn` inside pi to start the dashboard and AI engine:
+Inside a pi session:
 
 ```
 /fn              # start on default port 4040
@@ -44,10 +49,12 @@ Run `/fn` inside pi to start the dashboard and AI engine:
 /fn 8080         # run on a custom port
 ```
 
-Or from a shell:
+From a shell:
 
 ```bash
-fn dashboard     # same thing, outside pi
+fn dashboard                 # or: fusion dashboard / npx @runfusion/fusion dashboard
+fn dashboard --paused        # start with automation paused
+fn dashboard --dev           # web UI only, no AI engine
 ```
 
 The dashboard gives you:
