@@ -2,8 +2,8 @@
  * Dashboard TUI Renderer
  *
  * An interactive terminal user interface for `fn dashboard` with five sections:
- * - logs: real-time log entries with ring buffer
  * - system: host, port, URL, auth mode, token, engine mode
+ * - logs: real-time log entries with ring buffer
  * - utilities: action list with keybindings
  * - stats: task counts, active task count, agent state counts
  * - settings: real key/value settings from TaskStore
@@ -257,10 +257,10 @@ function visibleTruncate(text: string, maxWidth: number): string {
 
 // ── Dashboard TUI Renderer ───────────────────────────────────────────────────
 
-const SECTION_ORDER: SectionId[] = ["logs", "system", "utilities", "stats", "settings"];
+const SECTION_ORDER: SectionId[] = ["system", "logs", "utilities", "stats", "settings"];
 
 export class DashboardTUI {
-  private activeSection: SectionId = "logs";
+  private activeSection: SectionId = "system";
   private logBuffer: LogRingBuffer;
   private systemInfo: SystemInfo | null = null;
   private taskStats: TaskStats | null = null;
@@ -684,8 +684,8 @@ export class DashboardTUI {
     process.stdout.write(title);
 
     // Responsive header modes based on terminal width:
-    // - Wide (>= 70 cols): Full labels "[1] Logs [2] System [3] Utilities [4] Stats [5] Settings"
-    // - Medium (>= 40 cols): Short labels "[1] L [2] S [3] U [4] St [5] Se"
+    // - Wide (>= 70 cols): Full labels "[1] System [2] Logs [3] Utilities [4] Stats [5] Settings"
+    // - Medium (>= 40 cols): Short labels "[1] S [2] L [3] U [4] St [5] Se"
     // - Narrow (< 40 cols): Only active tab with navigation hint "[n/p] Previous/Next"
 
     if (cols >= 70) {
@@ -1331,7 +1331,7 @@ export function renderHeaderToString(cols: number): string {
   if (cols >= 70) {
     for (let i = 0; i < SECTION_ORDER.length; i++) {
       const section = SECTION_ORDER[i];
-      const isActive = section === "logs"; // Default active section for test
+      const isActive = section === "system"; // Default active section for test
       const num = (i + 1).toString();
       const label = section.charAt(0).toUpperCase() + section.slice(1);
       const tabText = `[${num}] ${label}`;
@@ -1348,7 +1348,7 @@ export function renderHeaderToString(cols: number): string {
     };
     for (let i = 0; i < SECTION_ORDER.length; i++) {
       const section = SECTION_ORDER[i];
-      const isActive = section === "logs";
+      const isActive = section === "system";
       const num = (i + 1).toString();
       const shortLabel = shortLabels[section];
       const tabText = `[${num}]${shortLabel}`;
@@ -1356,7 +1356,7 @@ export function renderHeaderToString(cols: number): string {
       output += colorize(` ${tabText} `, style);
     }
   } else {
-    output += colorize(" [1]Logs ", "brightBlue");
+    output += colorize(" [1]System ", "brightBlue");
     output += colorize(" [n/p]nav ", "dim");
   }
 

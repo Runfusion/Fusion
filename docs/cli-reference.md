@@ -70,11 +70,14 @@ interactive TUI with five sections:
 
 | Section | Description |
 |---|---|
-| **Logs** | Real-time log entries with timestamps and severity levels |
 | **System** | Host, port, URL, auth mode, token, engine status, uptime |
+| **Logs** | Real-time log entries with timestamps and severity levels |
 | **Utilities** | Actions: refresh stats, clear logs, toggle engine pause |
 | **Stats** | Task counts by column, active task count, agent state counts |
 | **Settings** | Key settings from the task store |
+
+On startup, the TUI opens on the **System** section by default so you can
+immediately see host/port and access-token details.
 
 **Keyboard Navigation:**
 

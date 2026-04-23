@@ -236,6 +236,11 @@ export class FirstRunDetector {
    * @returns Generated name
    */
   async generateProjectName(projectPath: string): Promise<string> {
+    // Fast path: avoid invoking git for non-repositories (prevents unnecessary delays in tests/startup).
+    if (!existsSync(join(projectPath, ".git"))) {
+      return basename(projectPath);
+    }
+
     // Try git remote first
     try {
       const { execFile } = await import("node:child_process");
@@ -245,7 +250,7 @@ export class FirstRunDetector {
       const { stdout } = await execFileAsync(
         "git",
         ["remote", "get-url", "origin"],
-        { cwd: projectPath, timeout: 5000 }
+        { cwd: projectPath, timeout: 1000 }
       );
 
       const remoteUrl = stdout.trim();

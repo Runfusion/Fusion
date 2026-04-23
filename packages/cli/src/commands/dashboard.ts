@@ -240,7 +240,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   //
   // When both stdout and stdin are TTY, we activate the interactive TUI
   // instead of plain console output. The TUI provides 5 sections:
-  // logs, system, utilities, stats, settings with keyboard navigation.
+  // system, logs, utilities, stats, settings with keyboard navigation.
   //
   // In non-TTY mode (CI, piped output), we fall back to plain console
   // output to maintain compatibility with automated workflows.

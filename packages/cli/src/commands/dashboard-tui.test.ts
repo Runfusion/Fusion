@@ -166,25 +166,33 @@ describe("renderHeaderToString", () => {
   it("renders correctly at wide terminal width (>= 70 cols)", () => {
     const header = renderHeaderToString(80);
     expect(header).toContain("fusion");
-    expect(header).toContain("Logs");
-    expect(header).toContain("System");
+    expect(header).toContain("[1] System");
+    expect(header).toContain("[2] Logs");
   });
 
   it("renders correctly at medium terminal width (>= 40 cols)", () => {
     const header = renderHeaderToString(50);
     expect(header).toContain("fusion");
-    expect(header).toContain("[1]L"); // Short label for Logs
+    expect(header).toContain("[1]S"); // Short label for System
+    expect(header).toContain("[2]L"); // Short label for Logs
   });
 
   it("renders correctly at narrow terminal width (< 40 cols)", () => {
     const header = renderHeaderToString(30);
     expect(header).toContain("fusion");
-    expect(header).toContain("Logs");
+    expect(header).toContain("[1]System");
     expect(header).toContain("[n/p]nav");
   });
 });
 
 // ── Type exports verification ─────────────────────────────────────────────
+
+describe("DashboardTUI default section", () => {
+  it("starts on the system section by default", () => {
+    const tui = new DashboardTUI();
+    expect((tui as any).activeSection).toBe("system");
+  });
+});
 
 describe("Type exports", () => {
   it("exports LogEntry type", () => {
