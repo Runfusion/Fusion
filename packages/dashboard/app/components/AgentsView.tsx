@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { Plus, Play, Pause, Activity, Trash2, RefreshCw, Bot, LayoutGrid, List, ChevronRight, ChevronDown, GitBranch, Filter, Upload, Network } from "lucide-react";
+import { Plus, Play, Pause, Activity, Trash2, RefreshCw, Bot, List, ChevronRight, ChevronDown, GitBranch, Filter, Upload, Network } from "lucide-react";
 import type { Agent, AgentCapability, AgentState, OrgTreeNode } from "../api";
 import { fetchAgents, updateAgent, updateAgentState, deleteAgent, startAgentRun, fetchOrgTree } from "../api";
 import { AgentDetailView } from "./AgentDetailView";
@@ -56,7 +56,7 @@ function getStateBadgeClass(state: AgentState): string {
   }
 }
 
-function getStateCardClass(prefix: "agent-board-card" | "agent-card", state: AgentState): string {
+function getStateCardClass(prefix: "agent-card", state: AgentState): string {
   switch (state) {
     case "running":
       return `${prefix}--running`;
@@ -253,17 +253,18 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
   const [isImporting, setIsImporting] = useState(false);
   const [filterState, setFilterState] = useState<AgentState | "all">("all");
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [agentView, setAgentView] = useState<"board" | "list" | "tree" | "org">(() => {
+  const [agentView, setAgentView] = useState<"list" | "tree" | "org">(() => {
     if (typeof window === "undefined") return "list";
     const saved = getScopedItem("fn-agent-view", projectId);
-    return (saved === "board" || saved === "list" || saved === "tree" || saved === "org") ? saved : "list";
+    // "board" is a retired option — migrate any persisted preference to "list".
+    return (saved === "list" || saved === "tree" || saved === "org") ? saved : "list";
   });
   const [orgTree, setOrgTree] = useState<OrgTreeNode[]>([]);
   const [isOrgTreeLoading, setIsOrgTreeLoading] = useState(false);
 
   useEffect(() => {
     const saved = getScopedItem("fn-agent-view", projectId);
-    if (saved === "board" || saved === "list" || saved === "tree" || saved === "org") {
+    if (saved === "list" || saved === "tree" || saved === "org") {
       setAgentView(saved);
       return;
     }
@@ -507,15 +508,6 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
         <div className="agents-view-controls">
           <div className="view-toggle">
             <button
-              className={`view-toggle-btn${agentView === "board" ? " active" : ""}`}
-              onClick={() => setAgentView("board")}
-              title="Board view"
-              aria-label="Board view"
-              aria-pressed={agentView === "board"}
-            >
-              <LayoutGrid size={16} />
-            </button>
-            <button
               className={`view-toggle-btn${agentView === "list" ? " active" : ""}`}
               onClick={() => setAgentView("list")}
               title="List view"
@@ -669,152 +661,9 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
             )}
           </div>
         ) : (
-        <div className={agentView === "board" ? "agent-board" : "agent-list"}>
+        <div className="agent-list">
           {displayAgents.length === 0 ? (
             <AgentEmptyState onCtaClick={() => setIsCreating(true)} />
-          ) : agentView === "board" ? (
-            // Board view: compact grid layout
-            displayAgents.map(agent => {
-              const health = getHealthStatus(agent);
-              const stateBadgeClass = getStateBadgeClass(agent.state);
-              const stateCardClass = getStateCardClass("agent-board-card", agent.state);
-              return (
-                <div key={agent.id} className={`agent-board-card ${stateCardClass}`}>
-                  <div 
-                    className="agent-board-clickable"
-                    onClick={() => setSelectedAgentId(agent.id)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => e.key === "Enter" && setSelectedAgentId(agent.id)}
-                  >
-                    <div className="agent-board-header">
-                      <span className="agent-board-icon">{getRoleIcon(agent.role)}</span>
-                      <span
-                        className={`agent-board-badge ${stateBadgeClass}`}
-                      >
-                        {agent.state}
-                      </span>
-                      <span className="agent-board-health" style={{ color: health.color }} title={health.label}>
-                        {health.icon}
-                      </span>
-                    </div>
-                    <div className="agent-board-name" title={agent.name}>
-                      {agent.name}
-                    </div>
-                    <div className="agent-board-id">{agent.id}</div>
-                    {/* Board view: up to 1 skill badge */}
-                    {(() => {
-                      const skills = getSkillBadges(agent);
-                      if (skills.length === 0) return null;
-                      const displaySkills = skills.slice(0, 1);
-                      const extraCount = skills.length - 1;
-                      return (
-                        <div className="agent-board-skills">
-                          {displaySkills.map((skillId) => (
-                            <span key={skillId} className="skill-badge-sm">{skillId}</span>
-                          ))}
-                          {extraCount > 0 && <span className="skill-badge-sm skill-badge-extra">+{extraCount}</span>}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                  <div className="agent-board-actions">
-                    {agent.state === "idle" && (
-                      <>
-                        <button
-                          className="btn btn--sm"
-                          onClick={() => void handleStateChange(agent.id, "active")}
-                          title="Activate"
-                        >
-                          <Play size={14} />
-                        </button>
-                        <button
-                          className="btn btn--sm btn--danger"
-                          onClick={() => void handleDelete(agent.id, agent.name)}
-                          title="Delete"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </>
-                    )}
-                    {agent.state === "active" && (
-                      <>
-                        <button
-                          className="btn btn--sm"
-                          onClick={() => void handleRunHeartbeat(agent.id, agent.name)}
-                          title="Run Now"
-                          aria-label={`Run now for ${agent.name}`}
-                        >
-                          <Activity size={14} />
-                        </button>
-                        <button
-                          className="btn btn--sm"
-                          onClick={() => void handleStateChange(agent.id, "paused")}
-                          title="Pause"
-                        >
-                          <Pause size={14} />
-                        </button>
-                      </>
-                    )}
-                    {agent.state === "paused" && (
-                      <button
-                        className="btn btn--sm"
-                        onClick={() => void handleStateChange(agent.id, "active")}
-                        title="Resume"
-                      >
-                        <Play size={14} />
-                      </button>
-                    )}
-                    {agent.state === "running" && (
-                      <>
-                        <button
-                          className="btn btn--sm"
-                          disabled
-                          title="Run in progress"
-                          aria-label={`Heartbeat run in progress for ${agent.name}`}
-                        >
-                          <Activity size={14} />
-                        </button>
-                        <button
-                          className="btn btn--sm"
-                          onClick={() => void handleStateChange(agent.id, "paused")}
-                          title="Pause"
-                        >
-                          <Pause size={14} />
-                        </button>
-                      </>
-                    )}
-                    {agent.state === "error" && (
-                      <button
-                        className="btn btn--sm"
-                        onClick={() => void handleStateChange(agent.id, "active")}
-                        title="Retry"
-                      >
-                        <Play size={14} />
-                      </button>
-                    )}
-                    {agent.state === "terminated" && (
-                      <>
-                        <button
-                          className="btn btn--sm"
-                          onClick={() => void handleStateChange(agent.id, "active")}
-                          title="Start"
-                        >
-                          <Play size={14} />
-                        </button>
-                        <button
-                          className="btn btn--sm btn--danger"
-                          onClick={() => void handleDelete(agent.id, agent.name)}
-                          title="Delete"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              );
-            })
           ) : (
             // List view: detailed card layout
             displayAgents.map(agent => {
