@@ -1,24 +1,13 @@
 import { EventEmitter, once } from "node:events";
-import http from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import type { Task } from "@fusion/core";
 import { createServer } from "../server.js";
 import { WebSocketManager } from "../websocket.js";
 import { InMemoryBadgePubSub, type BadgePubSub } from "../badge-pubsub.js";
+import { createLoopbackIntegrationTest } from "./loopback-integration-test.js";
 
-async function detectLoopbackBinding(): Promise<boolean> {
-  return await new Promise((resolve) => {
-    const server = http.createServer();
-    server.once("error", () => resolve(false));
-    server.listen(0, "127.0.0.1", () => {
-      server.close(() => resolve(true));
-    });
-  });
-}
-
-const loopbackBindingAvailable = await detectLoopbackBinding();
-const websocketIntegrationTest = loopbackBindingAvailable ? it : it.skip;
+const websocketIntegrationTest = await createLoopbackIntegrationTest("websocket integration");
 
 class MockSocket extends EventEmitter {
   readyState: number = WebSocket.OPEN;

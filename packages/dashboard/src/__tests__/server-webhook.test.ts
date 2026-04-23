@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter, once } from "node:events";
 import http from "node:http";
-import type { Task, TaskStore, PrInfo, IssueInfo } from "@fusion/core";
+import type { Task, PrInfo, IssueInfo } from "@fusion/core";
 import { createServer } from "../server.js";
 import { getGitHubAppConfig } from "../github-webhooks.js";
+import { createLoopbackIntegrationTest } from "./loopback-integration-test.js";
 
 // Mock the github-webhooks module
 vi.mock("../github-webhooks.js", async () => {
@@ -16,18 +17,7 @@ vi.mock("../github-webhooks.js", async () => {
 
 const mockGetGitHubAppConfig = vi.mocked(getGitHubAppConfig);
 
-async function detectLoopbackBinding(): Promise<boolean> {
-  return await new Promise((resolve) => {
-    const server = http.createServer();
-    server.once("error", () => resolve(false));
-    server.listen(0, "127.0.0.1", () => {
-      server.close(() => resolve(true));
-    });
-  });
-}
-
-const loopbackBindingAvailable = await detectLoopbackBinding();
-const webhookIntegrationTest = loopbackBindingAvailable ? it : it.skip;
+const webhookIntegrationTest = await createLoopbackIntegrationTest("GitHub webhook integration");
 
 class MockStore extends EventEmitter {
   private tasks = new Map<string, Task>();

@@ -1,19 +1,8 @@
 import express from "express";
 import { describe, expect, it } from "vitest";
-import http from "node:http";
+import { createLoopbackIntegrationTest } from "./__tests__/loopback-integration-test.js";
 
-async function detectLoopbackBinding(): Promise<boolean> {
-  return await new Promise((resolve) => {
-    const server = http.createServer();
-    server.once("error", () => resolve(false));
-    server.listen(0, "127.0.0.1", () => {
-      server.close(() => resolve(true));
-    });
-  });
-}
-
-const loopbackBindingAvailable = await detectLoopbackBinding();
-const staticAssetIntegrationTest = loopbackBindingAvailable ? it : it.skip;
+const staticAssetIntegrationTest = await createLoopbackIntegrationTest("static asset serving");
 
 describe("static asset serving", () => {
   staticAssetIntegrationTest("returns 404 for missing asset paths instead of falling back to index.html", async () => {
