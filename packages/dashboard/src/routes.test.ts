@@ -16349,6 +16349,17 @@ describe("Messaging Routes", () => {
       { body: { toId: "agent-1", toType: "agent", content: "", type: "user-to-agent" }, message: "content is required" },
       { body: { toId: "agent-1", toType: "agent", content: "a".repeat(2001), type: "user-to-agent" }, message: "content is required" },
       { body: { toId: "agent-1", toType: "agent", content: "x", type: "bad-type" }, message: "type must be one of" },
+      { body: { toId: "agent-1", toType: "agent", content: "x", type: "user-to-agent", metadata: "bad" }, message: "metadata must be an object" },
+      {
+        body: {
+          toId: "agent-1",
+          toType: "agent",
+          content: "x",
+          type: "user-to-agent",
+          metadata: { replyTo: { messageId: "" } },
+        },
+        message: "metadata.replyTo.messageId must be a non-empty string",
+      },
     ];
 
     for (const testCase of invalidCases) {
@@ -16362,6 +16373,38 @@ describe("Messaging Routes", () => {
       expect(res.status).toBe(400);
       expect(String(res.body.error)).toContain(testCase.message);
     }
+  });
+
+  it("preserves reply metadata for dashboard-sent messages", async () => {
+    const original = messageStore.sendMessage({
+      fromId: "agent-3",
+      fromType: "agent",
+      toId: "dashboard",
+      toType: "user",
+      content: "Lookup me",
+      type: "agent-to-user",
+    });
+
+    const created = await REQUEST(
+      app,
+      "POST",
+      "/api/messages",
+      JSON.stringify({
+        toId: "agent-3",
+        toType: "agent",
+        content: "Replying now",
+        type: "user-to-agent",
+        metadata: { replyTo: { messageId: original.id } },
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(created.status).toBe(201);
+    expect(created.body.metadata).toEqual({ replyTo: { messageId: original.id } });
+
+    const outbox = await GET(app, "/api/messages/outbox");
+    const sentReply = outbox.body.messages.find((msg: { id: string }) => msg.id === created.body.id);
+    expect(sentReply?.metadata).toEqual({ replyTo: { messageId: original.id } });
   });
 
   it("GET /api/messages/:id returns a message and 404 when missing", async () => {

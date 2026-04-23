@@ -28,7 +28,7 @@ const {
   writeFile: fsWriteFile,
 } = fsPromises;
 import type { TaskStore, Column, ScheduleType, ActivityEventType, ModelPreset, MessageType, ParticipantType, RoutineTriggerType, ProjectSettings, EnrichedChatSession, PlanningSummary } from "@fusion/core";
-import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, type PiExtensionEntry, type PiExtensionSettings, getCurrentRepo, isGhAvailable, isGhAuthenticated, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupRoutine, exportSettings, importSettings, validateImportData, MessageStore, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes, listProjectMemoryFiles, readProjectMemoryFile, readProjectMemoryFileContent, writeProjectMemoryFile, listAgentMemoryFiles, readAgentMemoryFile, writeAgentMemoryFile, readMemory, writeMemory, searchProjectMemory, isQmdAvailable, installQmd, refreshQmdProjectMemoryIndex, QMD_INSTALL_COMMAND, MemoryBackendError, scheduleQmdProjectMemoryRefresh, discoverPiExtensions, updatePiExtensionDisabledIds, getFusionAgentDir, getLegacyPiAgentDir, ensureMemoryFileWithBackend, readInsightsMemory, writeInsightsMemory, generateMemoryAudit, buildInsightExtractionPrompt, parseInsightExtractionResponse, processAndAuditInsightExtraction } from "@fusion/core";
+import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, type PiExtensionEntry, type PiExtensionSettings, getCurrentRepo, isGhAvailable, isGhAuthenticated, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupRoutine, exportSettings, importSettings, validateImportData, MessageStore, validateMessageMetadata, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes, listProjectMemoryFiles, readProjectMemoryFile, readProjectMemoryFileContent, writeProjectMemoryFile, listAgentMemoryFiles, readAgentMemoryFile, writeAgentMemoryFile, readMemory, writeMemory, searchProjectMemory, isQmdAvailable, installQmd, refreshQmdProjectMemoryIndex, QMD_INSTALL_COMMAND, MemoryBackendError, scheduleQmdProjectMemoryRefresh, discoverPiExtensions, updatePiExtensionDisabledIds, getFusionAgentDir, getLegacyPiAgentDir, ensureMemoryFileWithBackend, readInsightsMemory, writeInsightsMemory, generateMemoryAudit, buildInsightExtractionPrompt, parseInsightExtractionResponse, processAndAuditInsightExtraction } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
 import { GitHubClient, parseBadgeUrl } from "./github.js";
 import { githubRateLimiter } from "./github-poll.js";
@@ -3333,6 +3333,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.put("/settings/global", async (req, res) => {
     try {
+      // Snapshot the prior value of useClaudeCli *before* writing so we can
+      // detect a toggle transition and trigger the onUseClaudeCliToggled
+      // hook (used to install the fusion Claude-skill into every registered
+      // project without waiting for a server restart).
+      let prevUseClaudeCli = false;
+      try {
+        const priorGlobal = await store.getGlobalSettingsStore().getSettings();
+        prevUseClaudeCli = priorGlobal.useClaudeCli === true;
+      } catch {
+        // Best-effort: on read failure assume false so a flip-on still fires.
+      }
+
       const settings = await store.updateGlobalSettings(req.body);
       // Invalidate global settings caches in all project-scoped stores so the
       // next GET /settings?projectId=xxx reads fresh values from disk rather
@@ -3346,6 +3358,20 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           engine.getTaskStore().getGlobalSettingsStore().invalidateCache();
         }
       }
+
+      // Fire the toggle hook only on an actual transition — avoids redundant
+      // skill-install sweeps when the user saves unrelated settings.
+      const nextUseClaudeCli = settings.useClaudeCli === true;
+      if (options?.onUseClaudeCliToggled && prevUseClaudeCli !== nextUseClaudeCli) {
+        try {
+          options.onUseClaudeCliToggled(prevUseClaudeCli, nextUseClaudeCli);
+        } catch (hookErr) {
+          runtimeLogger.warn(
+            `onUseClaudeCliToggled callback threw: ${hookErr instanceof Error ? hookErr.message : String(hookErr)}`,
+          );
+        }
+      }
+
       res.json(settings);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -15430,14 +15456,33 @@ async function persistImportedSkills(
 
       // Activate the project (registration sets it to 'initializing')
       const activeProject = await central.updateProject(project.id, { status: "active" });
-      
+
       // Bootstrap memory files (non-blocking, non-fatal)
       ensureMemoryFileWithBackend(path.trim()).catch(() => {
         // Memory bootstrap failure is non-fatal - project registration succeeded
       });
-      
+
+      // Notify the host (serve.ts/daemon.ts) so it can run project-setup
+      // side-effects like installing the fusion Claude-skill into
+      // .claude/skills/fusion when pi-claude-cli is configured. The callback
+      // is responsible for catching its own errors — a failure here must not
+      // fail the registration response.
+      if (options?.onProjectRegistered) {
+        try {
+          options.onProjectRegistered({
+            id: activeProject.id,
+            name: activeProject.name,
+            path: activeProject.path,
+          });
+        } catch (hookErr) {
+          runtimeLogger.warn(
+            `onProjectRegistered callback threw: ${hookErr instanceof Error ? hookErr.message : String(hookErr)}`,
+          );
+        }
+      }
+
       await central.close();
-      
+
       res.status(201).json({ ...activeProject, _meta: { hasFusionDir: hasFusionDir ? undefined : false } });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -17855,6 +17900,16 @@ async function persistImportedSkills(
         throw badRequest(`type must be one of: ${VALID_MESSAGE_TYPES.join(", ")}`);
       }
 
+      if (metadata !== undefined && (typeof metadata !== "object" || metadata === null || Array.isArray(metadata))) {
+        throw badRequest("metadata must be an object");
+      }
+
+      try {
+        validateMessageMetadata(metadata);
+      } catch (err: unknown) {
+        throw badRequest(err instanceof Error ? err.message : "metadata.replyTo is invalid");
+      }
+
       const msgStore = await getMessageStore(req);
       const message = await msgStore.sendMessage({
         fromId: DASHBOARD_USER_ID,
@@ -18849,7 +18904,7 @@ function registerModelsRoute(
 
     try {
       modelRegistry.refresh();
-      const models = modelRegistry.getAvailable().map((m) => ({
+      let models = modelRegistry.getAvailable().map((m) => ({
         provider: m.provider,
         id: m.id,
         name: m.name,
@@ -18860,15 +18915,28 @@ function registerModelsRoute(
       // Get favoriteProviders and favoriteModels from global settings
       let favoriteProviders: string[] = [];
       let favoriteModels: string[] = [];
+      let useClaudeCli = false;
       if (store) {
         try {
           const globalStore = store.getGlobalSettingsStore();
           const globalSettings = await globalStore.getSettings();
           favoriteProviders = globalSettings.favoriteProviders ?? [];
           favoriteModels = globalSettings.favoriteModels ?? [];
+          useClaudeCli = globalSettings.useClaudeCli === true;
         } catch {
           // Silently ignore settings errors - just return empty favorites
         }
+      }
+
+      // When the user has opted to route AI through pi-claude-cli, only
+      // Anthropic Claude models are reachable — pi-claude-cli wraps the
+      // local Claude CLI and does not bridge other providers. Surface only
+      // those models so every picker in the app (settings, onboarding, per
+      // lane overrides) stays honest about what'll actually run.
+      // OpenRouter-proxied Claude (provider: "openrouter") is excluded on
+      // purpose: it hits OpenRouter's API, not the local CLI.
+      if (useClaudeCli) {
+        models = models.filter((m) => m.provider === "anthropic");
       }
 
       res.json({ models, favoriteProviders, favoriteModels });

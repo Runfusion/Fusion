@@ -47,6 +47,7 @@ const mockMarkMessageRead = vi.mocked(apiModule.markMessageRead);
 const mockMarkAllMessagesRead = vi.mocked(apiModule.markAllMessagesRead);
 const mockDeleteMessage = vi.mocked(apiModule.deleteMessage);
 const mockFetchConversation = vi.mocked(apiModule.fetchConversation);
+const mockSendMessage = vi.mocked(apiModule.sendMessage);
 
 const mockAgents: Agent[] = [
   {
@@ -131,6 +132,7 @@ describe("MailboxView", () => {
     vi.clearAllMocks();
     mockFetchUnreadCount.mockResolvedValue({ unreadCount: 2 });
     mockFetchAgents.mockResolvedValue(mockAgents);
+    mockSendMessage.mockResolvedValue({ ...mockMessage, id: "msg-sent" });
   });
 
   it("renders the mailbox view", async () => {
@@ -440,6 +442,136 @@ describe("MailboxView", () => {
 
     await waitFor(() => {
       expect(mockDeleteMessage).toHaveBeenCalledWith("msg-001", undefined);
+    });
+  });
+
+  it("opens reply composer with linked reply context and sends metadata", async () => {
+    mockFetchInbox.mockResolvedValue({
+      messages: [mockMessage],
+      unreadCount: 1,
+    });
+    mockFetchConversation.mockResolvedValue([mockMessage]);
+    mockMarkMessageRead.mockResolvedValue(undefined);
+
+    render(<MailboxView {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mailbox-conversation-agent:agent-001")).toBeDefined();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("mailbox-conversation-agent:agent-001"));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mailbox-reply")).toBeDefined();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("mailbox-reply"));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("message-composer")).toBeDefined();
+      expect(screen.getByTestId("message-composer-reply-context")).toBeDefined();
+    });
+
+    await act(async () => {
+      fireEvent.change(screen.getByTestId("message-composer-content"), { target: { value: "Thanks for the update." } });
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("message-composer-send"));
+    });
+
+    await waitFor(() => {
+      expect(mockSendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toId: "agent-001",
+          toType: "agent",
+          type: "user-to-agent",
+          metadata: { replyTo: { messageId: "msg-001" } },
+        }),
+        undefined,
+      );
+    });
+  });
+
+  it("renders reply context inside conversation thread", async () => {
+    const agentMessage: Message = {
+      ...mockMessage,
+      id: "msg-thread-root",
+      content: "Can you share your current status?",
+    };
+    const userReply: Message = {
+      ...mockMessage,
+      id: "msg-thread-reply",
+      fromId: "dashboard",
+      fromType: "user",
+      toId: "agent-001",
+      toType: "agent",
+      type: "user-to-agent",
+      content: "Status: still investigating",
+      metadata: { replyTo: { messageId: "msg-thread-root" } },
+      read: true,
+    };
+
+    mockFetchInbox.mockResolvedValue({
+      messages: [agentMessage],
+      unreadCount: 1,
+    });
+    mockFetchConversation.mockResolvedValue([agentMessage, userReply]);
+    mockMarkMessageRead.mockResolvedValue(undefined);
+
+    render(<MailboxView {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mailbox-conversation-agent:agent-001")).toBeDefined();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("mailbox-conversation-agent:agent-001"));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mailbox-conversation")).toBeDefined();
+      const replyContext = screen.getByTestId("mailbox-reply-context-msg-thread-reply");
+      expect(replyContext).toBeDefined();
+      expect(replyContext).toHaveClass("mailbox-reply-context");
+      expect(screen.getByText(/Replying to Can you share your current status\?/)).toBeDefined();
+    });
+  });
+
+  it("renders selected-message reply context with dedicated styling", async () => {
+    const replyMessage: Message = {
+      ...mockMessage,
+      id: "msg-reply-single",
+      content: "I have the answer now",
+      metadata: { replyTo: { messageId: "msg-root-single" } },
+      read: true,
+    };
+
+    mockFetchInbox.mockResolvedValue({
+      messages: [replyMessage],
+      unreadCount: 0,
+    });
+    mockFetchConversation.mockResolvedValue([replyMessage]);
+
+    render(<MailboxView {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mailbox-conversation-agent:agent-001")).toBeDefined();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("mailbox-conversation-agent:agent-001"));
+    });
+
+    await waitFor(() => {
+      const replyContext = screen.getByTestId("mailbox-selected-reply-context");
+      expect(replyContext).toBeDefined();
+      expect(replyContext).toHaveClass("mailbox-reply-context");
+      expect(screen.getByTestId("mailbox-message-body")).toHaveTextContent("I have the answer now");
     });
   });
 

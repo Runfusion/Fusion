@@ -967,6 +967,17 @@ export interface GlobalSettings {
    *  false/undefined, the dashboard will auto-open the onboarding modal.
    *  Also set to true when the user explicitly dismisses onboarding. */
   modelOnboardingComplete?: boolean;
+  /** When true, route AI model calls through the locally-installed Claude CLI
+   *  via the `pi-claude-cli` pi extension (instead of the direct Anthropic
+   *  API). Enabling this also causes Fusion to symlink its skill into each
+   *  project's `.claude/skills/fusion/` on `fn init`, `fn project add`,
+   *  dashboard project creation, and server startup — so the skill is
+   *  available inside Claude Code sessions that pi spawns.
+   *
+   *  When left undefined, detection falls back to scanning the `packages`
+   *  array in the agent settings for `"npm:pi-claude-cli"` (legacy signal).
+   *  Setting this field explicitly (true/false) always wins. */
+  useClaudeCli?: boolean;
   /** Global baseline AI model provider for task execution (executor agent).
    *  This is the global lane that project-level `executionProvider` can override.
    *  Must be set together with `executionGlobalModelId`. Falls back to
@@ -2904,6 +2915,18 @@ export type ParticipantType = "agent" | "user" | "system";
 /** Message types/categories */
 export type MessageType = "agent-to-agent" | "agent-to-user" | "user-to-agent" | "system";
 
+/** Stable metadata contract for linking a reply to an earlier message. */
+export interface MessageReplyReference {
+  /** ID of the message this one is replying to. */
+  messageId: string;
+}
+
+/** Optional metadata attached to mailbox messages. */
+export interface MessageMetadata extends Record<string, unknown> {
+  /** Optional link to the original message when this message is a reply. */
+  replyTo?: MessageReplyReference;
+}
+
 /** Message record stored in the system */
 export interface Message {
   /** Unique identifier */
@@ -2923,7 +2946,7 @@ export interface Message {
   /** Whether the recipient has read this message */
   read: boolean;
   /** Optional extra data */
-  metadata?: Record<string, unknown>;
+  metadata?: MessageMetadata;
   /** ISO-8601 timestamp of creation */
   createdAt: string;
   /** ISO-8601 timestamp of last update */
@@ -2945,7 +2968,7 @@ export interface MessageCreateInput {
   /** Message category */
   type: MessageType;
   /** Optional extra data */
-  metadata?: Record<string, unknown>;
+  metadata?: MessageMetadata;
 }
 
 /** Filter options for querying messages */
@@ -2958,6 +2981,21 @@ export interface MessageFilter {
   limit?: number;
   /** Number of messages to skip (for pagination) */
   offset?: number;
+}
+
+/** Validate mailbox metadata, including reply-link contract when present. */
+export function validateMessageMetadata(metadata: MessageMetadata | undefined): void {
+  if (!metadata || metadata.replyTo === undefined) {
+    return;
+  }
+
+  if (typeof metadata.replyTo !== "object" || metadata.replyTo === null || Array.isArray(metadata.replyTo)) {
+    throw new Error("metadata.replyTo must be an object");
+  }
+
+  if (typeof metadata.replyTo.messageId !== "string" || metadata.replyTo.messageId.trim().length === 0) {
+    throw new Error("metadata.replyTo.messageId must be a non-empty string");
+  }
 }
 
 /** Mailbox summary for a participant */

@@ -182,6 +182,9 @@ import { TaskExecutor, buildExecutionPrompt } from "./executor.js";
 import { createFnAgent } from "./pi.js";
 import { reviewStep as mockedReviewStepFn } from "./reviewer.js";
 import { execSync } from "node:child_process";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { findWorktreeUser, aiMergeTask } from "./merger.js";
 import { WorktreePool } from "./worktree-pool.js";
 import { generateWorktreeName, slugify } from "./worktree-names.js";
@@ -8115,6 +8118,119 @@ describe("Workflow Steps Execution", () => {
 
     // onError should NOT be called (task is being retried, not permanently failed)
     expect(onError).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
+  it("routes exhausted prompt-mode workflow hard failures back to remediation and only reopens the last step", async () => {
+    const store = createMockStore();
+
+    const tempRoot = await mkdtemp(join(tmpdir(), "fn-2301-workflow-"));
+    const fusionDir = join(tempRoot, ".fusion");
+    const promptPath = join(fusionDir, "tasks", "FN-001", "PROMPT.md");
+    await mkdir(join(fusionDir, "tasks", "FN-001"), { recursive: true });
+    await writeFile(promptPath, "# Task\n\n## Steps\n\n- [x] Step 0\n- [x] Step 1\n", "utf-8");
+    store.getFusionDir.mockReturnValue(fusionDir);
+
+    const mutableTask = {
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress" as const,
+      dependencies: [] as string[],
+      steps: [
+        { name: "Step 0", status: "done" as const },
+        { name: "Step 1", status: "done" as const },
+      ],
+      currentStep: 1,
+      log: [] as any[],
+      enabledWorkflowSteps: ["WS-001"],
+      workflowStepRetries: 3,
+      prompt: "# test\n## Steps\n### Step 0\n- [x] done\n### Step 1\n- [x] done",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    store.getTask.mockImplementation(async () => mutableTask);
+
+    store.updateStep.mockImplementation(async (_taskId: string, stepIndex: number, status: string) => {
+      if (mutableTask.steps[stepIndex]) {
+        mutableTask.steps[stepIndex].status = status as any;
+      }
+      return {};
+    });
+
+    store.getWorkflowStep.mockResolvedValue({
+      id: "WS-001",
+      name: "Frontend UX Design",
+      description: "Verify UX polish",
+      mode: "prompt",
+      prompt: "Review and report issues.",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    let callIdx = 0;
+    mockedCreateFnAgent.mockImplementation((async (opts: any) => {
+      callIdx++;
+      if (callIdx === 1) {
+        const customTools = opts.customTools || [];
+        const session = {
+          prompt: vi.fn().mockImplementation(async () => {
+            const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+            if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
+          }),
+          dispose: vi.fn(),
+          subscribe: vi.fn(),
+          on: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+          state: {},
+        };
+        return { session };
+      }
+
+      return {
+        session: {
+          prompt: vi.fn().mockRejectedValue(new Error("Quality gate hard failure: spacing regression in dashboard cards")),
+          dispose: vi.fn(),
+          subscribe: vi.fn(),
+          on: vi.fn(),
+          state: {},
+        },
+      };
+    }) as any);
+
+    const onError = vi.fn();
+    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+
+    vi.useFakeTimers();
+
+    await executor.execute({ ...mutableTask });
+
+    expect(store.addTaskComment).toHaveBeenCalledWith(
+      "FN-001",
+      expect.stringContaining("Workflow step failed"),
+      "agent",
+    );
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-review");
+
+    const updateStepCalls = store.updateStep.mock.calls
+      .filter((call: any[]) => call[0] === "FN-001" && call[2] === "pending")
+      .map((call: any[]) => call[1]);
+    expect(updateStepCalls).toContain(1);
+    expect(updateStepCalls).not.toContain(0);
+
+    vi.advanceTimersByTime(0);
+    await vi.runAllTimersAsync();
+
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress");
+    expect(onError).not.toHaveBeenCalled();
+
+    const promptContent = await readFile(promptPath, "utf-8");
+    expect(promptContent).toContain("## Workflow Step Failure");
+    expect(promptContent).toContain("Frontend UX Design");
+    expect(promptContent).toContain("Quality gate hard failure");
 
     vi.useRealTimers();
   });

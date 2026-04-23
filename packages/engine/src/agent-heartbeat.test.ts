@@ -1991,6 +1991,7 @@ describe("HeartbeatMonitor", () => {
           createMessage({
             id: "msg-1",
             fromId: "agent-2",
+            fromType: "agent",
             content: "Hello from agent-2",
             createdAt: "2024-01-15T10:30:00.000Z",
           }),
@@ -2031,8 +2032,8 @@ describe("HeartbeatMonitor", () => {
         expect(promptCalls.length).toBeGreaterThan(0);
         const executionPrompt = promptCalls[promptCalls.length - 1][0];
         expect(executionPrompt).toContain("Pending Messages:");
-        expect(executionPrompt).toContain("Hello from agent-2");
-        expect(executionPrompt).toContain("Hello from user");
+        expect(executionPrompt).toContain("[id: msg-1] [from: agent:agent-2] Hello from agent-2");
+        expect(executionPrompt).toContain("[id: msg-2] [from: user:user-1] Hello from user");
       });
 
       it("does not include message section when no unread messages", async () => {
@@ -2320,8 +2321,8 @@ describe("HeartbeatMonitor", () => {
         expect(executionPrompt).toContain("Hello from agent-2");
       });
 
-      describe("end-to-end agent-to-agent message flow", () => {
-        it("proves full message flow from send to wake to processing to reply", async () => {
+      describe("end-to-end message flow", () => {
+        it("proves wake-on-message can surface a user message and send a linked reply", async () => {
           const messages: Map<string, Message[]> = new Map();
           let messageCounter = 0;
 
@@ -2365,27 +2366,15 @@ describe("HeartbeatMonitor", () => {
             }),
           } as unknown as MessageStore;
 
-          // Agent A sends a message to Agent B
-          const sentMessage = fakeMessageStore.sendMessage({
-            fromId: "agent-alpha",
-            fromType: "agent",
+          const inboundFromUser = fakeMessageStore.sendMessage({
+            fromId: "dashboard",
+            fromType: "user",
             toId: "agent-beta",
             toType: "agent",
-            content: "Hello Agent Beta, please process task FN-001.",
-            type: "agent-to-agent",
-            metadata: { taskId: "FN-001" },
+            content: "Can you post a status update?",
+            type: "user-to-agent",
           });
 
-          expect(sentMessage.id).toBeDefined();
-          expect(sentMessage.content).toContain("Hello Agent Beta");
-
-          // Verify message is stored in Agent B's inbox
-          const inbox = fakeMessageStore.getInbox("agent-beta", "agent", { read: false });
-          expect(inbox).toHaveLength(1);
-          expect(inbox[0].id).toBe(sentMessage.id);
-          expect(inbox[0].content).toBe(sentMessage.content);
-
-          // Create a monitor for Agent B with fake MessageStore
           const store = createStoreWithAgentForExec({
             id: "agent-beta",
             name: "Agent Beta",
@@ -2402,25 +2391,40 @@ describe("HeartbeatMonitor", () => {
             rootDir: "/tmp",
           });
 
-          // Execute heartbeat to process the message (simulating wake-on-message trigger)
           const result = await monitor.executeHeartbeat({
             agentId: "agent-beta",
             source: "on_demand",
             triggerDetail: "wake-on-message",
           });
 
-          // Verify heartbeat completed
           expect(result.status).toBe("completed");
 
-          // Verify the execution prompt included the message
           const promptCalls = mockSession.prompt.mock.calls;
-          expect(promptCalls.length).toBeGreaterThan(0);
-          const executionPrompt = promptCalls[promptCalls.length - 1][0];
-          expect(executionPrompt).toContain("Hello Agent Beta");
+          const executionPrompt = promptCalls[promptCalls.length - 1]?.[0] as string;
           expect(executionPrompt).toContain("Pending Messages:");
+          expect(executionPrompt).toContain(`[id: ${inboundFromUser.id}]`);
+          expect(executionPrompt).toContain("dashboard");
 
-          // Verify messages were marked as read after successful processing
-          expect(fakeMessageStore.getMailbox("agent-beta", "agent").unreadCount).toBe(0);
+          const callArgs = mockedCreateFnAgent.mock.calls[0]![0]!;
+          const sendMessageTool = callArgs.customTools?.find((tool: { name: string }) => tool.name === "send_message");
+          expect(sendMessageTool).toBeDefined();
+
+          await sendMessageTool!.execute(
+            "tool-call",
+            {
+              to_id: "dashboard",
+              content: "Status: I am on it.",
+              type: "agent-to-user",
+              reply_to_message_id: inboundFromUser.id,
+            },
+            undefined,
+            undefined,
+            {} as any,
+          );
+
+          const dashboardInbox = fakeMessageStore.getInbox("dashboard", "user");
+          const linkedReply = dashboardInbox.find((message) => message.content === "Status: I am on it.");
+          expect(linkedReply?.metadata).toEqual({ replyTo: { messageId: inboundFromUser.id } });
 
           await monitor.stop();
         });
@@ -2637,6 +2641,11 @@ describe("HeartbeatMonitor", () => {
       it("both prompts include memory boundaries section", () => {
         expect(HEARTBEAT_SYSTEM_PROMPT).toContain("## Memory Boundaries");
         expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("## Memory Boundaries");
+      });
+
+      it("both prompts instruct replies to include reply_to_message_id", () => {
+        expect(HEARTBEAT_SYSTEM_PROMPT).toContain("reply_to_message_id");
+        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("reply_to_message_id");
       });
 
       it("no-task system prompt processing messages section does not reference task_log", () => {

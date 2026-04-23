@@ -493,6 +493,7 @@ export function ModelOnboardingModal({
   const [authActionInProgress, setAuthActionInProgress] = useState<string | null>(null);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
+  const [useClaudeCli, setUseClaudeCli] = useState<boolean>(false);
   const [saving, setSaving] = useState(false);
   const [apiKeyInputs, setApiKeyInputs] = useState<Record<string, string>>({});
   const [apiKeyErrors, setApiKeyErrors] = useState<Record<string, string>>({});
@@ -1150,13 +1151,20 @@ export function ModelOnboardingModal({
         }
       }
 
+      // Only write useClaudeCli when the user explicitly opted in; leaving
+      // the field undefined keeps the legacy packages-array fallback in play
+      // for anyone who had pi-claude-cli installed before this toggle existed.
+      if (useClaudeCli) {
+        updates.useClaudeCli = true;
+      }
+
       await updateGlobalSettings(updates);
       // Mark onboarding as completed (preserves state for completion timestamp)
       markOnboardingCompleted();
     } catch {
       // Best-effort: continue even if save fails
     }
-  }, [selectedModel, availableModels, updateGlobalSettings, markOnboardingCompleted]);
+  }, [selectedModel, availableModels, useClaudeCli, updateGlobalSettings, markOnboardingCompleted]);
 
   // Complete onboarding
   const handleComplete = useCallback(async () => {
@@ -1751,6 +1759,39 @@ export function ModelOnboardingModal({
                     </small>
                   </div>
                 )}
+              </div>
+
+              {/* Claude CLI routing toggle.
+                  Opt-in: we only flip useClaudeCli=true when the user ticks
+                  this. The backend install hooks (fn init, dashboard project
+                  add, server startup) will then symlink the fusion skill into
+                  every project's .claude/skills/fusion so Claude Code can see
+                  fn_* tools. */}
+              <div className="onboarding-model-section">
+                <h3 className="onboarding-section-title">
+                  Use the Claude CLI? (Optional)
+                </h3>
+                <label htmlFor="onboarding-useClaudeCli" className="checkbox-label">
+                  <input
+                    id="onboarding-useClaudeCli"
+                    type="checkbox"
+                    checked={useClaudeCli}
+                    onChange={(e) => setUseClaudeCli(e.target.checked)}
+                  />
+                  Route AI calls through my locally-installed Claude CLI
+                </label>
+                <OnboardingDisclosure summary="What does this do?">
+                  <p className="onboarding-helper-text">
+                    If you already have Claude CLI installed and an active
+                    Claude subscription, Fusion can send its model calls through
+                    the CLI instead of the Anthropic API — using your existing
+                    quota. Requires the <code>pi-claude-cli</code> pi extension.
+                    Fusion will also install its skill into each project's{" "}
+                    <code>.claude/skills/fusion/</code> so Claude Code can use
+                    Fusion's tools directly. You can toggle this later in
+                    Settings → Global Models.
+                  </p>
+                </OnboardingDisclosure>
               </div>
             </div>
           )}

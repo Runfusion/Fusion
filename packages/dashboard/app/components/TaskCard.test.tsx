@@ -82,6 +82,86 @@ describe("TaskCard", () => {
     expect(container.querySelector(".card-status-badge")).toBeNull();
   });
 
+  it("renders unified progress counts for task steps + workflow checks", () => {
+    render(
+      <TaskCard
+        task={makeTask({
+          steps: [
+            { name: "Step 0", status: "done" },
+            { name: "Step 1", status: "pending" },
+          ],
+          enabledWorkflowSteps: ["WS-001", "WS-002", "WS-003"],
+          workflowStepResults: [
+            {
+              workflowStepId: "WS-001",
+              workflowStepName: "Browser Verification",
+              status: "passed",
+            },
+            {
+              workflowStepId: "WS-002",
+              workflowStepName: "Frontend UX Design",
+              status: "failed",
+            },
+          ],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByText("2/5")).toBeDefined();
+    expect(screen.getByText("5 steps")).toBeDefined();
+  });
+
+  it("renders workflow checks after normal steps with mapped statuses", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          steps: [
+            { name: "Step 0", status: "done" },
+            { name: "Step 1", status: "pending" },
+          ],
+          enabledWorkflowSteps: ["WS-001", "WS-002", "WS-003"],
+          workflowStepResults: [
+            {
+              workflowStepId: "WS-001",
+              workflowStepName: "Browser Verification",
+              status: "passed",
+            },
+            {
+              workflowStepId: "WS-002",
+              workflowStepName: "Frontend UX Design",
+              status: "failed",
+            },
+          ],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const stepNames = Array.from(container.querySelectorAll(".card-step-name")).map((el) => el.textContent);
+    expect(stepNames).toEqual([
+      "Step 0",
+      "Step 1",
+      "Browser Verification",
+      "Frontend UX Design",
+      "WS-003",
+    ]);
+
+    const dots = container.querySelectorAll(".card-step-dot");
+    expect(dots[2]?.className).toContain("card-step-dot--done");
+    expect(dots[3]?.className).toContain("card-step-dot--failed");
+    expect(dots[4]?.className).toContain("card-step-dot--pending");
+
+    const workflowBadges = Array.from(container.querySelectorAll(".card-step-workflow-badge")).map((el) => el.textContent);
+    expect(workflowBadges).toEqual([
+      "Workflow · Pre-merge",
+      "Workflow · Pre-merge",
+      "Workflow · Pre-merge",
+    ]);
+  });
+
   it("shows drop indicator on file dragover and removes on dragleave", () => {
     const { container } = render(
       <TaskCard task={makeTask()} onOpenDetail={noop} addToast={noop} />,

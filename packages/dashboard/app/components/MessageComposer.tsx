@@ -9,6 +9,8 @@ import type { Agent } from "../api";
 interface MessageComposerProps {
   /** Pre-fill recipient (e.g. when replying) */
   recipient?: { id: string; type: ParticipantType } | null;
+  /** Reply context for linked replies */
+  replyContext?: { messageId: string; preview?: string } | null;
   /** List of agents for recipient selection */
   agents?: Agent[];
   /** Project ID for multi-project */
@@ -29,6 +31,7 @@ const MAX_CONTENT_LENGTH = 2000;
 
 export function MessageComposer({
   recipient,
+  replyContext,
   agents = [],
   projectId,
   onSend,
@@ -58,6 +61,7 @@ export function MessageComposer({
           toType,
           content: content.trim(),
           type: messageType,
+          ...(replyContext ? { metadata: { replyTo: { messageId: replyContext.messageId } } } : {}),
         },
         projectId,
       );
@@ -69,7 +73,7 @@ export function MessageComposer({
     } finally {
       setIsSending(false);
     }
-  }, [isValid, isSending, toId, toType, content, projectId, onSend, addToast]);
+  }, [isValid, isSending, toId, toType, content, replyContext, projectId, onSend, addToast]);
 
   const handleAgentSelect = useCallback((agentId: string) => {
     setToId(agentId);
@@ -79,7 +83,7 @@ export function MessageComposer({
   return (
     <div className="message-composer" data-testid="message-composer">
       <div className="message-composer-header">
-        <span>New Message</span>
+        <span>{replyContext ? "Reply" : "New Message"}</span>
         <button
           className="btn-icon"
           onClick={onCancel}
@@ -128,6 +132,15 @@ export function MessageComposer({
           </div>
         )}
 
+        {replyContext && (
+          <div className="message-composer-field" data-testid="message-composer-reply-context">
+            <span className="message-composer-label">Replying to:</span>
+            <span className="message-composer-recipient-fixed">
+              {replyContext.preview?.trim() ? replyContext.preview : `Message ${replyContext.messageId}`}
+            </span>
+          </div>
+        )}
+
         {/* Content */}
         <div className="message-composer-field message-composer-field--content">
           <label className="message-composer-label" htmlFor="message-content">
@@ -161,14 +174,14 @@ export function MessageComposer({
 
       <div className="message-composer-footer">
         <button
-          className="btn-sm btn-secondary"
+          className="btn btn-sm btn-secondary"
           onClick={onCancel}
           data-testid="message-composer-cancel-btn"
         >
           Cancel
         </button>
         <button
-          className="btn-sm btn-primary"
+          className="btn btn-sm btn-primary"
           onClick={handleSend}
           disabled={!isValid || isSending}
           data-testid="message-composer-send"

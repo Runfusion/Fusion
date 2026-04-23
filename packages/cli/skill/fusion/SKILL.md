@@ -1,11 +1,11 @@
 ---
 name: fusion
-description: AI-orchestrated task board (Fusion/kb) interface. Use when working with the Fusion task management system, creating or managing tasks, understanding task workflows, organizing work into missions, or interfacing with the kb dashboard. Triggers on "create a task", "list tasks", "show board", "plan a mission", "check task status", "import issues", or any Fusion/kb interaction.
+description: AI-orchestrated task board (Fusion) interface. Use when working with the Fusion task management system, creating or managing tasks, understanding task workflows, organizing work into missions, or interfacing with the fusion dashboard. Triggers on "create a task", "list tasks", "show board", "plan a mission", "check task status", "import issues", or any Fusion interaction.
 ---
 
 <essential_principles>
 
-Fusion (kb) is an AI-orchestrated task board. You throw in rough ideas; AI specifies, executes, reviews, and delivers them.
+Fusion is an AI-orchestrated task board. You throw in rough ideas; AI specifies, executes, reviews, and delivers them.
 
 **Task lifecycle:** Triage → Todo → In Progress → In Review → Done → Archived
 

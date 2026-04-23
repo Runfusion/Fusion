@@ -10,6 +10,7 @@ import { useBadgeWebSocket } from "../hooks/useBadgeWebSocket";
 import { getFreshBatchData } from "../hooks/useBatchBadgeFetch";
 import { useTaskDiffStats } from "../hooks/useTaskDiffStats";
 import { isTaskStuck } from "../utils/taskStuck";
+import { getUnifiedTaskProgress } from "../utils/taskProgress";
 import type { ToastType } from "../hooks/useToast";
 
 // ── Mission title caching ───────────────────────────────────────────────────
@@ -74,6 +75,15 @@ const EDITABLE_COLUMNS: Set<Column> = new Set(["triage", "todo"]);
 
 const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "specifying"]);
 
+const COLUMN_PROGRESS_COLOR_MAP: Record<Column, string> = {
+  triage: "var(--triage)",
+  todo: "var(--todo)",
+  "in-progress": "var(--in-progress)",
+  "in-review": "var(--in-review)",
+  done: "var(--done)",
+  archived: "var(--text-muted)",
+};
+
 interface TaskCardProps {
   task: Task;
   projectId?: string;
@@ -122,6 +132,32 @@ function areTaskStepsEqual(previous: Task["steps"], next: Task["steps"]): boolea
 function areTaskDependenciesEqual(previous: string[], next: string[]): boolean {
   if (previous.length !== next.length) return false;
   return previous.every((dependency, index) => dependency === next[index]);
+}
+
+function areTaskWorkflowStepIdsEqual(previous?: string[], next?: string[]): boolean {
+  if (!previous && !next) return true;
+  if (!previous || !next) return false;
+  if (previous.length !== next.length) return false;
+  return previous.every((stepId, index) => stepId === next[index]);
+}
+
+function areTaskWorkflowResultsEqual(previous?: Task["workflowStepResults"], next?: Task["workflowStepResults"]): boolean {
+  if (!previous && !next) return true;
+  if (!previous || !next) return false;
+  if (previous.length !== next.length) return false;
+  return previous.every((result, index) => {
+    const nextResult = next[index];
+    if (!nextResult) return false;
+    return (
+      result.workflowStepId === nextResult.workflowStepId &&
+      result.workflowStepName === nextResult.workflowStepName &&
+      result.phase === nextResult.phase &&
+      result.status === nextResult.status &&
+      result.output === nextResult.output &&
+      result.startedAt === nextResult.startedAt &&
+      result.completedAt === nextResult.completedAt
+    );
+  });
 }
 
 /**
@@ -215,6 +251,8 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     areCommentsEqual(previousTask.comments, nextTask.comments) &&
     areTaskDependenciesEqual(previousTask.dependencies, nextTask.dependencies) &&
     areTaskStepsEqual(previousTask.steps, nextTask.steps) &&
+    areTaskWorkflowStepIdsEqual(previousTask.enabledWorkflowSteps, nextTask.enabledWorkflowSteps) &&
+    areTaskWorkflowResultsEqual(previousTask.workflowStepResults, nextTask.workflowStepResults) &&
     areTaskBadgeInfosEqual(previousTask.prInfo, nextTask.prInfo) &&
     areTaskBadgeInfosEqual(previousTask.issueInfo, nextTask.issueInfo)
   );
@@ -486,6 +524,10 @@ function TaskCardComponent({
   const canEdit = EDITABLE_COLUMNS.has(task.column) && !isAgentActive && !isPaused && !queued && onUpdateTask;
   const hasGitHubBadge = Boolean(task.prInfo || task.issueInfo);
   const isAgentNameLoading = Boolean(task.assignedAgentId && agentName === null);
+  const unifiedProgress = useMemo(
+    () => getUnifiedTaskProgress(task),
+    [task.steps, task.enabledWorkflowSteps, task.workflowStepResults],
+  );
 
   useEffect(() => {
     if (!hasGitHubBadge || !isInViewport) {
@@ -930,9 +972,8 @@ function TaskCardComponent({
       <div className="card-title" title={task.title || task.description || undefined}>
         {truncate(task.title, MAX_TITLE_LENGTH) || truncate(task.description, MAX_TITLE_LENGTH) || task.id}
       </div>
-      {task.steps.length > 0 && (() => {
-        const completedSteps = task.steps.filter((s) => s.status === "done" || s.status === "skipped").length;
-        const totalSteps = task.steps.length;
+      {unifiedProgress.total > 0 && (() => {
+        const progressPercent = (unifiedProgress.completed / unifiedProgress.total) * 100;
         return (
           <>
             <div className="card-progress">
@@ -940,12 +981,12 @@ function TaskCardComponent({
                 <div
                   className="card-progress-fill"
                   style={{
-                    width: `${(completedSteps / totalSteps) * 100}%`,
-                    backgroundColor: `var(--${task.column})`,
+                    width: `${progressPercent}%`,
+                    backgroundColor: COLUMN_PROGRESS_COLOR_MAP[task.column],
                   }}
                 />
               </div>
-              <span className="card-progress-label">{completedSteps}/{totalSteps}</span>
+              <span className="card-progress-label">{unifiedProgress.completed}/{unifiedProgress.total}</span>
             </div>
             <button
               type="button"
@@ -954,7 +995,7 @@ function TaskCardComponent({
               aria-expanded={showSteps}
               aria-label={showSteps ? "Hide steps" : "Show steps"}
             >
-              <span>{totalSteps} steps</span>
+              <span>{unifiedProgress.total} steps</span>
               <ChevronDown
                 size={14}
                 className={`card-steps-toggle-icon${showSteps ? " expanded" : ""}`}
@@ -962,8 +1003,8 @@ function TaskCardComponent({
             </button>
             {showSteps && (
               <div className="card-steps-list">
-                {task.steps.map((step, index) => (
-                  <div key={index} className="card-step-item">
+                {unifiedProgress.items.map((step) => (
+                  <div key={step.id} className="card-step-item">
                     <span
                       className={`card-step-dot card-step-dot--${step.status}`}
                       aria-hidden="true"
@@ -971,6 +1012,14 @@ function TaskCardComponent({
                     <span className={`card-step-name${step.status === "done" ? " completed" : ""}`}>
                       {step.name}
                     </span>
+                    {step.source === "workflow" && (
+                      <span
+                        className={`card-step-workflow-badge card-step-workflow-badge--${step.phase}`}
+                        title={step.phase === "post-merge" ? "Post-merge workflow check" : "Pre-merge workflow check"}
+                      >
+                        {step.phase === "post-merge" ? "Workflow · Post-merge" : "Workflow · Pre-merge"}
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>

@@ -104,18 +104,35 @@ The revision block replaces any prior revision instructions (no accumulation).
 
 Not all workflow failures are revision requests:
 
-- **Revision requested**: Implementation needs changes → routes back to executor
-- **Hard failure**: Unrecoverable issue → moves to `in-review` with `failed` status
+- **Revision requested**: Implementation needs changes → routes back to executor in-place while keeping the task in `in-progress`
+- **Hard failure**: Treated as remediable until retries are exhausted; the executor injects feedback and sends the task through `todo → in-progress` for a fresh remediation pass
 
-Use revision requests when the implementation is wrong but fixable. Use hard failures only for genuine blockers (e.g., required files are missing, test infrastructure is broken).
+#### Pre-merge hard failure remediation flow
+
+For pre-merge workflow hard failures, executor behavior is:
+
+1. Retry the failing check up to `MAX_WORKFLOW_STEP_RETRIES` within the same execution lifecycle
+2. On retry exhaustion, add a steering comment with failure details and inject a `Workflow Step Failure` section into `PROMPT.md`
+3. Reopen only the last implementation step (`pending`) so prior completed work remains preserved
+4. Schedule `todo → in-progress` after guard unwind, triggering a fresh executor remediation run
+
+Tasks are not parked in `in-review` for this remediable path unless additional terminal failures occur.
+
+#### Self-healing recovery for parked review tasks
+
+If a task is found in `in-review` with failed pre-merge workflow results and no active executor, self-healing can auto-revive it (bounded by `maxPostReviewFixes`) by replaying the same remediation send-back flow.
 
 ## Viewing Results
 
-Task detail modal includes a **Workflow** tab when workflow data exists.
+Workflow status is visible in multiple places:
 
-You can inspect:
+- **Task cards**: workflow checks are shown after normal implementation steps in the step list; each workflow row is labeled (`Workflow · Pre-merge` / `Workflow · Post-merge`) and progress counts include both implementation and workflow checks
+- **List view (desktop + mobile)**: progress labels/bars use the same unified step model as task cards
+- **Task detail modal**: includes a **Workflow** tab when workflow data exists
 
-- pass/fail/skipped status
+In the Workflow tab, you can inspect:
+
+- pass/fail/skipped/running status
 - outputs/findings
 - timing metadata
 

@@ -38,6 +38,10 @@ import {
 } from "./task-lifecycle.js";
 import { promptForPort } from "./port-prompt.js";
 import { createReadOnlyProviderSettingsView } from "./provider-settings.js";
+import {
+  ensureClaudeSkillsForAllProjectsOnStartup,
+  maybeInstallClaudeSkillForNewProject,
+} from "./claude-skills-runner.js";
 import { createReadOnlyAuthFileStorage, mergeAuthStorageReads, wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
 import { getFusionAuthPath, getLegacyAuthPaths, getModelRegistryModelsPath, getPackageManagerAgentDir } from "./auth-paths.js";
 import { resolveProject } from "../project-context.js";
@@ -295,6 +299,22 @@ export async function runDaemon(opts: DaemonOptions = {}) {
   await engineManager.startAll();
   engineManager.startReconciliation();
 
+  // Backfill Claude Code skills for all registered projects. No-op when
+  // pi-claude-cli isn't configured; non-blocking to protect startup latency.
+  void (async () => {
+    try {
+      if (!sharedCentralCore) return;
+      const projects = await sharedCentralCore.listProjects();
+      ensureClaudeSkillsForAllProjectsOnStartup(
+        projects.map((p) => ({ id: p.id, name: p.name, path: p.path })),
+      );
+    } catch (err) {
+      console.warn(
+        `[fusion] Claude skill reconciliation failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  })();
+
   // ── PeerExchangeService: gossip protocol for mesh peer discovery ──────
   let peerExchangeService: PeerExchangeService | null = null;
   if (sharedCentralCore) {
@@ -327,7 +347,12 @@ export async function runDaemon(opts: DaemonOptions = {}) {
   }
 
   // ── PluginStore: plugin installation management ─────────────────────
-  const pluginStore = new PluginStore(store.getRootDir());
+  // Some mocked stores used in tests may not implement getRootDir(); fall
+  // back to the resolved runtime cwd in that case.
+  const storeRootDir = typeof (store as { getRootDir?: () => string }).getRootDir === "function"
+    ? (store as { getRootDir: () => string }).getRootDir()
+    : cwd;
+  const pluginStore = new PluginStore(storeRootDir);
   await pluginStore.init();
 
   // ── PluginLoader: plugin lifecycle management ───────────────────────
@@ -432,6 +457,9 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     pluginLoader,
     pluginRunner: pluginLoader,
     onProjectFirstAccessed: (projectId: string) => engineManager.onProjectAccessed(projectId),
+    onProjectRegistered: ({ path }) => {
+      maybeInstallClaudeSkillForNewProject(path);
+    },
     headless: true,
     daemon: { token: daemonToken },
     skillsAdapter,

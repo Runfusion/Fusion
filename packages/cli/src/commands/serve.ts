@@ -42,6 +42,10 @@ import { createReadOnlyProviderSettingsView, createProjectSettingsPersistence } 
 import { createReadOnlyAuthFileStorage, mergeAuthStorageReads, wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
 import { getFusionAuthPath, getLegacyAuthPaths, getModelRegistryModelsPath, getPackageManagerAgentDir } from "./auth-paths.js";
 import { resolveProject } from "../project-context.js";
+import {
+  ensureClaudeSkillsForAllProjectsOnStartup,
+  maybeInstallClaudeSkillForNewProject,
+} from "./claude-skills-runner.js";
 
 const DIAGNOSTIC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 let diagnosticIntervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -316,6 +320,25 @@ export async function runServe(
   // Start engines for all registered projects eagerly
   await engineManager.startAll();
 
+  // Backfill Claude Code skills for any registered project that's missing
+  // `.claude/skills/fusion`. Runs only when pi-claude-cli is configured; for
+  // users on the direct Anthropic provider this is a no-op and leaves no
+  // trace in the project tree. Non-blocking — we don't want a slow FS to
+  // delay server listen.
+  void (async () => {
+    try {
+      if (!sharedCentralCore) return;
+      const projects = await sharedCentralCore.listProjects();
+      ensureClaudeSkillsForAllProjectsOnStartup(
+        projects.map((p) => ({ id: p.id, name: p.name, path: p.path })),
+      );
+    } catch (err) {
+      console.warn(
+        `[fusion] Claude skill reconciliation failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  })();
+
   // Start background reconciliation to detect and start engines for projects
   // registered after startup (without requiring headless node API access).
   // This ensures project task execution starts from backend runtime alone.
@@ -373,7 +396,11 @@ export async function runServe(
   // internally for task-execution plugin hooks. These instances here serve the
   // HTTP plugin-management API routes and are intentionally separate.
   //
-  const pluginStore = new PluginStore(store.getRootDir());
+  const pluginStoreRootDir =
+    typeof (store as { getRootDir?: () => string }).getRootDir === "function"
+      ? store.getRootDir()
+      : store.getFusionDir();
+  const pluginStore = new PluginStore(pluginStoreRootDir);
   await pluginStore.init();
 
   // ── PluginLoader: plugin lifecycle management ───────────────────────
@@ -589,6 +616,11 @@ export async function runServe(
     pluginLoader,
     pluginRunner: pluginLoader,
     onProjectFirstAccessed: (projectId: string) => engineManager.onProjectAccessed(projectId),
+    onProjectRegistered: ({ path }) => {
+      // Fire-and-forget: install the fusion Claude-skill when pi-claude-cli
+      // is configured. The runner logs its own outcome and swallows errors.
+      maybeInstallClaudeSkillForNewProject(path);
+    },
     headless: true,
     skillsAdapter,
     daemon: daemonToken ? { token: daemonToken } : undefined,

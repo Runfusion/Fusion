@@ -24,6 +24,7 @@ import type {
   TaskDocumentWithTask,
 
   Message,
+  MessageMetadata,
   MessageType,
   ParticipantType,
   NodeConfig,
@@ -6131,7 +6132,7 @@ export interface SendMessageInput {
   toType: ParticipantType;
   content: string;
   type: MessageType;
-  metadata?: Record<string, unknown>;
+  metadata?: MessageMetadata;
 }
 
 /** Fetch inbox messages for the current user. */

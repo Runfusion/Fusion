@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, Fragment, useEffect, useRef } from "react";
 import { LayoutGrid, List as ListIcon, ArrowUpDown, ArrowUp, ArrowDown, Link, Columns3, EyeOff, Eye, ChevronRight } from "lucide-react";
-import type { Task, TaskDetail, Column, TaskStep, TaskCreateInput } from "@fusion/core";
+import type { Task, TaskDetail, Column, TaskCreateInput } from "@fusion/core";
 import { COLUMN_LABELS, COLUMNS } from "@fusion/core";
 import { batchUpdateTaskModels } from "../api";
 import type { ModelInfo } from "../api";
@@ -10,6 +10,7 @@ import { isTaskStuck } from "../utils/taskStuck";
 import type { ToastType } from "../hooks/useToast";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
+import { getUnifiedTaskProgress } from "../utils/taskProgress";
 
 const COLUMN_COLOR_MAP: Record<Column, string> = {
   triage: "var(--triage)",
@@ -132,16 +133,17 @@ interface ListViewProps {
   lastFetchTimeMs?: number;
 }
 
-function getStepProgress(steps: TaskStep[]): string {
-  if (steps.length === 0) return "-";
-  const done = steps.filter((s) => s.status === "done").length;
-  return `${done}/${steps.length}`;
-}
+function getTaskProgress(task: Task): { label: string; percent: number; hasProgress: boolean } {
+  const progress = getUnifiedTaskProgress(task);
+  if (progress.total === 0) {
+    return { label: "-", percent: 0, hasProgress: false };
+  }
 
-function getStepProgressPercent(steps: TaskStep[]): number {
-  if (steps.length === 0) return 0;
-  const done = steps.filter((s) => s.status === "done").length;
-  return (done / steps.length) * 100;
+  return {
+    label: `${progress.completed}/${progress.total}`,
+    percent: (progress.completed / progress.total) * 100,
+    hasProgress: true,
+  };
 }
 
 export function ListView({
@@ -816,7 +818,8 @@ export function ListView({
                             (task.column === "in-progress" || ACTIVE_STATUSES.has(task.status as string));
                           const hasStatus = typeof task.status === "string" && task.status.trim().length > 0;
                           const hasDependencies = Boolean(task.dependencies && task.dependencies.length > 0);
-                          const hasSteps = task.steps.length > 0;
+                          const taskProgress = getTaskProgress(task);
+                          const hasProgress = taskProgress.hasProgress;
                           const isSelectionMode = selectedTaskIds.size > 0;
 
                           return (
@@ -858,25 +861,25 @@ export function ListView({
                                 <div className="list-card-title">{task.title || task.description}</div>
                               </div>
 
-                              {(hasDependencies || hasSteps) && (
+                              {(hasDependencies || hasProgress) && (
                                 <div className="list-card-row list-card-meta">
                                   {hasDependencies && (
                                     <span className="list-dep-badge" title={task.dependencies.join(", ")}>
                                       <Link size={12} /> {task.dependencies.length}
                                     </span>
                                   )}
-                                  {hasSteps && (
+                                  {hasProgress && (
                                     <div className="list-progress">
                                       <div className="list-progress-bar">
                                         <div
                                           className="list-progress-fill"
                                           style={{
-                                            width: `${getStepProgressPercent(task.steps)}%`,
+                                            width: `${taskProgress.percent}%`,
                                             backgroundColor: COLUMN_COLOR_MAP[task.column],
                                           }}
                                         />
                                       </div>
-                                      <span className="list-progress-label">{getStepProgress(task.steps)}</span>
+                                      <span className="list-progress-label">{taskProgress.label}</span>
                                     </div>
                                   )}
                                 </div>
@@ -1071,22 +1074,24 @@ export function ListView({
                                 )}
                                 {visibleColumns.has("progress") && (
                                   <td className="list-cell list-cell-progress">
-                                    {task.steps.length > 0 ? (
-                                      <div className="list-progress">
-                                        <div className="list-progress-bar">
-                                          <div
-                                            className="list-progress-fill"
-                                            style={{
-                                              width: `${getStepProgressPercent(task.steps)}%`,
-                                              backgroundColor: COLUMN_COLOR_MAP[task.column],
-                                            }}
-                                          />
+                                    {(() => {
+                                      const taskProgress = getTaskProgress(task);
+                                      if (!taskProgress.hasProgress) return "-";
+                                      return (
+                                        <div className="list-progress">
+                                          <div className="list-progress-bar">
+                                            <div
+                                              className="list-progress-fill"
+                                              style={{
+                                                width: `${taskProgress.percent}%`,
+                                                backgroundColor: COLUMN_COLOR_MAP[task.column],
+                                              }}
+                                            />
+                                          </div>
+                                          <span className="list-progress-label">{taskProgress.label}</span>
                                         </div>
-                                        <span className="list-progress-label">{getStepProgress(task.steps)}</span>
-                                      </div>
-                                    ) : (
-                                      "-"
-                                    )}
+                                      );
+                                    })()}
                                   </td>
                                 )}
                               </tr>

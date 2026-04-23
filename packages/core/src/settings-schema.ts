@@ -29,6 +29,7 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   favoriteModels: undefined,
   openrouterModelSync: true,
   modelOnboardingComplete: undefined,
+  useClaudeCli: undefined,
   // Global baseline lanes for per-role model selection
   executionGlobalProvider: undefined,
   executionGlobalModelId: undefined,

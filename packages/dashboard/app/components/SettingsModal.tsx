@@ -1224,6 +1224,28 @@ export function SettingsModal({
                 to skip the initial API call and use only the built-in model list.
               </small>
             </div>
+
+            {/* --- Claude CLI routing --- */}
+            <h4 className="settings-section-heading settings-section-heading--spaced">Claude CLI</h4>
+            <div className="form-group">
+              <label htmlFor="useClaudeCli" className="checkbox-label">
+                <input
+                  id="useClaudeCli"
+                  type="checkbox"
+                  checked={form.useClaudeCli === true}
+                  onChange={(e) => setForm((f) => ({ ...f, useClaudeCli: e.target.checked }))}
+                />
+                Route AI calls through the Claude CLI (via pi-claude-cli)
+              </label>
+              <small>
+                When enabled, Fusion sends model calls to your locally-installed Claude CLI instead
+                of the direct Anthropic API — useful if you already have a Claude subscription and
+                want to use its quota. Requires <code>pi-claude-cli</code> installed as a pi
+                extension. Fusion will also install its skill into each project's{" "}
+                <code>.claude/skills/fusion/</code> so Claude Code sessions can use the{" "}
+                <code>fn_*</code> tools natively.
+              </small>
+            </div>
           </>
         );
       }

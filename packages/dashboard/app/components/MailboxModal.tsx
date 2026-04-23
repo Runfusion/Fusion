@@ -75,6 +75,11 @@ function messageTypeLabel(type: MessageType): string {
   }
 }
 
+function messagePreview(content: string, max = 80): string {
+  if (content.length <= max) return content;
+  return `${content.slice(0, max)}…`;
+}
+
 // ── Component ─────────────────────────────────────────────────────────────
 
 export function MailboxModal({
@@ -93,6 +98,7 @@ export function MailboxModal({
   const [conversationMessages, setConversationMessages] = useState<Message[]>([]);
   const [showComposer, setShowComposer] = useState(false);
   const [composeRecipient, setComposeRecipient] = useState<{ id: string; type: ParticipantType } | null>(null);
+  const [composeReplyContext, setComposeReplyContext] = useState<{ messageId: string; preview: string } | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [agentSubTab, setAgentSubTab] = useState<"inbox" | "outbox">("inbox");
   const [agentMailbox, setAgentMailbox] = useState<AgentMailboxResponse | null>(null);
@@ -267,12 +273,17 @@ export function MailboxModal({
 
   const handleReply = useCallback((message: Message) => {
     setComposeRecipient({ id: message.fromId, type: message.fromType });
+    setComposeReplyContext({
+      messageId: message.id,
+      preview: messagePreview(message.content, 120),
+    });
     setShowComposer(true);
   }, []);
 
   const handleMessageSent = useCallback(() => {
     setShowComposer(false);
     setComposeRecipient(null);
+    setComposeReplyContext(null);
     addToast?.("Message sent", "success");
     // Refresh current tab
     if (activeTab === "outbox") loadOutbox();
@@ -286,12 +297,14 @@ export function MailboxModal({
     } else {
       setComposeRecipient(null);
     }
+    setComposeReplyContext(null);
     setShowComposer(true);
   }, [activeTab, selectedAgentId]);
 
   const handleComposeCancel = useCallback(() => {
     setShowComposer(false);
     setComposeRecipient(null);
+    setComposeReplyContext(null);
   }, []);
 
   if (!isOpen) return null;
@@ -332,7 +345,7 @@ export function MailboxModal({
             </button>
             {activeTab === "inbox" && unreadCount > 0 && (
               <button
-                className="btn-sm btn-secondary"
+                className="btn btn-sm btn-secondary"
                 onClick={handleMarkAllRead}
                 title="Mark all as read"
                 data-testid="mailbox-mark-all-read"
@@ -402,7 +415,7 @@ export function MailboxModal({
             <div className="mailbox-message-detail" data-testid="mailbox-message-detail">
               <div className="mailbox-message-detail-header">
                 <button
-                  className="btn-sm btn-secondary"
+                  className="btn btn-sm btn-secondary"
                   onClick={handleCloseMessage}
                   data-testid="mailbox-back-to-list"
                 >
@@ -415,7 +428,7 @@ export function MailboxModal({
                 <div className="mailbox-message-detail-actions">
                   {selectedMessage.fromType === "agent" && (
                     <button
-                      className="btn-sm btn-secondary"
+                      className="btn btn-sm btn-secondary"
                       onClick={() => handleReply(selectedMessage)}
                       data-testid="mailbox-reply"
                     >
@@ -424,7 +437,7 @@ export function MailboxModal({
                     </button>
                   )}
                   <button
-                    className="btn-sm btn-secondary"
+                    className="btn btn-sm btn-secondary"
                     onClick={() => handleDeleteMessage(selectedMessage.id)}
                     data-testid="mailbox-delete"
                   >
@@ -453,25 +466,44 @@ export function MailboxModal({
               {conversationMessages.length > 1 && (
                 <div className="mailbox-conversation" data-testid="mailbox-conversation">
                   <div className="mailbox-conversation-label">Conversation</div>
-                  {conversationMessages.map((msg) => (
-                    <div
-                      key={msg.id}
-                      className={`mailbox-conversation-msg ${msg.id === selectedMessage.id ? "current" : ""}`}
-                    >
-                      <div className="mailbox-conversation-msg-header">
-                        <span>{participantLabel(msg.fromId, msg.fromType)}</span>
-                        <span className="mailbox-message-time">{formatTimestamp(msg.createdAt)}</span>
+                  {conversationMessages.map((msg) => {
+                    const replyToId = msg.metadata?.replyTo?.messageId;
+                    const replyToMessage = replyToId
+                      ? conversationMessages.find((candidate) => candidate.id === replyToId)
+                      : undefined;
+
+                    return (
+                      <div
+                        key={msg.id}
+                        className={`mailbox-conversation-msg ${msg.id === selectedMessage.id ? "current" : ""}`}
+                      >
+                        <div className="mailbox-conversation-msg-header">
+                          <span>{participantLabel(msg.fromId, msg.fromType)}</span>
+                          <span className="mailbox-message-time">{formatTimestamp(msg.createdAt)}</span>
+                        </div>
+                        {replyToId && (
+                          <div className="mailbox-reply-context" data-testid={`mailbox-reply-context-${msg.id}`}>
+                            ↪ Replying to {replyToMessage ? messagePreview(replyToMessage.content, 60) : `message ${replyToId}`}
+                          </div>
+                        )}
+                        <div className="mailbox-conversation-msg-body">{msg.content}</div>
                       </div>
-                      <div className="mailbox-conversation-msg-body">{msg.content}</div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
               {/* Full message content */}
               {(conversationMessages.length <= 1) && (
-                <div className="mailbox-message-body" data-testid="mailbox-message-body">
-                  {selectedMessage.content}
-                </div>
+                <>
+                  {selectedMessage.metadata?.replyTo?.messageId && (
+                    <div className="mailbox-reply-context" data-testid="mailbox-selected-reply-context">
+                      ↪ Replying to message {selectedMessage.metadata.replyTo.messageId}
+                    </div>
+                  )}
+                  <div className="mailbox-message-body" data-testid="mailbox-message-body">
+                    {selectedMessage.content}
+                  </div>
+                </>
               )}
             </div>
           )}
@@ -480,6 +512,7 @@ export function MailboxModal({
           {showComposer && (
             <MessageComposer
               recipient={composeRecipient}
+              replyContext={composeReplyContext}
               agents={agents}
               projectId={projectId}
               onSend={handleMessageSent}

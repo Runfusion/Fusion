@@ -79,6 +79,9 @@ export const sendMessageParams = Type.Object({
     Type.Literal("agent-to-agent"),
     Type.Literal("agent-to-user"),
   ], { description: "Message type (defaults to 'agent-to-agent')" })),
+  reply_to_message_id: Type.Optional(
+    Type.String({ description: "Optional ID of the message you are replying to (use IDs from read_messages output)" }),
+  ),
 });
 
 export const readMessagesParams = Type.Object({
@@ -928,7 +931,8 @@ export function createSendMessageTool(messageStore: MessageStore, fromAgentId: s
     label: "Send Message",
     description:
       "Send a message to another agent or user. The recipient will be woken if they have " +
-      "`messageResponseMode: 'immediate'` configured.",
+      "`messageResponseMode: 'immediate'` configured. When replying to an existing message, " +
+      "include `reply_to_message_id` to preserve threading.",
     parameters: sendMessageParams,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     execute: async (_id: string, params: Static<typeof sendMessageParams>, _signal?: any, _onUpdate?: any, _ctx?: any) => {
@@ -950,6 +954,14 @@ export function createSendMessageTool(messageStore: MessageStore, fromAgentId: s
       try {
         const messageType = params.type ?? "agent-to-agent";
         const recipientType = messageType === "agent-to-user" ? "user" : "agent";
+        const replyToMessageId = params.reply_to_message_id?.trim();
+
+        if (params.reply_to_message_id !== undefined && !replyToMessageId) {
+          return {
+            content: [{ type: "text" as const, text: "ERROR: reply_to_message_id must be a non-empty string" }],
+            details: {},
+          };
+        }
 
         const message = messageStore.sendMessage({
           fromId: fromAgentId,
@@ -958,6 +970,7 @@ export function createSendMessageTool(messageStore: MessageStore, fromAgentId: s
           toType: recipientType,
           content,
           type: messageType,
+          ...(replyToMessageId ? { metadata: { replyTo: { messageId: replyToMessageId } } } : {}),
         });
 
         return {
@@ -1014,7 +1027,7 @@ export function createReadMessagesTool(messageStore: MessageStore, agentId: stri
         const lines = messages.map((msg: Message) => {
           const timestamp = new Date(msg.createdAt).toLocaleString();
           const readStatus = msg.read ? "[read] " : "[unread] ";
-          return `${readStatus}[from: ${msg.fromId}] ${msg.content} (${timestamp})`;
+          return `${readStatus}[id: ${msg.id}] [from: ${msg.fromType}:${msg.fromId}] ${msg.content} (${timestamp})`;
         });
 
         return {

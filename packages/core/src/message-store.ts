@@ -14,14 +14,7 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import type { Database } from "./db.js";
 import { fromJson, toJsonNullable } from "./db.js";
-import type {
-  Message,
-  MessageCreateInput,
-  MessageFilter,
-  MessageType,
-  Mailbox,
-  ParticipantType,
-} from "./types.js";
+import { validateMessageMetadata, type Message, type MessageCreateInput, type MessageFilter, type MessageType, type Mailbox, type ParticipantType } from "./types.js";
 
 // ── Event Types ─────────────────────────────────────────────────────
 
@@ -112,7 +105,7 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
       content: row.content,
       type: row.type as MessageType,
       read: row.read === 1,
-      metadata: fromJson<Record<string, unknown>>(row.metadata),
+      metadata: fromJson<Message["metadata"]>(row.metadata),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -126,6 +119,8 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
    * @returns The created message
    */
   sendMessage(input: MessageCreateInput): Message {
+    validateMessageMetadata(input.metadata);
+
     const now = new Date().toISOString();
     const messageId = `msg-${randomUUID().slice(0, 8)}`;
 

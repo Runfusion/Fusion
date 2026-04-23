@@ -155,12 +155,14 @@ When you are woken by an incoming message (source includes "wake-on-message"), y
 1. Use read_messages to check your inbox for unread messages.
 2. Review each message and determine the appropriate action:
    - If the message requires a response, use send_message to reply.
+   - When replying, include 'reply_to_message_id' with the original message ID from read_messages output.
    - If the message is informational, acknowledge it by logging with task_log.
    - If the message requests work, create a follow-up task with task_create or handle it directly.
 3. After processing messages, continue with your normal heartbeat duties.
 
 When sending messages:
 - Be concise and clear about what you need or what you've done.
+- Use 'reply_to_message_id' when replying so threaded conversations stay linked.
 - Include relevant context (task IDs, file paths) in metadata when applicable.
 - Use agent-to-agent for inter-agent communication.`;
 
@@ -198,12 +200,14 @@ When you are woken by an incoming message (source includes "wake-on-message"), y
 1. If read_messages is available, use it to check your inbox for unread messages.
 2. Review each message and determine the appropriate action:
    - If the message requires a response and send_message is available, use send_message to reply.
+   - When replying, include 'reply_to_message_id' with the original message ID from read_messages output.
    - If the message is informational, acknowledge it and respond via send_message when appropriate.
    - If the message requests work, create a follow-up task with task_create.
 3. After processing messages, continue with your ambient work.
 
 When sending messages:
 - Be concise and clear about what you need or what you've done.
+- Use 'reply_to_message_id' when replying so threaded conversations stay linked.
 - Include relevant context (task IDs, file paths) in metadata when applicable.
 - Use agent-to-agent for inter-agent communication.`;
 
@@ -1202,7 +1206,7 @@ export class HeartbeatMonitor {
                 "Pending Messages:",
                 ...pendingMessages.map((msg) => {
                   const timestamp = new Date(msg.createdAt).toLocaleString();
-                  return `- [from: ${msg.fromId}] ${msg.content} (${timestamp})`;
+                  return `- [id: ${msg.id}] [from: ${msg.fromType}:${msg.fromId}] ${msg.content} (${timestamp})`;
                 }),
               );
             }
@@ -1217,7 +1221,7 @@ export class HeartbeatMonitor {
               "useful ambient work. Here are some things you can do:",
               "",
               "1. **Check your messages** — Use read_messages to review any pending messages",
-              "   and use send_message to respond or communicate with other agents.",
+              "   and use send_message with reply_to_message_id when responding.",
               "",
               "2. **Create new tasks** — Use task_create to spawn follow-up work that needs",
               "   to be done. This is useful for surfacing issues or ideas you discover.",
@@ -1286,7 +1290,7 @@ export class HeartbeatMonitor {
                 "Pending Messages:",
                 ...pendingMessages.map((msg) => {
                   const timestamp = new Date(msg.createdAt).toLocaleString();
-                  return `- [from: ${msg.fromId}] ${msg.content} (${timestamp})`;
+                  return `- [id: ${msg.id}] [from: ${msg.fromType}:${msg.fromId}] ${msg.content} (${timestamp})`;
                 }),
               );
             }

@@ -1838,7 +1838,8 @@ body {
   align-items: center;
   gap: var(--space-xs);
   margin-top: 6px;
-  padding: 0;
+  min-height: calc(var(--space-xl) + var(--space-md));
+  padding: var(--space-xs) 0;
   background: none;
   border: none;
   cursor: pointer;
@@ -1851,10 +1852,9 @@ body {
   color: var(--text);
 }
 
-.card-steps-toggle:focus {
-  outline: 1px solid var(--todo);
-  outline-offset: 1px;
-  border-radius: 2px;
+.card-steps-toggle:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
 }
 
 .card-steps-toggle-icon {
@@ -1889,22 +1889,28 @@ body {
 }
 
 .card-step-dot--pending {
-  background: var(--border, #30363d);
+  background: var(--border);
 }
 
 .card-step-dot--in-progress {
-  background: var(--todo, #58a6ff);
+  background: var(--todo);
 }
 
 .card-step-dot--done {
-  background: var(--color-success, #3fb950);
+  background: var(--color-success);
 }
 
 .card-step-dot--skipped {
-  background: var(--text-dim, #484f58);
+  background: var(--text-dim);
+}
+
+.card-step-dot--failed {
+  background: var(--color-error-dark);
 }
 
 .card-step-name {
+  flex: 1;
+  min-width: 0;
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1914,6 +1920,29 @@ body {
 .card-step-name.completed {
   text-decoration: line-through;
   opacity: 0.6;
+}
+
+.card-step-workflow-badge {
+  margin-left: auto;
+  padding: 0 var(--space-xs);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.25);
+  color: var(--text-muted);
+  background: var(--surface);
+  white-space: nowrap;
+}
+
+.card-step-workflow-badge--pre-merge {
+  color: var(--in-review);
+  background: var(--status-in-review-bg);
+  border-color: color-mix(in srgb, var(--in-review) 35%, var(--border));
+}
+
+.card-step-workflow-badge--post-merge {
+  color: var(--done);
+  background: var(--status-done-bg);
+  border-color: color-mix(in srgb, var(--done) 35%, var(--border));
 }
 
 /* === ProjectCard Component === */
@@ -7486,7 +7515,7 @@ input[type="range"]:focus-visible {
   }
 
   .card-steps-toggle {
-    padding: 4px 0;
+    padding: var(--space-xs) 0;
   }
 
   /* Card: smaller status badges for 280px width */
@@ -24323,11 +24352,17 @@ html .column.drag-over * {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--space-sm, 8px);
   margin-bottom: var(--space-xs, 4px);
 }
 
 .workflow-result-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs, 4px);
+  min-width: 0;
   font-weight: 600;
   font-size: 14px;
   color: var(--text-primary, #e6edf3);
@@ -24366,20 +24401,20 @@ html .column.drag-over * {
 
 /* Phase badge base and modifier classes */
 .phase-badge {
-  margin-left: 6px;
+  margin-inline-start: var(--space-xs, 4px);
   font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 4px;
+  padding: var(--space-xs, 4px) var(--space-sm, 8px);
+  border-radius: var(--radius-sm, 4px);
 }
 
 .phase-badge--pre-merge {
-  background-color: color-mix(in srgb, var(--ws-pre-merge, #3b82f6) 15%, transparent);
-  color: var(--ws-pre-merge, #3b82f6);
+  background-color: color-mix(in srgb, var(--ws-pre-merge) 15%, transparent);
+  color: var(--ws-pre-merge);
 }
 
 .phase-badge--post-merge {
-  background-color: color-mix(in srgb, var(--ws-post-merge, #0ea58c) 15%, transparent);
-  color: var(--ws-post-merge, #0ea58c);
+  background-color: color-mix(in srgb, var(--ws-post-merge) 15%, transparent);
+  color: var(--ws-post-merge);
 }
 
 .workflow-result-meta {
@@ -24512,6 +24547,19 @@ html .column.drag-over * {
   font-family: var(--font-primary);
   font-size: 13px;
   line-height: 1.6;
+}
+
+.workflow-result-output--markdown .workflow-markdown-pre {
+  overflow-x: auto;
+  max-width: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.workflow-result-output--markdown .workflow-markdown-table {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
 }
 
 /* ===== Expanded Workflow Output Modal ===== */
@@ -29998,6 +30046,18 @@ html .column.drag-over * {
   word-break: break-word;
 }
 
+.mailbox-reply-context {
+  margin-bottom: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* Conversation thread */
 .mailbox-conversation {
   display: flex;
@@ -33792,18 +33852,18 @@ html .column.drag-over * {
 
 .mobile-nav-tab-badge {
   position: absolute;
-  top: 2px;
-  right: calc(50% - 12px);
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
+  top: calc(var(--space-xs) / 2);
+  right: calc(50% - var(--space-md));
+  min-width: var(--space-lg);
+  height: var(--space-lg);
+  padding: 0 var(--space-xs);
   font-size: 9px;
   font-weight: 600;
-  line-height: 16px;
+  line-height: var(--space-lg);
   text-align: center;
   background: var(--color-error);
-  color: #fff;
-  border-radius: 8px;
+  color: var(--fab-text);
+  border-radius: var(--radius-md);
 }
 
 /* === Mobile More Sheet (Bottom Drawer) === */
@@ -33902,6 +33962,11 @@ html .column.drag-over * {
   align-items: center;
   justify-content: center;
   padding: 0 6px;
+}
+
+.mobile-more-item-badge--unread {
+  background: var(--color-error);
+  color: var(--fab-text);
 }
 
 .mobile-more-separator {

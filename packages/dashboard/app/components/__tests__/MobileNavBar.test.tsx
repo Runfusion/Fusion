@@ -134,6 +134,17 @@ describe("MobileNavBar", () => {
     expect(badge?.textContent).toBe("5");
   });
 
+  it("shows matching mailbox unread badge in the More sheet", () => {
+    render(<MobileNavBar {...createDefaultProps()} mailboxUnreadCount={7} />);
+
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+
+    const moreItemBadge = screen.getByTestId("mobile-more-item-mailbox").querySelector(".mobile-more-item-badge");
+    expect(moreItemBadge).toBeDefined();
+    expect(moreItemBadge?.className).toContain("mobile-more-item-badge--unread");
+    expect(moreItemBadge?.textContent).toBe("7");
+  });
+
   it("tasks tab calls onChangeView with 'board' when coming from a non-tasks view", () => {
     const props = createDefaultProps();
     render(<MobileNavBar {...props} view="missions" />);

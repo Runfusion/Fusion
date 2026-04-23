@@ -326,7 +326,7 @@ export function MobileNavBar({
               <Mail />
               <span>Mailbox</span>
               {mailboxUnreadCount > 0 && (
-                <span className="mobile-more-item-badge">{formatCount(mailboxUnreadCount)}</span>
+                <span className="mobile-more-item-badge mobile-more-item-badge--unread">{formatCount(mailboxUnreadCount)}</span>
               )}
             </button>
 

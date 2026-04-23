@@ -54,6 +54,7 @@ import { NodeProvider, useNodeContext } from "./context/NodeContext";
 import type { AiSessionSummary } from "./api";
 import { fetchAiSession, fetchUnreadCount, reportDashboardPerf } from "./api";
 import { getScopedItem, setScopedItem } from "./utils/projectStorage";
+import { subscribeSse } from "./sse-bus";
 
 const SETUP_WARNING_DISMISSED_KEY = "kb-setup-warning-dismissed";
 
@@ -212,11 +213,10 @@ function AppInner() {
   const viewportMode = useViewportMode();
   const isMobile = viewportMode === "mobile";
 
-  // App-level mailbox unread count state (used for header badge)
+  // App-level mailbox unread count state (used for header/mobile nav badges)
   const [mailboxUnreadCount, setMailboxUnreadCount] = useState(0);
 
-  // Initial fetch of mailbox unread count
-  useEffect(() => {
+  const refreshMailboxUnreadCount = useCallback(() => {
     fetchUnreadCount(currentProject?.id)
       .then((data: { unreadCount: number }) => {
         setMailboxUnreadCount(data.unreadCount);
@@ -225,6 +225,26 @@ function AppInner() {
         console.warn("[App] Failed to fetch mailbox unread count:", err);
       });
   }, [currentProject?.id]);
+
+  // Initial fetch + live updates from mailbox SSE events.
+  useEffect(() => {
+    refreshMailboxUnreadCount();
+
+    const params = new URLSearchParams();
+    if (currentProject?.id) {
+      params.set("projectId", currentProject.id);
+    }
+    const query = params.size > 0 ? `?${params.toString()}` : "";
+
+    return subscribeSse(`/api/events${query}`, {
+      events: {
+        "message:sent": refreshMailboxUnreadCount,
+        "message:received": refreshMailboxUnreadCount,
+        "message:read": refreshMailboxUnreadCount,
+        "message:deleted": refreshMailboxUnreadCount,
+      },
+    });
+  }, [currentProject?.id, refreshMailboxUnreadCount]);
 
   // Nodes management is an overlay view (not a modal), so it stays local to App.
   const [nodesOpen, setNodesOpen] = useState(false);

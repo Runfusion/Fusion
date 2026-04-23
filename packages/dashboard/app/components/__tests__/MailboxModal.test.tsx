@@ -45,6 +45,7 @@ const mockMarkMessageRead = vi.mocked(apiModule.markMessageRead);
 const mockMarkAllMessagesRead = vi.mocked(apiModule.markAllMessagesRead);
 const mockDeleteMessage = vi.mocked(apiModule.deleteMessage);
 const mockFetchConversation = vi.mocked(apiModule.fetchConversation);
+const mockSendMessage = vi.mocked(apiModule.sendMessage);
 
 const mockAgents: Agent[] = [
   {
@@ -118,6 +119,7 @@ describe("MailboxModal", () => {
     mockMarkMessageRead.mockResolvedValue({ ...mockMessage, read: true });
     mockMarkAllMessagesRead.mockResolvedValue({ markedAsRead: 1 });
     mockDeleteMessage.mockResolvedValue(undefined);
+    mockSendMessage.mockResolvedValue({ ...mockMessage, id: "msg-sent" });
   });
 
   it("renders nothing when isOpen is false", () => {
@@ -341,6 +343,82 @@ describe("MailboxModal", () => {
     fireEvent.click(screen.getByTestId("mailbox-delete"));
     await waitFor(() => {
       expect(mockDeleteMessage).toHaveBeenCalledWith("msg-001", undefined);
+    });
+  });
+
+  it("opens reply composer with linked reply context and sends metadata", async () => {
+    render(<MailboxModal {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mailbox-item-msg-001")).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByTestId("mailbox-item-msg-001"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mailbox-reply")).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByTestId("mailbox-reply"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("message-composer")).toBeDefined();
+      expect(screen.getByTestId("message-composer-reply-context")).toBeDefined();
+    });
+
+    fireEvent.change(screen.getByTestId("message-composer-content"), {
+      target: { value: "Acknowledged." },
+    });
+    fireEvent.click(screen.getByTestId("message-composer-send"));
+
+    await waitFor(() => {
+      expect(mockSendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toId: "agent-001",
+          toType: "agent",
+          type: "user-to-agent",
+          metadata: { replyTo: { messageId: "msg-001" } },
+        }),
+        undefined,
+      );
+    });
+  });
+
+  it("renders reply context inside modal conversation thread", async () => {
+    const root: Message = {
+      ...mockMessage,
+      id: "msg-root",
+      content: "Need a status update.",
+    };
+    const reply: Message = {
+      ...mockMessage,
+      id: "msg-reply",
+      fromId: "dashboard",
+      fromType: "user",
+      toId: "agent-001",
+      toType: "agent",
+      type: "user-to-agent",
+      content: "Status shared.",
+      read: true,
+      metadata: { replyTo: { messageId: "msg-root" } },
+    };
+
+    mockFetchInbox.mockResolvedValue({ messages: [root], total: 1, unreadCount: 1 });
+    mockFetchConversation.mockResolvedValue([root, reply]);
+
+    render(<MailboxModal {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mailbox-item-msg-root")).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByTestId("mailbox-item-msg-root"));
+
+    await waitFor(() => {
+      const replyContext = screen.getByTestId("mailbox-reply-context-msg-reply");
+      expect(replyContext).toBeDefined();
+      expect(replyContext).toHaveClass("mailbox-reply-context");
+      expect(screen.getByText(/Replying to Need a status update\./)).toBeDefined();
     });
   });
 

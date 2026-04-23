@@ -21,6 +21,10 @@ import { createReadOnlyProviderSettingsView } from "./provider-settings.js";
 import { createReadOnlyAuthFileStorage, mergeAuthStorageReads, wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
 import { getFusionAuthPath, getLegacyAuthPaths, getModelRegistryModelsPath, getPackageManagerAgentDir } from "./auth-paths.js";
 import { resolveProject } from "../project-context.js";
+import {
+  ensureClaudeSkillsForAllProjectsOnStartup,
+  maybeInstallClaudeSkillForNewProject,
+} from "./claude-skills-runner.js";
 import { DashboardTUI, DashboardLogSink, isTTYAvailable, type SystemInfo } from "./dashboard-tui.js";
 
 // Re-export for backward compatibility with tests
@@ -635,7 +639,11 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   // Enables the PluginManager UI to list, install, enable, disable, and
   // configure plugins via the /api/plugins REST endpoints.
   //
-  const pluginStore = new PluginStore(store.getRootDir());
+  const pluginStoreRootDir =
+    typeof (store as { getRootDir?: () => string }).getRootDir === "function"
+      ? store.getRootDir()
+      : store.getFusionDir();
+  const pluginStore = new PluginStore(pluginStoreRootDir);
   await pluginStore.init();
 
   // ── PluginLoader: plugin lifecycle management ───────────────────────
@@ -918,6 +926,23 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     // required for correctness — reconciliation handles all cases.
     engineManager.startReconciliation();
 
+    // Backfill Claude Code skills for all registered projects. No-op when
+    // pi-claude-cli isn't configured; non-blocking to protect startup latency.
+    void (async () => {
+      try {
+        if (!centralCoreForEngine) return;
+        const projects = await centralCoreForEngine.listProjects();
+        ensureClaudeSkillsForAllProjectsOnStartup(
+          projects.map((p) => ({ id: p.id, name: p.name, path: p.path })),
+        );
+      } catch (err) {
+        logSink.log(
+          `Claude skill reconciliation failed: ${err instanceof Error ? err.message : String(err)}`,
+          "engine",
+        );
+      }
+    })();
+
     // ── PeerExchangeService: gossip protocol for mesh peer discovery ──────
     //
     // Reuse centralCoreForEngine for peer exchange since it handles all mesh ops.
@@ -972,6 +997,9 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       pluginLoader,
       pluginRunner: pluginLoader,
       onProjectFirstAccessed: (projectId: string) => engineManager.onProjectAccessed(projectId),
+      onProjectRegistered: ({ path }) => {
+        maybeInstallClaudeSkillForNewProject(path);
+      },
       skillsAdapter,
       https: loadTlsCredentialsFromEnv(),
       daemon: dashboardAuthToken ? { token: dashboardAuthToken } : undefined,
@@ -1160,6 +1188,9 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       pluginStore,
       pluginLoader,
       pluginRunner: pluginLoader,
+      onProjectRegistered: ({ path }) => {
+        maybeInstallClaudeSkillForNewProject(path);
+      },
       skillsAdapter,
       https: loadTlsCredentialsFromEnv(),
       daemon: dashboardAuthToken ? { token: dashboardAuthToken } : undefined,

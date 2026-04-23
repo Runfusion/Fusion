@@ -200,6 +200,29 @@ export interface ServerOptions {
    * for projects that are accessed before the next reconciliation tick.
    */
   onProjectFirstAccessed?: (projectId: string) => void;
+  /**
+   * Called after a project is successfully registered via POST /api/projects
+   * (dashboard-initiated project add). Invoked with the registered project's
+   * path *after* activation but *before* the response is sent to the client.
+   *
+   * Consumers use this to perform side-effects that belong to project setup
+   * (e.g. installing the fusion Claude-skill into `.claude/skills/fusion/`
+   * when pi-claude-cli is configured). Failures should be swallowed by the
+   * callback — they must not cause the HTTP response to fail.
+   */
+  onProjectRegistered?: (project: { id: string; name: string; path: string }) => void;
+  /**
+   * Called when the user toggles the `useClaudeCli` global setting via
+   * PUT /api/settings/global. Invoked only on an actual transition (prev
+   * !== next). Consumers use this to run project-wide setup — most notably,
+   * installing the fusion Claude-skill into every registered project's
+   * `.claude/skills/fusion/` when the toggle flips on, so the user doesn't
+   * have to wait for a server restart to see the effect.
+   *
+   * Failures should be swallowed by the callback — they must not cause the
+   * settings PUT to fail.
+   */
+  onUseClaudeCliToggled?: (prev: boolean, next: boolean) => void;
   /** Optional SkillsAdapter for skills discovery, execution toggling, and catalog fetching */
   skillsAdapter?: SkillsAdapter;
   /** Daemon mode configuration with bearer token authentication.

@@ -311,12 +311,23 @@ fn agent mailbox AGENT-001
 
 When messaging tools are enabled for an agent, heartbeat runs check for unread mailbox messages during execution regardless of the trigger type. This ensures agents can see and respond to incoming messages without needing an explicit wake-on-message trigger.
 
+### Reply Linking Contract
+
+Mailbox replies use `message.metadata.replyTo.messageId` as the stable reply link.
+
+- `read_messages` includes each message ID in its human-readable output so agents can target a specific message.
+- `send_message` supports `reply_to_message_id`; when provided, the sent message is stored with `metadata.replyTo.messageId`.
+- Heartbeat prompts explicitly instruct agents to include `reply_to_message_id` when replying.
+
+The dashboard mailbox UI also uses the same metadata contract when users click **Reply**, so user and agent replies share one threading model.
+
 ### How It Works
 
-1. **Message Prefetch**: When `messageStore` is available, heartbeat runs fetch up to 10 unread inbox messages for the agent
-2. **Prompt Injection**: Pending messages are injected into the execution prompt with sender and timestamp information
-3. **Mark as Read**: After successful heartbeat completion, messages are marked as read
-4. **Failed Runs**: If the heartbeat execution fails, messages remain unread for retry on the next run
+1. **Message Prefetch**: When `messageStore` is available, heartbeat runs fetch up to 10 unread inbox messages for the agent.
+2. **Prompt Injection**: Pending messages are injected into the execution prompt with message ID, sender, and timestamp information.
+3. **Reply Guidance**: System instructions remind agents to reply with `reply_to_message_id` for linked threads.
+4. **Mark as Read**: After successful heartbeat completion, messages are marked as read.
+5. **Failed Runs**: If the heartbeat execution fails, messages remain unread for retry on the next run.
 
 ### Message Response Modes
 

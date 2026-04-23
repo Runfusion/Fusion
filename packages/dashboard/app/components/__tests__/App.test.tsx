@@ -18,6 +18,12 @@ const defaultSettings: Settings = {
   experimentalFeatures: { insights: true, roadmap: true, skillsView: true, agentsView: true, memoryView: true },
 };
 
+const mockSubscribeSse = vi.fn(() => vi.fn());
+
+vi.mock("../../sse-bus", () => ({
+  subscribeSse: (...args: unknown[]) => mockSubscribeSse(...args),
+}));
+
 vi.mock("../../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api")>();
   return {
@@ -224,8 +230,17 @@ import { App } from "../../App";
 import { fetchAuthStatus, fetchSettings, fetchGlobalSettings, fetchTaskDetail, fetchUnreadCount, updateSettings, runScript, fetchScripts, fetchModels } from "../../api";
 import * as apiNodeModule from "../../hooks/useRemoteNodeData";
 
+async function waitForAppShell(): Promise<void> {
+  await waitFor(() => {
+    expect(fetchSettings).toHaveBeenCalled();
+    expect(screen.getByTitle("Settings")).toBeTruthy();
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mockSubscribeSse.mockReset();
+  mockSubscribeSse.mockReturnValue(vi.fn());
   mockUseTasks.mockReset();
   mockUseTasks.mockImplementation(() => ({
     tasks: [],
@@ -298,6 +313,36 @@ describe("App mailbox unread count", () => {
 
     expect(screen.getByRole("status", { name: "Loading Fusion dashboard" })).toBeInTheDocument();
     warnSpy.mockRestore();
+  });
+
+  it("refreshes unread count on mailbox SSE events even outside mailbox view", async () => {
+    (fetchUnreadCount as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ unreadCount: 0 })
+      .mockResolvedValueOnce({ unreadCount: 4 });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockSubscribeSse).toHaveBeenCalled();
+    });
+
+    const mailboxSubscriptionCall = mockSubscribeSse.mock.calls.find(
+      ([url, sub]) => String(url).startsWith("/api/events") && typeof (sub as { events?: Record<string, unknown> })?.events?.["message:received"] === "function",
+    );
+    const subscriptionConfig = mailboxSubscriptionCall?.[1] as {
+      events: Record<string, () => void>;
+    };
+
+    expect(subscriptionConfig.events["message:received"]).toBeTypeOf("function");
+
+    await act(async () => {
+      subscriptionConfig.events["message:received"]();
+    });
+
+    await waitFor(() => {
+      expect(fetchUnreadCount).toHaveBeenCalledTimes(2);
+      expect(fetchUnreadCount).toHaveBeenLastCalledWith("proj_123");
+    });
   });
 });
 
@@ -865,10 +910,7 @@ describe("OnboardingResumeCard", () => {
     // No localStorage data set - resume card should not appear
     render(<App />);
 
-    // Wait a bit for any renders
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    });
+    await waitForAppShell();
 
     // Resume card should not appear (no resumable state)
     expect(screen.queryByText("Continue Setup")).toBeNull();
@@ -901,10 +943,7 @@ describe("OnboardingResumeCard", () => {
 
     render(<App />);
 
-    // Give time for any renders
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    });
+    await waitForAppShell();
 
     // Resume card should NOT be visible (onboarding is complete)
     expect(screen.queryByText("Continue Setup")).toBeNull();
@@ -1819,14 +1858,7 @@ describe("App node mode switching", () => {
   it("does not render node selector when no remote nodes are available", async () => {
     render(<App />);
 
-    await waitFor(() => {
-      expect(fetchSettings).toHaveBeenCalled();
-    });
-
-    // Wait for initial load to complete
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    });
+    await waitForAppShell();
 
     // Node selector should not be visible when no remote nodes available
     expect(screen.queryByTestId("node-selector-trigger")).toBeNull();
@@ -1861,11 +1893,7 @@ describe("App node mode switching", () => {
 
     await waitFor(() => {
       expect(fetchSettings).toHaveBeenCalled();
-    });
-
-    // Wait for initial load to complete
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(screen.getByTestId("node-selector-trigger")).toBeInTheDocument();
     });
 
     // Node selector trigger should be visible when remote nodes available
@@ -1913,15 +1941,6 @@ describe("App node mode switching", () => {
 
     render(<App />);
 
-    await waitFor(() => {
-      expect(fetchSettings).toHaveBeenCalled();
-    });
-
-    // Wait for initial load to complete
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    });
-
     // Should show remote node name
     await waitFor(() => {
       expect(screen.getByText("Remote Node 1")).toBeInTheDocument();
@@ -1968,15 +1987,6 @@ describe("App node mode switching", () => {
     mockNodeContextValue.isRemote = true;
 
     render(<App />);
-
-    await waitFor(() => {
-      expect(fetchSettings).toHaveBeenCalled();
-    });
-
-    // Wait for initial load to complete
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    });
 
     await waitFor(() => {
       expect(screen.getByText("Remote Node 1")).toBeInTheDocument();
@@ -2036,11 +2046,7 @@ describe("App node mode switching", () => {
 
     await waitFor(() => {
       expect(fetchSettings).toHaveBeenCalled();
-    });
-
-    // Wait for initial load to complete
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(screen.getByTestId("node-selector-trigger")).toBeInTheDocument();
     });
 
     // Open the node selector

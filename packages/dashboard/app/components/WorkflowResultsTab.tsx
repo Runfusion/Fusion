@@ -9,27 +9,18 @@ import type { Components } from "react-markdown";
 
 // Markdown rendering components for workflow output
 const markdownComponents: Components = {
-  pre: ({ children, ...props }) => (
+  pre: ({ children, className, ...props }) => (
     <pre
       {...props}
-      style={{
-        overflowX: "auto",
-        maxWidth: "100%",
-        whiteSpace: "pre-wrap",
-        wordBreak: "break-word",
-      }}
+      className={["workflow-markdown-pre", className].filter(Boolean).join(" ")}
     >
       {children}
     </pre>
   ),
-  table: ({ children, ...props }) => (
+  table: ({ children, className, ...props }) => (
     <table
       {...props}
-      style={{
-        display: "block",
-        overflowX: "auto",
-        maxWidth: "100%",
-      }}
+      className={["workflow-markdown-table", className].filter(Boolean).join(" ")}
     >
       {children}
     </table>

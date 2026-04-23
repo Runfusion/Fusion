@@ -80,6 +80,44 @@ describe("MessageStore", () => {
       expect(message.metadata).toEqual({ taskId: "FN-001", priority: "high" });
     });
 
+    it("persists reply link metadata through storage roundtrip", () => {
+      const original = store.sendMessage({
+        fromId: "user-1",
+        fromType: "user",
+        toId: "agent-1",
+        toType: "agent",
+        content: "Can you help?",
+        type: "user-to-agent",
+      });
+
+      const reply = store.sendMessage({
+        fromId: "agent-1",
+        fromType: "agent",
+        toId: "user-1",
+        toType: "user",
+        content: "Sure",
+        type: "agent-to-user",
+        metadata: { replyTo: { messageId: original.id } },
+      });
+
+      expect(reply.metadata).toEqual({ replyTo: { messageId: original.id } });
+      expect(store.getMessage(reply.id)?.metadata).toEqual({ replyTo: { messageId: original.id } });
+    });
+
+    it("rejects malformed reply metadata", () => {
+      expect(() => {
+        store.sendMessage({
+          fromId: "agent-1",
+          fromType: "agent",
+          toId: "user-1",
+          toType: "user",
+          content: "Bad metadata",
+          type: "agent-to-user",
+          metadata: { replyTo: { messageId: "" } },
+        });
+      }).toThrow("metadata.replyTo.messageId must be a non-empty string");
+    });
+
     it("returns null for non-existent message", () => {
       const result = store.getMessage("msg-nonexistent");
       expect(result).toBeNull();

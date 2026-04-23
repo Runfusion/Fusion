@@ -417,7 +417,7 @@ describe("ListView", () => {
     expect(table?.textContent).toContain("Done");
   });
 
-  it("renders step progress bar", () => {
+  it("renders unified progress bar for implementation steps + workflow checks", () => {
     const tasks = [
       createMockTask({
         id: "FN-001",
@@ -426,12 +426,43 @@ describe("ListView", () => {
           { name: "Step 2", status: "done" },
           { name: "Step 3", status: "pending" },
         ],
+        enabledWorkflowSteps: ["WS-001", "WS-002"],
+        workflowStepResults: [
+          {
+            workflowStepId: "WS-001",
+            workflowStepName: "Browser Verification",
+            status: "passed",
+          },
+        ],
       }),
     ];
 
     renderListView({ tasks });
 
-    expect(screen.getByText("2/3")).toBeDefined();
+    expect(screen.getByText("3/5")).toBeDefined();
+  });
+
+  it("shows workflow-only progress even when task.steps is empty", () => {
+    const tasks = [
+      createMockTask({
+        id: "FN-001",
+        steps: [],
+        enabledWorkflowSteps: ["WS-001"],
+        workflowStepResults: [
+          {
+            workflowStepId: "WS-001",
+            workflowStepName: "Browser Verification",
+            status: "failed",
+          },
+        ],
+      }),
+    ];
+
+    renderListView({ tasks });
+
+    const row = screen.getByText("FN-001").closest("tr")!;
+    const progressCell = row.querySelector(".list-cell-progress");
+    expect(progressCell?.textContent).toContain("0/1");
   });
 
   it("shows - for tasks with no steps", () => {
@@ -2141,7 +2172,7 @@ describe("ListView - Bulk Selection", () => {
       expect(within(card as HTMLElement).getByText("executing")).toBeInTheDocument();
     });
 
-    it("shows progress bar for cards with steps", () => {
+    it("shows unified progress bar for cards with steps and workflow checks", () => {
       mockMobileViewport();
 
       const { container } = renderListView({
@@ -2153,13 +2184,21 @@ describe("ListView - Bulk Selection", () => {
               { name: "Step 1", status: "done" },
               { name: "Step 2", status: "pending" },
             ],
+            enabledWorkflowSteps: ["WS-001"],
+            workflowStepResults: [
+              {
+                workflowStepId: "WS-001",
+                workflowStepName: "Browser Verification",
+                status: "passed",
+              },
+            ],
           }),
         ],
       });
 
       const card = container.querySelector('.list-card[data-id="FN-001"]') as HTMLElement;
       expect(card.querySelector(".list-progress-fill")).toBeInTheDocument();
-      expect(within(card).getByText("1/2")).toBeInTheDocument();
+      expect(within(card).getByText("2/3")).toBeInTheDocument();
     });
 
     it("shows dependency badge for cards with dependencies", () => {

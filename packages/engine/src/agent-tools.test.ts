@@ -384,8 +384,9 @@ describe("createSendMessageTool", () => {
     expect(tool.label).toBe("Send Message");
   });
 
-  it("creates a tool with a description mentioning recipient waking", () => {
+  it("creates a tool with a description mentioning recipient waking and reply linking", () => {
     expect(tool.description).toContain("messageResponseMode");
+    expect(tool.description).toContain("reply_to_message_id");
   });
 
   it("calls messageStore.sendMessage with correct parameters", async () => {
@@ -451,6 +452,32 @@ describe("createSendMessageTool", () => {
     expect(messageStore.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: "agent-to-agent", toType: "agent" })
     );
+  });
+
+  it("persists reply metadata when reply_to_message_id is provided", async () => {
+    const mockMessage = createMessage({ id: "msg-reply" });
+    vi.mocked(messageStore.sendMessage).mockReturnValue(mockMessage);
+
+    await executeTool(tool, {
+      to_id: "agent-2",
+      content: "Following up",
+      reply_to_message_id: "msg-original",
+    });
+
+    expect(messageStore.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: { replyTo: { messageId: "msg-original" } } })
+    );
+  });
+
+  it("rejects blank reply_to_message_id", async () => {
+    const result = await executeTool(tool, {
+      to_id: "agent-2",
+      content: "Following up",
+      reply_to_message_id: "   ",
+    });
+
+    expect(result.content[0]).toEqual({ type: "text", text: "ERROR: reply_to_message_id must be a non-empty string" });
+    expect(messageStore.sendMessage).not.toHaveBeenCalled();
   });
 
   it("returns error for empty content", async () => {
@@ -570,11 +597,12 @@ describe("createReadMessagesTool", () => {
     expect(result.content[0]).toEqual({ type: "text", text: "No messages" });
   });
 
-  it("returns formatted message list with sender, content, and timestamp", async () => {
+  it("returns formatted message list with message IDs, sender, content, and timestamp", async () => {
     const messages = [
       createMessage({
         id: "msg-1",
         fromId: "agent-2",
+        fromType: "agent",
         content: "Hello there",
         createdAt: "2024-01-15T10:30:00.000Z",
         read: false,
@@ -582,6 +610,7 @@ describe("createReadMessagesTool", () => {
       createMessage({
         id: "msg-2",
         fromId: "user-1",
+        fromType: "user",
         content: "Another message",
         createdAt: "2024-01-15T11:00:00.000Z",
         read: true,
@@ -594,8 +623,8 @@ describe("createReadMessagesTool", () => {
     const text = result.content[0];
     expect(text).toMatchObject({ type: "text" });
     expect((text as { text: string }).text).toContain("Messages (2)");
-    expect((text as { text: string }).text).toContain("[unread] [from: agent-2] Hello there");
-    expect((text as { text: string }).text).toContain("[read] [from: user-1] Another message");
+    expect((text as { text: string }).text).toContain("[unread] [id: msg-1] [from: agent:agent-2] Hello there");
+    expect((text as { text: string }).text).toContain("[read] [id: msg-2] [from: user:user-1] Another message");
     expect(result.details).toEqual({ messages });
   });
 
