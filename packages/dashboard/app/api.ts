@@ -600,7 +600,7 @@ export interface PiExtensionEntry {
   id: string;
   name: string;
   path: string;
-  source: "fusion-global" | "pi-global" | "fusion-project" | "pi-project";
+  source: "fusion-global" | "pi-global" | "fusion-project" | "pi-project" | "package";
   enabled: boolean;
 }
 
