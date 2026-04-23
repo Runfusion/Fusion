@@ -15,6 +15,8 @@ vi.mock("../../api", () => ({
   deleteAgent: vi.fn(),
   startAgentRun: vi.fn(),
   fetchOrgTree: vi.fn(),
+  fetchSettings: vi.fn().mockResolvedValue({ heartbeatMultiplier: 1 }),
+  updateSettings: vi.fn().mockResolvedValue({}),
   fetchModels: vi.fn().mockResolvedValue({ models: [] }),
   fetchDiscoveredSkills: vi.fn().mockResolvedValue([]),
 }));
@@ -31,6 +33,8 @@ const mockDeleteAgent = vi.mocked(apiModule.deleteAgent);
 const mockStartAgentRun = vi.mocked(apiModule.startAgentRun);
 const mockFetchOrgTree = vi.mocked((apiModule as any).fetchOrgTree);
 const mockFetchAgentStats = vi.mocked((apiModule as any).fetchAgentStats);
+const mockFetchSettings = vi.mocked((apiModule as any).fetchSettings);
+const mockUpdateSettings = vi.mocked((apiModule as any).updateSettings);
 
 describe("AgentsView", () => {
   const mockAddToast = vi.fn();
@@ -95,6 +99,8 @@ describe("AgentsView", () => {
       status: "active",
     });
     mockFetchOrgTree.mockResolvedValue([]);
+    mockFetchSettings.mockResolvedValue({ heartbeatMultiplier: 1 });
+    mockUpdateSettings.mockResolvedValue({});
   });
 
   describe("rendering", () => {
@@ -1440,6 +1446,88 @@ describe("AgentsView", () => {
 
       await waitFor(() => {
         expect(screen.getByTestId("agent-detail-view")).toHaveTextContent("spawned-001");
+      });
+    });
+  });
+
+  describe("global heartbeat multiplier", () => {
+    it("renders the global heartbeat speed control", async () => {
+      mockFetchSettings.mockResolvedValue({ heartbeatMultiplier: 1 });
+      render(<AgentsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Heartbeat Speed")).toBeTruthy();
+      });
+
+      // Check the slider and preset are rendered
+      expect(screen.getByRole("slider", { name: "Heartbeat Speed" })).toBeTruthy();
+      expect(screen.getByLabelText("Heartbeat speed preset")).toBeTruthy();
+
+      // Check helper text
+      expect(screen.getByText(/Scales all agent heartbeat intervals/)).toBeTruthy();
+    });
+
+    it("loads heartbeat multiplier from settings", async () => {
+      mockFetchSettings.mockResolvedValue({ heartbeatMultiplier: 2.5 });
+      render(<AgentsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        const slider = screen.getByRole("slider", { name: "Heartbeat Speed" }) as HTMLInputElement;
+        expect(slider.value).toBe("2.5");
+      });
+    });
+
+    it("saves heartbeat multiplier when slider changes", async () => {
+      mockFetchSettings.mockResolvedValue({ heartbeatMultiplier: 1 });
+      render(<AgentsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Heartbeat Speed")).toBeTruthy();
+      });
+
+      // Change the slider
+      const slider = screen.getByRole("slider", { name: "Heartbeat Speed" });
+      fireEvent.change(slider, { target: { value: "3" } });
+
+      await waitFor(() => {
+        expect(mockUpdateSettings).toHaveBeenCalledWith({ heartbeatMultiplier: 3 }, undefined);
+        expect(mockAddToast).toHaveBeenCalledWith("Heartbeat speed set to ×3.0", "success");
+      });
+    });
+
+    it("saves heartbeat multiplier when preset is selected", async () => {
+      mockFetchSettings.mockResolvedValue({ heartbeatMultiplier: 1 });
+      render(<AgentsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Heartbeat Speed")).toBeTruthy();
+      });
+
+      // Change the preset
+      const preset = screen.getByLabelText("Heartbeat speed preset") as HTMLSelectElement;
+      fireEvent.change(preset, { target: { value: "0.5" } });
+
+      await waitFor(() => {
+        expect(mockUpdateSettings).toHaveBeenCalledWith({ heartbeatMultiplier: 0.5 }, undefined);
+      });
+    });
+
+    it("disables control while saving", async () => {
+      mockFetchSettings.mockResolvedValue({ heartbeatMultiplier: 1 });
+      mockUpdateSettings.mockImplementation(() => new Promise(resolve => setTimeout(resolve, 100)));
+      render(<AgentsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Heartbeat Speed")).toBeTruthy();
+      });
+
+      // Change the slider - this should start the save
+      const slider = screen.getByRole("slider", { name: "Heartbeat Speed" });
+      fireEvent.change(slider, { target: { value: "2" } });
+
+      // Both controls should be disabled while saving
+      await waitFor(() => {
+        expect(slider).toBeDisabled();
       });
     });
   });

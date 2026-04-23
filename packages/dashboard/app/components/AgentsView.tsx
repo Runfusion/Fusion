@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Plus, Play, Pause, Activity, Trash2, RefreshCw, Bot, List, ChevronRight, ChevronDown, GitBranch, Filter, Upload, Network } from "lucide-react";
 import type { Agent, AgentCapability, AgentState, OrgTreeNode } from "../api";
-import { fetchAgents, updateAgent, updateAgentState, deleteAgent, startAgentRun, fetchOrgTree } from "../api";
+import { fetchAgents, updateAgent, updateAgentState, deleteAgent, startAgentRun, fetchOrgTree, fetchSettings, updateSettings } from "../api";
 import { AgentDetailView } from "./AgentDetailView";
 import { ActiveAgentsPanel } from "./ActiveAgentsPanel";
 import { AgentMetricsBar } from "./AgentMetricsBar";
@@ -38,6 +38,8 @@ const AGENT_ROLES: { value: AgentCapability; label: string; icon: string }[] = [
   { value: "engineer", label: "Engineer", icon: "⎔" },
   { value: "custom", label: "Custom", icon: "✦" },
 ];
+
+const HEARTBEAT_MULTIPLIER_PRESETS = [0.1, 0.25, 0.5, 1, 2, 3, 5, 10] as const;
 
 
 function getStateBadgeClass(state: AgentState): string {
@@ -285,6 +287,36 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
   const [customHeartbeatAgentId, setCustomHeartbeatAgentId] = useState<string | null>(null);
   /** Custom minutes input value for each agent */
   const [customHeartbeatMinutes, setCustomHeartbeatMinutes] = useState<Record<string, string>>({});
+  /** Global heartbeat multiplier loaded from project settings */
+  const [heartbeatMultiplier, setHeartbeatMultiplier] = useState<number>(1);
+  /** Whether the heartbeat multiplier is currently being saved */
+  const [isSavingMultiplier, setIsSavingMultiplier] = useState(false);
+
+  // Load heartbeat multiplier from project settings on mount
+  useEffect(() => {
+    fetchSettings(projectId)
+      .then((settings) => {
+        setHeartbeatMultiplier(settings.heartbeatMultiplier ?? 1);
+      })
+      .catch(() => {
+        // Use default on error
+      });
+  }, [projectId]);
+
+  /** Handle saving heartbeat multiplier to project settings */
+  const handleHeartbeatMultiplierChange = useCallback(async (multiplier: number) => {
+    const clampedValue = Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1;
+    setHeartbeatMultiplier(clampedValue);
+    setIsSavingMultiplier(true);
+    try {
+      await updateSettings({ heartbeatMultiplier: clampedValue }, projectId);
+      addToast(`Heartbeat speed set to ×${clampedValue.toFixed(1)}`, "success");
+    } catch (err: any) {
+      addToast(`Failed to save heartbeat multiplier: ${err.message}`, "error");
+    } finally {
+      setIsSavingMultiplier(false);
+    }
+  }, [projectId, addToast]);
 
   const hierarchy = useAgentHierarchy(agents, projectId);
 
@@ -720,6 +752,55 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
               <Plus size={16} />
               New Agent
             </button>
+          </div>
+        </div>
+
+        {/* Global Heartbeat Speed Control */}
+        <div className="agent-global-controls">
+          <div className="heartbeat-multiplier-group">
+            <div className="heartbeat-multiplier-controls">
+              <label htmlFor="globalHeartbeatMultiplier" className="heartbeat-multiplier-label">
+                Heartbeat Speed
+              </label>
+              <input
+                id="globalHeartbeatMultiplier"
+                className="heartbeat-multiplier-slider touch-target"
+                type="range"
+                min={0.1}
+                max={10}
+                step={0.1}
+                value={heartbeatMultiplier}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  void handleHeartbeatMultiplierChange(Number.isFinite(val) && val > 0 ? val : 1);
+                }}
+                disabled={isSavingMultiplier}
+              />
+              <span className="heartbeat-multiplier-value">×{heartbeatMultiplier.toFixed(1)}</span>
+              <select
+                className="heartbeat-multiplier-preset"
+                value={String(
+                  HEARTBEAT_MULTIPLIER_PRESETS.reduce((closest, candidate) => {
+                    return Math.abs(candidate - heartbeatMultiplier) < Math.abs(closest - heartbeatMultiplier) ? candidate : closest;
+                  }, HEARTBEAT_MULTIPLIER_PRESETS[0])
+                )}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  void handleHeartbeatMultiplierChange(Number.isFinite(val) && val > 0 ? val : 1);
+                }}
+                disabled={isSavingMultiplier}
+                aria-label="Heartbeat speed preset"
+              >
+                {HEARTBEAT_MULTIPLIER_PRESETS.map((multiplier) => (
+                  <option key={multiplier} value={String(multiplier)}>
+                    ×{multiplier}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <small className="text-secondary">
+              Scales all agent heartbeat intervals. ×0.5 = twice as fast, ×2.0 = twice as slow. Default: ×1.0
+            </small>
           </div>
         </div>
 

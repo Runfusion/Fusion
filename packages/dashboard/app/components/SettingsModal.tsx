@@ -78,7 +78,6 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const AUTO_ARCHIVE_DEFAULT_AFTER_DAYS = 2;
-const HEARTBEAT_MULTIPLIER_PRESETS = [0.1, 0.25, 0.5, 1, 2, 3, 5, 10] as const;
 
 /** Well-known experimental feature flags with display labels.
  *  These always appear in the Experimental Features settings tab,
@@ -1789,46 +1788,6 @@ export function SettingsModal({
                   setForm((f) => ({ ...f, pollIntervalMs: val === "" ? undefined : Number(val) } as any));
                 }}
               />
-            </div>
-            <div className="form-group heartbeat-multiplier-group">
-              <label htmlFor="heartbeatMultiplier">Heartbeat Multiplier</label>
-              <div className="heartbeat-multiplier-controls">
-                <input
-                  id="heartbeatMultiplier"
-                  className="heartbeat-multiplier-slider touch-target"
-                  type="range"
-                  min={0.1}
-                  max={10}
-                  step={0.1}
-                  value={form.heartbeatMultiplier ?? 1}
-                  onChange={(e) => {
-                    const val = Number(e.target.value);
-                    setForm((f) => ({ ...f, heartbeatMultiplier: Number.isFinite(val) && val > 0 ? val : 1 }));
-                  }}
-                />
-                <span className="heartbeat-multiplier-value">×{(form.heartbeatMultiplier ?? 1).toFixed(1)}</span>
-              </div>
-              <select
-                id="heartbeatMultiplierPreset"
-                className="heartbeat-multiplier-preset"
-                value={String(
-                  HEARTBEAT_MULTIPLIER_PRESETS.reduce((closest, candidate) => {
-                    const current = form.heartbeatMultiplier ?? 1;
-                    return Math.abs(candidate - current) < Math.abs(closest - current) ? candidate : closest;
-                  }, HEARTBEAT_MULTIPLIER_PRESETS[0])
-                )}
-                onChange={(e) => {
-                  const val = Number(e.target.value);
-                  setForm((f) => ({ ...f, heartbeatMultiplier: Number.isFinite(val) && val > 0 ? val : 1 }));
-                }}
-              >
-                {HEARTBEAT_MULTIPLIER_PRESETS.map((multiplier) => (
-                  <option key={multiplier} value={String(multiplier)}>
-                    ×{multiplier}
-                  </option>
-                ))}
-              </select>
-              <small>Scales all agent heartbeat intervals. 0.5 = twice as fast, 2.0 = twice as slow. Default: 1.0</small>
             </div>
             <div className="form-group">
               <label htmlFor="taskStuckTimeoutMs">Stuck Task Timeout (minutes)</label>

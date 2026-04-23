@@ -134,7 +134,7 @@ The `runtimeConfig` field on agents supports the following options:
 | `budgetConfig` | `AgentBudgetConfig` | — | Token budget governance settings |
 
 Heartbeat values are validated and minimum-clamped to 5 minutes (300,000 ms).
-Project setting `heartbeatMultiplier` (default `1`) scales resolved heartbeat intervals globally; per-agent `heartbeatIntervalMs` remains the base interval before multiplier scaling.
+Project setting `heartbeatMultiplier` (default `1`) scales resolved heartbeat intervals globally; per-agent `heartbeatIntervalMs` remains the base interval before multiplier scaling. This setting is configured from the **Agents** screen's "Heartbeat Speed" control.
 
 ## Agent Instructions (Dashboard)
 

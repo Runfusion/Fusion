@@ -28569,6 +28569,14 @@ html .column.drag-over * {
     text-align: left;
   }
 
+  .agent-global-controls {
+    padding: var(--space-sm);
+  }
+
+  .heartbeat-multiplier-label {
+    margin-bottom: var(--space-sm);
+  }
+
   .agents-view-header {
     padding: var(--space-sm) var(--space-md);
     flex-wrap: wrap;
@@ -30866,6 +30874,23 @@ html .column.drag-over * {
 .agent-controls-actions {
   display: flex;
   gap: var(--space-sm);
+}
+
+/* Global agent controls (heartbeat speed) */
+.agent-global-controls {
+  display: flex;
+  align-items: center;
+  padding: var(--space-md) var(--space-lg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-lg);
+}
+
+.heartbeat-multiplier-label {
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
 }
 
 /* === Skills View === */

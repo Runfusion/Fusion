@@ -896,45 +896,15 @@ describe("SettingsModal", () => {
     expect(checkbox.getAttribute("type")).toBe("checkbox");
   });
 
-  it("renders heartbeat multiplier slider in Scheduling", async () => {
+  it("does not render heartbeat multiplier control in Scheduling section", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     fireEvent.click(screen.getByText("Scheduling"));
 
-    const slider = screen.getByLabelText("Heartbeat Multiplier") as HTMLInputElement;
-    expect(slider.type).toBe("range");
-    expect(slider.value).toBe("1");
-    expect(screen.getByText("×1.0")).toBeTruthy();
-  });
-
-  it("updates heartbeat multiplier form state when slider changes", async () => {
-    render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
-
-    fireEvent.click(screen.getByText("Scheduling"));
-
-    const slider = screen.getByLabelText("Heartbeat Multiplier") as HTMLInputElement;
-    fireEvent.change(slider, { target: { value: "2.5" } });
-
-    expect(slider.value).toBe("2.5");
-    expect(screen.getByText("×2.5")).toBeTruthy();
-  });
-
-  it("includes heartbeatMultiplier in save payload", async () => {
-    render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
-
-    fireEvent.click(screen.getByText("Scheduling"));
-
-    const slider = screen.getByLabelText("Heartbeat Multiplier") as HTMLInputElement;
-    fireEvent.change(slider, { target: { value: "3" } });
-
-    fireEvent.click(screen.getByText("Save"));
-    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
-
-    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(payload.heartbeatMultiplier).toBe(3);
+    // Heartbeat multiplier is now configured from the Agents screen, not Settings
+    expect(screen.queryByLabelText("Heartbeat Multiplier")).toBeNull();
+    expect(screen.queryByText(/Heartbeat Multiplier/)).toBeNull();
   });
 
   it("save button calls updateSettings with form data", async () => {
