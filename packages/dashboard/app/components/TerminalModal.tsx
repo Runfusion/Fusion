@@ -683,9 +683,24 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
    * On mobile browsers, opening the soft keyboard requires focus to happen
    * within a real user gesture. Programmatic focus in async effects is often
    * ignored even though xterm stays connected and receives output.
+   *
+   * On touch-primary devices, the CSS sizes `.xterm-helper-textarea` to cover
+   * the whole terminal surface (see styles.css @media (hover: none) and
+   * (pointer: coarse)), so iOS focuses it natively on tap. Re-focusing and
+   * calling setSelectionRange inside the touchstart/pointerdown handler
+   * disrupts iOS's input-event attribution (same class of bug the prior
+   * capture-phase handlers caused — see commit c7266b7f), and subsequent
+   * keystrokes are silently dropped. Early-return on touch-primary so iOS
+   * handles focus with no JS interference.
    */
   const handleTerminalGestureFocus = useCallback(() => {
     if (!terminalRef.current) return;
+
+    const isTouchPrimary =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(hover: none) and (pointer: coarse)")?.matches === true;
+    if (isTouchPrimary) return;
 
     // Ensure xterm updates its own focus state first.
     xtermRef.current?.focus();

@@ -3646,6 +3646,50 @@ describe("TerminalModal — xterm focus initialization (FN-1602)", () => {
     expect(helperTextarea.autocorrect).toBe("off");
     expect(helperTextarea.spellcheck).toBe(false);
   });
+
+  // On touch-primary devices (iOS, Android), the CSS sizes the helper textarea
+  // to cover the whole terminal so iOS focuses it natively on tap. Re-focusing
+  // in the bubble-phase gesture handler disrupts iOS input-event attribution
+  // and causes typed keys to be silently dropped. The handler must be a no-op
+  // in that environment — see commit c7266b7f for prior iOS input fix context.
+  it("no-ops gesture focus handler on touch-primary devices", async () => {
+    const matchMediaSpy = vi
+      .spyOn(window, "matchMedia")
+      .mockImplementation((query: string) => ({
+        matches: query === "(hover: none) and (pointer: coarse)",
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }));
+
+    try {
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+      await waitFor(() => {
+        expect(mockTerminalInstance.open).toHaveBeenCalled();
+      });
+
+      const terminalDiv = screen.getByTestId("terminal-xterm");
+      const helperTextarea = document.createElement("textarea");
+      helperTextarea.className = "xterm-helper-textarea";
+      const focusSpy = vi.spyOn(helperTextarea, "focus");
+      const setSelectionRangeSpy = vi.spyOn(helperTextarea, "setSelectionRange");
+      terminalDiv.appendChild(helperTextarea);
+
+      mockTerminalInstance.focus.mockClear();
+      fireEvent.touchStart(terminalDiv);
+
+      expect(mockTerminalInstance.focus).not.toHaveBeenCalled();
+      expect(focusSpy).not.toHaveBeenCalled();
+      expect(setSelectionRangeSpy).not.toHaveBeenCalled();
+    } finally {
+      matchMediaSpy.mockRestore();
+    }
+  });
 });
 
 // --- FN-1765: Project-context propagation ---
