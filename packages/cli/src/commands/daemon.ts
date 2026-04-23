@@ -327,7 +327,7 @@ export async function runDaemon(opts: DaemonOptions = {}) {
   }
 
   // ── PluginStore: plugin installation management ─────────────────────
-  const pluginStore = new PluginStore(store.getFusionDir());
+  const pluginStore = new PluginStore(store.getRootDir());
   await pluginStore.init();
 
   // ── PluginLoader: plugin lifecycle management ───────────────────────

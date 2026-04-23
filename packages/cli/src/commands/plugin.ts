@@ -38,7 +38,7 @@ async function getProjectPath(projectName?: string): Promise<string> {
  */
 async function createPluginStore(projectName?: string): Promise<PluginStore> {
   const projectPath = await getProjectPath(projectName);
-  const pluginStore = new PluginStore(projectPath + "/.fusion");
+  const pluginStore = new PluginStore(projectPath);
   await pluginStore.init();
   return pluginStore;
 }
