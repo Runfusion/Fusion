@@ -1905,7 +1905,11 @@ export async function aiMergeTask(
           const msg = rebaseErr instanceof Error ? rebaseErr.message : String(rebaseErr);
           mergerLog.warn(`${taskId}: pre-merge rebase failed (${msg}) — aborting rebase and falling through to smart/AI merge`);
           if (worktreePath) {
-            await execAsync("git rebase --abort", { cwd: worktreePath }).catch(() => {});
+            try {
+              await execAsync("git rebase --abort", { cwd: worktreePath });
+            } catch (abortError: unknown) {
+              mergerLog.warn(`${taskId}: failed to abort pre-merge rebase: ${getCommandErrorMessage(abortError)}`);
+            }
           }
         }
       }

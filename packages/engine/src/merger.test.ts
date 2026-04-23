@@ -330,6 +330,114 @@ describe("aiMergeTask — conditional worktree cleanup", () => {
   });
 });
 
+describe("aiMergeTask — pre-merge rebase abort observability", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+    mockedCreateFnAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+  });
+
+  it("attempts rebase abort in the task worktree and continues merge when abort succeeds", async () => {
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git symbolic-ref --short HEAD")) return "main" as any;
+      if (cmdStr.includes("git rev-parse --abbrev-ref origin/HEAD")) return "origin/main" as any;
+      if (cmdStr === "git rev-parse --abbrev-ref HEAD") return "main" as any;
+      if (cmdStr.includes("git config --get branch.main.remote")) return "origin" as any;
+      if (cmdStr === 'git fetch "origin"') return Buffer.from("");
+      if (cmdStr === 'git rebase "origin/main"') {
+        throw new Error("pre-merge rebase conflict");
+      }
+      if (cmdStr === "git rebase --abort") return Buffer.from("");
+      if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("diff --name-only --diff-filter=U")) return "" as any;
+      if (cmdStr.includes("diff --cached --quiet")) return "1" as any;
+      if (cmdStr.includes("diff --cached")) return "0" as any;
+      if (cmdStr.includes("show --shortstat")) return "1 file changed, 1 insertion(+), 0 deletions(-)" as any;
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(result.merged).toBe(true);
+    expect(
+      mockedExec.mock.calls.some(
+        ([command, options]) => command === "git rebase --abort"
+          && typeof options === "object"
+          && options !== null
+          && "cwd" in options
+          && (options as { cwd?: string }).cwd === "/tmp/root/.worktrees/KB-050",
+      ),
+    ).toBe(true);
+    expect(mockedExecSync.mock.calls.some(([command]) => String(command).includes("merge --squash"))).toBe(true);
+  });
+
+  it("logs abort cleanup failure details but still falls through to merge", async () => {
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+
+    const warnSpy = vi.spyOn(mergerLog, "warn");
+    const abortFailureMessage = "fatal: no rebase in progress";
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git symbolic-ref --short HEAD")) return "main" as any;
+      if (cmdStr.includes("git rev-parse --abbrev-ref origin/HEAD")) return "origin/main" as any;
+      if (cmdStr === "git rev-parse --abbrev-ref HEAD") return "main" as any;
+      if (cmdStr.includes("git config --get branch.main.remote")) return "origin" as any;
+      if (cmdStr === 'git fetch "origin"') return Buffer.from("");
+      if (cmdStr === 'git rebase "origin/main"') {
+        throw new Error("pre-merge rebase conflict");
+      }
+      if (cmdStr === "git rebase --abort") {
+        const error = new Error("rebase abort failed") as Error & { stderr?: string };
+        error.stderr = abortFailureMessage;
+        throw error;
+      }
+      if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("diff --name-only --diff-filter=U")) return "" as any;
+      if (cmdStr.includes("diff --cached --quiet")) return "1" as any;
+      if (cmdStr.includes("diff --cached")) return "0" as any;
+      if (cmdStr.includes("show --shortstat")) return "1 file changed, 1 insertion(+), 0 deletions(-)" as any;
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(result.merged).toBe(true);
+    expect(
+      warnSpy.mock.calls.some(([message]) => String(message).includes(`FN-050: failed to abort pre-merge rebase: ${abortFailureMessage}`)),
+    ).toBe(true);
+    expect(mockedExecSync.mock.calls.some(([command]) => String(command).includes("merge --squash"))).toBe(true);
+
+    warnSpy.mockRestore();
+  });
+});
+
 describe("aiMergeTask — task.branch field", () => {
   beforeEach(() => {
     vi.clearAllMocks();
