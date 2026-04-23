@@ -658,8 +658,10 @@ export class DashboardTUI {
   private renderLogsSection(): void {
     const cols = process.stdout.columns || 80;
     const entries = this.logBuffer.getAll();
-    // Clamp to minimum 1 row to handle very small terminals
-    const maxRows = Math.max(1, (process.stdout.rows ?? 38) - 8);
+    // Clamp to minimum 1 row to handle very small terminals.
+    // Reserve 9 rows for fixed UI chrome (header, section labels/spacers, footer)
+    // so content never overlaps the footer on short terminals.
+    const maxRows = Math.max(1, (process.stdout.rows ?? 38) - 9);
 
     process.stdout.write(colorize("\n  LOGS\n", "bold"));
     process.stdout.write(colorize(`  Ring buffer: ${this.logBuffer.total}/${MAX_LOG_ENTRIES} entries\n\n`, "dim"));
