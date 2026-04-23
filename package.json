@@ -33,6 +33,7 @@
     "typecheck": "pnpm -r typecheck",
     "changeset": "changeset",
     "version": "changeset version",
+    "release": "node scripts/release.mjs",
     "release:version": "changeset version",
     "mobile:build": "pnpm --filter @fusion/dashboard build && pnpm --filter @fusion/mobile cap sync",
     "mobile:ios": "pnpm mobile:build && pnpm --filter @fusion/mobile cap open ios",
