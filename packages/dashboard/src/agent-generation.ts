@@ -13,6 +13,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { createSessionDiagnostics } from "./ai-session-diagnostics.js";
 
 // Dynamic import for @fusion/core to get prompt override resolution
 
@@ -183,6 +184,9 @@ const sessions = new Map<string, Session>();
 /** Rate limiting state indexed by IP */
 const rateLimits = new Map<string, RateLimitEntry>();
 
+/** Shared diagnostics helper for structured agent-generation telemetry. */
+const diagnostics = createSessionDiagnostics("agent-generation");
+
 // ── Cleanup Interval ────────────────────────────────────────────────────────
 
 /**
@@ -208,10 +212,20 @@ function cleanupExpiredSessions(): void {
   }
 
   if (cleanedSessions > 0 || cleanedRateLimits > 0) {
-    console.log(
-      `[agent-generation] Cleanup: removed ${cleanedSessions} sessions, ${cleanedRateLimits} rate limit entries`
-    );
+    diagnostics.info("Cleanup completed", {
+      cleanedSessions,
+      cleanedRateLimits,
+      operation: "cleanup-expired",
+    });
   }
+}
+
+/**
+ * Run expiry cleanup immediately. Test-only helper for deterministic assertions.
+ * @internal
+ */
+export function __runAgentGenerationCleanupForTests(): void {
+  cleanupExpiredSessions();
 }
 
 const cleanupInterval = setInterval(cleanupExpiredSessions, CLEANUP_INTERVAL_MS);
@@ -472,7 +486,10 @@ export async function generateAgentSpec(
     session.updatedAt = new Date();
     return spec;
   } catch (err) {
-    console.error(`[agent-generation] AI generation failed for session ${sessionId}:`, err);
+    diagnostics.errorFromException("AI generation failed for session", err, {
+      sessionId,
+      operation: "generate-agent-spec",
+    });
     throw err;
   }
 }

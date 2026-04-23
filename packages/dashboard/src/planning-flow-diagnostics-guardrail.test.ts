@@ -1,7 +1,7 @@
 /**
- * Planning-Flow Diagnostics Guardrail Test
+ * AI-Session Diagnostics Guardrail Test
  *
- * This test enforces that AI-session planning flow modules use the shared
+ * This test enforces that AI-session modules use the shared
  * ai-session-diagnostics helper instead of raw console.* calls for diagnostics.
  *
  * Guardrail: These modules must NOT contain direct console.log( / console.warn( / console.error(
@@ -18,17 +18,18 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 /**
- * List of planning-flow modules that must use the shared diagnostics helper.
+ * List of AI-session modules that must use the shared diagnostics helper.
  * These modules handle AI-session flows and must not use raw console.* diagnostics.
  */
-const PLANNING_FLOW_MODULES = [
+const AI_SESSION_FLOW_MODULES = [
   "planning.ts",
   "mission-interview.ts",
   "milestone-slice-interview.ts",
   "subtask-breakdown.ts",
+  "agent-generation.ts",
 ] as const;
 
-type PlanningFlowModule = (typeof PLANNING_FLOW_MODULES)[number];
+type AiSessionFlowModule = (typeof AI_SESSION_FLOW_MODULES)[number];
 
 /**
  * Patterns that indicate raw console diagnostics in AI-session failure paths.
@@ -44,10 +45,10 @@ const RAW_CONSOLE_PATTERNS: readonly RegExp[] = [
 type RawConsolePattern = (typeof RAW_CONSOLE_PATTERNS)[number];
 
 /**
- * Read the source content of a planning-flow module.
+ * Read the source content of an AI-session flow module.
  * Throws if the file cannot be read.
  */
-function readModuleSource(moduleName: PlanningFlowModule): string {
+function readModuleSource(moduleName: AiSessionFlowModule): string {
   const modulePath = resolve(import.meta.dirname, moduleName);
   return readFileSync(modulePath, "utf-8");
 }
@@ -72,18 +73,18 @@ function findRawConsoleCalls(
   return violations;
 }
 
-describe("Planning-Flow Diagnostics Guardrail", () => {
+describe("AI-Session Diagnostics Guardrail", () => {
   /**
-   * Test that each planning-flow module uses the shared diagnostics helper
+   * Test that each AI-session flow module uses the shared diagnostics helper
    * instead of raw console.* calls.
    *
    * This guardrail prevents:
    * - Incomplete migrations where raw console.* remains
    * - Accidental reintroduction of raw console diagnostics
-   * - Inconsistent diagnostics across planning flow modules
+   * - Inconsistent diagnostics across AI-session modules
    */
   describe("AI-session failure paths must use shared diagnostics helper", () => {
-    for (const moduleName of PLANNING_FLOW_MODULES) {
+    for (const moduleName of AI_SESSION_FLOW_MODULES) {
       const moduleShortName = moduleName.replace(".ts", "");
 
       it(`${moduleShortName} does not contain raw console.* diagnostics`, () => {

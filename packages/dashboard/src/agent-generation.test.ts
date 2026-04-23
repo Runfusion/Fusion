@@ -8,14 +8,28 @@ import {
   getRateLimitResetTime,
   parseGenerationResponse,
   __resetAgentGenerationState,
+  __runAgentGenerationCleanupForTests,
   RateLimitError,
   SessionNotFoundError,
 } from "./agent-generation.js";
+import {
+  setDiagnosticsSink,
+  resetDiagnosticsSink,
+  type DiagnosticsContext,
+  type DiagnosticsLevel,
+} from "./ai-session-diagnostics.js";
 
 // Counter for unique IPs per test
 let ipCounter = 0;
 function getUniqueIp(): string {
   return `127.0.0.${++ipCounter}`;
+}
+
+interface CapturedDiagnostic {
+  level: DiagnosticsLevel;
+  scope: string;
+  message: string;
+  context: DiagnosticsContext;
 }
 
 describe("agent-generation module", () => {
@@ -25,7 +39,9 @@ describe("agent-generation module", () => {
   });
 
   afterEach(() => {
+    resetDiagnosticsSink();
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   describe("startAgentGeneration", () => {
@@ -100,6 +116,45 @@ describe("agent-generation module", () => {
       await expect(
         generateAgentSpec("non-existent-session-id", "/tmp")
       ).rejects.toThrow(SessionNotFoundError);
+    });
+
+    it("logs structured error diagnostics with sessionId and rethrows when AI generation fails", async () => {
+      vi.resetModules();
+
+      const generationFailure = new Error("engine failed to generate spec");
+      vi.doMock("@fusion/engine", () => ({
+        createFnAgent: vi.fn(async () => {
+          throw generationFailure;
+        }),
+      }));
+
+      const diagnostics: CapturedDiagnostic[] = [];
+
+      const diagnosticsModule = await import("./ai-session-diagnostics.js");
+      diagnosticsModule.setDiagnosticsSink((level, scope, message, context) => {
+        diagnostics.push({ level, scope, message, context });
+      });
+
+      const agentGenerationModule = await import("./agent-generation.js");
+      const session = await agentGenerationModule.startAgentGeneration(getUniqueIp(), "Role requiring AI spec");
+
+      await expect(agentGenerationModule.generateAgentSpec(session.id, "/tmp")).rejects.toThrow(generationFailure);
+
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0]).toMatchObject({
+        level: "error",
+        scope: "agent-generation",
+        message: "AI generation failed for session",
+        context: expect.objectContaining({
+          sessionId: session.id,
+          operation: "generate-agent-spec",
+          error: expect.objectContaining({
+            message: "engine failed to generate spec",
+          }),
+        }),
+      });
+
+      diagnosticsModule.resetDiagnosticsSink();
     });
   });
 
@@ -333,6 +388,36 @@ describe("agent-generation module", () => {
       const retrieved = getAgentGenerationSession(session.id);
       expect(retrieved).toBeDefined();
       expect(retrieved!.roleDescription).toBe("Security auditor role");
+    });
+
+    it("emits one structured cleanup diagnostic when expired sessions and stale rate limits are removed", async () => {
+      const diagnostics: CapturedDiagnostic[] = [];
+      setDiagnosticsSink((level, scope, message, context) => {
+        diagnostics.push({ level, scope, message, context });
+      });
+
+      const staleIp = getUniqueIp();
+      const session = await startAgentGeneration(staleIp, "Temporary role");
+      checkRateLimit("192.168.0.99");
+
+      vi.setSystemTime(Date.now() + 61 * 60 * 1000);
+      __runAgentGenerationCleanupForTests();
+
+      expect(getAgentGenerationSession(session.id)).toBeUndefined();
+      expect(getRateLimitResetTime(staleIp)).toBeNull();
+      expect(getRateLimitResetTime("192.168.0.99")).toBeNull();
+
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0]).toMatchObject({
+        level: "info",
+        scope: "agent-generation",
+        message: "Cleanup completed",
+        context: expect.objectContaining({
+          cleanedSessions: 1,
+          cleanedRateLimits: 2,
+          operation: "cleanup-expired",
+        }),
+      });
     });
   });
 
