@@ -6769,6 +6769,86 @@ Task with acceptance criteria
       expect(logs[0].timestamp).toBeDefined();
     });
 
+    it("recordActivity logs failures and stays best-effort", async () => {
+      const storeAny = store as any;
+      const originalPrepare = storeAny.db.prepare.bind(storeAny.db);
+      const prepareSpy = vi.spyOn(storeAny.db, "prepare").mockImplementation((sql: string) => {
+        if (sql.includes("INSERT INTO activityLog")) {
+          return {
+            run: () => {
+              throw new Error("activity insert failed");
+            },
+          };
+        }
+        return originalPrepare(sql);
+      });
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      try {
+        await expect(
+          store.recordActivity({
+            type: "task:created",
+            taskId: "FN-404",
+            taskTitle: "Resilient record",
+            details: "Create event",
+            metadata: { source: "test" },
+          }),
+        ).resolves.toMatchObject({
+          type: "task:created",
+          taskId: "FN-404",
+          taskTitle: "Resilient record",
+          details: "Create event",
+        });
+
+        const failureCall = errorSpy.mock.calls.find(
+          (call) => typeof call[0] === "string" && call[0].includes("[task-store] Failed to record activity"),
+        );
+        expect(failureCall).toBeDefined();
+        const [, context] = failureCall as [string, Record<string, unknown>];
+        expect(context).toMatchObject({
+          type: "task:created",
+          taskId: "FN-404",
+          taskTitle: "Resilient record",
+          detailsLength: "Create event".length,
+          hasMetadata: true,
+          error: "activity insert failed",
+        });
+      } finally {
+        prepareSpy.mockRestore();
+        errorSpy.mockRestore();
+      }
+    });
+
+    it("logs listener-level activity recording failures without throwing", async () => {
+      const task = await store.createTask({ description: "Listener test" });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const recordSpy = vi.spyOn(store, "recordActivity").mockRejectedValue(new Error("listener rejected"));
+
+      try {
+        expect(() => {
+          store.emit("task:created", task);
+        }).not.toThrow();
+
+        await Promise.resolve();
+
+        const warningCall = warnSpy.mock.calls.find(
+          (call) => typeof call[0] === "string" && call[0].includes("[task-store] Activity logging listener failed"),
+        );
+        expect(warningCall).toBeDefined();
+
+        const [, context] = warningCall as [string, Record<string, unknown>];
+        expect(context).toMatchObject({
+          sourceEvent: "task:created",
+          type: "task:created",
+          taskId: task.id,
+          error: "listener rejected",
+        });
+      } finally {
+        recordSpy.mockRestore();
+        warnSpy.mockRestore();
+      }
+    });
+
     it("getActivityLog returns entries newest first", async () => {
       await store.recordActivity({ type: "task:created", taskId: "FN-001", details: "First" });
       await new Promise((r) => setTimeout(r, 10));
@@ -7543,6 +7623,31 @@ Task with acceptance criteria
       expect(task.enabledWorkflowSteps).toEqual(["WS-001", "WS-002"]);
     });
 
+    it("logs default-on resolution failures and still creates the task", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const listStepsSpy = vi.spyOn(store, "listWorkflowSteps").mockRejectedValue(new Error("workflow catalog unavailable"));
+
+      try {
+        const task = await store.createTask({ description: "Best effort defaults" });
+        expect(task.id).toMatch(/^FN-\d+$/);
+        expect(task.enabledWorkflowSteps).toBeUndefined();
+
+        const warningCall = warnSpy.mock.calls.find(
+          (call) => typeof call[0] === "string" && call[0].includes("[task-store] Failed to auto-apply default workflow steps during task creation"),
+        );
+        expect(warningCall).toBeDefined();
+
+        const [, context] = warningCall as [string, Record<string, unknown>];
+        expect(context).toMatchObject({
+          descriptionLength: "Best effort defaults".length,
+          error: "workflow catalog unavailable",
+        });
+      } finally {
+        listStepsSpy.mockRestore();
+        warnSpy.mockRestore();
+      }
+    });
+
     it("should update task workflow steps and materialize built-in templates", async () => {
       const task = await store.createTask({ description: "Editable task" });
 
@@ -7774,23 +7879,30 @@ Task with acceptance criteria
       const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       const mockOnSummarize = vi.fn().mockRejectedValue(new Error("AI service failed"));
 
-      const task = await store.createTask(
-        { description: "a".repeat(201) },
-        { onSummarize: mockOnSummarize, settings: { autoSummarizeTitles: true } }
-      );
+      try {
+        const task = await store.createTask(
+          { description: "a".repeat(201) },
+          { onSummarize: mockOnSummarize, settings: { autoSummarizeTitles: true } }
+        );
 
-      expect(task.title).toBeUndefined();
-      expect(task.id).toMatch(/^FN-\d+$/); // Task still created
+        expect(task.title).toBeUndefined();
+        expect(task.id).toMatch(/^FN-\d+$/); // Task still created
 
-      // Wait for async error to be logged
-      await new Promise((resolve) => setTimeout(resolve, 10));
+        // Wait for async error to be logged
+        await new Promise((resolve) => setTimeout(resolve, 10));
 
-      expect(consoleSpy.mock.calls[0][0]).toMatch(/Title summarization failed for task/);
-      expect(consoleSpy.mock.calls[0][0]).toMatch(/AI service failed/);
-      expect(consoleSpy.mock.calls[0][0]).toMatch(/desc length: 201/);
-      expect(consoleSpy.mock.calls[0][0]).toMatch(/auto-summarize: true/);
-
-      consoleSpy.mockRestore();
+        expect(consoleSpy).toHaveBeenCalled();
+        const [message, context] = consoleSpy.mock.calls[0] as [string, Record<string, unknown>];
+        expect(message).toContain("[task-store] Title summarization failed for task");
+        expect(context).toMatchObject({
+          taskId: task.id,
+          descriptionLength: 201,
+          autoSummarizeEnabled: true,
+          error: "AI service failed",
+        });
+      } finally {
+        consoleSpy.mockRestore();
+      }
     });
 
     it("should trigger summarization at exactly 201 characters", async () => {
@@ -8096,35 +8208,65 @@ Task with acceptance criteria
       expect(storeAny.pollingInProgress).toBe(false);
     });
 
-    it("emits timing warning when polling is slow (>100ms)", async () => {
+    it("logs poll failures with context and keeps checkForChanges non-fatal", async () => {
       // Start watching to enable polling
       await store.watch();
 
       const storeAny = store as any;
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const originalGetLastModified = storeAny.db.getLastModified.bind(storeAny.db);
+      storeAny.db.getLastModified = vi.fn(() => {
+        throw new Error("poll db unavailable");
+      });
 
-      // Create a task to ensure there's something to poll
-      await store.createTask({ description: "slow poll test" });
+      try {
+        await expect(storeAny.checkForChanges()).resolves.toBeUndefined();
+        expect(storeAny.pollingInProgress).toBe(false);
 
-      // Wait for poll interval to trigger naturally
-      await new Promise((resolve) => setTimeout(resolve, 1100));
+        const pollFailureCall = warnSpy.mock.calls.find(
+          (call) =>
+            typeof call[0] === "string"
+            && call[0].includes("[task-store] checkForChanges poll cycle failed"),
+        );
+        expect(pollFailureCall).toBeDefined();
+        const [, context] = pollFailureCall as [string, Record<string, unknown>];
+        expect(context).toMatchObject({
+          lastPollTime: storeAny.lastPollTime,
+          error: "poll db unavailable",
+        });
+      } finally {
+        storeAny.db.getLastModified = originalGetLastModified;
+        warnSpy.mockRestore();
+      }
+    });
 
-      // Reset the guard so we can call checkForChanges directly
-      storeAny.pollingInProgress = false;
+    it("logs watcher failures and keeps polling operational", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-      // Test the timing warning logic by directly manipulating the condition
-      // We verify the timing warning code path exists by checking the source
-      const storeSource = storeAny.checkForChanges.toString();
-      expect(storeSource).toContain("Date.now()");
-      expect(storeSource).toContain("elapsed > 100");
-      expect(storeSource).toContain("console.warn");
+      try {
+        await store.watch();
+        const storeAny = store as any;
 
-      // Verify the guard prevents overlapping calls
-      const firstCall = storeAny.checkForChanges();
-      const secondCall = storeAny.checkForChanges();
-      expect(firstCall).toBeInstanceOf(Promise);
-      expect(secondCall).toBeInstanceOf(Promise);
-      await Promise.all([firstCall, secondCall]);
-      expect(storeAny.pollingInProgress).toBe(false);
+        if (storeAny.watcher) {
+          storeAny.watcher.emit("error", new Error("watcher degraded"));
+
+          const watcherErrorCall = warnSpy.mock.calls.find(
+            (call) => typeof call[0] === "string" && call[0].includes("[task-store] fs.watch emitted an error; polling will continue"),
+          );
+          expect(watcherErrorCall).toBeDefined();
+          const [, context] = watcherErrorCall as [string, Record<string, unknown>];
+          expect(context).toMatchObject({ error: "watcher degraded" });
+        } else {
+          const fallbackCall = warnSpy.mock.calls.find(
+            (call) => typeof call[0] === "string" && call[0].includes("[task-store] fs.watch unavailable; falling back to polling-only updates"),
+          );
+          expect(fallbackCall).toBeDefined();
+        }
+
+        await expect(storeAny.checkForChanges()).resolves.toBeUndefined();
+      } finally {
+        warnSpy.mockRestore();
+      }
     });
 
     it("does not emit timing warning when polling is fast (<100ms)", async () => {
