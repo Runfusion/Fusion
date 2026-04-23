@@ -13,7 +13,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { createSessionDiagnostics } from "./ai-session-diagnostics.js";
+import { createSessionDiagnostics, nonfatal } from "./ai-session-diagnostics.js";
 
 // Dynamic import for @fusion/core to get prompt override resolution
 
@@ -543,11 +543,15 @@ async function generateSpecWithAI(
 
     return parseGenerationResponse(responseText);
   } finally {
-    try {
-      agent.session.dispose?.();
-    } catch {
-      // Ignore cleanup errors
-    }
+    nonfatal(
+      () => agent.session.dispose?.(),
+      diagnostics,
+      "Failed to dispose agent-generation session",
+      {
+        sessionId: session.id,
+        operation: "dispose-agent-session",
+      }
+    );
   }
 }
 

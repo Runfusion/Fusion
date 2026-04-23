@@ -118,6 +118,70 @@ describe("agent-generation module", () => {
       ).rejects.toThrow(SessionNotFoundError);
     });
 
+    it("emits a nonfatal diagnostic when session dispose throws after successful generation", async () => {
+      vi.resetModules();
+
+      const diagnostics: CapturedDiagnostic[] = [];
+      const diagnosticsModule = await import("./ai-session-diagnostics.js");
+      diagnosticsModule.setDiagnosticsSink((level, scope, message, context) => {
+        diagnostics.push({ level, scope, message, context });
+      });
+
+      vi.doMock("@fusion/engine", () => ({
+        createFnAgent: vi.fn(async () => {
+          const messages: Array<{ role: string; content: string }> = [];
+          return {
+            session: {
+              state: { messages },
+              prompt: vi.fn(async () => {
+                messages.push({
+                  role: "assistant",
+                  content: JSON.stringify({
+                    title: "Generated Agent",
+                    icon: "🤖",
+                    role: "custom",
+                    description: "Generated description",
+                    systemPrompt: "Generated prompt",
+                    thinkingLevel: "low",
+                    maxTurns: 12,
+                  }),
+                });
+              }),
+              dispose: vi.fn(() => {
+                throw new Error("dispose failed");
+              }),
+            },
+          };
+        }),
+      }));
+
+      const agentGenerationModule = await import("./agent-generation.js");
+      const session = await agentGenerationModule.startAgentGeneration(getUniqueIp(), "Role requiring generation");
+      const spec = await agentGenerationModule.generateAgentSpec(session.id, "/tmp");
+
+      expect(spec).toMatchObject({
+        title: "Generated Agent",
+        role: "custom",
+      });
+
+      expect(diagnostics).toContainEqual(
+        expect.objectContaining({
+          level: "error",
+          scope: "agent-generation",
+          message: "Failed to dispose agent-generation session",
+          context: expect.objectContaining({
+            sessionId: session.id,
+            operation: "dispose-agent-session",
+            error: expect.objectContaining({
+              message: "dispose failed",
+            }),
+          }),
+        })
+      );
+
+      diagnosticsModule.resetDiagnosticsSink();
+    });
+
     it("logs structured error diagnostics with sessionId and rethrows when AI generation fails", async () => {
       vi.resetModules();
 
