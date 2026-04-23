@@ -10,7 +10,8 @@ import type { IPty, IPtyForkOptions, IWindowsPtyForkOptions } from "node-pty";
 import { EventEmitter } from "events";
 import * as os from "os";
 import * as path from "path";
-import { existsSync, chmodSync } from "node:fs";
+import * as fs from "node:fs";
+import { createRequire } from "node:module";
 import { join, dirname } from "node:path";
 
 // Detect if we're running as a Bun-compiled binary
@@ -21,11 +22,13 @@ const isBunBinary = typeof Bun !== "undefined" && !!Bun.embeddedFiles;
 let ptyModule: typeof import("node-pty") | null = null;
 let ptyLoadError: Error | null = null;
 
+const require = createRequire(import.meta.url);
+
 /**
  * Find the staged native assets directory for Bun-compiled binaries.
  * Looks for runtime/<platform-arch>/ next to the binary.
  *
- * NOTE: The existsSync() calls in this function run during service initialization
+ * NOTE: The fs.existsSync() calls in this function run during service initialization
  * (when terminal is first used). This is acceptable as it only executes once per
  * service lifetime, not per-request.
  */
@@ -42,7 +45,7 @@ function findInstalledNodePtyNativeDir(): string | null {
   try {
     const packageJsonPath = require.resolve("node-pty/package.json");
     const nativeDir = join(dirname(packageJsonPath), "prebuilds", getNativePrebuildName());
-    return existsSync(join(nativeDir, "pty.node")) ? nativeDir : null;
+    return fs.existsSync(join(nativeDir, "pty.node")) ? nativeDir : null;
   } catch {
     return null;
   }
@@ -74,13 +77,16 @@ function ensureNodePtyNativePermissions(): void {
     const nativeModulePath = join(nativeDir, "pty.node");
 
     try {
-      if (existsSync(helperPath)) {
-        chmodSync(helperPath, 0o755);
-      }
-      if (existsSync(nativeModulePath)) {
-        chmodSync(nativeModulePath, 0o755);
-      }
+      fs.chmodSync(helperPath, 0o755);
+    } catch {
+      // Best-effort permission repair; helper may not exist in some layouts.
+    }
+
+    try {
+      fs.chmodSync(nativeModulePath, 0o755);
     } catch (err) {
+      // Keep diagnostics for the native module path since missing/invalid perms
+      // here are more likely to prevent PTY startup.
       console.warn("[terminal] Failed to repair node-pty native permissions:", {
         nativeDir,
         error: err instanceof Error ? err.message : String(err),
@@ -95,7 +101,7 @@ function findStagedNativeDir(): string | null {
   // Check FUSION_RUNTIME_DIR env var first
   if (process.env.FUSION_RUNTIME_DIR) {
     const envPath = join(process.env.FUSION_RUNTIME_DIR, prebuildName);
-    if (existsSync(join(envPath, "pty.node"))) {
+    if (fs.existsSync(join(envPath, "pty.node"))) {
       return envPath;
     }
   }
@@ -103,7 +109,7 @@ function findStagedNativeDir(): string | null {
   // Look next to the executable
   const execDir = dirname(process.execPath);
   const nextToBinary = join(execDir, "runtime", prebuildName);
-  if (existsSync(join(nextToBinary, "pty.node"))) {
+  if (fs.existsSync(join(nextToBinary, "pty.node"))) {
     return nextToBinary;
   }
 
@@ -111,6 +117,8 @@ function findStagedNativeDir(): string | null {
 }
 
 async function loadPtyModule(): Promise<typeof import("node-pty")> {
+  ensureNodePtyNativePermissions();
+
   if (ptyModule) {
     return ptyModule;
   }
@@ -133,7 +141,7 @@ async function loadPtyModule(): Promise<typeof import("node-pty")> {
       // Try to pre-load the native module using process.dlopen
       // This can help when the normal require() path fails
       const nativePath = join(nativeDir, "pty.node");
-      if (existsSync(nativePath)) {
+      if (fs.existsSync(nativePath)) {
         try {
           const nativeModule: { exports?: unknown } = { exports: {} };
           // process.dlopen is a Node internal API
@@ -148,8 +156,6 @@ async function loadPtyModule(): Promise<typeof import("node-pty")> {
   }
 
   try {
-    ensureNodePtyNativePermissions();
-
     // Standard import path - the native-patch setup should have created
     // the necessary symlink structure for node-pty to find the module
     const mod = await import("node-pty");
@@ -323,7 +329,7 @@ export class TerminalService extends EventEmitter {
       const normalizedUserShell = this.isWindows ? userShell.toLowerCase() : userShell;
       for (const allowed of allowedShells) {
         const normalizedAllowed = this.isWindows ? allowed.toLowerCase() : allowed;
-        if (normalizedAllowed === normalizedUserShell && existsSync(allowed)) {
+        if (normalizedAllowed === normalizedUserShell && fs.existsSync(allowed)) {
           return { shell: allowed, args: getShellArgs(allowed) };
         }
       }
@@ -331,7 +337,7 @@ export class TerminalService extends EventEmitter {
 
     // Iterate through allowed shell paths and return first existing one
     for (const shell of allowedShells) {
-      if (existsSync(shell)) {
+      if (fs.existsSync(shell)) {
         return { shell, args: getShellArgs(shell) };
       }
     }
@@ -360,7 +366,7 @@ export class TerminalService extends EventEmitter {
       detectedShell,
       detectedArgs,
       envShell: process.env.SHELL ?? null,
-      allowedShells: this.getAllowedShells().filter((shellPath) => existsSync(shellPath)),
+      allowedShells: this.getAllowedShells().filter((shellPath) => fs.existsSync(shellPath)),
     };
   }
 
@@ -592,7 +598,7 @@ export class TerminalService extends EventEmitter {
     }
 
     for (const allowedShell of this.getAllowedShells()) {
-      if (allowedShell === shell || !existsSync(allowedShell)) continue;
+      if (allowedShell === shell || !fs.existsSync(allowedShell)) continue;
       const shellName = path.basename(allowedShell).toLowerCase().replace(".exe", "");
       const fallbackArgs = shellName === "bash" || shellName === "zsh" ? [] : [];
       addSpawnAttempt(allowedShell, fallbackArgs, "allowed-fallback");
