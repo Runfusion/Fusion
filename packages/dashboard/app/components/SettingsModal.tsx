@@ -1159,7 +1159,7 @@ export function SettingsModal({
 
             {availableModels.length > 0 && (
               <>
-                <h4 className="settings-section-heading" style={{ marginTop: "1.5rem" }}>Model Lanes</h4>
+                <h4 className="settings-section-heading settings-section-heading--spaced">Model Lanes</h4>
                 <p className="settings-description">
                   Global baseline models for each AI role. Project settings can override these per-project.
                 </p>
@@ -1207,7 +1207,7 @@ export function SettingsModal({
             )}
 
             {/* --- OpenRouter Model Sync --- */}
-            <h4 className="settings-section-heading" style={{ marginTop: "1.5rem" }}>OpenRouter Models</h4>
+            <h4 className="settings-section-heading settings-section-heading--spaced">OpenRouter Models</h4>
             <div className="form-group">
               <label htmlFor="openrouterModelSync" className="checkbox-label">
                 <input
@@ -1274,7 +1274,7 @@ export function SettingsModal({
             </div>
 
             {/* --- Project Model Lanes --- */}
-            <h4 className="settings-section-heading" style={{ marginTop: "1.5rem" }}>Model Lanes</h4>
+            <h4 className="settings-section-heading settings-section-heading--spaced">Model Lanes</h4>
             <p className="settings-description">
               Override global model settings at the project level. Each lane controls a specific AI usage context.
               Unset lanes inherit from the corresponding global lane.
@@ -1340,7 +1340,7 @@ export function SettingsModal({
             )}
 
             {/* --- Fallback Models --- */}
-            <h4 className="settings-section-heading" style={{ marginTop: "1.5rem" }}>Fallback Models</h4>
+            <h4 className="settings-section-heading settings-section-heading--spaced">Fallback Models</h4>
             {modelsLoading ? (
               <div className="settings-empty-state">Loading available models…</div>
             ) : availableModels.length === 0 ? (
@@ -1407,7 +1407,7 @@ export function SettingsModal({
             )}
 
             {/* --- Model Presets --- */}
-            <h4 className="settings-section-heading" style={{ marginTop: "1.5rem" }}>Model Presets</h4>
+            <h4 className="settings-section-heading settings-section-heading--spaced">Model Presets</h4>
             <div className="form-group">
               <label>Configured presets</label>
               {presets.length === 0 ? (
@@ -1600,7 +1600,7 @@ export function SettingsModal({
             ) : null}
 
             {/* --- AI Summarization --- */}
-            <h4 className="settings-section-heading" style={{ marginTop: "1.5rem" }}>AI Summarization</h4>
+            <h4 className="settings-section-heading settings-section-heading--spaced">AI Summarization</h4>
             <div className="form-group">
               <label htmlFor="autoSummarizeTitles" className="checkbox-label">
                 <input

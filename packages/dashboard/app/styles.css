@@ -3574,11 +3574,16 @@ input[type="range"]:focus-visible {
 .settings-section-heading {
   font-size: 14px;
   font-weight: 600;
-  padding: 12px 20px 10px;
-  margin: 0 20px 0 0;
+  padding: var(--space-lg) var(--space-xl) var(--space-md);
+  margin: 0 var(--space-xl) 0;
   color: var(--text);
   border-bottom: 1px solid var(--border);
   margin-bottom: var(--space-xs);
+}
+
+/* Spacing modifier for settings-section-heading that need extra top margin */
+.settings-section-heading--spaced {
+  margin-top: var(--space-xl);
 }
 
 /* Scope indicators in sidebar nav items */
@@ -3594,8 +3599,8 @@ input[type="range"]:focus-visible {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  padding: 8px 20px;
-  margin: 0 0 4px 0;
+  padding: var(--space-sm) var(--space-xl);
+  margin: 0 var(--space-xl) var(--space-xs);
   font-size: 12px;
   border-radius: var(--radius);
   color: var(--text-muted);
@@ -7288,8 +7293,8 @@ input[type="range"]:focus-visible {
   }
 
   .settings-section-heading {
-    padding: 12px 14px 10px;
-    margin-right: 14px;
+    padding: var(--space-lg) var(--space-lg) var(--space-md);
+    margin: 0 var(--space-lg) 0;
   }
 
   .form-group {
@@ -7297,7 +7302,7 @@ input[type="range"]:focus-visible {
   }
 
   .settings-scope-banner {
-    padding: 8px 14px;
+    padding: var(--space-sm) var(--space-lg);
   }
 
   .settings-empty-state {
@@ -7327,7 +7332,7 @@ input[type="range"]:focus-visible {
   }
 
   .settings-description {
-    padding: 0 14px;
+    padding: 0 var(--space-lg);
   }
 
   .theme-selector {
