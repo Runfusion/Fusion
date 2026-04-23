@@ -219,6 +219,13 @@ npx companies.sh add paperclipai/companies/gstack
 
 ## Quick start
 
+**One-line install** (macOS & Linux — picks Homebrew if available, falls back to npm):
+
+```bash
+curl -fsSL https://runfusion.ai/install.sh | sh
+fusion dashboard
+```
+
 **Homebrew** (macOS & Linux):
 
 ```bash

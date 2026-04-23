@@ -20,6 +20,14 @@
 
 ## Install
 
+**One-line install** (macOS & Linux):
+
+```bash
+curl -fsSL https://runfusion.ai/install.sh | sh
+```
+
+Picks Homebrew if available, falls back to npm.
+
 **Homebrew** (macOS & Linux):
 
 ```bash
