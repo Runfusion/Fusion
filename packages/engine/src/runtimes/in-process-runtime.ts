@@ -492,14 +492,18 @@ export class InProcessRuntime
         );
         this.triggerScheduler.start();
 
-        // Set up dynamic registration for agents created or updated after startup
+        // Dynamic registration follows state, not runtimeConfig.enabled.
+        // Active/running → timer armed; anything else → not. Ephemeral
+        // (task-worker) agents are never armed.
+        const isTickable = (agent: import("@fusion/core").Agent) =>
+          !isEphemeralAgent(agent) && (agent.state === "active" || agent.state === "running");
+
         this.agentCreatedListener = (agent) => {
           if (!this.triggerScheduler) return;
+          if (!isTickable(agent)) return;
           const rc = agent.runtimeConfig;
-          if (rc?.enabled === false) return;
           this.triggerScheduler.registerAgent(agent.id, {
             heartbeatIntervalMs: rc?.heartbeatIntervalMs as number | undefined,
-            enabled: rc?.enabled as boolean | undefined,
             maxConcurrentRuns: rc?.maxConcurrentRuns as number | undefined,
           });
           runtimeLog.log(`Registered new agent ${agent.id} for heartbeat triggers`);
@@ -508,18 +512,17 @@ export class InProcessRuntime
 
         this.agentUpdatedListener = (agent) => {
           if (!this.triggerScheduler) return;
-          const rc = agent.runtimeConfig;
-          if (rc?.enabled === false) {
+          if (!isTickable(agent)) {
             this.triggerScheduler.unregisterAgent(agent.id);
-            runtimeLog.log(`Unregistered agent ${agent.id} from heartbeat triggers (disabled)`);
-          } else {
-            this.triggerScheduler.registerAgent(agent.id, {
-              heartbeatIntervalMs: rc?.heartbeatIntervalMs as number | undefined,
-              enabled: rc?.enabled as boolean | undefined,
-              maxConcurrentRuns: rc?.maxConcurrentRuns as number | undefined,
-            });
-            runtimeLog.log(`Re-registered agent ${agent.id} for heartbeat triggers`);
+            runtimeLog.log(`Unregistered agent ${agent.id} from heartbeat triggers (state=${agent.state})`);
+            return;
           }
+          const rc = agent.runtimeConfig;
+          this.triggerScheduler.registerAgent(agent.id, {
+            heartbeatIntervalMs: rc?.heartbeatIntervalMs as number | undefined,
+            maxConcurrentRuns: rc?.maxConcurrentRuns as number | undefined,
+          });
+          runtimeLog.log(`Re-registered agent ${agent.id} for heartbeat triggers (state=${agent.state})`);
         };
         this.agentStore.on("agent:updated", this.agentUpdatedListener);
 
@@ -563,21 +566,21 @@ export class InProcessRuntime
         };
         this.agentStore.on("agent:stateChanged", this.ephemeralTerminationListener);
 
-        // Register existing agents with heartbeat monitoring not explicitly disabled
-        // Agents without explicit heartbeat config will use the default 3600-second interval (1 hour)
+        // Register existing agents whose current state is tickable. Agents
+        // in paused/idle/error/terminated stay unregistered until the user
+        // re-activates them; the agentUpdatedListener arms the timer the
+        // moment state transitions to active.
         try {
           const agents = await this.agentStore.listAgents();
           let registeredCount = 0;
           for (const agent of agents) {
+            if (!isTickable(agent)) continue;
             const rc = agent.runtimeConfig;
-            if (rc?.enabled !== false) {
-              this.triggerScheduler.registerAgent(agent.id, {
-                heartbeatIntervalMs: rc?.heartbeatIntervalMs as number | undefined,
-                enabled: rc?.enabled as boolean | undefined,
-                maxConcurrentRuns: rc?.maxConcurrentRuns as number | undefined,
-              });
-              registeredCount++;
-            }
+            this.triggerScheduler.registerAgent(agent.id, {
+              heartbeatIntervalMs: rc?.heartbeatIntervalMs as number | undefined,
+              maxConcurrentRuns: rc?.maxConcurrentRuns as number | undefined,
+            });
+            registeredCount++;
           }
           if (agents.length > 0) {
             runtimeLog.log(`Registered ${registeredCount} of ${agents.length} agents for heartbeat triggers`);

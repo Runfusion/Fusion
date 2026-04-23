@@ -204,6 +204,10 @@ export interface ServerOptions {
   /** Daemon mode configuration with bearer token authentication.
    *  When provided, all API requests (except /api/health) require valid bearer token. */
   daemon?: { token: string };
+  /** Explicitly disable bearer-token auth, ignoring FUSION_DAEMON_TOKEN /
+   *  FUSION_DASHBOARD_TOKEN env vars. Used by `fn dashboard --no-auth` so a
+   *  stale token in a project .env doesn't silently override the flag. */
+  noAuth?: boolean;
   /** Optional TLS credentials. When provided, the server is served over HTTP/2
    *  with HTTP/1.1 fallback (allowHTTP1:true) — this lifts the browser's
    *  per-origin connection cap so long-lived SSE streams no longer starve
@@ -398,7 +402,9 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   // that then captures ?token= from the URL and injects a Bearer header on every
   // /api/* call. WebSocket upgrades are gated separately in setupTerminalWebSocket /
   // setupBadgeWebSocket.
-  const daemonToken = options?.daemon?.token ?? process.env.FUSION_DAEMON_TOKEN;
+  const daemonToken = options?.noAuth
+    ? undefined
+    : options?.daemon?.token ?? process.env.FUSION_DAEMON_TOKEN;
   if (daemonToken) {
     app.use(createAuthMiddleware(daemonToken));
   }

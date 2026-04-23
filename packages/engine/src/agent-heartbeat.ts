@@ -1665,25 +1665,34 @@ interface AgentTimer {
 }
 
 /**
+ * True when an agent's state indicates it should be ticking right now.
+ * Heartbeats track liveness while the agent is meant to be doing work.
+ */
+function isTickableState(state: Agent["state"]): boolean {
+  return state === "active" || state === "running";
+}
+
+/**
+ * True when the scheduler should manage this agent at all. Ephemeral
+ * (task-worker) agents are driven directly by TaskExecutor and must never
+ * acquire a scheduler timer.
+ */
+function isHeartbeatManaged(agent: Agent): boolean {
+  return !isEphemeralAgent(agent);
+}
+
+/**
  * HeartbeatTriggerScheduler manages timer-based heartbeat triggers for agents.
  *
- * Each agent can be registered with a heartbeat config that specifies
- * the timer interval. When the timer fires, the scheduler invokes the
- * provided callback with the appropriate source and context.
+ * State is the source of truth: state ∈ {active, running} on a non-ephemeral
+ * agent arms the timer; any other state or any ephemeral agent doesn't. The
+ * `runtimeConfig.enabled` flag is no longer consulted here — pause/resume
+ * happens through `agent.state`, and the `agent:updated` listener arms or
+ * clears the timer on transitions.
  *
- * The scheduler respects:
- * - `enabled`: Skip registration if false
- * - `heartbeatIntervalMs`: Timer interval (undefined = no timer)
+ * Other config knobs still apply:
+ * - `heartbeatIntervalMs`: Timer interval (default 1h)
  * - `maxConcurrentRuns`: Skip tick if agent already has an active run
- *
- * Usage:
- * ```typescript
- * const scheduler = new HeartbeatTriggerScheduler(agentStore, async (agentId, source, ctx) => {
- *   await heartbeatMonitor.startRun(agentId, { source, triggerDetail: ctx.triggerDetail, contextSnapshot: { ...ctx } });
- * });
- * scheduler.registerAgent("agent-123", { heartbeatIntervalMs: 3600000, enabled: true });
- * scheduler.start();
- * ```
  */
 export class HeartbeatTriggerScheduler {
   private store: AgentStore;
@@ -1751,11 +1760,9 @@ export class HeartbeatTriggerScheduler {
    * @param config - Per-agent heartbeat config
    */
   registerAgent(agentId: string, config: AgentHeartbeatConfig): void {
-    // Skip if not enabled
-    if (config.enabled === false) {
-      heartbeatLog.log(`Skipping timer registration for ${agentId} (disabled)`);
-      return;
-    }
+    // State drives whether an agent ticks; this method no longer honors
+    // `config.enabled` as a registration gate. Callers filter based on
+    // state + ephemeral classification before calling through.
 
     // Apply default interval if not explicitly configured
     // This ensures agents with heartbeat monitoring enabled but no explicit interval
@@ -1884,8 +1891,8 @@ export class HeartbeatTriggerScheduler {
       if (!this.running) return;
 
       try {
-        if (agent.runtimeConfig?.enabled === false) {
-          heartbeatLog.log(`Assignment trigger skipped for ${agent.id} (heartbeat disabled)`);
+        if (!isHeartbeatManaged(agent) || !isTickableState(agent.state)) {
+          heartbeatLog.log(`Assignment trigger skipped for ${agent.id} (state=${agent.state})`);
           return;
         }
 
@@ -1966,10 +1973,29 @@ export class HeartbeatTriggerScheduler {
   private watchAgentLifecycle(): void {
     if (this.updatedListener || this.deletedListener) return;
 
+    // State-driven registration: when an agent transitions into a tickable
+    // state (active/running) arm the timer; transitioning out clears it.
     this.updatedListener = (agent) => {
-      if (agent.state === "terminated" || agent.runtimeConfig?.enabled === false) {
+      if (!isHeartbeatManaged(agent) || !isTickableState(agent.state)) {
         this.unregisterAgent(agent.id);
+        return;
       }
+      if (this.timers.has(agent.id)) {
+        // Already ticking — re-registering would reset the interval mid-cycle
+        // on every unrelated agent update.
+        return;
+      }
+      const rc = (agent.runtimeConfig ?? {}) as {
+        heartbeatIntervalMs?: number;
+        maxConcurrentRuns?: number;
+      };
+      this.registerAgent(agent.id, {
+        heartbeatIntervalMs: rc.heartbeatIntervalMs,
+        maxConcurrentRuns: rc.maxConcurrentRuns,
+      });
+      heartbeatLog.log(
+        `State-driven registration: ${agent.id} is ${agent.state} — timer armed`,
+      );
     };
     this.deletedListener = (agentId) => {
       this.unregisterAgent(agentId);
@@ -2004,8 +2030,8 @@ export class HeartbeatTriggerScheduler {
         this.unregisterAgent(agentId);
         return;
       }
-      if (agent.state === "terminated" || agent.runtimeConfig?.enabled === false) {
-        heartbeatLog.log(`Timer tick skipped for ${agentId} (disabled or terminated)`);
+      if (!isHeartbeatManaged(agent) || !isTickableState(agent.state)) {
+        heartbeatLog.log(`Timer tick skipped for ${agentId} (state=${agent.state})`);
         this.unregisterAgent(agentId);
         return;
       }

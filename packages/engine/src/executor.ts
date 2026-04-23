@@ -75,16 +75,10 @@ const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"
 const MAX_WORKFLOW_STEP_RETRIES = 3;
 
 /**
- * Decide the earliest step index that must be reset when a workflow reviewer
- * (e.g. Frontend UX Design) requests revision. Two invariants:
- *   - Preflight (step 0, when named "preflight") is never reset — redoing it
- *     is pure waste because it only reads context, and revision feedback
- *     never targets it. This alone saves 10–15 min per revision.
- *   - If the feedback text mentions a distinctive (>=5-char) token from a
- *     step's name, the reset starts at that step; everything before it stays
- *     `done`. This avoids dragging already-approved earlier steps through
- *     plan-review / code-review again.
- * Returns an index >= steps.length when there is nothing to reset.
+ * @deprecated Kept exported so existing unit tests in executor.test.ts still
+ * link, but no longer called from the executor. Revision feedback is applied
+ * as an in-place fix via `reopenLastStepForRevision` — earlier completed
+ * steps stay done instead of being replayed.
  */
 export function determineRevisionResetStart(
   steps: ReadonlyArray<{ name: string }>,
@@ -2870,13 +2864,11 @@ export class TaskExecutor {
 
   /**
    * Handle a workflow step revision request.
-   * 
-   * This method:
-   * 1. Updates PROMPT.md with "Workflow Revision Instructions" section
-   * 2. Resets task execution state (all steps reset to pending)
-   * 3. Schedules fresh execution to run after current guard unwinds
-   * 
-   * The task stays in "in-progress" and is scheduled for a fresh executor pass.
+   *
+   * Re-opens ONLY the last step so the executor has exactly one pending slot
+   * to re-enter through. All earlier done steps stay done — the agent reads
+   * the injected feedback from PROMPT.md and applies an in-place fix rather
+   * than redoing any completed step.
    */
   private async handleWorkflowRevisionRequest(
     task: Task,
@@ -2886,39 +2878,20 @@ export class TaskExecutor {
   ): Promise<void> {
     executorLog.log(`${task.id}: workflow revision requested by step "${stepName}"`);
 
-    // Scope the reset: keep Preflight intact and, when feedback mentions a
-    // specific step, only reset from that step onward. Earlier already-reviewed
-    // steps stay done, avoiding redundant plan/code-review round-trips.
     const updatedTask = await this.store.getTask(task.id);
-    const resetStart = determineRevisionResetStart(updatedTask.steps, feedback);
-    const targetStepName =
-      resetStart < updatedTask.steps.length ? updatedTask.steps[resetStart].name : null;
-    const resetSummary =
-      resetStart >= updatedTask.steps.length
-        ? "no steps to reset"
-        : `resetting steps ${resetStart + 1}–${updatedTask.steps.length} (starting at "${targetStepName}")`;
+    const reopen = await this.reopenLastStepForRevision(task.id, updatedTask);
+    const reopenSummary = reopen
+      ? `re-opening Step ${reopen.index + 1} ("${reopen.name}") for in-place fix`
+      : "no step to re-open (none were completed)";
 
     await this.store.logEntry(
       task.id,
-      `Workflow step "${stepName}" requested revision — ${resetSummary}`,
+      `Workflow step "${stepName}" requested revision — ${reopenSummary}`,
       feedback,
     );
 
-    // 1. Update PROMPT.md with revision instructions
-    await this.injectWorkflowRevisionInstructions(task, feedback, {
-      resetStart,
-      targetStepName,
-      totalSteps: updatedTask.steps.length,
-    });
+    await this.injectWorkflowRevisionInstructions(task, feedback);
 
-    // 2. Reset the scoped range of steps to pending
-    for (let i = resetStart; i < updatedTask.steps.length; i++) {
-      if (updatedTask.steps[i].status !== "pending") {
-        await this.store.updateStep(task.id, i, "pending");
-      }
-    }
-
-    // 3. Clear any session file so we get a fresh session
     await this.store.updateTask(task.id, {
       status: null,
       sessionFile: null,
@@ -2954,6 +2927,37 @@ export class TaskExecutor {
   }
 
   /**
+   * Re-open the last non-pending step so a revision/failure handler gives the
+   * executor exactly one pending slot to re-enter through. Returns the index
+   * and name of the step that was flipped to `pending`, or null when there
+   * was nothing to re-open.
+   */
+  private async reopenLastStepForRevision(
+    taskId: string,
+    task: Task,
+  ): Promise<{ index: number; name: string } | null> {
+    const steps = task.steps;
+    if (steps.length === 0) return null;
+
+    let targetIndex = -1;
+    for (let i = steps.length - 1; i >= 0; i--) {
+      if (steps[i].status !== "pending") {
+        targetIndex = i;
+        break;
+      }
+    }
+
+    if (targetIndex === -1) {
+      await this.store.updateTask(taskId, { currentStep: 0 });
+      return null;
+    }
+
+    await this.store.updateStep(taskId, targetIndex, "pending");
+    await this.store.updateTask(taskId, { currentStep: targetIndex });
+    return { index: targetIndex, name: steps[targetIndex].name };
+  }
+
+  /**
    * Inject or update the "Workflow Revision Instructions" section in PROMPT.md.
    * This section contains feedback from workflow steps that requested revisions.
    * The section is replaced entirely to avoid accumulation of old feedback.
@@ -2961,7 +2965,6 @@ export class TaskExecutor {
   private async injectWorkflowRevisionInstructions(
     task: Task,
     feedback: string,
-    scope?: { resetStart: number; targetStepName: string | null; totalSteps: number },
   ): Promise<void> {
     const promptPath = join(this.store.getFusionDir(), "tasks", task.id, "PROMPT.md");
 
@@ -2974,17 +2977,9 @@ export class TaskExecutor {
       return;
     }
 
-    // Describe which steps were reset so the executor knows not to re-run
-    // Preflight or any earlier already-approved steps. When no scope is
-    // provided (legacy callers), fall back to the previous "all steps" wording.
-    let scopeLine: string;
-    if (scope && scope.targetStepName && scope.resetStart < scope.totalSteps) {
-      scopeLine = `Re-execution starts at **Step ${scope.resetStart + 1} ("${scope.targetStepName}")**. Earlier steps remain done — do not re-run them unless the feedback explicitly calls them out.`;
-    } else if (scope && scope.resetStart >= scope.totalSteps) {
-      scopeLine = "No steps were reset; apply the feedback as an in-place fix and call task_done() when complete.";
-    } else {
-      scopeLine = "Address the feedback above by making the necessary code changes, then mark all affected steps as done and call task_done() when complete.";
-    }
+    // All prior steps stay done — agent applies the feedback as an in-place
+    // patch rather than re-planning or re-executing earlier steps.
+    const scopeLine = "All prior steps remain **done**. Apply the feedback above as an in-place fix (make the necessary code changes, commit, and call `task_done()` when complete). Do **not** re-run or re-plan any earlier step unless the feedback explicitly calls it out.";
 
     // Check for existing Workflow Revision Instructions section
     const revisionSectionHeader = "## Workflow Revision Instructions";
@@ -3065,13 +3060,10 @@ ${feedback}
     // 2. Inject failure feedback into PROMPT.md
     await this.injectWorkflowStepFailureInstructions(task, failureFeedback, stepName, retryCount);
 
-    // 3. Reset all steps to pending for fresh execution
+    // 3. Re-open only the last step so the executor has a single pending
+    // slot to re-enter. Earlier done steps stay done.
     const updatedTask = await this.store.getTask(task.id);
-    for (let i = 0; i < updatedTask.steps.length; i++) {
-      if (updatedTask.steps[i].status !== "pending") {
-        await this.store.updateStep(task.id, i, "pending");
-      }
-    }
+    await this.reopenLastStepForRevision(task.id, updatedTask);
 
     // 4. Clear any session file so we get a fresh session
     await this.store.updateTask(task.id, {
@@ -3138,13 +3130,10 @@ ${feedback}
     // Pass MAX_WORKFLOW_STEP_RETRIES to indicate retries are exhausted (shows "3/3 (0 remaining)")
     await this.injectWorkflowStepFailureInstructions(task, failureFeedback, stepName, MAX_WORKFLOW_STEP_RETRIES);
 
-    // 4. Reset all steps to pending
+    // 4. Re-open only the last step for a single in-place fix pass. Earlier
+    // done steps stay done so the executor doesn't redo finished work.
     const updatedTask = await this.store.getTask(taskId);
-    for (let i = 0; i < updatedTask.steps.length; i++) {
-      if (updatedTask.steps[i].status !== "pending") {
-        await this.store.updateStep(taskId, i, "pending");
-      }
-    }
+    await this.reopenLastStepForRevision(taskId, updatedTask);
 
     // 5. Clear error/status/session fields and reset workflow step retries
     await this.store.updateTask(taskId, {

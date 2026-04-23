@@ -4118,9 +4118,13 @@ describe("HeartbeatTriggerScheduler", () => {
       expect(scheduler.getRegisteredAgents()).toContain("agent-001");
     });
 
-    it("skips registration when enabled is false", () => {
+    it("registers regardless of the legacy enabled flag (state is the source of truth)", () => {
+      // runtimeConfig.enabled is no longer honored by the scheduler — pause
+      // and resume happen through agent.state, and the agent:updated listener
+      // drives register/unregister. Callers that still pass `enabled: false`
+      // should not silently lose the timer.
       scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 10000, enabled: false });
-      expect(scheduler.getRegisteredAgents()).not.toContain("agent-001");
+      expect(scheduler.getRegisteredAgents()).toContain("agent-001");
     });
 
     it("applies default 3600-second interval when intervalMs is undefined", async () => {
@@ -4486,7 +4490,7 @@ describe("HeartbeatTriggerScheduler", () => {
     });
 
     it("triggers callback on agent:assigned event", async () => {
-      const agent = { id: "agent-test", name: "Test", taskId: "FN-001" } as import("@fusion/core").Agent;
+      const agent = { id: "agent-test", name: "Test", state: "active", metadata: {}, taskId: "FN-001" } as import("@fusion/core").Agent;
 
       eventStore.emit("agent:assigned", agent, "FN-001");
 
@@ -4578,7 +4582,7 @@ describe("HeartbeatTriggerScheduler", () => {
       });
       (eventStore as any).getBudgetStatus = vi.fn().mockResolvedValue(budgetStatus);
 
-      const agent = { id: "agent-test", name: "Test" } as import("@fusion/core").Agent;
+      const agent = { id: "agent-test", name: "Test", state: "active", metadata: {} } as import("@fusion/core").Agent;
       eventStore.emit("agent:assigned", agent, "FN-003");
 
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -4601,7 +4605,7 @@ describe("HeartbeatTriggerScheduler", () => {
       });
       (eventStore as any).getBudgetStatus = vi.fn().mockResolvedValue(budgetStatus);
 
-      const agent = { id: "agent-test", name: "Test" } as import("@fusion/core").Agent;
+      const agent = { id: "agent-test", name: "Test", state: "active", metadata: {} } as import("@fusion/core").Agent;
       eventStore.emit("agent:assigned", agent, "FN-005");
 
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -4636,7 +4640,7 @@ describe("HeartbeatTriggerScheduler", () => {
       scheduler = new HeartbeatTriggerScheduler(eventStore as unknown as AgentStore, callback, assignmentTaskStore);
       scheduler.start();
 
-      const agent = { id: "agent-test", name: "Test" } as import("@fusion/core").Agent;
+      const agent = { id: "agent-test", name: "Test", state: "active", metadata: {} } as import("@fusion/core").Agent;
       eventStore.emit("agent:assigned", agent, "FN-006");
 
       await vi.waitFor(() => {

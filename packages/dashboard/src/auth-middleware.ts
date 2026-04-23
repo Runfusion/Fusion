@@ -33,13 +33,15 @@ function isApiPath(path: string): boolean {
 /**
  * Check if daemon auth should be active.
  * Auth is enabled when FUSION_DAEMON_TOKEN env var is set OR daemon options are provided.
+ * Always returns false when options.noAuth is true (CLI --no-auth override).
  */
-export function isDaemonAuthActive(options?: { daemon?: { token: string } }): boolean {
-  // Check explicit daemon option
+export function isDaemonAuthActive(options?: { daemon?: { token: string }; noAuth?: boolean }): boolean {
+  if (options?.noAuth) {
+    return false;
+  }
   if (options?.daemon?.token) {
     return true;
   }
-  // Check environment variable
   if (process.env.FUSION_DAEMON_TOKEN) {
     return true;
   }
@@ -48,8 +50,12 @@ export function isDaemonAuthActive(options?: { daemon?: { token: string } }): bo
 
 /**
  * Get the daemon token from options or environment.
+ * Returns undefined when options.noAuth is true, regardless of env.
  */
-export function getDaemonToken(options?: { daemon?: { token: string } }): string | undefined {
+export function getDaemonToken(options?: { daemon?: { token: string }; noAuth?: boolean }): string | undefined {
+  if (options?.noAuth) {
+    return undefined;
+  }
   if (options?.daemon?.token) {
     return options.daemon.token;
   }

@@ -1,7 +1,7 @@
 import type { AddressInfo } from "node:net";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
-import { TaskStore, AutomationStore, CentralCore, AgentStore, PluginStore, PluginLoader, getTaskMergeBlocker, getEnabledPiExtensionPaths } from "@fusion/core";
+import { TaskStore, AutomationStore, CentralCore, AgentStore, PluginStore, PluginLoader, getTaskMergeBlocker, getEnabledPiExtensionPaths, isEphemeralAgent } from "@fusion/core";
 import { createServer, GitHubClient, createSkillsAdapter, getProjectSettingsPath, loadTlsCredentialsFromEnv } from "@fusion/dashboard";
 import { aiMergeTask, MissionAutopilot, MissionExecutionLoop, HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext, ProjectEngineManager, PeerExchangeService } from "@fusion/engine";
 import { AuthStorage, DefaultPackageManager, ModelRegistry, discoverAndLoadExtensions, createExtensionRuntime } from "@mariozechner/pi-coding-agent";
@@ -628,6 +628,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       skillsAdapter,
       https: loadTlsCredentialsFromEnv(),
       daemon: dashboardAuthToken ? { token: dashboardAuthToken } : undefined,
+      noAuth: opts.noAuth,
     });
 
     const shutdown = async (signal: NodeJS.Signals) => {
@@ -761,14 +762,16 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
 
       const agents = await agentStore.listAgents();
       for (const agent of agents) {
+        // State drives whether a timer is armed. Arm timers only for
+        // non-ephemeral agents currently in active/running — transitions
+        // after startup are handled by the scheduler's agent:updated listener.
+        if (isEphemeralAgent(agent)) continue;
+        if (agent.state !== "active" && agent.state !== "running") continue;
         const rc = agent.runtimeConfig;
-        if (rc && (rc.heartbeatIntervalMs || rc.enabled !== undefined || rc.maxConcurrentRuns)) {
-          triggerScheduler.registerAgent(agent.id, {
-            heartbeatIntervalMs: rc.heartbeatIntervalMs as number | undefined,
-            enabled: rc.enabled as boolean | undefined,
-            maxConcurrentRuns: rc.maxConcurrentRuns as number | undefined,
-          });
-        }
+        triggerScheduler.registerAgent(agent.id, {
+          heartbeatIntervalMs: rc?.heartbeatIntervalMs as number | undefined,
+          maxConcurrentRuns: rc?.maxConcurrentRuns as number | undefined,
+        });
       }
       if (agents.length > 0) {
         console.log(`[engine] Registered ${triggerScheduler.getRegisteredAgents().length} agents for heartbeat triggers`);
@@ -810,6 +813,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       skillsAdapter,
       https: loadTlsCredentialsFromEnv(),
       daemon: dashboardAuthToken ? { token: dashboardAuthToken } : undefined,
+      noAuth: opts.noAuth,
     });
   }
 
