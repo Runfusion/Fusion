@@ -36076,80 +36076,22 @@ html .column.drag-over * {
   color: var(--text-muted);
 }
 
-/* Mobile responsive overrides */
-@media (max-width: 768px) {
-  /* Detail view header */
-  .plugin-manager-detail-header {
-    gap: var(--space-sm);
-    flex-wrap: wrap;
-  }
-
-  .plugin-detail-title {
-    flex-wrap: wrap;
-    gap: var(--space-xs);
-  }
-
-  /* Detail cards */
-  .plugin-detail-card {
-    padding: var(--space-md);
-    gap: var(--space-sm);
-  }
-
-  /* Plugin list items */
-  .plugin-list {
-    gap: var(--space-xs);
-  }
-
-  .plugin-item {
-    padding: var(--space-md);
-  }
-
-  /* Action buttons inside list items */
-  .plugin-actions {
-    gap: var(--space-xs);
-  }
-
-  /* Detail actions footer — buttons stack on narrow screens */
-  .plugin-detail-actions {
-    flex-wrap: wrap;
-    justify-content: stretch;
-  }
-
-  .plugin-detail-actions button {
-    flex: 1 1 auto;
-    min-height: 36px;
-  }
-
-  /* Pi Extensions list items - mobile adjustments */
-  .pi-ext-list {
-    gap: var(--space-xs);
-  }
-
-  .pi-ext-item {
-    padding: var(--space-sm);
-  }
-
-  /* Pi Extensions Manager - mobile-specific layout */
-  .pi-ext-add-form-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .pi-ext-add-form-row .btn,
-  .pi-ext-add-form-row .btn-primary {
-    width: 100%;
-  }
-
-  .pi-ext-package-header {
-    padding: var(--space-sm) var(--space-md);
-  }
-
-  .pi-ext-resource-path {
-    max-width: 120px;
-  }
+/* Pi Extensions Manager package UI — base styles */
+.pi-ext-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
 }
 
-/* ── Pi Extensions Manager Package UI ──────────────────────── */
+.pi-ext-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
 
 .pi-ext-add-form {
   margin-bottom: var(--space-md);
@@ -36204,8 +36146,8 @@ html .column.drag-over * {
 }
 
 .pi-ext-expand-btn:focus-visible {
-  outline: none;
   box-shadow: var(--focus-ring-strong);
+  outline: none;
 }
 
 .pi-ext-expand-placeholder {
@@ -36214,7 +36156,6 @@ html .column.drag-over * {
   flex-shrink: 0;
 }
 
-/* Package source type badges */
 .pi-ext-source-badge--npm {
   color: var(--color-info);
   background: color-mix(in srgb, var(--color-info) 12%, transparent);
@@ -36268,8 +36209,8 @@ html .column.drag-over * {
 }
 
 .pi-ext-remove-btn:focus-visible {
-  outline: none;
   box-shadow: var(--focus-ring-strong);
+  outline: none;
 }
 
 .pi-ext-filter-list {
@@ -36391,8 +36332,81 @@ html .column.drag-over * {
 }
 
 .pi-ext-resource-remove:focus-visible {
-  outline: none;
   box-shadow: var(--focus-ring-strong);
+  outline: none;
+}
+
+/* Mobile responsive overrides */
+@media (max-width: 768px) {
+  /* Detail view header */
+  .plugin-manager-detail-header {
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+  }
+
+  .plugin-detail-title {
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+  }
+
+  /* Detail cards */
+  .plugin-detail-card {
+    padding: var(--space-md);
+    gap: var(--space-sm);
+  }
+
+  /* Plugin list items */
+  .plugin-list {
+    gap: var(--space-xs);
+  }
+
+  .plugin-item {
+    padding: var(--space-md);
+  }
+
+  /* Action buttons inside list items */
+  .plugin-actions {
+    gap: var(--space-xs);
+  }
+
+  /* Detail actions footer — buttons stack on narrow screens */
+  .plugin-detail-actions {
+    flex-wrap: wrap;
+    justify-content: stretch;
+  }
+
+  .plugin-detail-actions button {
+    flex: 1 1 auto;
+    min-height: 36px;
+  }
+
+  /* Pi Extensions list items - mobile adjustments */
+  .pi-ext-list {
+    gap: var(--space-xs);
+  }
+
+  .pi-ext-item {
+    padding: var(--space-sm);
+  }
+
+  /* Pi Extensions Manager - mobile-specific layout */
+  .pi-ext-add-form-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .pi-ext-add-form-row .btn,
+  .pi-ext-add-form-row .btn-primary {
+    width: 100%;
+  }
+
+  .pi-ext-package-header {
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .pi-ext-resource-path {
+    max-width: 120px;
+  }
 }
 
 /* Discovered Extensions Section */
