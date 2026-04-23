@@ -110,6 +110,25 @@ describe("core modals mobile css coverage", () => {
     expect(mobileBlock).toContain("overflow-y: auto;");
   });
 
+  it("GitManagerModal: modal uses full-screen viewport sizing on mobile (641-768px range)", () => {
+    const css = fs.readFileSync(stylesPath, "utf-8");
+    const mobileBlock = getMainMobileBlock(css);
+
+    // Verify .gm-modal is included in the modal sizing rule block
+    const modalRuleMatch = mobileBlock.match(
+      /\.modal,\s*\.modal-lg,\s*\.modal-md,\s*\.gm-modal\s*\{[^}]+\}/,
+    );
+    expect(modalRuleMatch).not.toBeNull();
+    const modalRule = modalRuleMatch![0];
+
+    // Verify full-screen constraints
+    expect(modalRule).toContain("width: 100%;");
+    expect(modalRule).toContain("max-width: 100%;");
+    expect(modalRule).toContain("height: 100vh;");
+    expect(modalRule).toContain("max-height: 100vh;");
+    expect(modalRule).toContain("border-radius: 0;");
+  });
+
   it("TaskDetailModal: action dropdown menus have max-height constraint on mobile", () => {
     const css = fs.readFileSync(stylesPath, "utf-8");
     const mobileBlock = getMainMobileBlock(css);
