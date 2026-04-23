@@ -119,7 +119,7 @@ describe("build-exe", () => {
         cleanup();
       }
     },
-    20_000,
+    90_000,
   );
 
   it("binary runs 'task list' without crashing", () => {

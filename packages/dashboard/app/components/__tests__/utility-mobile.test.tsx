@@ -235,7 +235,7 @@ describe("Utility component mobile adaptations", () => {
     expectMobileRule(css, ".settings-layout", "flex-direction: column;");
     expectMobileRule(css, ".agent-board", "grid-template-columns: 1fr;");
     expectMobileRule(css, ".active-agents-grid", "grid-template-columns: 1fr;");
-    expectMobileRule(css, ".toast-container", "bottom: calc(var(--mobile-nav-height, 44px) + var(--executor-footer-height, 0px) + var(--standalone-bottom-gap, 0px) + env(safe-area-inset-bottom, 0px) + var(--space-lg));");
+    expectMobileRule(css, ".toast-container", "bottom: calc(var(--mobile-nav-height, 44px) + var(--executor-footer-height, 0px) + var(--standalone-bottom-gap, 0px) + env(safe-area-inset-bottom, 0px) + var(--space-lg) + var(--space-2xl));");
     expectMobileRule(css, ".background-tasks-indicator__popover", "position: fixed;");
   });
 });

@@ -5700,7 +5700,7 @@ input[type="range"]:focus-visible {
 
 @media (max-width: 768px) {
   .toast-container {
-    bottom: calc(var(--mobile-nav-height, 44px) + var(--executor-footer-height, 0px) + var(--standalone-bottom-gap, 0px) + env(safe-area-inset-bottom, 0px) + var(--space-lg));
+    bottom: calc(var(--mobile-nav-height, 44px) + var(--executor-footer-height, 0px) + var(--standalone-bottom-gap, 0px) + env(safe-area-inset-bottom, 0px) + var(--space-lg) + var(--space-2xl));
     right: 8px;
     left: 8px;
   }
