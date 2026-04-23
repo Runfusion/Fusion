@@ -6,9 +6,9 @@
   "author": "Fusion Team",
   "homepage": "https://github.com/gsxdsm/fusion",
   "runtime": {
-    "runtimeId": "hermes-runtime",
-    "name": "Hermes AI Runtime",
-    "description": "AI agent execution runtime for Fusion tasks",
+    "runtimeId": "hermes",
+    "name": "Hermes Runtime",
+    "description": "Experimental Hermes runtime integration for Fusion tasks (implementation deferred to FN-2264)",
     "version": "0.1.0"
   }
 }

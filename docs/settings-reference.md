@@ -232,6 +232,7 @@ Fusion supports multiple agent runtimes through a plugin-based runtime system. T
 |------------|------|-------------|
 | `pi` | Default PI Runtime | Built-in runtime using the `pi` agent (default) |
 | `paperclip` | Paperclip Runtime | Plugin-provided runtime (requires `fusion-plugin-paperclip-runtime`) |
+| `hermes` | Hermes Runtime (experimental) | Plugin-provided experimental runtime hint (requires `fusion-plugin-hermes-runtime`; execution deferred to FN-2264) |
 
 ### Runtime Resolution Order
 
@@ -239,7 +240,7 @@ When creating an agent session, Fusion resolves the runtime as follows:
 
 1. **No `runtimeHint` configured** → Use default `pi` runtime
 2. **`runtimeHint` is `"pi"` or `"default"`** → Use default `pi` runtime
-3. **`runtimeHint` is a plugin runtime ID** (e.g., `"paperclip"`) → Look up and instantiate the plugin runtime
+3. **`runtimeHint` is a plugin runtime ID** (e.g., `"paperclip"` or `"hermes"`) → Look up and instantiate the plugin runtime
 4. **Plugin runtime unavailable** → Fall back to default `pi` runtime (with warning log)
 
 ### Configuring Runtime Selection
@@ -256,6 +257,18 @@ Runtime selection is configured at the **agent level** via `runtimeConfig.runtim
 }
 ```
 
+```json
+{
+  "name": "Hermes Executor",
+  "role": "executor",
+  "runtimeConfig": {
+    "runtimeHint": "hermes"
+  }
+}
+```
+
+> ⚠️ `runtimeHint: "hermes"` is currently experimental and deferred. Runtime resolution works, but execution remains intentionally unimplemented until FN-2264.
+
 **Important:** There is no task-level runtime configuration. Tasks inherit the runtime from their assigned agent's `runtimeConfig`.
 
 ### Fallback Behavior
@@ -263,22 +276,23 @@ Runtime selection is configured at the **agent level** via `runtimeConfig.runtim
 If a configured runtime is unavailable (plugin not installed, not enabled, or factory error), Fusion logs a warning and falls back to the default `pi` runtime:
 
 ```
-[runtime-resolver] [executor] Runtime "paperclip" unavailable (not_found), falling back to default pi runtime
+[runtime-resolver] [executor] Runtime "hermes" unavailable (not_found), falling back to default pi runtime
 ```
 
 The fallback ensures tasks continue executing even if the configured runtime plugin is unavailable.
 
 ### Installing Plugin Runtimes
 
-To use a plugin-provided runtime like Paperclip:
+To use plugin-provided runtimes like Paperclip or Hermes:
 
-1. Install the plugin:
+1. Install one or both plugins:
 
 ```bash
 fn plugin add ./plugins/fusion-plugin-paperclip-runtime
+fn plugin add ./plugins/fusion-plugin-hermes-runtime
 ```
 
-2. Create an agent with the appropriate `runtimeConfig`:
+2. Create agents with the appropriate `runtimeConfig`:
 
 ```json
 {
@@ -290,9 +304,19 @@ fn plugin add ./plugins/fusion-plugin-paperclip-runtime
 }
 ```
 
+```json
+{
+  "name": "Hermes Executor",
+  "role": "executor",
+  "runtimeConfig": {
+    "runtimeHint": "hermes"
+  }
+}
+```
+
 3. Assign the agent to tasks that should use this runtime.
 
-For more details, see the [Paperclip Runtime Plugin documentation](../plugins/fusion-plugin-paperclip-runtime/README.md).
+For more details, see the [Paperclip Runtime Plugin documentation](../plugins/fusion-plugin-paperclip-runtime/README.md) and [Hermes Runtime Plugin documentation](../plugins/fusion-plugin-hermes-runtime/README.md).
 
 ---
 
@@ -424,7 +448,7 @@ To clear all overrides, set `promptOverrides` to `null`:
 
 ### 4) Agent runtime configuration (example agent config)
 
-Runtime selection is configured at the agent level via `runtimeConfig`. This example shows an agent configured to use the Paperclip runtime:
+Runtime selection is configured at the agent level via `runtimeConfig`. These examples show agents configured to use Paperclip and Hermes runtime hints:
 
 ```json
 {
@@ -436,16 +460,28 @@ Runtime selection is configured at the agent level via `runtimeConfig`. This exa
 }
 ```
 
-To create this agent via the API:
+```json
+{
+  "name": "Hermes Executor",
+  "role": "executor",
+  "runtimeConfig": {
+    "runtimeHint": "hermes"
+  }
+}
+```
+
+> ⚠️ Hermes remains experimental/deferred (FN-2264). Runtime hint selection is available now; full runtime execution behavior is not.
+
+To create a Hermes-configured agent via the API:
 
 ```bash
 curl -X POST http://localhost:4040/api/agents \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "Paperclip Executor",
+    "name": "Hermes Executor",
     "role": "executor",
     "runtimeConfig": {
-      "runtimeHint": "paperclip"
+      "runtimeHint": "hermes"
     }
   }'
 ```

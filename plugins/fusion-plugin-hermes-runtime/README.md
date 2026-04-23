@@ -27,7 +27,7 @@ cp -r fusion-plugin-hermes-runtime ~/.fusion/plugins/
 ### Option 2: Install via CLI
 
 ```bash
-fn plugin install /path/to/fusion-plugin-hermes-runtime
+fn plugin add ./plugins/fusion-plugin-hermes-runtime
 ```
 
 ## Current Status
@@ -42,10 +42,24 @@ fn plugin install /path/to/fusion-plugin-hermes-runtime
 
 The plugin registers a runtime with the following metadata:
 
-- **Runtime ID:** `hermes-runtime`
-- **Name:** `Hermes AI Runtime`
-- **Description:** AI agent execution runtime for Fusion tasks
+- **Runtime ID:** `hermes`
+- **Name:** `Hermes Runtime`
+- **Description:** Experimental Hermes runtime integration for Fusion tasks (implementation deferred to FN-2264)
 - **Version:** `0.1.0`
+
+To route an agent to Hermes, set `runtimeConfig.runtimeHint` to `"hermes"`:
+
+```json
+{
+  "name": "Hermes Executor",
+  "role": "executor",
+  "runtimeConfig": {
+    "runtimeHint": "hermes"
+  }
+}
+```
+
+> ⚠️ Hermes is currently an experimental placeholder runtime. Session creation succeeds, but `execute()` intentionally throws until FN-2264 is implemented.
 
 ### Deferred Implementation
 
@@ -90,9 +104,9 @@ The plugin includes comprehensive tests covering:
   "author": "Fusion Team",
   "homepage": "https://github.com/gsxdsm/fusion",
   "runtime": {
-    "runtimeId": "hermes-runtime",
-    "name": "Hermes AI Runtime",
-    "description": "AI agent execution runtime for Fusion tasks",
+    "runtimeId": "hermes",
+    "name": "Hermes Runtime",
+    "description": "Experimental Hermes runtime integration for Fusion tasks (implementation deferred to FN-2264)",
     "version": "0.1.0"
   }
 }
@@ -105,7 +119,7 @@ The plugin exports the following for testing and verification:
 - `default` - The FusionPlugin instance
 - `hermesRuntimeMetadata` - Runtime manifest metadata object
 - `hermesRuntimeFactory` - Factory function for creating runtime instances
-- `HERMES_RUNTIME_ID` - Runtime ID constant (`"hermes-runtime"`)
+- `HERMES_RUNTIME_ID` - Runtime ID constant (`"hermes"`)
 
 ## Related
 

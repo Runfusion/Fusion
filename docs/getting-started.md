@@ -44,6 +44,32 @@ After installation, select the Paperclip runtime for an agent by setting `runtim
 
 For details on runtime selection, fallback behavior, and constraints, see the [Paperclip Runtime Plugin documentation](../plugins/fusion-plugin-paperclip-runtime/README.md).
 
+### Optional: Install the Hermes Runtime Plugin (Experimental)
+
+The Hermes Runtime Plugin (`fusion-plugin-hermes-runtime`) registers an experimental runtime hint (`"hermes"`) so agents can explicitly target Hermes in runtime selection.
+
+Install the plugin:
+
+```bash
+fn plugin add ./plugins/fusion-plugin-hermes-runtime
+```
+
+Configure an agent to use Hermes:
+
+```json
+{
+  "name": "Hermes Executor",
+  "role": "executor",
+  "runtimeConfig": {
+    "runtimeHint": "hermes"
+  }
+}
+```
+
+> ⚠️ Hermes is currently a deferred placeholder. Runtime registration and selection work, but execution intentionally reports "not implemented" until [FN-2264](https://github.com/gsxdsm/fusion/issues/FN-2264).
+
+For Hermes-specific details, see the [Hermes Runtime Plugin documentation](../plugins/fusion-plugin-hermes-runtime/README.md).
+
 ## Install Fusion
 
 Install the published CLI package globally:

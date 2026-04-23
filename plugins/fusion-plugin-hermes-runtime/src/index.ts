@@ -18,13 +18,13 @@ import type {
 
 // ── Hermes Runtime Metadata ───────────────────────────────────────────────────
 
-const HERMES_RUNTIME_ID = "hermes-runtime";
+const HERMES_RUNTIME_ID = "hermes";
 const HERMES_RUNTIME_VERSION = "0.1.0";
 
 const hermesRuntimeMetadata: PluginRuntimeManifestMetadata = {
   runtimeId: HERMES_RUNTIME_ID,
-  name: "Hermes AI Runtime",
-  description: "AI agent execution runtime for Fusion tasks",
+  name: "Hermes Runtime",
+  description: "Experimental Hermes runtime integration for Fusion tasks (implementation deferred to FN-2264)",
   version: HERMES_RUNTIME_VERSION,
 };
 

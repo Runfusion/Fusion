@@ -914,6 +914,90 @@ describe("PluginRunner", () => {
     });
   });
 
+  describe("Hermes runtime compatibility", () => {
+    it("should resolve hermes runtime when registered", () => {
+      const hermesRuntime = {
+        metadata: {
+          runtimeId: "hermes",
+          name: "Hermes Runtime",
+          description: "Experimental Hermes runtime integration for Fusion tasks (implementation deferred to FN-2264)",
+          version: "0.1.0",
+        },
+        factory: vi.fn().mockReturnValue({}),
+      };
+      mockPluginLoader.getPluginRuntimes.mockReturnValue([
+        { pluginId: "fusion-plugin-hermes-runtime", runtime: hermesRuntime as any },
+      ]);
+
+      const result = pluginRunner.getRuntimeById("hermes");
+      expect(result).toBeDefined();
+      expect(result?.pluginId).toBe("fusion-plugin-hermes-runtime");
+      expect(result?.runtime.metadata.runtimeId).toBe("hermes");
+      expect(result?.runtime.metadata.name).toBe("Hermes Runtime");
+      expect(result?.runtime.metadata.description).toContain("deferred to FN-2264");
+      expect(result?.runtime.metadata.version).toBe("0.1.0");
+    });
+
+    it("should expose hermes runtime metadata correctly", () => {
+      const hermesRuntime = {
+        metadata: {
+          runtimeId: "hermes",
+          name: "Hermes Runtime",
+          description: "Experimental Hermes runtime integration for Fusion tasks (implementation deferred to FN-2264)",
+          version: "0.1.0",
+        },
+        factory: vi.fn().mockReturnValue({}),
+      };
+      mockPluginLoader.getPluginRuntimes.mockReturnValue([
+        { pluginId: "fusion-plugin-hermes-runtime", runtime: hermesRuntime as any },
+      ]);
+
+      const runtimes = pluginRunner.getPluginRuntimes();
+      const hermes = runtimes.find(r => r.runtime.metadata.runtimeId === "hermes");
+
+      expect(hermes).toBeDefined();
+      expect(hermes?.runtime.metadata).toEqual({
+        runtimeId: "hermes",
+        name: "Hermes Runtime",
+        description: "Experimental Hermes runtime integration for Fusion tasks (implementation deferred to FN-2264)",
+        version: "0.1.0",
+      });
+    });
+
+    it("should allow factory invocation for hermes runtime", async () => {
+      const hermesPlaceholderRuntime = {
+        runtimeId: "hermes",
+        version: "0.1.0",
+        status: "deferred",
+        message: "Hermes runtime implementation is deferred to FN-2264.",
+        execute: vi.fn().mockRejectedValue(new Error("FN-2264")),
+      };
+      const hermesRuntime = {
+        metadata: {
+          runtimeId: "hermes",
+          name: "Hermes Runtime",
+          description: "Experimental Hermes runtime integration for Fusion tasks (implementation deferred to FN-2264)",
+          version: "0.1.0",
+        },
+        factory: vi.fn().mockReturnValue(hermesPlaceholderRuntime),
+      };
+      mockPluginLoader.getPluginRuntimes.mockReturnValue([
+        { pluginId: "fusion-plugin-hermes-runtime", runtime: hermesRuntime as any },
+      ]);
+
+      const result = pluginRunner.getRuntimeById("hermes");
+      expect(result).toBeDefined();
+
+      const context = { pluginId: "fusion-plugin-hermes-runtime" };
+      const runtime = await result!.runtime.factory(context as any) as typeof hermesPlaceholderRuntime;
+
+      expect(hermesRuntime.factory).toHaveBeenCalledWith(context);
+      expect(runtime).toBe(hermesPlaceholderRuntime);
+      expect(runtime.runtimeId).toBe("hermes");
+      expect(runtime.status).toBe("deferred");
+    });
+  });
+
   describe("getLoader() / getStore()", () => {
     it("should return the plugin loader", () => {
       const loader = pluginRunner.getLoader();

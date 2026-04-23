@@ -96,7 +96,8 @@ describe("hermes-runtime plugin", () => {
     it("should have correct runtime metadata", () => {
       expect(plugin.runtime?.metadata).toBeDefined();
       expect(plugin.runtime?.metadata.runtimeId).toBe(HERMES_RUNTIME_ID);
-      expect(plugin.runtime?.metadata.name).toBe("Hermes AI Runtime");
+      expect(plugin.runtime?.metadata.name).toBe("Hermes Runtime");
+      expect(plugin.runtime?.metadata.description).toContain("deferred to FN-2264");
       expect(plugin.runtime?.metadata.version).toBe("0.1.0");
     });
 
@@ -151,8 +152,8 @@ describe("hermes-runtime plugin", () => {
   describe("deferred implementation behavior", () => {
     it("should export hermesRuntimeMetadata", () => {
       expect(hermesRuntimeMetadata).toBeDefined();
-      expect(hermesRuntimeMetadata.runtimeId).toBe("hermes-runtime");
-      expect(hermesRuntimeMetadata.name).toBe("Hermes AI Runtime");
+      expect(hermesRuntimeMetadata.runtimeId).toBe("hermes");
+      expect(hermesRuntimeMetadata.name).toBe("Hermes Runtime");
     });
 
     it("should export hermesRuntimeFactory", () => {
@@ -161,7 +162,7 @@ describe("hermes-runtime plugin", () => {
     });
 
     it("should export HERMES_RUNTIME_ID constant", () => {
-      expect(HERMES_RUNTIME_ID).toBe("hermes-runtime");
+      expect(HERMES_RUNTIME_ID).toBe("hermes");
     });
 
     it("runtime factory should return placeholder object", () => {
