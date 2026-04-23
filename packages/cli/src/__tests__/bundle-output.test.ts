@@ -1,26 +1,21 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { execSync } from "node:child_process";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import {
+  buildCliWithRealDashboardAssets,
+  bundlePath,
+  cliRoot,
+  clientIndexPath,
+  dashboardClientStubMarker,
+  readClientIndexHtml,
+} from "./bundle-output-helpers";
 
-const cliRoot = join(__dirname, "..", "..");
-const bundlePath = join(cliRoot, "dist", "bin.js");
-const clientIndexPath = join(cliRoot, "dist", "client", "index.html");
 const tsupConfigPath = join(cliRoot, "tsup.config.ts");
-const clientDirExists = existsSync(clientIndexPath);
 
 describe("CLI bundle output", () => {
   beforeAll(() => {
-    if (existsSync(bundlePath)) {
-      return;
-    }
-
-    execSync("pnpm build", {
-      cwd: cliRoot,
-      stdio: "pipe",
-      timeout: 120_000,
-    });
-  }, 180_000);
+    buildCliWithRealDashboardAssets();
+  }, 300_000);
 
   it("dist/bin.js exists", () => {
     expect(existsSync(bundlePath)).toBe(true);
@@ -46,8 +41,19 @@ describe("CLI bundle output", () => {
     expect(content).toContain("createServer");
   });
 
-  it.skipIf(!clientDirExists)("dashboard client assets are included", () => {
+  it("dashboard client assets are included", () => {
     expect(existsSync(clientIndexPath)).toBe(true);
+
+    const indexHtml = readClientIndexHtml();
+    expect(indexHtml).toContain("<script");
+    expect(indexHtml).toMatch(/assets\/.+-[A-Za-z0-9_-]+\.js/);
+    expect(indexHtml).toMatch(/assets\/vendor-react-[A-Za-z0-9_-]+\.js/);
+    expect(indexHtml).not.toContain(dashboardClientStubMarker);
+
+    const copiedAssetsDir = join(cliRoot, "dist", "client", "assets");
+    const copiedAssets = readdirSync(copiedAssetsDir);
+    expect(copiedAssets.some((file) => /^vendor-react-[A-Za-z0-9_-]+\.js$/.test(file))).toBe(true);
+    expect(copiedAssets.some((file) => /^vendor-xterm-[A-Za-z0-9_-]+\.js$/.test(file))).toBe(true);
   });
 
   it("tsup config copies dashboard assets from dashboard/dist/client to dist/client", () => {
@@ -69,7 +75,7 @@ describe("CLI bundle output", () => {
   it("provides require via createRequire banner", () => {
     const content = readFileSync(bundlePath, "utf-8");
     // Banner should inject createRequire for ESM CJS interop
-    expect(content).toContain('createRequire');
+    expect(content).toContain("createRequire");
     expect(content).toContain("import.meta.url");
     // Banner should be near the top of the file (after shebang)
     const shebangEnd = content.indexOf("\n");
