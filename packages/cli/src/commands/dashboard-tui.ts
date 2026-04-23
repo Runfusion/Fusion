@@ -276,6 +276,7 @@ export class DashboardTUI {
 
   // Logs interaction state
   private selectedLogIndex = 0;
+  private logsViewportStart = 0;
   private logsWrapEnabled = false;
   private logsExpandedMode = false;
 
@@ -328,6 +329,7 @@ export class DashboardTUI {
   clearLogs(): void {
     this.logBuffer.clear();
     this.selectedLogIndex = 0;
+    this.logsViewportStart = 0;
     this.logsExpandedMode = false;
   }
 
@@ -777,6 +779,25 @@ export class DashboardTUI {
     }
   }
 
+  private getLogViewportStart(totalEntries: number, maxRows: number): number {
+    if (totalEntries <= 0) {
+      this.logsViewportStart = 0;
+      return 0;
+    }
+
+    const maxStart = Math.max(0, totalEntries - maxRows);
+    let start = Math.min(this.logsViewportStart, maxStart);
+
+    if (this.selectedLogIndex < start) {
+      start = this.selectedLogIndex;
+    } else if (this.selectedLogIndex >= start + maxRows) {
+      start = this.selectedLogIndex - maxRows + 1;
+    }
+
+    this.logsViewportStart = Math.max(0, Math.min(start, maxStart));
+    return this.logsViewportStart;
+  }
+
   private renderLogsSection(): void {
     const cols = process.stdout.columns || 80;
     const entries = this.logBuffer.getAll();
@@ -795,6 +816,9 @@ export class DashboardTUI {
 
     // Clamp selection index to valid range
     const safeSelectedIndex = Math.min(this.selectedLogIndex, Math.max(0, entries.length - 1));
+    if (safeSelectedIndex !== this.selectedLogIndex) {
+      this.selectedLogIndex = safeSelectedIndex;
+    }
 
     // If expanded mode is on, render the detail pane
     if (this.logsExpandedMode) {
@@ -807,14 +831,14 @@ export class DashboardTUI {
     const modeIndicator = this.logsWrapEnabled ? colorize("  [w] wrap on", "dim") : colorize("  [w] wrap off", "dim");
     process.stdout.write(modeIndicator + "\n\n");
 
-    // Calculate which entries are visible (last maxRows entries, reversed for display)
-    const startIndex = Math.max(0, entries.length - maxRows);
-    const visibleEntries = entries.slice(startIndex);
+    // Calculate viewport window from selection, so every ring-buffer entry remains reachable.
+    const startIndex = this.getLogViewportStart(entries.length, maxRows);
+    const visibleEntries = entries.slice(startIndex, startIndex + maxRows);
     const visibleReversed = [...visibleEntries].reverse();
 
-    // Map selected index to display index (for highlighting)
-    const selectedDisplayIndex = safeSelectedIndex >= startIndex
-      ? safeSelectedIndex - startIndex
+    // Map selected index to display index (for highlighting in newest-first list)
+    const selectedDisplayIndex = safeSelectedIndex >= startIndex && safeSelectedIndex < startIndex + visibleEntries.length
+      ? visibleEntries.length - 1 - (safeSelectedIndex - startIndex)
       : -1;
 
     // In wrap mode, calculate available width for message body

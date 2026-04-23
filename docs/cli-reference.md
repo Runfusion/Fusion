@@ -105,10 +105,18 @@ immediately see host/port and access-token details.
 | `Esc` | Close expanded view |
 | `w` | Toggle wrap mode (long messages wrap vs. truncate) |
 
+The Logs list uses a scrollable viewport across the full in-memory ring buffer.
+As long as an entry is still inside the buffer, you can reach it with
+`↑`/`↓` (or `k`/`j`) and jump to absolute bounds with `Home`/`End`.
+
 In wrapped mode, long log messages are displayed with word wrapping. Long
 unbroken tokens (such as URLs or stack traces) are hard-wrapped at the
 available width. In expanded view, the full message is shown with complete
 wrapping for inspection.
+
+During interactive TTY mode, streamed runtime text (including merge-session
+agent output) is routed into the Logs tab as stable line entries instead of
+being written directly into the alternate-screen terminal surface.
 
 In non-TTY mode (CI, piped output, scripts), the dashboard falls back to
 plain console output to maintain compatibility with automated workflows.

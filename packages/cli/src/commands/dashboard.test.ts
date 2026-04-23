@@ -667,7 +667,7 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
 
 // ── Import module under test (after mocks) ──────────────────────────
 
-const { runDashboard: runDashboardImpl } = await import("./dashboard.js");
+const { runDashboard: runDashboardImpl, StreamedLogBuffer } = await import("./dashboard.js");
 const { processPullRequestMergeTask, getMergeStrategy, getTaskBranchName } = await import("./task-lifecycle.js");
 const dashboardDisposables: Array<() => void> = [];
 
@@ -1574,6 +1574,7 @@ describe("runDashboard — port fallback on EADDRINUSE", () => {
   it("prints a warning when port fallback occurs", async () => {
     const fallbackPort = 12345;
     const serverEmitter = new EventEmitter();
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const mockServerListen = vi.fn((_port?: number) => {
       process.nextTick(() => serverEmitter.emit("listening"));
@@ -1601,9 +1602,10 @@ describe("runDashboard — port fallback on EADDRINUSE", () => {
     await new Promise((r) => setTimeout(r, 100));
 
     // Should print warning with both the requested and actual ports
-    expect(consoleSpy).toHaveBeenCalledWith(
-      `⚠ Port 4040 in use, using ${fallbackPort} instead`,
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      `[dashboard] Port 4040 in use, using ${fallbackPort} instead`,
     );
+    consoleWarnSpy.mockRestore();
   });
 });
 
@@ -2496,5 +2498,120 @@ describe("promptForPort", () => {
 
     onSpy.mockRestore();
     removeListenerSpy.mockRestore();
+  });
+});
+
+describe("StreamedLogBuffer", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("coalesces partial chunks and flushes after idle timeout", () => {
+    vi.useFakeTimers();
+    const lines: string[] = [];
+    const buffer = new StreamedLogBuffer((line) => lines.push(line), 100);
+
+    buffer.push("Hel");
+    buffer.push("lo");
+
+    expect(lines).toEqual([]);
+
+    vi.advanceTimersByTime(100);
+    expect(lines).toEqual(["Hello"]);
+  });
+
+  it("flushes complete newline-delimited lines immediately", () => {
+    const lines: string[] = [];
+    const buffer = new StreamedLogBuffer((line) => lines.push(line), 100);
+
+    buffer.push("one\ntwo\n");
+
+    expect(lines).toEqual(["one", "two"]);
+    buffer.dispose();
+  });
+});
+
+describe("runDashboard — merge stream sink routing", () => {
+  it("routes streamed merge deltas through log sink without raw stdout writes", async () => {
+    const { TaskStore, AutomationStore, AgentStore, PluginStore, PluginLoader, CentralCore } = await import("@fusion/core");
+    const { aiMergeTask } = await import("@fusion/engine");
+    const { createServer } = await import("@fusion/dashboard");
+    const { AuthStorage, DefaultPackageManager, ModelRegistry, discoverAndLoadExtensions, createExtensionRuntime } = await import("@mariozechner/pi-coding-agent");
+
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
+    (AutomationStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+    }));
+    (AgentStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+      listAgents: vi.fn().mockResolvedValue([]),
+      on: vi.fn(),
+      off: vi.fn(),
+    }));
+    (PluginStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+      on: vi.fn(),
+      off: vi.fn(),
+    }));
+    (PluginLoader as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      getPluginRoutes: vi.fn().mockReturnValue([]),
+      on: vi.fn(),
+      off: vi.fn(),
+    }));
+    (CentralCore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      getProjectByPath: vi.fn().mockResolvedValue({ id: "project-1" }),
+      listProjects: vi.fn().mockResolvedValue([{ id: "project-1", path: process.cwd() }]),
+    }));
+
+    (AuthStorage.create as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      getApiKey: vi.fn().mockResolvedValue(undefined),
+      getAuth: vi.fn(),
+      setAuth: vi.fn(),
+    });
+    (DefaultPackageManager as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      resolve: vi.fn().mockResolvedValue({ extensions: [] }),
+    }));
+    (ModelRegistry as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      registerProvider: vi.fn(),
+      refresh: vi.fn(),
+    }));
+    (discoverAndLoadExtensions as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      runtime: { pendingProviderRegistrations: [] },
+      errors: [],
+    });
+    (createExtensionRuntime as unknown as ReturnType<typeof vi.fn>).mockReturnValue({});
+
+    const stdoutWriteSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    (aiMergeTask as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      async (_store: unknown, _cwd: string, _taskId: string, opts: { onAgentText?: (delta: string) => void }) => {
+        opts.onAgentText?.("Hel");
+        opts.onAgentText?.("lo");
+        opts.onAgentText?.("\nWorld");
+        opts.onAgentText?.("!\nTail");
+        return { merged: true };
+      },
+    );
+
+    await runDashboard(0, { open: false, dev: true });
+    consoleLogSpy.mockClear();
+    stdoutWriteSpy.mockClear();
+
+    const createServerCall = (createServer as ReturnType<typeof vi.fn>).mock.calls[0];
+    const serverOpts = createServerCall[1] as { onMerge: (taskId: string) => Promise<unknown> };
+
+    await serverOpts.onMerge("FN-TEST");
+
+    expect(stdoutWriteSpy).not.toHaveBeenCalled();
+    expect(consoleLogSpy).toHaveBeenCalledWith("[merge] Hello");
+    expect(consoleLogSpy).toHaveBeenCalledWith("[merge] World!");
+    expect(consoleLogSpy).toHaveBeenCalledWith("[merge] Tail");
+    expect(consoleLogSpy).not.toHaveBeenCalledWith("[merge] H");
+
+    stdoutWriteSpy.mockRestore();
+    consoleLogSpy.mockRestore();
   });
 });

@@ -26,6 +26,72 @@ let diagnosticStartTime = 0;
 let diagnosticDbHealthCheck: (() => boolean) | null = null;
 let diagnosticStoreListenerCheck: (() => Record<string, number>) | null = null;
 
+const STREAM_LOG_FLUSH_IDLE_MS = 100;
+
+export class StreamedLogBuffer {
+  private pending = "";
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(
+    private readonly emitLine: (line: string) => void,
+    private readonly flushIdleMs: number = STREAM_LOG_FLUSH_IDLE_MS,
+  ) {}
+
+  push(delta: string): void {
+    if (!delta) return;
+
+    this.pending += delta;
+    this.flushCompletedLines();
+    this.scheduleFlush();
+  }
+
+  flush(): void {
+    this.clearFlushTimer();
+    const trailing = this.pending.trim();
+    if (trailing.length > 0) {
+      this.emitLine(trailing);
+    }
+    this.pending = "";
+  }
+
+  dispose(): void {
+    this.clearFlushTimer();
+    this.pending = "";
+  }
+
+  private flushCompletedLines(): void {
+    if (!this.pending.includes("\n")) {
+      return;
+    }
+
+    const splitLines = this.pending.split(/\r?\n/);
+    const completeLines = splitLines.slice(0, -1);
+    this.pending = splitLines[splitLines.length - 1] ?? "";
+
+    for (const line of completeLines) {
+      const normalized = line.trim();
+      if (normalized.length > 0) {
+        this.emitLine(normalized);
+      }
+    }
+  }
+
+  private scheduleFlush(): void {
+    this.clearFlushTimer();
+    this.flushTimer = setTimeout(() => {
+      this.flush();
+    }, this.flushIdleMs);
+    this.flushTimer.unref?.();
+  }
+
+  private clearFlushTimer(): void {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+  }
+}
+
 /**
  * Format bytes to human-readable string
  */
@@ -438,7 +504,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     try {
       if (!store) {
         taskSummary = "tasks=unavailable (store not initialized)";
-        console.log(`[dashboard] shutdown requested reason=${reason} pid=${process.pid} ppid=${process.ppid} uptime=${uptimeSeconds}s ${taskSummary}`);
+        logSink.log(`shutdown requested reason=${reason} pid=${process.pid} ppid=${process.ppid} uptime=${uptimeSeconds}s ${taskSummary}`, "dashboard");
         return;
       }
       const tasks = await store.listTasks({ slim: true, includeArchived: false });
@@ -457,8 +523,9 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       taskSummary = `tasks=unavailable (${message})`;
     }
 
-    console.log(
-      `[dashboard] shutdown requested reason=${reason} pid=${process.pid} ppid=${process.ppid} uptime=${uptimeSeconds}s ${taskSummary}`,
+    logSink.log(
+      `shutdown requested reason=${reason} pid=${process.pid} ppid=${process.ppid} uptime=${uptimeSeconds}s ${taskSummary}`,
+      "dashboard",
     );
   }
 
@@ -559,11 +626,22 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   // In non-dev mode: replaced by engine.onMerge() after ProjectEngine starts
   // (semaphore-gated via the engine's InProcessRuntime).
   //
-  const onMergeImpl = (taskId: string) =>
-    aiMergeTask(store, cwd, taskId, {
-      agentStore,
-      onAgentText: (delta) => process.stdout.write(delta),
-    });
+  const onMergeImpl = async (taskId: string) => {
+    const streamedMergeLog = new StreamedLogBuffer(
+      (line) => logSink.log(line, "merge"),
+      STREAM_LOG_FLUSH_IDLE_MS,
+    );
+
+    try {
+      return await aiMergeTask(store, cwd, taskId, {
+        agentStore,
+        onAgentText: (delta) => streamedMergeLog.push(delta),
+      });
+    } finally {
+      streamedMergeLog.flush();
+      streamedMergeLog.dispose();
+    }
+  };
 
   const onMerge = (taskId: string) => onMergeImpl(taskId);
 
@@ -790,7 +868,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       peerExchangeService.start();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.warn(`[dashboard] Failed to start peer exchange service: ${message}`);
+      logSink.warn(`Failed to start peer exchange service: ${message}`, "dashboard");
     }
 
     // Use the same CentralCore instance for mesh operations
@@ -858,7 +936,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           .sort((a, b) => b[1] - a[1])
           .map(([type, count]) => `${type}:${count}`)
           .join(", ");
-        console.log(`[dashboard] active handles at shutdown: ${handleSummary}`);
+        logSink.log(`active handles at shutdown: ${handleSummary}`, "dashboard");
       } catch {
         // Ignore errors getting handle types
       }
@@ -876,7 +954,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           await peerExchangeService.stop();
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          console.warn(`[dashboard] Failed to stop peer exchange service: ${message}`);
+          logSink.warn(`Failed to stop peer exchange service: ${message}`, "dashboard");
         }
       }
 
@@ -886,13 +964,13 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           centralCoreForMesh.stopDiscovery();
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          console.warn(`[dashboard] Failed to stop mDNS discovery: ${message}`);
+          logSink.warn(`Failed to stop mDNS discovery: ${message}`, "dashboard");
         }
         try {
           await centralCoreForMesh.updateNode(localNodeIdForMesh, { status: "offline" });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          console.warn(`[dashboard] Failed to set local node offline: ${message}`);
+          logSink.warn(`Failed to set local node offline: ${message}`, "dashboard");
         }
       }
 
@@ -909,7 +987,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     // the process silently — the exit handler tries to log to the now-dead
     // PTY and the write is lost.
     registerHandler(process, "SIGHUP", () => {
-      console.log("[dashboard] Received SIGHUP (terminal disconnected) — ignoring");
+      logSink.log("Received SIGHUP (terminal disconnected) — ignoring", "dashboard");
     });
   } else {
   // Dev mode: create HeartbeatMonitor + TriggerScheduler inline (engine not started)
@@ -927,7 +1005,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       peerExchangeService.start();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.warn(`[dashboard] Failed to initialize mesh networking: ${message}`);
+      logSink.warn(`Failed to initialize mesh networking: ${message}`, "dashboard");
     }
 
     try {
@@ -1048,7 +1126,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           .sort((a, b) => b[1] - a[1])
           .map(([type, count]) => `${type}:${count}`)
           .join(", ");
-        console.log(`[dashboard] active handles at shutdown: ${handleSummary}`);
+        logSink.log(`active handles at shutdown: ${handleSummary}`, "dashboard");
       } catch {
         // Ignore errors getting handle types
       }
@@ -1065,7 +1143,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           await peerExchangeService.stop();
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          console.warn(`[dashboard] Failed to stop peer exchange service: ${message}`);
+          logSink.warn(`Failed to stop peer exchange service: ${message}`, "dashboard");
         }
       }
 
@@ -1075,13 +1153,13 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           centralCoreForMesh.stopDiscovery();
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          console.warn(`[dashboard] Failed to stop mDNS discovery: ${message}`);
+          logSink.warn(`Failed to stop mDNS discovery: ${message}`, "dashboard");
         }
         try {
           await centralCoreForMesh.updateNode(localNodeIdForMesh, { status: "offline" });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          console.warn(`[dashboard] Failed to set local node offline: ${message}`);
+          logSink.warn(`Failed to set local node offline: ${message}`, "dashboard");
         }
       }
 
@@ -1097,7 +1175,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
 
     // Ignore SIGHUP so the dashboard survives SSH session disconnects
     registerHandler(process, "SIGHUP", () => {
-      console.log("[dashboard] Received SIGHUP (terminal disconnected) — ignoring");
+      logSink.log("Received SIGHUP (terminal disconnected) — ignoring", "dashboard");
     });
   }
 
@@ -1107,7 +1185,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     if (err.code === "EADDRINUSE") {
       server.listen(0, selectedHost);
     } else {
-      console.error(`Failed to start server: ${err.message}`);
+      logSink.error(`Failed to start server: ${err.message}`, "dashboard");
       process.exit(1);
     }
   });
@@ -1116,7 +1194,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     const actualPort = (server.address() as AddressInfo).port;
 
     if (actualPort !== selectedPort) {
-      console.log(`⚠ Port ${selectedPort} in use, using ${actualPort} instead`);
+      logSink.warn(`Port ${selectedPort} in use, using ${actualPort} instead`, "dashboard");
     }
 
     // ── mDNS discovery: broadcast presence and listen for other nodes ───────
@@ -1135,7 +1213,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        console.warn(`[dashboard] Failed to start mDNS discovery: ${message}`);
+        logSink.warn(`Failed to start mDNS discovery: ${message}`, "dashboard");
       }
     }
 
@@ -1153,7 +1231,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        console.warn(`[dashboard] Failed to set local node online: ${message}`);
+        logSink.warn(`Failed to set local node online: ${message}`, "dashboard");
       }
     }
 

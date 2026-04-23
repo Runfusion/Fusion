@@ -504,6 +504,68 @@ describe("DashboardTUI Logs Selection", () => {
   });
 });
 
+describe("DashboardTUI Logs viewport window", () => {
+  let tui: DashboardTUI & {
+    _stdout: string[];
+    _setTerminalSize: (cols: number, rows: number) => void;
+  };
+  let stdoutWriteSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tui = createTestTUI();
+    tui._setTerminalSize(80, 14); // maxRows = 5 in logs list
+    (tui as any).activeSection = "logs";
+
+    stdoutWriteSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    (tui as any).isRunning = true;
+
+    for (let i = 1; i <= 12; i++) {
+      tui.log(`Entry ${i}`);
+    }
+  });
+
+  afterEach(() => {
+    stdoutWriteSpy.mockRestore();
+    Object.defineProperty(process.stdout, "columns", { value: 80, writable: true });
+    Object.defineProperty(process.stdout, "rows", { value: 24, writable: true });
+  });
+
+  function renderLogs(): string {
+    stdoutWriteSpy.mockClear();
+    (tui as any).renderLogsSection();
+    return stdoutWriteSpy.mock.calls.map(([chunk]) => String(chunk)).join("");
+  }
+
+  it("keeps the selected older entry visible when navigating beyond newest screenful", () => {
+    // Jump to newest entry (index 11), then move to older entries.
+    simulateKeypress(tui, "End");
+    for (let i = 0; i < 7; i++) {
+      simulateKeypress(tui, "\x1b[A");
+    }
+
+    expect((tui as any).selectedLogIndex).toBe(4);
+    const output = renderLogs();
+
+    expect(output).toContain("Entry 5");
+    expect(output).toContain("Entry 9");
+    expect(output).not.toContain("Entry 12");
+    expect((tui as any).logsViewportStart).toBe(4);
+  });
+
+  it("Home and End reach full ring buffer bounds from the logs tab", () => {
+    simulateKeypress(tui, "Home");
+    expect((tui as any).selectedLogIndex).toBe(0);
+    let output = renderLogs();
+    expect(output).toContain("Entry 1");
+
+    simulateKeypress(tui, "End");
+    expect((tui as any).selectedLogIndex).toBe(11);
+    output = renderLogs();
+    expect(output).toContain("Entry 12");
+    expect((tui as any).logsViewportStart).toBe(7);
+  });
+});
+
 describe("DashboardTUI Logs Expanded Mode", () => {
   let tui: DashboardTUI & {
     _stdout: string[];
