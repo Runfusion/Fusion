@@ -1011,73 +1011,49 @@ describe("Header", () => {
     });
   });
 
-  describe("Back to All Projects button", () => {
+  describe("Manage Projects action", () => {
     const singleProject = [
       { id: "1", name: "Test Project", path: "/path/to/project", status: "active" as const },
     ];
 
-    it("renders Back to All Projects button when currentProject is set", () => {
+    it("renders project selector trigger on desktop with a single project", () => {
       renderHeader({
         projects: singleProject,
         currentProject: singleProject[0],
         onViewAllProjects: noop,
       }, "desktop");
-      expect(screen.getByTestId("back-to-projects-btn")).toBeDefined();
+      expect(screen.getByTestId("project-selector-trigger")).toBeDefined();
     });
 
-    it("calls onViewAllProjects when Back button is clicked", () => {
+    it("shows Manage Projects action in dropdown and calls onViewAllProjects", () => {
       const onViewAllProjects = vi.fn();
       renderHeader({
         projects: singleProject,
         currentProject: singleProject[0],
         onViewAllProjects,
       }, "desktop");
-      fireEvent.click(screen.getByTestId("back-to-projects-btn"));
+
+      fireEvent.click(screen.getByTestId("project-selector-trigger"));
+      fireEvent.click(screen.getByTestId("manage-projects-action"));
       expect(onViewAllProjects).toHaveBeenCalled();
+      expect(screen.queryByTestId("project-selector-dropdown")).toBeNull();
     });
 
-    it("does not render Back button when no currentProject", () => {
-      renderHeader({
-        projects: singleProject,
-        currentProject: null,
-        onViewAllProjects: noop,
-      }, "desktop");
-      expect(screen.queryByTestId("back-to-projects-btn")).toBeNull();
-    });
-
-    it("does not render Back button on mobile", () => {
-      renderHeader({
-        projects: singleProject,
-        currentProject: singleProject[0],
-        onViewAllProjects: noop,
-      }, "mobile");
-      expect(screen.queryByTestId("back-to-projects-btn")).toBeNull();
-    });
-
-    it("does not render Back button on tablet", () => {
-      renderHeader({
-        projects: singleProject,
-        currentProject: singleProject[0],
-        onViewAllProjects: noop,
-      }, "tablet");
-      expect(screen.queryByTestId("back-to-projects-btn")).toBeNull();
-    });
-
-    it("does not render Back button when onViewAllProjects is not provided", () => {
-      renderHeader({
-        projects: singleProject,
-        currentProject: singleProject[0],
-      }, "desktop");
-      expect(screen.queryByTestId("back-to-projects-btn")).toBeNull();
-    });
-
-    it("renders Back button with correct title", () => {
+    it("does not render separate back button on desktop", () => {
       renderHeader({
         projects: singleProject,
         currentProject: singleProject[0],
         onViewAllProjects: noop,
       }, "desktop");
-      expect(screen.getByTitle("Back to All Projects")).toBeDefined();
+      expect(screen.queryByTestId("back-to-projects-btn")).toBeNull();
+    });
+
+    it("does not render project selector when onViewAllProjects is not provided", () => {
+      renderHeader({
+        projects: singleProject,
+        currentProject: singleProject[0],
+      }, "desktop");
+      expect(screen.queryByTestId("project-selector-trigger")).toBeNull();
     });
   });
 

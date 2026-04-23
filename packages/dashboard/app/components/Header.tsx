@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Server, Workflow, Bot, ChevronLeft, Target, ChevronRight, FileCode, Loader2, Grid3X3, Mail, MessageSquare, ChevronDown, Check, Map, Zap, Sparkles, FileText, Brain } from "lucide-react";
+import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Server, Workflow, Bot, Target, ChevronRight, FileCode, Loader2, Grid3X3, Mail, MessageSquare, ChevronDown, Check, Map, Zap, Sparkles, FileText, Brain } from "lucide-react";
 import type { ProjectInfo } from "../api";
 import type { NodeConfig, ProjectStatus } from "@fusion/core";
 import { fetchScripts } from "../api";
@@ -20,8 +20,7 @@ const PROJECT_STATUS_CONFIG: Record<ProjectStatus, { color: string }> = {
 
 /**
  * ProjectSelector - A component for project navigation.
- * Shows "Back to All Projects" button with ChevronLeft icon when currentProject is set.
- * Shows project dropdown for switching when 2+ projects exist.
+ * Shows project dropdown for switching projects and navigating to project management.
  */
 function ProjectSelector({
   projects,
@@ -71,21 +70,7 @@ function ProjectSelector({
 
   return (
     <div className="project-selector" ref={dropdownRef}>
-      {/* Back to All Projects button - shown when a project is selected */}
-      {currentProject && (
-        <button
-          className="header-back-button"
-          onClick={onViewAll}
-          title="Back to All Projects"
-          data-testid="back-to-projects-btn"
-        >
-          <ChevronLeft size={14} />
-          <span>Back to All Projects</span>
-        </button>
-      )}
-
-      {/* Project dropdown - shown when 2+ projects exist */}
-      {projects.length > 1 && (
+      {projects.length > 0 && (
         <>
           <button
             className={`project-selector-trigger${isOpen ? " project-selector-trigger--open" : ""}`}
@@ -130,6 +115,17 @@ function ProjectSelector({
                   </button>
                 );
               })}
+              <div className="project-selector-divider" role="presentation" />
+              <button
+                className="project-selector-manage"
+                onClick={() => {
+                  onViewAll();
+                  setIsOpen(false);
+                }}
+                data-testid="manage-projects-action"
+              >
+                Manage Projects
+              </button>
             </div>
           )}
         </>

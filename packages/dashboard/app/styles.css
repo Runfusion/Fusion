@@ -20505,28 +20505,6 @@ html .column.drag-over * {
 }
 
 /* === Split Project Button === */
-/* === Header Back Button === */
-.header-back-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  color: var(--text-muted);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
-  white-space: nowrap;
-}
-
-.header-back-button:hover {
-  background: var(--card-hover);
-  color: var(--text);
-  border-color: var(--text-dim);
-}
-
 /* === Project Selector === */
 .project-selector {
   position: relative;
@@ -20604,6 +20582,37 @@ html .column.drag-over * {
 
 .project-selector-item--current {
   background: var(--card-hover);
+}
+
+.project-selector-divider {
+  height: 1px;
+  margin: var(--space-xs) var(--space-sm);
+  background: var(--border);
+}
+
+.project-selector-manage {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: var(--space-sm) calc(var(--space-sm) + var(--space-xs));
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.project-selector-manage:hover {
+  background: var(--card-hover);
+}
+
+.project-selector-manage:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
 }
 
 .project-selector-dot {

@@ -111,7 +111,7 @@ describe("MultiProjectFlow", () => {
     expect(storage[taskViewKey]).toBe("board");
   });
 
-  describe("Back to All Projects button navigation", () => {
+  describe("Manage Projects dropdown navigation", () => {
     const singleProject: ProjectInfo = {
       id: "proj_1",
       name: "Solo Project",
@@ -122,7 +122,7 @@ describe("MultiProjectFlow", () => {
       updatedAt: "2026-01-01T00:00:00.000Z",
     };
 
-    it("shows Back to All Projects button and navigates to overview on click", () => {
+    it("navigates to overview from Manage Projects action", () => {
       mockDesktopMatchMedia();
 
       let viewMode: "overview" | "project" = "project";
@@ -144,17 +144,17 @@ describe("MultiProjectFlow", () => {
         />
       );
 
-      // The Back to All Projects button should be visible when currentProject is set
-      const backBtn = screen.getByTestId("back-to-projects-btn");
-      expect(backBtn).toBeDefined();
+      fireEvent.click(screen.getByTestId("project-selector-trigger"));
+      const manageProjectsAction = screen.getByTestId("manage-projects-action");
+      expect(manageProjectsAction.textContent).toContain("Manage Projects");
 
-      // Clicking should trigger navigation to overview
-      fireEvent.click(backBtn);
+      fireEvent.click(manageProjectsAction);
       expect(handleViewAllProjects).toHaveBeenCalled();
       expect(viewMode).toBe("overview");
+      expect(screen.queryByTestId("project-selector-dropdown")).toBeNull();
     });
 
-    it("shows Back to All Projects button text when currentProject is set", () => {
+    it("does not render a separate back to projects header button", () => {
       mockDesktopMatchMedia();
 
       render(
@@ -171,10 +171,7 @@ describe("MultiProjectFlow", () => {
         />
       );
 
-      // The back button should show "Back to All Projects"
-      const backBtn = screen.getByTestId("back-to-projects-btn");
-      expect(backBtn).toBeDefined();
-      expect(backBtn.textContent).toContain("Back to All Projects");
+      expect(screen.queryByTestId("back-to-projects-btn")).toBeNull();
     });
   });
 });
