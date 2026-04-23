@@ -203,6 +203,51 @@ describe("useQuickChat", () => {
     });
   });
 
+  it("startFreshSession creates a second session for the same model target", async () => {
+    const existingSession = makeSession({
+      id: "session-existing",
+      agentId: FN_AGENT_ID,
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+    });
+    const freshSession = makeSession({
+      id: "session-fresh",
+      agentId: FN_AGENT_ID,
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+    });
+
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [existingSession] });
+    mockCreateChatSession.mockResolvedValueOnce({ session: freshSession });
+
+    const { result } = renderHook(() => useQuickChat("proj-123"));
+
+    await act(async () => {
+      await result.current.startModelChat("openai", "gpt-4o");
+    });
+
+    await waitFor(() => {
+      expect(result.current.activeSession?.id).toBe("session-existing");
+    });
+
+    await act(async () => {
+      await result.current.startFreshSession();
+    });
+
+    await waitFor(() => {
+      expect(mockCreateChatSession).toHaveBeenCalledWith(
+        {
+          agentId: FN_AGENT_ID,
+          modelProvider: "openai",
+          modelId: "gpt-4o",
+        },
+        "proj-123",
+      );
+      expect(result.current.activeSession?.id).toBe("session-fresh");
+      expect(mockFetchChatMessages).toHaveBeenCalledWith("session-fresh", { limit: 50 }, "proj-123");
+    });
+  });
+
   it("stopStreaming aborts stream and resets streaming state", async () => {
     const existingSession = makeSession({ id: "session-existing", agentId: "agent-001" });
     const closeFn = vi.fn();

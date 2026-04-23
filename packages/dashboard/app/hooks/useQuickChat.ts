@@ -59,6 +59,7 @@ export interface UseQuickChatReturn {
   clearPendingMessage: () => void;
   switchSession: (agentId: string, modelProvider?: string, modelId?: string) => Promise<void>;
   startModelChat: (modelProvider: string, modelId: string) => Promise<void>;
+  startFreshSession: () => Promise<void>;
   loadMessages: () => Promise<void>;
   reloadMessages: () => Promise<void>;
 }
@@ -187,10 +188,28 @@ export function useQuickChat(
 
   // Track the current selected chat target for session management
   const currentSessionKeyRef = useRef<string>("");
+  const currentSessionTargetRef = useRef<SessionTarget | null>(null);
 
   useEffect(() => {
     pendingMessageRef.current = pendingMessage;
   }, [pendingMessage]);
+
+  const createSessionForTarget = useCallback(
+    async (target: SessionTarget): Promise<ChatSession> => {
+      const newSessionInput: { agentId: string; modelProvider?: string; modelId?: string } = {
+        agentId: target.agentId,
+      };
+
+      if (target.modelProvider && target.modelId) {
+        newSessionInput.modelProvider = target.modelProvider;
+        newSessionInput.modelId = target.modelId;
+      }
+
+      const newSession = await createChatSession(newSessionInput, projectId);
+      return newSession.session;
+    },
+    [projectId],
+  );
 
   // Fetch existing sessions and find/create one for the given target
   const initializeSession = useCallback(
@@ -209,17 +228,8 @@ export function useQuickChat(
           setActiveSession(existingSession);
           currentSessionKeyRef.current = sessionKey;
         } else {
-          const newSessionInput: { agentId: string; modelProvider?: string; modelId?: string } = {
-            agentId: target.agentId,
-          };
-
-          if (target.modelProvider && target.modelId) {
-            newSessionInput.modelProvider = target.modelProvider;
-            newSessionInput.modelId = target.modelId;
-          }
-
-          const newSession = await createChatSession(newSessionInput, projectId);
-          setActiveSession(newSession.session);
+          const newSession = await createSessionForTarget(target);
+          setActiveSession(newSession);
           currentSessionKeyRef.current = sessionKey;
         }
       } catch (err) {
@@ -229,7 +239,7 @@ export function useQuickChat(
         setSessionsLoading(false);
       }
     },
-    [projectId, addToast],
+    [projectId, addToast, createSessionForTarget],
   );
 
   // Load messages for the active session
@@ -277,6 +287,7 @@ export function useQuickChat(
       if (!target) return;
 
       const targetSessionKey = buildSessionKey(target.agentId, target.modelProvider, target.modelId);
+      currentSessionTargetRef.current = target;
 
       // Close any existing stream
       if (streamRef.current) {
@@ -313,6 +324,38 @@ export function useQuickChat(
     },
     [switchSession],
   );
+
+  const startFreshSession = useCallback(async () => {
+    const target = currentSessionTargetRef.current;
+    if (!target) return;
+
+    // Explicit "new chat" action: keep the same target key but create a new persisted session.
+    // This preserves normal switchSession resume behavior while allowing multiple threads per target.
+    const targetSessionKey = buildSessionKey(target.agentId, target.modelProvider, target.modelId);
+
+    if (streamRef.current) {
+      streamRef.current.close();
+      streamRef.current = null;
+    }
+
+    setStreamingText("");
+    setStreamingThinking("");
+    setStreamingToolCalls([]);
+    setIsStreaming(false);
+    setMessages([]);
+
+    setSessionsLoading(true);
+    try {
+      const newSession = await createSessionForTarget(target);
+      setActiveSession(newSession);
+      currentSessionKeyRef.current = targetSessionKey;
+    } catch (err) {
+      console.error("[useQuickChat] Failed to start a fresh session:", err);
+      addToast?.("Failed to start a new chat", "error");
+    } finally {
+      setSessionsLoading(false);
+    }
+  }, [addToast, createSessionForTarget]);
 
   const stopStreaming = useCallback(() => {
     if (!activeSession) return;
@@ -505,6 +548,7 @@ export function useQuickChat(
     clearPendingMessage,
     switchSession,
     startModelChat,
+    startFreshSession,
     loadMessages,
     reloadMessages,
   }), [
@@ -522,6 +566,7 @@ export function useQuickChat(
     clearPendingMessage,
     switchSession,
     startModelChat,
+    startFreshSession,
     loadMessages,
     reloadMessages,
   ]);

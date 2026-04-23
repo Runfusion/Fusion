@@ -488,6 +488,7 @@ export function QuickChatFAB({
     clearPendingMessage,
     switchSession,
     startModelChat,
+    startFreshSession,
   } = useQuickChat(projectId, addToast);
 
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -609,6 +610,13 @@ export function QuickChatFAB({
   const handleModelChange = useCallback((value: string) => {
     setSelectedModel(value);
   }, []);
+
+  const handleStartFreshChat = useCallback(() => {
+    if (!hasChatTarget || sessionsLoading) {
+      return;
+    }
+    void startFreshSession();
+  }, [hasChatTarget, sessionsLoading, startFreshSession]);
 
   const selectedAgent = useMemo(
     () => agents.find((agent) => agent.id === selectedAgentId) ?? null,
@@ -988,15 +996,26 @@ export function QuickChatFAB({
                 </span>
               )}
             </div>
-            <button
-              type="button"
-              className="btn-icon"
-              aria-label="Close quick chat"
-              data-testid="quick-chat-close"
-              onClick={() => setIsOpen(false)}
-            >
-              <X size={16} />
-            </button>
+            <div className="quick-chat-panel-header-actions">
+              <button
+                type="button"
+                className="btn btn-sm"
+                data-testid="quick-chat-new-thread"
+                onClick={handleStartFreshChat}
+                disabled={!hasChatTarget || sessionsLoading}
+              >
+                New chat
+              </button>
+              <button
+                type="button"
+                className="btn-icon"
+                aria-label="Close quick chat"
+                data-testid="quick-chat-close"
+                onClick={() => setIsOpen(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
           </div>
 
           {agents.length > 0 && (

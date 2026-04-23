@@ -32388,6 +32388,16 @@ html .column.drag-over * {
   color: var(--text);
 }
 
+.quick-chat-panel-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.quick-chat-panel-header-actions .btn {
+  white-space: nowrap;
+}
+
 .quick-chat-mode-toggle {
   display: flex;
   gap: var(--space-xs);

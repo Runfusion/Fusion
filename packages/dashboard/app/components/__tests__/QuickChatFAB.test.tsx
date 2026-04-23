@@ -364,6 +364,69 @@ describe("QuickChatFAB", () => {
     });
   });
 
+  it("new chat action creates a fresh model thread without changing the selected model", async () => {
+    const existingModelSession: ChatSession = {
+      id: "session-model-001",
+      agentId: "__fn_agent__",
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      status: "active",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const freshModelSession: ChatSession = {
+      id: "session-model-002",
+      agentId: "__fn_agent__",
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      status: "active",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    mockAgentsHook([]);
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [existingModelSession] });
+    mockCreateChatSession.mockResolvedValueOnce({ session: freshModelSession });
+
+    render(<QuickChatFAB addToast={addToast} projectId="proj-123" />);
+
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-model-tag")).toHaveTextContent("Claude Sonnet 4.5");
+      expect(mockCreateChatSession).not.toHaveBeenCalled();
+      expect(mockFetchChatMessages).toHaveBeenCalledWith("session-model-001", { limit: 50 }, "proj-123");
+    });
+
+    fireEvent.click(screen.getByTestId("quick-chat-new-thread"));
+
+    await waitFor(() => {
+      expect(mockCreateChatSession).toHaveBeenCalledTimes(1);
+      expect(mockCreateChatSession).toHaveBeenCalledWith(
+        {
+          agentId: "__fn_agent__",
+          modelProvider: "anthropic",
+          modelId: "claude-sonnet-4-5",
+        },
+        "proj-123",
+      );
+      expect(mockFetchChatMessages).toHaveBeenCalledWith("session-model-002", { limit: 50 }, "proj-123");
+    });
+
+    const input = await screen.findByTestId("quick-chat-input");
+    fireEvent.change(input, { target: { value: "fresh thread message" } });
+    fireEvent.click(screen.getByTestId("quick-chat-send"));
+
+    await waitFor(() => {
+      expect(mockStreamChatResponse).toHaveBeenCalledWith(
+        "session-model-002",
+        "fresh thread message",
+        expect.any(Object),
+        "proj-123",
+      );
+    });
+  });
+
   it("switching from model mode to agent mode creates session with only agentId", async () => {
     render(<QuickChatFAB addToast={addToast} projectId="proj-123" />);
 
