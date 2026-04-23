@@ -108,6 +108,59 @@ describe("AgentImportModal", () => {
     expect(preview).toBeEnabled();
   });
 
+  it("enables Preview for directory imports with parsed agents even when manifest text is empty", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      await mockResponse({
+        ok: true,
+        body: {
+          dryRun: true,
+          companyName: "Directory Import",
+          agents: [{ name: "Dir Agent", role: "reviewer" }],
+          skills: [],
+          created: ["Dir Agent"],
+          skipped: [],
+          errors: [],
+        },
+      }),
+    );
+
+    renderModal(true);
+
+    const preview = screen.getByRole("button", { name: "Preview" });
+    expect(preview).toBeDisabled();
+
+    const directoryInput = screen.getByLabelText(/Select directory/i) as HTMLInputElement;
+    const manifest = `---\nname: Dir Agent\nrole: reviewer\n---\nDirectory instructions`;
+    const directoryFile = new File([manifest], "AGENTS.md", { type: "text/markdown" });
+    Object.defineProperty(directoryFile, "webkitRelativePath", { value: "agents/AGENTS.md" });
+
+    fireEvent.change(directoryInput, { target: { files: [directoryFile] } });
+
+    await waitFor(() => {
+      expect(preview).toBeEnabled();
+    });
+
+    const user = userEvent.setup();
+    await user.click(preview);
+
+    await waitFor(() => {
+      expect(screen.getByText("Directory Import")).toBeInTheDocument();
+      expect(screen.getByText("1 agent found")).toBeInTheDocument();
+    });
+
+    const body = JSON.parse(vi.mocked(globalThis.fetch).mock.calls[0][1]!.body as string);
+    expect(body).toMatchObject({
+      dryRun: true,
+      agents: [
+        expect.objectContaining({
+          name: "Dir Agent",
+          role: "reviewer",
+        }),
+      ],
+    });
+    expect(body).not.toHaveProperty("manifest");
+  });
+
   it("handleParse posts dryRun import request and moves to preview step", async () => {
     renderModal(true);
 
@@ -140,9 +193,53 @@ describe("AgentImportModal", () => {
     expect(screen.getByText(/reviewer/)).toBeInTheDocument();
     expect(screen.getByText(/triage/)).toBeInTheDocument();
     expect(screen.getByText("2 skills found")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import 2 Agents + 2 Skills" })).toBeInTheDocument();
     expect(screen.getByText("review")).toBeInTheDocument();
     expect(screen.getByText("strategy")).toBeInTheDocument();
     expect(screen.getByText("Review implementation details")).toBeInTheDocument();
+    expect(screen.getByLabelText("Select agent Reviewer")).toBeChecked();
+    expect(screen.getByLabelText("Select skill review")).toBeChecked();
+  });
+
+  it("allows selecting a subset of agents and skills before import", async () => {
+    renderModal(true);
+
+    await goToPreview();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText("Select agent Planner"));
+    await user.click(screen.getByLabelText("Select skill strategy"));
+
+    expect(screen.getByRole("button", { name: "Import 1 Agent + 1 Skill" })).toBeInTheDocument();
+
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      await mockResponse({
+        ok: true,
+        body: {
+          companyName: "Acme AI",
+          created: [{ id: "agent-1", name: "Reviewer" }],
+          skipped: [],
+          errors: [],
+          skills: {
+            imported: [{ name: "review", path: "skills/imported/acme-ai/review/SKILL.md" }],
+            skipped: [],
+            errors: [],
+          },
+        },
+      }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Import 1 Agent + 1 Skill" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Import Complete")).toBeInTheDocument();
+    });
+
+    const body = JSON.parse(vi.mocked(globalThis.fetch).mock.calls[1][1]!.body as string);
+    expect(body).toMatchObject({
+      selectedAgents: ["Reviewer"],
+      selectedSkills: ["review"],
+    });
   });
 
   it("Back button returns to input step", async () => {
@@ -202,7 +299,7 @@ describe("AgentImportModal", () => {
     );
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /Import 2 Agents/i }));
+    await user.click(screen.getByRole("button", { name: /Import 2 Agents \+ 2 Skills/i }));
 
     await waitFor(() => {
       expect(screen.getByText("Import Complete")).toBeInTheDocument();
@@ -233,7 +330,7 @@ describe("AgentImportModal", () => {
     );
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /Import 2 Agents/i }));
+    await user.click(screen.getByRole("button", { name: /Import 2 Agents \+ 2 Skills/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/2 created/)).toBeInTheDocument();
@@ -270,7 +367,7 @@ describe("AgentImportModal", () => {
     );
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /Import 2 Agents/i }));
+    await user.click(screen.getByRole("button", { name: /Import 2 Agents \+ 2 Skills/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/2 skills imported/)).toBeInTheDocument();
@@ -301,7 +398,7 @@ describe("AgentImportModal", () => {
     );
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /Import 2 Agents/i }));
+    await user.click(screen.getByRole("button", { name: /Import 2 Agents \+ 2 Skills/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/2 skills skipped/)).toBeInTheDocument();
@@ -330,7 +427,7 @@ describe("AgentImportModal", () => {
     );
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /Import 2 Agents/i }));
+    await user.click(screen.getByRole("button", { name: /Import 2 Agents \+ 2 Skills/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/1 skill error/)).toBeInTheDocument();
@@ -360,7 +457,7 @@ describe("AgentImportModal", () => {
     );
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /Import 2 Agents/i }));
+    await user.click(screen.getByRole("button", { name: /Import 2 Agents \+ 2 Skills/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/No skills in package/)).toBeInTheDocument();
@@ -384,7 +481,7 @@ describe("AgentImportModal", () => {
     );
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /Import 2 Agents/i }));
+    await user.click(screen.getByRole("button", { name: /Import 2 Agents \+ 2 Skills/i }));
 
     await waitFor(() => {
       expect(onImported).toHaveBeenCalledTimes(1);
@@ -416,7 +513,7 @@ describe("AgentImportModal", () => {
     );
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /Import 2 Agents/i }));
+    await user.click(screen.getByRole("button", { name: /Import 2 Agents \+ 2 Skills/i }));
 
     await waitFor(() => {
       expect(screen.getByText("Import failed")).toBeInTheDocument();
@@ -458,6 +555,8 @@ describe("AgentImportModal", () => {
     expect(styles).toContain('background: color-mix(in srgb, var(--color-error) 8%, transparent);');
     expect(styles).toContain('.agent-import-browse-selected');
     expect(styles).toContain('background: color-mix(in srgb, var(--todo) 10%, transparent);');
+    expect(styles).toContain('.agent-import-browse-item-repo');
+    expect(styles).toContain('font-family: var(--font-mono);');
   });
 
   describe("Browse Catalog Mode", () => {
@@ -522,6 +621,83 @@ describe("AgentImportModal", () => {
       const changeButton = await screen.findByRole("button", { name: "Change" });
       expect(changeButton).toHaveClass("btn-sm");
       expect(changeButton).not.toHaveClass("btn--small");
+    });
+
+    it("shows package skills in browse-mode preview and import results", async () => {
+      globalThis.fetch = vi.fn().mockImplementation((input, init) => {
+        const url = String(input);
+        if (url === "/api/agents/companies") {
+          return Promise.resolve(createMockResponse({
+            companies: [{ slug: "acme-ai", name: "Acme AI", tagline: "Agent package with skills" }],
+          }));
+        }
+
+        if (url === "/api/agents/import") {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { dryRun?: boolean };
+          if (body.dryRun) {
+            return Promise.resolve(createMockResponse({
+              dryRun: true,
+              companyName: "Acme AI",
+              companySlug: "acme-ai",
+              agents: [{ name: "Reviewer", role: "reviewer" }],
+              skills: [
+                { name: "review", description: "Review changes" },
+                { name: "strategy", description: "Plan delivery" },
+              ],
+              created: ["Reviewer"],
+              skipped: [],
+              errors: [],
+            }));
+          }
+
+          return Promise.resolve(createMockResponse({
+            companyName: "Acme AI",
+            companySlug: "acme-ai",
+            created: [{ id: "agent-1", name: "Reviewer" }],
+            skipped: [],
+            errors: [],
+            skills: {
+              imported: [{ name: "review", path: "skills/imported/acme-ai/review/SKILL.md" }],
+              skipped: ["strategy"],
+              errors: [],
+            },
+          }));
+        }
+
+        return Promise.reject(new Error(`Unexpected fetch URL: ${url}`));
+      });
+
+      renderModal(true);
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "Browse Catalog" }));
+      await user.click(await screen.findByText("Acme AI"));
+      await user.click(screen.getByRole("button", { name: "Preview" }));
+
+      await waitFor(() => {
+        expect(screen.getByText("1 agent found")).toBeInTheDocument();
+        expect(screen.getByText("2 skills found")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Import 1 Agent + 2 Skills" })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByLabelText("Select skill strategy"));
+      expect(screen.getByRole("button", { name: "Import 1 Agent + 1 Skill" })).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Import 1 Agent + 1 Skill" }));
+
+      await waitFor(() => {
+        expect(screen.getByText("Import Complete")).toBeInTheDocument();
+        expect(screen.getByText(/1 skill imported/)).toBeInTheDocument();
+        expect(screen.getByText(/1 skill skipped/)).toBeInTheDocument();
+      });
+
+      const importBody = JSON.parse(String(vi.mocked(globalThis.fetch).mock.calls[2]?.[1]?.body ?? "{}"));
+      expect(importBody).toMatchObject({
+        importSource: "companies.sh",
+        companySlug: "acme-ai",
+        selectedAgents: ["Reviewer"],
+        selectedSkills: ["review"],
+      });
     });
 
     it("shows Retry button when error occurs", async () => {

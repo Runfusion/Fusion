@@ -132,6 +132,8 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
   const [companyName, setCompanyName] = useState("Unknown");
   const [agents, setAgents] = useState<AgentPreview[]>([]);
   const [skills, setSkills] = useState<SkillPreview[]>([]);
+  const [selectedAgentNames, setSelectedAgentNames] = useState<string[]>([]);
+  const [selectedSkillNames, setSelectedSkillNames] = useState<string[]>([]);
   const [isParsing, setIsParsing] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
@@ -208,6 +210,8 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
     setCompanyName("Unknown");
     setAgents([]);
     setSkills([]);
+    setSelectedAgentNames([]);
+    setSelectedSkillNames([]);
     setIsParsing(false);
     setIsImporting(false);
     setParseError(null);
@@ -346,6 +350,8 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
       setCompanyName(data.companyName ?? "Unknown");
       setAgents(previewAgents);
       setSkills(previewSkills);
+      setSelectedAgentNames(previewAgents.map((agent) => agent.name));
+      setSelectedSkillNames(previewSkills.map((skill) => skill.name));
       setStep("preview");
     } catch (err) {
       setParseError(err instanceof Error ? err.message : "Failed to parse manifest");
@@ -363,11 +369,27 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
       let body: Record<string, unknown>;
 
       if (inputMethod === "directory") {
-        body = { agents: directoryAgents, skipExisting: true };
+        body = {
+          agents: directoryAgents,
+          skipExisting: true,
+          selectedAgents: selectedAgentNames,
+          selectedSkills: selectedSkillNames,
+        };
       } else if (inputMethod === "browse" && selectedCompany) {
-        body = { importSource: "companies.sh", companySlug: selectedCompany.slug, skipExisting: true };
+        body = {
+          importSource: "companies.sh",
+          companySlug: selectedCompany.slug,
+          skipExisting: true,
+          selectedAgents: selectedAgentNames,
+          selectedSkills: selectedSkillNames,
+        };
       } else {
-        body = { manifest: manifestContent, skipExisting: true };
+        body = {
+          manifest: manifestContent,
+          skipExisting: true,
+          selectedAgents: selectedAgentNames,
+          selectedSkills: selectedSkillNames,
+        };
       }
 
       const res = await fetch(buildUrl("/agents/import"), {
@@ -390,7 +412,47 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
     } finally {
       setIsImporting(false);
     }
-  }, [inputMethod, directoryAgents, manifestContent, selectedCompany, projectId, onImported]);
+  }, [
+    inputMethod,
+    directoryAgents,
+    manifestContent,
+    selectedCompany,
+    selectedAgentNames,
+    selectedSkillNames,
+    projectId,
+    onImported,
+  ]);
+
+  const selectedAgentCount = selectedAgentNames.length;
+  const selectedSkillCount = selectedSkillNames.length;
+  const selectedAgentLabel = `${selectedAgentCount} Agent${selectedAgentCount !== 1 ? "s" : ""}`;
+  const selectedSkillLabel = `${selectedSkillCount} Skill${selectedSkillCount !== 1 ? "s" : ""}`;
+  const importActionLabel = selectedAgentCount > 0 && selectedSkillCount > 0
+    ? `${selectedAgentLabel} + ${selectedSkillLabel}`
+    : selectedSkillCount > 0
+      ? selectedSkillLabel
+      : selectedAgentLabel;
+  const importLoadingLabel = selectedAgentCount > 0 && selectedSkillCount > 0
+    ? `Importing ${selectedAgentCount} agent${selectedAgentCount !== 1 ? "s" : ""} and ${selectedSkillCount} skill${selectedSkillCount !== 1 ? "s" : ""}...`
+    : selectedSkillCount > 0
+      ? `Importing ${selectedSkillCount} skill${selectedSkillCount !== 1 ? "s" : ""}...`
+      : `Importing ${selectedAgentCount} agent${selectedAgentCount !== 1 ? "s" : ""}...`;
+
+  const toggleAgentSelection = (name: string) => {
+    setSelectedAgentNames((current) => (
+      current.includes(name)
+        ? current.filter((selectedName) => selectedName !== name)
+        : [...current, name]
+    ));
+  };
+
+  const toggleSkillSelection = (name: string) => {
+    setSelectedSkillNames((current) => (
+      current.includes(name)
+        ? current.filter((selectedName) => selectedName !== name)
+        : [...current, name]
+    ));
+  };
 
   if (!isOpen) return null;
 
@@ -616,10 +678,37 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
                 <span>{agents.length} agent{agents.length !== 1 ? "s" : ""} found</span>
               </div>
 
+              {agents.length > 0 && (
+                <div className="agent-import-selection-controls">
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => setSelectedAgentNames(agents.map((agent) => agent.name))}
+                  >
+                    Select all agents
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => setSelectedAgentNames([])}
+                  >
+                    Clear agents
+                  </button>
+                </div>
+              )}
+
               {agents.length > 0 ? (
                 <div className="agent-import-agent-list">
                   {agents.map((agent, idx) => (
                     <div key={idx} className="agent-import-agent-item">
+                      <label className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select agent ${agent.name}`}
+                          checked={selectedAgentNames.includes(agent.name)}
+                          onChange={() => toggleAgentSelection(agent.name)}
+                        />
+                      </label>
                       <span className="agent-import-agent-icon">{agent.icon || "🤖"}</span>
                       <div className="agent-import-agent-details">
                         <span className="agent-import-agent-name">{agent.name}</span>
@@ -652,9 +741,33 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
                     <FileText size={14} />
                     <span>{skills.length} skill{skills.length !== 1 ? "s" : ""} found</span>
                   </div>
+                  <div className="agent-import-selection-controls">
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() => setSelectedSkillNames(skills.map((skill) => skill.name))}
+                    >
+                      Select all skills
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() => setSelectedSkillNames([])}
+                    >
+                      Clear skills
+                    </button>
+                  </div>
                   <div className="agent-import-skill-list">
                     {skills.map((skill, idx) => (
                       <div key={`${skill.name}-${idx}`} className="agent-import-skill-item">
+                        <label className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            aria-label={`Select skill ${skill.name}`}
+                            checked={selectedSkillNames.includes(skill.name)}
+                            onChange={() => toggleSkillSelection(skill.name)}
+                          />
+                        </label>
                         <span className="agent-import-skill-icon">⚡</span>
                         <div className="agent-import-skill-details">
                           <span className="agent-import-skill-name">{skill.name}</span>
@@ -797,9 +910,13 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
               className="btn btn--primary"
               onClick={() => void handleParse()}
               disabled={
-                isParsing ||
-                (inputMethod === "directory" ? directoryAgents.length === 0 : false) ||
-                (inputMethod === "browse" ? !selectedCompany : !manifestContent.trim())
+                isParsing || (
+                  inputMethod === "directory"
+                    ? directoryAgents.length === 0
+                    : inputMethod === "browse"
+                      ? !selectedCompany
+                      : !manifestContent.trim()
+                )
               }
             >
               {isParsing ? (
@@ -816,15 +933,15 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
             <button
               className="btn btn--primary"
               onClick={() => void handleImport()}
-              disabled={isImporting || agents.length === 0}
+              disabled={isImporting || (selectedAgentCount === 0 && selectedSkillCount === 0)}
             >
               {isImporting ? (
                 <>
                   <Loader2 size={14} className="spin" />
-                  Importing...
+                  {importLoadingLabel}
                 </>
               ) : (
-                `Import ${agents.length} Agent${agents.length !== 1 ? "s" : ""}`
+                `Import ${importActionLabel}`
               )}
             </button>
           )}

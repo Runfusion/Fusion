@@ -30534,6 +30534,13 @@ html .column.drag-over * {
   margin-bottom: var(--space-md);
 }
 
+.agent-import-selection-controls {
+  display: flex;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-md);
+}
+
 .agent-import-agent-list {
   display: flex;
   flex-direction: column;
@@ -30879,7 +30886,7 @@ html .column.drag-over * {
   background: var(--surface-hover, color-mix(in srgb, var(--text-muted) 8%, transparent));
 }
 
-.agent-import-browse-item:focus {
+.agent-import-browse-item:focus-visible {
   outline: none;
   background: var(--surface-hover, color-mix(in srgb, var(--text-muted) 8%, transparent));
   box-shadow: var(--focus-ring);
@@ -30917,7 +30924,7 @@ html .column.drag-over * {
 .agent-import-browse-item-repo {
   font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
   color: var(--text-muted);
-  font-family: monospace;
+  font-family: var(--font-mono);
 }
 
 .agent-import-browse-empty {

@@ -16,10 +16,11 @@ const mockParseSingleAgentManifest = vi.fn();
 const mockPrepareAgentCompaniesImport = vi.fn();
 
 // Use vi.hoisted to ensure mocks are available when vi.mock runs
-const { mockFsAccess, mockFsMkdir, mockFsWriteFile } = vi.hoisted(() => ({
+const { mockFsAccess, mockFsMkdir, mockFsWriteFile, mockExecFile } = vi.hoisted(() => ({
   mockFsAccess: vi.fn(),
   mockFsMkdir: vi.fn(),
   mockFsWriteFile: vi.fn(),
+  mockExecFile: vi.fn(),
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -27,7 +28,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return {
     ...actual,
     default: actual,
-    mkdtemp: vi.fn(),
+    mkdtemp: actual.mkdtemp,
     access: mockFsAccess,
     stat: actual.stat,
     mkdir: mockFsMkdir,
@@ -35,6 +36,14 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     rm: actual.rm,
     readFile: actual.readFile,
     writeFile: mockFsWriteFile,
+  };
+});
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    execFile: mockExecFile,
   };
 });
 
@@ -90,6 +99,12 @@ async function postImport(app: Parameters<typeof request>[0], body: unknown) {
   });
 }
 
+function createGitHubArchiveBuffer(_companySlug: string): Buffer {
+  return Buffer.from("mock-company-archive");
+}
+
+const originalFetch = globalThis.fetch;
+
 describe("POST /api/agents/import", () => {
   let store: MockStore;
   let app: ReturnType<typeof import("../server.js").createServer>;
@@ -104,6 +119,19 @@ describe("POST /api/agents/import", () => {
     mockListAgents.mockResolvedValue([]);
     mockCreateAgent.mockReset();
     mockCreateAgent.mockImplementation(async (input: any) => ({ id: `agent-${input.name}`, ...input }));
+
+    mockExecFile.mockReset();
+    mockExecFile.mockImplementation((command: string, args: string[], _options: unknown, callback: (error: Error | null, stdout?: string, stderr?: string) => void) => {
+      if ((command === "tar" || command === "bsdtar") && Array.isArray(args)) {
+        const extractDirIndex = args.indexOf("-C");
+        const extractDir = extractDirIndex >= 0 ? args[extractDirIndex + 1] : undefined;
+        if (extractDir) {
+          mkdirSync(join(extractDir, "mock-company-main", "acme-ai"), { recursive: true });
+        }
+      }
+      callback(null, "", "");
+      return {} as any;
+    });
 
     mockParseCompanyDirectory.mockReturnValue({
       company: { name: "Directory Co", slug: "directory-co" },
@@ -153,6 +181,7 @@ describe("POST /api/agents/import", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    globalThis.fetch = originalFetch;
     rmSync(testDir, { recursive: true, force: true });
   });
 
@@ -445,6 +474,203 @@ describe("POST /api/agents/import", () => {
 
     expect(response.status).toBe(400);
     expect((response.body as any).error).toContain("Invalid companies.sh slug");
+  });
+
+  it("returns companies.sh dry-run preview with package skills", async () => {
+    const archiveBuffer = createGitHubArchiveBuffer("acme-ai");
+
+    globalThis.fetch = vi.fn().mockImplementation((input: unknown) => {
+      const url = String(input);
+      if (url === "https://companies.sh/api/companies") {
+        return Promise.resolve(new Response(
+          JSON.stringify({ items: [{ slug: "acme-ai", name: "Acme AI", repo: "acme/reviewers" }] }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ));
+      }
+
+      if (url === "https://github.com/acme/reviewers/archive/refs/heads/main.tar.gz") {
+        return Promise.resolve(new Response(archiveBuffer, {
+          status: 200,
+          headers: { "content-type": "application/gzip" },
+        }));
+      }
+
+      return Promise.reject(new Error(`Unexpected fetch URL: ${url}`));
+    });
+
+    mockParseCompanyArchive.mockResolvedValue({
+      company: { name: "Acme AI", slug: "acme-ai" },
+      agents: [{ name: "Reviewer", skills: ["review"] }],
+      teams: [],
+      projects: [],
+      tasks: [],
+      skills: [{ name: "review", description: "Review implementation details" }],
+    });
+
+    const response = await postImport(app, {
+      importSource: "companies.sh",
+      companySlug: "acme-ai",
+      dryRun: true,
+    });
+
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    const body = response.body as any;
+    expect(body.dryRun).toBe(true);
+    expect(body.companyName).toBe("Acme AI");
+    expect(body.companySlug).toBe("acme-ai");
+    expect(body.agents).toEqual([expect.objectContaining({ name: "YAML Agent" })]);
+    expect(body.skills).toEqual([{ name: "review", description: "Review implementation details" }]);
+  });
+
+  it("returns companies.sh live import with skill import result", async () => {
+    const archiveBuffer = createGitHubArchiveBuffer("acme-ai");
+
+    globalThis.fetch = vi.fn().mockImplementation((input: unknown) => {
+      const url = String(input);
+      if (url === "https://companies.sh/api/companies") {
+        return Promise.resolve(new Response(
+          JSON.stringify({ items: [{ slug: "acme-ai", name: "Acme AI", repo: "acme/reviewers" }] }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ));
+      }
+
+      if (url === "https://github.com/acme/reviewers/archive/refs/heads/main.tar.gz") {
+        return Promise.resolve(new Response(archiveBuffer, {
+          status: 200,
+          headers: { "content-type": "application/gzip" },
+        }));
+      }
+
+      return Promise.reject(new Error(`Unexpected fetch URL: ${url}`));
+    });
+
+    mockParseCompanyArchive.mockResolvedValue({
+      company: { name: "Acme AI", slug: "acme-ai" },
+      agents: [{ name: "Reviewer", skills: ["review"] }],
+      teams: [],
+      projects: [],
+      tasks: [],
+      skills: [{ name: "review", description: "Review implementation details" }],
+    });
+
+    mockFsAccess.mockReset();
+    mockFsMkdir.mockReset();
+    mockFsWriteFile.mockReset();
+    mockFsAccess.mockRejectedValue(new Error("ENOENT"));
+    mockFsMkdir.mockResolvedValue(undefined);
+    mockFsWriteFile.mockResolvedValue(undefined);
+
+    const response = await postImport(app, {
+      importSource: "companies.sh",
+      companySlug: "acme-ai",
+    });
+
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    const body = response.body as any;
+    expect(body.companyName).toBe("Acme AI");
+    expect(body.companySlug).toBe("acme-ai");
+    expect(body.skillsCount).toBe(1);
+    expect(body.skills).toEqual({
+      imported: [
+        expect.objectContaining({
+          name: "review",
+          path: expect.stringContaining("skills/imported/acme-ai/review/SKILL.md"),
+        }),
+      ],
+      skipped: [],
+      errors: [],
+    });
+    expect(mockFsWriteFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("imports only selected companies.sh agents and skills", async () => {
+    const archiveBuffer = createGitHubArchiveBuffer("acme-ai");
+
+    globalThis.fetch = vi.fn().mockImplementation((input: unknown) => {
+      const url = String(input);
+      if (url === "https://companies.sh/api/companies") {
+        return Promise.resolve(new Response(
+          JSON.stringify({ items: [{ slug: "acme-ai", name: "Acme AI", repo: "acme/reviewers" }] }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ));
+      }
+
+      if (url === "https://github.com/acme/reviewers/archive/refs/heads/main.tar.gz") {
+        return Promise.resolve(new Response(archiveBuffer, {
+          status: 200,
+          headers: { "content-type": "application/gzip" },
+        }));
+      }
+
+      return Promise.reject(new Error(`Unexpected fetch URL: ${url}`));
+    });
+
+    mockParseCompanyArchive.mockResolvedValue({
+      company: { name: "Acme AI", slug: "acme-ai" },
+      agents: [
+        { name: "Reviewer", skills: ["review"] },
+        { name: "Planner", skills: ["strategy"] },
+      ],
+      teams: [],
+      projects: [],
+      tasks: [],
+      skills: [
+        { name: "review", description: "Review implementation details" },
+        { name: "strategy", description: "Plan implementation details" },
+      ],
+    });
+
+    mockPrepareAgentCompaniesImport.mockImplementation((pkg: any) => ({
+      items: (pkg.agents ?? []).map((agent: { name: string }, index: number) => ({
+        manifestKey: agent.name.toLowerCase(),
+        aliases: [agent.name.toLowerCase()],
+        index,
+        input: { name: agent.name, role: "custom" },
+      })),
+      result: {
+        created: (pkg.agents ?? []).map((agent: { name: string }) => agent.name),
+        skipped: [],
+        errors: [],
+      },
+    }));
+
+    mockFsAccess.mockReset();
+    mockFsMkdir.mockReset();
+    mockFsWriteFile.mockReset();
+    mockFsAccess.mockRejectedValue(new Error("ENOENT"));
+    mockFsMkdir.mockResolvedValue(undefined);
+    mockFsWriteFile.mockResolvedValue(undefined);
+
+    const response = await postImport(app, {
+      importSource: "companies.sh",
+      companySlug: "acme-ai",
+      selectedAgents: ["Reviewer"],
+      selectedSkills: ["review"],
+    });
+
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    const body = response.body as any;
+    expect(body.created).toEqual([{ id: "agent-Reviewer", name: "Reviewer" }]);
+    expect(body.skillsCount).toBe(1);
+    expect(body.skills.imported).toEqual([
+      expect.objectContaining({
+        name: "review",
+        path: expect.stringContaining("skills/imported/acme-ai/review/SKILL.md"),
+      }),
+    ]);
+    expect(mockFsWriteFile).toHaveBeenCalledTimes(1);
+    const preparedPackage = mockPrepareAgentCompaniesImport.mock.calls[0]?.[0] as any;
+    expect(preparedPackage.agents).toEqual([{ name: "Reviewer", skills: ["review"] }]);
+    expect(preparedPackage.skills).toEqual([{ name: "review", description: "Review implementation details" }]);
   });
 
   it("live import persists skills and returns skill import result", async () => {

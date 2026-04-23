@@ -11969,7 +11969,17 @@ async function persistImportedSkills(
    */
   router.post("/agents/import", async (req, res) => {
     try {
-      const { agents, source, manifest, importSource, companySlug: importCompanySlug, skipExisting, dryRun } = req.body ?? {};
+      const {
+        agents,
+        source,
+        manifest,
+        importSource,
+        companySlug: importCompanySlug,
+        selectedAgents,
+        selectedSkills,
+        skipExisting,
+        dryRun,
+      } = req.body ?? {};
       const {
         AgentStore,
         parseCompanyDirectory,
@@ -12172,63 +12182,8 @@ async function persistImportedSkills(
             createWriteStream(archivePath),
           );
 
-          // Extract the archive
-          // The archive extracts to a subdirectory named after the repo
-          const extractDir = join(tempDir, "extracted");
-          await mkdir(extractDir, { recursive: true });
-
-          // Use tar to extract (available on Linux/macOS)
-          const execFileAsync = promisify(execFile);
-          try {
-            await execFileAsync("tar", ["xzf", archivePath, "-C", extractDir], { timeout: 30000 });
-          } catch {
-            // Fallback: try with bsdtar (macOS Homebrew)
-            try {
-              await execFileAsync("bsdtar", ["xzf", archivePath, "-C", extractDir], { timeout: 30000 });
-            } catch {
-              throw badRequest("Failed to extract archive. Please ensure tar is installed.");
-            }
-          }
-
-          // Find the extracted directory (GitHub archives extract to owner-repo-hash/)
-          const extractedEntries = await readdir(extractDir);
-          if (extractedEntries.length === 0) {
-            throw badRequest("Archive extracted to empty directory");
-          }
-
-          // The archive should have a single directory at the root
-          const extractedDir = join(extractDir, extractedEntries[0]);
-          const extractedDirStat = await stat(extractedDir);
-          if (!extractedDirStat.isDirectory()) {
-            throw badRequest("Archive did not extract to a directory");
-          }
-
-          // Parse the extracted company.
-          // Multi-company repos (e.g. paperclipai/companies) contain multiple company
-          // subdirectories. If the extracted root doesn't contain COMPANY.md but has a
-          // subdirectory matching the requested slug, descend into it.
-          let companyDir = extractedDir;
-          const companyMdPath = join(extractedDir, "COMPANY.md");
-          let companyMdExists = false;
-          try {
-            await access(companyMdPath);
-            companyMdExists = true;
-          } catch {
-            companyMdExists = false;
-          }
-          if (!companyMdExists) {
-            const slugDir = join(extractedDir, importCompanySlug);
-            try {
-              const slugDirStat = await stat(slugDir);
-              if (slugDirStat.isDirectory()) {
-                companyDir = slugDir;
-              }
-            } catch {
-              // slugDir doesn't exist or isn't a directory
-            }
-          }
-
-          pkg = parseCompanyDirectory(companyDir);
+          // Parse the downloaded archive directly to avoid requiring shell tar tools.
+          pkg = await parseCompanyArchive(archivePath);
 
           // Override company info if available from API
           if (companyInfo) {
@@ -12251,12 +12206,45 @@ async function persistImportedSkills(
         throw badRequest("Provide one of: agents (array), source (path), manifest (string), or importSource + companySlug");
       }
 
+      const normalizeSelectionNames = (value: unknown): string[] | undefined => {
+        if (!Array.isArray(value)) return undefined;
+        const normalized = value
+          .filter((entry): entry is string => typeof entry === "string")
+          .map((entry) => entry.trim())
+          .filter((entry) => entry.length > 0);
+        return normalized.length > 0 ? normalized : undefined;
+      };
+
+      const selectedAgentNameList = normalizeSelectionNames(selectedAgents);
+      const selectedSkillNameList = normalizeSelectionNames(selectedSkills);
+
+      if (selectedAgentNameList) {
+        const selectedAgentSet = new Set(selectedAgentNameList);
+        pkg.agents = pkg.agents.filter((agent) => (
+          typeof agent === "object"
+          && agent !== null
+          && typeof (agent as { name?: unknown }).name === "string"
+          && selectedAgentSet.has((agent as { name: string }).name)
+        ));
+      }
+
+      if (selectedSkillNameList) {
+        const selectedSkillSet = new Set(selectedSkillNameList);
+        pkg.skills = (pkg.skills ?? []).filter((skill) => (
+          typeof skill === "object"
+          && skill !== null
+          && typeof (skill as { name?: unknown }).name === "string"
+          && selectedSkillSet.has((skill as { name: string }).name)
+        ));
+      }
+
       const { items: importItems, result } = prepareAgentCompaniesImport(pkg as import("@fusion/core").AgentCompaniesPackage, conversionOptions);
       const companyName = pkg.company?.name ?? "Unknown";
       const companySlug = typeof pkg.company?.slug === "string" ? pkg.company.slug : undefined;
+      const selectedSkillsCount = (pkg.skills ?? []).length;
 
-      if (importItems.length === 0 && result.errors.length === 0 && result.skipped.length === 0) {
-        throw badRequest("No agents found in manifest");
+      if (importItems.length === 0 && selectedSkillsCount === 0 && result.errors.length === 0 && result.skipped.length === 0) {
+        throw badRequest("No agents or skills found in manifest");
       }
 
       if (dryRun) {

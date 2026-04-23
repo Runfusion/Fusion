@@ -125,11 +125,20 @@ describe("build-exe-cross: --all builds all platforms", () => {
     const bin = join(distDir, name);
     if (!existsSync(bin)) return;
 
-    const result = spawnSync(bin, ["--help"], {
+    let result = spawnSync(bin, ["--help"], {
       encoding: "utf-8",
       // CI can occasionally be slow to launch freshly built native binaries.
       timeout: 45_000,
     });
+
+    // Retry once with a longer timeout when the first probe times out.
+    if (result.status === null && result.signal === "SIGTERM") {
+      result = spawnSync(bin, ["--help"], {
+        encoding: "utf-8",
+        timeout: 120_000,
+      });
+    }
+
     if (hasKnownBunSqliteLimitation(result)) {
       return;
     }
