@@ -73,6 +73,7 @@ const mockExtensions = [
   { id: "ext-1", name: "Example Extension", source: "fusion-global" as const, path: "/path/to/ext-1", enabled: true },
   { id: "ext-2", name: "Another Extension", source: "pi-project" as const, path: "/path/to/ext-2", enabled: false },
   { id: "ext-3", name: "Fusion Project Extension", source: "fusion-project" as const, path: "/path/to/ext-3", enabled: true },
+  { id: "ext-4", name: "Package Extension", source: "package" as const, path: "/path/to/ext-4", enabled: true },
 ];
 
 const mockExtensionsSettings = {
@@ -429,6 +430,7 @@ describe("PiExtensionsManager", () => {
         expect(screen.getByText("Example Extension")).toBeTruthy();
         expect(screen.getByText("Another Extension")).toBeTruthy();
         expect(screen.getByText("Fusion Project Extension")).toBeTruthy();
+        expect(screen.getByText("Package Extension")).toBeTruthy();
       });
     });
 
@@ -442,6 +444,7 @@ describe("PiExtensionsManager", () => {
         expect(screen.getByText("Fusion Global")).toBeTruthy();
         expect(screen.getByText("Pi Project")).toBeTruthy();
         expect(screen.getByText("Fusion Project")).toBeTruthy();
+        expect(screen.getByText("Package")).toBeTruthy();
       });
     });
 
@@ -455,6 +458,7 @@ describe("PiExtensionsManager", () => {
         expect(screen.getByText("/path/to/ext-1")).toBeTruthy();
         expect(screen.getByText("/path/to/ext-2")).toBeTruthy();
         expect(screen.getByText("/path/to/ext-3")).toBeTruthy();
+        expect(screen.getByText("/path/to/ext-4")).toBeTruthy();
       });
     });
 
@@ -466,10 +470,11 @@ describe("PiExtensionsManager", () => {
 
       await waitFor(() => {
         const toggles = screen.getAllByRole("checkbox");
-        expect(toggles).toHaveLength(3);
+        expect(toggles).toHaveLength(4);
         expect(toggles[0]).toBeChecked(); // ext-1 enabled
         expect(toggles[1]).not.toBeChecked(); // ext-2 disabled
         expect(toggles[2]).toBeChecked(); // ext-3 enabled
+        expect(toggles[3]).toBeChecked(); // ext-4 enabled
       });
     });
 

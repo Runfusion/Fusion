@@ -46,6 +46,7 @@ function getSourceLabel(source: PiExtensionEntry["source"]): string {
     "pi-global": "Pi Global",
     "fusion-project": "Fusion Project",
     "pi-project": "Pi Project",
+    package: "Package",
   };
   return labels[source] ?? source;
 }
@@ -428,6 +429,7 @@ export function PiExtensionsManager({ addToast, projectId }: PiExtensionsManager
                       checked={ext.enabled}
                       onChange={() => void handleToggleExtension(ext)}
                       disabled={updatingExtensions}
+                      aria-label={`Toggle ${ext.name}`}
                     />
                     <span className="toggle-slider" />
                   </label>
