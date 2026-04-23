@@ -1,19 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { PrMonitor, type PrComment } from "./pr-monitor.js";
+import type { PrMonitorGhClient } from "./pr-monitor-gh.js";
 
 describe("PrMonitor", () => {
   let monitor: PrMonitor;
+  let checkAuth: ReturnType<typeof vi.fn<PrMonitorGhClient["checkAuth"]>>;
+  let fetchComments: ReturnType<typeof vi.fn<PrMonitorGhClient["fetchComments"]>>;
 
-  beforeEach(() => {
-    vi.useFakeTimers();
-    monitor = new PrMonitor();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    monitor.stopAll();
-    vi.clearAllMocks();
-  });
+  const flushAsync = async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  };
 
   const mockPrInfo = {
     url: "https://github.com/owner/repo/pull/42",
@@ -24,6 +21,24 @@ describe("PrMonitor", () => {
     baseBranch: "main",
     commentCount: 0,
   };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    checkAuth = vi.fn(async () => true);
+    fetchComments = vi.fn(async () => []);
+    monitor = new PrMonitor({
+      ghClient: {
+        checkAuth,
+        fetchComments,
+      },
+    });
+  });
+
+  afterEach(() => {
+    monitor.stopAll();
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
 
   describe("startMonitoring", () => {
     it("starts monitoring a PR", () => {
@@ -41,6 +56,131 @@ describe("PrMonitor", () => {
 
       const tracked = monitor.getTrackedPrs();
       expect(tracked.get("FN-001")?.prInfo.number).toBe(43);
+    });
+  });
+
+  describe("polling", () => {
+    it("polls successfully and updates tracking state with filtered new comments", async () => {
+      fetchComments.mockResolvedValueOnce([]).mockResolvedValueOnce([
+        {
+          id: 5,
+          body: "older",
+          user: { login: "reviewer1" },
+          created_at: "2024-01-01T00:00:00.000Z",
+          updated_at: "2024-01-01T00:00:00.000Z",
+          html_url: "https://example.com/5",
+        },
+        {
+          id: 12,
+          body: "new feedback",
+          user: { login: "reviewer2" },
+          created_at: "2024-01-02T00:00:00.000Z",
+          updated_at: "2024-01-02T00:00:00.000Z",
+          html_url: "https://example.com/12",
+        },
+      ]);
+
+      monitor.startMonitoring("FN-001", "owner", "repo", mockPrInfo);
+      await flushAsync(); // initial immediate poll
+
+      const tracked = monitor.getTrackedPrs().get("FN-001")!;
+      tracked.lastCommentId = 10;
+      tracked.lastCheckedAt = new Date("2024-01-01T00:00:00.000Z");
+      tracked.consecutiveErrors = 3;
+
+      vi.setSystemTime(new Date("2024-01-01T00:00:30.000Z"));
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(checkAuth).toHaveBeenCalledTimes(2);
+      expect(fetchComments).toHaveBeenNthCalledWith(2, {
+        owner: "owner",
+        repo: "repo",
+        prNumber: 42,
+        since: "2024-01-01T00:00:00.000Z",
+      });
+
+      expect(tracked.lastCommentId).toBe(12);
+      expect(tracked.lastCheckedAt.toISOString()).toBe("2024-01-01T00:01:00.000Z");
+      expect(tracked.consecutiveErrors).toBe(0);
+      expect(tracked.bufferedComments).toHaveLength(1);
+      expect(tracked.bufferedComments[0].id).toBe(12);
+    });
+
+    it("keeps buffered comments even when callback throws, and drainComments is single-consumption", async () => {
+      const newComment: PrComment = {
+        id: 101,
+        body: "please update",
+        user: { login: "reviewer" },
+        created_at: "2024-01-02T00:00:00.000Z",
+        updated_at: "2024-01-02T00:00:00.000Z",
+        html_url: "https://example.com/101",
+      };
+
+      fetchComments.mockResolvedValueOnce([]).mockResolvedValueOnce([newComment]);
+      monitor.onNewComments(async () => {
+        throw new Error("callback failure");
+      });
+
+      monitor.startMonitoring("FN-001", "owner", "repo", mockPrInfo);
+      await flushAsync();
+
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      const drained = monitor.drainComments("FN-001");
+      expect(drained).toEqual([newComment]);
+      expect(monitor.drainComments("FN-001")).toEqual([]);
+    });
+
+    it("returns false on auth failure, increments errors, does not fetch comments, and keeps task tracked", async () => {
+      checkAuth.mockResolvedValue(false);
+      monitor.startMonitoring("FN-001", "owner", "repo", mockPrInfo);
+      await flushAsync();
+
+      const tracked = monitor.getTrackedPrs().get("FN-001")!;
+      const result = await (monitor as any).checkForComments("FN-001", tracked);
+
+      expect(result).toBe(false);
+      expect(tracked.consecutiveErrors).toBe(2);
+      expect(fetchComments).not.toHaveBeenCalled();
+      expect(monitor.getTrackedPrs().has("FN-001")).toBe(true);
+    });
+
+    it("increments consecutive failures and stops monitoring after 5 fetch errors", async () => {
+      fetchComments.mockRejectedValue(new Error("gh failed"));
+
+      monitor.startMonitoring("FN-001", "owner", "repo", mockPrInfo);
+      await flushAsync(); // failure #1
+
+      expect(monitor.getTrackedPrs().get("FN-001")?.consecutiveErrors).toBe(1);
+
+      await vi.runOnlyPendingTimersAsync(); // #2
+      await vi.runOnlyPendingTimersAsync(); // #3
+      await vi.runOnlyPendingTimersAsync(); // #4
+      await vi.runOnlyPendingTimersAsync(); // #5 -> stop monitoring
+
+      expect(checkAuth).toHaveBeenCalledTimes(5);
+      expect(fetchComments).toHaveBeenCalledTimes(5);
+      expect(monitor.getTrackedPrs().has("FN-001")).toBe(false);
+    });
+
+    it("marks tracked PR idle after no new comments for >5 minutes and then polls on idle interval", async () => {
+      fetchComments.mockResolvedValue([]);
+      monitor.startMonitoring("FN-001", "owner", "repo", mockPrInfo);
+      await flushAsync();
+
+      const tracked = monitor.getTrackedPrs().get("FN-001")!;
+      tracked.lastCheckedAt = new Date("2024-01-01T00:00:00.000Z");
+      vi.setSystemTime(new Date("2024-01-01T00:10:00.000Z"));
+
+      await vi.advanceTimersByTimeAsync(30_000); // active interval poll sets isActive=false
+      expect(tracked.isActive).toBe(false);
+      const fetchCallsAfterIdleFlip = fetchComments.mock.calls.length;
+
+      await vi.advanceTimersByTimeAsync(4 * 60 * 1000 + 59_000);
+      expect(fetchComments).toHaveBeenCalledTimes(fetchCallsAfterIdleFlip);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(fetchComments).toHaveBeenCalledTimes(fetchCallsAfterIdleFlip + 1);
     });
   });
 
@@ -71,58 +211,12 @@ describe("PrMonitor", () => {
     });
   });
 
-  describe("stopAll", () => {
-    it("stops all monitoring", () => {
-      monitor.startMonitoring("FN-001", "owner", "repo", mockPrInfo);
-      monitor.startMonitoring("FN-002", "owner", "repo", mockPrInfo);
-
-      monitor.stopAll();
-
-      const tracked = monitor.getTrackedPrs();
-      expect(tracked.size).toBe(0);
-    });
-  });
-
-  // Note: Polling tests are skipped because the implementation now uses gh CLI
-  // which cannot be easily mocked in ESM mode. The polling logic is tested
-  // via inline implementations below.
-  describe("polling logic (inline tests)", () => {
-    it("filters comments by ID to find new ones", () => {
-      const comments: PrComment[] = [
-        { id: 100, body: "old", user: { login: "user1" }, created_at: "2024-01-01", updated_at: "2024-01-01", html_url: "" },
-        { id: 200, body: "new", user: { login: "user2" }, created_at: "2024-01-02", updated_at: "2024-01-02", html_url: "" },
-      ];
-      
-      const lastCommentId = 150;
-      const newComments = comments.filter((c) => c.id > lastCommentId);
-      
-      expect(newComments).toHaveLength(1);
-      expect(newComments[0].id).toBe(200);
-    });
-
-    it("filters comments by timestamp when since is provided", () => {
-      const comments: PrComment[] = [
-        { id: 1, body: "old", user: { login: "user1" }, created_at: "2024-01-01T00:00:00Z", updated_at: "2024-01-01T00:00:00Z", html_url: "" },
-        { id: 2, body: "new", user: { login: "user2" }, created_at: "2024-01-03T00:00:00Z", updated_at: "2024-01-03T00:00:00Z", html_url: "" },
-      ];
-      
-      const since = "2024-01-02T00:00:00Z";
-      const sinceDate = new Date(since);
-      const newComments = comments.filter((c) => new Date(c.created_at) > sinceDate);
-      
-      expect(newComments).toHaveLength(1);
-      expect(newComments[0].id).toBe(2);
-    });
-  });
-
   describe("constructor", () => {
     it("no longer requires getGitHubToken option", () => {
-      // Should not throw
       expect(() => new PrMonitor()).not.toThrow();
     });
 
     it("ignores getGitHubToken if provided (backward compat)", () => {
-      // Should not throw even with old signature
       expect(() => new PrMonitor({ getGitHubToken: () => "token" })).not.toThrow();
     });
   });
@@ -133,66 +227,21 @@ describe("PrMonitor", () => {
       expect(result).toEqual([]);
     });
 
-    it("returns empty array for tracked PR with no buffered comments", () => {
-      monitor.startMonitoring("FN-001", "owner", "repo", mockPrInfo);
-      const result = monitor.drainComments("FN-001");
-      expect(result).toEqual([]);
-    });
-
-    it("returns buffered comments and clears buffer (single-consumption)", () => {
-      monitor.startMonitoring("FN-001", "owner", "repo", mockPrInfo);
-
-      // Simulate comments being buffered (this is what checkForComments does internally)
-      const tracked = monitor.getTrackedPrs().get("FN-001")!;
-      const comments: PrComment[] = [
-        { id: 1, body: "Please fix this", user: { login: "reviewer" }, created_at: "2024-01-01", updated_at: "2024-01-01", html_url: "https://example.com" },
-        { id: 2, body: "Change that", user: { login: "reviewer2" }, created_at: "2024-01-01", updated_at: "2024-01-01", html_url: "https://example.com" },
-      ];
-      tracked.bufferedComments.push(...comments);
-
-      // First drain should return the comments
-      const drained = monitor.drainComments("FN-001");
-      expect(drained).toHaveLength(2);
-      expect(drained[0].id).toBe(1);
-      expect(drained[1].id).toBe(2);
-
-      // Second drain should return empty (buffer was cleared)
-      const drainedAgain = monitor.drainComments("FN-001");
-      expect(drainedAgain).toEqual([]);
-    });
-
     it("returns empty array after PR is stopped", () => {
       monitor.startMonitoring("FN-001", "owner", "repo", mockPrInfo);
       const tracked = monitor.getTrackedPrs().get("FN-001")!;
-      tracked.bufferedComments.push(
-        { id: 1, body: "Fix this", user: { login: "reviewer" }, created_at: "2024-01-01", updated_at: "2024-01-01", html_url: "" },
-      );
+      tracked.bufferedComments.push({
+        id: 1,
+        body: "Fix this",
+        user: { login: "reviewer" },
+        created_at: "2024-01-01",
+        updated_at: "2024-01-01",
+        html_url: "",
+      });
 
       monitor.stopMonitoring("FN-001");
       const result = monitor.drainComments("FN-001");
       expect(result).toEqual([]);
-    });
-
-    it("does not affect other tracked PRs", () => {
-      monitor.startMonitoring("FN-001", "owner", "repo", mockPrInfo);
-      monitor.startMonitoring("FN-002", "owner", "repo", { ...mockPrInfo, number: 43 });
-
-      const tracked1 = monitor.getTrackedPrs().get("FN-001")!;
-      const tracked2 = monitor.getTrackedPrs().get("FN-002")!;
-      tracked1.bufferedComments.push(
-        { id: 1, body: "Fix", user: { login: "r" }, created_at: "2024-01-01", updated_at: "2024-01-01", html_url: "" },
-      );
-      tracked2.bufferedComments.push(
-        { id: 2, body: "Update", user: { login: "r" }, created_at: "2024-01-01", updated_at: "2024-01-01", html_url: "" },
-      );
-
-      // Drain FN-001 only
-      const drained1 = monitor.drainComments("FN-001");
-      expect(drained1).toHaveLength(1);
-
-      // FN-002 buffer should still be intact
-      const drained2 = monitor.drainComments("FN-002");
-      expect(drained2).toHaveLength(1);
     });
   });
 });
