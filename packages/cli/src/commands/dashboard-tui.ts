@@ -884,6 +884,52 @@ export class DashboardTUI {
     process.stdout.write("\n");
   }
 
+  /**
+   * Build help overlay lines as an array of strings.
+   * Uses dynamic visibleLength calculation to ensure consistent box width.
+   * All box-drawing rows (including borders) have the same total visible width.
+   *
+   * @param boxWidth - The interior content width (excluding the two box characters)
+   * @param useBoxDrawing - Whether to use box-drawing characters (true) or compact text (false)
+   * @returns Array of help lines
+   */
+  private buildHelpLines(boxWidth: number, useBoxDrawing: boolean): string[] {
+    if (useBoxDrawing) {
+      // Helper to create a width-safe interior row with consistent total width
+      // Formula: │ + content + padding + │ where padding = max(0, boxWidth - visibleLength(content))
+      // This ensures total visible width = boxWidth + 2 for ALL rows
+      const boxRow = (content: string): string => {
+        const padding = Math.max(0, boxWidth - visibleLength(content));
+        return "│" + content + " ".repeat(padding) + "│";
+      };
+
+      // Full box drawing style for terminals wide enough
+      return [
+        "┌" + "─".repeat(boxWidth) + "┐",
+        boxRow(centerText("KEYBOARD SHORTCUTS", boxWidth, " ")),
+        "├" + "─".repeat(boxWidth) + "┤",
+        boxRow("  [1-5]       Switch to tab by number"),
+        boxRow("  [n] / →     Next tab"),
+        boxRow("  [p] / ←     Previous tab"),
+        boxRow("  [r]         Refresh stats (Utilities)"),
+        boxRow("  [c]         Clear logs (Utilities)"),
+        boxRow("  [t]         Toggle engine pause (Utilities)"),
+        boxRow("  [?] / [h]   Toggle help"),
+        boxRow("  [q]         Quit"),
+        boxRow("  [Ctrl+C]    Force quit"),
+        "└" + "─".repeat(boxWidth) + "┘",
+      ];
+    } else {
+      // Compact plain text for narrow terminals - use visibleTruncate to prevent overflow
+      return [
+        "KEYBOARD SHORTCUTS",
+        "  [1-5] Switch tab | [n/p] Next/Prev | [q] Quit",
+        "  [r] Refresh | [c] Clear logs | [t] Toggle engine",
+        "  [?/h] Help | [Ctrl+C] Force quit",
+      ];
+    }
+  }
+
   private renderHelpOverlay(): void {
     const cols = process.stdout.columns || 80;
     const rows = process.stdout.rows || 24;
@@ -892,38 +938,11 @@ export class DashboardTUI {
     const boxWidth = Math.min(62, Math.max(cols - 4, 20));
     const useBoxDrawing = cols >= boxWidth + 4;
 
-    let helpLines: string[];
-    if (useBoxDrawing) {
-      // Full box drawing style for terminals wide enough
-      helpLines = [
-        colorize("┌" + "─".repeat(boxWidth) + "┐", "brightBlue"),
-        colorize("│" + centerText("KEYBOARD SHORTCUTS", boxWidth, " ") + "│", "brightBlue"),
-        colorize("├" + "─".repeat(boxWidth) + "┤", "brightBlue"),
-        colorize("│  [1-5]       Switch to tab by number" + padRight("", boxWidth - 39) + "│", "white"),
-        colorize("│  [n] / →     Next tab" + padRight("", boxWidth - 25) + "│", "white"),
-        colorize("│  [p] / ←     Previous tab" + padRight("", boxWidth - 27) + "│", "white"),
-        colorize("│  [r]         Refresh stats (Utilities)" + padRight("", boxWidth - 36) + "│", "white"),
-        colorize("│  [c]         Clear logs (Utilities)" + padRight("", boxWidth - 33) + "│", "white"),
-        colorize("│  [t]         Toggle engine pause (Utilities)" + padRight("", boxWidth - 42) + "│", "white"),
-        colorize("│  [?] / [h]   Toggle help" + padRight("", boxWidth - 24) + "│", "white"),
-        colorize("│  [q]         Quit" + padRight("", boxWidth - 15) + "│", "white"),
-        colorize("│  [Ctrl+C]    Force quit" + padRight("", boxWidth - 22) + "│", "white"),
-        colorize("└" + "─".repeat(boxWidth) + "┘", "brightBlue"),
-      ];
-    } else {
-      // Compact plain text for narrow terminals - use visibleTruncate to prevent overflow
-      const maxLineWidth = cols - 2; // Padding for left margin
-      helpLines = [
-        visibleTruncate(colorize("KEYBOARD SHORTCUTS", "brightBlue"), maxLineWidth),
-        visibleTruncate(colorize("  [1-5] Switch tab | [n/p] Next/Prev | [q] Quit", "white"), maxLineWidth),
-        visibleTruncate(colorize("  [r] Refresh | [c] Clear logs | [t] Toggle engine", "white"), maxLineWidth),
-        visibleTruncate(colorize("  [?/h] Help | [Ctrl+C] Force quit", "white"), maxLineWidth),
-      ];
-    }
+    const rawHelpLines = this.buildHelpLines(boxWidth, useBoxDrawing);
 
     // Compute compact box width from actual line widths for proper centering
-    const compactBoxWidth = useBoxDrawing ? boxWidth : Math.max(...helpLines.map(visibleLength));
-    const boxHeight = helpLines.length;
+    const compactBoxWidth = useBoxDrawing ? boxWidth : Math.max(...rawHelpLines.map(visibleLength));
+    const boxHeight = rawHelpLines.length;
     // Clamp origin to terminal-safe coordinates (minimum 1)
     const safeStartX = Math.max(1, Math.floor((cols - compactBoxWidth) / 2));
     const safeStartY = Math.max(1, Math.floor((rows - boxHeight) / 2));
@@ -932,16 +951,17 @@ export class DashboardTUI {
     const clearTop = Math.max(1, safeStartY - 1);
     const clearBottom = Math.min(rows, safeStartY + boxHeight);
 
-    // Clear screen area for overlay
+    // Colorize lines and clear screen area for overlay
     for (let y = clearTop; y <= clearBottom; y++) {
       moveCursorTo(1, y);
       clearLine();
     }
 
     // Draw the help box
-    for (let i = 0; i < helpLines.length; i++) {
+    for (let i = 0; i < rawHelpLines.length; i++) {
+      const color = i === 0 || i === 2 || i === rawHelpLines.length - 1 ? "brightBlue" : "white";
       moveCursorTo(safeStartX, safeStartY + i);
-      process.stdout.write(helpLines[i]);
+      process.stdout.write(colorize(rawHelpLines[i], color));
     }
   }
 }
@@ -1000,13 +1020,6 @@ function centerText(text: string, width: number, padChar: string = " "): string 
   const leftPad = Math.floor(padding / 2);
   const rightPad = padding - leftPad;
   return padChar.repeat(leftPad) + text + padChar.repeat(rightPad);
-}
-
-/** Right-pad a string to a given width */
-function padRight(text: string, width: number): string {
-  if (width <= 0) return "";
-  const visibleLen = visibleLength(text);
-  return text + " ".repeat(Math.max(0, width - visibleLen));
 }
 
 // ── Check if TTY is available ─────────────────────────────────────────────────

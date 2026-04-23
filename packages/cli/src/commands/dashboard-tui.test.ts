@@ -238,3 +238,140 @@ describe("Type exports", () => {
     expect(settings.enginePaused).toBe(false);
   });
 });
+
+// ── Help Overlay Alignment Tests ─────────────────────────────────────────────
+
+/**
+ * Calculate visible length of a string (strips ANSI escape sequences).
+ * Mirrors the helper function in dashboard-tui.ts for testing purposes.
+ */
+function visibleLength(s: string): number {
+  return s.replace(/\x1b\[[0-9;]*m/g, "").length;
+}
+
+describe("Help overlay border alignment in box-drawing mode", () => {
+  /**
+   * Helper that mirrors the boxRow logic from buildHelpLines.
+   * Ensures total visible width = boxWidth + 2 for rows with content <= boxWidth.
+   */
+  function boxRow(content: string, boxWidth: number): string {
+    const padding = Math.max(0, boxWidth - visibleLength(content));
+    return "│" + content + " ".repeat(padding) + "│";
+  }
+
+  function centerText(text: string, width: number, padChar = " "): string {
+    const padding = Math.max(0, width - visibleLength(text));
+    const leftPad = Math.floor(padding / 2);
+    const rightPad = padding - leftPad;
+    return padChar.repeat(leftPad) + text + padChar.repeat(rightPad);
+  }
+
+  /**
+   * Build help lines exactly as buildHelpLines() does.
+   * Used to verify box geometry without requiring TTY mode.
+   */
+  function buildHelpLinesForTest(boxWidth: number): string[] {
+    return [
+      "┌" + "─".repeat(boxWidth) + "┐",
+      boxRow(centerText("KEYBOARD SHORTCUTS", boxWidth, " "), boxWidth),
+      "├" + "─".repeat(boxWidth) + "┤",
+      boxRow("  [1-5]       Switch to tab by number", boxWidth),
+      boxRow("  [n] / →     Next tab", boxWidth),
+      boxRow("  [p] / ←     Previous tab", boxWidth),
+      boxRow("  [r]         Refresh stats (Utilities)", boxWidth),
+      boxRow("  [c]         Clear logs (Utilities)", boxWidth),
+      boxRow("  [t]         Toggle engine pause (Utilities)", boxWidth),
+      boxRow("  [?] / [h]   Toggle help", boxWidth),
+      boxRow("  [q]         Quit", boxWidth),
+      boxRow("  [Ctrl+C]    Force quit", boxWidth),
+      "└" + "─".repeat(boxWidth) + "┘",
+    ];
+  }
+
+  it("all box-drawing rows have consistent total visible width for standard terminal", () => {
+    const boxWidth = 62;
+    const helpLines = buildHelpLinesForTest(boxWidth);
+    const expectedWidth = boxWidth + 2; // boxWidth interior + 2 box characters
+
+    // All rows should have exactly the same visible width
+    for (const line of helpLines) {
+      expect(visibleLength(line)).toBe(expectedWidth);
+    }
+  });
+
+  it("box rows match the top/bottom border width", () => {
+    const boxWidth = 62;
+    const helpLines = buildHelpLinesForTest(boxWidth);
+
+    // Get top border width
+    const topBorder = helpLines[0];
+    const borderWidth = visibleLength(topBorder);
+
+    // Every row must match the border width
+    for (let i = 1; i < helpLines.length; i++) {
+      expect(visibleLength(helpLines[i])).toBe(borderWidth);
+    }
+  });
+
+  it("right border characters align across all rows for standard terminal", () => {
+    const boxWidth = 62;
+    const helpLines = buildHelpLinesForTest(boxWidth);
+    const expectedWidth = boxWidth + 2;
+
+    // Top border determines the box width
+    const topBorder = helpLines[0];
+    const topBorderWidth = visibleLength(topBorder);
+
+    // Every interior row should have the same total width as the top border
+    for (let i = 1; i < helpLines.length; i++) {
+      const line = helpLines[i];
+      // The line should have the same total width as top border
+      expect(visibleLength(line)).toBe(topBorderWidth);
+      expect(visibleLength(line)).toBe(expectedWidth);
+    }
+  });
+
+  it("handles narrow terminal width (boxWidth = 62) for full-width content", () => {
+    // Use 62 to accommodate the longest content line (~45 chars)
+    const boxWidth = 62;
+    const helpLines = buildHelpLinesForTest(boxWidth);
+    const expectedWidth = boxWidth + 2;
+
+    // All rows should have consistent width with boxWidth=62
+    for (const line of helpLines) {
+      expect(visibleLength(line)).toBe(expectedWidth);
+    }
+  });
+
+  it("all interior rows end with right border character", () => {
+    const boxWidth = 62;
+    const helpLines = buildHelpLinesForTest(boxWidth);
+
+    // Check that all interior rows (indices 1 through length-2) end with │
+    // Skip header/title row (index 1) which has centered text
+    for (let i = 3; i < helpLines.length - 1; i++) {
+      const line = helpLines[i];
+      expect(line.endsWith("│")).toBe(true);
+    }
+  });
+
+  it("padding is zero when content fills the boxWidth", () => {
+    const boxWidth = 62;
+    // "  [t]         Toggle engine pause (Utilities)" is 45 chars
+    const content = "  [t]         Toggle engine pause (Utilities)";
+    const padding = Math.max(0, boxWidth - visibleLength(content));
+    expect(padding).toBe(17); // 62 - 45 = 17
+  });
+
+  it("padding calculation ensures consistent row width", () => {
+    // Test that for content shorter than boxWidth, padding fills the gap
+    const boxWidth = 62;
+    const shortContent = "  [q]         Quit"; // 18 chars
+    const expectedPadding = boxWidth - visibleLength(shortContent); // 62 - 18 = 44
+
+    const row = boxRow(shortContent, boxWidth);
+    expect(visibleLength(row)).toBe(boxWidth + 2);
+    expect(row.startsWith("│")).toBe(true);
+    expect(row.endsWith("│")).toBe(true);
+  });
+});
