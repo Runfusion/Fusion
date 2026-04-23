@@ -50,6 +50,29 @@ These fields are managed by the engine and cannot be directly edited:
 - `lastError` — Last error message (managed by engine)
 - `pauseReason` — Reason for paused state (managed by engine)
 
+### Stale Task Link Sanitization
+
+The `taskId` field is suppressed in API responses when the linked task is in a terminal state (`done` or `archived`). This prevents stale "working on" UI indicators in the Agents dashboard for agents whose task has already completed.
+
+**Terminal task statuses:**
+- `done` — Task completed successfully
+- `archived` — Task archived
+
+**Affected API endpoints:**
+- `GET /api/agents` — `taskId` is omitted from agents with terminal linked tasks
+- `GET /api/agents/:id` — `taskId` is omitted when the linked task is terminal
+- `GET /api/agents/stats` — `assignedTaskCount` excludes agents with terminal linked tasks
+
+**Non-terminal task statuses (taskId is preserved):**
+- `triage`
+- `todo`
+- `in-progress`
+- `in-review`
+
+**Graceful degradation:**
+- If task lookup fails (e.g., task deleted), `taskId` is preserved in the response to avoid false negatives
+- The underlying `taskId` is NOT modified in storage — only the API response is sanitized
+
 ### Update-Only Fields
 
 These fields can only be set during update (not on create):

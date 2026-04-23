@@ -16469,3 +16469,363 @@ describe("Messaging Routes", () => {
 
 // Note: Project pause/resume route tests are in src/__tests__/project-pause-resume-routes.test.ts
 // to avoid test isolation issues with vi.restoreAllMocks() from other tests in routes.test.ts
+
+describe("Agent stale task-link sanitization", () => {
+  let tempDir: string;
+  let fusionDir: string;
+  let agentId: string;
+
+  beforeEach(async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "kb-routes-agent-stale-"));
+    fusionDir = join(tempDir, ".fusion");
+    mkdirSync(fusionDir, { recursive: true });
+
+    const { AgentStore } = await import("@fusion/core");
+    const agentStore = new AgentStore({ rootDir: fusionDir });
+    await agentStore.init();
+    const agent = await agentStore.createAgent({
+      name: "Test Agent",
+      role: "executor",
+    });
+    agentId = agent.id;
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  function buildAgentApp() {
+    const store = createMockStore({
+      getFusionDir: vi.fn().mockReturnValue(fusionDir),
+    } as any);
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("GET /api/agents omits taskId when linked task is done", async () => {
+    const doneTaskId = "FN-DONE";
+    const store = createMockStore({
+      getFusionDir: vi.fn().mockReturnValue(fusionDir),
+      getTask: vi.fn().mockResolvedValue({
+        id: doneTaskId,
+        column: "done",
+        description: "Completed task",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        prompt: "# Done\n\nDone task",
+      }),
+    } as any);
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+
+    // Assign done task to agent
+    const { AgentStore } = await import("@fusion/core");
+    const agentStore = new AgentStore({ rootDir: fusionDir });
+    await agentStore.init();
+    await agentStore.assignTask(agentId, doneTaskId);
+
+    const res = await GET(app, "/api/agents");
+
+    expect(res.status).toBe(200);
+    const agents = Array.isArray(res.body) ? res.body : [res.body];
+    const testAgent = agents.find((a: { id: string }) => a.id === agentId);
+    expect(testAgent).toBeDefined();
+    expect(testAgent).not.toHaveProperty("taskId");
+  });
+
+  it("GET /api/agents omits taskId when linked task is archived", async () => {
+    const archivedTaskId = "FN-ARCHIVED";
+    const store = createMockStore({
+      getFusionDir: vi.fn().mockReturnValue(fusionDir),
+      getTask: vi.fn().mockResolvedValue({
+        id: archivedTaskId,
+        column: "archived",
+        description: "Archived task",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        prompt: "# Archived\n\nArchived task",
+      }),
+    } as any);
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+
+    // Assign archived task to agent
+    const { AgentStore } = await import("@fusion/core");
+    const agentStore = new AgentStore({ rootDir: fusionDir });
+    await agentStore.init();
+    await agentStore.assignTask(agentId, archivedTaskId);
+
+    const res = await GET(app, "/api/agents");
+
+    expect(res.status).toBe(200);
+    const agents = Array.isArray(res.body) ? res.body : [res.body];
+    const testAgent = agents.find((a: { id: string }) => a.id === agentId);
+    expect(testAgent).toBeDefined();
+    expect(testAgent).not.toHaveProperty("taskId");
+  });
+
+  it("GET /api/agents preserves taskId for non-terminal linked tasks", async () => {
+    const activeTaskId = "FN-ACTIVE";
+    const store = createMockStore({
+      getFusionDir: vi.fn().mockReturnValue(fusionDir),
+      getTask: vi.fn().mockResolvedValue({
+        id: activeTaskId,
+        column: "in-progress",
+        description: "Active task",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        prompt: "# Active\n\nActive task",
+      }),
+    } as any);
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+
+    // Assign active task to agent
+    const { AgentStore } = await import("@fusion/core");
+    const agentStore = new AgentStore({ rootDir: fusionDir });
+    await agentStore.init();
+    await agentStore.assignTask(agentId, activeTaskId);
+
+    const res = await GET(app, "/api/agents");
+
+    expect(res.status).toBe(200);
+    const agents = Array.isArray(res.body) ? res.body : [res.body];
+    const testAgent = agents.find((a: { id: string }) => a.id === agentId);
+    expect(testAgent).toBeDefined();
+    expect(testAgent.taskId).toBe(activeTaskId);
+  });
+
+  it("GET /api/agents/:id omits taskId when linked task is done", async () => {
+    const doneTaskId = "FN-DONE-DETAIL";
+    const store = createMockStore({
+      getFusionDir: vi.fn().mockReturnValue(fusionDir),
+      getTask: vi.fn().mockResolvedValue({
+        id: doneTaskId,
+        column: "done",
+        description: "Done task",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        prompt: "# Done\n\nDone task",
+      }),
+    } as any);
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+
+    // Assign done task to agent
+    const { AgentStore } = await import("@fusion/core");
+    const agentStore = new AgentStore({ rootDir: fusionDir });
+    await agentStore.init();
+    await agentStore.assignTask(agentId, doneTaskId);
+
+    const res = await GET(app, `/api/agents/${agentId}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toBeDefined();
+    expect(res.body.id).toBe(agentId);
+    expect(res.body).not.toHaveProperty("taskId");
+  });
+
+  it("GET /api/agents/:id omits taskId when linked task is archived", async () => {
+    const archivedTaskId = "FN-ARCHIVED-DETAIL";
+    const store = createMockStore({
+      getFusionDir: vi.fn().mockReturnValue(fusionDir),
+      getTask: vi.fn().mockResolvedValue({
+        id: archivedTaskId,
+        column: "archived",
+        description: "Archived task",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        prompt: "# Archived\n\nArchived task",
+      }),
+    } as any);
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+
+    // Assign archived task to agent
+    const { AgentStore } = await import("@fusion/core");
+    const agentStore = new AgentStore({ rootDir: fusionDir });
+    await agentStore.init();
+    await agentStore.assignTask(agentId, archivedTaskId);
+
+    const res = await GET(app, `/api/agents/${agentId}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toBeDefined();
+    expect(res.body.id).toBe(agentId);
+    expect(res.body).not.toHaveProperty("taskId");
+  });
+
+  it("GET /api/agents/:id preserves taskId for in-review linked tasks", async () => {
+    const inReviewTaskId = "FN-IN-REVIEW";
+    const store = createMockStore({
+      getFusionDir: vi.fn().mockReturnValue(fusionDir),
+      getTask: vi.fn().mockResolvedValue({
+        id: inReviewTaskId,
+        column: "in-review",
+        description: "In review task",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        prompt: "# In Review\n\nIn review task",
+      }),
+    } as any);
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+
+    // Assign in-review task to agent
+    const { AgentStore } = await import("@fusion/core");
+    const agentStore = new AgentStore({ rootDir: fusionDir });
+    await agentStore.init();
+    await agentStore.assignTask(agentId, inReviewTaskId);
+
+    const res = await GET(app, `/api/agents/${agentId}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toBeDefined();
+    expect(res.body.id).toBe(agentId);
+    expect(res.body.taskId).toBe(inReviewTaskId);
+  });
+
+  it("GET /api/agents/stats excludes terminal task links from assignedTaskCount", async () => {
+    const doneTaskId = "FN-STATS-DONE";
+    const activeTaskId = "FN-STATS-ACTIVE";
+
+    const store = createMockStore({
+      getFusionDir: vi.fn().mockReturnValue(fusionDir),
+      getTask: vi.fn().mockImplementation(async (taskId: string) => {
+        if (taskId === doneTaskId) {
+          return {
+            id: doneTaskId,
+            column: "done",
+            description: "Done task",
+            dependencies: [],
+            steps: [],
+            currentStep: 0,
+            log: [],
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            prompt: "# Done\n\nDone task",
+          };
+        }
+        if (taskId === activeTaskId) {
+          return {
+            id: activeTaskId,
+            column: "in-progress",
+            description: "Active task",
+            dependencies: [],
+            steps: [],
+            currentStep: 0,
+            log: [],
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            prompt: "# Active\n\nActive task",
+          };
+        }
+        return null;
+      }),
+    } as any);
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+
+    // Create two agents: one with done task, one with active task
+    const { AgentStore } = await import("@fusion/core");
+    const agentStore = new AgentStore({ rootDir: fusionDir });
+    await agentStore.init();
+
+    const agent1 = await agentStore.createAgent({ name: "Agent 1", role: "executor" });
+    const agent2 = await agentStore.createAgent({ name: "Agent 2", role: "executor" });
+
+    await agentStore.assignTask(agent1.id, doneTaskId);
+    await agentStore.assignTask(agent2.id, activeTaskId);
+
+    const res = await GET(app, "/api/agents/stats");
+
+    expect(res.status).toBe(200);
+    // Only agent2 should count (active task), agent1 should be excluded (done task)
+    expect(res.body.assignedTaskCount).toBe(1);
+  });
+
+  it("GET /api/agents/stats preserves taskId for agents with no linked task", async () => {
+    const store = createMockStore({
+      getFusionDir: vi.fn().mockReturnValue(fusionDir),
+    } as any);
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+
+    // Agent already created in beforeEach with no task assigned
+    const res = await GET(app, "/api/agents/stats");
+
+    expect(res.status).toBe(200);
+    // Agent has no task, so assignedTaskCount should be 0
+    expect(res.body.assignedTaskCount).toBe(0);
+  });
+
+  it("GET /api/agents handles task lookup failure gracefully", async () => {
+    const taskId = "FN-LOOKUP-FAIL";
+    const store = createMockStore({
+      getFusionDir: vi.fn().mockReturnValue(fusionDir),
+      getTask: vi.fn().mockRejectedValue(new Error("Database error")),
+    } as any);
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+
+    // Assign task to agent
+    const { AgentStore } = await import("@fusion/core");
+    const agentStore = new AgentStore({ rootDir: fusionDir });
+    await agentStore.init();
+    await agentStore.assignTask(agentId, taskId);
+
+    // Should not throw, taskId should be preserved on lookup failure
+    const res = await GET(app, "/api/agents");
+
+    expect(res.status).toBe(200);
+    const agents = Array.isArray(res.body) ? res.body : [res.body];
+    const testAgent = agents.find((a: { id: string }) => a.id === agentId);
+    expect(testAgent).toBeDefined();
+    // On lookup failure, taskId should be preserved (treated as non-terminal)
+    expect(testAgent.taskId).toBe(taskId);
+  });
+});

@@ -11334,6 +11334,62 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   // ── Agent Routes ───────────────────────────────────────────────────────────
 
   /**
+   * Terminal task statuses — tasks in these states should not be displayed
+   * as "working on" in agent UI surfaces to avoid stale activity indicators.
+   */
+  const TERMINAL_TASK_STATUSES = new Set(["done", "archived"]);
+
+  /**
+   * Check if a task status is terminal (done or archived).
+   */
+  function isTerminalTaskStatus(status: string | undefined): boolean {
+    return status !== undefined && TERMINAL_TASK_STATUSES.has(status);
+  }
+
+  /**
+   * Sanitize agent responses to omit taskId when the linked task is in a terminal state.
+   * This prevents stale "working on" UI indicators for completed/archived tasks.
+   *
+   * @param agents - Array of agents to sanitize
+   * @param scopedStore - Task store for looking up linked task status
+   * @returns Agents with terminal-linked taskId omitted from response
+   */
+  async function sanitizeAgentTaskLinks(
+    agents: Array<import("@fusion/core").Agent>,
+    scopedStore: TaskStore,
+  ): Promise<Array<import("@fusion/core").Agent>> {
+    // Batch lookup all unique taskIds to minimize individual store calls
+    const taskIds = [...new Set(agents.map((a) => a.taskId).filter((id): id is string => id !== undefined))];
+    const taskStatusMap = new Map<string, string>();
+
+    // Parallel fetch all linked tasks
+    await Promise.all(
+      taskIds.map(async (taskId) => {
+        try {
+          const task = await scopedStore.getTask(taskId);
+          if (task) {
+            taskStatusMap.set(taskId, task.column);
+          }
+        } catch {
+          // Task lookup failed — treat as non-terminal (preserve taskId)
+        }
+      }),
+    );
+
+    return agents.map((agent) => {
+      if (!agent.taskId) return agent;
+
+      const taskStatus = taskStatusMap.get(agent.taskId);
+      if (isTerminalTaskStatus(taskStatus)) {
+        // Omit taskId for terminal tasks — use spread to create shallow copy without taskId
+        const { taskId: _omitted, ...sanitized } = agent;
+        return sanitized as import("@fusion/core").Agent;
+      }
+      return agent;
+    });
+  }
+
+  /**
    * GET /api/agents
    * List all agents with optional filtering.
    * Query params: state, role, includeEphemeral
@@ -11357,7 +11413,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await agentStore.init();
 
       const agents = await agentStore.listAgents(filter as { state?: "idle" | "active" | "paused" | "terminated"; role?: import("@fusion/core").AgentCapability; includeEphemeral?: boolean });
-      res.json(agents);
+      const sanitizedAgents = await sanitizeAgentTaskLinks(agents, scopedStore);
+      res.json(sanitizedAgents);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
@@ -12313,6 +12370,7 @@ async function persistImportedSkills(
    * GET /api/agents/stats
    * Return aggregate stats across all agents.
    * Must be registered before /agents/:id to avoid "stats" matching :id.
+   * Note: assignedTaskCount excludes agents whose linked task is in a terminal state.
    */
   router.get("/agents/stats", async (req, res) => {
     try {
@@ -12323,7 +12381,10 @@ async function persistImportedSkills(
 
       const agents = await agentStore.listAgents();
       const activeCount = agents.filter((a) => a.state === "active" || a.state === "running").length;
-      const assignedTaskCount = agents.filter((a) => a.taskId).length;
+
+      // Count only agents with non-terminal linked tasks
+      const sanitizedAgents = await sanitizeAgentTaskLinks(agents, scopedStore);
+      const assignedTaskCount = sanitizedAgents.filter((a) => a.taskId).length;
 
       let completedRuns = 0;
       let failedRuns = 0;
@@ -12396,6 +12457,7 @@ async function persistImportedSkills(
   /**
    * GET /api/agents/:id
    * Get agent by ID with heartbeat history.
+   * taskId is omitted from response if the linked task is in a terminal state.
    */
   router.get("/agents/:id", async (req, res) => {
     try {
@@ -12408,7 +12470,9 @@ async function persistImportedSkills(
       if (!agent) {
         throw notFound("Agent not found");
       }
-      res.json(agent);
+      // Sanitize taskId for single-agent responses (omit if linked task is terminal)
+      const [sanitizedAgent] = await sanitizeAgentTaskLinks([agent], scopedStore);
+      res.json(sanitizedAgent);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
