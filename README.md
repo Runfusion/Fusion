@@ -172,7 +172,7 @@ npx companies.sh add paperclipai/companies/gstack
 <div align="center">
   <img src="./demo/assets/pi-logo.svg" alt="pi" height="56" />
 
-  ### [pi](https://github.com/badlogic/pi-mono) <sub>`experimental`</sub>
+  ### [pi](https://github.com/badlogic/pi-mono)
 
 </div>
 
@@ -186,13 +186,13 @@ pi install npm:@runfusion/fusion
 <td width="50%" valign="top">
 
 <div align="center">
-  <img src="./demo/assets/hermes-logo.svg" alt="Hermes" height="56" />
+  <img src="./demo/assets/paperclip-logo.svg" alt="Paperclip" height="56" />
 
-  ### [Hermes](https://github.com/paperclipai) <sub>`experimental`</sub>
+  ### [Paperclip](https://github.com/paperclipai) <sub>`experimental`</sub>
 
 </div>
 
-Fusion speaks **Hermes**, the open agent-company protocol from [Paperclip](https://github.com/paperclipai). Import a prebuilt team from `companies.sh` and let its agents coordinate over Fusion's mailbox, missions, and workflow gates for weeks of autonomous work.
+Import agent companies from **Paperclip**'s [`companies.sh`](https://github.com/paperclipai/companies) ecosystem — 440+ agents across 16 companies — and let them coordinate over Fusion's mailbox, missions, and workflow gates for weeks of autonomous work.
 
 ```bash
 npx companies.sh add paperclipai/companies/gstack
@@ -202,7 +202,7 @@ npx companies.sh add paperclipai/companies/gstack
 </tr>
 </table>
 
-> Both integrations are **experimental** — APIs and wire formats may shift between minor releases.
+> The Paperclip integration is **experimental** — APIs and wire formats may shift between minor releases. pi is Fusion's stable runtime dependency.
 
 ---
 
