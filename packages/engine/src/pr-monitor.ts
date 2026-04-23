@@ -1,5 +1,9 @@
 import { prMonitorLog } from "./logger.js";
 import type { PrInfo } from "@fusion/core";
+import {
+  createDefaultPrMonitorGhClient,
+  type PrMonitorGhClient,
+} from "./pr-monitor-gh.js";
 
 export interface TrackedPr {
   owner: string;
@@ -28,71 +32,20 @@ export type OnNewCommentsCallback = (
   comments: PrComment[]
 ) => void | Promise<void>;
 
-// gh CLI JSON output type for comments
-interface GhPrViewJson {
-  comments: Array<{
-    id: string;
-    body: string;
-    author: { login: string };
-    createdAt: string;
-    updatedAt: string;
-    url: string;
-  }>;
-}
-
-/**
- * Check if gh CLI is available and authenticated.
- * Lazy-loaded to avoid issues during module load in tests.
- */
-async function checkGhAuth(): Promise<boolean> {
-  try {
-    const { isGhAvailable, isGhAuthenticated } = await import("@fusion/core");
-    return isGhAvailable() && isGhAuthenticated();
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Fetch PR comments using gh CLI.
- */
-async function fetchCommentsWithGh(
-  owner: string,
-  repo: string,
-  prNumber: number,
-  since?: string
-): Promise<PrComment[]> {
-  const { runGhJson } = await import("@fusion/core");
-  
-  const pr = await runGhJson<GhPrViewJson>([
-    "pr", "view", String(prNumber),
-    "--repo", `${owner}/${repo}`,
-    "--json", "comments",
-  ]);
-
-  let comments = pr.comments.map((c) => ({
-    id: parseInt(c.id, 10),
-    body: c.body,
-    user: { login: c.author.login },
-    created_at: c.createdAt,
-    updated_at: c.updatedAt,
-    html_url: c.url,
-  }));
-
-  // Filter by timestamp if since is provided
-  if (since) {
-    const sinceDate = new Date(since);
-    comments = comments.filter((c) => new Date(c.created_at) > sinceDate);
-  }
-
-  return comments;
+interface PrMonitorOptions {
+  /**
+   * @deprecated Kept for backwards compatibility only. gh CLI auth is required.
+   */
+  getGitHubToken?: () => string | undefined;
+  /** Internal seam for gh auth/comment polling behavior in tests. */
+  ghClient?: PrMonitorGhClient;
 }
 
 /**
  * Monitors GitHub PRs for new comments.
  * Uses adaptive polling: 30s when active, 5min when idle.
  * Implements exponential backoff on errors.
- * 
+ *
  * NOTE: Uses gh CLI for all GitHub operations. Requires gh CLI to be installed
  * and authenticated (run `gh auth login`). The GITHUB_TOKEN fallback is no
  * longer supported - monitoring will fail if gh CLI is not available.
@@ -101,6 +54,7 @@ export class PrMonitor {
   private trackedPrs = new Map<string, TrackedPr>();
   private intervals = new Map<string, ReturnType<typeof setInterval>>();
   private newCommentsCallback?: OnNewCommentsCallback;
+  private readonly ghClient: PrMonitorGhClient;
 
   // Polling intervals in ms
   private readonly ACTIVE_INTERVAL = 30 * 1000; // 30 seconds
@@ -110,10 +64,11 @@ export class PrMonitor {
 
   /**
    * Create a PR monitor.
-   * @param _options Deprecated - no longer used. gh CLI authentication is now required.
+   * @param options Deprecated getGitHubToken is retained for backwards compatibility.
    */
-  constructor(_options?: { getGitHubToken?: () => string | undefined }) {
+  constructor(options?: PrMonitorOptions) {
     // getGitHubToken option is no longer used - gh CLI auth is required
+    this.ghClient = options?.ghClient ?? createDefaultPrMonitorGhClient();
   }
 
   /**
@@ -241,7 +196,7 @@ export class PrMonitor {
     tracked: TrackedPr
   ): Promise<boolean> {
     // Check if gh CLI is available
-    if (!(await checkGhAuth())) {
+    if (!(await this.ghClient.checkAuth())) {
       prMonitorLog.warn(`GitHub CLI (gh) not available or not authenticated for task ${taskId}. Run 'gh auth login' to enable PR monitoring.`);
       tracked.consecutiveErrors++;
       return false;
@@ -249,12 +204,12 @@ export class PrMonitor {
 
     try {
       const since = tracked.lastCheckedAt.toISOString();
-      const comments = await fetchCommentsWithGh(
-        tracked.owner,
-        tracked.repo,
-        tracked.prInfo.number,
-        since
-      );
+      const comments = await this.ghClient.fetchComments({
+        owner: tracked.owner,
+        repo: tracked.repo,
+        prNumber: tracked.prInfo.number,
+        since,
+      });
 
       // Filter to only new comments (by ID)
       const newComments = tracked.lastCommentId
