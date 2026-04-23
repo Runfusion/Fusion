@@ -805,7 +805,7 @@ function AppInner() {
         toasts={toasts}
         removeToast={removeToast}
         modalManager={modalManager}
-        projectActions={{ handleSetupComplete, handleModelOnboardingComplete }}
+        projectActions={{ handleAddProject, handleSetupComplete, handleModelOnboardingComplete }}
         taskHandlers={{
           handleModalCreate,
           handlePlanningTaskCreated,

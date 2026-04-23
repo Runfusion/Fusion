@@ -98,7 +98,7 @@ On first launch, Fusion automatically opens the **onboarding wizard**. It guides
 
 2. **GitHub (Optional)** — Connect GitHub to import issues and manage pull requests. This step is optional — you can continue without GitHub.
 
-3. **First Task** — Get started by creating your first task or importing from GitHub.
+3. **First Task** — Get started by creating your first task or importing from GitHub. If no project is currently selected, onboarding first prompts you to register/select a project directory before task actions are enabled.
 
 **The onboarding wizard is dismissible and non-blocking.** If you skip setup, you can complete it later — and you can always update your AI provider authentication anytime via **Settings → Authentication** in the dashboard:
 - Click **Skip for now** to dismiss the wizard — the dashboard remains fully usable

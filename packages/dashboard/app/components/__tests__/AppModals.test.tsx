@@ -74,8 +74,12 @@ vi.mock("../SetupWizardModal", () => ({
   SetupWizardModal: () => null,
 }));
 
+const mockModelOnboardingModalProps = vi.fn();
 vi.mock("../ModelOnboardingModal", () => ({
-  ModelOnboardingModal: () => null,
+  ModelOnboardingModal: (props: any) => {
+    mockModelOnboardingModalProps(props);
+    return null;
+  },
 }));
 
 vi.mock("../ToastContainer", () => ({
@@ -184,6 +188,7 @@ describe("AppModals", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockScheduledTasksModalProps.mockClear();
+    mockModelOnboardingModalProps.mockClear();
   });
 
   it("renders without crashing", () => {
@@ -197,7 +202,7 @@ describe("AppModals", () => {
         toasts={mockToasts}
         removeToast={vi.fn()}
         modalManager={mockModalManager}
-        projectActions={{ handleSetupComplete: vi.fn(), handleModelOnboardingComplete: vi.fn() }}
+        projectActions={{ handleAddProject: vi.fn(), handleSetupComplete: vi.fn(), handleModelOnboardingComplete: vi.fn() }}
         taskHandlers={{ handleModalCreate: vi.fn(), handlePlanningTaskCreated: vi.fn(), handlePlanningTasksCreated: vi.fn(), handleSubtaskTasksCreated: vi.fn(), handleGitHubImport: vi.fn() }}
         taskOperations={{ moveTask: vi.fn(), deleteTask: vi.fn(), mergeTask: vi.fn(), retryTask: vi.fn(), duplicateTask: vi.fn() }}
         deepLink={{ handleDetailClose: vi.fn() }}
@@ -205,6 +210,36 @@ describe("AppModals", () => {
       />
     );
     expect(document.body).toBeDefined();
+  });
+
+  describe("ModelOnboardingModal wiring", () => {
+    it("passes project context and setup-wizard callback into onboarding modal", () => {
+      const handleAddProject = vi.fn();
+      const manager = { ...mockModalManager, modelOnboardingOpen: true };
+
+      render(
+        <AppModals
+          projectId={undefined}
+          tasks={[]}
+          projects={[]}
+          currentProject={null}
+          addToast={vi.fn()}
+          toasts={mockToasts}
+          removeToast={vi.fn()}
+          modalManager={manager}
+          projectActions={{ handleAddProject, handleSetupComplete: vi.fn(), handleModelOnboardingComplete: vi.fn() }}
+          taskHandlers={{ handleModalCreate: vi.fn(), handlePlanningTaskCreated: vi.fn(), handlePlanningTasksCreated: vi.fn(), handleSubtaskTasksCreated: vi.fn(), handleGitHubImport: vi.fn() }}
+          taskOperations={{ moveTask: vi.fn(), deleteTask: vi.fn(), mergeTask: vi.fn(), retryTask: vi.fn(), duplicateTask: vi.fn() }}
+          deepLink={{ handleDetailClose: vi.fn() }}
+          settings={mockSettings}
+        />,
+      );
+
+      expect(mockModelOnboardingModalProps).toHaveBeenCalledTimes(1);
+      const props = mockModelOnboardingModalProps.mock.calls[0][0];
+      expect(props.projectId).toBe("");
+      expect(props.onOpenSetupWizard).toBe(handleAddProject);
+    });
   });
 
   describe("ScheduledTasksModal projectId forwarding", () => {
@@ -220,7 +255,7 @@ describe("AppModals", () => {
           toasts={mockToasts}
           removeToast={vi.fn()}
           modalManager={manager}
-          projectActions={{ handleSetupComplete: vi.fn(), handleModelOnboardingComplete: vi.fn() }}
+          projectActions={{ handleAddProject: vi.fn(), handleSetupComplete: vi.fn(), handleModelOnboardingComplete: vi.fn() }}
           taskHandlers={{ handleModalCreate: vi.fn(), handlePlanningTaskCreated: vi.fn(), handlePlanningTasksCreated: vi.fn(), handleSubtaskTasksCreated: vi.fn(), handleGitHubImport: vi.fn() }}
           taskOperations={{ moveTask: vi.fn(), deleteTask: vi.fn(), mergeTask: vi.fn(), retryTask: vi.fn(), duplicateTask: vi.fn() }}
           deepLink={{ handleDetailClose: vi.fn() }}
@@ -242,7 +277,7 @@ describe("AppModals", () => {
           toasts={mockToasts}
           removeToast={vi.fn()}
           modalManager={manager}
-          projectActions={{ handleSetupComplete: vi.fn(), handleModelOnboardingComplete: vi.fn() }}
+          projectActions={{ handleAddProject: vi.fn(), handleSetupComplete: vi.fn(), handleModelOnboardingComplete: vi.fn() }}
           taskHandlers={{ handleModalCreate: vi.fn(), handlePlanningTaskCreated: vi.fn(), handlePlanningTasksCreated: vi.fn(), handleSubtaskTasksCreated: vi.fn(), handleGitHubImport: vi.fn() }}
           taskOperations={{ moveTask: vi.fn(), deleteTask: vi.fn(), mergeTask: vi.fn(), retryTask: vi.fn(), duplicateTask: vi.fn() }}
           deepLink={{ handleDetailClose: vi.fn() }}
@@ -266,7 +301,7 @@ describe("AppModals", () => {
           toasts={mockToasts}
           removeToast={vi.fn()}
           modalManager={manager}
-          projectActions={{ handleSetupComplete: vi.fn(), handleModelOnboardingComplete: vi.fn() }}
+          projectActions={{ handleAddProject: vi.fn(), handleSetupComplete: vi.fn(), handleModelOnboardingComplete: vi.fn() }}
           taskHandlers={{ handleModalCreate: vi.fn(), handlePlanningTaskCreated: vi.fn(), handlePlanningTasksCreated: vi.fn(), handleSubtaskTasksCreated: vi.fn(), handleGitHubImport: vi.fn() }}
           taskOperations={{ moveTask: vi.fn(), deleteTask: vi.fn(), mergeTask: vi.fn(), retryTask: vi.fn(), duplicateTask: vi.fn() }}
           deepLink={{ handleDetailClose: vi.fn() }}
@@ -290,7 +325,7 @@ describe("AppModals", () => {
           toasts={mockToasts}
           removeToast={vi.fn()}
           modalManager={manager}
-          projectActions={{ handleSetupComplete: vi.fn(), handleModelOnboardingComplete: vi.fn() }}
+          projectActions={{ handleAddProject: vi.fn(), handleSetupComplete: vi.fn(), handleModelOnboardingComplete: vi.fn() }}
           taskHandlers={{ handleModalCreate: vi.fn(), handlePlanningTaskCreated: vi.fn(), handlePlanningTasksCreated: vi.fn(), handleSubtaskTasksCreated: vi.fn(), handleGitHubImport: vi.fn() }}
           taskOperations={{ moveTask: vi.fn(), deleteTask: vi.fn(), mergeTask: vi.fn(), retryTask: vi.fn(), duplicateTask: vi.fn() }}
           deepLink={{ handleDetailClose: vi.fn() }}

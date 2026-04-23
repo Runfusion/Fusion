@@ -134,6 +134,7 @@ interface RenderModalOverrides {
   onOpenGitHubImport?: () => void;
   onViewTask?: (task: Task) => void;
   firstCreatedTask?: Task | null;
+  projectId?: string;
 }
 
 interface RenderModalResult extends RenderResult {
@@ -155,6 +156,7 @@ function renderModal(overrides: RenderModalOverrides = {}): RenderModalResult {
     <ModelOnboardingModal
       onComplete={onComplete}
       addToast={addToast}
+      projectId={overrides.projectId ?? "proj_123"}
       onOpenNewTask={onOpenNewTask}
       onOpenGitHubImport={onOpenGitHubImport}
       onViewTask={onViewTask}
@@ -263,7 +265,7 @@ function AuthOnboardingHarness({ openModelOnboardingSpy, openSettingsSpy }: Auth
   return (
     <>
       {modelOnboardingOpen ? (
-        <ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />
+        <ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />
       ) : (
         <div data-testid="onboarding-modal-closed" />
       )}
@@ -795,6 +797,7 @@ describe("onboarding flow integration", () => {
               setIsOpen(false);
             }}
             addToast={vi.fn()}
+            projectId="proj_123"
           />
         ) : (
           <div data-testid="modal-host-closed" />
@@ -866,6 +869,13 @@ describe("onboarding flow integration", () => {
     });
 
     it("task creation flow: Import from GitHub CTA completes onboarding and triggers import", async () => {
+      mockFetchAuthStatus.mockResolvedValue({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+          { id: "github", name: "GitHub", authenticated: true, type: "oauth" },
+        ],
+      });
+
       const renderResult = renderModal();
 
       await advanceThroughSteps(renderResult, ["next", "next"]);

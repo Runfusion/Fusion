@@ -34,7 +34,7 @@ interface AppModalsProps {
   toasts: Toast[];
   removeToast: (id: number) => void;
   modalManager: ModalManager;
-  projectActions: Pick<UseProjectActionsResult, "handleSetupComplete" | "handleModelOnboardingComplete">;
+  projectActions: Pick<UseProjectActionsResult, "handleAddProject" | "handleSetupComplete" | "handleModelOnboardingComplete">;
   taskHandlers: Pick<UseTaskHandlersResult, "handleModalCreate" | "handlePlanningTaskCreated" | "handlePlanningTasksCreated" | "handleSubtaskTasksCreated" | "handleGitHubImport">;
   taskOperations: {
     moveTask: (taskId: string, column: Column, position?: number) => Promise<Task>;
@@ -287,6 +287,8 @@ export function AppModals({
         <ModelOnboardingModal
           onComplete={projectActions.handleModelOnboardingComplete}
           addToast={addToast}
+          projectId={projectId ?? ""}
+          onOpenSetupWizard={projectActions.handleAddProject}
           onOpenNewTask={handleOpenNewTask}
           onOpenGitHubImport={handleOpenGitHubImport}
           firstCreatedTask={firstCreatedTask}

@@ -420,6 +420,10 @@ export interface ModelOnboardingModalProps {
   onComplete: () => void;
   /** Toast helper */
   addToast: (message: string, type?: ToastType) => void;
+  /** Currently selected project ID (required for first-task actions) */
+  projectId?: string;
+  /** Optional callback to open project setup wizard when no project is selected */
+  onOpenSetupWizard?: () => void;
   /** Optional callback when user wants to open new task creation */
   onOpenNewTask?: () => void;
   /** Optional callback when user wants to open GitHub import */
@@ -458,6 +462,8 @@ const MAX_POLL_CYCLES = 150;
 export function ModelOnboardingModal({
   onComplete,
   addToast,
+  projectId,
+  onOpenSetupWizard,
   onOpenNewTask,
   onOpenGitHubImport,
   firstCreatedTask,
@@ -1216,6 +1222,10 @@ export function ModelOnboardingModal({
 
   // Handle GitHub import CTA - mark complete, close modal, then open GitHub import
   const handleOpenGitHubImport = useCallback(async () => {
+    if (!isGitHubReady) {
+      return;
+    }
+
     // First complete the onboarding
     setSaving(true);
     try {
@@ -1229,7 +1239,7 @@ export function ModelOnboardingModal({
     onComplete();
     trackOnboardingEvent("onboarding:open-github-import", {});
     onOpenGitHubImport?.();
-  }, [completeOnboarding, onComplete, onOpenGitHubImport]);
+  }, [completeOnboarding, isGitHubReady, onComplete, onOpenGitHubImport]);
 
   // Dismiss without completing (still marks onboarding complete)
   const handleDismiss = useCallback(async () => {
@@ -1288,6 +1298,7 @@ export function ModelOnboardingModal({
   const aiProviders = authProviders.filter((provider) => provider.id !== "github");
   const connectedAiProviders = aiProviders.filter((provider) => provider.authenticated);
   const hasAiProvider = connectedAiProviders.length > 0;
+  const hasProjectSelected = Boolean(projectId);
   // True when on GitHub step but skipped AI setup (no AI provider connected)
   const aiSetupSkipped = step === "github" && !hasAiProvider;
 
@@ -1315,6 +1326,20 @@ export function ModelOnboardingModal({
   })();
 
   const readinessItems: ReadinessItem[] = [];
+
+  if (hasProjectSelected) {
+    readinessItems.push({
+      label: "Project",
+      status: "connected",
+      detail: "Project selected — task creation and imports are available",
+    });
+  } else {
+    readinessItems.push({
+      label: "Project",
+      status: "missing",
+      detail: "Register a project to enable task creation and imports",
+    });
+  }
 
   if (hasAiProvider) {
     const firstConnectedProviderName = getProviderDisplayName(connectedAiProviders[0]?.id ?? "");
@@ -1906,7 +1931,9 @@ export function ModelOnboardingModal({
           {step === "first-task" && (
             <div className="model-onboarding-first-task">
               <p className="model-onboarding-description">
-                Your workspace is ready. Here's how to get started:
+                {hasProjectSelected
+                  ? "Your workspace is ready. Here's how to get started:"
+                  : "Before creating your first task, register a project directory."}
               </p>
 
               {showTaskCreated && createdTaskForDisplay ? (
@@ -1939,97 +1966,119 @@ export function ModelOnboardingModal({
                 </div>
               ) : (
                 <>
-                  <div className="onboarding-first-task-form">
-                    <label className="onboarding-first-task-form__label" htmlFor="onboarding-first-task-input">
-                      Describe your first task
-                    </label>
-                    <textarea
-                      id="onboarding-first-task-input"
-                      className="input onboarding-first-task-form__input"
-                      data-testid="onboarding-first-task-input"
-                      value={firstTaskDescription}
-                      onChange={(event) => {
-                        setFirstTaskDescription(event.target.value);
-                        setTaskCreationError(null);
-                      }}
-                      placeholder="Example: Build a login page with email and password"
-                      rows={4}
-                    />
-                    <div className="onboarding-first-task-form__actions">
+                  {!hasProjectSelected ? (
+                    <div className="onboarding-project-prerequisite" data-testid="onboarding-project-prerequisite">
+                      <p className="onboarding-helper-text">
+                        A project must be selected before you can create tasks or import from GitHub.
+                      </p>
                       <button
                         type="button"
                         className="btn btn-primary"
-                        onClick={handleCreateFirstTask}
-                        disabled={isCreatingFirstTask}
-                        data-testid="onboarding-first-task-submit"
+                        onClick={onOpenSetupWizard}
+                        data-testid="onboarding-open-setup-wizard"
                       >
-                        {isCreatingFirstTask ? (
-                          <>
-                            <Loader2 size={16} className="animate-spin" />
-                            <span>Creating task…</span>
-                          </>
-                        ) : (
-                          "Create First Task"
-                        )}
+                        Set Up Project
                       </button>
                     </div>
-                  </div>
+                  ) : (
+                    <>
+                      <div className="onboarding-first-task-form">
+                        <label className="onboarding-first-task-form__label" htmlFor="onboarding-first-task-input">
+                          Describe your first task
+                        </label>
+                        <textarea
+                          id="onboarding-first-task-input"
+                          className="input onboarding-first-task-form__input"
+                          data-testid="onboarding-first-task-input"
+                          value={firstTaskDescription}
+                          onChange={(event) => {
+                            setFirstTaskDescription(event.target.value);
+                            setTaskCreationError(null);
+                          }}
+                          placeholder="Example: Build a login page with email and password"
+                          rows={4}
+                        />
+                        <div className="onboarding-first-task-form__actions">
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            onClick={handleCreateFirstTask}
+                            disabled={isCreatingFirstTask}
+                            data-testid="onboarding-first-task-submit"
+                          >
+                            {isCreatingFirstTask ? (
+                              <>
+                                <Loader2 size={16} className="animate-spin" />
+                                <span>Creating task…</span>
+                              </>
+                            ) : (
+                              "Create First Task"
+                            )}
+                          </button>
+                        </div>
+                      </div>
 
-                  {taskCreationError && (
-                    <div className="onboarding-task-error" role="alert" data-testid="onboarding-task-error">
-                      <p className="field-error">{taskCreationError}</p>
-                      <p className="onboarding-helper-text">Your text has been preserved — fix the issue and try again.</p>
-                    </div>
+                      {taskCreationError && (
+                        <div className="onboarding-task-error" role="alert" data-testid="onboarding-task-error">
+                          <p className="field-error">{taskCreationError}</p>
+                          <p className="onboarding-helper-text">Your text has been preserved — fix the issue and try again.</p>
+                        </div>
+                      )}
+                    </>
                   )}
 
                   <ReadinessSummary items={readinessItems} />
 
-                  <OnboardingDisclosure summary="What happens when I create a task?">
-                    <p className="onboarding-helper-text">
-                      A task describes something you want done. Fusion's AI agents will read
-                      your description and work on implementing it. You can track progress on
-                      the board and review the results.
-                    </p>
-                  </OnboardingDisclosure>
+                  {hasProjectSelected && (
+                    <>
+                      <OnboardingDisclosure summary="What happens when I create a task?">
+                        <p className="onboarding-helper-text">
+                          A task describes something you want done. Fusion's AI agents will read
+                          your description and work on implementing it. You can track progress on
+                          the board and review the results.
+                        </p>
+                      </OnboardingDisclosure>
 
-                  <div className="onboarding-cta-options">
-                    <button
-                      className="onboarding-cta-card primary"
-                      onClick={handleOpenNewTask}
-                      disabled={saving}
-                    >
-                      <div className="cta-icon">
-                        <Plus size={24} />
-                      </div>
-                      <div className="cta-content">
-                        <strong>Create a New Task</strong>
-                        <span>Describe what you need built and AI will work on it</span>
-                      </div>
-                    </button>
+                      <div className="onboarding-cta-options">
+                        <button
+                          className="onboarding-cta-card primary"
+                          onClick={handleOpenNewTask}
+                          disabled={saving}
+                        >
+                          <div className="cta-icon">
+                            <Plus size={24} />
+                          </div>
+                          <div className="cta-content">
+                            <strong>Create a New Task</strong>
+                            <span>Describe what you need built and AI will work on it</span>
+                          </div>
+                        </button>
 
-                    <button
-                      className={`onboarding-cta-card${!isGitHubReady ? " onboarding-cta-card--disabled" : ""}`}
-                      data-testid="cta-github-import"
-                      onClick={handleOpenGitHubImport}
-                      disabled={saving}
-                    >
-                      <div className="cta-icon">
-                        <GitPullRequest size={24} />
+                        <button
+                          className={`onboarding-cta-card${!isGitHubReady ? " onboarding-cta-card--disabled" : ""}`}
+                          data-testid="cta-github-import"
+                          onClick={handleOpenGitHubImport}
+                          disabled={saving || !isGitHubReady}
+                        >
+                          <div className="cta-icon">
+                            <GitPullRequest size={24} />
+                          </div>
+                          <div className="cta-content">
+                            <strong>Import from GitHub</strong>
+                            <span>Turn GitHub issues into tasks you can track here</span>
+                            {!isGitHubReady && (
+                              <small className="onboarding-cta-note">Requires GitHub connection</small>
+                            )}
+                          </div>
+                        </button>
                       </div>
-                      <div className="cta-content">
-                        <strong>Import from GitHub</strong>
-                        <span>Turn GitHub issues into tasks you can track here</span>
-                        {!isGitHubReady && (
-                          <small className="onboarding-cta-note">Requires GitHub connection</small>
-                        )}
-                      </div>
-                    </button>
-                  </div>
 
-                  <p className="onboarding-skip-note">
-                    You can create tasks anytime from the board, or use{" "}
-                    <code>fn task create</code> in the terminal.
-                  </p>
+                      <p className="onboarding-skip-note">
+                        You can create tasks anytime from the board, or use{" "}
+                        <code>fn task create</code> in the terminal.
+                      </p>
+                    </>
+                  )}
                 </>
               )}
             </div>

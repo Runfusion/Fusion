@@ -25530,6 +25530,27 @@ html .column.drag-over * {
   justify-content: flex-end;
 }
 
+/* === Onboarding Project Prerequisite === */
+.onboarding-project-prerequisite {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  border-radius: var(--radius-lg);
+  border: 1px solid color-mix(in srgb, var(--todo) 35%, var(--border));
+  background: color-mix(in srgb, var(--todo) 10%, var(--surface));
+}
+
+.onboarding-project-prerequisite .onboarding-helper-text {
+  margin: 0;
+  color: var(--text);
+  line-height: calc(var(--space-lg) + (var(--space-xs) / 2));
+}
+
+.onboarding-project-prerequisite .btn {
+  align-self: flex-start;
+}
+
 /* === Onboarding Task Error === */
 .onboarding-task-error {
   margin-top: var(--space-sm);
@@ -25621,6 +25642,23 @@ html .column.drag-over * {
 
 .onboarding-cta-card--disabled {
   opacity: 0.6;
+}
+
+.onboarding-cta-card--disabled,
+.onboarding-cta-card:disabled {
+  cursor: not-allowed;
+}
+
+.onboarding-cta-card:disabled:hover {
+  border-color: var(--border);
+  background: var(--surface);
+  transform: none;
+}
+
+.onboarding-cta-card:disabled:focus,
+.onboarding-cta-card:disabled:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 
 .onboarding-cta-note {
@@ -26103,6 +26141,15 @@ html .column.drag-over * {
 
   .model-onboarding-step-indicator .step-label {
     display: none;
+  }
+
+  .onboarding-project-prerequisite {
+    padding: var(--space-md);
+    gap: var(--space-sm);
+  }
+
+  .onboarding-project-prerequisite .btn {
+    width: 100%;
   }
 
   .onboarding-cta-card {

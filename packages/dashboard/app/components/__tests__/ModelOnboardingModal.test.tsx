@@ -167,7 +167,7 @@ afterEach(() => {
 describe("ModelOnboardingModal", () => {
   describe("step structure", () => {
     it("renders the AI Setup step by default with all three step indicators", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Set Up AI")).toBeTruthy();
@@ -183,7 +183,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("shows Next button on first step, not Back", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Next →")).toBeTruthy();
@@ -194,7 +194,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("shows Skip for now button on non-terminal steps", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Skip for now")).toBeTruthy();
@@ -208,7 +208,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToGitHubStep();
 
@@ -220,7 +220,7 @@ describe("ModelOnboardingModal", () => {
 
   describe("skip vs complete step tracking (FN-1937)", () => {
     it("does not mark AI Setup step as completed when Skip setup is clicked", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByRole("button", { name: "Skip setup →" })).toBeTruthy();
@@ -239,7 +239,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("marks AI Setup step as completed when Next is clicked", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByRole("button", { name: "Next →" })).toBeTruthy();
@@ -257,7 +257,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("does not add step to completedSteps when skipped", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByRole("button", { name: "Skip setup →" })).toBeTruthy();
@@ -276,7 +276,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("shows dash icon for skipped step in progress indicator", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByRole("button", { name: "Skip setup →" })).toBeTruthy();
@@ -292,7 +292,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("allows going back to a skipped step", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByRole("button", { name: "Skip setup →" })).toBeTruthy();
@@ -310,7 +310,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("removes skipped status when step is completed after going back", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByRole("button", { name: "Skip setup →" })).toBeTruthy();
@@ -345,7 +345,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("skipped step is clickable in progress indicator", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByRole("button", { name: "Skip setup →" })).toBeTruthy();
@@ -369,7 +369,7 @@ describe("ModelOnboardingModal", () => {
 
   describe("AI Setup step", () => {
     it("shows OAuth providers with Login button", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Anthropic")).toBeTruthy();
@@ -384,7 +384,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("shows API key providers with key input", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("OpenAI")).toBeTruthy();
@@ -395,7 +395,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("shows provider-specific API key field label and setup instructions", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("OpenAI API Key")).toBeTruthy();
@@ -407,7 +407,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("shows usage disclosure and dashboard link for API key provider", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Where is this key used?")).toBeTruthy();
@@ -419,7 +419,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("renders OAuth and API key providers at the same time", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Anthropic")).toBeTruthy();
@@ -431,7 +431,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("shows model dropdown in AI Setup step", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Default Model (Optional)")).toBeTruthy();
@@ -441,7 +441,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("allows model selection in AI Setup step", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByTestId("mock-model-dropdown")).toBeTruthy();
@@ -460,7 +460,7 @@ describe("ModelOnboardingModal", () => {
       const mockWindowOpen = vi.fn();
       vi.spyOn(window, "open").mockImplementation(mockWindowOpen);
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Login")).toBeTruthy();
@@ -480,7 +480,7 @@ describe("ModelOnboardingModal", () => {
       const mockWindowOpen = vi.fn();
       vi.spyOn(window, "open").mockImplementation(mockWindowOpen);
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Login")).toBeTruthy();
@@ -497,7 +497,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("saves API key when Save is clicked", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByTestId("onboarding-apikey-input-openai")).toBeTruthy();
@@ -513,7 +513,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("submits API key when Enter is pressed", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByTestId("onboarding-apikey-input-openai")).toBeTruthy();
@@ -529,7 +529,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("shows Save button as disabled when API key input is empty", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByTestId("onboarding-apikey-save-openai")).toBeTruthy();
@@ -547,7 +547,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("✓ API key saved")).toBeTruthy();
@@ -562,7 +562,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("does NOT render API key values in the DOM", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByTestId("onboarding-apikey-input-openai")).toBeTruthy();
@@ -581,7 +581,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Claude models — strong at reasoning, analysis, and code")).toBeTruthy();
@@ -599,7 +599,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("GPT models — versatile for a wide range of tasks")).toBeTruthy();
@@ -611,7 +611,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("renders ProviderIcon for each provider card", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Anthropic")).toBeTruthy();
@@ -637,7 +637,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      const { container } = render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      const { container } = render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Anthropic")).toBeTruthy();
@@ -666,7 +666,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("AI provider — connect to start using AI models")).toBeTruthy();
@@ -680,7 +680,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("API Key")).toBeTruthy();
@@ -692,7 +692,7 @@ describe("ModelOnboardingModal", () => {
 
   describe("API key validation and error feedback", () => {
     it("shows required validation when API key is empty", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByTestId("onboarding-apikey-input-openai")).toBeTruthy();
@@ -708,7 +708,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("shows format validation for known provider and blocks save", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByTestId("onboarding-apikey-input-openai")).toBeTruthy();
@@ -727,7 +727,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("passes valid format to server", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByTestId("onboarding-apikey-input-openai")).toBeTruthy();
@@ -744,7 +744,7 @@ describe("ModelOnboardingModal", () => {
 
     it("shows actionable network error message", async () => {
       mockSaveApiKey.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByTestId("onboarding-apikey-input-openai")).toBeTruthy();
@@ -762,7 +762,7 @@ describe("ModelOnboardingModal", () => {
 
     it("shows server error message inline", async () => {
       mockSaveApiKey.mockRejectedValueOnce(new Error("Unknown API key provider: xyz"));
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByTestId("onboarding-apikey-input-openai")).toBeTruthy();
@@ -779,7 +779,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("shows inline success confirmation", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByTestId("onboarding-apikey-input-openai")).toBeTruthy();
@@ -797,7 +797,7 @@ describe("ModelOnboardingModal", () => {
 
     it("auto-clears success message after timeout", async () => {
       vi.useFakeTimers();
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await act(async () => {
         await Promise.resolve();
@@ -822,7 +822,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("clears inline error state when input changes", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByTestId("onboarding-apikey-input-openai")).toBeTruthy();
@@ -847,7 +847,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("clears inline success state when input changes", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByTestId("onboarding-apikey-input-openai")).toBeTruthy();
@@ -871,7 +871,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("shows format hint for known providers", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Format: Starts with sk-")).toBeTruthy();
@@ -884,7 +884,7 @@ describe("ModelOnboardingModal", () => {
           { id: "mystery-provider", name: "Mystery AI", authenticated: false, type: "api_key" },
         ],
       });
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByTestId("onboarding-apikey-input-mystery-provider")).toBeTruthy();
@@ -908,7 +908,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("allows skipping and continuing even when validation errors exist", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByTestId("onboarding-apikey-input-openai")).toBeTruthy();
@@ -943,7 +943,7 @@ describe("ModelOnboardingModal", () => {
 
   describe("GitHub step", () => {
     it("GitHub step shows OAuth setup fallback when neither OAuth nor gh CLI auth is available", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToGitHubStep();
 
@@ -959,7 +959,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToGitHubStep();
 
@@ -977,7 +977,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("GitHub step description mentions task creation works without GitHub", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToGitHubStep();
 
@@ -991,7 +991,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToGitHubStep();
 
@@ -1008,7 +1008,7 @@ describe("ModelOnboardingModal", () => {
         ghCli: { available: true, authenticated: true },
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToGitHubStep();
 
@@ -1025,7 +1025,7 @@ describe("ModelOnboardingModal", () => {
           ],
         });
 
-        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
         await navigateToGitHubStep();
 
@@ -1043,7 +1043,7 @@ describe("ModelOnboardingModal", () => {
           ghCli: { available: true, authenticated: true },
         });
 
-        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
         await navigateToGitHubStep();
 
@@ -1060,7 +1060,7 @@ describe("ModelOnboardingModal", () => {
           ],
         });
 
-        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
         await navigateToGitHubStep();
 
@@ -1079,7 +1079,7 @@ describe("ModelOnboardingModal", () => {
         });
         mockLoginProvider.mockImplementationOnce(() => new Promise(() => {}));
 
-        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
         await navigateToGitHubStep();
 
@@ -1100,7 +1100,7 @@ describe("ModelOnboardingModal", () => {
         });
         mockLoginProvider.mockRejectedValueOnce(new Error("GitHub login failed"));
 
-        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
         await navigateToGitHubStep();
 
@@ -1126,7 +1126,7 @@ describe("ModelOnboardingModal", () => {
           .mockRejectedValueOnce(new Error("Initial GitHub failure"))
           .mockImplementationOnce(() => new Promise(() => {}));
 
-        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
         await navigateToGitHubStep();
 
@@ -1150,7 +1150,7 @@ describe("ModelOnboardingModal", () => {
           ],
         });
 
-        const { unmount } = render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+        const { unmount } = render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
         await navigateToGitHubStep();
 
@@ -1182,7 +1182,7 @@ describe("ModelOnboardingModal", () => {
           ],
         });
 
-        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
         await waitFor(() => {
           expect(screen.getByText("Connect GitHub")).toBeTruthy();
@@ -1215,7 +1215,7 @@ describe("ModelOnboardingModal", () => {
           ],
         });
 
-        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
         await waitFor(() => {
           expect(screen.getByRole("button", { name: "Connect anyway" })).toBeTruthy();
@@ -1230,7 +1230,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("allows navigating to First Task step via Continue without GitHub", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToGitHubStep();
 
@@ -1248,7 +1248,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToGitHubStep();
       fireEvent.click(screen.getByText("← Back"));
@@ -1269,7 +1269,7 @@ describe("ModelOnboardingModal", () => {
         stepData: {},
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Connect GitHub")).toBeTruthy();
@@ -1295,17 +1295,53 @@ describe("ModelOnboardingModal", () => {
   });
 
   describe("First Task step", () => {
+    it("shows a blocking project setup prompt when no project is selected", async () => {
+      render(
+        <ModelOnboardingModal
+          onComplete={vi.fn()}
+          addToast={vi.fn()}
+          projectId=""
+        />,
+      );
+
+      await navigateToFirstTaskStep();
+
+      expect(screen.getByTestId("onboarding-project-prerequisite")).toBeTruthy();
+      expect(screen.getByText(/A project must be selected before you can create tasks or import from GitHub/)).toBeTruthy();
+      expect(screen.queryByTestId("onboarding-first-task-input")).toBeNull();
+      expect(screen.queryByText("Create a New Task")).toBeNull();
+      expect(screen.queryByText("Import from GitHub")).toBeNull();
+    });
+
+    it("opens setup wizard callback from the blocking project setup prompt", async () => {
+      const onOpenSetupWizard = vi.fn();
+      render(
+        <ModelOnboardingModal
+          onComplete={vi.fn()}
+          addToast={vi.fn()}
+          projectId=""
+          onOpenSetupWizard={onOpenSetupWizard}
+        />,
+      );
+
+      await navigateToFirstTaskStep();
+
+      fireEvent.click(screen.getByTestId("onboarding-open-setup-wizard"));
+      expect(onOpenSetupWizard).toHaveBeenCalledTimes(1);
+    });
+
     it("shows CTA options for creating first task", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToFirstTaskStep();
 
       expect(screen.getByText("Create a New Task")).toBeTruthy();
       expect(screen.getByText("Import from GitHub")).toBeTruthy();
+      expect(screen.getByText("Project selected — task creation and imports are available")).toBeTruthy();
     });
 
     it("shows empty-description validation and does not call createTask", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToFirstTaskStep();
 
@@ -1322,7 +1358,7 @@ describe("ModelOnboardingModal", () => {
     it("shows server error and preserves typed task description", async () => {
       mockCreateTask.mockRejectedValueOnce(new Error("description is required"));
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToFirstTaskStep();
 
@@ -1346,7 +1382,7 @@ describe("ModelOnboardingModal", () => {
           description: "Build auth",
         } as Task);
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToFirstTaskStep();
 
@@ -1376,7 +1412,7 @@ describe("ModelOnboardingModal", () => {
           }),
       );
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToFirstTaskStep();
 
@@ -1397,7 +1433,7 @@ describe("ModelOnboardingModal", () => {
     it("clears first-task creation error as input changes", async () => {
       mockCreateTask.mockRejectedValueOnce(new Error("description is required"));
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToFirstTaskStep();
 
@@ -1419,7 +1455,7 @@ describe("ModelOnboardingModal", () => {
     it("renders network error message when createTask fails with Failed to fetch", async () => {
       mockCreateTask.mockRejectedValueOnce(new Error("Failed to fetch"));
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToFirstTaskStep();
 
@@ -1436,7 +1472,7 @@ describe("ModelOnboardingModal", () => {
     it("uses fallback message when createTask throws a non-Error value", async () => {
       mockCreateTask.mockRejectedValueOnce("unknown");
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToFirstTaskStep();
 
@@ -1468,7 +1504,7 @@ describe("ModelOnboardingModal", () => {
           onComplete={vi.fn()}
           addToast={vi.fn()}
           firstCreatedTask={null}
-        />,
+        projectId="proj_123" />,
       );
 
       await waitFor(() => {
@@ -1480,7 +1516,7 @@ describe("ModelOnboardingModal", () => {
           onComplete={vi.fn()}
           addToast={vi.fn()}
           firstCreatedTask={createdTaskMock}
-        />,
+        projectId="proj_123" />,
       );
 
       await waitFor(() => {
@@ -1508,7 +1544,7 @@ describe("ModelOnboardingModal", () => {
           onComplete={vi.fn()}
           addToast={vi.fn()}
           firstCreatedTask={null}
-        />,
+        projectId="proj_123" />,
       );
 
       await waitFor(() => {
@@ -1520,7 +1556,7 @@ describe("ModelOnboardingModal", () => {
           onComplete={vi.fn()}
           addToast={vi.fn()}
           firstCreatedTask={createdTaskMock}
-        />,
+        projectId="proj_123" />,
       );
 
       await waitFor(() => {
@@ -1544,7 +1580,7 @@ describe("ModelOnboardingModal", () => {
           onComplete={vi.fn()}
           addToast={vi.fn()}
           firstCreatedTask={null}
-        />,
+        projectId="proj_123" />,
       );
 
       await waitFor(() => {
@@ -1556,7 +1592,7 @@ describe("ModelOnboardingModal", () => {
           onComplete={vi.fn()}
           addToast={vi.fn()}
           firstCreatedTask={createdTaskMock}
-        />,
+        projectId="proj_123" />,
       );
 
       await waitFor(() => {
@@ -1583,7 +1619,7 @@ describe("ModelOnboardingModal", () => {
           addToast={vi.fn()}
           onViewTask={onViewTask}
           firstCreatedTask={null}
-        />,
+        projectId="proj_123" />,
       );
 
       await waitFor(() => {
@@ -1596,7 +1632,7 @@ describe("ModelOnboardingModal", () => {
           addToast={vi.fn()}
           onViewTask={onViewTask}
           firstCreatedTask={createdTaskMock}
-        />,
+        projectId="proj_123" />,
       );
 
       await waitFor(() => {
@@ -1628,7 +1664,7 @@ describe("ModelOnboardingModal", () => {
           addToast={vi.fn()}
           onViewTask={onViewTask}
           firstCreatedTask={null}
-        />,
+        projectId="proj_123" />,
       );
 
       await waitFor(() => {
@@ -1641,7 +1677,7 @@ describe("ModelOnboardingModal", () => {
           addToast={vi.fn()}
           onViewTask={onViewTask}
           firstCreatedTask={createdTaskMock}
-        />,
+        projectId="proj_123" />,
       );
 
       await waitFor(() => {
@@ -1655,7 +1691,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("keeps CTA cards visible and success hidden when firstCreatedTask is not provided", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} firstCreatedTask={null} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} firstCreatedTask={null} projectId="proj_123" />);
 
       await navigateToFirstTaskStep();
 
@@ -1664,7 +1700,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("Finish Setup still transitions to complete step when no task is created", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} firstCreatedTask={null} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} firstCreatedTask={null} projectId="proj_123" />);
 
       await navigateToFirstTaskStep();
 
@@ -1676,13 +1712,35 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("Import from GitHub card shows connection note when GitHub not connected", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToFirstTaskStep();
 
       const githubImportCard = screen.getByTestId("cta-github-import");
       expect(githubImportCard).toHaveClass("onboarding-cta-card--disabled");
+      expect(githubImportCard).toBeDisabled();
       expect(screen.getByText("Requires GitHub connection")).toBeTruthy();
+    });
+
+    it("Import from GitHub card cannot be clicked when GitHub is not connected", async () => {
+      const onOpenGitHubImport = vi.fn();
+
+      render(
+        <ModelOnboardingModal
+          onComplete={vi.fn()}
+          addToast={vi.fn()}
+          onOpenGitHubImport={onOpenGitHubImport}
+          projectId="proj_123"
+        />,
+      );
+
+      await navigateToFirstTaskStep();
+
+      const githubImportCard = screen.getByTestId("cta-github-import");
+      fireEvent.click(githubImportCard);
+
+      expect(onOpenGitHubImport).not.toHaveBeenCalled();
+      expect(mockMarkOnboardingCompleted).not.toHaveBeenCalled();
     });
 
     it("Import from GitHub card has no connection note when GitHub is connected", async () => {
@@ -1692,7 +1750,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToFirstTaskStep();
 
@@ -1703,7 +1761,7 @@ describe("ModelOnboardingModal", () => {
 
     it("Create a New Task card is never dimmed regardless of GitHub status", async () => {
       const renderAndAssert = async () => {
-        const view = render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+        const view = render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
         await navigateToFirstTaskStep();
 
         const createTaskCard = screen.getByText("Create a New Task").closest("button");
@@ -1725,7 +1783,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("shows skip note about CLI and board creation", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToFirstTaskStep();
 
@@ -1733,7 +1791,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("feature callout does not appear on ai-setup or first-task steps", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       expect(document.querySelector(".onboarding-feature-list")).toBeNull();
 
@@ -1743,7 +1801,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("allows navigation back to GitHub step", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToFirstTaskStep();
 
@@ -1771,7 +1829,7 @@ describe("ModelOnboardingModal", () => {
           onComplete={onComplete}
           addToast={vi.fn()}
           onOpenNewTask={onOpenNewTask}
-        />
+        projectId="proj_123" />
       );
 
       // Select a model
@@ -1808,9 +1866,10 @@ describe("ModelOnboardingModal", () => {
       const onComplete = vi.fn();
       const onOpenGitHubImport = vi.fn();
 
-      mockFetchAuthStatus.mockResolvedValueOnce({
+      mockFetchAuthStatus.mockResolvedValue({
         providers: [
           { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+          { id: "github", name: "GitHub", authenticated: true, type: "oauth" },
         ],
       });
 
@@ -1819,7 +1878,7 @@ describe("ModelOnboardingModal", () => {
           onComplete={onComplete}
           addToast={vi.fn()}
           onOpenGitHubImport={onOpenGitHubImport}
-        />
+        projectId="proj_123" />
       );
 
       // Navigate through all steps
@@ -1851,7 +1910,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} projectId="proj_123" />);
 
       // Navigate through all steps
       await navigateToFirstTaskStep();
@@ -1881,7 +1940,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} projectId="proj_123" />);
 
       // Navigate through all steps without selecting model
       await navigateToFirstTaskStep();
@@ -1903,7 +1962,7 @@ describe("ModelOnboardingModal", () => {
     it("marks onboarding complete when dismissed via X button", async () => {
       const onComplete = vi.fn();
 
-      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Set Up AI")).toBeTruthy();
@@ -1925,7 +1984,7 @@ describe("ModelOnboardingModal", () => {
     it("marks onboarding complete when Skip for now is clicked", async () => {
       const onComplete = vi.fn();
 
-      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Skip for now")).toBeTruthy();
@@ -1946,7 +2005,7 @@ describe("ModelOnboardingModal", () => {
       const onComplete = vi.fn();
       mockUpdateGlobalSettings.mockRejectedValueOnce(new Error("Network error"));
 
-      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Skip for now")).toBeTruthy();
@@ -1964,7 +2023,7 @@ describe("ModelOnboardingModal", () => {
     it("shows empty state when no providers are configured", async () => {
       mockFetchAuthStatus.mockResolvedValueOnce({ providers: [] });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText(/No AI providers are configured/)).toBeTruthy();
@@ -1974,7 +2033,7 @@ describe("ModelOnboardingModal", () => {
     it("handles auth status fetch failure gracefully", async () => {
       mockFetchAuthStatus.mockRejectedValueOnce(new Error("Network error"));
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         // Should still render the modal without crashing
@@ -1987,7 +2046,7 @@ describe("ModelOnboardingModal", () => {
       mockFetchAuthStatus.mockReturnValue(new Promise(() => {}));
       mockFetchModels.mockReturnValue(new Promise(() => {}));
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       expect(screen.getByText("Loading providers…")).toBeTruthy();
     });
@@ -2002,7 +2061,7 @@ describe("ModelOnboardingModal", () => {
       });
 
       // Render without onOpenNewTask and onOpenGitHubImport
-      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} projectId="proj_123" />);
 
       // Navigate through all steps
       await navigateToFirstTaskStep();
@@ -2025,7 +2084,7 @@ describe("ModelOnboardingModal", () => {
         modelOnboardingComplete: true,
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Set Up AI")).toBeTruthy();
@@ -2042,7 +2101,7 @@ describe("ModelOnboardingModal", () => {
         modelOnboardingComplete: true,
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Set Up AI")).toBeTruthy();
@@ -2057,7 +2116,7 @@ describe("ModelOnboardingModal", () => {
       // Mock global settings fetch to fail
       mockFetchGlobalSettings.mockRejectedValueOnce(new Error("Network error"));
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Set Up AI")).toBeTruthy();
@@ -2088,7 +2147,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Connect GitHub")).toBeTruthy();
@@ -2113,7 +2172,7 @@ describe("ModelOnboardingModal", () => {
         modelOnboardingComplete: false,
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Set Up AI")).toBeTruthy();
@@ -2145,7 +2204,7 @@ describe("ModelOnboardingModal", () => {
         modelOnboardingComplete: false,
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       // Wait for modal to show the first-task step
       await waitFor(() => {
@@ -2184,7 +2243,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToFirstTaskStep();
 
@@ -2206,7 +2265,7 @@ describe("ModelOnboardingModal", () => {
     it("dismissing onboarding (Skip for now) does NOT call markOnboardingCompleted", async () => {
       const onComplete = vi.fn();
 
-      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Skip for now")).toBeTruthy();
@@ -2225,7 +2284,7 @@ describe("ModelOnboardingModal", () => {
     it("dismissing onboarding (X button) does NOT call markOnboardingCompleted", async () => {
       const onComplete = vi.fn();
 
-      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Set Up AI")).toBeTruthy();
@@ -2258,7 +2317,7 @@ describe("ModelOnboardingModal", () => {
           onComplete={onComplete}
           addToast={vi.fn()}
           onOpenNewTask={onOpenNewTask}
-        />
+        projectId="proj_123" />
       );
 
       await navigateToFirstTaskStep();
@@ -2279,9 +2338,10 @@ describe("ModelOnboardingModal", () => {
       const onComplete = vi.fn();
       const onOpenGitHubImport = vi.fn();
 
-      mockFetchAuthStatus.mockResolvedValueOnce({
+      mockFetchAuthStatus.mockResolvedValue({
         providers: [
           { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+          { id: "github", name: "GitHub", authenticated: true, type: "oauth" },
         ],
       });
 
@@ -2290,7 +2350,7 @@ describe("ModelOnboardingModal", () => {
           onComplete={onComplete}
           addToast={vi.fn()}
           onOpenGitHubImport={onOpenGitHubImport}
-        />
+        projectId="proj_123" />
       );
 
       await navigateToFirstTaskStep();
@@ -2308,7 +2368,7 @@ describe("ModelOnboardingModal", () => {
     });
 
     it("marks onboarding complete when first task is created inline", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToFirstTaskStep();
 
@@ -2340,7 +2400,7 @@ describe("ModelOnboardingModal", () => {
           onComplete={onComplete}
           addToast={vi.fn()}
           onViewTask={onViewTask}
-        />,
+        projectId="proj_123" />,
       );
 
       await navigateToFirstTaskStep();
@@ -2377,7 +2437,7 @@ describe("ModelOnboardingModal", () => {
     it("marks onboarding complete when Go to Dashboard is clicked after inline creation", async () => {
       const onComplete = vi.fn();
 
-      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={onComplete} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToFirstTaskStep();
 
@@ -2420,7 +2480,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Set Up AI")).toBeTruthy();
@@ -2440,7 +2500,7 @@ describe("ModelOnboardingModal", () => {
 
     it("allows advancing to GitHub step without selecting a model", async () => {
       // Default mock setup has no model selected
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Set Up AI")).toBeTruthy();
@@ -2468,7 +2528,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       // Navigate to GitHub step
       await navigateToGitHubStep();
@@ -2490,7 +2550,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       // Navigate AI Setup → GitHub → First Task
       await navigateToFirstTaskStep();
@@ -2518,7 +2578,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       // On AI Setup step, Optional badge should be visible
       await waitFor(() => {
@@ -2553,7 +2613,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Set Up AI")).toBeTruthy();
@@ -2591,7 +2651,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Set Up AI")).toBeTruthy();
@@ -2610,7 +2670,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Set Up AI")).toBeTruthy();
@@ -2628,7 +2688,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToGitHubStep();
 
@@ -2644,7 +2704,7 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToGitHubStep();
 
@@ -2658,7 +2718,7 @@ describe("ModelOnboardingModal", () => {
       const mockWindowOpen = vi.fn();
       vi.spyOn(window, "open").mockImplementation(mockWindowOpen);
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Login")).toBeTruthy();
@@ -2676,7 +2736,7 @@ describe("ModelOnboardingModal", () => {
       const mockWindowOpen = vi.fn();
       vi.spyOn(window, "open").mockImplementation(mockWindowOpen);
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Login")).toBeTruthy();
@@ -2704,7 +2764,7 @@ describe("ModelOnboardingModal", () => {
       mockLoginProvider.mockRejectedValueOnce(new Error("Login failed: Invalid credentials"));
 
       const addToast = vi.fn();
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={addToast} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={addToast} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Login")).toBeTruthy();
@@ -2729,7 +2789,7 @@ describe("ModelOnboardingModal", () => {
       mockLoginProvider.mockRejectedValueOnce(error);
 
       const addToast = vi.fn();
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={addToast} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={addToast} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Login")).toBeTruthy();
@@ -2768,7 +2828,7 @@ describe("ModelOnboardingModal", () => {
       });
 
       const addToast = vi.fn();
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={addToast} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={addToast} projectId="proj_123" />);
 
       // Wait for Login button to appear (provider not authenticated initially)
       await waitFor(() => {
@@ -2816,7 +2876,7 @@ describe("ModelOnboardingModal", () => {
         });
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       // Wait for Login button to appear
       await waitFor(() => {
@@ -2848,7 +2908,7 @@ describe("ModelOnboardingModal", () => {
         },
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Set Up AI")).toBeTruthy();
@@ -2875,7 +2935,7 @@ describe("ModelOnboardingModal", () => {
       const addToast = vi.fn();
 
       await act(async () => {
-        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={addToast} />);
+        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={addToast} projectId="proj_123" />);
       });
 
       await waitFor(() => {
@@ -2895,7 +2955,7 @@ describe("ModelOnboardingModal", () => {
       const mockWindowOpen = vi.fn();
       vi.spyOn(window, "open").mockImplementation(mockWindowOpen);
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Login")).toBeTruthy();
@@ -2927,7 +2987,7 @@ describe("ModelOnboardingModal", () => {
 
       // Use act to render with fake timers
       await act(async () => {
-        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={addToast} />);
+        render(<ModelOnboardingModal onComplete={vi.fn()} addToast={addToast} projectId="proj_123" />);
       });
 
       // Click Login to start the login flow
@@ -2958,7 +3018,7 @@ describe("ModelOnboardingModal", () => {
 describe("ModelOnboardingModal progressive disclosure", () => {
   describe("AI Setup step disclosures", () => {
     it("renders all 4 disclosure trigger buttons in AI Setup step", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       // Wait for async provider/model loading to settle before asserting all disclosures
       await waitFor(() => {
@@ -2971,7 +3031,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
     });
 
     it("clicking disclosure trigger expands content", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("What are AI providers?")).toBeTruthy();
@@ -2989,7 +3049,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
     });
 
     it("clicking disclosure trigger again collapses content", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("What are AI providers?")).toBeTruthy();
@@ -3012,7 +3072,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
     });
 
     it("multiple disclosures are independent", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("What are AI providers?")).toBeTruthy();
@@ -3042,7 +3102,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
 
   describe("GitHub step disclosures", () => {
     it("renders GitHub integration disclosure in GitHub step", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToGitHubStep();
 
@@ -3052,7 +3112,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
 
   describe("First Task step disclosures", () => {
     it("renders task creation disclosure in First Task step", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToFirstTaskStep();
 
@@ -3062,7 +3122,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
 
   describe("Complete step disclosures", () => {
     it("does not render any disclosure triggers in complete step", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToFirstTaskStep();
 
@@ -3092,7 +3152,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Anthropic")).toBeTruthy();
@@ -3104,7 +3164,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
     });
 
     it("shows Not connected badge for unauthenticated provider", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Anthropic")).toBeTruthy();
@@ -3126,7 +3186,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Anthropic")).toBeTruthy();
@@ -3167,7 +3227,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         })
       );
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Anthropic")).toBeTruthy();
@@ -3208,7 +3268,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Anthropic")).toBeTruthy();
@@ -3247,7 +3307,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Anthropic")).toBeTruthy();
@@ -3291,7 +3351,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Anthropic")).toBeTruthy();
@@ -3311,7 +3371,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Anthropic")).toBeTruthy();
@@ -3329,7 +3389,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Anthropic")).toBeTruthy();
@@ -3361,7 +3421,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Anthropic")).toBeTruthy();
@@ -3376,7 +3436,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
       // Don't resolve the mock immediately
       mockFetchAuthStatus.mockImplementation(() => new Promise(() => {}));
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       // Summary should not exist while loading
       expect(screen.queryByTestId("provider-summary")).toBeNull();
@@ -3393,7 +3453,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToGitHubStep();
 
@@ -3413,7 +3473,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToGitHubStep();
 
@@ -3435,7 +3495,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToGitHubStep();
 
@@ -3451,7 +3511,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Set Up AI")).toBeTruthy();
@@ -3472,7 +3532,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToGitHubStep();
 
@@ -3515,7 +3575,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Create Your First Task")).toBeTruthy();
@@ -3535,7 +3595,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Create Your First Task")).toBeTruthy();
@@ -3560,7 +3620,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Create Your First Task")).toBeTruthy();
@@ -3580,7 +3640,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Create Your First Task")).toBeTruthy();
@@ -3599,7 +3659,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Create Your First Task")).toBeTruthy();
@@ -3623,7 +3683,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         defaultModelId: "claude-sonnet-4-5",
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Create Your First Task")).toBeTruthy();
@@ -3643,7 +3703,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Create Your First Task")).toBeTruthy();
@@ -3661,7 +3721,7 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         ],
       });
 
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} />);
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Create Your First Task")).toBeTruthy();
