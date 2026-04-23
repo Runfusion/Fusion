@@ -3430,6 +3430,9 @@ describe("SettingsModal", () => {
       await userEvent.click(screen.getByText("Plugins"));
       await waitFor(() => expect(screen.getByTestId("plugin-manager")).toBeDefined());
 
+      // Should show scope banner (project-scoped)
+      expect(screen.getByText("These settings only affect this project.")).toBeTruthy();
+
       // Verify slot renders
       const slot = container.querySelector('[data-slot-id="settings-section"]');
       expect(slot).not.toBeNull();

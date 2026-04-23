@@ -934,4 +934,47 @@ describe("PluginManager", () => {
       expect(allUseCssVars).toBe(true);
     });
   });
+
+  describe("style conventions", () => {
+    it("renders empty state with settings-empty-state class for consistency", async () => {
+      vi.mocked(fetchPlugins).mockResolvedValueOnce([]);
+
+      render(<PluginManager addToast={addToast} />);
+
+      await waitFor(() => {
+        expect(fetchPlugins).toHaveBeenCalled();
+      });
+
+      const emptyState = screen.getByText("No plugins installed.").closest(".settings-empty-state");
+      expect(emptyState).toBeTruthy();
+    });
+
+    it("renders loading state with settings-empty-state class for consistency", async () => {
+      vi.mocked(fetchPlugins).mockImplementationOnce(
+        () => new Promise(() => {}) // Never resolves to keep loading state
+      );
+
+      render(<PluginManager addToast={addToast} />);
+
+      const loadingState = screen.getByText("Loading plugins...").closest(".settings-empty-state");
+      expect(loadingState).toBeTruthy();
+    });
+
+    it("renders plugin manager header without redundant h3 (heading provided by SettingsModal)", async () => {
+      vi.mocked(fetchPlugins).mockResolvedValueOnce([]);
+
+      render(<PluginManager addToast={addToast} />);
+
+      await waitFor(() => {
+        expect(fetchPlugins).toHaveBeenCalled();
+      });
+
+      // Header should exist
+      const header = screen.getByTestId("plugin-manager").querySelector(".plugin-manager-header");
+      expect(header).toBeTruthy();
+
+      // But should not contain an h3 (heading is provided by SettingsModal's settings-section-heading)
+      expect(header?.querySelector("h3")).toBeNull();
+    });
+  });
 });

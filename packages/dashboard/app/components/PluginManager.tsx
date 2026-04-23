@@ -249,7 +249,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
   // Plugin detail view
   if (selectedPlugin) {
     return (
-      <div className="plugin-manager-detail">
+      <div className="plugin-manager-detail" data-testid="plugin-manager-detail">
         <div className="plugin-manager-detail-header">
           <button className="btn-icon" onClick={() => setSelectedPlugin(null)} aria-label="Back to plugin list">
             <X size={16} />
@@ -451,9 +451,8 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
 
   // Plugin list view
   return (
-    <div className="plugin-manager">
+    <div className="plugin-manager" data-testid="plugin-manager">
       <div className="plugin-manager-header">
-        <h3>Plugins</h3>
         <div className="plugin-manager-actions">
           <button className="btn-icon" onClick={loadPlugins} title="Refresh">
             <RefreshCw size={16} className={loading ? "spin" : ""} />
@@ -492,9 +491,9 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
       )}
 
       {loading ? (
-        <div className="loading-state">Loading plugins...</div>
+        <div className="settings-empty-state">Loading plugins...</div>
       ) : plugins.length === 0 ? (
-        <div className="empty-state">
+        <div className="settings-empty-state">
           <Package size={32} className="text-muted" />
           <p>No plugins installed.</p>
           <p className="text-muted">Install a plugin to get started.</p>

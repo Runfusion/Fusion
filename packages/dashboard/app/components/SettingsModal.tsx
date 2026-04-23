@@ -3014,6 +3014,7 @@ export function SettingsModal({
       case "plugins":
         return (
           <>
+            {renderScopeBanner()}
             <h4 className="settings-section-heading">Plugins</h4>
             <PluginManager addToast={addToast} projectId={projectId} />
             <PluginSlot slotId="settings-section" projectId={projectId} />
