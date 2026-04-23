@@ -621,6 +621,22 @@ export async function runServe(
       // is configured. The runner logs its own outcome and swallows errors.
       maybeInstallClaudeSkillForNewProject(path);
     },
+    onUseClaudeCliToggled: (_prev, next) => {
+      if (!next) return; // Toggle-off leaves existing skill symlinks alone.
+      void (async () => {
+        try {
+          if (!sharedCentralCore) return;
+          const projects = await sharedCentralCore.listProjects();
+          ensureClaudeSkillsForAllProjectsOnStartup(
+            projects.map((p) => ({ id: p.id, name: p.name, path: p.path })),
+          );
+        } catch (err) {
+          console.warn(
+            `[fusion] Claude skill backfill on toggle failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      })();
+    },
     headless: true,
     skillsAdapter,
     daemon: daemonToken ? { token: daemonToken } : undefined,

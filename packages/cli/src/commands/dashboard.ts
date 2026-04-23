@@ -1000,6 +1000,23 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       onProjectRegistered: ({ path }) => {
         maybeInstallClaudeSkillForNewProject(path);
       },
+      onUseClaudeCliToggled: (_prev, next) => {
+        if (!next) return;
+        void (async () => {
+          try {
+            if (!centralCoreForEngine) return;
+            const projects = await centralCoreForEngine.listProjects();
+            ensureClaudeSkillsForAllProjectsOnStartup(
+              projects.map((p) => ({ id: p.id, name: p.name, path: p.path })),
+            );
+          } catch (err) {
+            logSink.log(
+              `Claude skill backfill on toggle failed: ${err instanceof Error ? err.message : String(err)}`,
+              "engine",
+            );
+          }
+        })();
+      },
       skillsAdapter,
       https: loadTlsCredentialsFromEnv(),
       daemon: dashboardAuthToken ? { token: dashboardAuthToken } : undefined,
@@ -1190,6 +1207,23 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       pluginRunner: pluginLoader,
       onProjectRegistered: ({ path }) => {
         maybeInstallClaudeSkillForNewProject(path);
+      },
+      onUseClaudeCliToggled: (_prev, next) => {
+        if (!next) return;
+        void (async () => {
+          try {
+            if (!centralCoreForMesh) return;
+            const projects = await centralCoreForMesh.listProjects();
+            ensureClaudeSkillsForAllProjectsOnStartup(
+              projects.map((p) => ({ id: p.id, name: p.name, path: p.path })),
+            );
+          } catch (err) {
+            logSink.log(
+              `Claude skill backfill on toggle failed: ${err instanceof Error ? err.message : String(err)}`,
+              "engine",
+            );
+          }
+        })();
       },
       skillsAdapter,
       https: loadTlsCredentialsFromEnv(),

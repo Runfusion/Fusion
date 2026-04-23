@@ -4419,42 +4419,43 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * Resolve the diff base ref for a task's worktree.
    *
    * Strategy (in priority order):
-   * 1. **Task-scoped** — When the task has a `baseCommitSha` that is still
-   *    a valid ancestor of the current HEAD in the worktree, use it.  This
-   *    keeps the changed-files list scoped to files introduced by *this*
-   *    specific task, even in shared or recycled worktree scenarios.
-   * 2. **Branch merge-base** — Fall back to the merge-base between HEAD and
-   *    `origin/{baseBranch}` (or bare `{baseBranch}`).
-   * 3. **HEAD~1** — Last resort when neither baseCommitSha nor merge-base
+   * 1. **Branch merge-base** — Prefer the live merge-base between HEAD and
+   *    `origin/{baseBranch}` (or bare `{baseBranch}`). This stays correct as
+   *    the base branch advances and is merged into the feature branch.
+   * 2. **Task-scoped baseCommitSha** — Only when no merge-base is available
+   *    (e.g. the base branch was deleted), fall back to the stored SHA if it
+   *    is still an ancestor of HEAD.
+   * 3. **HEAD~1** — Last resort when neither merge-base nor baseCommitSha
    *    can be resolved.
+   *
+   * Why not prefer baseCommitSha: a stored SHA captured at worktree creation
+   * goes stale as upstream merges land on the feature branch. The ancestor
+   * check passes but the diff now includes every upstream file that was
+   * merged in, inflating the changed-files count.
    */
   async function resolveDiffBase(task: { baseCommitSha?: string; baseBranch?: string }, cwd: string): Promise<string | undefined> {
-    // 1. Try task-scoped baseCommitSha
-    if (task.baseCommitSha) {
-      try {
-        // Validate that the stored SHA is still an ancestor of HEAD.
-        // If the branch was rebased or the SHA is otherwise unreachable,
-        // this will exit non-zero and we fall through.
-        await runGitCommand(["merge-base", "--is-ancestor", task.baseCommitSha, "HEAD"], cwd, 5000);
-        return task.baseCommitSha;
-      } catch {
-        // baseCommitSha is stale or invalid — fall through to merge-base
-      }
-    }
-
-    // 2. Branch merge-base
     const baseBranch = task.baseBranch ?? "main";
     try {
       try {
-        return (await runGitCommand(["merge-base", "HEAD", `origin/${baseBranch}`], cwd, 5000)).trim() || undefined;
+        const base = (await runGitCommand(["merge-base", "HEAD", `origin/${baseBranch}`], cwd, 5000)).trim();
+        if (base) return base;
       } catch {
-        return (await runGitCommand(["merge-base", "HEAD", baseBranch], cwd, 5000)).trim() || undefined;
+        const base = (await runGitCommand(["merge-base", "HEAD", baseBranch], cwd, 5000)).trim();
+        if (base) return base;
       }
     } catch {
-      // merge-base unavailable — fall through to HEAD~1
+      // merge-base unavailable — base branch may no longer exist locally
     }
 
-    // 3. HEAD~1 fallback
+    if (task.baseCommitSha) {
+      try {
+        await runGitCommand(["merge-base", "--is-ancestor", task.baseCommitSha, "HEAD"], cwd, 5000);
+        return task.baseCommitSha;
+      } catch {
+        // stale or unreachable — fall through
+      }
+    }
+
     try {
       return (await runGitCommand(["rev-parse", "HEAD~1"], cwd, 5000)).trim() || undefined;
     } catch {

@@ -460,6 +460,22 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     onProjectRegistered: ({ path }) => {
       maybeInstallClaudeSkillForNewProject(path);
     },
+    onUseClaudeCliToggled: (_prev, next) => {
+      if (!next) return;
+      void (async () => {
+        try {
+          if (!sharedCentralCore) return;
+          const projects = await sharedCentralCore.listProjects();
+          ensureClaudeSkillsForAllProjectsOnStartup(
+            projects.map((p) => ({ id: p.id, name: p.name, path: p.path })),
+          );
+        } catch (err) {
+          console.warn(
+            `[fusion] Claude skill backfill on toggle failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      })();
+    },
     headless: true,
     daemon: { token: daemonToken },
     skillsAdapter,
