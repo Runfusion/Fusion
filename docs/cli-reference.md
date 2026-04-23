@@ -90,6 +90,23 @@ interactive TUI with five sections:
 | `q` | Quit |
 | `Ctrl+C` | Force quit |
 
+**Logs Tab Navigation:**
+
+| Key | Action |
+|---|---|
+| `↑` or `k` | Move selection to older log entry |
+| `↓` or `j` | Move selection to newer log entry |
+| `Home` | Jump to first log entry |
+| `End` | Jump to last log entry |
+| `Enter`, `Space`, or `e` | Toggle expanded view for selected entry |
+| `Esc` | Close expanded view |
+| `w` | Toggle wrap mode (long messages wrap vs. truncate) |
+
+In wrapped mode, long log messages are displayed with word wrapping. Long
+unbroken tokens (such as URLs or stack traces) are hard-wrapped at the
+available width. In expanded view, the full message is shown with complete
+wrapping for inspection.
+
 In non-TTY mode (CI, piped output, scripts), the dashboard falls back to
 plain console output to maintain compatibility with automated workflows.
 

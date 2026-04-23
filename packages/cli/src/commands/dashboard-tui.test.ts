@@ -1,9 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   LogRingBuffer,
   DashboardLogSink,
   isTTYAvailable,
   renderHeaderToString,
+  DashboardTUI,
   type SystemInfo,
   type TaskStats,
   type SettingsValues,
@@ -373,5 +374,361 @@ describe("Help overlay border alignment in box-drawing mode", () => {
     expect(visibleLength(row)).toBe(boxWidth + 2);
     expect(row.startsWith("│")).toBe(true);
     expect(row.endsWith("│")).toBe(true);
+  });
+});
+
+// ── DashboardTUI Logs Interaction Tests ─────────────────────────────────────────
+
+// Helper to create a TUI with mocked stdout for testing
+function createTestTUI(): DashboardTUI & {
+  _stdout: string[];
+  _setTerminalSize: (cols: number, rows: number) => void;
+} {
+  const tui = new DashboardTUI() as DashboardTUI & {
+    _stdout: string[];
+    _setTerminalSize: (cols: number, rows: number) => void;
+  };
+
+  // Mock stdout writes
+  const originalWrite = process.stdout.write.bind(process.stdout);
+  tui._stdout = [];
+  tui._setTerminalSize = (cols: number, rows: number) => {
+    Object.defineProperty(process.stdout, "columns", { value: cols, writable: true });
+    Object.defineProperty(process.stdout, "rows", { value: rows, writable: true });
+  };
+
+  // Set default terminal size
+  tui._setTerminalSize(80, 24);
+
+  return tui;
+}
+
+// Helper to simulate keypress
+function simulateKeypress(tui: DashboardTUI, key: string): void {
+  // Access the private handleLogsKeypress method via any
+  (tui as any).handleLogsKeypress(key);
+}
+
+describe("DashboardTUI Logs Selection", () => {
+  let tui: DashboardTUI & {
+    _stdout: string[];
+    _setTerminalSize: (cols: number, rows: number) => void;
+  };
+
+  beforeEach(() => {
+    tui = createTestTUI();
+    // Add some test entries
+    for (let i = 1; i <= 5; i++) {
+      tui.log(`Entry ${i}`);
+    }
+  });
+
+  afterEach(() => {
+    // Restore stdout
+    Object.defineProperty(process.stdout, "columns", { value: 80, writable: true });
+    Object.defineProperty(process.stdout, "rows", { value: 24, writable: true });
+  });
+
+  it("selection starts at 0", () => {
+    expect((tui as any).selectedLogIndex).toBe(0);
+  });
+
+  it("arrow up moves selection to older entry", () => {
+    // Move down first (towards newer)
+    simulateKeypress(tui, "\x1b[B"); // down
+    expect((tui as any).selectedLogIndex).toBe(1);
+
+    // Move up (towards older)
+    simulateKeypress(tui, "\x1b[A"); // up
+    expect((tui as any).selectedLogIndex).toBe(0);
+  });
+
+  it("arrow down moves selection to newer entry", () => {
+    simulateKeypress(tui, "\x1b[B"); // down
+    expect((tui as any).selectedLogIndex).toBe(1);
+
+    simulateKeypress(tui, "\x1b[B"); // down again
+    expect((tui as any).selectedLogIndex).toBe(2);
+  });
+
+  it("k key moves selection to older entry", () => {
+    simulateKeypress(tui, "\x1b[B"); // down
+    expect((tui as any).selectedLogIndex).toBe(1);
+
+    simulateKeypress(tui, "k");
+    expect((tui as any).selectedLogIndex).toBe(0);
+  });
+
+  it("j key moves selection to newer entry", () => {
+    simulateKeypress(tui, "j");
+    expect((tui as any).selectedLogIndex).toBe(1);
+  });
+
+  it("selection clamps at first entry (up boundary)", () => {
+    expect((tui as any).selectedLogIndex).toBe(0);
+    simulateKeypress(tui, "\x1b[A"); // up from 0
+    expect((tui as any).selectedLogIndex).toBe(0); // Should stay at 0
+  });
+
+  it("selection clamps at last entry (down boundary)", () => {
+    // Move to last entry
+    for (let i = 0; i < 10; i++) {
+      simulateKeypress(tui, "\x1b[B");
+    }
+    expect((tui as any).selectedLogIndex).toBe(4); // Max index for 5 entries
+
+    // Try to go past last
+    simulateKeypress(tui, "\x1b[B");
+    expect((tui as any).selectedLogIndex).toBe(4); // Should stay at 4
+  });
+
+  it("selection is entry-based, not visual-line-based", () => {
+    // Selection should always be by entry index, regardless of wrap mode
+    simulateKeypress(tui, "\x1b[B");
+    expect((tui as any).selectedLogIndex).toBe(1);
+
+    // Enable wrap mode
+    simulateKeypress(tui, "w");
+
+    // Selection should still be entry-based
+    simulateKeypress(tui, "\x1b[A");
+    expect((tui as any).selectedLogIndex).toBe(0);
+  });
+});
+
+describe("DashboardTUI Logs Expanded Mode", () => {
+  let tui: DashboardTUI & {
+    _stdout: string[];
+    _setTerminalSize: (cols: number, rows: number) => void;
+  };
+
+  beforeEach(() => {
+    tui = createTestTUI();
+    // Add some test entries
+    for (let i = 1; i <= 5; i++) {
+      tui.log(`Entry ${i}`);
+    }
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process.stdout, "columns", { value: 80, writable: true });
+    Object.defineProperty(process.stdout, "rows", { value: 24, writable: true });
+  });
+
+  it("expanded mode starts as false", () => {
+    expect((tui as any).logsExpandedMode).toBe(false);
+  });
+
+  it("Enter toggles expanded mode on", () => {
+    simulateKeypress(tui, "\r");
+    expect((tui as any).logsExpandedMode).toBe(true);
+  });
+
+  it("Enter toggles expanded mode off when already expanded", () => {
+    simulateKeypress(tui, "\r"); // turn on
+    expect((tui as any).logsExpandedMode).toBe(true);
+
+    simulateKeypress(tui, "\r"); // turn off
+    expect((tui as any).logsExpandedMode).toBe(false);
+  });
+
+  it("Esc closes expanded mode", () => {
+    simulateKeypress(tui, "\r"); // turn on
+    expect((tui as any).logsExpandedMode).toBe(true);
+
+    simulateKeypress(tui, "\x1b"); // Esc
+    expect((tui as any).logsExpandedMode).toBe(false);
+  });
+
+  it("Enter on empty logs is a no-op", () => {
+    // Clear all logs
+    (tui as any).clearLogs();
+    expect((tui as any).logsExpandedMode).toBe(false);
+
+    simulateKeypress(tui, "\r"); // Should not throw or change state
+    expect((tui as any).logsExpandedMode).toBe(false);
+  });
+
+  it("Esc on empty logs does nothing", () => {
+    (tui as any).clearLogs();
+    simulateKeypress(tui, "\x1b"); // Should not throw
+    expect((tui as any).logsExpandedMode).toBe(false);
+  });
+});
+
+describe("DashboardTUI Logs Wrap Mode", () => {
+  let tui: DashboardTUI & {
+    _stdout: string[];
+    _setTerminalSize: (cols: number, rows: number) => void;
+  };
+
+  beforeEach(() => {
+    tui = createTestTUI();
+    tui.log("This is a long message that should wrap when wrap mode is enabled");
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process.stdout, "columns", { value: 80, writable: true });
+    Object.defineProperty(process.stdout, "rows", { value: 24, writable: true });
+  });
+
+  it("wrap mode starts as false", () => {
+    expect((tui as any).logsWrapEnabled).toBe(false);
+  });
+
+  it("w toggles wrap mode on", () => {
+    simulateKeypress(tui, "w");
+    expect((tui as any).logsWrapEnabled).toBe(true);
+  });
+
+  it("w toggles wrap mode off when already on", () => {
+    simulateKeypress(tui, "w"); // turn on
+    expect((tui as any).logsWrapEnabled).toBe(true);
+
+    simulateKeypress(tui, "w"); // turn off
+    expect((tui as any).logsWrapEnabled).toBe(false);
+  });
+
+  it("W (uppercase) also toggles wrap mode", () => {
+    simulateKeypress(tui, "W");
+    expect((tui as any).logsWrapEnabled).toBe(true);
+  });
+
+  it("wrap mode persists across tab switches", () => {
+    simulateKeypress(tui, "w"); // Enable wrap
+    expect((tui as any).logsWrapEnabled).toBe(true);
+
+    // Switch to utilities tab (would be tab 3)
+    (tui as any).activeSection = "utilities";
+
+    // Switch back to logs
+    (tui as any).activeSection = "logs";
+
+    // Wrap mode should still be enabled
+    expect((tui as any).logsWrapEnabled).toBe(true);
+  });
+});
+
+describe("DashboardTUI Logs Selection Reset on Clear", () => {
+  let tui: DashboardTUI & {
+    _stdout: string[];
+    _setTerminalSize: (cols: number, rows: number) => void;
+  };
+
+  beforeEach(() => {
+    tui = createTestTUI();
+    // Add some test entries
+    for (let i = 1; i <= 5; i++) {
+      tui.log(`Entry ${i}`);
+    }
+    // Move selection to middle
+    simulateKeypress(tui, "\x1b[B");
+    simulateKeypress(tui, "\x1b[B");
+    expect((tui as any).selectedLogIndex).toBe(2);
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process.stdout, "columns", { value: 80, writable: true });
+    Object.defineProperty(process.stdout, "rows", { value: 24, writable: true });
+  });
+
+  it("clearing logs resets selection to 0", () => {
+    (tui as any).clearLogs();
+    expect((tui as any).selectedLogIndex).toBe(0);
+  });
+
+  it("clearing logs closes expanded mode", () => {
+    simulateKeypress(tui, "\r"); // Enable expanded
+    expect((tui as any).logsExpandedMode).toBe(true);
+
+    (tui as any).clearLogs();
+    expect((tui as any).logsExpandedMode).toBe(false);
+  });
+
+  it("clearing logs preserves wrap mode (wrap persists for session)", () => {
+    simulateKeypress(tui, "w"); // Enable wrap
+    expect((tui as any).logsWrapEnabled).toBe(true);
+
+    (tui as any).clearLogs();
+    // Wrap mode should persist across clear per spec: "w wrap mode persists for the active TUI session"
+    expect((tui as any).logsWrapEnabled).toBe(true);
+  });
+});
+
+describe("DashboardTUI Narrow Terminal Safety", () => {
+  let tui: DashboardTUI & {
+    _stdout: string[];
+    _setTerminalSize: (cols: number, rows: number) => void;
+  };
+
+  beforeEach(() => {
+    tui = createTestTUI();
+    tui.log("Test message");
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process.stdout, "columns", { value: 80, writable: true });
+    Object.defineProperty(process.stdout, "rows", { value: 24, writable: true });
+  });
+
+  it("handles very narrow terminal width without throwing", () => {
+    tui._setTerminalSize(20, 10);
+    expect(() => simulateKeypress(tui, "\x1b[A")).not.toThrow();
+    expect(() => simulateKeypress(tui, "\x1b[B")).not.toThrow();
+    expect(() => simulateKeypress(tui, "\r")).not.toThrow();
+  });
+
+  it("handles very short terminal height without throwing", () => {
+    tui._setTerminalSize(80, 5);
+    expect(() => simulateKeypress(tui, "\x1b[A")).not.toThrow();
+    expect(() => simulateKeypress(tui, "\x1b[B")).not.toThrow();
+  });
+
+  it("handles single-row terminal without throwing", () => {
+    tui._setTerminalSize(80, 1);
+    expect(() => simulateKeypress(tui, "\x1b[A")).not.toThrow();
+  });
+
+  it("no negative widths in wrap calculation", () => {
+    tui._setTerminalSize(5, 10); // Very narrow
+    // This should not cause negative width issues
+    expect(() => simulateKeypress(tui, "w")).not.toThrow();
+  });
+});
+
+describe("DashboardTUI Help Overlay Interaction", () => {
+  let tui: DashboardTUI & {
+    _stdout: string[];
+    _setTerminalSize: (cols: number, rows: number) => void;
+  };
+
+  beforeEach(() => {
+    tui = createTestTUI();
+    tui.log("Test message");
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process.stdout, "columns", { value: 80, writable: true });
+    Object.defineProperty(process.stdout, "rows", { value: 24, writable: true });
+  });
+
+  it("Esc closes expanded mode and help overlay together", () => {
+    simulateKeypress(tui, "\r"); // Enable expanded
+    expect((tui as any).logsExpandedMode).toBe(true);
+
+    (tui as any).showHelp = true; // Manually enable help
+    expect((tui as any).showHelp).toBe(true);
+
+    simulateKeypress(tui, "\x1b"); // Esc closes both
+    expect((tui as any).logsExpandedMode).toBe(false);
+    expect((tui as any).showHelp).toBe(false);
+  });
+
+  it("Esc closes help overlay when expanded mode is not active", () => {
+    (tui as any).showHelp = true;
+    expect((tui as any).showHelp).toBe(true);
+
+    simulateKeypress(tui, "\x1b"); // Esc
+    expect((tui as any).showHelp).toBe(false);
   });
 });

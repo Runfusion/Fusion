@@ -274,6 +274,11 @@ export class DashboardTUI {
   private uptimeTimer: ReturnType<typeof setInterval> | null = null;
   private resizeHandler: (() => void) | null = null;
 
+  // Logs interaction state
+  private selectedLogIndex = 0;
+  private logsWrapEnabled = false;
+  private logsExpandedMode = false;
+
   constructor() {
     this.logBuffer = new LogRingBuffer();
   }
@@ -309,7 +314,21 @@ export class DashboardTUI {
       ...entry,
       timestamp: new Date(),
     });
+    // Clamp selection index if it exceeds new length
+    const newLength = this.logBuffer.getAll().length;
+    if (this.selectedLogIndex >= newLength) {
+      this.selectedLogIndex = Math.max(0, newLength - 1);
+    }
     this.render();
+  }
+
+  /**
+   * Clear logs and reset selection state.
+   */
+  clearLogs(): void {
+    this.logBuffer.clear();
+    this.selectedLogIndex = 0;
+    this.logsExpandedMode = false;
   }
 
   log(message: string, prefix?: string): void {
@@ -355,6 +374,8 @@ export class DashboardTUI {
         this.handleKeypress(str);
       } else if (key.ctrl && key.name === "c") {
         this.handleKeypress("\x03"); // Ctrl+C
+      } else if (key.name === "return" || key.name === "enter") {
+        this.handleKeypress("\r"); // Enter/Return key
       } else if (key.name === "right") {
         this.handleKeypress("\x1b[C");
       } else if (key.name === "left") {
@@ -365,6 +386,12 @@ export class DashboardTUI {
         this.handleKeypress("\x1b[B");
       } else if (key.name === "escape") {
         this.handleKeypress("\x1b");
+      } else if (key.name === "home") {
+        this.handleKeypress("Home");
+      } else if (key.name === "end") {
+        this.handleKeypress("End");
+      } else if (key.name === "space") {
+        this.handleKeypress(" ");
       }
     });
 
@@ -503,6 +530,102 @@ export class DashboardTUI {
     // Utility actions based on active section
     if (this.activeSection === "utilities") {
       this.handleUtilityKeypress(key);
+      return;
+    }
+
+    // Logs-specific key handling
+    if (this.activeSection === "logs") {
+      this.handleLogsKeypress(key);
+      return;
+    }
+  }
+
+  private handleLogsKeypress(key: string): void {
+    const entries = this.logBuffer.getAll();
+    const maxIndex = Math.max(0, entries.length - 1);
+
+    // Esc: close expanded mode (also closes help overlay)
+    if (key === "\x1b") {
+      if (this.logsExpandedMode) {
+        this.logsExpandedMode = false;
+        this.showHelp = false;
+        this.render();
+      } else if (this.showHelp) {
+        this.showHelp = false;
+        this.render();
+      }
+      return;
+    }
+
+    // Enter: toggle expanded mode for selected entry
+    if (key === "\r") {
+      if (entries.length === 0) {
+        // No-op when no entries
+        return;
+      }
+      this.logsExpandedMode = !this.logsExpandedMode;
+      this.render();
+      return;
+    }
+
+    // w: toggle wrap mode (case-insensitive)
+    if (key === "w" || key === "W") {
+      this.logsWrapEnabled = !this.logsWrapEnabled;
+      this.render();
+      return;
+    }
+
+    // Arrow up or k: move selection to older entry
+    if (key === "\x1b[A" || key === "k" || key === "K") {
+      if (entries.length === 0) return;
+      // Clamp to first entry
+      if (this.selectedLogIndex > 0) {
+        this.selectedLogIndex--;
+        this.render();
+      }
+      return;
+    }
+
+    // Arrow down or j: move selection to newer entry
+    if (key === "\x1b[B" || key === "j" || key === "J") {
+      if (entries.length === 0) return;
+      // Clamp to last entry
+      if (this.selectedLogIndex < maxIndex) {
+        this.selectedLogIndex++;
+        this.render();
+      }
+      return;
+    }
+
+    // Home: jump to first entry
+    if (key === "Home") {
+      if (entries.length === 0) return;
+      if (this.selectedLogIndex !== 0) {
+        this.selectedLogIndex = 0;
+        this.render();
+      }
+      return;
+    }
+
+    // End: jump to last entry
+    if (key === "End") {
+      if (entries.length === 0) return;
+      if (this.selectedLogIndex !== maxIndex) {
+        this.selectedLogIndex = maxIndex;
+        this.render();
+      }
+      return;
+    }
+
+    // Space or e: toggle expanded mode for selected entry
+    if (key === " " || key === "e" || key === "E") {
+      if (entries.length === 0) {
+        // No-op when no entries
+        return;
+      }
+      this.logsExpandedMode = !this.logsExpandedMode;
+      this.render();
+      return;
     }
   }
 
@@ -515,8 +638,7 @@ export class DashboardTUI {
         break;
       case "c": // Clear logs
         this.callbacks.onClearLogs();
-        this.logBuffer.clear();
-        this.render();
+        this.clearLogs();
         break;
       case "t": // Toggle pause
         if (this.systemInfo) {
@@ -664,30 +786,189 @@ export class DashboardTUI {
     const maxRows = Math.max(1, (process.stdout.rows ?? 38) - 9);
 
     process.stdout.write(colorize("\n  LOGS\n", "bold"));
-    process.stdout.write(colorize(`  Ring buffer: ${this.logBuffer.total}/${MAX_LOG_ENTRIES} entries\n\n`, "dim"));
+    process.stdout.write(colorize(`  Ring buffer: ${this.logBuffer.total}/${MAX_LOG_ENTRIES} entries\n`, "dim"));
 
     if (entries.length === 0) {
       process.stdout.write(colorize("  No log entries yet.\n", "dim"));
       return;
     }
 
-    // Show most recent entries first (reverse chronological)
-    const displayEntries = entries.slice(-maxRows).reverse();
-    for (const entry of displayEntries) {
+    // Clamp selection index to valid range
+    const safeSelectedIndex = Math.min(this.selectedLogIndex, Math.max(0, entries.length - 1));
+
+    // If expanded mode is on, render the detail pane
+    if (this.logsExpandedMode) {
+      this.renderLogsExpandedPane(entries[safeSelectedIndex], safeSelectedIndex, entries.length);
+      return;
+    }
+
+    // Normal list mode
+    // Show mode indicator (only in list mode)
+    const modeIndicator = this.logsWrapEnabled ? colorize("  [w] wrap on", "dim") : colorize("  [w] wrap off", "dim");
+    process.stdout.write(modeIndicator + "\n\n");
+
+    // Calculate which entries are visible (last maxRows entries, reversed for display)
+    const startIndex = Math.max(0, entries.length - maxRows);
+    const visibleEntries = entries.slice(startIndex);
+    const visibleReversed = [...visibleEntries].reverse();
+
+    // Map selected index to display index (for highlighting)
+    const selectedDisplayIndex = safeSelectedIndex >= startIndex
+      ? safeSelectedIndex - startIndex
+      : -1;
+
+    // In wrap mode, calculate available width for message body
+    const prefixLen = 30; // timestamp + level + prefix overhead
+    const availableWidth = Math.max(8, cols - prefixLen);
+
+    for (let displayIdx = 0; displayIdx < visibleReversed.length; displayIdx++) {
+      const entry = visibleReversed[displayIdx];
+      const isSelected = displayIdx === selectedDisplayIndex;
+
+      // Selection indicator
+      const selector = isSelected ? colorize("▸ ", "brightGreen") : "  ";
       const ts = colorize(formatTimestamp(entry.timestamp), "dim");
       const prefix = entry.prefix ? colorize(`[${entry.prefix}]`, "gray") : "";
       const levelChar = entry.level === "error" ? colorize("✗", "brightRed")
         : entry.level === "warn" ? colorize("⚠", "brightYellow")
         : colorize("✓", "brightGreen");
 
-      // Clamp message width to prevent negative truncation on narrow terminals
-      const messageWidth = Math.max(8, cols - 40);
-      // Use visibleTruncate to handle ANSI sequences in log messages
-      const message = visibleTruncate(entry.message, messageWidth);
-      const line = `  ${ts} ${levelChar} ${prefix ? prefix + " " : ""}${message}`;
-
-      process.stdout.write(visibleTruncate(line, cols - 1) + "\n");
+      if (this.logsWrapEnabled) {
+        // Wrapped mode: wrap message to available width
+        const wrappedLines = this.wrapText(entry.message, availableWidth);
+        // First line includes prefix
+        const firstLine = `${selector}${ts} ${levelChar} ${prefix ? prefix + " " : ""}${wrappedLines[0]}`;
+        process.stdout.write(visibleTruncate(firstLine, cols - 1) + "\n");
+        // Continuation lines (indented)
+        for (let i = 1; i < wrappedLines.length; i++) {
+          const continuation = `    ${wrappedLines[i]}`;
+          process.stdout.write(visibleTruncate(continuation, cols - 1) + "\n");
+        }
+      } else {
+        // Single-line mode: truncate to available width
+        const messageWidth = Math.max(8, cols - prefixLen);
+        const message = visibleTruncate(entry.message, messageWidth);
+        const line = `${selector}${ts} ${levelChar} ${prefix ? prefix + " " : ""}${message}`;
+        process.stdout.write(visibleTruncate(line, cols - 1) + "\n");
+      }
     }
+  }
+
+  /**
+   * Render the expanded log entry detail pane.
+   * Replaces the normal list view with a focused view of a single entry.
+   */
+  private renderLogsExpandedPane(entry: LogEntry, index: number, total: number): void {
+    const cols = process.stdout.columns || 80;
+    const rows = process.stdout.rows ?? 24;
+
+    // Reserve 3 rows for footer area + 3 rows for header (2 title + 1 hint)
+    const maxContentRows = Math.max(1, rows - 12);
+
+    // Title and navigation hint
+    process.stdout.write(colorize("  EXPANDED LOG ENTRY\n", "bold"));
+    const navHint = colorize(`  Entry ${index + 1} of ${total} | [↑/k] older  [↓/j] newer  [Enter/Esc] close\n`, "dim");
+    process.stdout.write(navHint);
+    process.stdout.write(colorize("  " + "─".repeat(Math.max(20, cols - 4)) + "\n", "dim"));
+
+    // Metadata section
+    const ts = formatTimestamp(entry.timestamp);
+    const levelLabel = entry.level === "error" ? colorize("ERROR", "brightRed")
+      : entry.level === "warn" ? colorize("WARN", "brightYellow")
+      : colorize("INFO", "brightGreen");
+
+    process.stdout.write(colorize(`  Timestamp: `, "gray") + colorize(ts, "white") + "\n");
+    process.stdout.write(colorize(`  Level: `, "gray") + levelLabel + "\n");
+    if (entry.prefix) {
+      process.stdout.write(colorize(`  Prefix: `, "gray") + colorize(entry.prefix, "dim") + "\n");
+    }
+    process.stdout.write("\n");
+
+    // Message section header
+    process.stdout.write(colorize("  MESSAGE\n", "bold"));
+
+    // Calculate available width for message body (accounting for leading spaces)
+    const messageIndent = "  ";
+    const availableWidth = Math.max(8, cols - messageIndent.length);
+
+    // Wrap and display the full message
+    const wrappedMessage = this.wrapText(entry.message, availableWidth);
+    let linesPrinted = 5; // header + metadata lines (approximate)
+
+    for (const line of wrappedMessage) {
+      if (linesPrinted >= maxContentRows) {
+        // Stop before footer
+        process.stdout.write(colorize(`\n  ... (truncated)\n`, "dim"));
+        break;
+      }
+      process.stdout.write(messageIndent + line + "\n");
+      linesPrinted++;
+    }
+
+    // Footer hint
+    const footerHint = colorize(`\n  [Esc] or [Enter] to close expanded view\n`, "dim");
+    process.stdout.write(footerHint);
+  }
+
+  /**
+   * Wrap text to fit within available width, returning an array of lines.
+   * Respects ANSI escape sequences via visibleLength.
+   */
+  private wrapText(text: string, maxWidth: number): string[] {
+    if (maxWidth <= 0) return [""];
+    if (visibleLength(text) <= maxWidth) return [text];
+
+    const lines: string[] = [];
+    let remaining = text;
+
+    while (visibleLength(remaining) > maxWidth) {
+      // Find the best break point (prefer whitespace)
+      let breakIdx = 0;
+      for (let i = 0; i < remaining.length; i++) {
+        const char = remaining[i];
+        if (char === " " || char === "\t") {
+          if (visibleLength(remaining.substring(0, i)) <= maxWidth) {
+            breakIdx = i;
+          }
+        }
+        // Check if we've exceeded width
+        if (visibleLength(remaining.substring(0, i + 1)) > maxWidth) {
+          break;
+        }
+      }
+
+      if (breakIdx === 0) {
+        // No whitespace found within width - check if this is a long unbroken token
+        const firstTokenMatch = remaining.match(/^(\S+)/);
+        if (firstTokenMatch) {
+          const firstToken = firstTokenMatch[1];
+          if (visibleLength(firstToken) > maxWidth) {
+            // Long unbroken token exceeds width - split into chunks
+            const chunkSize = Math.max(1, maxWidth - 1);
+            let chunkStart = 0;
+            while (chunkStart < firstToken.length) {
+              const chunk = firstToken.substring(chunkStart, chunkStart + chunkSize);
+              lines.push(chunk);
+              chunkStart += chunkSize;
+            }
+            // Update remaining to skip the entire token and process rest
+            remaining = remaining.substring(firstToken.length).trimStart();
+            continue;
+          }
+        }
+        // No long token - hard break at width
+        breakIdx = Math.min(maxWidth, remaining.length);
+      }
+
+      lines.push(remaining.substring(0, breakIdx).trimEnd());
+      remaining = remaining.substring(breakIdx).trimStart();
+    }
+
+    if (remaining.length > 0) {
+      lines.push(remaining);
+    }
+
+    return lines.length > 0 ? lines : [""];
   }
 
   private renderSystemSection(): void {
@@ -914,6 +1195,10 @@ export class DashboardTUI {
         boxRow("  [r]         Refresh stats (Utilities)"),
         boxRow("  [c]         Clear logs (Utilities)"),
         boxRow("  [t]         Toggle engine pause (Utilities)"),
+        boxRow("  [↑/↓/k/j]   Navigate log entries (Logs)"),
+        boxRow("  [Home/End]   First/last log entry (Logs)"),
+        boxRow("  [Enter/Space/e] Expand log (Logs)"),
+        boxRow("  [w]          Toggle word wrap (Logs)"),
         boxRow("  [?] / [h]   Toggle help"),
         boxRow("  [q]         Quit"),
         boxRow("  [Ctrl+C]    Force quit"),
@@ -924,6 +1209,8 @@ export class DashboardTUI {
       return [
         "KEYBOARD SHORTCUTS",
         "  [1-5] Switch tab | [n/p] Next/Prev | [q] Quit",
+        "  [↑↓/k/j] Navigate logs | [Home/End] First/Last (Logs)",
+        "  [Enter/Space/e] Expand log | [w] Toggle wrap (Logs)",
         "  [r] Refresh | [c] Clear logs | [t] Toggle engine",
         "  [?/h] Help | [Ctrl+C] Force quit",
       ];
