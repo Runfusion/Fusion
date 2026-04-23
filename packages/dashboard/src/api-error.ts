@@ -1,4 +1,5 @@
 import type { NextFunction, Request, RequestHandler, Response } from "express";
+import { createRuntimeLogger, type RuntimeLogger } from "./runtime-logger.js";
 
 export interface ApiErrorResponse {
   error: string;
@@ -7,6 +8,7 @@ export interface ApiErrorResponse {
 
 export interface SendErrorOptions {
   details?: Record<string, unknown>;
+  logger?: RuntimeLogger;
 }
 
 export class ApiError extends Error {
@@ -31,7 +33,8 @@ export function sendErrorResponse(
 ): Response<ApiErrorResponse> {
   if (statusCode >= 500) {
     const request = res.req;
-    console.error("[api:error]", {
+    const logger = options?.logger ?? createRuntimeLogger("api:error");
+    logger.error("Request failed", {
       method: request?.method,
       path: request?.originalUrl ?? request?.path,
       statusCode,

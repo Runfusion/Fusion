@@ -75,6 +75,7 @@ import {
 import { rateLimit, RATE_LIMITS } from "./rate-limit.js";
 import { resolvePluginManifest } from "./plugin-routes.js";
 import { getAuthFileCandidates, getFusionAuthPath, type StoredAuthProvider } from "./auth-paths.js";
+import { createRuntimeLogger, type RuntimeLogger } from "./runtime-logger.js";
 
 const TASK_DETAIL_ACTIVITY_LOG_LIMIT = 500;
 
@@ -1890,6 +1891,10 @@ function checkSessionLock(
 
 export function createApiRoutes(store: TaskStore, options?: ServerOptions): Router {
   const router = Router();
+  const runtimeLogger = options?.runtimeLogger?.child("routes") ?? createRuntimeLogger("routes");
+  const planningLogger = runtimeLogger.child("planning");
+  const proxyLogger = runtimeLogger.child("proxy");
+  const chatLogger = runtimeLogger.child("chat");
 
   function prioritizeProjectsForCurrentDirectory<T extends { path: string }>(projects: T[]): T[] {
     const cwd = resolve(process.cwd());
@@ -2030,7 +2035,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       nodeStream.on("error", (err: Error) => {
         // Log but don't crash — stream may already be closing
-        console.error(`[proxy] Stream error for node ${nodeId}:`, err.message);
+        proxyLogger.error(`Stream error for node ${nodeId}`, { error: err.message });
         if (!res.writableEnded) {
           res.end();
         }
@@ -2258,7 +2263,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       "POST /planning/create-tasks",
       "GET /planning/:sessionId/stream",
     ];
-    console.debug("[planning:routes:registered]", planningRoutes);
+    planningLogger.info("routes registered", { planningRoutes });
   }
   const sessionFilesCache = new Map<string, { files: string[]; expiresAt: number }>();
   const fileDiffsCache = new Map<
@@ -2465,7 +2470,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           await syncBackupRoutine(routineStoreForProject, settings);
         } catch (err) {
           // Log but don't fail the settings update if routine sync fails
-          console.error("Failed to sync backup routine:", err);
+          runtimeLogger.error("Failed to sync backup routine", {
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       }
       
@@ -3226,7 +3233,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       // Log without actual credentials
-      console.error(`[settings-sync] Auth credentials received: providers=${receivedProviders.join(",")}, source=${sourceNodeId}`);
+      runtimeLogger.child("settings-sync").info(
+        `Auth credentials received: providers=${receivedProviders.join(",")}, source=${sourceNodeId}`,
+      );
 
       await central.close();
 
@@ -3750,7 +3759,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   });
 
   // Models
-  registerModelsRoute(router, options?.modelRegistry, store);
+  registerModelsRoute(router, options?.modelRegistry, store, runtimeLogger.child("models"));
 
   // List all tasks
   router.get("/tasks", async (req, res) => {
@@ -3883,7 +3892,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
             } catch (err) {
               // Log the full error so server logs show what went wrong
               const errorMessage = err instanceof Error ? err.message : String(err);
-              console.error(`[routes] Title summarization failed: ${errorMessage}`, err);
+              runtimeLogger.error(`Title summarization failed: ${errorMessage}`, {
+                error: errorMessage,
+              });
               // Return null on error so task creation continues without title
               return null;
             }
@@ -4236,7 +4247,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       if (err instanceof ApiError) {
         throw err;
       }
-          console.error(`Failed to update task ${taskId}:`, err);
+          runtimeLogger.error(`Failed to update task ${taskId}`, {
+            error: err instanceof Error ? err.message : String(err),
+          });
           const success = false;
           return { success, taskId, error: err instanceof Error ? err.message : String(err) };
         }
@@ -4258,7 +4271,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       // Log errors but don't fail the entire request
       if (errors.length > 0) {
-        console.error(`[batch-update-models] ${errors.length} tasks failed to update:`, errors);
+        runtimeLogger.error(`${errors.length} tasks failed to update`, { errors });
       }
 
       res.json({ updated, count: updated.length });
@@ -4685,8 +4698,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         triggeringCommentIds: newCommentId ? [newCommentId] : undefined,
         triggerDetail: "task-comment",
       }).catch((error) => {
-        console.warn(
-          `[routes] failed to trigger task-comment heartbeat for ${task.id}: ${error instanceof Error ? error.message : String(error)}`,
+        runtimeLogger.warn(
+          `failed to trigger task-comment heartbeat for ${task.id}: ${error instanceof Error ? error.message : String(error)}`,
         );
       });
 
@@ -4947,8 +4960,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         triggeringCommentIds: newSteeringCommentId ? [newSteeringCommentId] : undefined,
         triggerDetail: "steering-comment",
       }).catch((error) => {
-        console.warn(
-          `[routes] failed to trigger steering-comment heartbeat for ${task.id}: ${error instanceof Error ? error.message : String(error)}`,
+        runtimeLogger.warn(
+          `failed to trigger steering-comment heartbeat for ${task.id}: ${error instanceof Error ? error.message : String(error)}`,
         );
       });
 
@@ -9758,7 +9771,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         normalizedProvider,
         normalizedModelId,
       ).catch((err: Error) => {
-        console.error(`[chat:routes] Error in sendMessage:`, err);
+        chatLogger.error("Error in sendMessage", {
+          error: err.message,
+        });
         chatStreamManager.broadcast(sessionId, {
           type: "error",
           data: err.message || "Failed to process message",
@@ -9846,7 +9861,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       "POST /chat/sessions/:id/cancel",
       "DELETE /chat/sessions/:id/messages/:messageId",
     ];
-    console.debug("[chat:routes:registered]", chatRoutes);
+    chatLogger.info("routes registered", { chatRoutes });
   }
 
   /**
@@ -9952,7 +9967,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       // Debug logging
       if (process.env.FUSION_DEBUG_AI) {
-        console.log(`[ai-summarize] Request from ${ip}, description length: ${description?.length || 0}`);
+        runtimeLogger.child("ai-summarize").info(
+          `Request from ${ip}, description length: ${description?.length || 0}`,
+        );
       }
 
       // Check rate limit first
@@ -9995,7 +10012,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         (settings.defaultProvider && settings.defaultModelId ? settings.defaultModelId : undefined);
 
       if (process.env.FUSION_DEBUG_AI) {
-        console.log(`[ai-summarize] Resolved model: ${resolvedProvider || "auto"}/${resolvedModelId || "auto"}`);
+        runtimeLogger.child("ai-summarize").info(
+          `Resolved model: ${resolvedProvider || "auto"}/${resolvedModelId || "auto"}`,
+        );
       }
 
       // Process summarization
@@ -10018,7 +10037,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       } else if (err instanceof Error && err.name === "ValidationError") {
         throw badRequest(err instanceof Error ? err.message : String(err));
       } else {
-        console.error("[ai-summarize] Unexpected error:", err);
+        runtimeLogger.child("ai-summarize").error("Unexpected error", {
+          error: err instanceof Error ? err.message : String(err),
+        });
         rethrowAsApiError(err, "Failed to generate title");
       }
     }
@@ -11772,7 +11793,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           throw new Error("companies.sh request timed out");
         }
         // Log and include error in response so frontend can display it
-        console.warn(`[agents/companies] Failed to fetch catalog: ${message}`);
+        runtimeLogger.child("agents/companies").warn(`Failed to fetch catalog: ${message}`);
         res.json({ companies, error: `Failed to fetch companies.sh catalog: ${message}` });
         return;
       }
@@ -14432,7 +14453,9 @@ async function persistImportedSkills(
       if (err instanceof AgentGenerationRateLimitError) {
         throw rateLimited(err.message);
       }
-      console.error("[agent-generation] Error starting session:", err);
+      runtimeLogger.child("agent-generation").error("Error starting session", {
+        error: err instanceof Error ? err.message : String(err),
+      });
       rethrowAsApiError(err, "Failed to start agent generation session");
     }
   });
@@ -14463,7 +14486,9 @@ async function persistImportedSkills(
       if (err instanceof AgentGenerationSessionNotFoundError) {
         throw notFound(err instanceof Error ? err.message : String(err));
       }
-      console.error("[agent-generation] Error generating spec:", err);
+      runtimeLogger.child("agent-generation").error("Error generating spec", {
+        error: err instanceof Error ? err.message : String(err),
+      });
       rethrowAsApiError(err, "Failed to generate agent specification");
     }
   });
@@ -14668,7 +14693,9 @@ async function persistImportedSkills(
             await options.pluginLoader.loadPlugin(plugin.id);
           } catch (loadErr) {
             // Log but don't fail - plugin is registered, just not loaded
-            console.error(`[plugin-routes] Failed to load plugin ${plugin.id}:`, loadErr);
+            runtimeLogger.child("plugin-routes").error(`Failed to load plugin ${plugin.id}`, {
+              error: loadErr instanceof Error ? loadErr.message : String(loadErr),
+            });
           }
         }
 
@@ -14705,7 +14732,9 @@ async function persistImportedSkills(
           try {
             await options.pluginLoader.loadPlugin(plugin.id);
           } catch (loadErr) {
-            console.error(`[plugin-routes] Failed to load plugin ${plugin.id}:`, loadErr);
+            runtimeLogger.child("plugin-routes").error(`Failed to load plugin ${plugin.id}`, {
+              error: loadErr instanceof Error ? loadErr.message : String(loadErr),
+            });
           }
         }
 
@@ -15330,7 +15359,9 @@ async function persistImportedSkills(
       remoteProjectArrays.forEach((result, index) => {
         if (result.status === "rejected") {
           const node = remoteNodes[index];
-          console.warn(`[projects:across-nodes] Failed to fetch projects from node ${node?.id}: ${result.reason?.message ?? result.reason}`);
+          runtimeLogger.child("projects:across-nodes").warn(
+            `Failed to fetch projects from node ${node?.id}: ${result.reason?.message ?? result.reason}`,
+          );
         }
       });
 
@@ -16567,7 +16598,9 @@ async function persistImportedSkills(
 
         // Log without actual credentials
         const providerNames = Object.keys(apiKeyProviders);
-        console.error(`[settings-sync] Auth sync completed: direction=push, providers=${providerNames.join(",")}, targetNode=${node.id}`);
+        runtimeLogger.child("settings-sync").info(
+          `Auth sync completed: direction=push, providers=${providerNames.join(",")}, targetNode=${node.id}`,
+        );
 
         res.json({ success: true, syncedProviders: providerNames });
       } else {
@@ -16595,7 +16628,9 @@ async function persistImportedSkills(
         await central.close();
 
         // Log without actual credentials
-        console.error(`[settings-sync] Auth sync completed: direction=pull, providers=${syncedProviders.join(",")}, targetNode=${node.id}`);
+        runtimeLogger.child("settings-sync").info(
+          `Auth sync completed: direction=pull, providers=${syncedProviders.join(",")}, targetNode=${node.id}`,
+        );
 
         res.json({ success: true, syncedProviders });
       }
@@ -16745,12 +16780,11 @@ async function persistImportedSkills(
             const applyResult = await central.applyRemoteSettings(remoteSettings);
 
             if (applyResult.success) {
-              console.log(
-                `[mesh/sync] Applied remote settings from ${senderNodeId}: ` +
-                `global=${applyResult.globalCount}, projects=${applyResult.projectCount}, auth=${applyResult.authCount}`
+              runtimeLogger.child("mesh/sync").info(
+                `Applied remote settings from ${senderNodeId}: global=${applyResult.globalCount}, projects=${applyResult.projectCount}, auth=${applyResult.authCount}`,
               );
             } else {
-              console.warn(`[mesh/sync] Failed to apply remote settings: ${applyResult.error}`);
+              runtimeLogger.child("mesh/sync").warn(`Failed to apply remote settings: ${applyResult.error}`);
             }
           }
 
@@ -16758,7 +16792,9 @@ async function persistImportedSkills(
           responseSettings = localPayload;
         } catch (err) {
           // Log but don't fail the sync - peers are more important
-          console.error("[mesh/sync] Settings sync error:", err);
+          runtimeLogger.child("mesh/sync").error("Settings sync error", {
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       }
 
@@ -18287,7 +18323,9 @@ async function persistImportedSkills(
 
       nodeStream.on("error", (err: Error) => {
         // Log but don't crash — stream may already be closing
-        console.error(`[proxy:sse] Stream error for node ${nodeId}:`, err.message);
+        runtimeLogger.child("proxy:sse").error(`Stream error for node ${nodeId}`, {
+          error: err.message,
+        });
         if (!res.writableEnded) {
           res.end();
         }
@@ -18306,7 +18344,9 @@ async function persistImportedSkills(
           res.end();
         }
       } else {
-        console.error(`[proxy:sse] Unexpected error for node ${nodeId}:`, err);
+        runtimeLogger.child("proxy:sse").error(`Unexpected error for node ${nodeId}`, {
+          error: err instanceof Error ? err.message : String(err),
+        });
         if (!res.headersSent) {
           if (err instanceof ApiError) {
             throw err;
@@ -18430,7 +18470,9 @@ async function persistImportedSkills(
       });
 
       nodeStream.on("error", (err: Error) => {
-        console.error(`[proxy] Stream error for node ${nodeId}:`, err.message);
+        proxyLogger.error(`Stream error for node ${nodeId}`, {
+          error: err.message,
+        });
         if (!res.writableEnded) {
           res.end();
         }
@@ -18447,7 +18489,9 @@ async function persistImportedSkills(
       } else if (err instanceof TypeError) {
         res.status(502).json({ error: "Bad Gateway" });
       } else {
-        console.error(`[proxy] Unexpected error for node ${nodeId}:`, err);
+        proxyLogger.error(`Unexpected error for node ${nodeId}`, {
+          error: err instanceof Error ? err.message : String(err),
+        });
         res.status(502).json({ error: "Bad Gateway" });
       }
     } finally {
@@ -18789,7 +18833,12 @@ async function refreshIssueInBackground(
  * along with favoriteProviders for UI ordering.
  * If no ModelRegistry is provided, returns an empty array.
  */
-function registerModelsRoute(router: Router, modelRegistry?: ModelRegistryLike, store?: TaskStore): void {
+function registerModelsRoute(
+  router: Router,
+  modelRegistry?: ModelRegistryLike,
+  store?: TaskStore,
+  runtimeLogger: RuntimeLogger = createRuntimeLogger("models"),
+): void {
   router.get("/models", async (_req, res) => {
     // Always return 200 with empty array instead of 404 when no models available.
     // This ensures the frontend can handle empty states gracefully.
@@ -18828,7 +18877,7 @@ function registerModelsRoute(router: Router, modelRegistry?: ModelRegistryLike, 
         throw err;
       }
       const message = err instanceof Error ? err.message : String(err);
-      console.log(`[models] Failed to load models: ${message}`);
+      runtimeLogger.warn(`Failed to load models: ${message}`);
       res.json({ models: [], favoriteProviders: [], favoriteModels: [] });
     }
   });

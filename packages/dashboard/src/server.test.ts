@@ -551,12 +551,13 @@ describe("Terminal stale-session eviction", () => {
 
     expect(consoleErrorSpy).toHaveBeenCalled();
     const failureCall = consoleErrorSpy.mock.calls.find(
-      (call) => typeof call[0] === "string" && call[0].includes("[terminal] Stale session eviction failed:"),
+      (call) => typeof call[0] === "string" && call[0].includes("[terminal] Stale session eviction failed"),
     );
     expect(failureCall).toBeDefined();
-    expect(failureCall?.[0]).toEqual(expect.stringContaining("[terminal] Stale session eviction failed:"));
-    expect(failureCall?.[1]).toBeInstanceOf(Error);
-    expect((failureCall?.[1] as Error).message).toContain("simulated eviction failure");
+    expect(failureCall?.[0]).toEqual(expect.stringContaining("[terminal] Stale session eviction failed"));
+    expect(failureCall?.[1]).toEqual(
+      expect.objectContaining({ error: "simulated eviction failure" }),
+    );
 
     vi.advanceTimersByTime(60_000);
     expect(mockTerminalService.evictStaleSessions).toHaveBeenCalledTimes(2);

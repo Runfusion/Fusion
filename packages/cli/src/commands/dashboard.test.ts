@@ -2615,3 +2615,61 @@ describe("runDashboard — merge stream sink routing", () => {
     consoleLogSpy.mockRestore();
   });
 });
+
+describe("runDashboard runtime logger wiring", () => {
+  it("injects a runtime logger into createServer and preserves non-TTY console fallback", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runDashboard(0, { open: false, dev: true });
+
+    const createServerCall = (createServer as ReturnType<typeof vi.fn>).mock.calls.at(-1)!;
+    const serverOpts = createServerCall[1] as { runtimeLogger?: { info: (message: string, context?: Record<string, unknown>) => void } };
+
+    expect(serverOpts.runtimeLogger).toBeDefined();
+    serverOpts.runtimeLogger?.info("runtime diagnostic", { source: "test" });
+
+    expect(consoleLogSpy).toHaveBeenCalledWith(
+      '[dashboard] runtime diagnostic {"source":"test"}',
+    );
+
+    consoleLogSpy.mockRestore();
+  });
+
+  it("routes runtime logger output through DashboardLogSink in TTY mode", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+    const { DashboardLogSink, DashboardTUI } = await import("./dashboard-tui.js");
+
+    const originalStdoutIsTTY = process.stdout.isTTY;
+    const originalStdinIsTTY = process.stdin.isTTY;
+
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+
+    const tuiStartSpy = vi.spyOn(DashboardTUI.prototype, "start").mockResolvedValue(undefined);
+    const tuiStopSpy = vi.spyOn(DashboardTUI.prototype, "stop").mockResolvedValue(undefined);
+    const tuiLogSpy = vi.spyOn(DashboardTUI.prototype, "log").mockImplementation(() => {});
+    const captureConsoleSpy = vi.spyOn(DashboardLogSink.prototype, "captureConsole").mockImplementation(() => {});
+
+    try {
+      await runDashboard(0, { open: false, dev: true });
+
+      expect(captureConsoleSpy).toHaveBeenCalledTimes(1);
+
+      const createServerCall = (createServer as ReturnType<typeof vi.fn>).mock.calls.at(-1)!;
+      const serverOpts = createServerCall[1] as { runtimeLogger?: { info: (message: string, context?: Record<string, unknown>) => void } };
+
+      expect(serverOpts.runtimeLogger).toBeDefined();
+      serverOpts.runtimeLogger?.info("tty runtime diagnostic", { source: "test" });
+      expect(tuiLogSpy).toHaveBeenCalledWith('tty runtime diagnostic {"source":"test"}', "dashboard");
+      expect(tuiStartSpy).toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process.stdout, "isTTY", { value: originalStdoutIsTTY, configurable: true });
+      Object.defineProperty(process.stdin, "isTTY", { value: originalStdinIsTTY, configurable: true });
+      tuiStartSpy.mockRestore();
+      tuiStopSpy.mockRestore();
+      tuiLogSpy.mockRestore();
+      captureConsoleSpy.mockRestore();
+    }
+  });
+});

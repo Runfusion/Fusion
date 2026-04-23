@@ -203,7 +203,7 @@ describe("GET /api/projects/across-nodes", () => {
 
     // Should have logged a warning
     expect(consoleWarnSpy).toHaveBeenCalled();
-    expect(consoleWarnSpy.mock.calls[0][0]).toContain("[projects:across-nodes]");
+    expect(consoleWarnSpy.mock.calls[0][0]).toContain("projects:across-nodes]");
 
     consoleWarnSpy.mockRestore();
   });

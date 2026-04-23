@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import type { NextFunction, Request, Response } from "express";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   badRequest,
@@ -13,8 +13,14 @@ import {
   sendErrorResponse,
   unauthorized,
 } from "./api-error.js";
+import { resetRuntimeLogSink, setRuntimeLogSink } from "./runtime-logger.js";
 
-const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+const runtimeLogEvents: Array<{
+  level: string;
+  scope: string;
+  message: string;
+  context?: Record<string, unknown>;
+}> = [];
 
 interface MockResponse {
   res: Response;
@@ -49,6 +55,17 @@ function createMockResponse(overrides?: Partial<Response>, requestOverrides?: Pa
   };
 }
 
+beforeEach(() => {
+  runtimeLogEvents.length = 0;
+  setRuntimeLogSink((level, scope, message, context) => {
+    runtimeLogEvents.push({ level, scope, message, context });
+  });
+});
+
+afterEach(() => {
+  resetRuntimeLogSink();
+});
+
 describe("ApiError", () => {
   it("sets statusCode, message, and details", () => {
     const details = { foo: "bar" };
@@ -67,9 +84,6 @@ describe("ApiError", () => {
 });
 
 describe("sendErrorResponse", () => {
-  beforeEach(() => {
-    consoleErrorSpy.mockClear();
-  });
 
   it("sends standard { error: string } payload", () => {
     const { res, statusMock, jsonMock } = createMockResponse();
@@ -102,11 +116,16 @@ describe("sendErrorResponse", () => {
 
     sendErrorResponse(res, 500, "Internal issue");
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith("[api:error]", {
-      method: "GET",
-      path: "/api/test?x=1",
-      statusCode: 500,
-      message: "Internal issue",
+    expect(runtimeLogEvents).toContainEqual({
+      level: "error",
+      scope: "api:error",
+      message: "Request failed",
+      context: {
+        method: "GET",
+        path: "/api/test?x=1",
+        statusCode: 500,
+        message: "Internal issue",
+      },
     });
   });
 
@@ -115,14 +134,11 @@ describe("sendErrorResponse", () => {
 
     sendErrorResponse(res, 404, "Not found");
 
-    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    expect(runtimeLogEvents).toHaveLength(0);
   });
 });
 
 describe("catchHandler", () => {
-  beforeEach(() => {
-    consoleErrorSpy.mockClear();
-  });
 
   it("catches ApiError and sends status/message/details", async () => {
     const details = { field: "name" };
@@ -137,7 +153,7 @@ describe("catchHandler", () => {
     expect(statusMock).toHaveBeenCalledWith(400);
     expect(jsonMock).toHaveBeenCalledWith({ error: "Invalid input", details });
     expect(next).not.toHaveBeenCalled();
-    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    expect(runtimeLogEvents).toHaveLength(0);
   });
 
   it("catches generic Error and sends 500 with error message", async () => {
@@ -151,7 +167,17 @@ describe("catchHandler", () => {
 
     expect(statusMock).toHaveBeenCalledWith(500);
     expect(jsonMock).toHaveBeenCalledWith({ error: "boom" });
-    expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+    expect(runtimeLogEvents).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        scope: "api:error",
+        message: "Request failed",
+        context: expect.objectContaining({
+          statusCode: 500,
+          message: "boom",
+        }),
+      }),
+    );
   });
 
   it("calls next(err) when headers are already sent", async () => {

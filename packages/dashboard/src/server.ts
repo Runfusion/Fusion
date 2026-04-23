@@ -20,6 +20,7 @@ import { terminalSessionManager } from "./terminal.js";
 import { WebSocketManager, type BadgeSnapshot } from "./websocket.js";
 import type { BadgePubSub } from "./badge-pubsub.js";
 import { createBadgePubSub, type BadgePubSubMessage } from "./badge-pubsub.js";
+import { createRuntimeLogger, type RuntimeLogger } from "./runtime-logger.js";
 import {
   AiSessionStore,
   SESSION_CLEANUP_DEFAULT_MAX_AGE_MS,
@@ -208,6 +209,9 @@ export interface ServerOptions {
    *  FUSION_DASHBOARD_TOKEN env vars. Used by `fn dashboard --no-auth` so a
    *  stale token in a project .env doesn't silently override the flag. */
   noAuth?: boolean;
+  /** Optional runtime logger for server/routes diagnostics.
+   *  Defaults to a console-backed logger scoped to `server` when omitted. */
+  runtimeLogger?: RuntimeLogger;
   /** Optional TLS credentials. When provided, the server is served over HTTP/2
    *  with HTTP/1.1 fallback (allowHTTP1:true) — this lifts the browser's
    *  per-origin connection cap so long-lived SSE streams no longer starve
@@ -375,6 +379,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   }
 
   const app = express();
+  const runtimeLogger = options?.runtimeLogger ?? createRuntimeLogger("server");
   const mutationRateLimit = rateLimit(RATE_LIMITS.mutation);
   const setupRateLimit = rateLimit(RATE_LIMITS.api);
   const setupReadRateLimit = rateLimit(RATE_LIMITS.api);
@@ -649,8 +654,9 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
 
   // Planning route diagnostics for production/runtime debugging. Disabled by default.
   if (process.env.FUSION_DEBUG_PLANNING_ROUTES === "1") {
+    const planningLogger = runtimeLogger.child("planning");
     app.use("/api/planning", (req, _res, next) => {
-      console.debug("[planning:request]", {
+      planningLogger.info("request", {
         method: req.method,
         path: req.path,
         originalUrl: req.originalUrl,
@@ -675,8 +681,8 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   const totalRehydrated =
     planningRehydratedCount + subtaskRehydratedCount + missionRehydratedCount + milestoneSliceRehydratedCount;
   if (totalRehydrated > 0) {
-    console.log(
-      `[server] Rehydrated ${planningRehydratedCount} planning, ${subtaskRehydratedCount} subtask, ${missionRehydratedCount} mission, ${milestoneSliceRehydratedCount} milestone/slice sessions from SQLite`,
+    runtimeLogger.info(
+      `Rehydrated ${planningRehydratedCount} planning, ${subtaskRehydratedCount} subtask, ${missionRehydratedCount} mission, ${milestoneSliceRehydratedCount} milestone/slice sessions from SQLite`,
     );
   }
 
@@ -688,8 +694,8 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
 
   const runAiSessionCleanup = (maxAgeMs: number, source: "initial" | "scheduled") => {
     const result = aiSessionStore.cleanupStaleSessions(maxAgeMs);
-    console.log(
-      `[server] AI session cleanup (${source}): removed ${result.terminalDeleted} terminal, ${result.orphanedDeleted} orphaned sessions`,
+    runtimeLogger.info(
+      `AI session cleanup (${source}): removed ${result.terminalDeleted} terminal, ${result.orphanedDeleted} orphaned sessions`,
     );
     return result;
   };
@@ -700,7 +706,9 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       try {
         runAiSessionCleanup(maxAgeMs, "scheduled");
       } catch (err) {
-        console.error("[server] Scheduled AI session cleanup failed", err);
+        runtimeLogger.error("Scheduled AI session cleanup failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }, cleanupIntervalMs);
     aiSessionCleanupIntervalHandle.unref?.();
@@ -728,18 +736,24 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
           void Promise.resolve()
             .then(() => runAiSessionCleanup(ttlMs, "initial"))
             .catch((err) => {
-              console.error("[server] Initial AI session cleanup failed", err);
+              runtimeLogger.error("Initial AI session cleanup failed", {
+                error: err instanceof Error ? err.message : String(err),
+              });
             });
 
           scheduleAiSessionCleanup(cleanupIntervalMs, ttlMs);
         })
         .catch((err) => {
-          console.warn("[server] Failed to load settings for AI session cleanup; using defaults", err);
+          runtimeLogger.warn("Failed to load settings for AI session cleanup; using defaults", {
+            error: err instanceof Error ? err.message : String(err),
+          });
 
           void Promise.resolve()
             .then(() => runAiSessionCleanup(DEFAULT_AI_SESSION_TTL_MS, "initial"))
             .catch((cleanupErr) => {
-              console.error("[server] Initial AI session cleanup failed", cleanupErr);
+              runtimeLogger.error("Initial AI session cleanup failed", {
+                error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+              });
             });
 
           scheduleAiSessionCleanup(
@@ -751,7 +765,9 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       void Promise.resolve()
         .then(() => runAiSessionCleanup(DEFAULT_AI_SESSION_TTL_MS, "initial"))
         .catch((err) => {
-          console.error("[server] Initial AI session cleanup failed", err);
+          runtimeLogger.error("Initial AI session cleanup failed", {
+            error: err instanceof Error ? err.message : String(err),
+          });
         });
 
       scheduleAiSessionCleanup(
@@ -770,7 +786,14 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   });
 
   // REST API
-  app.use("/api", createApiRoutes(store, { ...options, aiSessionStore, chatStore, chatManager, skillsAdapter: options?.skillsAdapter }));
+  app.use("/api", createApiRoutes(store, {
+    ...options,
+    runtimeLogger,
+    aiSessionStore,
+    chatStore,
+    chatManager,
+    skillsAdapter: options?.skillsAdapter,
+  }));
 
   // API 404 Handler - Return JSON for unmatched API routes (instead of falling through to SPA)
   app.use("/api", (_req: express.Request, res: express.Response) => {
@@ -845,14 +868,15 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       aiSessionStore.stopScheduledCleanup();
       void stopAllDevServers().catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
-        console.warn(`[server] Failed to shutdown dev-server managers: ${message}`);
+        runtimeLogger.warn(`Failed to shutdown dev-server managers: ${message}`);
       });
     });
 
     if (!dashboardApp.__fnWebSocketsAttached) {
       dashboardApp.__fnWebSocketsAttached = true;
-      setupTerminalWebSocket(dashboardApp, server as HttpServer, store, options);
-      setupBadgeWebSocket(dashboardApp, server as HttpServer, store, options);
+      const websocketOptions = { ...options, runtimeLogger };
+      setupTerminalWebSocket(dashboardApp, server as HttpServer, store, websocketOptions);
+      setupBadgeWebSocket(dashboardApp, server as HttpServer, store, websocketOptions);
     }
 
     return server as HttpServer;
@@ -878,6 +902,7 @@ export function setupTerminalWebSocket(
 
   // Resolve the daemon token once so every upgrade picks up the same value.
   const wsDaemonToken = getDaemonToken(options);
+  const terminalLogger = options?.runtimeLogger?.child("terminal") ?? createRuntimeLogger("terminal");
 
   server.on("upgrade", (req, socket, head) => {
     const pathname = new URL(req.url || "", `http://${req.headers.host}`).pathname;
@@ -930,7 +955,9 @@ export function setupTerminalWebSocket(
         terminalService = getTerminalService(scopedRootDir);
       }
     } catch (err) {
-      console.error("[terminal] Failed to resolve project scope:", err);
+      terminalLogger.error("Failed to resolve project scope", {
+        error: err instanceof Error ? err.message : String(err),
+      });
       ws.close(4510, "Failed to resolve project scope");
       return;
     }
@@ -944,7 +971,7 @@ export function setupTerminalWebSocket(
     // Security check: reject sessions that don't belong to this project's root
     // Session cwd must be within the resolved project root
     if (!session.cwd.startsWith(scopedRootDir)) {
-      console.warn(`[terminal] Session ${sessionId} cwd ${session.cwd} does not belong to project root ${scopedRootDir}`);
+      terminalLogger.warn(`Session ${sessionId} cwd ${session.cwd} does not belong to project root ${scopedRootDir}`);
       ws.close(4503, "Session does not belong to this project");
       return;
     }
@@ -960,8 +987,8 @@ export function setupTerminalWebSocket(
     // Detect potentially stale sessions on reconnect
     const idleMs = Date.now() - session.lastActivityAt.getTime();
     if (idleMs > STALE_SESSION_THRESHOLD_MS) {
-      console.warn(
-        `[terminal] Session ${sessionId} reconnect after ${Math.round(idleMs / 1000)}s idle — PTY may be stale`
+      terminalLogger.warn(
+        `Session ${sessionId} reconnect after ${Math.round(idleMs / 1000)}s idle — PTY may be stale`,
       );
     }
 
@@ -995,7 +1022,7 @@ export function setupTerminalWebSocket(
         try {
           ws.send(JSON.stringify({ type: "exit", exitCode }));
           const idleSec = id ? Math.round((Date.now() - (terminalService.getSession(id)?.lastActivityAt?.getTime() ?? Date.now())) / 1000) : 0;
-          console.info(`[terminal] Session ${id} exited with code ${exitCode} (was ${idleSec}s idle)`);
+          terminalLogger.info(`Session ${id} exited with code ${exitCode} (was ${idleSec}s idle)`);
         } catch {
           // WebSocket might be closing
         }
@@ -1007,11 +1034,11 @@ export function setupTerminalWebSocket(
       if (!isAlive) {
         missedPongs++;
         if (missedPongs >= MAX_MISSED_PONGS) {
-          console.warn(`[terminal] Connection dead after ${missedPongs} missed pongs, terminating`);
+          terminalLogger.warn(`Connection dead after ${missedPongs} missed pongs, terminating`);
           ws.terminate();
           return;
         }
-        console.info(`[terminal] Missed pong #${missedPongs}, waiting for response...`);
+        terminalLogger.info(`Missed pong #${missedPongs}, waiting for response...`);
         return;
       }
       isAlive = false;
@@ -1084,7 +1111,9 @@ export function setupTerminalWebSocket(
     try {
       defaultTerminalService.evictStaleSessions();
     } catch (err) {
-      console.error("[terminal] Stale session eviction failed:", err);
+      terminalLogger.error("Stale session eviction failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }, 60_000);
 
@@ -1093,7 +1122,7 @@ export function setupTerminalWebSocket(
     clearInterval(staleEvictionInterval);
   });
 
-  console.log("Terminal WebSocket server mounted at /api/terminal/ws");
+  terminalLogger.info("WebSocket server mounted at /api/terminal/ws");
 }
 
 export function setupBadgeWebSocket(

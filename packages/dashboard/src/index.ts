@@ -1,4 +1,14 @@
 export { createServer, loadTlsCredentialsFromEnv, type ServerOptions } from "./server.js";
+export {
+  createRuntimeLogger,
+  getRuntimeLogSink,
+  resetRuntimeLogSink,
+  setRuntimeLogSink,
+  type RuntimeLogContext,
+  type RuntimeLogger,
+  type RuntimeLogLevel,
+  type RuntimeLogSink,
+} from "./runtime-logger.js";
 export { createSkillsAdapter, getProjectSettingsPath, type SkillsAdapter, type DiscoveredSkill, type CatalogEntry, type CatalogFetchResult, type ToggleSkillResult, type UpstreamError, type UpstreamErrorCode, type SkillContent, type SkillFileEntry } from "./skills-adapter.js";
 export { GitHubClient, isPrMergeReady, type PrMergeStatus, type PrCheckStatus, type ReviewDecision, type MergePrParams, type FindPrParams } from "./github.js";
 export { rateLimit, RATE_LIMITS, type RateLimitOptions } from "./rate-limit.js";

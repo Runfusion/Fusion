@@ -24,6 +24,7 @@ import { SESSION_CLEANUP_DEFAULT_MAX_AGE_MS } from "./ai-session-store.js";
 import * as projectStoreResolver from "./project-store-resolver.js";
 import * as terminalServiceModule from "./terminal-service.js";
 import { get as performGet, request as performRequest } from "./test-request.js";
+import { resetRuntimeLogSink, setRuntimeLogSink } from "./runtime-logger.js";
 
 // Mock @fusion/core for gh CLI auth checks
 const mockCentralListProjects = vi.fn().mockResolvedValue([]);
@@ -354,25 +355,34 @@ describe("Standardized error responses", () => {
     expect(res.body).toEqual({ error: expect.stringContaining("not found") });
   });
 
-  it("returns 500 errors as { error } and logs to console.error", async () => {
-    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  it("returns 500 errors as { error } and logs to the runtime logger", async () => {
+    const runtimeEvents: Array<{ level: string; scope: string; message: string; context?: Record<string, unknown> }> = [];
+    setRuntimeLogSink((level, scope, message, context) => {
+      runtimeEvents.push({ level, scope, message, context });
+    });
     (store.getSettingsFast as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Config read failed"));
 
-    const res = await GET(buildApp(), "/api/settings");
+    try {
+      const res = await GET(buildApp(), "/api/settings");
 
-    expect(res.status).toBe(500);
-    expect(res.body).toEqual({ error: "Config read failed" });
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      "[api:error]",
-      expect.objectContaining({
-        method: "GET",
-        path: "/api/settings",
-        statusCode: 500,
-        message: "Config read failed",
-      }),
-    );
-
-    consoleErrorSpy.mockRestore();
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: "Config read failed" });
+      expect(runtimeEvents).toContainEqual(
+        expect.objectContaining({
+          level: "error",
+          scope: "api:error",
+          message: "Request failed",
+          context: expect.objectContaining({
+            method: "GET",
+            path: "/api/settings",
+            statusCode: 500,
+            message: "Config read failed",
+          }),
+        }),
+      );
+    } finally {
+      resetRuntimeLogSink();
+    }
   });
 });
 

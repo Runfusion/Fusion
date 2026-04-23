@@ -578,7 +578,7 @@ describe("Node settings sync routes", () => {
         ok: true,
         json: () => Promise.resolve({ success: true }),
       });
-      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
       await request(
         app,
@@ -765,7 +765,7 @@ describe("Node settings sync routes", () => {
     it("logs provider names but not credentials", async () => {
       const localNode = createMockLocalNode();
       mockListNodes.mockResolvedValue([localNode]);
-      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
       await request(
         app,

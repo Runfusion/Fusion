@@ -389,6 +389,12 @@ Key server capabilities:
 - Rate limiting (`rate-limit.ts`)
 - Static SPA hosting (Vite build output)
 
+### Runtime diagnostics logging contract
+- Dashboard/server runtime diagnostics use the shared `RuntimeLogger` contract (`packages/dashboard/src/runtime-logger.ts`) instead of ad hoc `console.*` calls.
+- `createServer()` accepts `ServerOptions.runtimeLogger`; when omitted it defaults to a console-backed logger, preserving readable output in non-TTY/headless modes.
+- CLI TTY dashboard sessions inject a logger backed by `DashboardLogSink`, so runtime diagnostics from server/routes are captured in the TUI log buffer.
+- Intentional startup/banner text in `fn dashboard` and `fn serve` remains direct plain output for readability and backward-compatible scripting behavior.
+
 ### Real-time channels
 - **SSE**: `/api/events` (`sse.ts`)
   - Emits `task:*`, mission events, AI session updates

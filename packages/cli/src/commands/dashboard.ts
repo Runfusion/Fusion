@@ -2,7 +2,14 @@ import type { AddressInfo } from "node:net";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { TaskStore, AutomationStore, CentralCore, AgentStore, PluginStore, PluginLoader, getTaskMergeBlocker, getEnabledPiExtensionPaths, isEphemeralAgent } from "@fusion/core";
-import { createServer, GitHubClient, createSkillsAdapter, getProjectSettingsPath, loadTlsCredentialsFromEnv } from "@fusion/dashboard";
+import {
+  createServer,
+  GitHubClient,
+  createSkillsAdapter,
+  getProjectSettingsPath,
+  loadTlsCredentialsFromEnv,
+  type RuntimeLogger,
+} from "@fusion/dashboard";
 import { aiMergeTask, MissionAutopilot, MissionExecutionLoop, HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext, ProjectEngineManager, PeerExchangeService } from "@fusion/engine";
 import { AuthStorage, DefaultPackageManager, ModelRegistry, discoverAndLoadExtensions, createExtensionRuntime } from "@mariozechner/pi-coding-agent";
 import {
@@ -27,6 +34,36 @@ let diagnosticDbHealthCheck: (() => boolean) | null = null;
 let diagnosticStoreListenerCheck: (() => Record<string, number>) | null = null;
 
 const STREAM_LOG_FLUSH_IDLE_MS = 100;
+
+function formatRuntimeContext(context: Record<string, unknown> | undefined): string {
+  if (context === undefined) {
+    return "";
+  }
+
+  try {
+    return ` ${JSON.stringify(context)}`;
+  } catch {
+    return ` ${String(context)}`;
+  }
+}
+
+function createDashboardRuntimeLogger(logSink: DashboardLogSink, scope: string): RuntimeLogger {
+  return {
+    scope,
+    info(message, context) {
+      logSink.log(`${message}${formatRuntimeContext(context)}`, scope);
+    },
+    warn(message, context) {
+      logSink.warn(`${message}${formatRuntimeContext(context)}`, scope);
+    },
+    error(message, context) {
+      logSink.error(`${message}${formatRuntimeContext(context)}`, scope);
+    },
+    child(childScope) {
+      return createDashboardRuntimeLogger(logSink, `${scope}:${childScope}`);
+    },
+  };
+}
 
 export class StreamedLogBuffer {
   private pending = "";
@@ -123,7 +160,7 @@ function formatUptime(ms: number): string {
  * @param startTime - Process start timestamp
  * @param dbHealthCheck - Optional function to check database health
  */
-function logDiagnostics(prefix: string, startTime: number, dbHealthCheck?: () => boolean): void {
+function logDiagnostics(logger: RuntimeLogger, prefix: string, startTime: number, dbHealthCheck?: () => boolean): void {
   const mem = process.memoryUsage();
   const uptime = Date.now() - startTime;
 
@@ -168,7 +205,7 @@ function logDiagnostics(prefix: string, startTime: number, dbHealthCheck?: () =>
     `external=${formatBytes(mem.external)} arrayBuffers=${formatBytes(mem.arrayBuffers)} ` +
     `handles=${handleCount} requests=${requestCount} db=${dbHealth}${listenerInfo}`;
 
-  console.log(logLine);
+  logger.info(logLine);
 }
 
 /**
@@ -176,7 +213,7 @@ function logDiagnostics(prefix: string, startTime: number, dbHealthCheck?: () =>
  * Logs memory usage, handle counts, and uptime at startup and every 30 minutes.
  * Also logs beforeExit and exit events for shutdown analysis.
  */
-function ensureProcessDiagnostics(): void {
+function ensureProcessDiagnostics(logger: RuntimeLogger): void {
   if (processDiagnosticsRegistered) {
     return;
   }
@@ -185,11 +222,11 @@ function ensureProcessDiagnostics(): void {
   diagnosticStartTime = Date.now();
 
   // Log initial diagnostics at startup (before store is created)
-  logDiagnostics("dashboard", diagnosticStartTime);
+  logDiagnostics(logger, "dashboard", diagnosticStartTime);
 
   // Register periodic diagnostics every 30 minutes
   diagnosticIntervalHandle = setInterval(() => {
-    logDiagnostics("dashboard", diagnosticStartTime, diagnosticDbHealthCheck ?? undefined);
+    logDiagnostics(logger, "dashboard", diagnosticStartTime, diagnosticDbHealthCheck ?? undefined);
   }, DIAGNOSTIC_INTERVAL_MS);
   diagnosticIntervalHandle.unref?.(); // Don't prevent process exit
 
@@ -206,24 +243,24 @@ function ensureProcessDiagnostics(): void {
     } catch {
       // Ignore
     }
-    console.log(`[dashboard] beforeExit code=${code} uptime=${formatUptime(uptime)} handles=${handleCount} requests=${requestCount}`);
+    logger.info(`[dashboard] beforeExit code=${code} uptime=${formatUptime(uptime)} handles=${handleCount} requests=${requestCount}`);
   });
 
   // Log exit event with exit code and uptime
   process.on("exit", (code: number) => {
     const uptime = Date.now() - diagnosticStartTime;
-    console.log(`[dashboard] exit code=${code} uptime=${formatUptime(uptime)}`);
+    logger.info(`[dashboard] exit code=${code} uptime=${formatUptime(uptime)}`);
   });
 
   // Log uncaught exceptions
   process.on("uncaughtExceptionMonitor", (error: Error) => {
-    console.error(`[dashboard] uncaught exception pid=${process.pid}: ${error.stack || error.message}`);
+    logger.error(`[dashboard] uncaught exception pid=${process.pid}: ${error.stack || error.message}`);
   });
 
   // Log unhandled rejections
   process.on("unhandledRejection", (reason: unknown) => {
     const message = reason instanceof Error ? reason.stack || reason.message : String(reason);
-    console.error(`[dashboard] unhandled rejection pid=${process.pid}: ${message}`);
+    logger.error(`[dashboard] unhandled rejection pid=${process.pid}: ${message}`);
   });
 }
 
@@ -285,7 +322,11 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       ?? process.env.FUSION_DASHBOARD_TOKEN
       ?? process.env.FUSION_DAEMON_TOKEN
       ?? `fn_${randomBytes(16).toString("hex")}`;
-  ensureProcessDiagnostics();
+
+  // Single sink/logger pair for all dashboard command diagnostics.
+  // In TTY mode this routes to DashboardTUI; in non-TTY mode it falls back to console.*.
+  const logSink = new DashboardLogSink();
+  const runtimeLogger = createDashboardRuntimeLogger(logSink, "dashboard");
 
   // Handle interactive port selection
   let selectedPort = port;
@@ -319,9 +360,6 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   // (they're assigned after initialization, but the variables exist from the start)
   let store: TaskStore | undefined;
   let agentStore: AgentStore | undefined;
-
-  // Create a log sink that routes to TUI in TTY mode, or console otherwise
-  const logSink = new DashboardLogSink();
 
   if (isTTY) {
     tui = new DashboardTUI();
@@ -393,6 +431,10 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     // in the TUI's ring buffer instead of being overwritten by the alt screen.
     logSink.captureConsole();
   }
+
+  // Register long-running process diagnostics after TTY sink wiring so
+  // startup/runtime lines flow into the TUI log buffer when interactive.
+  ensureProcessDiagnostics(runtimeLogger);
 
   store = new TaskStore(cwd);
   await store.init();
@@ -925,6 +967,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       https: loadTlsCredentialsFromEnv(),
       daemon: dashboardAuthToken ? { token: dashboardAuthToken } : undefined,
       noAuth: opts.noAuth,
+      runtimeLogger,
     });
 
     const shutdown = async (signal: NodeJS.Signals) => {
@@ -1112,6 +1155,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       https: loadTlsCredentialsFromEnv(),
       daemon: dashboardAuthToken ? { token: dashboardAuthToken } : undefined,
       noAuth: opts.noAuth,
+      runtimeLogger,
     });
   }
 
