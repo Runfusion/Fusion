@@ -61,9 +61,11 @@ interface ColumnProps {
   onOpenMission?: (missionId: string) => void;
   /** Timestamp (ms) when task data was last confirmed fresh from the server. Used for freshness-aware stuck detection. */
   lastFetchTimeMs?: number;
+  /** Lookup of workflow step IDs to display names, fetched once at board level. */
+  workflowStepNameLookup?: ReadonlyMap<string, string>;
 }
 
-function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onDeleteTask, onArchiveAllDone, collapsed, onToggleCollapse, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs, onOpenMission, lastFetchTimeMs }: ColumnProps) {
+function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onDeleteTask, onArchiveAllDone, collapsed, onToggleCollapse, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs, onOpenMission, lastFetchTimeMs, workflowStepNameLookup }: ColumnProps) {
   const [dragOver, setDragOver] = useState(false);
   const [visibleTaskCount, setVisibleTaskCount] = useState(VISIBLE_TASKS_INITIAL);
   const countFlashing = useFlashOnIncrease(tasks.length);
@@ -237,6 +239,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
                   taskStuckTimeoutMs={taskStuckTimeoutMs}
                   onOpenMission={onOpenMission}
                   lastFetchTimeMs={lastFetchTimeMs}
+                  workflowStepNameLookup={workflowStepNameLookup}
                 />
               ))
             )
@@ -261,6 +264,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
                   onOpenMission={onOpenMission}
                   onMoveTask={onMoveTask}
                   lastFetchTimeMs={lastFetchTimeMs}
+                  workflowStepNameLookup={workflowStepNameLookup}
                 />
               ))}
               {shouldPaginate && hiddenTaskCount > 0 && (

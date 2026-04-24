@@ -23,6 +23,8 @@ interface WorktreeGroupProps {
   onOpenMission?: (missionId: string) => void;
   /** Timestamp (ms) when task data was last confirmed fresh from the server. Used for freshness-aware stuck detection. */
   lastFetchTimeMs?: number;
+  /** Lookup of workflow step IDs to display names, fetched once at board level. */
+  workflowStepNameLookup?: ReadonlyMap<string, string>;
 }
 
 function WorktreeGroupComponent({
@@ -38,6 +40,7 @@ function WorktreeGroupComponent({
   taskStuckTimeoutMs,
   onOpenMission,
   lastFetchTimeMs,
+  workflowStepNameLookup,
 }: WorktreeGroupProps) {
   return (
     <div className="worktree-group">
@@ -48,7 +51,7 @@ function WorktreeGroupComponent({
         <span className="worktree-label">{label}</span>
       </div>
       {activeTasks.map((task) => (
-        <TaskCard key={task.id} task={task} projectId={projectId} onOpenDetail={onOpenDetail} addToast={addToast} globalPaused={globalPaused} onUpdateTask={onUpdateTask} onOpenDetailWithTab={onOpenDetailWithTab} taskStuckTimeoutMs={taskStuckTimeoutMs} onOpenMission={onOpenMission} lastFetchTimeMs={lastFetchTimeMs} />
+        <TaskCard key={task.id} task={task} projectId={projectId} onOpenDetail={onOpenDetail} addToast={addToast} globalPaused={globalPaused} onUpdateTask={onUpdateTask} onOpenDetailWithTab={onOpenDetailWithTab} taskStuckTimeoutMs={taskStuckTimeoutMs} onOpenMission={onOpenMission} lastFetchTimeMs={lastFetchTimeMs} workflowStepNameLookup={workflowStepNameLookup} />
       ))}
       {queuedTasks.map((task) => (
         <TaskCard
@@ -64,6 +67,7 @@ function WorktreeGroupComponent({
           taskStuckTimeoutMs={taskStuckTimeoutMs}
           onOpenMission={onOpenMission}
           lastFetchTimeMs={lastFetchTimeMs}
+          workflowStepNameLookup={workflowStepNameLookup}
         />
       ))}
     </div>

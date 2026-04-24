@@ -1,19 +1,25 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Board } from "../Board";
 import { COLUMNS } from "@fusion/core";
 
 import type { Task } from "@fusion/core";
 
+vi.mock("../../api", () => ({
+  fetchWorkflowSteps: vi.fn().mockResolvedValue([
+    { id: "WS-003", name: "Accessibility Audit", enabled: true },
+  ]),
+}));
+
 const columnRenderCounts: Record<string, number> = {};
 
 // Mock child components so we only test Board's own rendering
 vi.mock("../Column", () => ({
-  Column: React.memo(({ column, tasks, onToggleCollapse, availableModels, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive }: { column: string; tasks: Task[]; onToggleCollapse?: () => void; availableModels?: unknown; favoriteProviders?: string[]; favoriteModels?: string[]; onToggleFavorite?: (provider: string) => void; onToggleModelFavorite?: (modelId: string) => void; isSearchActive?: boolean }) => {
+  Column: React.memo(({ column, tasks, onToggleCollapse, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, workflowStepNameLookup }: { column: string; tasks: Task[]; onToggleCollapse?: () => void; favoriteProviders?: string[]; favoriteModels?: string[]; onToggleFavorite?: (provider: string) => void; onToggleModelFavorite?: (modelId: string) => void; isSearchActive?: boolean; workflowStepNameLookup?: ReadonlyMap<string, string> }) => {
     columnRenderCounts[column] = (columnRenderCounts[column] ?? 0) + 1;
     return (
-      <div data-testid={`column-${column}`} data-tasks={JSON.stringify(tasks)} data-favorite-providers={JSON.stringify(favoriteProviders ?? [])} data-favorite-models={JSON.stringify(favoriteModels ?? [])} data-has-toggle-favorite={onToggleFavorite ? "yes" : "no"} data-has-toggle-model-favorite={onToggleModelFavorite ? "yes" : "no"} data-is-search-active={isSearchActive ? "true" : "false"}>
+      <div data-testid={`column-${column}`} data-tasks={JSON.stringify(tasks)} data-favorite-providers={JSON.stringify(favoriteProviders ?? [])} data-favorite-models={JSON.stringify(favoriteModels ?? [])} data-has-toggle-favorite={onToggleFavorite ? "yes" : "no"} data-has-toggle-model-favorite={onToggleModelFavorite ? "yes" : "no"} data-is-search-active={isSearchActive ? "true" : "false"} data-workflow-lookup-size={String(workflowStepNameLookup?.size ?? 0)}>
         {onToggleCollapse && <button onClick={onToggleCollapse}>toggle-{column}</button>}
       </div>
     );
@@ -71,6 +77,17 @@ describe("Board", () => {
     for (const col of COLUMNS) {
       expect(screen.getByTestId(`column-${col}`)).toBeDefined();
     }
+  });
+
+  it("forwards board-level workflow name lookup to columns", async () => {
+    renderBoard();
+
+    await waitFor(() => {
+      for (const col of COLUMNS) {
+        const columnEl = screen.getByTestId(`column-${col}`);
+        expect(columnEl.getAttribute("data-workflow-lookup-size")).toBe("1");
+      }
+    });
   });
 
   it("renders all 6 columns as direct children of .board (CSS selector target)", () => {

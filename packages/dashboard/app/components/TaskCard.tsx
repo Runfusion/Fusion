@@ -107,6 +107,8 @@ interface TaskCardProps {
   onMoveTask?: (id: string, column: Column) => Promise<Task>;
   /** Timestamp (ms) when task data was last confirmed fresh from the server. Used for freshness-aware stuck detection. */
   lastFetchTimeMs?: number;
+  /** Lookup of workflow step IDs to display names, fetched once at board level. */
+  workflowStepNameLookup?: ReadonlyMap<string, string>;
 }
 
 function areTaskBadgeInfosEqual(
@@ -241,6 +243,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.onOpenDetailWithTab === next.onOpenDetailWithTab &&
     previous.onOpenMission === next.onOpenMission &&
     previous.onMoveTask === next.onMoveTask &&
+    previous.workflowStepNameLookup === next.workflowStepNameLookup &&
     previousTask.id === nextTask.id &&
     previousTask.title === nextTask.title &&
     previousTask.description === nextTask.description &&
@@ -292,6 +295,7 @@ function TaskCardComponent({
   onOpenMission,
   onMoveTask,
   lastFetchTimeMs,
+  workflowStepNameLookup,
 }: TaskCardProps) {
   const [dragging, setDragging] = useState(false);
   const [fileDragOver, setFileDragOver] = useState(false);
@@ -543,8 +547,8 @@ function TaskCardComponent({
   const hasGitHubBadge = Boolean(task.prInfo || task.issueInfo);
   const isAgentNameLoading = Boolean(task.assignedAgentId && agentName === null);
   const unifiedProgress = useMemo(
-    () => getUnifiedTaskProgress(task),
-    [task.steps, task.enabledWorkflowSteps, task.workflowStepResults],
+    () => getUnifiedTaskProgress(task, workflowStepNameLookup),
+    [task.steps, task.enabledWorkflowSteps, task.workflowStepResults, workflowStepNameLookup],
   );
 
   useEffect(() => {

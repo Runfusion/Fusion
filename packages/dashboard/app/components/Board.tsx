@@ -4,7 +4,7 @@ import { Column } from "./Column";
 import type { ToastType } from "../hooks/useToast";
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useBatchBadgeFetch } from "../hooks/useBatchBadgeFetch";
-import type { ModelInfo } from "../api";
+import { fetchWorkflowSteps, type ModelInfo } from "../api";
 
 interface BoardProps {
   tasks: Task[];
@@ -67,11 +67,22 @@ function areTaskArraysEqual(previous: Task[], next: Task[]): boolean {
   return previous.every((task, index) => task === next[index]);
 }
 
+const EMPTY_WORKFLOW_STEP_NAME_LOOKUP: ReadonlyMap<string, string> = new Map();
+
+function areWorkflowNameLookupsEqual(previous: ReadonlyMap<string, string>, next: ReadonlyMap<string, string>): boolean {
+  if (previous.size !== next.size) return false;
+  for (const [key, value] of previous) {
+    if (next.get(key) !== value) return false;
+  }
+  return true;
+}
+
 export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onDeleteTask, onArchiveAllDone, onLoadArchivedTasks, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, taskStuckTimeoutMs, onOpenMission, lastFetchTimeMs }: BoardProps) {
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const archivedLoadedRef = useRef(false);
   const { fetchBatch } = useBatchBadgeFetch(projectId);
   const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [workflowStepNameLookup, setWorkflowStepNameLookup] = useState<ReadonlyMap<string, string>>(EMPTY_WORKFLOW_STEP_NAME_LOOKUP);
   // Normalized search-active signal: trimmed and non-empty
   const isSearchActive = searchQuery.trim() !== "";
   const tasksByColumnCacheRef = useRef<Record<ColumnType, Task[]>>({
@@ -120,6 +131,28 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetai
     tasksByColumnCacheRef.current = stableGrouped;
     return stableGrouped;
   }, [tasks]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetchWorkflowSteps(projectId)
+      .then((steps) => {
+        if (cancelled) return;
+
+        const nextLookup = new Map(steps.map((step) => [step.id, step.name] as const));
+        setWorkflowStepNameLookup((previous) => (
+          areWorkflowNameLookupsEqual(previous, nextLookup) ? previous : nextLookup
+        ));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setWorkflowStepNameLookup((previous) => (previous.size === 0 ? previous : EMPTY_WORKFLOW_STEP_NAME_LOOKUP));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
 
   // Collect task IDs with GitHub badge info for batch fetching
   const taskIdsWithBadges = useMemo(() => {
@@ -186,6 +219,7 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetai
             taskStuckTimeoutMs={taskStuckTimeoutMs}
             onOpenMission={onOpenMission}
             lastFetchTimeMs={lastFetchTimeMs}
+            workflowStepNameLookup={workflowStepNameLookup}
             {...(col === "triage" ? { onQuickCreate, onNewTask, onPlanningMode, onSubtaskBreakdown } : {})}
             {...(col === "in-review" ? { autoMerge, onToggleAutoMerge } : {})}
             {...(col === "done" ? { onArchiveAllDone } : {})}

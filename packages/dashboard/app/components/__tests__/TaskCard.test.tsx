@@ -262,6 +262,39 @@ describe("TaskCard memoization", () => {
     expect(screen.getByText("1/1")).toBeDefined();
   });
 
+  it("re-renders workflow labels when workflowStepNameLookup prop changes", () => {
+    const task = createTask({
+      enabledWorkflowSteps: ["WS-003"],
+      workflowStepResults: [],
+      steps: [],
+    });
+    const onOpenDetail = vi.fn();
+    const addToast = vi.fn();
+
+    const { rerender } = render(
+      <TaskCard
+        task={task}
+        workflowStepNameLookup={new Map()}
+        onOpenDetail={onOpenDetail}
+        addToast={addToast}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /show steps/i }));
+    expect(screen.getByText("WS-003")).toBeDefined();
+
+    rerender(
+      <TaskCard
+        task={task}
+        workflowStepNameLookup={new Map([["WS-003", "Accessibility Audit"]])}
+        onOpenDetail={onOpenDetail}
+        addToast={addToast}
+      />,
+    );
+
+    expect(screen.getByText("Accessibility Audit")).toBeDefined();
+  });
+
   it("re-renders when blockedBy changes", () => {
     const onOpenDetail = vi.fn();
     const addToast = vi.fn();

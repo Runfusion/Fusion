@@ -9,13 +9,15 @@ import type { Task, Column as ColumnType } from "@fusion/core";
 const taskCardRenderSpy = vi.fn();
 
 vi.mock("../TaskCard", () => ({
-  TaskCard: React.memo(({ task }: { task: Task }) => {
+  TaskCard: React.memo(({ task, workflowStepNameLookup }: { task: Task; workflowStepNameLookup?: ReadonlyMap<string, string> }) => {
     taskCardRenderSpy(task.id);
-    return <div data-testid={`task-${task.id}`} />;
+    return <div data-testid={`task-${task.id}`} data-workflow-lookup-size={String(workflowStepNameLookup?.size ?? 0)} />;
   }),
 }));
 vi.mock("../WorktreeGroup", () => ({
-  WorktreeGroup: () => <div />,
+  WorktreeGroup: ({ workflowStepNameLookup }: { workflowStepNameLookup?: ReadonlyMap<string, string> }) => (
+    <div data-testid="worktree-group" data-workflow-lookup-size={String(workflowStepNameLookup?.size ?? 0)} />
+  ),
 }));
 vi.mock("../QuickEntryBox", () => ({
   QuickEntryBox: ({ favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, autoExpand }: { favoriteProviders?: string[]; favoriteModels?: string[]; onToggleFavorite?: (provider: string) => void; onToggleModelFavorite?: (modelId: string) => void; autoExpand?: boolean }) => (
@@ -118,6 +120,32 @@ describe("Column memoization", () => {
     rerender(<Column {...props} />);
 
     expect(taskCardRenderSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards workflowStepNameLookup to task cards", () => {
+    render(
+      <Column
+        {...defaultProps}
+        column="todo"
+        tasks={[{ ...makeTask("FN-001"), column: "todo" as ColumnType }]}
+        workflowStepNameLookup={new Map([["WS-003", "Accessibility Audit"]])}
+      />,
+    );
+
+    expect(screen.getByTestId("task-FN-001").getAttribute("data-workflow-lookup-size")).toBe("1");
+  });
+
+  it("forwards workflowStepNameLookup to in-progress worktree groups", () => {
+    render(
+      <Column
+        {...defaultProps}
+        column="in-progress"
+        tasks={[{ ...makeTask("FN-001"), column: "in-progress" as ColumnType, worktree: "wt-1" }]}
+        workflowStepNameLookup={new Map([["WS-003", "Accessibility Audit"]])}
+      />,
+    );
+
+    expect(screen.getByTestId("worktree-group").getAttribute("data-workflow-lookup-size")).toBe("1");
   });
 });
 

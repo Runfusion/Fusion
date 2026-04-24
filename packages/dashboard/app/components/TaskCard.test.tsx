@@ -150,6 +150,7 @@ describe("TaskCard", () => {
             },
           ],
         })}
+        workflowStepNameLookup={new Map([["WS-003", "Accessibility Audit"]])}
         onOpenDetail={noop}
         addToast={noop}
       />,
@@ -161,7 +162,7 @@ describe("TaskCard", () => {
       "Step 1",
       "Browser Verification",
       "Frontend UX Design",
-      "WS-003",
+      "Accessibility Audit",
     ]);
 
     const dots = container.querySelectorAll(".card-step-dot");
@@ -175,6 +176,23 @@ describe("TaskCard", () => {
       "Workflow · Pre-merge",
       "Workflow · Pre-merge",
     ]);
+  });
+
+  it("falls back to raw workflow step ID when lookup is unavailable", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          enabledWorkflowSteps: ["WS-003"],
+          workflowStepResults: [],
+        })}
+        workflowStepNameLookup={new Map()}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const stepNames = Array.from(container.querySelectorAll(".card-step-name")).map((el) => el.textContent);
+    expect(stepNames).toEqual(["WS-003"]);
   });
 
   it("shows drop indicator on file dragover and removes on dragleave", () => {
