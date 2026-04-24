@@ -498,6 +498,7 @@ export function ModelOnboardingModal({
   const [apiKeyErrors, setApiKeyErrors] = useState<Record<string, string>>({});
   const [apiKeySuccess, setApiKeySuccess] = useState<Record<string, string | null>>({});
   const apiKeySuccessTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const onboardingContentRef = useRef<HTMLDivElement | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [loginOutcomes, setLoginOutcomes] = useState<Record<string, LoginOutcome>>({});
   const [isGithubSkipped, setIsGithubSkipped] = useState<boolean>(() => {
@@ -982,6 +983,30 @@ export function ModelOnboardingModal({
     });
   }, []);
 
+  const scrollOnboardingContentToTop = useCallback(() => {
+    const content = onboardingContentRef.current;
+    if (!content) {
+      return;
+    }
+
+    const prefersReducedMotion =
+      typeof window !== "undefined"
+      && typeof window.matchMedia === "function"
+      && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    try {
+      if (typeof content.scrollTo === "function") {
+        content.scrollTo({ top: 0, behavior: prefersReducedMotion ? "auto" : "smooth" });
+        return;
+      }
+    } catch {
+      // Fall through to direct scrollTop assignment for environments
+      // without ScrollToOptions support.
+    }
+
+    content.scrollTop = 0;
+  }, []);
+
   // API key save handler
   const handleSaveApiKey = useCallback(
     async (providerId: string, keyValue?: string) => {
@@ -1019,6 +1044,7 @@ export function ModelOnboardingModal({
       try {
         await saveApiKey(providerId, key);
         await loadAuthStatus();
+        scrollOnboardingContentToTop();
 
         setApiKeyInputs((prev) => {
           const next = { ...prev };
@@ -1077,7 +1103,7 @@ export function ModelOnboardingModal({
         setAuthActionInProgress(null);
       }
     },
-    [apiKeyInputs, addToast, loadAuthStatus],
+    [apiKeyInputs, addToast, loadAuthStatus, scrollOnboardingContentToTop],
   );
 
   // API key clear handler
@@ -1507,7 +1533,7 @@ export function ModelOnboardingModal({
         </div>
 
         {/* Content */}
-        <div className="model-onboarding-content">
+        <div className="model-onboarding-content" ref={onboardingContentRef}>
           {step === "ai-setup" && (
             <div className="model-onboarding-ai-setup">
               <p className="model-onboarding-description">

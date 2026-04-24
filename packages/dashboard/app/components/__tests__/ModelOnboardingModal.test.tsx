@@ -512,6 +512,81 @@ describe("ModelOnboardingModal", () => {
       });
     });
 
+    it("scrolls onboarding content to top after successful API key save", async () => {
+      mockFetchAuthStatus
+        .mockResolvedValueOnce({
+          providers: [
+            { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+            { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
+          ],
+        })
+        .mockResolvedValueOnce({
+          providers: [
+            { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+            { id: "openai", name: "OpenAI", authenticated: true, type: "api_key" },
+          ],
+        });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("onboarding-apikey-input-openai")).toBeTruthy();
+      });
+
+      const content = document.querySelector(".model-onboarding-content") as HTMLDivElement;
+      expect(content).toBeTruthy();
+      const scrollToMock = vi.fn();
+      Object.defineProperty(content, "scrollTo", {
+        value: scrollToMock,
+        writable: true,
+      });
+      content.scrollTop = 240;
+
+      fireEvent.change(screen.getByTestId("onboarding-apikey-input-openai"), {
+        target: { value: "sk-scroll-success" },
+      });
+      fireEvent.click(screen.getByTestId("onboarding-apikey-save-openai"));
+
+      await waitFor(() => {
+        expect(mockSaveApiKey).toHaveBeenCalledWith("openai", "sk-scroll-success");
+        expect(scrollToMock).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("✓ API key saved")).toBeTruthy();
+      });
+    });
+
+    it("does not scroll onboarding content to top when API key save fails", async () => {
+      mockSaveApiKey.mockRejectedValueOnce(new Error("save failed"));
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("onboarding-apikey-input-openai")).toBeTruthy();
+      });
+
+      const content = document.querySelector(".model-onboarding-content") as HTMLDivElement;
+      expect(content).toBeTruthy();
+      const scrollToMock = vi.fn();
+      Object.defineProperty(content, "scrollTo", {
+        value: scrollToMock,
+        writable: true,
+      });
+      content.scrollTop = 180;
+
+      fireEvent.change(screen.getByTestId("onboarding-apikey-input-openai"), {
+        target: { value: "sk-scroll-fail" },
+      });
+      fireEvent.click(screen.getByTestId("onboarding-apikey-save-openai"));
+
+      await waitFor(() => {
+        expect(screen.getByText("save failed")).toBeTruthy();
+      });
+
+      expect(scrollToMock).not.toHaveBeenCalled();
+      expect(content.scrollTop).toBe(180);
+    });
+
     it("submits API key when Enter is pressed", async () => {
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
