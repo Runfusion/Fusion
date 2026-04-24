@@ -1,12 +1,16 @@
 # OpenClaw Runtime Plugin
 
-> **Status:** Experimental placeholder - runtime execution deferred
-
-Provides an OpenClaw runtime plugin for Fusion. This package enables runtime registration and discovery so agents can be configured with `runtimeConfig.runtimeHint: "openclaw"`.
+Provides an executable OpenClaw runtime plugin for Fusion. This package enables runtime registration, discovery, and session execution so agents configured with `runtimeConfig.runtimeHint: "openclaw"` can run through the standard runtime adapter contract.
 
 ## Overview
 
-This plugin mirrors the Hermes runtime plugin pattern: runtime registration succeeds and can be discovered by Fusion's runtime resolver, while execution behavior is intentionally deferred.
+This plugin follows the runtime adapter pattern used by other executable plugin runtimes:
+
+- Registers OpenClaw runtime metadata for resolver discovery
+- Creates executable runtime sessions via `createFnAgent`
+- Delegates prompt execution through `promptWithFallback`
+- Exposes model descriptions through `describeModel`
+- Supports best-effort session disposal via `dispose()`
 
 ## Installation
 
@@ -22,15 +26,6 @@ cp -r fusion-plugin-openclaw-runtime ~/.fusion/plugins/
 fn plugin add ./plugins/fusion-plugin-openclaw-runtime
 ```
 
-## Current Status
-
-| Component | Status |
-|-----------|--------|
-| Plugin Scaffold | ✅ Complete |
-| Runtime Registration | ✅ Complete |
-| Runtime Discovery | ✅ Complete |
-| Runtime Execution | ⏳ Deferred placeholder |
-
 ## Runtime Metadata
 
 - **Plugin ID:** `fusion-plugin-openclaw-runtime`
@@ -38,7 +33,7 @@ fn plugin add ./plugins/fusion-plugin-openclaw-runtime
 - **Runtime ID:** `openclaw`
 - **Runtime name:** `OpenClaw Runtime`
 - **Version:** `0.1.0`
-- **Description:** Experimental OpenClaw runtime integration for Fusion tasks (execution deferred)
+- **Description:** OpenClaw-backed AI session using the user's configured pi provider and model
 
 ## Agent Configuration
 
@@ -53,16 +48,6 @@ Configure an agent to target OpenClaw via `runtimeConfig.runtimeHint`:
   }
 }
 ```
-
-## Placeholder Runtime Behavior
-
-The runtime factory currently returns a deferred placeholder object:
-
-- Runtime registration and lookup are supported
-- Runtime factory invocation succeeds
-- `execute()` intentionally throws a descriptive not-implemented/deferred error
-
-This prevents silent misbehavior while making runtime configuration and compatibility tests possible.
 
 ## Local Development
 

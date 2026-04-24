@@ -1,35 +1,28 @@
 /**
  * OpenClaw Runtime Plugin
  *
- * Registers an experimental OpenClaw runtime with Fusion's plugin runtime
- * discovery pipeline. Runtime execution behavior is intentionally deferred.
+ * Provides an executable OpenClaw runtime adapter for Fusion's plugin runtime
+ * discovery and session execution pipeline.
  */
 import { definePlugin } from "@fusion/plugin-sdk";
+import { OpenClawRuntimeAdapter } from "./runtime-adapter.js";
 const OPENCLAW_RUNTIME_ID = "openclaw";
 const OPENCLAW_RUNTIME_VERSION = "0.1.0";
 const openclawRuntimeMetadata = {
     runtimeId: OPENCLAW_RUNTIME_ID,
     name: "OpenClaw Runtime",
-    description: "Experimental OpenClaw runtime integration for Fusion tasks (execution deferred)",
+    description: "OpenClaw-backed AI session using the user's configured pi provider and model",
     version: OPENCLAW_RUNTIME_VERSION,
 };
-const openclawRuntimeFactory = (_ctx) => {
-    return {
-        runtimeId: OPENCLAW_RUNTIME_ID,
-        version: OPENCLAW_RUNTIME_VERSION,
-        status: "deferred",
-        message: "OpenClaw runtime execution is currently deferred. This runtime is registered for discovery and configuration only.",
-        execute: async () => {
-            throw new Error("OpenClaw runtime is not implemented yet. Runtime discovery and configuration are supported, but execution is deferred.");
-        },
-    };
+const openclawRuntimeFactory = async () => {
+    return new OpenClawRuntimeAdapter();
 };
 const plugin = definePlugin({
     manifest: {
         id: "fusion-plugin-openclaw-runtime",
         name: "OpenClaw Runtime Plugin",
         version: "0.1.0",
-        description: "OpenClaw runtime plugin for Fusion with experimental deferred execution",
+        description: "Provides OpenClaw runtime for Fusion AI agents",
         author: "Fusion Team",
         homepage: "https://github.com/gsxdsm/fusion",
         runtime: openclawRuntimeMetadata,
@@ -37,11 +30,10 @@ const plugin = definePlugin({
     state: "installed",
     hooks: {
         onLoad: (ctx) => {
-            ctx.logger.info("OpenClaw Runtime Plugin loaded (experimental placeholder runtime)");
+            ctx.logger.info("OpenClaw Runtime Plugin loaded");
             ctx.emitEvent("openclaw-runtime:loaded", {
                 runtimeId: OPENCLAW_RUNTIME_ID,
                 version: OPENCLAW_RUNTIME_VERSION,
-                status: "deferred",
             });
         },
         onUnload: () => {

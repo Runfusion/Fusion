@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 export type DevServerStatus = "starting" | "running" | "stopped" | "failed";
@@ -149,18 +149,50 @@ export class DevServerStore {
 
   async save(): Promise<void> {
     const dir = dirname(this.filePath);
-    try {
-      await access(dir);
-    } catch {
-      await mkdir(dir, { recursive: true });
-    }
-
     const payload: DevServerStoreFile = {
       state: this.state,
       config: this.config,
     };
+    const serializedPayload = JSON.stringify(payload, null, 2);
+    const isMissingPathError = (error: unknown): boolean => {
+      return (error as NodeJS.ErrnoException).code === "ENOENT";
+    };
 
-    await writeFile(this.filePath, JSON.stringify(payload, null, 2), "utf-8");
+    try {
+      await mkdir(dir, { recursive: true });
+    } catch (error) {
+      if (isMissingPathError(error)) {
+        return;
+      }
+      throw error;
+    }
+
+    try {
+      await writeFile(this.filePath, serializedPayload, "utf-8");
+    } catch (error) {
+      if (!isMissingPathError(error)) {
+        throw error;
+      }
+
+      // Directory may have been removed between mkdir and write (e.g. temp-dir cleanup race).
+      try {
+        await mkdir(dir, { recursive: true });
+      } catch (retryMkdirError) {
+        if (isMissingPathError(retryMkdirError)) {
+          return;
+        }
+        throw retryMkdirError;
+      }
+
+      try {
+        await writeFile(this.filePath, serializedPayload, "utf-8");
+      } catch (retryWriteError) {
+        if (isMissingPathError(retryWriteError)) {
+          return;
+        }
+        throw retryWriteError;
+      }
+    }
   }
 
   getState(): DevServerState {

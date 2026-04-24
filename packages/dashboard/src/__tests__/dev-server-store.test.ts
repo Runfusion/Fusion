@@ -3,7 +3,7 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEV_SERVER_CONFIG_DEFAULTS,
   DEV_SERVER_DEFAULT_STATE,
@@ -26,6 +26,7 @@ describe("DevServerStore", () => {
   const tempDirs: string[] = [];
 
   afterEach(() => {
+    vi.restoreAllMocks();
     for (const dir of tempDirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -313,6 +314,21 @@ describe("DevServerStore", () => {
 
     const persisted = readPersistedStoreFile(projectDir) as { state: { logHistory: string[] } };
     expect(persisted.state.logHistory).toEqual([]);
+  });
+
+  it("treats ENOENT as non-fatal when project directory is removed during save", async () => {
+    const projectDir = createTempProject();
+    tempDirs.push(projectDir);
+
+    const store = new DevServerStore(projectDir);
+    await store.load();
+
+    rmSync(projectDir, { recursive: true, force: true });
+
+    await expect(store.updateState({ id: "gone", status: "stopped" })).resolves.toMatchObject({
+      id: "gone",
+      status: "stopped",
+    });
   });
 
   it("singleton cache returns same instance for same path", async () => {

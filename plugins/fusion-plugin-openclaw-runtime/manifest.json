@@ -2,13 +2,13 @@
   "id": "fusion-plugin-openclaw-runtime",
   "name": "OpenClaw Runtime Plugin",
   "version": "0.1.0",
-  "description": "OpenClaw runtime plugin for Fusion with experimental deferred execution",
+  "description": "Provides OpenClaw runtime for Fusion AI agents",
   "author": "Fusion Team",
   "homepage": "https://github.com/gsxdsm/fusion",
   "runtime": {
     "runtimeId": "openclaw",
     "name": "OpenClaw Runtime",
-    "description": "Experimental OpenClaw runtime integration for Fusion tasks (execution deferred)",
+    "description": "OpenClaw-backed AI session using the user's configured pi provider and model",
     "version": "0.1.0"
   }
 }

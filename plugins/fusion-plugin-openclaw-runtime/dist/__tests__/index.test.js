@@ -1,5 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+const { mockCreateFnAgent, mockPromptWithFallback, mockDescribeModel } = vi.hoisted(() => ({
+    mockCreateFnAgent: vi.fn(),
+    mockPromptWithFallback: vi.fn(),
+    mockDescribeModel: vi.fn().mockReturnValue("unknown model"),
+}));
+vi.mock("../pi-module.js", () => ({
+    createFnAgent: mockCreateFnAgent,
+    promptWithFallback: mockPromptWithFallback,
+    describeModel: mockDescribeModel,
+}));
 import plugin, { openclawRuntimeMetadata, openclawRuntimeFactory, OPENCLAW_RUNTIME_ID } from "../index.js";
+import { OpenClawRuntimeAdapter } from "../runtime-adapter.js";
 function createMockContext(overrides = {}) {
     return {
         pluginId: "fusion-plugin-openclaw-runtime",
@@ -39,7 +50,7 @@ describe("openclaw-runtime plugin", () => {
             expect(plugin.runtime).toBeDefined();
             expect(plugin.runtime?.metadata.runtimeId).toBe(OPENCLAW_RUNTIME_ID);
             expect(plugin.runtime?.metadata.name).toBe("OpenClaw Runtime");
-            expect(plugin.runtime?.metadata.description).toContain("execution deferred");
+            expect(plugin.runtime?.metadata.description).toContain("OpenClaw-backed AI session");
             expect(plugin.runtime?.metadata.version).toBe("0.1.0");
         });
         it("should have consistent runtime metadata between export and manifest", () => {
@@ -51,41 +62,32 @@ describe("openclaw-runtime plugin", () => {
         it("onLoad should log startup message and emit loaded event", async () => {
             const ctx = createMockContext();
             await plugin.hooks.onLoad?.(ctx);
-            expect(ctx.logger.info).toHaveBeenCalledWith(expect.stringContaining("OpenClaw Runtime Plugin loaded"));
+            expect(ctx.logger.info).toHaveBeenCalledWith("OpenClaw Runtime Plugin loaded");
             expect(ctx.emitEvent).toHaveBeenCalledWith("openclaw-runtime:loaded", {
                 runtimeId: OPENCLAW_RUNTIME_ID,
                 version: "0.1.0",
-                status: "deferred",
             });
         });
         it("onUnload should not throw", () => {
             expect(() => plugin.hooks.onUnload?.()).not.toThrow();
         });
     });
-    describe("deferred runtime behavior", () => {
+    describe("runtime factory behavior", () => {
         it("should export runtime constants", () => {
             expect(OPENCLAW_RUNTIME_ID).toBe("openclaw");
             expect(openclawRuntimeMetadata.runtimeId).toBe("openclaw");
             expect(typeof openclawRuntimeFactory).toBe("function");
         });
-        it("runtime factory should return placeholder runtime shape", () => {
-            const runtime = openclawRuntimeFactory(createMockContext());
-            expect(runtime).toMatchObject({
-                runtimeId: "openclaw",
-                version: "0.1.0",
-                status: "deferred",
-            });
-            expect(runtime).toHaveProperty("message");
-            expect(String(runtime.message)).toContain("discovery and configuration only");
-            expect(String(runtime.message)).not.toContain("FN-");
+        it("runtime factory should return executable runtime adapter", async () => {
+            const runtime = (await openclawRuntimeFactory(createMockContext()));
+            expect(runtime).toBeInstanceOf(OpenClawRuntimeAdapter);
+            expect(runtime.id).toBe("openclaw");
+            expect(runtime.name).toBe("OpenClaw Runtime");
+            expect(runtime).not.toHaveProperty("status");
+            expect(runtime).not.toHaveProperty("execute");
         });
-        it("runtime execute should reject with deferred/not-implemented error", async () => {
-            const runtime = openclawRuntimeFactory(createMockContext());
-            await expect(runtime.execute()).rejects.toThrow("not implemented");
-            await expect(runtime.execute()).rejects.toThrow("deferred");
-        });
-        it("factory creation should not throw", () => {
-            expect(() => openclawRuntimeFactory(createMockContext())).not.toThrow();
+        it("factory creation should not throw", async () => {
+            await expect(openclawRuntimeFactory(createMockContext())).resolves.toBeInstanceOf(OpenClawRuntimeAdapter);
         });
     });
 });

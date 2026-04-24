@@ -2,7 +2,7 @@
   "name": "@fusion-plugin-examples/openclaw-runtime",
   "version": "0.1.0",
   "type": "module",
-  "description": "OpenClaw runtime plugin for Fusion - experimental placeholder runtime registration",
+  "description": "Provides OpenClaw runtime for Fusion AI agents",
   "keywords": [
     "fusion-plugin",
     "openclaw",

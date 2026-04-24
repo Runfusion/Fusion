@@ -2414,6 +2414,16 @@ describe("SettingsModal", () => {
   });
 
   it("re-opening modal shows previously saved notification settings", async () => {
+    const openNotificationsSection = () => {
+      const notificationsButton = screen.queryByRole("button", { name: /Notifications/ });
+      if (notificationsButton) {
+        fireEvent.click(notificationsButton);
+      } else {
+        // Mobile layout uses the section picker dropdown instead of sidebar buttons.
+        fireEvent.change(screen.getByLabelText("Settings Section"), { target: { value: "notifications" } });
+      }
+    };
+
     // First render with ntfy enabled
     (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ...defaultSettings,
@@ -2424,7 +2434,7 @@ describe("SettingsModal", () => {
     const { unmount } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Notifications"));
+    openNotificationsSection();
     const checkbox = screen.getByLabelText("Enable ntfy.sh notifications") as HTMLInputElement;
     expect(checkbox.checked).toBe(true);
     const input = screen.getByLabelText("ntfy Topic") as HTMLInputElement;
@@ -2443,7 +2453,7 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Notifications"));
+    openNotificationsSection();
     const newCheckbox = screen.getByLabelText("Enable ntfy.sh notifications") as HTMLInputElement;
     expect(newCheckbox.checked).toBe(true);
     const newInput = screen.getByLabelText("ntfy Topic") as HTMLInputElement;

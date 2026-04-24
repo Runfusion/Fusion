@@ -1,8 +1,8 @@
 /**
  * OpenClaw Runtime Plugin
  *
- * Registers an experimental OpenClaw runtime with Fusion's plugin runtime
- * discovery pipeline. Runtime execution behavior is intentionally deferred.
+ * Provides an executable OpenClaw runtime adapter for Fusion's plugin runtime
+ * discovery and session execution pipeline.
  */
 import type { FusionPlugin, PluginRuntimeFactory, PluginRuntimeManifestMetadata } from "@fusion/plugin-sdk";
 declare const OPENCLAW_RUNTIME_ID = "openclaw";
