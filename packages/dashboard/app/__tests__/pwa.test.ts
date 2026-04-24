@@ -67,6 +67,32 @@ describe("PWA configuration", () => {
     expect(swSource).toMatch(/fusion-cache-v\d+/);
   });
 
+  it("service worker bypasses SSE requests instead of trying to cache them", () => {
+    const swSource = readFileSync(resolve(__dirname, "../public/sw.js"), "utf8");
+
+    expect(swSource).toContain('text/event-stream');
+    expect(swSource).toContain('url.pathname === "/api/events"');
+    expect(swSource).toContain('url.pathname.startsWith("/api/events/")');
+    expect(swSource).toContain("if (isEventStreamRequest) {");
+    expect(swSource).toContain("return;");
+  });
+
+  it("service worker revalidates navigation requests so index.html cannot stay stale", () => {
+    const swSource = readFileSync(resolve(__dirname, "../public/sw.js"), "utf8");
+
+    expect(swSource).toContain('request.mode === "navigate"');
+    expect(swSource).toContain('request.destination === "document"');
+    expect(swSource).toContain('url.pathname === "/index.html"');
+    expect(swSource).toContain('[sw] navigation cache put failed');
+  });
+
+  it("service worker activates updated code immediately", () => {
+    const swSource = readFileSync(resolve(__dirname, "../public/sw.js"), "utf8");
+
+    expect(swSource).toContain("await self.skipWaiting()");
+    expect(swSource).toContain("await self.clients.claim()");
+  });
+
   describe("logo assets", () => {
     it("logo.svg uses ring + swoosh geometry matching Header.tsx brand mark", () => {
       const logoSvg = readFileSync(resolve(__dirname, "../public/logo.svg"), "utf8");

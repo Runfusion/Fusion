@@ -15,6 +15,85 @@ import type { AiSessionStore } from "./ai-session-store.js";
 
 let activeConnections = 0;
 let highWaterMark = 0;
+let nextConnectionId = 1;
+
+const SSE_CLIENT_ID_MAX_LENGTH = 128;
+const SSE_CLIENT_STALE_MS = 5_000;
+
+type SSECloseReason =
+  | "client-disconnect"
+  | "close"
+  | "error"
+  | "request-aborted"
+  | "send-failed"
+  | "stale"
+  | "superseded";
+
+interface ManagedSSEConnection {
+  id: number;
+  clientId?: string;
+  projectId?: string;
+  close: (reason: SSECloseReason) => void;
+  markAlive?: () => void;
+}
+
+const managedConnections = new Map<number, ManagedSSEConnection>();
+
+function normalizeSSEClientId(value: unknown): string | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > SSE_CLIENT_ID_MAX_LENGTH) return undefined;
+  if (!/^[a-zA-Z0-9._:-]+$/.test(trimmed)) return undefined;
+  return trimmed;
+}
+
+function registerManagedConnection(connection: ManagedSSEConnection): void {
+  managedConnections.set(connection.id, connection);
+
+  if (!connection.clientId) return;
+
+  const superseded = Array.from(managedConnections.values()).filter((candidate) =>
+    candidate.id !== connection.id &&
+    candidate.clientId === connection.clientId &&
+    candidate.projectId === connection.projectId
+  );
+  for (const existing of superseded) {
+    existing.close("superseded");
+  }
+}
+
+function unregisterManagedConnection(connectionId: number): void {
+  managedConnections.delete(connectionId);
+}
+
+export function disconnectSSEClient(clientId: unknown, projectId?: string): number {
+  const normalizedClientId = normalizeSSEClientId(clientId);
+  if (!normalizedClientId) return 0;
+
+  const matches = Array.from(managedConnections.values()).filter((connection) =>
+    connection.clientId === normalizedClientId &&
+    connection.projectId === projectId
+  );
+  for (const connection of matches) {
+    connection.close("client-disconnect");
+  }
+  return matches.length;
+}
+
+export function markSSEClientAlive(clientId: unknown, projectId?: string): number {
+  const normalizedClientId = normalizeSSEClientId(clientId);
+  if (!normalizedClientId) return 0;
+
+  const matches = Array.from(managedConnections.values()).filter((connection) =>
+    connection.clientId === normalizedClientId &&
+    connection.projectId === projectId
+  );
+  for (const connection of matches) {
+    connection.markAlive?.();
+  }
+  return matches.length;
+}
 
 /** Returns the current number of active SSE connections. */
 export function getActiveSSEConnections(): number {
@@ -197,9 +276,16 @@ export function createSSE(
   const { projectId } = options ?? {};
 
   return (_req: Request, res: Response) => {
+    const connectionId = nextConnectionId++;
+    const clientId = normalizeSSEClientId(_req.query?.clientId);
+    const socket = res.socket ?? _req.socket;
+
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
+    // This header discourages reuse after the stream ends, but Chrome may
+    // still keep an EventSource transport alive during page unload. Cleanup is
+    // therefore driven by explicit client ids and server-side reaping below.
+    res.setHeader("Connection", "close");
     res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders();
 
@@ -207,15 +293,15 @@ export function createSSE(
     // Track high water mark and log when new highs are reached
     if (activeConnections > highWaterMark) {
       highWaterMark = activeConnections;
-      console.log(`[sse] active connections: ${activeConnections} (high water mark: ${highWaterMark})`);
     }
+    console.log(`[sse] + connection (active=${activeConnections}, hwm=${highWaterMark})`);
 
     // Send initial heartbeat
     res.write(": connected\n\n");
 
     /** Write an SSE message; clean up on failure. */
     const send = (data: string) => {
-      if (!safeWrite(res, data)) cleanup();
+      if (!safeWrite(res, data)) cleanup("send-failed");
     };
 
     // --- Event handler definitions ---
@@ -412,10 +498,24 @@ export function createSSE(
     // --- Cleanup (all handlers are defined above, safe to reference) ---
 
     let cleaned = false;
-    const cleanup = () => {
+    let clientStaleTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function resetClientStaleTimer(): void {
+      if (!clientId) return;
+      if (clientStaleTimer) clearTimeout(clientStaleTimer);
+      clientStaleTimer = setTimeout(() => {
+        closeConnection("stale");
+      }, SSE_CLIENT_STALE_MS);
+      clientStaleTimer.unref?.();
+    }
+
+    function cleanup(_reason: SSECloseReason = "close") {
       if (cleaned) return;
       cleaned = true;
+      unregisterManagedConnection(connectionId);
       activeConnections--;
+      console.log(`[sse] - connection (active=${activeConnections})`);
+      if (clientStaleTimer) clearTimeout(clientStaleTimer);
       clearInterval(heartbeat);
       store.off("task:created", onCreated);
       store.off("task:moved", onMoved);
@@ -479,7 +579,25 @@ export function createSSE(
         chatStore.off("chat:message:added", onChatMessageAdded);
         chatStore.off("chat:message:deleted", onChatMessageDeleted);
       }
-    };
+    }
+
+    function closeConnection(reason: SSECloseReason): void {
+      cleanup(reason);
+      try {
+        if (!res.writableEnded && !res.destroyed) {
+          res.end();
+        }
+      } catch {
+        // The socket may already be gone.
+      }
+      try {
+        if (socket && !socket.destroyed) {
+          socket.destroy();
+        }
+      } catch {
+        // Ignore cleanup races with Node's own close path.
+      }
+    }
 
     // --- Subscribe ---
 
@@ -556,19 +674,42 @@ export function createSSE(
     // Sent as a named event so the client's EventSource can detect it
     // (SSE comments starting with ":" are silently consumed and never
     // fire event listeners in the browser).
+    registerManagedConnection({
+      id: connectionId,
+      clientId,
+      projectId,
+      close: closeConnection,
+      markAlive: resetClientStaleTimer,
+    });
+    resetClientStaleTimer();
+
     const heartbeat = setInterval(() => {
       send("event: heartbeat\ndata: \n\n");
     }, 30_000);
 
     // Register cleanup on request close (primary path for HTTP/1.1)
-    _req.on("close", cleanup);
+    _req.on("close", () => cleanup("close"));
+    _req.on("aborted", () => closeConnection("request-aborted"));
 
     // Also register on response close as a safety net for edge cases
     // (e.g., proxy timeouts, HTTP/2 stream resets). This ensures cleanup
     // fires even if the request object doesn't emit "close".
     // Guard with typeof check for test mocks that may not have on method.
     if (typeof res.on === "function") {
-      res.on("close", cleanup);
+      res.on("close", () => cleanup("close"));
+    }
+
+    // Socket events still handle normal disconnects and low-level errors. The
+    // client-id registry above covers browser unload cases where Chrome keeps
+    // the HTTP/1.1 transport alive and no close event arrives promptly.
+    if (socket) {
+      if (typeof socket.setKeepAlive === "function") {
+        socket.setKeepAlive(true, 10_000);
+      }
+      if (typeof socket.on === "function") {
+        socket.on("close", () => cleanup("close"));
+        socket.on("error", () => closeConnection("error"));
+      }
     }
   };
 }

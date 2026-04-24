@@ -33,6 +33,29 @@ const DEFAULT_PROBE_DELAY_MS = 10_000;
 const DEFAULT_PROBE_HOST = "127.0.0.1";
 const DEFAULT_PROBE_TIMEOUT_MS = 1_000;
 
+function killManagedProcess(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (typeof child.pid !== "number") {
+    return;
+  }
+
+  if (process.platform !== "win32") {
+    try {
+      // Detached POSIX children become their own process group leaders, so
+      // signaling the negative PID tears down the shell wrapper and its child.
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // Fall back to the direct child PID when the group no longer exists.
+    }
+  }
+
+  try {
+    process.kill(child.pid, signal);
+  } catch {
+    // Process may already have exited.
+  }
+}
+
 /**
  * Reject dev-server commands whose strings contain command-substitution
  * syntax. Dev-server commands are user-configured project settings (e.g.
@@ -111,6 +134,7 @@ export class DevServerProcessManager extends EventEmitter {
 
     const child = spawn(safeCommand, [], {
       cwd: safeCwd,
+      detached: process.platform !== "win32",
       shell: true,
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -177,20 +201,12 @@ export class DevServerProcessManager extends EventEmitter {
     const pid = child.pid;
 
     if (typeof pid === "number") {
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {
-        // Process may already have exited.
-      }
+      killManagedProcess(child, "SIGTERM");
     }
 
     const killTimer = setTimeout(() => {
-      if (!child.killed && typeof child.pid === "number") {
-        try {
-          process.kill(child.pid, "SIGKILL");
-        } catch {
-          // Process may already be gone.
-        }
+      if (this.childProcess === child && this.isRunning()) {
+        killManagedProcess(child, "SIGKILL");
       }
     }, this.stopTimeoutMs);
 
@@ -217,7 +233,9 @@ export class DevServerProcessManager extends EventEmitter {
   }
 
   isRunning(): boolean {
-    return this.childProcess !== null && !this.childProcess.killed;
+    return this.childProcess !== null
+      && this.childProcess.exitCode === null
+      && this.childProcess.signalCode === null;
   }
 
   hasPendingProbeTimer(): boolean {
@@ -228,11 +246,7 @@ export class DevServerProcessManager extends EventEmitter {
     this.clearTimers();
 
     if (this.childProcess && typeof this.childProcess.pid === "number") {
-      try {
-        process.kill(this.childProcess.pid, "SIGTERM");
-      } catch {
-        // Process is already gone.
-      }
+      killManagedProcess(this.childProcess, "SIGTERM");
       this.childProcess.removeAllListeners();
       this.childProcess.stdout?.removeAllListeners();
       this.childProcess.stderr?.removeAllListeners();

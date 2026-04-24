@@ -12,6 +12,8 @@ import { AUTOMATION_PRESETS, MAX_RUN_HISTORY } from "./automation.js";
 import type { ScheduleType } from "./automation.js";
 import { Database, fromJson } from "./db.js";
 
+const CRON_TIMEZONE = "UTC";
+
 export interface AutomationStoreEvents {
   "schedule:created": [schedule: ScheduledTask];
   "schedule:updated": [schedule: ScheduledTask];
@@ -170,6 +172,7 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
   computeNextRun(cronExpression: string, fromDate?: Date): string {
     const interval = CronExpressionParser.parse(cronExpression, {
       currentDate: fromDate ?? new Date(),
+      tz: CRON_TIMEZONE,
     });
     const next = interval.next();
     return next.toISOString() ?? new Date(next.getTime()).toISOString();

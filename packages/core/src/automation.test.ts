@@ -41,6 +41,7 @@ const allScheduleTypesRecord: Record<ScheduleType, true> = {
 };
 
 const allScheduleTypes = Object.keys(allScheduleTypesRecord) as ScheduleType[];
+const CRON_TIMEZONE = "UTC";
 
 function cronDateToDate(value: { toISOString(): string | null; getTime(): number }): Date {
   const iso = value.toISOString();
@@ -50,6 +51,7 @@ function cronDateToDate(value: { toISOString(): string | null; getTime(): number
 function parseNextRun(cronExpression: string, currentDate?: Date): Date {
   const interval = CronExpressionParser.parse(cronExpression, {
     currentDate: currentDate ?? new Date(),
+    tz: CRON_TIMEZONE,
   });
   return cronDateToDate(interval.next());
 }
@@ -287,6 +289,7 @@ describe("Preset cron expression edge cases", () => {
   it("ensures weekdays preset never schedules Saturday or Sunday in the next 7 runs", () => {
     const interval = CronExpressionParser.parse(AUTOMATION_PRESETS.weekdays, {
       currentDate: new Date("2026-04-06T00:00:00.000Z"), // Monday
+      tz: CRON_TIMEZONE,
     });
 
     const days = Array.from({ length: 7 }, () => cronDateToDate(interval.next()).getUTCDay());
@@ -301,6 +304,7 @@ describe("Preset cron expression edge cases", () => {
   it("ensures every15Minutes preset advances in 15 minute intervals", () => {
     const interval = CronExpressionParser.parse(AUTOMATION_PRESETS.every15Minutes, {
       currentDate: new Date("2026-01-01T00:00:00.000Z"),
+      tz: CRON_TIMEZONE,
     });
 
     const first = cronDateToDate(interval.next());
@@ -314,6 +318,7 @@ describe("Preset cron expression edge cases", () => {
   it("ensures every2Hours preset advances in 2 hour intervals", () => {
     const interval = CronExpressionParser.parse(AUTOMATION_PRESETS.every2Hours, {
       currentDate: new Date("2026-01-01T00:00:00.000Z"),
+      tz: CRON_TIMEZONE,
     });
 
     const first = cronDateToDate(interval.next());

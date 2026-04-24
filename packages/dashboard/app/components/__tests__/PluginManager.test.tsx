@@ -94,8 +94,16 @@ import {
 
 const addToast = vi.fn();
 
+function expectEventsUrl(url: string, projectId?: string) {
+  const parsed = new URL(url, "http://localhost");
+  expect(parsed.pathname).toBe("/api/events");
+  expect(parsed.searchParams.get("projectId")).toBe(projectId ?? null);
+  expect(parsed.searchParams.get("clientId")).toBeTruthy();
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  window.sessionStorage.clear();
   
   // Default implementations
   vi.mocked(fetchPlugins).mockResolvedValue([]);
@@ -145,7 +153,10 @@ beforeEach(() => {
     onmessage: null,
   };
   
-  const MockEventSource = vi.fn(() => eventSourceInstance) as unknown as typeof EventSource;
+  const MockEventSource = vi.fn((url: string) => {
+    eventSourceInstance.url = url;
+    return eventSourceInstance;
+  }) as unknown as typeof EventSource;
   MockEventSource.CONNECTING = 0;
   MockEventSource.OPEN = 1;
   MockEventSource.CLOSED = 2;
@@ -452,7 +463,9 @@ describe("PluginManager", () => {
         expect(fetchPlugins).toHaveBeenCalled();
       });
 
-      expect(EventSource).toHaveBeenCalledWith("/api/events?projectId=proj-456");
+      const url = (globalThis as any).__testEventSourceInstance?.url;
+      expect(typeof url).toBe("string");
+      expectEventsUrl(url, "proj-456");
     });
 
     it("handles plugin enabled SSE event", async () => {

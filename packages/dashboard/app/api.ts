@@ -1904,6 +1904,23 @@ export function createTasksFromPlanning(
 
 type StreamConnectionState = "connected" | "reconnecting";
 
+// Track every live createResilientEventSource instance so we can close their
+// underlying EventSource sockets on page unload. Without this, Chrome holds
+// the HTTP/1.1 sockets open in its keep-alive pool across refreshes, exhausts
+// its 6-per-origin limit after ~3 refreshes, and every new fetch stalls —
+// leaving the dashboard frozen on "Initializing...". sse-bus.ts has its own
+// handler; this one covers the parallel EventSource path in api.ts.
+const activeResilientEventSources = new Set<{ close: () => void }>();
+if (typeof window !== "undefined") {
+  const closeAll = () => {
+    for (const handle of Array.from(activeResilientEventSources)) {
+      try { handle.close(); } catch { /* best effort */ }
+    }
+  };
+  window.addEventListener("pagehide", closeAll);
+  window.addEventListener("beforeunload", closeAll);
+}
+
 interface ResilientEventSourceOptions {
   maxReconnectAttempts?: number;
   onConnectionStateChange?: (state: StreamConnectionState) => void;
@@ -2019,7 +2036,7 @@ function createResilientEventSource(
 
   connect();
 
-  return {
+  const handle = {
     close: () => {
       closedByUser = true;
       if (reconnectTimer) {
@@ -2027,9 +2044,12 @@ function createResilientEventSource(
         reconnectTimer = null;
       }
       eventSource?.close();
+      activeResilientEventSources.delete(handle);
     },
     isConnected: () => !closedByUser && eventSource?.readyState === EventSource.OPEN,
   };
+  activeResilientEventSources.add(handle);
+  return handle;
 }
 
 export interface DevServerCandidate {

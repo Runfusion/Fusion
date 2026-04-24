@@ -2,6 +2,17 @@ import { describe, it, expect, afterEach, vi, beforeEach } from "vitest";
 import { MockEventSource } from "../../vitest.setup";
 import { subscribeSse, __resetSseBus, __sseBusChannelCount } from "../sse-bus";
 
+function expectEventsUrl(url: string, projectId?: string): void {
+  const parsed = new URL(url, "http://localhost");
+  expect(parsed.pathname).toBe("/api/events");
+  expect(parsed.searchParams.get("projectId")).toBe(projectId ?? null);
+  expect(parsed.searchParams.get("clientId")).toBeTruthy();
+}
+
+beforeEach(() => {
+  window.sessionStorage.clear();
+});
+
 afterEach(() => {
   __resetSseBus();
 });
@@ -13,7 +24,10 @@ describe("sse-bus", () => {
     const unsubB = subscribeSse(url, { events: { "task:updated": () => {} } });
     const unsubC = subscribeSse(url, { events: { "task:deleted": () => {} } });
 
-    const sources = MockEventSource.instances.filter((es) => es.url === url);
+    const sources = MockEventSource.instances.filter((es) => {
+      expectEventsUrl(es.url, "p1");
+      return true;
+    });
     expect(sources).toHaveLength(1);
 
     unsubA();
@@ -25,6 +39,8 @@ describe("sse-bus", () => {
     const unsubA = subscribeSse("/api/events", {});
     const unsubB = subscribeSse("/api/events?projectId=p1", {});
     expect(MockEventSource.instances).toHaveLength(2);
+    expectEventsUrl(MockEventSource.instances[0]!.url);
+    expectEventsUrl(MockEventSource.instances[1]!.url, "p1");
     unsubA();
     unsubB();
   });

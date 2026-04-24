@@ -26,6 +26,8 @@ import {
   MAX_ROUTINE_RUN_HISTORY,
 } from "./routine.js";
 
+const CRON_TIMEZONE = "UTC";
+
 export interface RoutineStoreEvents {
   "routine:created": [routine: Routine];
   "routine:updated": [routine: Routine];
@@ -242,6 +244,7 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
   computeNextRun(cronExpression: string, fromDate?: Date): string {
     const interval = CronExpressionParser.parse(cronExpression, {
       currentDate: fromDate ?? new Date(),
+      tz: CRON_TIMEZONE,
     });
     const next = interval.next();
     return new Date(next.getTime()).toISOString();

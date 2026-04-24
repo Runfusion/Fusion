@@ -13,6 +13,13 @@ vi.mock("../../api", () => ({
 const mockFetchAgents = vi.mocked(api.fetchAgents);
 const mockFetchAgentStats = vi.mocked(api.fetchAgentStats);
 
+function expectEventsUrl(url: string, projectId?: string) {
+  const parsed = new URL(url, "http://localhost");
+  expect(parsed.pathname).toBe("/api/events");
+  expect(parsed.searchParams.get("projectId")).toBe(projectId ?? null);
+  expect(parsed.searchParams.get("clientId")).toBeTruthy();
+}
+
 function createAgent(overrides: Partial<Agent> = {}): Agent {
   return {
     id: "agent-1",
@@ -37,6 +44,7 @@ const defaultStats: AgentStats = {
 describe("useAgents", () => {
   beforeEach(() => {
     MockEventSource.instances = [];
+    window.sessionStorage.clear();
     mockFetchAgents.mockReset().mockResolvedValue([]);
     mockFetchAgentStats.mockReset().mockResolvedValue(defaultStats);
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -141,7 +149,8 @@ describe("useAgents", () => {
 
     await waitFor(() => {
       const urls = MockEventSource.instances.map((es) => es.url);
-      expect(urls).toContain("/api/events");
+      expect(urls.length).toBeGreaterThan(0);
+      expectEventsUrl(urls[urls.length - 1]!);
     });
   });
 
@@ -193,6 +202,7 @@ describe("useAgents", () => {
     });
 
     const urls = MockEventSource.instances.map((es) => es.url);
-    expect(urls).toContain(`/api/events?projectId=${encodeURIComponent(projectId)}`);
+    expect(urls.length).toBeGreaterThan(0);
+    expectEventsUrl(urls[urls.length - 1]!, projectId);
   });
 });

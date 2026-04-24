@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -14,6 +14,15 @@ async function waitFor(predicate: () => boolean, timeoutMs = 4_000): Promise<voi
       throw new Error("Timed out waiting for condition");
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -99,6 +108,35 @@ describe("DevServerProcessManager", () => {
     expect(state.status).toBe("stopped");
     expect(store.getState().status).toBe("stopped");
     expect(store.getState().exitCode).toBeDefined();
+  });
+
+  it("stop() terminates the shell-launched child process tree", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const { root, manager } = await createManager();
+    const childPidFile = join(root, "managed-child.pid");
+
+    await manager.start(
+      `node -e "require('node:fs').writeFileSync('${childPidFile}', String(process.pid)); setInterval(() => {}, 1000)"`,
+      root,
+    );
+
+    await waitFor(() => {
+      try {
+        return Number.parseInt(readFileSync(childPidFile, "utf8").trim(), 10) > 0;
+      } catch {
+        return false;
+      }
+    });
+
+    const managedChildPid = Number.parseInt(readFileSync(childPidFile, "utf8").trim(), 10);
+    expect(isProcessAlive(managedChildPid)).toBe(true);
+
+    await manager.stop();
+
+    await waitFor(() => !isProcessAlive(managedChildPid));
   });
 
   it("stop() falls back to SIGKILL after timeout", async () => {

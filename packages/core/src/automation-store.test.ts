@@ -81,6 +81,12 @@ describe("AutomationStore", () => {
       expect(new Date(next).getUTCHours()).toBe(13);
       expect(new Date(next).getUTCMinutes()).toBe(0);
     });
+
+    it("computes monthly runs against UTC instead of local machine time", () => {
+      const fromDate = new Date("2026-04-15T00:00:00Z");
+      const next = store.computeNextRun("0 0 1 * *", fromDate);
+      expect(next).toBe("2026-05-01T00:00:00.000Z");
+    });
   });
 
   // ── createSchedule ────────────────────────────────────────────────

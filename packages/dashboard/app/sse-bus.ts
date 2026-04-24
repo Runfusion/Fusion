@@ -14,6 +14,11 @@ type OpenListener = () => void;
 
 const HEARTBEAT_TIMEOUT_MS = 45_000;
 const RECONNECT_DELAY_MS = 3_000;
+const CLIENT_KEEPALIVE_INTERVAL_MS = 2_000;
+const CLIENT_KEEPALIVE_TIMEOUT_MS = 1_500;
+const CLIENT_ID_STORAGE_KEY = "fusion:sse-client-id";
+
+let memoryClientId: string | null = null;
 
 interface Subscriber {
   events: Map<string, Set<MessageListener>>;
@@ -28,6 +33,7 @@ interface Channel {
   subscribers: Set<Subscriber>;
   nativeListeners: Map<string, (event: Event) => void>;
   heartbeatTimer: ReturnType<typeof setTimeout> | null;
+  keepaliveTimer: number | null;
   reconnectTimer: ReturnType<typeof setTimeout> | null;
   hasOpenedOnce: boolean;
   /** Set true at the start of closeChannel to prevent reconnect after teardown. */
@@ -35,6 +41,176 @@ interface Channel {
 }
 
 const channels = new Map<string, Channel>();
+
+function createClientId(): string {
+  const cryptoApi = typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
+  if (cryptoApi && typeof cryptoApi.randomUUID === "function") {
+    return cryptoApi.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function getSseClientId(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+
+  if (memoryClientId) return memoryClientId;
+
+  try {
+    const stored = window.sessionStorage.getItem(CLIENT_ID_STORAGE_KEY);
+    if (stored) {
+      memoryClientId = stored;
+      return stored;
+    }
+    const created = createClientId();
+    window.sessionStorage.setItem(CLIENT_ID_STORAGE_KEY, created);
+    memoryClientId = created;
+    return created;
+  } catch {
+    memoryClientId = createClientId();
+    return memoryClientId;
+  }
+}
+
+function parseDashboardUrl(url: string): { parsed: URL; preserveRelativePath: boolean } | undefined {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const parsed = new URL(url, window.location.origin);
+    return { parsed, preserveRelativePath: url.startsWith("/") };
+  } catch {
+    return undefined;
+  }
+}
+
+function isLocalEventsUrl(parsed: URL): boolean {
+  return parsed.origin === window.location.origin && parsed.pathname === "/api/events";
+}
+
+function appendClientIdQuery(url: string): string {
+  const clientId = getSseClientId();
+  if (!clientId) return url;
+
+  const parsed = parseDashboardUrl(url);
+  if (!parsed || !isLocalEventsUrl(parsed.parsed)) return url;
+
+  parsed.parsed.searchParams.set("clientId", clientId);
+  return parsed.preserveRelativePath
+    ? `${parsed.parsed.pathname}${parsed.parsed.search}${parsed.parsed.hash}`
+    : parsed.parsed.toString();
+}
+
+function createControlUrl(eventsUrl: string, action: "disconnect" | "keepalive"): string | undefined {
+  const clientId = getSseClientId();
+  if (!clientId) return undefined;
+
+  const parsed = parseDashboardUrl(eventsUrl);
+  if (!parsed || !isLocalEventsUrl(parsed.parsed)) return undefined;
+
+  const controlUrl = new URL(`/api/events/${action}`, window.location.origin);
+  controlUrl.searchParams.set("clientId", clientId);
+  const projectId = parsed.parsed.searchParams.get("projectId");
+  if (projectId) {
+    controlUrl.searchParams.set("projectId", projectId);
+  }
+  return appendTokenQuery(`${controlUrl.pathname}${controlUrl.search}${controlUrl.hash}`);
+}
+
+function sendDisconnectBeacon(channel: Channel): void {
+  if (typeof window === "undefined") return;
+
+  const url = createControlUrl(channel.url, "disconnect");
+  if (!url) return;
+
+  const sendBeacon = window.navigator?.sendBeacon?.bind(window.navigator);
+  if (sendBeacon && sendBeacon(url)) {
+    return;
+  }
+
+  if (typeof window.fetch === "function") {
+    void window.fetch(url, { method: "POST", keepalive: true }).catch(() => {
+      // The next successful EventSource connection with this client id also
+      // supersedes older server-side streams, so a missed unload beacon is OK.
+    });
+  }
+}
+
+function stopClientKeepalive(channel: Channel): void {
+  if (channel.keepaliveTimer) {
+    clearInterval(channel.keepaliveTimer);
+    channel.keepaliveTimer = null;
+  }
+}
+
+function sendClientKeepalive(channel: Channel): void {
+  if (typeof window === "undefined" || typeof window.fetch !== "function") return;
+
+  const url = createControlUrl(channel.url, "keepalive");
+  if (!url) return;
+
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timeout = controller
+    ? window.setTimeout(() => controller.abort(), CLIENT_KEEPALIVE_TIMEOUT_MS)
+    : null;
+
+  void window.fetch(url, {
+    method: "POST",
+    cache: "no-store",
+    signal: controller?.signal,
+  }).catch(() => {
+    // If this page is suspended or the network drops, the server-side stale
+    // timer will reap the stream and EventSource will reconnect later.
+  }).finally(() => {
+    if (timeout !== null) {
+      window.clearTimeout(timeout);
+    }
+  });
+}
+
+function startClientKeepalive(channel: Channel): void {
+  stopClientKeepalive(channel);
+  if (!createControlUrl(channel.url, "keepalive")) return;
+
+  sendClientKeepalive(channel);
+  channel.keepaliveTimer = window.setInterval(() => {
+    sendClientKeepalive(channel);
+  }, CLIENT_KEEPALIVE_INTERVAL_MS);
+}
+
+// Close every EventSource when the page is unloading. Without this,
+// browsers keep the underlying TCP sockets open in their HTTP/1.1
+// keep-alive pool even though the JS EventSource object is gone —
+// the server never sees a close, connections pile up, and within a
+// few refreshes the browser hits its 6-connection-per-origin limit
+// and every subsequent fetch stalls. Using `pagehide` (fires reliably
+// on bfcache navigations too) plus `beforeunload` as a fallback.
+if (typeof window !== "undefined") {
+  const closeAllChannels = () => {
+    for (const channel of Array.from(channels.values())) {
+      if (channel.closed) continue;
+      stopClientKeepalive(channel);
+      sendDisconnectBeacon(channel);
+      if (channel.es) {
+        try {
+          channel.es.close();
+        } catch {
+          // ignore
+        }
+        channel.es = null;
+      }
+      channel.closed = true;
+    }
+  };
+  const reopenPersistedChannels = (event: PageTransitionEvent) => {
+    if (!event.persisted) return;
+    for (const channel of Array.from(channels.values())) {
+      if (channel.subscribers.size === 0) continue;
+      channel.closed = false;
+      openChannel(channel);
+    }
+  };
+  window.addEventListener("pagehide", closeAllChannels);
+  window.addEventListener("beforeunload", closeAllChannels);
+  window.addEventListener("pageshow", reopenPersistedChannels);
+}
 
 function resetHeartbeat(channel: Channel): void {
   if (channel.heartbeatTimer) clearTimeout(channel.heartbeatTimer);
@@ -52,6 +228,7 @@ function forceReconnect(channel: Channel): void {
     channel.es.close();
     channel.es = null;
   }
+  stopClientKeepalive(channel);
   channel.nativeListeners.clear();
 
   if (channel.closed) return;
@@ -91,8 +268,9 @@ function openChannel(channel: Channel): void {
   // EventSource can't set custom headers, so the bearer token must ride on
   // the URL as `fn_token=<token>`. `appendTokenQuery` is a no-op when no
   // token is configured.
-  const es = new EventSource(appendTokenQuery(channel.url));
+  const es = new EventSource(appendTokenQuery(appendClientIdQuery(channel.url)));
   channel.es = es;
+  startClientKeepalive(channel);
 
   es.addEventListener("open", () => {
     resetHeartbeat(channel);
@@ -146,6 +324,7 @@ function reattachNativeListeners(channel: Channel): void {
 function closeChannel(channel: Channel): void {
   channel.closed = true;
   if (channel.heartbeatTimer) clearTimeout(channel.heartbeatTimer);
+  stopClientKeepalive(channel);
   if (channel.reconnectTimer) clearTimeout(channel.reconnectTimer);
   if (channel.es) channel.es.close();
   channel.es = null;
@@ -178,6 +357,7 @@ export function subscribeSse(url: string, sub: SseSubscription = {}): () => void
       subscribers: new Set(),
       nativeListeners: new Map(),
       heartbeatTimer: null,
+      keepaliveTimer: null,
       reconnectTimer: null,
       hasOpenedOnce: false,
       closed: false,
@@ -220,6 +400,7 @@ export function subscribeSse(url: string, sub: SseSubscription = {}): () => void
 /** Test-only: tear down every open channel. */
 export function __resetSseBus(): void {
   for (const channel of Array.from(channels.values())) closeChannel(channel);
+  memoryClientId = null;
 }
 
 /** Test-only: inspect the number of live channels. */

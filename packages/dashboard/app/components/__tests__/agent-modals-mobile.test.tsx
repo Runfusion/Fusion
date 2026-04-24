@@ -15,12 +15,24 @@ vi.mock("../../api", () => ({
   updateAgentState: vi.fn(),
   deleteAgent: vi.fn(),
   fetchAgentLogs: vi.fn(),
+  fetchAgentLogsWithMeta: vi.fn(),
   fetchAgentRunLogs: vi.fn(),
+  fetchAgentChildren: vi.fn(),
   fetchAgentRuns: vi.fn(),
   fetchAgentRunDetail: vi.fn(),
   startAgentRun: vi.fn(),
+  stopAgentRun: vi.fn(),
+  updateAgentInstructions: vi.fn(),
+  updateAgentSoul: vi.fn(),
+  updateAgentMemory: vi.fn(),
+  fetchAgentMemoryFiles: vi.fn(),
+  fetchAgentMemoryFile: vi.fn(),
+  saveAgentMemoryFile: vi.fn(),
   fetchAgentTasks: vi.fn(),
   fetchChainOfCommand: vi.fn(),
+  fetchWorkspaceFileContent: vi.fn(),
+  saveWorkspaceFileContent: vi.fn(),
+  fetchModels: vi.fn(),
   fetchAgents: vi.fn(),
   createAgent: vi.fn(),
   startAgentGeneration: vi.fn(),
@@ -41,12 +53,24 @@ const mockUpdateAgent = vi.mocked(api.updateAgent);
 const mockUpdateAgentState = vi.mocked(api.updateAgentState);
 const mockDeleteAgent = vi.mocked(api.deleteAgent);
 const mockFetchAgentLogs = vi.mocked(api.fetchAgentLogs);
+const mockFetchAgentLogsWithMeta = vi.mocked(api.fetchAgentLogsWithMeta);
 const mockFetchAgentRunLogs = vi.mocked(api.fetchAgentRunLogs);
+const mockFetchAgentChildren = vi.mocked(api.fetchAgentChildren);
 const mockFetchAgentRuns = vi.mocked(api.fetchAgentRuns);
 const mockFetchAgentRunDetail = vi.mocked(api.fetchAgentRunDetail);
 const mockStartAgentRun = vi.mocked(api.startAgentRun);
+const mockStopAgentRun = vi.mocked(api.stopAgentRun);
+const mockUpdateAgentInstructions = vi.mocked(api.updateAgentInstructions);
+const mockUpdateAgentSoul = vi.mocked(api.updateAgentSoul);
+const mockUpdateAgentMemory = vi.mocked(api.updateAgentMemory);
+const mockFetchAgentMemoryFiles = vi.mocked(api.fetchAgentMemoryFiles);
+const mockFetchAgentMemoryFile = vi.mocked(api.fetchAgentMemoryFile);
+const mockSaveAgentMemoryFile = vi.mocked(api.saveAgentMemoryFile);
 const mockFetchAgentTasks = vi.mocked(api.fetchAgentTasks);
 const mockFetchChainOfCommand = vi.mocked(api.fetchChainOfCommand);
+const mockFetchWorkspaceFileContent = vi.mocked(api.fetchWorkspaceFileContent);
+const mockSaveWorkspaceFileContent = vi.mocked(api.saveWorkspaceFileContent);
+const mockFetchModels = vi.mocked(api.fetchModels);
 const mockFetchAgents = vi.mocked(api.fetchAgents);
 const mockCreateAgent = vi.mocked(api.createAgent);
 const mockStartAgentGeneration = vi.mocked(api.startAgentGeneration);
@@ -88,12 +112,24 @@ describe("agent modal mobile CSS structure", () => {
     mockUpdateAgentState.mockResolvedValue({ ...mockAgent, state: "paused" } as any);
     mockDeleteAgent.mockResolvedValue(undefined as any);
     mockFetchAgentLogs.mockResolvedValue([]);
+    mockFetchAgentLogsWithMeta.mockResolvedValue({ entries: [], total: 0, hasMore: false } as any);
     mockFetchAgentRunLogs.mockResolvedValue([]);
+    mockFetchAgentChildren.mockResolvedValue([]);
     mockFetchAgentRuns.mockResolvedValue([]);
     mockFetchAgentRunDetail.mockResolvedValue(undefined as any);
     mockStartAgentRun.mockResolvedValue({ id: "run-001", status: "active" } as any);
+    mockStopAgentRun.mockResolvedValue(undefined);
+    mockUpdateAgentInstructions.mockResolvedValue(mockAgent as any);
+    mockUpdateAgentSoul.mockResolvedValue(mockAgent as any);
+    mockUpdateAgentMemory.mockResolvedValue(mockAgent as any);
+    mockFetchAgentMemoryFiles.mockResolvedValue({ files: [] } as any);
+    mockFetchAgentMemoryFile.mockResolvedValue({ content: "" } as any);
+    mockSaveAgentMemoryFile.mockResolvedValue(undefined);
     mockFetchAgentTasks.mockResolvedValue([]);
     mockFetchChainOfCommand.mockResolvedValue([mockAgent] as any);
+    mockFetchWorkspaceFileContent.mockResolvedValue({ content: "" } as any);
+    mockSaveWorkspaceFileContent.mockResolvedValue(undefined);
+    mockFetchModels.mockResolvedValue([]);
 
     mockFetchAgents.mockResolvedValue([
       {
